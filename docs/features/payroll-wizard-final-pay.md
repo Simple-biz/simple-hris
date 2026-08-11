@@ -266,10 +266,17 @@ Other surfaces don't know the wizard's accounting layer (KPI/dept, Adj., Orphana
 disbursement), so the wizard **publishes a per-employee snapshot** they read.
 
 - `publishFinalPaySnapshot()` writes `app_settings` key `payroll.wizard.final_pay.<sourceFile>` =
-  `{ source_file, finals: { [email]: { final, regularPay, otPay, regularHours, otHours, totalHours, initial } } }`,
-  built from `dispatchData.rows`, keyed by **both** work and personal email (lowercased). The
+  `{ source_file, fx_rate, finals: { [email]: WizardFinalPayEntry } }`, built from
+  `dispatchData.rows`, keyed by **both** work and personal email (lowercased). The
   Regular/OT split + hours are included (not just `final`) so the dashboard's Regular + Overtime
   tiles reconcile exactly with the take-home.
+- **The entry is fully itemized** (`WizardFinalPayEntry` in
+  [`paystub-recovery.ts`](../../src/lib/payroll/paystub-recovery.ts), which extends the
+  client-safe `WizardSnapshotEntry`): `perfectAttendanceBonus`, `techBonus`,
+  `otherBonuses`, `adjustment`, `orphanagePay`, `mesaDeduction`, `mesaDisbursement`,
+  `regularRate`, `otRate`, `adjustmentNote`, the HSL `weekend*` carve-out, the
+  `proration` block and the `hoganSheet` legs. Consumers read these **verbatim** —
+  re-deriving them from hours diverges on manual toggles and post-hoc config drift.
 - **Published LIVE** — a 1.5s-debounced effect on `dispatchData` writes it as accounting edits, plus
   immediate writes on **Lock in additions** and **Confirm & Dispatch**.
 - **Dashboard** ([EmployeeDashboard.tsx](../../src/components/employee/EmployeeDashboard.tsx)) —
@@ -278,8 +285,25 @@ disbursement), so the wizard **publishes a per-employee snapshot** they read.
   snapshot (note: "Includes payroll-confirmed bonuses & adjustments"). **Fallback:** client-side
   auto-estimate (`INIT + PAB + Tech − MESA`) when no snapshot / All-time view.
 - **Payment Dispatch** ([useDispatchQueue.ts](../../src/components/payroll-clerk/useDispatchQueue.ts)) —
-  `loadAll` overlays each queue row's `amountPHP`/`amountUSD` from the snapshot (by email). Without
-  this it shows `/api/payroll-current-pay` which recomputes net pay WITHOUT the accounting layer.
+  `loadAll` overlays each queue row's amount **and its whole itemization** from the wizard. Without
+  this it shows `/api/payroll-current-pay`, which recomputes net pay WITHOUT the accounting layer.
+
+  > **This snapshot is NOT the only carrier, and it does not always win (2026-08-11).**
+  > `paystub_dispatch_queue` froze the same figures at lock time, and the precedence
+  > between them is one shared rule —
+  > [`wizard-dispatch-values.ts`](../../src/lib/payroll/wizard-dispatch-values.ts),
+  > used by both the queue and the paystub freshness merge. The snapshot wins only
+  > when it is **newer than `locked_at`**, itemized, catalog-consistent, matched on
+  > the **work email**, and the row is not wizard-`excluded`; otherwise the LOCKED
+  > values do. Full table + consequences:
+  > [payment-dispatch.md §4.2.2](./payment-dispatch.md#422-which-figures-the-queue-actually-shows).
+  >
+  > Two things follow for this publisher. **A re-lock demotes an older snapshot** —
+  > which is what makes "unlock and re-lock" authoritative over Payment Dispatch.
+  > And because this publish is a `void`-fired 1.5s debounce that **returns early**
+  > behind its own gates (`additionsHydratedFor`, both KPI markers, a per-cycle FX of
+  > 0), a re-lock whose publish is held no longer strands the queue on pre-relock
+  > figures — it falls back to the values that were just staged.
 
 Reg + OT = the wizard's Initial; take-home = `final`. When the employee has no bonus/MESA/Orphanage/
 Adj, Reg + OT equals take-home exactly; otherwise take-home is higher by those (separate lines).

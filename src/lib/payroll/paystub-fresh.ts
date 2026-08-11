@@ -23,6 +23,16 @@ import { getPaystubDispatchEntry } from "@/lib/supabase/paystub-dispatch-queue";
 import { getAppSettingWithMeta } from "@/lib/supabase/app-settings";
 import { listPayStructures } from "@/lib/supabase/pay-structures-db";
 import type { WizardFinalPayEntry } from "@/lib/payroll/paystub-recovery";
+// The three gates that decide whether a snapshot may speak for a payee live in
+// ONE pure module, shared with Payment Dispatch's queue. They used to exist only
+// here, while the queue overlay applied the snapshot with none of them — so the
+// money a clerk sent and the statement that person received could be priced from
+// different carriers. See src/lib/payroll/wizard-dispatch-values.ts.
+import {
+  snapshotEntryIsItemized,
+  snapshotIsNewerThanLock,
+  snapshotRateContradictsCatalog,
+} from "@/lib/payroll/wizard-dispatch-values";
 
 export interface FreshPaystubEntry {
   /** The raw staged queue row (null when this (cycle, employee) was never staged). */
@@ -281,9 +291,7 @@ export function mergeSnapshotIntoStaged(
   if (!staged.payload || staged.excluded || !snapValue) return base;
 
   // Newer-than-lock guard: both are timestamptz ISO strings.
-  const snapAt = snapUpdatedAt ? Date.parse(snapUpdatedAt) : NaN;
-  const lockedAt = staged.locked_at ? Date.parse(staged.locked_at) : NaN;
-  if (!Number.isFinite(snapAt) || (Number.isFinite(lockedAt) && snapAt <= lockedAt)) return base;
+  if (!snapshotIsNewerThanLock(snapUpdatedAt, staged.locked_at)) return base;
 
   let finals: Record<string, WizardFinalPayEntry> = {};
   let snapFx = 0;
@@ -303,35 +311,18 @@ export function mergeSnapshotIntoStaged(
   // Itemization required — a total-only (pre-2026-07-18) snapshot can't rebuild
   // the statement's line items, and mixing its total with stale lines would
   // produce a stub that doesn't reconcile.
-  if (
-    entry.perfectAttendanceBonus === undefined ||
-    entry.techBonus === undefined ||
-    entry.otherBonuses === undefined
-  ) {
-    return base;
-  }
+  if (!snapshotEntryIsItemized(entry)) return base;
 
   // ── Catalog rate check: the snapshot must have been computed at the rate the
   // Payment Catalog decrees. A mismatch on any rate the snapshot carries means
   // the publishing wizard session predates the current catalog — its figures
   // are stale no matter how new its `updated_at` is. (Snapshots without rate
   // fields — pre-2026-07-21 — can't be validated and keep the old behavior.)
-  if (catalogRatePhp) {
-    const snapReg = numOrNull(entry.regularRate);
-    const snapOt = numOrNull(entry.otRate);
-    const regStale = snapReg != null && Math.abs(snapReg - catalogRatePhp.regular) > 0.005;
-    // Sheet-form snapshots (HSL 2026-08-11) store the DERIVED 0.5× differential
-    // as `otRate`, which never matches the catalog's standalone OT column —
-    // and doesn't need to: the differential derives from the regular rate, so
-    // the regular-rate check above fully covers staleness for those rows.
-    const otStale =
-      entry.hoganSheet == null &&
-      snapOt != null &&
-      catalogRatePhp.ot != null &&
-      Math.abs(snapOt - catalogRatePhp.ot) > 0.005;
-    if (regStale || otStale) {
-      return { ...base, staleRateSnapshot: true };
-    }
+  // (Sheet-form snapshots (HSL 2026-08-11) store the DERIVED 0.5× differential as
+  // `otRate`, which never matches the catalog's standalone OT column and doesn't
+  // need to — the shared predicate scopes the OT check accordingly.)
+  if (snapshotRateContradictsCatalog(entry, catalogRatePhp)) {
+    return { ...base, staleRateSnapshot: true };
   }
 
   const p = obj(staged.payload);

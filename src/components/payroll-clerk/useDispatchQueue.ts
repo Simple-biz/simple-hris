@@ -16,7 +16,14 @@ import {
   type ExclusionReason,
   type QueueRow,
 } from './mock-queue';
+import {
+  resolveWizardRowValues,
+  type CatalogRateClaimLike,
+  type WizardRowValues,
+  type WizardSnapshotEntry,
+} from '@/lib/payroll/wizard-dispatch-values';
 import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 
 /** Resolve a department key to its display name (null when unknown/empty). */
@@ -33,6 +40,7 @@ type CachedQueue = {
   period: PayrollPeriod;
   fxRate: number;
   wizardReady: boolean;
+  valuesWarning: string | null;
 };
 
 /**
@@ -120,6 +128,17 @@ interface DispatchQueueState {
    * copy is the opposite: the queue below IS complete.
    */
   contractorAdvisory: string | null;
+  /**
+   * The amounts on screen are NOT the Payroll Wizard's for at least one payee, and
+   * the clerk has to know before sending money.
+   *
+   * Never silent: the wizard's figures used to be a best-effort overlay whose every
+   * failure mode (unreadable snapshot, unreadable stage, a snapshot rejected for
+   * contradicting the Payment Catalog, a staged payee neither carrier could price)
+   * degraded to a wizard-blind recompute behind a queue that looked perfectly
+   * healthy — no Adj., no Orphanage, no KPI/dept bonuses, no MESA.
+   */
+  valuesWarning: string | null;
   /** Re-pulls dispatches + queue. Call after Mark paid succeeds. */
   refresh: () => Promise<void>;
 }
@@ -130,6 +149,21 @@ const EMPTY_PERIOD: PayrollPeriod = {
   end: null,
   sourceFile: null,
 };
+
+/**
+ * Supabase Realtime **Broadcast** topic every open Payment Dispatch screen joins,
+ * so a payment logged on one appears on all of them within a second.
+ *
+ * Its own topic rather than the CEO card's `payments-live`: that channel carries a
+ * different contract (Accounting publishing exact counts to a viewer), and joining
+ * one topic twice from the same page invites subscription conflicts.
+ */
+const DISPATCH_SYNC_CHANNEL = 'payment-dispatch-sync';
+const DISPATCH_SYNC_EVENT = 'queue-changed';
+/** Coalesce a burst — settling multi-cycle arrears fires one POST per cycle. */
+const DISPATCH_SYNC_DEBOUNCE_MS = 400;
+/** Fallback cadence when the socket is down or a change came from outside the app. */
+const DISPATCH_POLL_INTERVAL_MS = 15_000;
 
 /** Build the visible state for a cache key — the last-known queue for that week
  *  (instant paint) or a blank loading shell when the week hasn't been seen. */
@@ -146,6 +180,9 @@ function seedState(cacheKey: string): Omit<DispatchQueueState, 'refresh'> {
     error: null,
     contractorError: null,
     contractorAdvisory: null,
+    // Cached: a warm repaint must not drop a "these aren't the wizard's amounts"
+    // notice that the cached rows are still carrying.
+    valuesWarning: cached?.valuesWarning ?? null,
   };
 }
 
@@ -177,6 +214,8 @@ async function loadAll(
   contractorError: string | null;
   /** Advisory on a SUCCESSFUL contractor load (e.g. invoices stuck mid-dispatch). */
   contractorAdvisory: string | null;
+  /** See {@link DispatchQueueState.valuesWarning}. */
+  valuesWarning: string | null;
 }> {
   // When the clerk picks a PAST week in the dispatch CSV selector, pay + cycle
   // are computed for that source file instead of the live `is_current` cycle.
@@ -235,6 +274,7 @@ async function loadAll(
       error: ratesJson.error,
       contractorError: null,
       contractorAdvisory: null,
+      valuesWarning: null,
     };
   }
 
@@ -245,126 +285,46 @@ async function loadAll(
 
   const period = payJson.period ?? EMPTY_PERIOD;
 
-  // Payroll Wizard's published final pay for this period's source file. When present
-  // it is authoritative — it includes the accounting layer (Adj., Orphanage, KPI/dept
-  // bonuses, MESA disbursement) that /api/payroll-current-pay recomputes without. We
-  // overlay it onto each queue row's amount so the clerk pays exactly what the wizard
-  // computed. Falls back silently to the current-pay amount when no snapshot exists.
-  let wizardFinalByEmail: Record<string, number> = {};
-  if (period.sourceFile) {
-    try {
-      // Employee-scope PHP catalog rates — the source of truth. A snapshot entry
-      // whose own rate contradicts the catalog was published by a wizard session
-      // holding pre-change data; its final must NOT set the amount the clerk pays.
-      // Fail-open: if the catalog fetch fails (network, role not rate-visible),
-      // the overlay behaves exactly as before.
-      const catalogClaimByEmail: Record<string, { reg: number; ot: number | null }> = {};
-      try {
-        const catRes = await fetch('/api/payment-catalog/pay-structures', { cache: 'no-store', signal });
-        if (catRes.ok) {
-          const catJson = (await catRes.json()) as {
-            structures?: Array<{
-              scope?: string;
-              employeeEmail?: string | null;
-              regularRate?: number;
-              otRate?: number | null;
-              currency?: string;
-            }>;
-          };
-          for (const s of catJson.structures ?? []) {
-            if (s?.scope !== 'employee' || s.currency !== 'PHP') continue;
-            const em = (s.employeeEmail ?? '').trim().toLowerCase();
-            if (!em || typeof s.regularRate !== 'number' || !Number.isFinite(s.regularRate)) continue;
-            catalogClaimByEmail[em] = {
-              reg: s.regularRate,
-              ot: typeof s.otRate === 'number' && Number.isFinite(s.otRate) ? s.otRate : null,
-            };
-          }
-        }
-      } catch {
-        /* fail-open — no catalog check */
-      }
-
-      const snapRes = await fetch(
-        `/api/app-settings?key=${encodeURIComponent(`payroll.wizard.final_pay.${period.sourceFile}`)}`,
-        { cache: 'no-store', signal },
-      );
-      const snapJson = (await snapRes.json()) as { value?: string | null };
-      if (snapJson?.value) {
-        const parsed = JSON.parse(snapJson.value) as {
-          finals?: Record<string, { final?: number; regularRate?: number; otRate?: number }>;
-        };
-        for (const [em, entry] of Object.entries(parsed.finals ?? {})) {
-          if (!entry || typeof entry.final !== 'number') continue;
-          const claim = catalogClaimByEmail[em];
-          if (claim) {
-            const snapReg = typeof entry.regularRate === 'number' ? entry.regularRate : null;
-            const snapOt = typeof entry.otRate === 'number' ? entry.otRate : null;
-            const stale =
-              (snapReg != null && Math.abs(snapReg - claim.reg) > 0.005) ||
-              (snapOt != null && claim.ot != null && Math.abs(snapOt - claim.ot) > 0.005);
-            if (stale) {
-              console.warn(
-                `[dispatch] wizard final for ${em} ignored — snapshot rate contradicts the ` +
-                  `Payment Catalog (stale wizard session). Reload the wizard and re-lock the week.`,
-              );
-              continue; // fall back to the staged/current-pay amount for this person
-            }
-          }
-          wizardFinalByEmail[em] = entry.final;
-        }
-      }
-    } catch {
-      /* ignore — fall back to current-pay amounts */
-    }
-  }
-  const fx = payJson.fxRate ?? 0;
-  // USD anchor for re-deriving a COP person's native amount when the wizard
-  // overrides their final PHP pay (COP = USD-equivalent × usd_to_cop_rate).
-  const usdToCop = payJson.fxRates?.usdToCop ?? 0;
-  const applyWizardFinal = <
-    T extends { id: string; amountPHP: number | null; amountUSD: number | null; amountCOP: number | null },
-  >(r: T): T => {
-    const f = wizardFinalByEmail[r.id];
-    if (typeof f !== 'number') return r;
-    const newUsd = fx > 0 ? Math.round((f / fx) * 100) / 100 : r.amountUSD;
-    // Only COP-paid rows carry a non-null amountCOP; keep it in step with the override.
-    const newCop =
-      r.amountCOP != null && newUsd != null && usdToCop > 0 ? Math.round(newUsd * usdToCop) : r.amountCOP;
-    return {
-      ...r,
-      amountPHP: f,
-      amountUSD: newUsd,
-      amountCOP: newCop,
-    };
-  };
-
-  // Payroll Wizard "do not pay" exclusions for this cycle. People accounting
-  // excluded from pay are moved out of the pending queue into the Excluded tab
-  // (still payable from there — paying them logs the dispatch + sends their
-  // staged paystub). Keyed by lowercased work email; carries the last paystub
-  // send timestamp for a per-row badge.
+  // ── What the Payroll Wizard LOCKED IN for this cycle ───────────────────────
+  // Read BEFORE pricing, because the locked figures are one of the two carriers
+  // the pricing below chooses between (the other is the wizard's live snapshot).
+  //
+  // Three jobs beyond that:
+  //  (1) "do not pay" exclusions → the Excluded tab, keyed by lowercased work
+  //      email, carrying the last paystub send timestamp for a per-row badge;
+  //  (2) the staged set overrides the master-list gate — anyone payroll locked in
+  //      must appear here, including re-hires / sync-lagged rows;
+  //  (3) the safety net further down synthesizes a row for anyone locked in that
+  //      the rates-only build couldn't produce, so nobody silently vanishes.
   const wizardExcluded = new Map<string, { sentAt: string | null; departmentKey: string | null }>();
-  // Every email the Payroll Wizard LOCKED IN for this cycle (payable AND
-  // excluded). This staged set is the payroll-authoritative payee list — anyone
-  // the wizard locked in must appear in Payment Dispatch. We use it below to
-  // (1) stop the master-list gate from dropping people the wizard already
-  // vouched for (re-hires / sync-lagged employees not yet in active_employees),
-  // and (2) as a safety-net: synthesize a row for anyone locked in that the
-  // rates-only queue build couldn't produce, so nobody ever silently vanishes.
   const stagedEmails = new Set<string>();
   const stagedItems: PaystubQueueListItem[] = [];
+  /** Staged rows by lowercased work email — the pricing lookup below. */
+  const stagedByEmail = new Map<string, PaystubQueueListItem>();
+  /** Non-null when the staged read FAILED. Distinct from "nobody is staged": the
+   *  first would silently price the whole week off the recompute and hide the
+   *  safety net, so it is surfaced rather than swallowed. */
+  let stagedError: string | null = null;
   if (period.sourceFile) {
     try {
       const stageRes = await fetch(
         `/api/paystub-dispatch-queue?source_file=${encodeURIComponent(period.sourceFile)}`,
         { cache: 'no-store', signal },
       );
-      const stageJson = (await stageRes.json()) as { rows?: PaystubQueueListItem[] };
+      const stageJson = (await stageRes.json()) as {
+        rows?: PaystubQueueListItem[];
+        error?: string | null;
+      };
+      if (!stageRes.ok || stageJson.error) {
+        stagedError = stageJson.error?.trim() || `HTTP ${stageRes.status}`;
+      }
       for (const r of stageJson.rows ?? []) {
         stagedItems.push(r);
         const re = r.recipient_email?.trim().toLowerCase();
-        if (re) stagedEmails.add(re);
+        if (re) {
+          stagedEmails.add(re);
+          stagedByEmail.set(re, r);
+        }
         if (r.personal_email) stagedEmails.add(r.personal_email.trim().toLowerCase());
         if (r.excluded) {
           wizardExcluded.set(r.recipient_email.trim().toLowerCase(), {
@@ -373,10 +333,207 @@ async function loadAll(
           });
         }
       }
-    } catch {
-      /* ignore — no staging just means nobody is wizard-excluded */
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') throw e;
+      stagedError = e instanceof Error ? e.message : String(e);
     }
   }
+
+  // ── The wizard's figures ───────────────────────────────────────────────────
+  // /api/payroll-current-pay recomputes pay WITHOUT the accounting layer (Adj.,
+  // Orphanage, KPI/dept bonuses, MESA) — which is precisely why the wizard
+  // publishes its own figures (docs/features/payroll-wizard-final-pay.md §5).
+  // TWO carriers hold them and they can disagree, so the precedence lives in one
+  // shared, unit-tested module that the paystub engine uses too:
+  //
+  //   snapshot (only when it QUALIFIES) → the LOCKED stage → nothing
+  //
+  // Nothing → the row keeps computeCurrentPay's figure and says so
+  // (`valuesSource: 'recomputed'`), because an absent saved value falls back to
+  // live computation and never to ₱0 (payroll-wizard-week-replay.md, rule 3).
+  //
+  // This used to be a total-only overlay of the snapshot with NONE of the gates
+  // paystub-fresh.ts applies — so a snapshot that predated a re-lock, a held row,
+  // or a total-only snapshot could all price the payment differently from the
+  // statement that person was emailed, and a missing snapshot silently handed the
+  // clerk a wizard-blind recompute.
+  let wizardFinals: Record<string, WizardSnapshotEntry> | null = null;
+  let wizardSnapshotUpdatedAt: string | null = null;
+  /** Non-null when the wizard's figures could NOT be read — never treated as
+   *  "the wizard published nothing", which would silently price the week off the
+   *  recompute. */
+  let valuesError: string | null = null;
+  const catalogClaimByEmail = new Map<string, CatalogRateClaimLike>();
+  if (period.sourceFile) {
+    // Employee-scope PHP catalog rates — the rate source of truth. A snapshot
+    // entry whose own rate contradicts the catalog was published by a wizard
+    // session holding pre-change data and must not price the payment. Fail-open:
+    // if the catalog fetch fails, the guard simply doesn't fire.
+    try {
+      const catRes = await fetch('/api/payment-catalog/pay-structures', { cache: 'no-store', signal });
+      if (catRes.ok) {
+        const catJson = (await catRes.json()) as {
+          structures?: Array<{
+            scope?: string;
+            employeeEmail?: string | null;
+            regularRate?: number;
+            otRate?: number | null;
+            currency?: string;
+          }>;
+        };
+        for (const s of catJson.structures ?? []) {
+          if (s?.scope !== 'employee' || s.currency !== 'PHP') continue;
+          const em = (s.employeeEmail ?? '').trim().toLowerCase();
+          if (!em || typeof s.regularRate !== 'number' || !Number.isFinite(s.regularRate)) continue;
+          catalogClaimByEmail.set(em, {
+            regular: s.regularRate,
+            ot: typeof s.otRate === 'number' && Number.isFinite(s.otRate) ? s.otRate : null,
+          });
+        }
+      }
+    } catch {
+      /* fail-open — no catalog check */
+    }
+
+    // `meta=1` carries the row's updated_at: without it there is no way to tell a
+    // snapshot that post-dates the lock from one the lock has superseded.
+    try {
+      const snapRes = await fetch(
+        `/api/app-settings?key=${encodeURIComponent(`payroll.wizard.final_pay.${period.sourceFile}`)}&meta=1`,
+        { cache: 'no-store', signal },
+      );
+      const snapJson = (await snapRes.json()) as {
+        value?: string | null;
+        updatedAt?: string | null;
+        error?: string | null;
+      };
+      if (!snapRes.ok || snapJson.error) {
+        valuesError = snapJson.error?.trim() || `HTTP ${snapRes.status}`;
+      } else if (snapJson.value) {
+        const parsed = JSON.parse(snapJson.value) as { finals?: Record<string, WizardSnapshotEntry> };
+        wizardFinals = parsed.finals ?? null;
+        wizardSnapshotUpdatedAt = snapJson.updatedAt ?? null;
+      }
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') throw e;
+      valuesError = e instanceof Error ? e.message : String(e);
+    }
+  }
+  const fx = payJson.fxRate ?? 0;
+  // USD anchor for re-deriving a COP person's native amount when the wizard
+  // overrides their final PHP pay (COP = USD-equivalent × usd_to_cop_rate).
+  const usdToCop = payJson.fxRates?.usdToCop ?? 0;
+  /** Rows priced off the recompute despite the wizard having staged them. */
+  const unpricedByWizard: string[] = [];
+  /** Rows the wizard re-priced after the values were locked. */
+  const repricedAfterLock: string[] = [];
+  /** Rows whose snapshot was rejected for contradicting the Payment Catalog. */
+  const staleRateRows: string[] = [];
+  /** Resolve one payee through the shared precedence, recording what happened. */
+  const wizardValuesFor = (row: { id: string; email: string }): WizardRowValues | null => {
+    const staged = stagedByEmail.get(row.id) ?? null;
+    const values = resolveWizardRowValues({
+      // Work-email-only matching (the staged row's key is always the work email).
+      // Personal addresses are shared/recycled in the master list, so an alias
+      // match could pay one person another person's figures.
+      workEmail: staged?.recipient_email ?? row.id,
+      finals: wizardFinals,
+      snapshotUpdatedAt: wizardSnapshotUpdatedAt,
+      staged: staged
+        ? {
+            amountPHP: staged.amount_php,
+            amountUSD: staged.amount_usd,
+            lockedAt: staged.locked_at,
+            excluded: staged.excluded === true,
+            payPhp: staged.pay_php,
+            hours: staged.hours,
+          }
+        : null,
+      catalogClaim: catalogClaimByEmail.get(row.id) ?? null,
+    });
+    const who = row.email || row.id;
+    if (!values) {
+      // Staged but unpriced by either carrier: the clerk is looking at a
+      // recomputed figure for someone payroll locked in. Reported, not swallowed.
+      if (staged) unpricedByWizard.push(who);
+      return null;
+    }
+    if (values.staleRateSnapshot) staleRateRows.push(who);
+    if (values.repricedAfterLock) repricedAfterLock.push(who);
+    return values;
+  };
+
+  /** PHP total → the USD/COP twins, keeping a row's currencies in step. */
+  const deriveCurrencies = (
+    r: { amountUSD: number | null; amountCOP: number | null },
+    values: WizardRowValues,
+  ): { amountUSD: number | null; amountCOP: number | null } => {
+    const amountUSD =
+      values.amountUSD ?? (fx > 0 ? Math.round((values.amountPHP / fx) * 100) / 100 : r.amountUSD);
+    // Only COP-relevant rows carry a non-null amountCOP; keep it in step.
+    const amountCOP =
+      r.amountCOP != null && amountUSD != null && usdToCop > 0
+        ? Math.round(amountUSD * usdToCop)
+        : r.amountCOP;
+    return { amountUSD, amountCOP };
+  };
+
+  /**
+   * Overlay the wizard's own figures onto a payable row — total AND itemization
+   * together. They must move in the same write: a wizard total beside a recomputed
+   * bonus split is a row whose own numbers don't add up (the 2026-08-02 cycle had
+   * 680 such rows, each showing no bonus chip while the wizard paid ₱120–₱7,000 of
+   * dept/KPI bonuses).
+   */
+  const applyWizardValues = (r: QueueRow): QueueRow => {
+    const values = wizardValuesFor(r);
+    if (!values) return r;
+    const b = values.breakdown;
+    return {
+      ...r,
+      amountPHP: values.amountPHP,
+      ...deriveCurrencies(r, values),
+      valuesSource: values.source,
+      lockedAmountPHP: values.lockedAmountPHP,
+      repricedAfterLock: values.repricedAfterLock,
+      // The split travels with the total or not at all. When the winning carrier
+      // has no itemization the fields are floored at 0 and flagged UNAVAILABLE, so
+      // a renderer shows "—" instead of asserting ₱0.
+      breakdownUnavailable: b === null,
+      initialPayPHP: b ? b.initialPayPHP : r.initialPayPHP,
+      initialPayUSD:
+        b && b.initialPayPHP != null && fx > 0
+          ? Math.round((b.initialPayPHP / fx) * 100) / 100
+          : r.initialPayUSD,
+      bonusTotalPHP: b ? b.bonusTotalPHP : 0,
+      pabBonusPHP: b ? b.pabBonusPHP : 0,
+      techBonusPHP: b ? b.techBonusPHP : 0,
+      orphanagePayPHP: b ? b.orphanagePayPHP : 0,
+      mesaDeductionPHP: b ? b.mesaDeductionPHP : 0,
+      mesaDisbursementPHP: b ? b.mesaDisbursementPHP : 0,
+      // Hours stay the timesheet's when the wizard didn't carry them: they are a
+      // display of hours worked, not a claim about money.
+      totalHours: b?.totalHours ?? r.totalHours,
+      otHours: b?.otHours ?? r.otHours,
+    };
+  };
+
+  /**
+   * The same overlay for an Excluded row, which carries amounts but no breakdown
+   * (its payable twin, when it has one, is overlaid in full). A wizard-HELD row
+   * resolves to its LOCKED figures by rule — the snapshot never speaks for a "do
+   * not pay" row, because that is what the arrears ledger settles from.
+   */
+  const applyWizardAmounts = (r: ExcludedRow): ExcludedRow => {
+    const values = wizardValuesFor(r);
+    if (!values) return r;
+    return {
+      ...r,
+      amountPHP: values.amountPHP,
+      ...deriveCurrencies(r, values),
+      totalHours: values.breakdown?.totalHours ?? r.totalHours,
+    };
+  };
 
   // Readiness = the cycle's realtime "values locked" flag
   // (payroll.dispatch_lock.<sourceFile>). Until accounting LOCKS the cycle in the
@@ -541,12 +698,12 @@ async function loadAll(
   const pendingActive = active
     .filter((r) => !lockedEmails.has(r.id))
     .filter(inMasterOrStaged)
-    .map(applyWizardFinal)
+    .map(applyWizardValues)
     .map(tagContractorRole);
   const excludedBase = excluded
     .filter((r) => !lockedEmails.has(r.id))
     .filter(inMasterOrStaged)
-    .map(applyWizardFinal)
+    .map(applyWizardAmounts)
     .map(tagContractorRole);
 
   // Split pending into truly-pending vs wizard-excluded.
@@ -722,10 +879,10 @@ async function loadAll(
       // so the staged safety net is the way most of them reach this queue at all.
       withArrears.push(heldUsdRow(placement.row));
     } else if (placement.kind === 'pending') {
-      // applyWizardFinal for parity with every other pending row: the published
-      // snapshot (catalog-staleness-guarded) overrides the staged amount when it
-      // exists, and is a no-op otherwise.
-      pendingQueue.push(applyWizardFinal(placement.row));
+      // Same overlay as every other pending row, so the staged-only population
+      // (catalog-paid people with no rates row) is priced and itemized by the same
+      // precedence rather than a second, looser one.
+      pendingQueue.push(applyWizardValues(placement.row));
       promotedStaged += 1;
     } else {
       withArrears.push(placement.row);
@@ -750,6 +907,46 @@ async function loadAll(
     r.payable ? { ...r, payable: applySmallWiresWiseReroute(r.payable) } : r,
   );
 
+  // ── Say it out loud when the amounts aren't the wizard's ───────────────────
+  // Ordered worst-first: an unreadable carrier means the whole week may be priced
+  // off the recompute; the per-row notes name who to check.
+  const valuesWarning = ((): string | null => {
+    if (!wizardReady) return null; // no queue on screen to be wrong about
+    const parts: string[] = [];
+    if (valuesError) {
+      parts.push(
+        `Couldn't read the Payroll Wizard's published pay for this week (${valuesError}) — ` +
+          `amounts fall back to the locked values, or to a recomputation that excludes ` +
+          `Adjustments, Orphanage pay, KPI/dept bonuses and MESA. Reload before sending.`,
+      );
+    }
+    if (stagedError) {
+      parts.push(`Couldn't read this week's locked payroll values (${stagedError}).`);
+    }
+    if (staleRateRows.length > 0) {
+      parts.push(
+        `${staleRateRows.length} ${staleRateRows.length === 1 ? 'row was' : 'rows were'} priced from the ` +
+          `LOCKED values because the wizard's published figures contradict the Payment Catalog rate ` +
+          `(stale wizard session — reload the wizard and re-lock the week): ${namesFor(staleRateRows)}.`,
+      );
+    }
+    if (unpricedByWizard.length > 0) {
+      parts.push(
+        `${unpricedByWizard.length} locked-in ${unpricedByWizard.length === 1 ? 'payee is' : 'payees are'} ` +
+          `showing a RECOMPUTED amount — the wizard published no usable figure for ` +
+          `${namesFor(unpricedByWizard)}. Re-lock the week in the Payroll Wizard.`,
+      );
+    }
+    if (repricedAfterLock.length > 0) {
+      parts.push(
+        `The wizard re-priced ${repricedAfterLock.length} ` +
+          `${repricedAfterLock.length === 1 ? 'payee' : 'payees'} AFTER the values were locked; the newer ` +
+          `figure is shown (${namesFor(repricedAfterLock)}). Re-lock to make the locked values match.`,
+      );
+    }
+    return parts.length > 0 ? parts.join(' ') : null;
+  })();
+
   return {
     // Until the wizard locks this cycle, Payment Dispatch shows NO queue data —
     // just the "not ready" note. (Reports / Urgent / Orphanage are separate and
@@ -763,7 +960,14 @@ async function loadAll(
     error: null,
     contractorError,
     contractorAdvisory,
+    valuesWarning,
   };
+}
+
+/** "a@x, b@x + 3 more" — bounded so a whole-cycle problem stays readable. */
+function namesFor(emails: string[], max = 3): string {
+  const head = emails.slice(0, max).join(', ');
+  return emails.length > max ? `${head} + ${emails.length - max} more` : head;
 }
 
 /**
@@ -807,6 +1011,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
           period: result.period,
           fxRate: result.fxRate,
           wizardReady: result.wizardReady,
+          valuesWarning: result.valuesWarning,
         });
       }
       setState({
@@ -820,6 +1025,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
         error: result.error,
         contractorError: result.contractorError,
         contractorAdvisory: result.contractorAdvisory,
+        valuesWarning: result.valuesWarning,
       });
     } catch (e) {
       if (signal?.aborted) return;
@@ -841,6 +1047,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
         error: e instanceof Error ? e.message : 'Failed to load dispatch queue',
         contractorError: null,
         contractorAdvisory: null,
+        valuesWarning: null,
       });
     }
   }, [sel, cacheKey]);
@@ -858,7 +1065,129 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
     return () => controller.abort();
   }, [load, cacheKey]);
 
+  // ── Live sync across every open dispatch screen ────────────────────────────
+  // Marking someone paid used to move ONLY the browser that did it: the queue had
+  // no subscription and no poll, so a second clerk (or Carla watching the progress
+  // strip) saw a stale pending count until they reloaded the page.
+  //
+  // Realtime here means **Broadcast**, not `postgres_changes`. The browser client
+  // connects as `anon` and `payment_dispatches` is RLS-protected, so row-change
+  // events never reach it — the lesson already paid for by the CEO
+  // "Payments to send" card (see usePaymentsLive: the app_settings pulse silently
+  // never fired). Broadcast is a pub/sub bus that never touches the DB or RLS, so
+  // it reaches every subscriber.
+  //
+  // Two paths, deliberately independent:
+  //  1. Broadcast — instant, and the only sub-second path that actually works.
+  //  2. A cheap `?signature=1` poll + a refetch on tab focus — covers a screen
+  //     whose socket is down, or a change made outside this app (SQL, a cron, an
+  //     n8n retry) that no browser broadcast.
+  const broadcastRef = useRef<((sourceFile: string | null) => void) | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The cycle currently on screen, for the broadcast filter and the poll below.
+  // Refs, so neither has to re-subscribe when unrelated state changes.
+  const stateSourceFileRef = useRef<string | null>(null);
+  stateSourceFileRef.current = state.period.sourceFile;
+  const cycleIdRef = useRef<string | null>(null);
+  cycleIdRef.current = state.period.cycleId;
+  const signatureRef = useRef<string | null>(null);
+  /** Reload WITHOUT announcing it — the remote-change path, so two screens can't
+   *  ping-pong broadcasts at each other forever. */
+  const reloadQuietly = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
+      void load(undefined, { silent: true });
+    }, DISPATCH_SYNC_DEBOUNCE_MS);
+  }, [load]);
+
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    const channel = supabase.channel(DISPATCH_SYNC_CHANNEL, {
+      // Our own writes are already reflected locally by refresh(); hearing them
+      // back would just double the work.
+      config: { broadcast: { self: false } },
+    });
+    channel.on('broadcast', { event: DISPATCH_SYNC_EVENT }, ({ payload }) => {
+      const p = (payload ?? {}) as { sourceFile?: string | null };
+      // Ignore another week's activity — a clerk on a past week must not have
+      // their view yanked by the live cycle being paid.
+      const other = typeof p.sourceFile === 'string' ? p.sourceFile : null;
+      if (other && sel && other !== sel) return;
+      if (other && !sel && other !== stateSourceFileRef.current) return;
+      reloadQuietly();
+    });
+    channel.subscribe((status, err) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[dispatch-queue] Realtime ${status} — falling back to the ` +
+            `${DISPATCH_POLL_INTERVAL_MS / 1000}s signature poll.`,
+          err,
+        );
+      }
+    });
+    broadcastRef.current = (sourceFile) => {
+      void channel.send({
+        type: 'broadcast',
+        event: DISPATCH_SYNC_EVENT,
+        payload: { sourceFile, ts: Date.now() },
+      });
+    };
+    return () => {
+      broadcastRef.current = null;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      void supabase.removeChannel(channel);
+    };
+  }, [sel, reloadQuietly]);
+
+  // Fallback poll: ask ONLY "did anything change?" (count + newest timestamp) and
+  // reload the queue when the answer differs. Skipped while the tab is hidden —
+  // the focus listener catches up on return, so a background tab costs nothing.
+  useEffect(() => {
+    const checkSignature = async () => {
+      const cycleId = cycleIdRef.current;
+      if (!cycleId) return;
+      try {
+        const res = await fetch(
+          `/api/payment-dispatches?cycle_id=${encodeURIComponent(cycleId)}&signature=1`,
+          { cache: 'no-store' },
+        );
+        if (!res.ok) return;
+        const json = (await res.json()) as { count?: number; latest?: string | null; error?: string | null };
+        if (json.error) return;
+        const next = `${json.count ?? 0}|${json.latest ?? ''}`;
+        const prev = signatureRef.current;
+        signatureRef.current = next;
+        // First observation only establishes the baseline — the queue it belongs
+        // to was just loaded, so there is nothing to reconcile.
+        if (prev !== null && prev !== next) reloadQuietly();
+      } catch {
+        /* offline / aborted — the next tick tries again */
+      }
+    };
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      void checkSignature();
+    }, DISPATCH_POLL_INTERVAL_MS);
+    const onFocus = () => void checkSignature();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [reloadQuietly]);
+
+  // A LOCAL action (mark paid, undo, a wizard lock flip) reloads this screen and
+  // tells every other open screen to do the same.
   const refresh = useCallback(async () => {
+    signatureRef.current = null; // re-baseline; our own write must not read as remote
+    // Announce FIRST: the other screens' reload runs in parallel with ours instead
+    // of queueing behind it, so their counters move within ~a second of the click.
+    broadcastRef.current?.(stateSourceFileRef.current);
     await load(undefined, { silent: true });
   }, [load]);
 

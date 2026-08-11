@@ -706,9 +706,15 @@ export default function MarkPaidDialog({
                 </button>
               </div>
 
-              {row && row.bonusTotalPHP > 0 && (
+              {/* What the wizard put INSIDE this amount beyond regular + OT.
+                  Deliberately not gated on `> 0`: the Adj. column is a signed
+                  delta, so a negative total means money is being WITHHELD and
+                  hiding it would make the hero figure unexplainable. */}
+              {row && !row.breakdownUnavailable && row.bonusTotalPHP !== 0 && (
                 <div className="mt-2.5 inline-flex items-center rounded-full bg-white/20 px-2.5 py-0.5 text-[9.5px] font-semibold text-white backdrop-blur-sm">
-                  {`incl. ${formatPHP(row.bonusTotalPHP)} bonus`}
+                  {row.bonusTotalPHP > 0
+                    ? `incl. ${formatPHP(row.bonusTotalPHP)} bonus`
+                    : `after ${formatPHP(Math.abs(row.bonusTotalPHP))} adjustment`}
                 </div>
               )}
             </div>

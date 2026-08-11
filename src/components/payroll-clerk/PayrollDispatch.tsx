@@ -201,8 +201,19 @@ export default function PayrollDispatch() {
   // past week's source file so accounting can work historical data while not
   // yet live; everything (queue, dispatches, paystubs) follows the chosen week.
   const [selectedSourceFile, setSelectedSourceFile] = useState<string | null>(null);
-  const { rows: fetched, excluded, paid, period, wizardReady, loading, error, contractorError, contractorAdvisory, refresh } =
-    useDispatchQueue(selectedSourceFile);
+  const {
+    rows: fetched,
+    excluded,
+    paid,
+    period,
+    wizardReady,
+    loading,
+    error,
+    contractorError,
+    contractorAdvisory,
+    valuesWarning,
+    refresh,
+  } = useDispatchQueue(selectedSourceFile);
   const viewingPastWeek = selectedSourceFile != null;
   const { state: lockState, setLocked } = useDispatchLock();
   const isLgUp = useIsLgUp();
@@ -853,11 +864,19 @@ export default function PayrollDispatch() {
     // period only, so the breakdown is only meaningful on the leg that matches
     // it (mirrors the contractor_invoice_id gate below). Older arrears legs
     // don't recompute their own historical bonus, so they carry none.
+    //
+    // These two values are FROZEN onto `payment_dispatches` and are what the Paid
+    // tab's chip reads forever, so they must be the wizard's own figures — the row
+    // now carries them (`valuesSource`), where it used to carry a PAB/Tech-only
+    // recomputation that read ₱0 for everyone paid a dept/KPI bonus. When the
+    // itemization is genuinely UNKNOWN nothing is written rather than a ₱0 claim.
     const systemBonusParts: string[] = [];
     if (row.pabBonusPHP > 0) systemBonusParts.push(`PAB ₱${row.pabBonusPHP.toLocaleString('en-PH')}`);
     if (row.techBonusPHP > 0) systemBonusParts.push(`Tech ₱${row.techBonusPHP.toLocaleString('en-PH')}`);
-    const systemBonusPhp = row.bonusTotalPHP > 0 ? row.bonusTotalPHP : null;
-    const systemBonusLabel = systemBonusParts.length > 0 ? systemBonusParts.join(' + ') : null;
+    const systemBonusPhp =
+      row.breakdownUnavailable || row.bonusTotalPHP === 0 ? null : row.bonusTotalPHP;
+    const systemBonusLabel =
+      row.breakdownUnavailable ? null : systemBonusParts.length > 0 ? systemBonusParts.join(' + ') : null;
     for (const c of cycles) {
       try {
         const res = await fetch('/api/payment-dispatches', {
@@ -1010,6 +1029,25 @@ export default function PayrollDispatch() {
       <span>
         <strong className="font-semibold">Contractor invoices need attention</strong>{' '}
         {contractorAdvisory}
+      </span>
+    </div>
+  ) : null;
+
+  /**
+   * The amounts on screen are not the Payroll Wizard's for at least one payee.
+   *
+   * Rose, not amber, and above the contractor banners: everything else on this
+   * screen can be wrong and be fixed later, but sending the wrong AMOUNT cannot be
+   * undone. The wizard's figures used to degrade silently to a recomputation that
+   * excludes Adjustments, Orphanage pay, KPI/dept bonuses and MESA — a queue that
+   * looked perfectly healthy while quoting numbers payroll never approved.
+   */
+  const valuesWarningBanner = valuesWarning ? (
+    <div className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-rose-300/70 bg-rose-50 px-3 py-2 text-[11px] text-rose-900 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <span>
+        <strong className="font-semibold">Check these amounts against the Payroll Wizard</strong>{' '}
+        {valuesWarning}
       </span>
     </div>
   ) : null;
@@ -1497,6 +1535,7 @@ export default function PayrollDispatch() {
                   do not read the contractor source. */}
               {!['reports', 'notifications', 'orphanage', 'urgent'].includes(activeTab) && (
                 <>
+                  {valuesWarningBanner}
                   {contractorErrorBanner}
                   {contractorAdvisoryBanner}
                 </>

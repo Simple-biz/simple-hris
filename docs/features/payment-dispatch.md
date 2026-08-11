@@ -352,8 +352,75 @@ Implemented in **`src/lib/payroll/dispatch-bonuses.ts`** as a server-side mirror
 
 **What's deliberately NOT mirrored:**
 
-- **Department-specific bonuses** (collections tiers, lead-gen formula). These depend on per-employee toggle state that lives only inside the wizard's React session — they aren't auto-derivable from Hubstaff. The dispatch view will undercount bonuses for employees whose pay includes a dept-specific addition until/unless the wizard persists a snapshot to a table.
+- **Department-specific bonuses** (collections tiers, lead-gen formula). These depend on per-employee toggle state that lives only inside the wizard's React session — they aren't auto-derivable from Hubstaff.
 - **OT suppression toggles** and **manual hour overrides**. The wizard's per-row UI surfaces those; the dispatch view trusts the raw Hubstaff numbers.
+
+> **SUPERSEDED for anything the wizard has locked (2026-08-11).** The sentence that
+> used to close the first bullet — *"the dispatch view will undercount bonuses …
+> until/unless the wizard persists a snapshot to a table"* — described a state that
+> ended when the wizard started persisting **both** `paystub_dispatch_queue`
+> (at lock) and `payroll.wizard.final_pay.<sourceFile>` (live). Those carriers now
+> price **and itemize** every staged row — see [§4.2.2](#422-which-figures-the-queue-actually-shows).
+> This `dispatch-bonuses.ts` mirror survives only for a payee the wizard never
+> staged, and a row priced by it says so (`valuesSource: 'recomputed'`).
+
+#### 4.2.2 Which figures the queue actually shows
+
+Three carriers can hold one cycle's per-employee figures, and they disagree in
+practice:
+
+| # | Carrier | Written | Holds |
+|---|---|---|---|
+| A | `paystub_dispatch_queue.amount_php` + `payload.pay_php` | ONCE, at **Lock in Values & Send** | the frozen total + full itemization |
+| B | `app_settings` `payroll.wizard.final_pay.<sourceFile>` | on a **1.5s debounce** for as long as a wizard tab sits on the live week, plus at lock | the live total + full itemization |
+| C | `computeCurrentPay()` | on every queue load | regular + OT + PAB/Tech mirror — **no** Adj., Orphanage, KPI/dept bonuses or MESA |
+
+**Precedence** ([`wizard-dispatch-values.ts`](../../src/lib/payroll/wizard-dispatch-values.ts),
+pure + unit-tested, shared with the paystub engine):
+
+```
+B (only when it QUALIFIES)  →  A  →  C (and the row says so)
+```
+
+B qualifies on exactly the conditions `mergeSnapshotIntoStaged` already required
+for the emailed statement — the staged row is **not** `excluded`, the snapshot is
+**newer than `locked_at`**, it is **itemized**, its rate does not contradict the
+**Payment Catalog**, and it was matched on the **work email only**. The queue used
+to apply B with *none* of those checks and fall back to *C* rather than *A*, which
+is how the money a clerk sent and the statement that person received could be
+priced from different carriers.
+
+Consequences worth knowing:
+
+- **A re-lock is authoritative.** Re-staging stamps a fresh `locked_at`, which
+  demotes any snapshot published before it. "Unlock and re-lock" now moves this
+  screen even if no wizard tab republishes.
+- **The itemization travels with the total, or not at all.** `initialPayPHP`,
+  `pabBonusPHP`, `techBonusPHP`, `bonusTotalPHP`, `orphanagePayPHP`,
+  `mesaDeductionPHP` and `mesaDisbursementPHP` are set from the same carrier as the
+  amount. When the winning carrier has no itemization the row carries
+  `breakdownUnavailable` and every surface shows "—" rather than a ₱0 it never
+  computed. `Regular + OT + Bonus Total + Orphanage − MESA Deduction + MESA
+  Disbursement` equals the amount being sent, and
+  `scripts/verify-dispatch-carryover.mts` asserts it against live rows.
+- **`bonusTotalPHP` can be NEGATIVE.** The Adj. column is a signed delta
+  ([payroll-wizard-final-pay.md §2](./payroll-wizard-final-pay.md)), so nothing may
+  gate its display on `> 0` — that hides money being withheld.
+- **Hours stay the timesheet's** when the winning carrier doesn't carry them. Hours
+  are a display of time worked, not a claim about money.
+- **Contractor rows are skipped entirely** — an invoice total must never be
+  overwritten by an hourly final for someone holding both identities.
+- **Nothing is silent.** An unreadable snapshot or stage, a catalog-rejected
+  snapshot, a staged payee neither carrier could price, and a post-lock re-price all
+  surface in a rose **"Check these amounts against the Payroll Wizard"** banner
+  (`valuesWarning`) above the queue, naming who to check. Before this, every one of
+  those degraded to carrier C behind a queue that looked perfectly healthy.
+- **`payment_dispatches.system_bonus_php` / `system_bonus_label`** are frozen from
+  the row at Mark Paid, so they inherit the same figures; an unknown breakdown
+  writes nothing rather than a ₱0 claim.
+
+The pending **Export CSV** carries the full breakdown plus an **Amount Source**
+column (`Payroll Wizard (published)` / `(locked)` / `RECOMPUTED — not the wizard`).
 
 **Helpers exported from `dispatch-bonuses.ts`:**
 
@@ -440,7 +507,46 @@ Located at `src/components/payroll-clerk/useDispatchQueue.ts`. Joins three sourc
 
 Builds a `QueueRow[]` via `buildQueueFromRates()` from `mock-queue.ts` (filename historical — it's no longer mocks). Filters out anyone whose email already has a dispatch record in the current cycle, so the same person can't be paid twice.
 
-Returns `{ rows, paid, period, fxRate, loading, error, refresh }`. The `refresh()` callback re-pulls everything; called after Mark paid succeeds.
+It then reads the two wizard carriers (the staged stage + the published snapshot) and
+prices every row through them — see [§4.2.2](#422-which-figures-the-queue-actually-shows).
+
+Returns `{ rows, excluded, paid, period, fxRate, wizardReady, loading, error, contractorError, contractorAdvisory, valuesWarning, refresh }`. The `refresh()` callback re-pulls everything; called after Mark paid succeeds.
+
+#### 5.1.1 Live sync across open screens (2026-08-11)
+
+Marking someone paid used to move **only the browser that did it**. The queue had no
+subscription and no poll, so a second clerk — or anyone watching the Dispatch
+Progress strip — kept a stale pending count until they reloaded the page.
+
+Two independent paths now keep every open screen level:
+
+1. **Supabase Realtime Broadcast** on the `payment-dispatch-sync` topic
+   (`queue-changed`, 400 ms debounce). Every local mutation already funnels through
+   `refresh()` — Mark Paid, the Excluded tab's "Pay now"/"Settle", Undo/Clear
+   (`onRefresh={refresh}`), and a wizard lock flip — so `refresh()` announces first
+   and reloads second, and remote screens reload **without** re-announcing (no
+   ping-pong). A broadcast naming a different `sourceFile` is ignored, so a clerk
+   reviewing a past week is never yanked to the live cycle.
+2. **A `?signature=1` poll** every 15 s while the tab is visible, plus a check on
+   focus/`visibilitychange`. `GET /api/payment-dispatches?cycle_id=…&signature=1`
+   returns just `{ count, latest }` (a HEAD count + one ordered row —
+   `getPaymentDispatchSignature`), and only a *changed* signature triggers a reload.
+   Paging ~1,000 full rows on a timer, per open tab, would not be acceptable.
+
+> **Why Broadcast and not `postgres_changes`.** The browser client connects as
+> `anon` and `payment_dispatches` is RLS-protected, so row-change events never reach
+> it. This was already paid for once by the CEO "Payments to send" card — the
+> `app_settings` pulse it subscribed to silently never fired and the card only moved
+> on its 20 s poll (see `usePaymentsLive`). Broadcast is a pub/sub bus that never
+> touches the DB or RLS, so it reaches every subscriber. **No migration and no
+> publication change is needed**, and adding `payment_dispatches` to
+> `supabase_realtime` would not have fixed it.
+
+Residual, unchanged: `POST /api/payment-dispatches` **awaits** the n8n paystub send
+before responding (that is what returns `{ paystub: { staged, sent, error } }` and
+stamps the queue row), so a slow n8n still slows the confirming clerk's dialog. Their
+own row is already removed optimistically, and every other screen now moves on the
+broadcast rather than waiting for that response.
 
 ### 5.2 `useDispatchLock()`
 

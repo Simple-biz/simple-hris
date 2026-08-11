@@ -43,7 +43,19 @@ export default function PayrollClerkApp() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
 
-  const { rows: fetched, excluded, paid, period, wizardReady, loading, error, contractorError, contractorAdvisory, refresh } = useDispatchQueue();
+  const {
+    rows: fetched,
+    excluded,
+    paid,
+    period,
+    wizardReady,
+    loading,
+    error,
+    contractorError,
+    contractorAdvisory,
+    valuesWarning,
+    refresh,
+  } = useDispatchQueue();
   // Realtime "values locked" flag — re-pull when the wizard locks/unlocks so the
   // queue appears/clears live.
   const cycleLock = useWizardDispatchLock(period.sourceFile);
@@ -340,6 +352,15 @@ export default function PayrollClerkApp() {
           {/* Contractor invoices failed to load — employee payroll below is fine,
               but approved invoices are NOT shown, so say so rather than letting the
               queue look healthy and empty. Mirrors PayrollDispatch. */}
+          {/* The amounts on screen are not the wizard's for at least one payee.
+              Above the contractor banners on purpose: a wrong amount, once sent,
+              cannot be taken back. Mirrors PayrollDispatch. */}
+          {valuesWarning && !['reports', 'urgent', 'history'].includes(activeTab) && (
+            <div className="mx-4 mt-3 rounded-lg border border-rose-300/70 bg-rose-50 px-3 py-2 text-[11px] text-rose-900 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+              <strong className="font-semibold">Check these amounts against the Payroll Wizard</strong>{' '}
+              {valuesWarning}
+            </div>
+          )}
           {contractorError && !['reports', 'urgent', 'history', 'excluded'].includes(activeTab) && (
             <div className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-[11px] text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
               <span>

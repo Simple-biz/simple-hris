@@ -281,8 +281,50 @@ export interface QueueRow {
   pabBonusPHP: number;
   /** Tech ₱1,850 on the salary-falls-in-3rd-week paycheck with 30 days of service. */
   techBonusPHP: number;
-  /** Sum of all bonuses included in amountUSD/PHP. */
+  /**
+   * Everything inside amountUSD/PHP beyond Initial, Orphanage and MESA: PAB +
+   * Tech + dept/KPI bonuses + the signed Adj. delta.
+   *
+   * **Can be NEGATIVE** — the Adj. column is a signed delta on top of the bonus
+   * subtotal (docs/features/payroll-wizard-final-pay.md §2), so an adjustment
+   * larger than the bonuses makes this negative and money is being WITHHELD.
+   * Anything rendering it must not gate on `> 0`.
+   */
   bonusTotalPHP: number;
+  /** Accounting's manual Orphanage add, as the wizard priced it. Its own paystub
+   *  line, so it is NOT part of {@link bonusTotalPHP}. */
+  orphanagePayPHP: number;
+  /** ₱100 MESA contribution withheld this run. Subtracted inside the amount. */
+  mesaDeductionPHP: number;
+  /** Approved MESA emergency disbursement released this run. Added inside the amount. */
+  mesaDisbursementPHP: number;
+  /**
+   * WHICH CARRIER priced this row.
+   *
+   * - `'snapshot'` — the wizard's live final-pay snapshot, which qualified to
+   *   speak for this row (newer than the lock, itemized, catalog-consistent).
+   * - `'lock'` — the figures `paystub_dispatch_queue` froze at "Lock in Values".
+   * - `'recomputed'` — NEITHER carrier could speak for this payee, so the row
+   *   carries `computeCurrentPay`'s figure, which knows nothing of the accounting
+   *   layer (Adj. / Orphanage / KPI-dept bonuses / MESA). Surfaced, never silent.
+   *
+   * Absent on rows that don't come from the wizard at all (contractor invoices,
+   * Urgent one-offs), where the concept doesn't apply.
+   */
+  valuesSource?: 'snapshot' | 'lock' | 'recomputed';
+  /**
+   * TRUE when the bonus/Orphanage/MESA split is genuinely UNKNOWN for this row —
+   * no itemization was available from either carrier. The breakdown fields are 0
+   * as a type floor; a renderer must show "—", never "₱0", or it states a figure
+   * nobody computed.
+   */
+  breakdownUnavailable?: boolean;
+  /** The total the wizard FROZE at lock time, when this row was staged. */
+  lockedAmountPHP?: number | null;
+  /** The wizard re-priced this person AFTER the values were locked, and the newer
+   *  figure is what's shown. Legitimate (a late Adj., a post-lock rate fix) but
+   *  never silent — a clerk must be able to see the amount moved. */
+  repricedAfterLock?: boolean;
   /** Hours worked in the current period; null when not present in Hubstaff. */
   totalHours: number | null;
   /** Overtime hours (total – regular). `null` when no Hubstaff entry. */
@@ -618,6 +660,14 @@ export function buildQueueFromRates(
       pabBonusPHP: pay?.pabBonusPHP ?? 0,
       techBonusPHP: pay?.techBonusPHP ?? 0,
       bonusTotalPHP: pay?.bonusTotalPHP ?? 0,
+      // computeCurrentPay knows nothing of the accounting layer, so these are 0
+      // here by definition. `applyWizardValues` in useDispatchQueue replaces the
+      // whole set — total AND split together — whenever the wizard can speak for
+      // this row, which is the only way they carry real figures.
+      orphanagePayPHP: 0,
+      mesaDeductionPHP: pay?.mesaDeductionPHP ?? 0,
+      mesaDisbursementPHP: 0,
+      valuesSource: 'recomputed',
       totalHours: pay?.totalHours ?? null,
       otHours: pay?.otHours ?? null,
       bankPreferredRaw: r.bank_preferred,
@@ -724,6 +774,13 @@ export function buildStagedOnlyPlacement(params: {
         pabBonusPHP: pay?.pabBonusPHP ?? 0,
         techBonusPHP: pay?.techBonusPHP ?? 0,
         bonusTotalPHP: pay?.bonusTotalPHP ?? 0,
+        orphanagePayPHP: 0,
+        mesaDeductionPHP: pay?.mesaDeductionPHP ?? 0,
+        mesaDisbursementPHP: 0,
+        // The staged TOTAL already won above (`staged.amount_php`), and
+        // `applyWizardValues` runs over this row too — so the split lands with the
+        // total rather than staying the engine's. Marked 'recomputed' until then.
+        valuesSource: 'recomputed',
         totalHours: pay?.totalHours ?? null,
         otHours: pay?.otHours ?? null,
         bankPreferredRaw,

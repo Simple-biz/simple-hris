@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
-import { getAppSettingStrict, getAppSettings, upsertAppSetting } from '@/lib/supabase/app-settings';
+import {
+  getAppSettingStrict,
+  getAppSettingWithMetaStrict,
+  getAppSettings,
+  upsertAppSetting,
+} from '@/lib/supabase/app-settings';
 import { requireElevatedSession, requireAdminSession, deniedResponse } from '@/lib/auth/authorize-email';
 import { requireFeatureEditAnyView } from '@/lib/auth/authorize-feature';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
@@ -91,6 +96,14 @@ export async function GET(request: Request) {
     if (!authz.ok) return deniedResponse(authz);
   }
   try {
+    // `?meta=1` also returns the row's `updated_at`. Payment Dispatch needs it to
+    // decide whether the wizard's final-pay snapshot post-dates the lock it is
+    // being weighed against — the same comparison paystub-fresh.ts makes
+    // server-side. Additive: without the flag the response shape is unchanged.
+    if (searchParams.get('meta') === '1') {
+      const row = await getAppSettingWithMetaStrict(key);
+      return NextResponse.json({ value: row?.value ?? null, updatedAt: row?.updatedAt ?? null, error: null });
+    }
     // Strict read: a failed Supabase read THROWS (→ 500) instead of masquerading
     // as a missing key — callers like the wizard's additions hydration must be
     // able to tell "absent" from "unreadable".
@@ -98,7 +111,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ value, error: null });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ value: null, error: msg }, { status: 500 });
+    return NextResponse.json({ value: null, updatedAt: null, error: msg }, { status: 500 });
   }
 }
 

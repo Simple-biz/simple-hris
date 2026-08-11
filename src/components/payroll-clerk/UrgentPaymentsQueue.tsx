@@ -207,9 +207,15 @@ function toQueueRow(r: UrgentPaymentRow, processor: ProcessorId): QueueRow {
     payCurrency: 'PHP',
     initialPayUSD: r.amount_usd,
     initialPayPHP: r.amount_needed,
+    // A MESA disbursement is the whole payment, not a payroll row: it has no
+    // bonus/orphanage/MESA-deduction split and no wizard carrier, so
+    // `valuesSource` is deliberately absent.
     pabBonusPHP: 0,
     techBonusPHP: 0,
     bonusTotalPHP: 0,
+    orphanagePayPHP: 0,
+    mesaDeductionPHP: 0,
+    mesaDisbursementPHP: 0,
     totalHours: null,
     otHours: null,
     bankPreferredRaw: PROCESSOR_LABEL[processor] ?? null,
@@ -234,9 +240,13 @@ function toQueueRowOneOff(r: UrgentOneOffRow, processor: ProcessorId): QueueRow 
     payCurrency: 'PHP',
     initialPayUSD: r.amount_usd,
     initialPayPHP: r.amount_php,
+    // Same as toQueueRow: a one-off is not a payroll row (see above).
     pabBonusPHP: 0,
     techBonusPHP: 0,
     bonusTotalPHP: 0,
+    orphanagePayPHP: 0,
+    mesaDeductionPHP: 0,
+    mesaDisbursementPHP: 0,
     totalHours: null,
     otHours: null,
     bankPreferredRaw: PROCESSOR_LABEL[processor] ?? null,

@@ -1,4 +1,5 @@
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from "./server";
+import type { StagedHours, StagedPayPhp } from "@/lib/payroll/wizard-dispatch-values";
 
 /**
  * One staged paystub per (cycle, employee). Written by the Payroll Wizard's
@@ -24,7 +25,13 @@ export interface PaystubQueueEntryInput {
   exclude_reason?: string | null;
 }
 
-/** Lightweight row for the dispatch queue (no heavy `payload` / `pay_period`). */
+/** Lightweight row for the dispatch queue (no heavy `payload` / `pay_period`).
+ *
+ *  `locked_at` + the two `pay_php` / `hours` projections are the LOCKED figures
+ *  Payment Dispatch prices from when the wizard's live snapshot doesn't qualify to
+ *  speak for the row (see `src/lib/payroll/wizard-dispatch-values.ts`). They are
+ *  jsonb sub-object projections, NOT the whole `payload` — the bank/contact fields
+ *  and the rendered statement stay out of this list, as before. */
 export interface PaystubQueueListItem {
   id: string;
   cycle_source_file: string;
@@ -40,6 +47,15 @@ export interface PaystubQueueListItem {
   sent_by: string | null;
   send_count: number;
   last_error: string | null;
+  /** When the wizard locked + staged this row. Compared against the final-pay
+   *  snapshot's `updated_at` to decide which carrier is authoritative. */
+  locked_at: string | null;
+  /** `payload.pay_php`, exactly as locked. Null on a row staged with no payload
+   *  (a Validation-step "do not pay" row) — then the row has a locked TOTAL but no
+   *  itemization, and no breakdown may be shown for it. */
+  pay_php: StagedPayPhp | null;
+  /** `payload.hours`, exactly as locked. */
+  hours: StagedHours | null;
 }
 
 /** Full row including the n8n payload — used by the single-send path. */
@@ -51,7 +67,7 @@ export interface PaystubQueueEntry extends PaystubQueueListItem {
 }
 
 const LIST_COLUMNS =
-  "id, cycle_source_file, recipient_email, personal_email, recipient_name, department_key, excluded, exclude_reason, amount_php, amount_usd, sent_at, sent_by, send_count, last_error";
+  "id, cycle_source_file, recipient_email, personal_email, recipient_name, department_key, excluded, exclude_reason, amount_php, amount_usd, sent_at, sent_by, send_count, last_error, locked_at, payload->pay_php, payload->hours";
 
 function norm(email: string): string {
   return email.trim().toLowerCase();
@@ -288,7 +304,17 @@ export async function listPaystubDispatchQueue(
       .order("recipient_email", { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) return { rows: [], error: error.message };
-    rows.push(...((data ?? []) as PaystubQueueListItem[]));
+    // The two jsonb projections arrive as whatever was staged (or absent, on a
+    // payload-less row). Normalize to null so a reader never has to tell
+    // `undefined` from "no itemization was locked".
+    for (const raw of (data ?? []) as Array<Record<string, unknown>>) {
+      rows.push({
+        ...(raw as unknown as PaystubQueueListItem),
+        locked_at: (raw.locked_at as string | null) ?? null,
+        pay_php: (raw.pay_php as StagedPayPhp | null) ?? null,
+        hours: (raw.hours as StagedHours | null) ?? null,
+      });
+    }
     if (!data || data.length < PAGE) break;
   }
   return { rows, error: null };

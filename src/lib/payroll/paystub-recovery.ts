@@ -29,9 +29,15 @@
 import { getAppSetting, getAppSettings } from "@/lib/supabase/app-settings";
 import type { ProrationBlockRaw } from "@/lib/payroll/paystub-view";
 import type { HoganSheetBlockRaw } from "@/lib/payroll/hogan-week-pay";
+import type { WizardSnapshotEntry } from "@/lib/payroll/wizard-dispatch-values";
 
-/** One employee's exact figures from `payroll.wizard.final_pay.<sourceFile>`. */
-export interface WizardFinalPayEntry {
+/** One employee's exact figures from `payroll.wizard.final_pay.<sourceFile>`.
+ *
+ *  EXTENDS the client-safe `WizardSnapshotEntry`, which declares the subset the
+ *  shared snapshot-vs-lock precedence rules read. Payment Dispatch's queue and the
+ *  paystub freshness merge both resolve through those rules, so the compiler now
+ *  refuses a change here that would put the two out of step. */
+export interface WizardFinalPayEntry extends WizardSnapshotEntry {
   /** Canonical identity (lowercased work email; added 2026-07-30). The finals
    *  map keys the SAME entry under work AND personal email, and two different
    *  people's entries can be byte-identical — aggregate readers dedupe by this.

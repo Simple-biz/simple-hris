@@ -187,6 +187,49 @@ export async function listPaymentDispatches(params: {
 }
 
 /**
+ * A cheap fingerprint of one cycle's dispatch activity: how many rows exist and
+ * when the newest one was written.
+ *
+ * Backs the Payment Dispatch queue's fallback poll. The queue needs to know
+ * *whether* anything changed, and paging ~1,000 full rows every few seconds to
+ * find out — on every open accounting tab — would be absurd. Two indexed
+ * aggregate reads instead: a HEAD count and one ordered row.
+ *
+ * Any INSERT (a payment logged), UPDATE (status corrected) or DELETE (an Undo)
+ * moves at least one of the two, EXCEPT the pathological case of a delete and an
+ * insert landing between two polls with the count unchanged and an older
+ * `created_at` — which the Realtime broadcast covers, and the next real change
+ * corrects.
+ */
+export async function getPaymentDispatchSignature(
+  cycleId: string | null,
+): Promise<{ count: number; latest: string | null; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return { count: 0, latest: null, error: "Supabase client unavailable" };
+
+  const countBase = supabase.from("payment_dispatches").select("id", { count: "exact", head: true });
+  const latestBase = supabase
+    .from("payment_dispatches")
+    .select("created_at")
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  const [countRes, latestRes] = await Promise.all([
+    cycleId === null ? countBase.is("cycle_id", null) : countBase.eq("cycle_id", cycleId),
+    cycleId === null ? latestBase.is("cycle_id", null) : latestBase.eq("cycle_id", cycleId),
+  ]);
+
+  if (countRes.error) return { count: 0, latest: null, error: countRes.error.message };
+  if (latestRes.error) return { count: 0, latest: null, error: latestRes.error.message };
+  const latestRow = (latestRes.data ?? [])[0] as { created_at?: string } | undefined;
+  return {
+    count: countRes.count ?? 0,
+    latest: latestRow?.created_at ?? null,
+    error: null,
+  };
+}
+
+/**
  * Deletes dispatch rows by id ("send back to the pay processor" — undo a
  * payment so the recipient drops out of paid and reappears in the pending
  * queue). The disbursement_records sync trigger reverts the matching record to

@@ -535,12 +535,18 @@ export function buildContractorRows(
       // USD invoices route to the USD tab exactly like USD-paid employees.
       payCurrency: currency === 'USD' ? 'USD' : 'PHP',
       // An invoice is a single billed total — there is no regular/OT split or
-      // bonus structure to break out.
+      // bonus structure to break out, and no Payroll Wizard carrier prices it, so
+      // `valuesSource` is deliberately absent (the wizard-values overlay skips
+      // contractor rows entirely, or it could overwrite an invoice with an hourly
+      // final for a person who holds both identities).
       initialPayUSD: null,
       initialPayPHP: null,
       pabBonusPHP: 0,
       techBonusPHP: 0,
       bonusTotalPHP: 0,
+      orphanagePayPHP: 0,
+      mesaDeductionPHP: 0,
+      mesaDisbursementPHP: 0,
       totalHours: null,
       otHours: null,
       bankPreferredRaw,

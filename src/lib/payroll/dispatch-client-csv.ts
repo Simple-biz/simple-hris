@@ -28,12 +28,21 @@ const PENDING_COLUMNS: { key: string; header: string }[] = [
   { key: 'processor',       header: 'Processor' },
   { key: 'amount_usd',      header: 'Amount (USD)' },
   { key: 'amount_php',      header: 'Amount (PHP)' },
-  { key: 'initial_pay_php', header: 'Regular + OT (PHP)' },
-  { key: 'pab_bonus_php',   header: 'PAB Bonus (PHP)' },
-  { key: 'tech_bonus_php',  header: 'Tech Bonus (PHP)' },
-  { key: 'bonus_total_php', header: 'Bonus Total (PHP)' },
-  { key: 'total_hours',     header: 'Total Hours' },
-  { key: 'ot_hours',        header: 'OT Hours' },
+  // The breakdown columns reconcile to Amount (PHP):
+  //   Regular + OT  +  Bonus Total  +  Orphanage  −  MESA Deduction  +  MESA Disbursement
+  // Bonus Total holds PAB + Tech + dept/KPI + the signed Adj. delta, so it can be
+  // NEGATIVE. Every column is the Payroll Wizard's own figure; blank means the
+  // wizard published no itemization for that row, never that the value is zero.
+  { key: 'initial_pay_php',  header: 'Regular + OT (PHP)' },
+  { key: 'pab_bonus_php',    header: 'PAB Bonus (PHP)' },
+  { key: 'tech_bonus_php',   header: 'Tech Bonus (PHP)' },
+  { key: 'bonus_total_php',  header: 'Bonus Total (PHP)' },
+  { key: 'orphanage_php',    header: 'Orphanage (PHP)' },
+  { key: 'mesa_deduction_php', header: 'MESA Deduction (PHP)' },
+  { key: 'mesa_disbursement_php', header: 'MESA Disbursement (PHP)' },
+  { key: 'values_source',    header: 'Amount Source' },
+  { key: 'total_hours',      header: 'Total Hours' },
+  { key: 'ot_hours',         header: 'OT Hours' },
   { key: 'bank_preferred',  header: 'Bank Preferred (raw)' },
   { key: 'account_holder',  header: 'Account Holder' },
   { key: 'account_number',  header: 'Account Number / Wallet' },
@@ -91,6 +100,14 @@ function statusLabel(status: string): string {
   }
 }
 
+/** Which carrier priced the row, in words — so a worksheet reader can see when a
+ *  figure did NOT come from payroll's locked values. */
+const VALUES_SOURCE_LABEL: Record<NonNullable<QueueRow['valuesSource']>, string> = {
+  snapshot: 'Payroll Wizard (published)',
+  lock: 'Payroll Wizard (locked)',
+  recomputed: 'RECOMPUTED — not the wizard',
+};
+
 export function buildPendingRows(rows: QueueRow[]): CsvRow[] {
   return rows.map((r) => ({
     name: r.name,
@@ -102,10 +119,19 @@ export function buildPendingRows(rows: QueueRow[]): CsvRow[] {
     processor: r.processor,
     amount_usd: fmtMoney(r.amountUSD),
     amount_php: fmtMoney(r.amountPHP),
-    initial_pay_php: fmtMoney(r.initialPayPHP),
-    pab_bonus_php: r.pabBonusPHP > 0 ? fmtMoney(r.pabBonusPHP) : '',
-    tech_bonus_php: r.techBonusPHP > 0 ? fmtMoney(r.techBonusPHP) : '',
-    bonus_total_php: r.bonusTotalPHP > 0 ? fmtMoney(r.bonusTotalPHP) : '',
+    initial_pay_php: r.breakdownUnavailable ? '' : fmtMoney(r.initialPayPHP),
+    // Blank only where there is nothing to state (no itemization, or a genuine
+    // zero line). A non-zero figure always prints, including a negative Bonus
+    // Total — otherwise Amount (PHP) stops reconciling with its own columns.
+    pab_bonus_php: r.breakdownUnavailable || r.pabBonusPHP === 0 ? '' : fmtMoney(r.pabBonusPHP),
+    tech_bonus_php: r.breakdownUnavailable || r.techBonusPHP === 0 ? '' : fmtMoney(r.techBonusPHP),
+    bonus_total_php: r.breakdownUnavailable || r.bonusTotalPHP === 0 ? '' : fmtMoney(r.bonusTotalPHP),
+    orphanage_php: r.breakdownUnavailable || r.orphanagePayPHP === 0 ? '' : fmtMoney(r.orphanagePayPHP),
+    mesa_deduction_php:
+      r.breakdownUnavailable || r.mesaDeductionPHP === 0 ? '' : fmtMoney(r.mesaDeductionPHP),
+    mesa_disbursement_php:
+      r.breakdownUnavailable || r.mesaDisbursementPHP === 0 ? '' : fmtMoney(r.mesaDisbursementPHP),
+    values_source: r.valuesSource ? VALUES_SOURCE_LABEL[r.valuesSource] : '',
     total_hours: fmtHours(r.totalHours),
     ot_hours: fmtHours(r.otHours),
     bank_preferred: r.bankPreferredRaw ?? '',

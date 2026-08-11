@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import {
+  getPaymentDispatchSignature,
   insertPaymentDispatch,
   listPaymentDispatches,
   type InsertPaymentDispatchInput,
@@ -39,6 +40,15 @@ export async function GET(req: NextRequest) {
   const cycleId = cycleIdRaw === "" ? undefined : cycleIdRaw ?? undefined;
   const emailRaw = req.nextUrl.searchParams.get("email");
   const recipientEmail = emailRaw?.trim() ? emailRaw.trim() : undefined;
+
+  // `?signature=1` returns only { count, latest } for the cycle — the dispatch
+  // queue's fallback poll asks "did anything change?" every few seconds and must
+  // not page ~1,000 full rows to find out. Same authz as the full list above.
+  if (req.nextUrl.searchParams.get("signature") === "1") {
+    const sig = await getPaymentDispatchSignature(cycleId ?? null);
+    return NextResponse.json(sig, { status: sig.error ? 500 : 200 });
+  }
+
   const { rows, error } = await listPaymentDispatches({ cycleId, recipientEmail });
   return NextResponse.json({ rows, error });
 }
