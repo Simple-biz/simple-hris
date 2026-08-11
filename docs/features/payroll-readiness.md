@@ -28,6 +28,7 @@ week's readiness at all.
 | Pure scorer (no I/O, unit-tested) | `src/lib/payroll/readiness-score.ts` (+ `readiness-score.test.ts`) |
 | Wizard setup checklist — pure derivation + marker keys (unit-tested) | `src/lib/payroll/wizard-setup-steps.ts` (+ `wizard-setup-steps.test.ts`) |
 | Week-scoped roster predicates (pure, unit-tested) | `src/lib/payroll/readiness-week-scope.ts` (+ `readiness-week-scope.test.ts`) |
+| No-Pay-Rate post-enrichment retry rule (pure, unit-tested) | `src/lib/payroll/readiness-rate-retry.ts` (+ `readiness-rate-retry.test.ts`) |
 | API | `app/api/payroll-wizard/readiness/route.ts` — `GET /api/payroll-wizard/readiness[?source_file=…]` |
 | Readiness pane + inline fixers | `src/components/accounting/PayrollWizardNotesFab.tsx` (`PayrollReadinessGlance`, `SetRateDialog`, `SetBankDialog`, `KpiCalculatorDialog`) |
 | 100% celebration — trigger rule (pure, unit-tested) | `src/lib/payroll/readiness-celebration.ts` (+ `readiness-celebration.test.ts`) |
@@ -109,6 +110,11 @@ No migration — everything reads existing tables.
    contractor also on the employee roster keeps their normal Bank Info
    treatment. Best-effort read: a role-table failure re-lists contractors
    (over-flags, never hides an employee), so it doesn't join `degraded`.
+   **The rate is resolved TWICE (2026-08-11)** — see "Post-enrichment rate
+   retry" below. The first pass keys the department off `active_employees`,
+   which by definition excludes every off-boarded person on the very week
+   that pays their final check, so it had been reporting people rate-less
+   whose department carries a Payment Catalog base rate.
 3. **Bank Info** — active on-channel employees whose `employee_ids` row isn't
    payable (`isPayoutComplete`, judged WITH the legacy rates-sheet fallbacks).
    Each row carries `onPayroll`: true when any of the person's aliases has
@@ -151,6 +157,48 @@ Configuration") but leave every dimension — numerators and denominators — so
 the score describes only the departments actually being paid. The exclusion is
 keyed per Hubstaff source file, so a new week snaps everything back. Pausing
 Hogan Smith Law pauses every HSL sub-dept with it.
+
+### Post-enrichment rate retry (2026-08-11)
+
+`buildMissingRates` resolves each Hubstaff worker's rate against a department
+read from the `active_employees` snapshot. That view is
+`global_master_list WHERE last_seen_upload_id = <current> AND off_boarded_at IS
+NULL`, so a person leaves it the instant HR stamps them off-boarded — which is
+the **normal** path for every leaver's final pay week, not an edge case — and
+also whenever a sheet-sync race orphans `last_seen_upload_id`. Those workers
+resolved with `department = null`, and `resolveDeptCatalogRate` short-circuits
+on a null department (`if (!deptRaw) return null`), so the department-base tier
+was silently skipped and they landed on the No Pay Rate list.
+
+`enrichMissingRatesFromMaster` already knew their real department — it just ran
+*after* the only resolve, and its doc comment described itself as display-only
+(true when written, untrue from `cbdd962` onward, which made department a rate
+input via `resolveDeptCatalogRate`).
+
+So the composer now **re-runs the same chain** once enrichment has filled the
+department in, dropping any row that genuinely resolves. The rule is pure and
+unit-tested in `readiness-rate-retry.ts` (`rowsStillMissingAfterRetry`):
+
+- a row leaves the list **only** by resolving through the real
+  `resolvePeopleRate` — never by a weaker test;
+- no department, no identity, or a failed enrichment read all keep the row, so
+  the pass can remove a false blocker and never hide a real one — the same
+  over-flag direction the rest of this dimension takes;
+- master-row aliases are reused only from an **exact email-alias** match. The
+  name-token fallback is trusted for a department label and not for identity,
+  because an individual-catalog or sheet rate resolved off a wrong name match
+  would hand someone another person's rate;
+- `workerCount` is untouched — these people are genuinely being paid this week
+  and belong in the denominator. Only the numerator was wrong.
+
+Scale of the bug when it was found (`scripts/probe-no-rate-dept-fallback.mts`,
+read-only, replays both orderings against live data): **95 people** were
+invisible to `active_employees` while holding a department with a base rate —
+86 Lead Gen (₱175), 5 HSL (₱225), plus Site Building, Client - VA and PM Team.
+Any one of them logging hours pinned the week's rate dimension to 10/50 and
+capped the score at 60. `offboarded-payroll-candidates.ts:197-200` (the Payroll
+Notes "Offboarded" tab) is the parallel path that already had the ordering
+right, by fetching the department *before* resolving.
 
 ### Bank Info "Temporary Exemption" (2026-08-04)
 

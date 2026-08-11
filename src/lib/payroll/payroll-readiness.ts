@@ -73,6 +73,7 @@ import { listHrPendingEmployees } from '@/lib/supabase/hr-pending-employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { applyDeptOverrideToRawRow } from '@/lib/departments/dept-email-overrides';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
+import { rowsStillMissingAfterRetry } from '@/lib/payroll/readiness-rate-retry';
 import { DEPARTMENTS, MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
 import { listBonusCatalog } from '@/lib/supabase/bonus-catalog-db';
 import { getDepartmentRegistry } from '@/lib/departments/registry-db';
@@ -654,15 +655,30 @@ function nameTokens(raw: string | null | undefined): Set<string> {
  *
  * Two passes, most-trustworthy first: every email alias on the master row, then
  * — only for a row still unresolved — a name-token match that must land on
- * exactly ONE person. This is display-only enrichment (it never moves a number
- * or the score), so on a read failure the columns just stay blank.
+ * exactly ONE person. On a read failure the columns just stay blank.
+ *
+ * NOT display-only any more (2026-08-11). It used to be — the comment here said
+ * so — but that stopped being true the day `resolveDeptCatalogRate` (cbdd962)
+ * made department a rate input. The department this fills in is now re-fed to
+ * `resolvePeopleRate` by the caller, so a person whose department has a Payment
+ * Catalog base rate stops being reported rate-less. See the re-resolve pass in
+ * {@link buildMissingRates}.
+ *
+ * Returns the master-row alias emails per enriched row, but ONLY for rows
+ * matched on an exact email alias. The name-token fallback is trusted for a
+ * department label and not for identity: resolving an INDIVIDUAL catalog or
+ * sheet rate off a name match could hand someone another person's rate, so
+ * those rows re-resolve on their original emails alone.
  */
-async function enrichMissingRatesFromMaster(missing: ReadinessMissingRate[]): Promise<void> {
+async function enrichMissingRatesFromMaster(
+  missing: ReadinessMissingRate[],
+): Promise<Map<ReadinessMissingRate, string[]>> {
+  const masterAliases = new Map<ReadinessMissingRate, string[]>();
   const unresolved = missing.filter((m) => !m.department || !m.startDate);
-  if (unresolved.length === 0) return;
+  if (unresolved.length === 0) return masterAliases;
 
   const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) return;
+  if (!supabase) return masterAliases;
 
   const FULL =
     'Department,Name,"Start Date","Work Email","Personal Email","Alternate Work Email","Alternate Work Email 2",off_boarded_at,last_seen_upload_id';
@@ -690,7 +706,7 @@ async function enrichMissingRatesFromMaster(missing: ReadinessMissingRate[]): Pr
   // The alternate-email + last_seen_upload_id columns post-date the original
   // table, so fall back to the base projection rather than losing the whole read.
   const rows = (await readAll(FULL)) ?? (await readAll(BASE));
-  if (!rows || rows.length === 0) return;
+  if (!rows || rows.length === 0) return masterAliases;
 
   const str = (v: unknown): string | null => {
     const s = v == null ? '' : String(v).trim();
@@ -702,6 +718,10 @@ async function enrichMissingRatesFromMaster(missing: ReadinessMissingRate[]): Pr
     startDate: string | null;
     offBoardedAt: string | null;
     tokens: Set<string>;
+    /** Every normalized alias on this master row. Handed back to the caller so
+     *  the rate chain can retry over addresses the ACTIVE roster never had —
+     *  the alehzandra@ vs alehzandraz@ case in the note above. */
+    emails: string[];
     /** Sort key for picking between duplicate rows for the same person. */
     seenId: number;
   }
@@ -728,6 +748,7 @@ async function enrichMissingRatesFromMaster(missing: ReadinessMissingRate[]): Pr
       startDate: normalizeStartDate(str(r['Start Date'])),
       offBoardedAt: normalizeStartDate(str(r['off_boarded_at'])),
       tokens: nameTokens(str(r['Name'])),
+      emails: [],
       seenId: Number.isFinite(seen) ? seen : 0,
     };
     candidates.push(c);
@@ -739,6 +760,7 @@ async function enrichMissingRatesFromMaster(missing: ReadinessMissingRate[]): Pr
     ]) {
       const em = normEmail(str(r[col]) ?? '');
       if (!em) continue;
+      if (!c.emails.includes(em)) c.emails.push(em);
       const cur = byEmail.get(em);
       if (!cur || better(c, cur)) byEmail.set(em, c);
     }
@@ -746,6 +768,8 @@ async function enrichMissingRatesFromMaster(missing: ReadinessMissingRate[]): Pr
 
   for (const m of unresolved) {
     let hit = m.email ? byEmail.get(normEmail(m.email) ?? '') ?? null : null;
+    // Only an exact-alias hit is trusted for identity — see the note above.
+    if (hit) masterAliases.set(m, hit.emails);
     if (!hit) {
       // Last resort: the Hubstaff display name. Only accepted when exactly one
       // person matches — a near-miss must leave the columns blank rather than
@@ -769,6 +793,7 @@ async function enrichMissingRatesFromMaster(missing: ReadinessMissingRate[]): Pr
     m.startDate = m.startDate ?? hit.startDate;
     m.offBoardedAt = hit.offBoardedAt;
   }
+  return masterAliases;
 }
 
 /**
@@ -900,6 +925,9 @@ async function buildMissingRates(
   const workers = rowsToPayrollRows(hubstaffRows);
   const seen = new Set<string>();
   const missing: ReadinessMissingRate[] = [];
+  /** The alias list each missing row was FIRST resolved on, so the post-
+   *  enrichment retry can union it with whatever the master row adds. */
+  const firstPassAliases = new Map<ReadinessMissingRate, string[]>();
   const payrollEmails = new Set<string>();
   let workerCount = 0;
   for (const w of workers) {
@@ -954,7 +982,7 @@ async function buildMissingRates(
 
     const rate = resolvePeopleRate(rateCtx, aliases, dept);
     if (rate.source === null) {
-      missing.push({
+      const row: ReadinessMissingRate = {
         name,
         email: email || null,
         department: dept,
@@ -962,7 +990,9 @@ async function buildMissingRates(
         // Both stamped below, once the master-list fallback has had its say.
         recentlyOnboarded: false,
         offBoardedAt: null,
-      });
+      };
+      missing.push(row);
+      firstPassAliases.set(row, aliases);
     }
   }
 
@@ -970,14 +1000,44 @@ async function buildMissingRates(
   // resolve, THEN decide who's a new hire — the enriched date is usually the
   // only one there is (a brand-new or just-left worker is exactly who the active
   // view misses).
-  await enrichMissingRatesFromMaster(missing);
-  for (const m of missing) {
+  const masterAliases = await enrichMissingRatesFromMaster(missing);
+
+  // Re-run the SAME rate chain on the enriched identity (2026-08-11).
+  //
+  // The loop above resolves each worker against `deptByEmail`, built from
+  // `active_employees`. Anyone missing from that view — which is EVERY
+  // off-boarded person from the moment HR stamps `off_boarded_at`, on the very
+  // pay week that pays them out, plus anyone lost to a sheet-sync race — gets
+  // `dept = null`, and `resolveDeptCatalogRate` short-circuits on a null
+  // department. So they land here rate-less even when their department has a
+  // Payment Catalog base rate that resolves perfectly well.
+  //
+  // The enrichment above already knows their real department; it just used to
+  // arrive too late to matter. This retries with it. Deliberately the same
+  // `resolvePeopleRate` over the same `rateCtx` — a row may only leave this
+  // list by genuinely resolving through the normal chain, never by a weaker
+  // test. A failed enrichment read yields no aliases and no department, so
+  // every row simply stays listed: this pass can only ever remove a FALSE
+  // blocker, never hide a real one.
+  //
+  // Mirrors `offboarded-payroll-candidates.ts`, which gets the ordering right
+  // by fetching the department before resolving and so never builds the bad
+  // list in the first place.
+  // `workerCount` is untouched on purpose: these people ARE workers being paid
+  // this week and belong in the denominator. Only the numerator was wrong.
+  const stillMissing = rowsStillMissingAfterRetry(
+    missing,
+    (m) => [...new Set([...(firstPassAliases.get(m) ?? []), ...(masterAliases.get(m) ?? [])])],
+    (emails, department) => resolvePeopleRate(rateCtx, emails, department).source !== null,
+  );
+
+  for (const m of stillMissing) {
     m.recentlyOnboarded = Boolean(
       m.startDate && recentStartCutoff && m.startDate >= recentStartCutoff,
     );
   }
-  missing.sort((a, b) => a.name.localeCompare(b.name));
-  return { rows: missing, workerCount, payrollEmails, degraded: [] };
+  stillMissing.sort((a, b) => a.name.localeCompare(b.name));
+  return { rows: stillMissing, workerCount, payrollEmails, degraded: [] };
 }
 
 // ── Missing bank info (active roster, USEE excluded) ──────────────────────────
