@@ -1,0 +1,4 @@
+# per-run state, not source
+proposal.json
+apply-result.json
+.apply.lock

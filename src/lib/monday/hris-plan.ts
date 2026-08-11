@@ -46,14 +46,19 @@ export const TASK_GROUPS = {
 } as const;
 export const TASK_COLS = {
   owner: 'multiple_person_mm4m9frz',
-  type: 'color_mm4m786c', // 0 Feature · 1 Bug · 2 Integration · 5 Chore · 6 Spike
-  status: 'color_mm4mts9b', // 0 Ready to Start · 4 Done
+  type: 'color_mm4m786c', // 0 Feature · 1 Bug · 2 Integration · 3 n8n Workflow · 5 Chore · 6 Spike · 7 PR Review
+  status: 'color_mm4mts9b', // 0 Ready to Start · 1 In Progress · 2 Waiting for Review · 3 Pending Deploy · 4 Done
   priority: 'color_mm4m2j0z', // 0 Critical · 1 High · 2 Medium · 3 Low
   estimatedSp: 'numeric_mm4mpgqk',
   actualSp: 'numeric_mm4mevqb',
   sprint: 'color_mm4mw08e', // 0 Sprint 24 · 1 Sprint 25 · 2 Backlog · 13 Sprint 26
   project: 'board_relation_mm4mrsvm',
   epic: 'board_relation_mm4mp3yb',
+  /**
+   * Completed Date. The reconciler never writes it — a date on a row that is not Done would be an
+   * invented record. Owned by the monday-board-sync skill's corrector, Done rows only.
+   */
+  completed: 'date_mm5qj7vm',
 } as const;
 
 /** Projects Portfolio columns (the HRIS project item) */
@@ -65,31 +70,70 @@ export const PROJECT_COLS = {
 } as const;
 
 export type Quarter = 'Q1' | 'Q2' | 'Q3' | 'Q4';
-export type EpicStatus = 'Planned' | 'In Progress' | 'Shipped';
-export type TaskType = 'Feature' | 'Bug' | 'Integration' | 'Chore' | 'Spike';
+export type EpicStatus = 'Planned' | 'In Progress' | 'Shipped' | 'Cancelled';
+export type TaskType =
+  | 'Feature'
+  | 'Bug'
+  | 'Integration'
+  | 'n8n Workflow'
+  | 'Chore'
+  | 'Spike'
+  | 'PR Review';
 export type TaskSprint = keyof typeof TASK_GROUPS;
 export type TaskPriority = 'Critical' | 'High' | null;
+/**
+ * Every Status label that exists on Sprint Tasks. The reconciler only ever writes Done or Ready to
+ * Start (from `PlanTask.done`); the middle three are execution state, written by the
+ * monday-board-sync skill's corrector. See docs/features/monday-board-sync.md.
+ */
+export type TaskStatus =
+  | 'Ready to Start'
+  | 'In Progress'
+  | 'Waiting for Review'
+  | 'Pending Deploy'
+  | 'Done';
 
 export const EPIC_STATUS_INDEX: Record<EpicStatus, number> = {
   Planned: 0,
   'In Progress': 1,
   Shipped: 2,
+  Cancelled: 3,
 };
 export const QUARTER_INDEX: Record<Quarter, number> = { Q1: 0, Q2: 1, Q3: 2, Q4: 3 };
 export const TASK_TYPE_INDEX: Record<TaskType, number> = {
   Feature: 0,
   Bug: 1,
   Integration: 2,
+  'n8n Workflow': 3,
   Chore: 5,
   Spike: 6,
+  'PR Review': 7,
 };
 export const TASK_SPRINT_INDEX: Record<TaskSprint, number> = { S24: 0, S25: 1, S26: 13, BL: 2 };
+/**
+ * The live label TEXT for each sprint key. The board is structure-locked — the API cannot create a
+ * Sprint label — so a pass must assert these still match `settings_str` before writing. There is no
+ * Sprint 27 label yet: when Sprint 26 ends, someone adds it on the board by hand first.
+ */
+export const TASK_SPRINT_LABELS: Record<TaskSprint, string> = {
+  S24: 'Sprint 24',
+  S25: 'Sprint 25',
+  S26: 'Sprint 26',
+  BL: 'Backlog',
+};
 export const TASK_PRIORITY_INDEX: Record<Exclude<TaskPriority, null>, number> = {
   Critical: 0,
   High: 1,
 };
-export const TASK_STATUS_DONE = 4;
-export const TASK_STATUS_READY = 0;
+export const TASK_STATUS_INDEX: Record<TaskStatus, number> = {
+  'Ready to Start': 0,
+  'In Progress': 1,
+  'Waiting for Review': 2,
+  'Pending Deploy': 3,
+  Done: 4,
+};
+export const TASK_STATUS_DONE = TASK_STATUS_INDEX.Done;
+export const TASK_STATUS_READY = TASK_STATUS_INDEX['Ready to Start'];
 
 export interface PlanEpic {
   code: string; // "HRIS-17"
@@ -105,8 +149,18 @@ export interface PlanTask {
   epic: string; // parent epic code
   name: string; // without the "[HRIS] " prefix (added at sync time)
   type: TaskType;
-  sp: number; // < 8 by definition (8+ belongs on the epics board)
-  /** Initial done-ness — applied only when the task is CREATED, never on update. */
+  /**
+   * Fibonacci. **Over** 8 is an epic, so 8 is a legal task score (the SP auditor's company rule —
+   * on a Fibonacci scale the next step up is 13, so "over 8" and ">= 13" are the same rule).
+   */
+  sp: number;
+  /**
+   * Shipped AND proven. `true` makes the reconciler write Done plus an Actual SP; `false` writes
+   * Ready to Start and no Actual SP. There is deliberately no way to express Pending Deploy or
+   * Waiting for Review here — those are execution state, written by the monday-board-sync skill's
+   * corrector, which is why an unproven row can never carry an invented Actual SP.
+   * Applied only when the task is CREATED, never on update.
+   */
   done: boolean;
   sprint: TaskSprint;
   priority?: TaskPriority;
@@ -296,4 +350,30 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-33', name: 'Pay-cycle report snapshot model + publish/list/unpublish API', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
   { epic: 'HRIS-33', name: 'Reports tab: list, detail view + CSV/XLSX/PDF export', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
   { epic: 'HRIS-33', name: 'Publish-gate + unpublish-audit hardening', type: 'Bug', sp: 3, done: true, sprint: 'S26' },
+  // ── Sprint 26 second pass — committed 5a6c52f..488cf44 (Aug 5–11 2026, 78 commits) ──────────
+  // Clustered by FILE OVERLAP, never by commit message: 488cf44 "HSL Weekend Hours Fix" contains no
+  // code at all, 02dc5aa "Massiv Update" carried two unrelated features, a7ecd4c "Callback" three,
+  // and 5eb398a's weekend-OT pricing was reversed by e0028b8 — so one row describes the CURRENT rule.
+  //
+  // done: true on the seven Kane confirmed working in production on 2026-08-11. The five below with
+  // done:false are NOT a matter of confirmation — each has a named external step nobody has run
+  // (n8n import, webhooks seed, cycle re-lock, zero `hsl:*` rate rows), so they sit in the Backlog
+  // and the skill's corrector marks them Pending Deploy. Commit SHAs live in each item's update.
+  { epic: 'HRIS-02a', name: 'Wizard Validation step shows the full per-person calculation with red and amber flags', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-03a', name: 'Close Pay Cycle from the Stop dialog — permanent close-out record naming who was left unpaid', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-08', name: 'Configurable Tech Bonus payout week (System Bonus modal, Sun–Sat) wired to every gate + KPI bonuses in the employee Estimated Take-Home', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-02a', name: "Wizard week selector replays that week's own bonuses, monthly HSL period and readiness instead of today's", type: 'Bug', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-19', name: 'Bank rail parity: People, wizard preview, Urgent cards and the bank-update form resolve the rail Payment Dispatch actually pays on; USD bucket retired', type: 'Bug', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-05', name: 'Disbursement report, contractor and app-settings API routes gated by matching role — 2026-08-10 SECURITY_AUDIT re-verify', type: 'Bug', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-06', name: 'Eleven departments permanently retired from the KPI Calculator + Callback accepts external members', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  // Blocked on an un-run external step — Backlog, corrected to Pending Deploy by the skill.
+  // 8, not 5 (Kane 2026-08-11): three pay engines repriced in lockstep + a new
+  // payload contract (hogan_sheet) consumed by five render surfaces + four
+  // validators. Scored with this pass's other multi-subsystem 8s, not with the
+  // single-surface HSL 5s. Still a task — over 8 is the epic line.
+  { epic: 'HRIS-02b', name: 'HSL pay = the Hogan sheet column AN verbatim — hogan-week-pay becomes the single rate authority, reversing the 2026-08-07 weekend-OT removal', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
+  { epic: 'HRIS-03b', name: 'One merged Weekend Hours line + dated rate-change disclosure on statement, email and export', type: 'Feature', sp: 5, done: false, sprint: 'BL' },
+  { epic: 'HRIS-03b', name: 'Paystub email HTML rendered in-app (n8n Gmail becomes a pipe) + System Bonus snapshot columns on payment_dispatches', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
+  { epic: 'HRIS-01a', name: 'Offboarding is delete-only: suspend is its own path, suspended-person offboards escalate to delete, and leavers get a correct final check', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
+  { epic: 'HRIS-06', name: 'One HSL department + required sub-department that sets the base rate, wired through the Payment Catalog', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
 ];
