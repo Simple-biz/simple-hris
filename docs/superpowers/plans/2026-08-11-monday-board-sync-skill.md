@@ -19,30 +19,33 @@ Scripts are `.mts` (not Python, unlike Gridline) so they can **import the board 
 
 ## Tasks
 
-- [ ] 1. `src/lib/monday/hris-plan.ts` — additive constants only
-  - [ ] `TASK_COLS.completed = 'date_mm5qj7vm'` (column exists; HRIS has never written it)
-  - [ ] `TASK_STATUS_INDEX` full map: Ready to Start 0, In Progress 1, Waiting for Review 2,
+- [x] 1. `src/lib/monday/hris-plan.ts` — additive constants only
+  - [x] `TASK_COLS.completed = 'date_mm5qj7vm'` (column exists; HRIS has never written it)
+  - [x] `TASK_STATUS_INDEX` full map: Ready to Start 0, In Progress 1, Waiting for Review 2,
         Pending Deploy 3, Done 4 (keep `TASK_STATUS_DONE`/`TASK_STATUS_READY` for sync.ts)
-  - [ ] `EpicStatus` += `'Cancelled'`, `EPIC_STATUS_INDEX.Cancelled = 3`
-  - [ ] `TaskType` += `'n8n Workflow'` (3), `'PR Review'` (7) — both exist as live labels
-  - [ ] `TASK_SPRINT_LABELS` — the live label text per sprint key, so a pass can assert the board's
+  - [x] `EpicStatus` += `'Cancelled'`, `EPIC_STATUS_INDEX.Cancelled = 3`
+  - [x] `TaskType` += `'n8n Workflow'` (3), `'PR Review'` (7) — both exist as live labels
+  - [x] `TASK_SPRINT_LABELS` — the live label text per sprint key, so a pass can assert the board's
         label set still matches before writing
-  - [ ] fix the `sp: number; // < 8 by definition` comment → over-8 is an epic, 8 SP is a legal task
-- [ ] 2. `.claude/skills/monday-board-sync/scripts/monday.mts` — shared lib. Retrying `gql`,
+  - [x] fix the `sp: number; // < 8 by definition` comment → over-8 is an epic, 8 SP is a legal task
+- [x] 2. `.claude/skills/monday-board-sync/scripts/monday.mts` — shared lib. Retrying `gql`,
       `DailyLimitExceeded` fast-fail, paged board reads, `items(ids:)` batched ≤25, board-relation
       handling via `linked_item_ids`, `.env` loader, proposal hashing, local lockfile.
-- [ ] 3. `scripts/pull-state.mts` — read-only. Dumps HRIS rows only. Re-queries `groups{id title}`
+- [x] 3. `scripts/pull-state.mts` — read-only. Dumps HRIS rows only. Re-queries `groups{id title}`
       every run and asserts live labels match the constants.
-- [ ] 4. `scripts/sprint-evidence.mts` — read-only git evidence: commit range, per-commit file lists,
+- [x] 4. `scripts/sprint-evidence.mts` — read-only git evidence: commit range, per-commit file lists,
       `merge-base --is-ancestor origin/main` per sha, new `.sql` / `apply-*.mjs` / n8n slug detection.
-- [ ] 5. `scripts/audit-board.mts` — invariants + board↔plan name parity both directions.
-- [ ] 6. `scripts/pass.mts` — the per-pass data file + `selfcheck()`.
-- [ ] 7. `scripts/review.mts` — the review Kane sees; writes `proposal.json` + prints approval hash.
-- [ ] 8. `scripts/apply.mts` — the ONLY writer. `--apply --approve <hash>`.
-- [ ] 9. `scripts/verify.mts` — re-read verification, never off the write log.
-- [ ] 10. `SKILL.md` — honesty gate, review-then-approve protocol, budget, traps.
-- [ ] 11. `docs/features/monday-board-sync.md` + `docs/features/INDEX.md` row + memory update.
-- [ ] 12. Typecheck (`tsc --noEmit`). **A dev server is running — do not run `next build`.**
+- [x] 5. ~~`scripts/audit-board.mts`~~ — **folded into `verify.mts`.** Its sections 2–4 (name parity
+      both directions, the invariant sweep, the rollup check) read the board independently of the
+      pass, so with an empty `ROWS` it already *is* the standalone audit. A second script would have
+      duplicated the queries and doubled the cost of the most expensive read in the skill.
+- [x] 6. `scripts/pass.mts` — the per-pass data file + `selfcheck()`.
+- [x] 7. `scripts/review.mts` — the review Kane sees; writes `proposal.json` + prints approval hash.
+- [x] 8. `scripts/apply.mts` — the ONLY writer. `--apply --approve <hash>`.
+- [x] 9. `scripts/verify.mts` — re-read verification, never off the write log.
+- [x] 10. `SKILL.md` — honesty gate, review-then-approve protocol, budget, traps.
+- [x] 11. `docs/features/monday-board-sync.md` + `docs/features/INDEX.md` row + memory update.
+- [x] 12. Typecheck (`tsc --noEmit`). **A dev server is running — do not run `next build`.**
 
 ## Invariants that must survive
 
