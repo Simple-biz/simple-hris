@@ -830,7 +830,15 @@
       "Bash(cp \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/91f98f4e-bcdf-4105-ba49-931293f2a4ee/scratchpad/probe-kpi-depts.mjs\" scripts/_tmp-probe-kpi-depts.mjs)",
       "Bash(node scripts/_tmp-probe-kpi-depts.mjs)",
       "Bash(cd c:/Users/Kane/Desktop/simple-hris && rm -f scripts/_tmp-probe-kpi-depts.mjs scripts/_tmp-probe-usmb.mjs && git status --short)",
-      "Bash(node -e \"console.log\\(JSON.stringify\\(require\\('./package.json'\\).scripts,null,2\\)\\)\")"
+      "Bash(node -e \"console.log\\(JSON.stringify\\(require\\('./package.json'\\).scripts,null,2\\)\\)\")",
+      "Bash(node --import tsx --test src/lib/payroll/kpi-calculator-depts.test.ts)",
+      "Bash(git --no-pager diff --stat -- src/components/PayrollWizard.tsx src/lib/payroll/department-bonus.ts src/lib/payroll/kpi-calculator-depts.test.ts docs/)",
+      "Bash(git --no-pager diff -U2 -- src/components/PayrollWizard.tsx)",
+      "Bash(grep -vE \"^\\\\+\\\\s*\\(//|\\\\*|/\\\\*\\)\")",
+      "Bash(node --import tsx --test src/lib/payroll/bonus-cadence.test.ts)",
+      "Bash(node --import tsx \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/49f872cf-db2c-49cd-8c19-7ada8d2d850b/scratchpad/check-hsl-monthly-periods.mts\")",
+      "Bash(sed -i \"s|'../../../../../../Users/Kane/Desktop/simple-hris/src/lib/payroll/bonus-cadence'|'../src/lib/payroll/bonus-cadence'|\" scripts/tmp-check-hsl-monthly.mts)",
+      "Bash(node --import tsx scripts/tmp-check-hsl-monthly.mts)"
     ],
     "additionalDirectories": [
       "\\tmp",
