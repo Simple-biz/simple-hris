@@ -148,6 +148,46 @@ await probeColumn('2026-07-20_split_onboarding_name_columns', 'hr_onboarding_sub
 await probeColumn('2026-07-20_split_onboarding_name_columns', 'hr_onboarding_submissions', 'last_name');
 await probeTable('2026-07-29_mesa_request_receipts', 'mesa_request_receipts');
 
+/**
+ * A CHECK constraint's allowed values are unreadable through PostgREST, but trivially readable over a
+ * direct Postgres connection. With DATABASE_URL set, this settles the three INCONCLUSIVE rows above
+ * for good. Still read-only: a SELECT against pg_constraint.
+ */
+if (process.env.DATABASE_URL?.trim()) {
+  console.log('\nDATABASE_URL present — reading the real CHECK constraint (read-only)');
+  const { Client } = await import('pg');
+  // Supabase requires TLS and its cert chain is not in Node's default store.
+  const client = new Client({ connectionString: process.env.DATABASE_URL.trim(), ssl: { rejectUnauthorized: false } });
+  try {
+    await client.connect();
+    const { rows } = await client.query<{ conname: string; def: string }>(
+      `select conname, pg_get_constraintdef(oid) as def
+         from pg_constraint
+        where conrelid = 'public.employee_notifications'::regclass and contype = 'c'`,
+    );
+    const allDefs = rows.map((r) => r.def).join(' ');
+    for (const [migration, type] of [
+      ['add_bank_override_type', 'people.banking.overridden'],
+      ['pab_exclusion_notification_types', 'pab.excluded'],
+      ['pab_exclusion_notification_types', 'pab.restored'],
+    ] as [string, string][]) {
+      // Replace the earlier INCONCLUSIVE verdict with a real one.
+      const i = results.findIndex((r) => r.target === `notification type ${type}`);
+      if (i >= 0) results.splice(i, 1);
+      const permitted = allDefs.includes(`'${type}'`);
+      record(migration, `notification type ${type}`, permitted ? 'APPLIED' : 'NOT APPLIED', permitted ? 'present in the CHECK definition' : 'ABSENT from the CHECK — inserts are rejected');
+    }
+  } catch (e) {
+    console.log(`  could not connect: ${e instanceof Error ? e.message.slice(0, 120) : e}`);
+    console.log('  (use the DIRECT connection on port 5432, not the pooler)');
+  } finally {
+    await client.end().catch(() => {});
+  }
+} else {
+  console.log('\nSet DATABASE_URL in .env.local to settle the CHECK-constraint rows definitively.');
+  console.log('  Supabase dashboard -> Project Settings -> Database -> Connection string -> URI (port 5432).');
+}
+
 const by = (v: Verdict) => results.filter((r) => r.verdict === v);
 console.log('\n' + '─'.repeat(92));
 console.log(`APPLIED ${by('APPLIED').length} · NOT APPLIED ${by('NOT APPLIED').length} · INCONCLUSIVE ${by('INCONCLUSIVE').length}`);
