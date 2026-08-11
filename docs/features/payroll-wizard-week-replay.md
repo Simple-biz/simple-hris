@@ -115,6 +115,61 @@ own clock, independent of the additions blob. Two holes, both closed:
   first await**. The HSL spinner (`hslKpiLoading`) already covers the gap; the KPI
   Sub. column is gated on `managerBonusMeta` and simply hides.
 
+## HSL KPI Bonus Period cards (step 4) — monthly depts ignored the selector
+
+Two more holes in the step-4 loader, found by Kane testing the above
+(2026-08-11): replaying **Jul 26 – Aug 1 2026** showed SSD Medical Records as
+**"August 2026 · ₱463,750 · READY"**.
+
+**Monthly depts were never week-scoped.** Weekly HSL depts pin to
+`hubstaffWeekStart`; monthly ones took *"the latest ready/locked, full stop"* —
+the newest period that exists anywhere, whatever week you were replaying. Live
+data at the time held both a `2026-08-02` (August) and a `2026-07-26` (July)
+ready period for each of the three monthly depts, so the August one always won.
+It affected **SSD Medical Records, Collections and Healthcare Team Lead**
+together.
+
+These cards carry a `manual · Adjustment` badge — monthly HSL bonuses are **not**
+auto-dispatched, Accounting applies them by hand from the Adjustment column. So
+the wrong month is an actionable wrong number, even though nothing auto-flows
+from it (the money path, `hslKpiAmounts`, is weekly-only and was already pinned).
+
+**The rule now** (`relateMonthlyPeriodToWeek` in
+[`bonus-cadence.ts`](../../src/lib/payroll/bonus-cadence.ts)):
+
+- a monthly period from a month the viewed week **has not reached** is never a
+  candidate;
+- an **exact month match** outranks an earlier one, regardless of which has the
+  later `period_start`;
+- otherwise the previous latest-wins / locked-beats-ready tiebreak stands — so a
+  month nobody submitted still falls back to the latest earlier period. The fix
+  only ever removes **future** months.
+- With no file loaded, or a date that will not parse, nothing is scoped
+  (`'unknown'`). Failing **open** is deliberate: dropping candidates on a parse
+  failure would hide a real bonus.
+
+### Two month rules, on purpose
+
+The two sides of that comparison are different kinds of date and must not share
+a rule:
+
+| Side | Rule | Why |
+| --- | --- | --- |
+| the viewed **week** | month of its **owning Monday** (`payrollWeekMonthOrdinal`) | what `bonus-cadence.ts` already defines monthly payout against, and what `fileMonth` uses for every other month-scoped section |
+| the **monthly period** | its own plain **calendar month** (`calendarMonthOrdinal`) | it is a month anchor, and this is how its visible label is rendered — scoping and label must agree |
+
+The first cut of this fix ran both sides through the owning-Monday rule and
+silently did nothing: `2026-08-01` is a **Saturday**, so the walk landed on Jul 27
+and reported *July* for a period the UI labels "August 2026". Live rows are a mix
+of month anchors (`2026-07-01`) and Sunday week dates (`2026-08-02`), so both
+shapes have to land in the month they display. Pinned in
+`bonus-cadence.test.ts`.
+
+**`hubstaffWeekStart` was also missing from the loader's dep array**, so
+switching the week selector while sitting on step 4 never reloaded — every card,
+weekly ones included, stayed on the previously-viewed week until the step was
+re-entered. Added.
+
 ### The publisher gate
 
 That in-flight window was not only cosmetic. `publishFinalPaySnapshot` runs on a
@@ -157,6 +212,7 @@ deliberate pass with the live path held byte-identical.
 | --- | --- |
 | Selector, `isReplay`, banner, both auto-toggle effects, publisher gate | `src/components/PayrollWizard.tsx` |
 | Freeze + gap-fill + week-marker rules (pure, unit-tested) | `src/lib/payroll/replay-bonus-toggles.ts` (+ `.test.ts`) |
+| Month-ownership + monthly-period scoping (pure, unit-tested) | `src/lib/payroll/bonus-cadence.ts` (+ `.test.ts`) |
 | Payment-side KPI dept set | `src/lib/payroll/department-bonus.ts` (`WIZARD_PAYABLE_KPI_DEPT_KEYS`) |
 | Dept-set invariants | `src/lib/payroll/kpi-calculator-depts.test.ts` |
 

@@ -205,7 +205,7 @@ import {
   slugifyDeptKey,
   type DepartmentRegistryEntry,
 } from '@/lib/departments/registry';
-import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
+import { isFinalPayrollWeekOfMonth, relateMonthlyPeriodToWeek, type MonthlyPeriodRelation } from '@/lib/payroll/bonus-cadence';
 import {
   buildSharedEmailOwners,
   attributeKpiRows,
@@ -4358,25 +4358,60 @@ export default function PayrollWizard({
             if (!cancelled) setHslDeptByEmail(deptMap);
           } catch { /* roster unavailable — keep the existing map */ }
         }
-        // Pick the period per HSL dept: WEEKLY depts pin to the processed Hubstaff
-        // week (so the review cards match what actually dispatches); monthly depts
-        // take the latest ready/locked. locked beats ready on a tie.
-        const chosen = new Map<string, { period_start: string; period_end: string; period_type: string; status: string }>();
+        // Pick the period per HSL dept. WEEKLY depts pin to the processed Hubstaff
+        // week (so the review cards match what actually dispatches).
+        //
+        // MONTHLY depts used to take "the latest ready/locked, full stop" — which
+        // ignored the week selector entirely, so replaying a July week showed
+        // AUGUST's card and its total (Kane, 2026-08-11: SSD Medical Records read
+        // "August 2026 · ₱463,750" while replaying Jul 26 – Aug 1). These cards are
+        // how Accounting knows what to apply by hand through the Adjustment column,
+        // so the wrong month is an actionable wrong number, not a cosmetic one.
+        //
+        // Scoped now by the month owning the viewed week (`relateMonthlyPeriodToWeek`,
+        // the owning-Monday rule `bonus-cadence.ts` already defines monthly payout
+        // against). A month the viewed week has not reached is never a candidate; an
+        // exact month match always beats an earlier one. With no file loaded, or a
+        // date that will not parse, nothing is scoped and the old latest-wins
+        // behaviour stands — dropping candidates there would hide a real bonus.
+        // locked beats ready on a tie.
+        const chosen = new Map<string, {
+          period_start: string; period_end: string; period_type: string; status: string;
+          /** Month placement of the pick, so an exact match can outrank an earlier one. */
+          rel: MonthlyPeriodRelation;
+        }>();
         for (const row of statusJson.rows ?? []) {
           if (!hslKeys.has(row.department)) continue;
           if (row.status !== 'ready' && row.status !== 'locked') continue;
           const cfg = (HSL_DEPTS as Record<string, { cadence?: string }>)[row.department];
-          if (cfg?.cadence === 'weekly' && hubstaffWeekStart && row.period_start !== hubstaffWeekStart) continue;
+          const isWeekly = cfg?.cadence === 'weekly';
+          if (isWeekly && hubstaffWeekStart && row.period_start !== hubstaffWeekStart) continue;
+          const rel: MonthlyPeriodRelation = isWeekly
+            ? 'unknown'
+            : relateMonthlyPeriodToWeek(row.period_start, hubstaffWeekStart);
+          // A monthly period from a later month than the week in view is a bonus
+          // this payroll run cannot owe.
+          if (rel === 'after') continue;
           const cur = chosen.get(row.department);
-          if (!cur || row.period_start > cur.period_start || (row.period_start === cur.period_start && row.status === 'locked')) {
-            chosen.set(row.department, { period_start: row.period_start, period_end: row.period_end, period_type: row.period_type, status: row.status });
+          const beatsCurrent =
+            !cur ||
+            // An exact-month monthly period outranks any earlier-month one,
+            // regardless of which has the later period_start.
+            (rel === 'same' && cur.rel === 'before') ||
+            (!(rel === 'before' && cur.rel === 'same') &&
+              (row.period_start > cur.period_start ||
+                (row.period_start === cur.period_start && row.status === 'locked')));
+          if (beatsCurrent) {
+            chosen.set(row.department, { period_start: row.period_start, period_end: row.period_end, period_type: row.period_type, status: row.status, rel });
           }
         }
         if (cancelled) return;
         type HslEntry = { employee_email: string; employee_name: string; is_manager: boolean; calculated_bonus: number };
         const periods: typeof hslStepPeriods = [];
         await Promise.all(
-          Array.from(chosen.entries()).map(async ([dept, info]) => {
+          Array.from(chosen.entries()).map(async ([dept, { rel: _rel, ...info }]) => {
+            // `rel` is the picking tiebreak only — it is deliberately dropped here
+            // rather than spread into the rendered period shape.
             const res = await fetch(`/api/hsl-bonus/entries?dept=${dept}&period_start=${info.period_start}`, { cache: 'no-store' });
             const json = (await res.json()) as { rows?: HslEntry[] };
             const entries = (json.rows ?? []).filter(r => r.employee_email && r.employee_email !== '__dept_meta__');
@@ -4398,7 +4433,11 @@ export default function PayrollWizard({
       }
     })();
     return () => { cancelled = true; };
-  }, [currentStep, hslRefreshKey]);
+    // `hubstaffWeekStart` is a REAL dependency — the body pins weekly depts to it
+    // and scopes monthly ones by its month. Omitted before, so switching the week
+    // selector while sitting on this step never reloaded: every card, weekly ones
+    // included, stayed on the previously-viewed week until the step was re-entered.
+  }, [currentStep, hslRefreshKey, hubstaffWeekStart]);
 
   // Fetch all contractor invoices when on step 6 (Contractors)
   useEffect(() => {
