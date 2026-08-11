@@ -38,6 +38,44 @@ test('the live worked example reconciles to the sheet exactly', () => {
   assert.equal(Math.round((p.totalHourlyPayPhp - 100) * 100) / 100, 16617.75);
 });
 
+test("Kane's 2026-08-11 rule statement: worked example pins", () => {
+  // "43 × ₱235 = ₱10,105 · 2 × ₱250 = ₱500 · 5 × ₱117.50 = ₱587.50 → ₱11,192.50.
+  //  The overtime adjustment is simply (hours_over_40) × (regular_rate × 0.5)."
+  const a = computeHoganWeekPay({ mfHours: 43, weHours: 2, regularRatePhp: 235 });
+  assert.equal(a.basePayPhp, 10105);
+  assert.equal(a.weekendPayPhp, 500);
+  assert.equal(a.otHours, 5);
+  assert.equal(a.otDifferentialPayPhp, 587.5);
+  assert.equal(a.totalHourlyPayPhp, 11192.5);
+
+  // First example, in the corrected differential form: 35 M-F + 8 WE = 43 total.
+  const b = computeHoganWeekPay({ mfHours: 35, weHours: 8, regularRatePhp: 235 });
+  assert.equal(b.basePayPhp, 8225);
+  assert.equal(b.weekendPayPhp, 2000);
+  assert.equal(b.otDifferentialPayPhp, 352.5); // 3 × 117.50 — NOT 3 × 352.50
+  assert.equal(b.totalHourlyPayPhp, 10577.5);
+});
+
+test('angelicaco 2026-08-02 week: past-cap weekend hours keep the +15 premium', () => {
+  // Raw Hubstaff seconds → hours: Mon 8:59:46 + Tue 8:49:04 + Wed 8:02:59 +
+  // Fri 8:31:03 = 34.381111h M-F; Sat 8:58:14 = 8.970556h WE. The cap crossed
+  // mid-Saturday, and under this rule that changes NOTHING about the weekend
+  // leg: all 8.97h price at ₱250. Sheet target ₱10,715.43 (+₱5,400 bonuses =
+  // Kane's ₱16,115.43); the retired within-cap scoping produced ₱10,665.74.
+  const p = computeHoganWeekPay({
+    mfHours: 34.381111,
+    weHours: 8.970556,
+    regularRatePhp: 235,
+  });
+  assert.equal(p.mfHours, 34.38);
+  assert.equal(p.weHours, 8.97);
+  assert.equal(p.otHours, 3.35);
+  assert.equal(p.basePayPhp, 8079.3);
+  assert.equal(p.weekendPayPhp, 2242.5);
+  assert.equal(p.otDifferentialPayPhp, 393.63);
+  assert.equal(p.totalHourlyPayPhp, 10715.43);
+});
+
 test('weekend hours count toward the 40h overtime threshold', () => {
   // 31.95 M-F + 9.11 WE = 41.06 total -> 1.06 OT, even though M-F alone is under 40.
   // Confirmed on 1045/1045 real sheet rows carrying both weekend and OT hours.

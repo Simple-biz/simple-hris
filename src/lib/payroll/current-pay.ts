@@ -31,6 +31,11 @@ import {
 import { listOrphanageBudgetRequests } from "@/lib/supabase/orphanage-budget-requests";
 import { listAllOrphanagePayHours } from "@/lib/supabase/orphanage-pay-db";
 import { buildOrphanageCoverageMap } from "@/lib/payroll/orphanage-pab-coverage";
+import {
+  computeHoganWeekPay,
+  HSL_WEEKEND_PREMIUM_PHP,
+  OT_DIFFERENTIAL_MULTIPLIER,
+} from "@/lib/payroll/hogan-week-pay";
 import { buildFxRates, USD_TO_COP_SETTINGS_KEY, type FxRates } from "@/lib/fx/currency-fx";
 import { normEmail } from "@/lib/email/norm-email";
 import { applyDeptOverrideToRawRow } from "@/lib/departments/dept-email-overrides";
@@ -415,6 +420,13 @@ function parseHmsToSec(v: unknown): number {
  * chronologically, and falls back to `fallbackRate` when no history row
  * is found for a date.
  *
+ * HSL rows price the Hogan sheet's three-stage form (Kane 2026-08-11; see
+ * hogan-week-pay.ts): every hour base-paid once at the day's regular rate,
+ * +₱15/h on ALL weekend hours, overtime as the derived 0.5× differential on
+ * chronological past-40h hours — the stored OT rate never moves HSL money.
+ * A week that priced at ONE regular rate returns the exact sheet computation
+ * (2dp hours per leg), byte-identical to what the Payroll Wizard stages.
+ *
  * Returns null when the row has no per-day ISO date columns (i.e. canonical
  * weekday CSV that couldn't be resolved) — caller should fall back to the
  * legacy single-rate × aggregate-hours formula in that case.
@@ -502,21 +514,40 @@ export function computeProratedRowPay(
   let otSec = 0;
   let anyRegRate = false;
   let anyOtRate = false;
+  // Sheet-form bookkeeping (HSL): M-F vs weekend seconds and whether the whole
+  // week priced at ONE regular rate — the condition for the exact 2dp-hours
+  // sheet computation below, which is what the Payroll Wizard stages.
+  let mfSec = 0;
+  let weSec = 0;
+  let hslUniformReg: number | null | undefined;
 
   for (const d of days) {
     let reg: number | null;
-    let ot: number | null;
+    let storedOt: number | null;
     if (overrideActive && rateOverride) {
       // Payment Catalog wins over the per-day history rate.
       reg = rateOverride.reg;
-      ot = rateOverride.ot;
+      storedOt = rateOverride.ot;
     } else {
       const resolved = resolveRateAsOfDate(empHist, d.date);
       reg = resolved?.regularRate ?? fallbackRate?.reg ?? null;
-      ot = resolved?.otRate ?? fallbackRate?.ot ?? null;
+      storedOt = resolved?.otRate ?? fallbackRate?.ot ?? null;
     }
+    // HSL overtime money is the DERIVED differential — 0.5 × the day's regular
+    // rate (the Hogan sheet's AG column; Kane 2026-08-11) — never a stored OT
+    // rate, so an off-ratio stored value cannot misprice OT. Non-HSL keeps the
+    // stored/fallback OT rate exactly as before.
+    const ot = isHsl
+      ? reg != null
+        ? Math.round(reg * OT_DIFFERENTIAL_MULTIPLIER * 100) / 100
+        : null
+      : storedOt;
     if (reg != null) anyRegRate = true;
     if (ot != null) anyOtRate = true;
+    if (isHsl) {
+      if (hslUniformReg === undefined) hslUniformReg = reg;
+      else if (hslUniformReg !== reg) hslUniformReg = null;
+    }
 
     const remaining = Math.max(0, REGULAR_WEEK_CAP_SEC - usedRegSec);
     const dayRegSec = Math.min(d.seconds, remaining);
@@ -526,22 +557,47 @@ export function computeProratedRowPay(
     regularSec += dayRegSec;
     otSec += dayOtSec;
 
-    // HSL weekend premium: REGULAR-bucket hours on Saturday (6) or Sunday (0)
-    // earn +15 PHP/h. Weekend hours past the 40h cap are plain overtime — no
-    // premium (2026-08-07: the weekend OT rate is gone; all OT prices at the
-    // regular OT rate). Day-scoped for a mid-week transfer INTO HSL — a weekend
-    // day worked before the transfer's effective date is an old-department day,
-    // plain rate.
+    // HSL weekend premium: ALL Saturday (6) / Sunday (0) hours earn +15 PHP/h —
+    // past-cap included (2026-08-11: the sheet's AD column makes no cap
+    // distinction; the 2026-08-07 within-cap scoping is reversed). Day-scoped
+    // for a mid-week transfer INTO HSL — a weekend day worked before the
+    // transfer's effective date is an old-department day, plain rate.
     const dow = d.date.getDay();
-    const weekendBonus =
+    const isWeekendDay =
       isHsl &&
       (dow === 0 || dow === 6) &&
-      (!hslFromDate || d.date.getTime() >= hslFromDate.getTime())
-        ? 15
-        : 0;
+      (!hslFromDate || d.date.getTime() >= hslFromDate.getTime());
+    const weekendBonus = isWeekendDay ? HSL_WEEKEND_PREMIUM_PHP : 0;
+    if (isHsl) {
+      if (isWeekendDay) weSec += d.seconds;
+      else mfSec += d.seconds;
+    }
 
-    if (reg != null) regularPayPHP += (dayRegSec / 3600) * (reg + weekendBonus);
+    // HSL base-pays EVERY hour once at (rate + premium) — the sheet's AB/AD
+    // columns include past-cap hours, with the differential riding on top.
+    // Non-HSL base-pays the 40h-capped bucket, the rest at the stored OT rate.
+    const dayBaseSec = isHsl ? d.seconds : dayRegSec;
+    if (reg != null) regularPayPHP += (dayBaseSec / 3600) * (reg + weekendBonus);
     if (ot != null) otPayPHP += (dayOtSec / 3600) * ot;
+  }
+
+  // Single-rate HSL week → the exact Hogan sheet computation (2dp HOURS × rate,
+  // per leg). This is byte-identical to what the Payroll Wizard stages, so the
+  // dispatch estimate, the freshness snapshot and the staged payload can never
+  // drift by rounding pennies. Genuine mid-week changes keep the per-day sum.
+  if (isHsl && hslUniformReg != null) {
+    const sheet = computeHoganWeekPay({
+      mfHours: mfSec / 3600,
+      weHours: weSec / 3600,
+      regularRatePhp: hslUniformReg,
+    });
+    return {
+      regularPayPHP: Math.round((sheet.basePayPhp + sheet.weekendPayPhp) * 100) / 100,
+      otPayPHP: sheet.otDifferentialPayPhp,
+      totalSec,
+      regularSec,
+      otSec,
+    };
   }
 
   return {

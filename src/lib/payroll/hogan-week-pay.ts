@@ -44,15 +44,23 @@
  * multiplied whole SECONDS (phpHourlyPayFromSeconds), which diverged by ~₱1.14 per
  * stub. The sheet is the payment authority, so this module follows the sheet.
  *
- * ⚠ 2026-08-07 POLICY CHANGE (Kane): the weekend OVERTIME rate is gone — a weekend
- * hour past the 40h cap is plain overtime at the regular OT rate (no +15). Under
- * the sheet formula above, a weekend OT hour effectively earns (AC+15) + 0.5·AC —
- * i.e. the OLD policy — because AD (WE Hours) makes no within-cap/past-cap
- * distinction. The LIVE engine (PayrollWizard calc, current-pay.ts,
- * prorate-mid-period.ts) now scopes the +15 premium to weekend hours WITHIN the
- * cap only. This module still mirrors the sheet as verified on 2026-08-05; do not
- * wire it into the pay run until the sheet itself drops the premium from weekend
- * OT hours (it needs a new column to express the split), and re-verify then.
+ * POLICY (Kane, 2026-08-11 — supersedes the 2026-08-07 within-cap scoping):
+ * this sheet formula IS the HSL pay rule, verbatim. M–F hours never re-rate on
+ * their own; ALL Sat+Sun hours earn the +15 premium (past-cap included); the
+ * only overtime money is the DERIVED differential — max(0, total − 40) × 0.5 ×
+ * regular — never a stored OT rate. Kane's worked example: 43h M–F + 2h WE at
+ * ₱235 → 10,105 + 500 + 5 × 117.50 = ₱11,192.50. The 2026-08-07 attempt to
+ * scope the premium to within-cap weekend hours (5eb398a) is REVERSED: it made
+ * HRIS disagree with the sheet by ₱15/weekend-OT-hour (angelicaco 2026-08-02
+ * week: HRIS ₱16,065.74 vs sheet ₱16,115.43).
+ *
+ * This module is now WIRED INTO THE PAY RUN: the Payroll Wizard's single-rate
+ * HSL path and the server engine's constant-rate HSL path (current-pay.ts)
+ * both price weeks through {@link computeHoganWeekPay}, so staged pay equals
+ * the sheet's column AN to the centavo — 2dp-hours rounding included. Only a
+ * genuine mid-week rate change falls back to per-day accumulation
+ * (prorate-mid-period.ts / current-pay.ts), which prices the same three legs
+ * day by day at each day's rate.
  */
 
 /** The +₱15/h HSL weekend premium: "Hogan WE Rate" is always the regular rate + 15. */
@@ -183,6 +191,58 @@ export function computeHoganWeekPay(input: HoganWeekInput): HoganWeekPay {
  * `regularExclWeekendHours` is what the old payload called `Regular Hours` — the
  * 40h-capped regular bucket with the weekend hours carved out of it.
  */
+/**
+ * The `hogan_sheet` block a staged HSL payload carries (snake_case, jsonb-ready).
+ * It is the DISPLAY contract for the sheet-form statement: three lines — M–F at
+ * the regular rate, ALL weekend hours at (regular + 15), and the derived OT
+ * differential — whose amounts sum exactly to `pay_php.initial`.
+ *
+ * `rates_php` is null on a genuinely prorated week (a dated mid-week rate
+ * change): no single rate can explain a leg then, and the statement renders the
+ * proration segments as each line's basis instead. The HOURS and per-leg money
+ * stay authoritative either way.
+ *
+ * Bucket compatibility: `pay_php.regular` on the payload = base + weekend legs
+ * and `pay_php.ot` = the differential leg, so `initial = regular + ot` and every
+ * total-summing consumer is untouched. `hours.regular`/`hours.ot` keep their
+ * chronological 40h-cap partition — this block is what corrects the DISPLAYED
+ * weekday hours (M–F includes the past-cap hours, exactly like the sheet's AB).
+ */
+export interface HoganSheetBlockRaw {
+  mf_hours: number;
+  we_hours: number;
+  ot_hours: number;
+  rates_php: {
+    regular: number;
+    weekend: number;
+    ot_differential: number;
+  } | null;
+  pay_php: {
+    base: number;
+    weekend: number;
+    ot_differential: number;
+  };
+}
+
+/** Build the payload block from a computed single-rate week. */
+export function hoganSheetBlockFromWeekPay(pay: HoganWeekPay): HoganSheetBlockRaw {
+  return {
+    mf_hours: pay.mfHours,
+    we_hours: pay.weHours,
+    ot_hours: pay.otHours,
+    rates_php: {
+      regular: pay.regularRatePhp,
+      weekend: pay.weekendRatePhp,
+      ot_differential: pay.otDifferentialPhp,
+    },
+    pay_php: {
+      base: pay.basePayPhp,
+      weekend: pay.weekendPayPhp,
+      ot_differential: pay.otDifferentialPayPhp,
+    },
+  };
+}
+
 export function collapsedEquivalent(pay: HoganWeekPay): {
   regularExclWeekendHours: number;
   regularExclWeekendPayPhp: number;

@@ -127,6 +127,43 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
  * may be a jsonb round-trip, so key ORDER must not matter and numbers compare
  * with the same sub-centavo tolerance as every other figure here).
  */
+/**
+ * Field-wise equality for two payload-shaped `hogan_sheet` blocks (the HSL
+ * sheet-form legs, 2026-08-11) — same jsonb-round-trip and tolerance rules as
+ * {@link sameProrationBlock}.
+ */
+function sameHoganBlock(a: unknown, b: unknown): boolean {
+  const ao = a && typeof a === "object" ? (a as Record<string, unknown>) : null;
+  const bo = b && typeof b === "object" ? (b as Record<string, unknown>) : null;
+  if (!ao || !bo) return ao === bo || (!ao && !bo);
+  if (
+    !sameAmount(ao.mf_hours, bo.mf_hours) ||
+    !sameAmount(ao.we_hours, bo.we_hours) ||
+    !sameAmount(ao.ot_hours, bo.ot_hours)
+  ) {
+    return false;
+  }
+  const aRates = ao.rates_php && typeof ao.rates_php === "object" ? obj(ao.rates_php) : null;
+  const bRates = bo.rates_php && typeof bo.rates_php === "object" ? obj(bo.rates_php) : null;
+  if (!aRates !== !bRates) return false;
+  if (aRates && bRates) {
+    if (
+      !sameAmount(aRates.regular, bRates.regular) ||
+      !sameAmount(aRates.weekend, bRates.weekend) ||
+      !sameAmount(aRates.ot_differential, bRates.ot_differential)
+    ) {
+      return false;
+    }
+  }
+  const aPay = obj(ao.pay_php);
+  const bPay = obj(bo.pay_php);
+  return (
+    sameAmount(aPay.base, bPay.base) &&
+    sameAmount(aPay.weekend, bPay.weekend) &&
+    sameAmount(aPay.ot_differential, bPay.ot_differential)
+  );
+}
+
 function sameProrationBlock(a: unknown, b: unknown): boolean {
   const ao = a && typeof a === "object" ? (a as Record<string, unknown>) : null;
   const bo = b && typeof b === "object" ? (b as Record<string, unknown>) : null;
@@ -283,8 +320,15 @@ export function mergeSnapshotIntoStaged(
     const snapReg = numOrNull(entry.regularRate);
     const snapOt = numOrNull(entry.otRate);
     const regStale = snapReg != null && Math.abs(snapReg - catalogRatePhp.regular) > 0.005;
+    // Sheet-form snapshots (HSL 2026-08-11) store the DERIVED 0.5× differential
+    // as `otRate`, which never matches the catalog's standalone OT column —
+    // and doesn't need to: the differential derives from the regular rate, so
+    // the regular-rate check above fully covers staleness for those rows.
     const otStale =
-      snapOt != null && catalogRatePhp.ot != null && Math.abs(snapOt - catalogRatePhp.ot) > 0.005;
+      entry.hoganSheet == null &&
+      snapOt != null &&
+      catalogRatePhp.ot != null &&
+      Math.abs(snapOt - catalogRatePhp.ot) > 0.005;
     if (regStale || otStale) {
       return { ...base, staleRateSnapshot: true };
     }
@@ -378,6 +422,17 @@ export function mergeSnapshotIntoStaged(
   const nextProration = !hasProrationField ? oldProration : (entry.proration ?? null);
   const prorationChanged = hasProrationField && !sameProrationBlock(oldProration, entry.proration ?? null);
 
+  // ── Hogan sheet-form legs (snapshots since 2026-08-11) ──
+  // Same contract again: the block IS the statement's M-F / Weekend /
+  // OT-Differential lines, so it must move in the same write as the regular/OT
+  // figures it decomposes. Older snapshots (field undefined) can't speak for
+  // it; `null` means not a sheet-form row and clears a stale block.
+  const oldHogan =
+    p.hogan_sheet && typeof p.hogan_sheet === "object" ? (p.hogan_sheet as Record<string, unknown>) : null;
+  const hasHoganField = entry.hoganSheet !== undefined;
+  const nextHogan = !hasHoganField ? oldHogan : (entry.hoganSheet ?? null);
+  const hoganChanged = hasHoganField && !sameHoganBlock(oldHogan, entry.hoganSheet ?? null);
+
   // Field-by-field change detection (NOT JSON.stringify — jsonb round-trips
   // reorder keys, which would flag every merge as a change). fx_rate is part of
   // the statement too (the USD line), so an fx-only snapshot update must merge.
@@ -387,6 +442,7 @@ export function mergeSnapshotIntoStaged(
     (Object.keys(nextRates) as Array<keyof typeof nextRates>).some((k) => !sameAmount(oldRates[k], nextRates[k])) ||
     weekendChanged ||
     prorationChanged ||
+    hoganChanged ||
     (snapFx > 0 && !sameAmount(oldPeriod.fx_rate, snapFx)) ||
     (nextNote ?? null) !== ((typeof p.adjustment_note === "string" ? p.adjustment_note : null) ?? null);
   if (!changed) return base;
@@ -400,6 +456,8 @@ export function mergeSnapshotIntoStaged(
     ...(hasWeekendFields ? { weekend: nextWeekend } : {}),
     // Same rule for the proration block (see above).
     ...(hasProrationField ? { proration: nextProration } : {}),
+    // Same rule for the Hogan sheet-form block (see above).
+    ...(hasHoganField ? { hogan_sheet: nextHogan } : {}),
     rates_php: nextRates,
     pay_php: nextPay,
     adjustment_note: nextNote,

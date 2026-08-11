@@ -566,3 +566,67 @@ test('weekend segments: empty segments fall back to the bucket check', () => {
   assert.equal(wk.displayedRate, 240);
   assert.equal(wk.deltaPhp, 120);
 });
+
+// ── Hogan sheet-form rows (2026-08-11) ───────────────────────────────────────
+// The statement renders M-F / Weekend / OT-Differential from `hogan_sheet`;
+// those legs are validated with NO headroom, and the bucket checks are skipped
+// (pay_php.regular = base + weekend legs against 40h-capped hours.regular —
+// arithmetic that corresponds to no displayed line).
+
+test('hogan legs: a clean sheet-form row reports nothing', () => {
+  // angelicaco 2026-08-02: buckets deliberately "inconsistent" (40h × 235 ≠
+  // 10,321.80) — exactly why they must be skipped when the legs are present.
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 40, ot: 3.3517 },
+    ratesPhp: { regular: 235, ot: 117.5 },
+    payPhp: { regular: 10321.8, ot: 393.63 },
+    isHsl: true,
+    hogan: {
+      mfHours: 34.38,
+      weHours: 8.97,
+      otHours: 3.35,
+      rates: { regular: 235, weekend: 250, otDifferential: 117.5 },
+      pay: { base: 8079.3, weekend: 2242.5, otDifferential: 393.63 },
+    },
+  });
+  assert.deepEqual(issues, []);
+});
+
+test('hogan legs: a weekend leg that does not reproduce its rate is flagged', () => {
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 40, ot: 3.3517 },
+    ratesPhp: { regular: 235, ot: 117.5 },
+    payPhp: { regular: 10321.8, ot: 393.63 },
+    isHsl: true,
+    hogan: {
+      mfHours: 34.38,
+      weHours: 8.97,
+      otHours: 3.35,
+      rates: { regular: 235, weekend: 250, otDifferential: 117.5 },
+      // Weekend money computed at a stale ₱240 (base 225 + 15) under a ₱250 label.
+      pay: { base: 8079.3, weekend: 2152.8, otDifferential: 393.63 },
+    },
+  });
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].line, 'weekend');
+  assert.ok(issues[0].deltaPhp > 0, 'shortfall must be positive (underpaid)');
+});
+
+test('hogan legs: the 0.5× differential line is validated exactly', () => {
+  const issues = findRateConsistencyIssues({
+    hours: { regular: 40, ot: 2 },
+    ratesPhp: { regular: 235, ot: 117.5 },
+    payPhp: { regular: 9400, ot: 705 },
+    isHsl: true,
+    hogan: {
+      mfHours: 42,
+      weHours: 0,
+      otHours: 2,
+      rates: { regular: 235, weekend: 250, otDifferential: 117.5 },
+      // 2h × 117.50 is 235, but the row pays 705 (a full-rate 352.50 leg —
+      // the old policy leaking through) → surplus, flagged.
+      pay: { base: 9870, weekend: 0, otDifferential: 705 },
+    },
+  });
+  assert.ok(issues.some((i) => i.line === 'ot'));
+});

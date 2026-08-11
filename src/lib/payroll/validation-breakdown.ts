@@ -76,6 +76,12 @@ export type BreakdownInput = {
   otHours: number;
   regularRate: number | null;
   otRate: number | null;
+  /**
+   * True when `otRate` is the sheet-form 0.5× DIFFERENTIAL (HSL, 2026-08-11)
+   * rather than a full standalone OT rate — the `ot_ratio` audit then expects
+   * it to equal `regular × 0.5` instead of `regular × 1.5`.
+   */
+  otRateIsDifferential?: boolean;
   regularPay: number | null;
   otPay: number | null;
   initialPay: number | null;
@@ -207,8 +213,13 @@ function deriveFlags(
   // A permanent regression net for the reg+15 corruption fixed 2026-08-04, where the
   // weekend premium had been mis-keyed into the OT rate column and ten HSL people were
   // underpaid on every overtime hour. Expected to report zero — the value is the next one.
+  // Since 2026-08-11 sheet-form rows DISPLAY the 0.5× differential as their OT rate
+  // (input.otRateIsDifferential), so the audit expects `regular × 0.5` there; legacy
+  // rows (no daily columns) still display a full standalone rate audited at 1.50×.
   if (input.isHsl && b.rates != null && b.rates.ot != null && b.rates.otDifferential != null) {
-    const expectedOtRate = round2(b.rates.mf + b.rates.otDifferential); // mf × 1.5
+    const expectedOtRate = input.otRateIsDifferential
+      ? b.rates.otDifferential // mf × 0.5 — the sheet's AG column
+      : round2(b.rates.mf + b.rates.otDifferential); // mf × 1.5
     // The delta is rounded before comparing because two rounding conventions are both
     // live in this codebase: the Hogan sheet derives the differential two-step
     // (mf × 0.5, then + mf, each step rounded — see hogan-week-pay.ts), while
@@ -225,7 +236,7 @@ function deriveFlags(
         message:
           `OT rate is ${formatPHP(b.rates.ot)}/h against a ${formatPHP(b.rates.mf)}/h ` +
           `regular rate — ${ratio.toFixed(2)}×, where the sheet derives ` +
-          `${formatPHP(expectedOtRate)}/h (1.50×).`,
+          `${formatPHP(expectedOtRate)}/h (${input.otRateIsDifferential ? '0.50× differential' : '1.50×'}).`,
       });
     }
   }

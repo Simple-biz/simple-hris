@@ -500,3 +500,110 @@ test('an old-shape snapshot over a payload WITHOUT a proration block never inven
   assert.equal(r.refreshed, true);
   assert.equal('proration' in (r.payload as Record<string, unknown>), false);
 });
+
+// ── Hogan sheet-form block through the merge (2026-08-11) ────────────────────
+// Same travel-together contract as the weekend block: the `hogan_sheet` legs
+// ARE the statement's M-F / Weekend / OT-Differential lines, so a refresh that
+// moves the figures must move the block in the same write. And a sheet-form
+// snapshot stores the DERIVED 0.5× differential as `otRate`, which must never
+// trip the catalog staleness gate — the regular-rate check covers it.
+
+const hoganOf = (p: unknown) =>
+  (p as Record<string, unknown>).hogan_sheet as Record<string, unknown> | null | undefined;
+
+test('a snapshot carrying hoganSheet rewrites the staged block in the same merge', () => {
+  const staged = hslStagedRow();
+  (staged.payload as Record<string, unknown>).hogan_sheet = {
+    mf_hours: 40,
+    we_hours: 4,
+    ot_hours: 4,
+    rates_php: { regular: 225, weekend: 240, ot_differential: 112.5 },
+    pay_php: { base: 9000, weekend: 960, ot_differential: 450 },
+  };
+  const entry = snapEntry({
+    regularRate: 225,
+    otRate: 112.5,
+    regularPay: 9960,
+    otPay: 337.5,
+    initial: 10297.5,
+    final: 10197.5,
+    otHours: 3,
+    totalHours: 43,
+    weekendRegularHours: 3,
+    weekendOtHours: 0,
+    weekendRegularPay: 720,
+    weekendOtPay: 0,
+    hoganSheet: {
+      mf_hours: 40,
+      we_hours: 3,
+      ot_hours: 3,
+      rates_php: { regular: 225, weekend: 240, ot_differential: 112.5 },
+      pay_php: { base: 9000, weekend: 720, ot_differential: 337.5 },
+    },
+  });
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER, CLAIM_225);
+  assert.equal(r.refreshed, true);
+  const h = hoganOf(r.payload);
+  assert.ok(h);
+  assert.equal(h.we_hours, 3);
+  assert.deepEqual(h.pay_php, { base: 9000, weekend: 720, ot_differential: 337.5 });
+});
+
+test('an old-shape snapshot (no hoganSheet field) leaves the staged block untouched', () => {
+  const staged = hslStagedRow();
+  (staged.payload as Record<string, unknown>).hogan_sheet = {
+    mf_hours: 40,
+    we_hours: 4,
+    ot_hours: 4,
+    rates_php: { regular: 225, weekend: 240, ot_differential: 112.5 },
+    pay_php: { base: 9000, weekend: 960, ot_differential: 450 },
+  };
+  const entry = snapEntry({
+    regularRate: 225,
+    otRate: 337.5,
+    regularPay: 9030,
+    otPay: 352.5,
+    initial: 9382.5,
+    final: 9282.5,
+    otHours: 1,
+    totalHours: 43,
+    weekendRegularHours: 2,
+    weekendOtHours: 1,
+    weekendRegularPay: 480,
+    weekendOtPay: 352.5,
+  });
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER, CLAIM_225);
+  assert.equal(r.refreshed, true);
+  const h = hoganOf(r.payload);
+  assert.ok(h, 'staged hogan_sheet must survive an old-shape snapshot merge');
+  assert.equal(h.we_hours, 4);
+});
+
+test('a sheet-form differential otRate never trips the catalog staleness gate', () => {
+  const staged = hslStagedRow();
+  const entry = snapEntry({
+    regularRate: 225,
+    // 0.5 × 225 — nothing like the catalog's stored 337.50, and rightly so.
+    otRate: 112.5,
+    regularPay: 9030,
+    otPay: 450,
+    initial: 9480,
+    final: 9380,
+    otHours: 4,
+    totalHours: 44,
+    weekendRegularHours: 4,
+    weekendOtHours: 0,
+    weekendRegularPay: 960,
+    weekendOtPay: 0,
+    hoganSheet: {
+      mf_hours: 40,
+      we_hours: 4,
+      ot_hours: 4,
+      rates_php: { regular: 225, weekend: 240, ot_differential: 112.5 },
+      pay_php: { base: 9000, weekend: 960, ot_differential: 450 },
+    },
+  });
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER, CLAIM_225);
+  assert.equal(r.staleRateSnapshot ?? false, false);
+  assert.equal(r.refreshed, true);
+});

@@ -32,6 +32,7 @@ import {
   type CurrentPayResult,
 } from "@/lib/payroll/current-pay";
 import { loadWeekDiscretionary, loadFinalPayForWeeks } from "@/lib/payroll/paystub-recovery";
+import type { HoganSheetBlockRaw } from "@/lib/payroll/hogan-week-pay";
 import { resolveEmployeeProcessor, resolvePayDateIso } from "@/lib/payroll/pay-schedule";
 import { dedupeOneRowPerWeek } from "@/lib/payroll/paystub-week-dedupe";
 import { getEmployeeMasterRecord } from "@/lib/supabase/employees";
@@ -167,6 +168,10 @@ function buildView(p: {
    *  statement's "Prorated" chip + `₱old → ₱new` + hour basis on the affected
    *  lines. Omit/null → classic single-rate lines. */
   proration?: ProrationBlockRaw | null;
+  /** Hogan sheet-form legs (snapshots since 2026-08-11) — the statement's
+   *  M-F / Weekend / OT-Differential lines for HSL. Omit/null → the classic
+   *  weekend-carve derivation below. */
+  hoganSheet?: HoganSheetBlockRaw | null;
   pab: number;
   tech: number;
   performanceBonus: number;
@@ -179,10 +184,22 @@ function buildView(p: {
   fxRate: number;
 }): PayStubView {
   const wknd = p.weekend ?? null;
-  const weekdayHours = wknd ? Math.max(0, round2(p.regularHours - wknd.regularHours)) : round2(p.regularHours);
-  const weekdayOtHours = wknd ? Math.max(0, round2(p.otHours - wknd.otHours)) : round2(p.otHours);
-  const weekdayPay = wknd ? round2(p.mfPay - wknd.regularPay) : p.mfPay;
-  const weekdayOtPay = wknd ? round2(p.otPay - wknd.otPay) : p.otPay;
+  const hogan = p.hoganSheet ?? null;
+  // Sheet-form snapshots (HSL 2026-08-11): the block's own legs are the lines.
+  // `regularHours` is the 40h-capped bucket, so subtraction would understate
+  // the M-F line — the sheet's AB column includes the past-cap hours.
+  const weekdayHours = hogan
+    ? round2(hogan.mf_hours)
+    : wknd ? Math.max(0, round2(p.regularHours - wknd.regularHours)) : round2(p.regularHours);
+  const weekdayOtHours = hogan
+    ? round2(hogan.ot_hours)
+    : wknd ? Math.max(0, round2(p.otHours - wknd.otHours)) : round2(p.otHours);
+  const weekdayPay = hogan
+    ? round2(hogan.pay_php.base)
+    : wknd ? round2(p.mfPay - wknd.regularPay) : p.mfPay;
+  const weekdayOtPay = hogan
+    ? round2(hogan.pay_php.ot_differential)
+    : wknd ? round2(p.otPay - wknd.otPay) : p.otPay;
   const prorFigures = parseProrationBlock({ proration: p.proration ?? null });
   // Merged Weekend Hours basis (2026-08-07): prefer the proration block's
   // per-day weekend segments (rate + ₱15 premium — same preference as the
@@ -221,26 +238,33 @@ function buildView(p: {
     // With a weekend split the Regular line shows the WEEKDAY figures, so its
     // rate is derived from those; the merged weekend line carries its own
     // per-bucket effective rates in `weekendBasis` (premium already inside).
-    mfRate: wknd
-      ? weekdayHours > 0
-        ? round2(weekdayPay / weekdayHours)
-        : 0
-      : p.regularHours > 0
-        ? round2(p.mfPay / p.regularHours)
-        : 0,
-    otRate: wknd
-      ? weekdayOtHours > 0
-        ? round2(weekdayOtPay / weekdayOtHours)
-        : 0
-      : p.otHours > 0
-        ? round2(p.otPay / p.otHours)
-        : 0,
+    mfRate: hogan?.rates_php
+      ? hogan.rates_php.regular
+      : wknd
+        ? weekdayHours > 0
+          ? round2(weekdayPay / weekdayHours)
+          : 0
+        : p.regularHours > 0
+          ? round2(p.mfPay / p.regularHours)
+          : 0,
+    otRate: hogan?.rates_php
+      ? hogan.rates_php.ot_differential
+      : wknd
+        ? weekdayOtHours > 0
+          ? round2(weekdayOtPay / weekdayOtHours)
+          : 0
+        : p.otHours > 0
+          ? round2(p.otPay / p.otHours)
+          : 0,
     mfPay: p.mfPay,
     otPay: p.otPay,
     hasWeekend: wknd != null,
-    weekendHours: wknd ? round2(wknd.regularHours + wknd.otHours) : 0,
-    weekendPay: wknd ? round2(wknd.regularPay + wknd.otPay) : 0,
-    weekendBasis,
+    otIsDifferential: hogan != null,
+    weekendHours: hogan ? round2(hogan.we_hours) : wknd ? round2(wknd.regularHours + wknd.otHours) : 0,
+    weekendPay: hogan ? round2(hogan.pay_php.weekend) : wknd ? round2(wknd.regularPay + wknd.otPay) : 0,
+    weekendBasis: hogan?.rates_php
+      ? [{ ratePhp: hogan.rates_php.weekend, hours: round2(hogan.we_hours) }]
+      : weekendBasis,
     weekdayHours,
     weekdayOtHours,
     weekdayPay,
@@ -342,6 +366,8 @@ async function reconstructStubForWeek(params: {
           : null,
       // Mid-week proration — snapshots since 2026-07-30; older ones render classic.
       proration: fp.proration ?? null,
+      // Hogan sheet-form legs — snapshots since 2026-08-11; older ones render classic.
+      hoganSheet: fp.hoganSheet ?? null,
       pab: round2(fp.perfectAttendanceBonus as number),
       tech: round2(fp.techBonus as number),
       performanceBonus: round2(fp.otherBonuses as number),

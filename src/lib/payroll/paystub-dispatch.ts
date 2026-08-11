@@ -118,10 +118,32 @@ function findUnderpaidLines(employees: unknown[]): string[] {
             }))
             .filter((s) => [s.ratePhp, s.hours, s.payPhp].every(Number.isFinite))
         : [];
+    // Sheet-form payloads (HSL 2026-08-11) carry their three displayed legs in
+    // `hogan_sheet` — the checker validates those and skips the bucket checks,
+    // whose arithmetic no longer corresponds to any rendered line.
+    const hoganRaw = emp.hogan_sheet as
+      | {
+          mf_hours?: number | null;
+          we_hours?: number | null;
+          ot_hours?: number | null;
+          rates_php?: {
+            regular?: number | null;
+            weekend?: number | null;
+            ot_differential?: number | null;
+          } | null;
+          pay_php?: {
+            base?: number | null;
+            weekend?: number | null;
+            ot_differential?: number | null;
+          } | null;
+        }
+      | null
+      | undefined;
     const issues = findRateConsistencyIssues({
       hours: emp.hours as { regular?: number | null; ot?: number | null } | null,
       ratesPhp: emp.rates_php as { regular?: number | null; ot?: number | null } | null,
       payPhp: emp.pay_php as { regular?: number | null; ot?: number | null } | null,
+      hasMidPeriodChange: !!emp.proration,
       weekend: wknd
         ? {
             hours: wknd.hours ?? null,
@@ -131,6 +153,27 @@ function findUnderpaidLines(employees: unknown[]): string[] {
               ? {
                   regular: toSegs(prorSegs.weekend_regular),
                   ot: toSegs(prorSegs.weekend_ot),
+                }
+              : null,
+          }
+        : null,
+      hogan: hoganRaw
+        ? {
+            mfHours: hoganRaw.mf_hours,
+            weHours: hoganRaw.we_hours,
+            otHours: hoganRaw.ot_hours,
+            rates: hoganRaw.rates_php
+              ? {
+                  regular: hoganRaw.rates_php.regular,
+                  weekend: hoganRaw.rates_php.weekend,
+                  otDifferential: hoganRaw.rates_php.ot_differential,
+                }
+              : null,
+            pay: hoganRaw.pay_php
+              ? {
+                  base: hoganRaw.pay_php.base,
+                  weekend: hoganRaw.pay_php.weekend,
+                  otDifferential: hoganRaw.pay_php.ot_differential,
                 }
               : null,
           }

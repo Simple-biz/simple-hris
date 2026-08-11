@@ -238,16 +238,17 @@ export function renderPayStubEmailHtml(
   const pror = view.proration;
   const weekHuman = view.weekHuman || '—';
 
-  /* Earnings. Regular/Overtime carry the WEEKDAY portion when an HSL week has a
-     weekend carve-out; ONE Weekend Hours row then carries ALL of Sat+Sun
-     (2026-08-07 — the old Weekend Overtime row folded into it). The buckets pay
-     at different premium-inclusive rates, so a mixed weekend renders the
-     per-rate basis (`weekendBasis`); the three lines sum to exactly the old
-     two. Non-HSL weeks have `hasWeekend: false` — no Weekend row at all, and
-     weekday === the full-week totals, so those statements are unchanged. */
+  /* Earnings. Sheet-form HSL stubs (2026-08-11, view.otIsDifferential) render
+     the Hogan sheet's three-stage form: "M-F Hours" = ALL Mon–Fri hours at the
+     regular rate (past-cap included), ONE Weekend Hours row = ALL Sat+Sun at
+     (regular + 15), and "OT Differential" = hours-past-40 × (regular × 0.5) on
+     top of base already paid. Pre-2026-08-11 HSL stubs keep their staged
+     weekday-by-subtraction split with a full-rate "Overtime" line. Non-HSL
+     weeks have `hasWeekend: false` — no Weekend row at all, and weekday ===
+     the full-week totals, so those statements are unchanged. */
   const earnings: string[] = [
     renderRow({
-      label: 'Regular Hours',
+      label: view.otIsDifferential ? 'M-F Hours' : 'Regular Hours',
       prorated: Boolean(pror?.regular),
       detail: pror?.regular
         ? proratedRateDetail(view.weekdayHours, pror.regular, pror.effectiveHuman)
@@ -255,7 +256,7 @@ export function renderPayStubEmailHtml(
       amount: php(view.weekdayPay),
     }),
     renderRow({
-      label: 'Overtime',
+      label: view.otIsDifferential ? 'OT Differential' : 'Overtime',
       prorated: Boolean(pror?.ot),
       detail: pror?.ot
         ? proratedRateDetail(view.weekdayOtHours, pror.ot, pror.effectiveHuman)

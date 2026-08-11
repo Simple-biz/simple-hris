@@ -40,6 +40,16 @@ export interface PayStubView {
    * weekday === mf then.
    */
   hasWeekend: boolean;
+  /**
+   * True when the payload carries the Hogan sheet-form legs (`hogan_sheet`,
+   * HSL since 2026-08-11): the Overtime line is then the 0.5× DIFFERENTIAL —
+   * hours past 40 × (regular × 0.5), on top of base already paid — and
+   * renderers label it "OT Differential" instead of implying a full re-rate.
+   * The weekday line's hours come from the block too (`mf_hours` INCLUDES the
+   * past-cap hours, like the sheet's AB column — the 40h-capped bucket minus
+   * the weekend carve would understate them).
+   */
+  otIsDifferential: boolean;
   /** ALL Sat+Sun hours — both pay buckets merged. */
   weekendHours: number;
   /** ALL Sat+Sun money — both pay buckets, premium included. */
@@ -530,6 +540,46 @@ export function deriveProrationFields(
   };
 }
 
+/** Normalized `hogan_sheet` block as staged on a payload / snapshot. */
+export interface HoganFigures {
+  mfHours: number;
+  weHours: number;
+  otHours: number;
+  rates: { regular: number; weekend: number; otDifferential: number } | null;
+  pay: { base: number; weekend: number; otDifferential: number };
+}
+
+/**
+ * Parse a payload's `hogan_sheet` block (HSL, staged since 2026-08-11 — the
+ * sheet's three-stage form; see hogan-week-pay.ts). Absent/null → null, which
+ * keeps the pre-existing weekend-block derivation, so older payloads render
+ * exactly as staged.
+ */
+export function parseHoganSheetBlock(payload: Json): HoganFigures | null {
+  const p = obj(payload);
+  if (!p.hogan_sheet || typeof p.hogan_sheet !== 'object') return null;
+  const h = obj(p.hogan_sheet);
+  const rates = h.rates_php && typeof h.rates_php === 'object' ? obj(h.rates_php) : null;
+  const pay = obj(h.pay_php);
+  return {
+    mfHours: num(h.mf_hours),
+    weHours: num(h.we_hours),
+    otHours: num(h.ot_hours),
+    rates: rates
+      ? {
+          regular: num(rates.regular),
+          weekend: num(rates.weekend),
+          otDifferential: num(rates.ot_differential),
+        }
+      : null,
+    pay: {
+      base: num(pay.base),
+      weekend: num(pay.weekend),
+      otDifferential: num(pay.ot_differential),
+    },
+  };
+}
+
 /**
  * Parse a payload's `weekend` block (HSL rows only — see `DispatchEmployee` in
  * PayrollWizard). Absent/null → null, which renders the classic two-line
@@ -582,6 +632,7 @@ export function mapPayloadToPayStub(payload: Json, payPeriod?: Json): PayStubVie
 
   const weekendFigures = parseWeekendBlock(payload);
   const prorationFigures = parseProrationBlock(payload);
+  const hoganFigures = parseHoganSheetBlock(payload);
 
   return {
     name: str(p.name),
@@ -592,6 +643,29 @@ export function mapPayloadToPayStub(payload: Json, payPeriod?: Json): PayStubVie
     salaryDate: period.salary_date ? str(period.salary_date) : null,
     ...baseFigures,
     ...deriveWeekendFields(baseFigures, weekendFigures, prorationFigures?.segments ?? null),
+    // Sheet-form payloads (HSL 2026-08-11): the block's own legs replace the
+    // subtraction-derived weekday figures. `hours.regular` is the 40h-capped
+    // bucket, so `capped − weekend` would UNDERSTATE the M-F line — the
+    // sheet's AB column includes the past-cap hours. Money is identical on
+    // both paths; hours and rate labels are what the block corrects.
+    ...(hoganFigures
+      ? {
+          weekdayHours: round2(hoganFigures.mfHours),
+          weekdayOtHours: round2(hoganFigures.otHours),
+          weekdayPay: round2(hoganFigures.pay.base),
+          weekdayOtPay: round2(hoganFigures.pay.otDifferential),
+          weekendHours: round2(hoganFigures.weHours),
+          weekendPay: round2(hoganFigures.pay.weekend),
+          ...(hoganFigures.rates
+            ? {
+                weekendBasis: [
+                  { ratePhp: hoganFigures.rates.weekend, hours: round2(hoganFigures.weHours) },
+                ],
+              }
+            : {}),
+        }
+      : {}),
+    otIsDifferential: hoganFigures != null,
     proration: deriveProrationFields(prorationFigures, weekendFigures),
     techBonus: num(pay.tech_bonus),
     attendanceBonus: num(pay.perfect_attendance_bonus),

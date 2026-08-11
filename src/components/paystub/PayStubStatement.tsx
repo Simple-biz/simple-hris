@@ -391,23 +391,23 @@ export function PayStubStatement({
         <div className={`${SEC_PAD} border-b border-[#e2e8f0] pb-[5px]`}>
           <div className={SEC_HEAD}>Earnings</div>
           <StatementTable caption="Earnings" detailHead="Hours × Rate">
-            {/* HSL weeks split the hours: Regular/Overtime carry the WEEKDAY
-                portion and ONE Weekend Hours row carries ALL of Sat+Sun
-                (2026-08-07 — the old Weekend Overtime row folded into it, so
-                "Overtime" is the only OT-labelled line). The buckets still pay
-                at different premium-inclusive rates — a weekend day past the
-                40h cap pays (otRate + ₱15) — so a mixed weekend renders the
-                per-rate basis (`weekendBasis`) instead of a single rate. The
-                three lines sum exactly to the old two. Non-HSL (and pre-split)
-                stubs: weekday === full totals and the weekend row doesn't
-                render, so nothing changes. */}
+            {/* HSL weeks render the Hogan sheet's three-stage form (2026-08-11,
+                view.otIsDifferential): "M-F Hours" carries ALL Mon–Fri hours at
+                the regular rate (past-cap included — they never re-rate), ONE
+                Weekend Hours row carries ALL of Sat+Sun at (regular + 15), and
+                "OT Differential" adds hours-past-40 × (regular × 0.5) on top of
+                base already paid. The three lines sum exactly to initial pay.
+                Pre-2026-08-11 HSL stubs keep their staged split (weekday-by-
+                subtraction, "Overtime" full-rate line, mixed weekendBasis).
+                Non-HSL (and pre-split) stubs: weekday === full totals and the
+                weekend row doesn't render, so nothing changes. */}
             {/* A mid-week transfer / dated rate change prorates a line across two
                 rates. Affected lines keep their EXACT row — the "Prorated" chip
                 joins the label and the detail cell shows `₱old → ₱new` plus the
                 per-rate hour basis. Lines paid at one rate (view.proration null
                 or that line's entry null) render classic, byte-identical. */}
             <EarningRow
-              label="Regular Hours"
+              label={view.otIsDifferential ? 'M-F Hours' : 'Regular Hours'}
               badge={view.proration?.regular ? <ProratedChip /> : null}
               detail={
                 view.proration?.regular ? (
@@ -423,7 +423,7 @@ export function PayStubStatement({
               amount={php(view.weekdayPay ?? view.mfPay)}
             />
             <EarningRow
-              label="Overtime"
+              label={view.otIsDifferential ? 'OT Differential' : 'Overtime'}
               badge={view.proration?.ot ? <ProratedChip /> : null}
               detail={
                 view.proration?.ot ? (

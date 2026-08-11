@@ -383,14 +383,15 @@ test('HSL weekend money stays inside its rate segment, with a weekend carve-out 
   assert.deepEqual(r.weekend, { regularHours: 4, otHours: 0, regularPay: 960, otPay: 0 });
 });
 
-// ── 2026-08-07 (Kane): the weekend OVERTIME rate is gone ────────────────────
-// A weekend hour past the 40h cap is plain overtime at the regular OT rate —
-// no +15 premium, no weekend-OT carve. The +15 applies only to weekend hours
-// WITHIN the cap (the Weekend Hours line). Before this change the Saturday
-// below paid 4 × (281.25 + 15) = ₱1,185 with a weekend-OT carve mirroring it.
+// ── 2026-08-11 (Kane): HSL pays the Hogan sheet's three-stage form ──────────
+// M–F hours never re-rate; ALL Sat+Sun hours earn the +15 premium (past-cap
+// included); overtime money is ONLY the derived differential — past-cap hours ×
+// 0.5 × that day's REGULAR rate. The stored OT rate is not a money input for
+// HSL. This reverses the 2026-08-07 within-cap scoping, whose pin previously
+// lived here (Sat 4h → 4 × 281.25 plain OT, no carve).
 
-test('weekend hours past the 40h cap pay plain OT: no premium, no weekend-OT carve', () => {
-  // Mon–Fri 8h/day fills the 40h cap; Sat 4h is entirely overtime.
+test('HSL weekend hours past the 40h cap keep the +15; OT is the 0.5× differential', () => {
+  // Mon–Fri 8h/day fills the 40h cap; Sat 4h crosses it entirely on the weekend.
   const r = proratePayForMidPeriodChange({
     days: [
       { date: new Date(2026, 6, 20), seconds: 8 * 3600 },
@@ -407,13 +408,35 @@ test('weekend hours past the 40h cap pay plain OT: no premium, no weekend-OT car
     fallbackOt: 281.25,
   });
   assert.ok(r);
-  // Mon+Tue 16×175 + Wed–Fri 24×225 = 2,800 + 5,400 (Sat contributes no regular).
-  assert.equal(r.regularPay, 8200);
-  // Sat 4h OT at the PLAIN regular-OT rate: 4 × 281.25 = 1,125 — not 4 × 296.25.
-  assert.equal(r.otPay, 1125);
-  assert.deepEqual(r.segments.ot, [{ ratePhp: 281.25, hours: 4, payPhp: 1125 }]);
-  // No weekend-OT carve anywhere: the OT money belongs to the Overtime line.
-  assert.deepEqual(r.weekend, { regularHours: 0, otHours: 0, regularPay: 0, otPay: 0 });
+  // Every hour is base-paid once: Mon+Tue 16×175 + Wed–Fri 24×225 + Sat 4×(225+15).
+  assert.equal(r.regularPay, 9160);
+  // Sat 4h past the cap add ONLY the differential: 4 × (0.5 × 225) = ₱450.
+  assert.equal(r.otPay, 450);
+  assert.deepEqual(r.segments.ot, [{ ratePhp: 112.5, hours: 4, payPhp: 450 }]);
+  assert.deepEqual(r.otRatesUsed, [112.5]);
+  // The weekend carve covers ALL weekend hours — past-cap included.
+  assert.deepEqual(r.weekend, { regularHours: 4, otHours: 0, regularPay: 960, otPay: 0 });
+  assert.deepEqual(r.segments.weekendRegular, [{ ratePhp: 225, hours: 4, payPhp: 960 }]);
   assert.deepEqual(r.segments.weekendOt, []);
-  assert.deepEqual(r.segments.weekendRegular, []);
+});
+
+test('HSL: a stored OT rate never moves money — only the regular rate does', () => {
+  // Constant ₱225 regular all week; the history's stored OT (281.25 = 1.25×,
+  // i.e. corrupt) must neither price the differential nor force an override
+  // when the regular rate matches the cache. This is what routes single-rate
+  // HSL weeks to the sheet-exact computeHoganWeekPay path in the caller.
+  const constant = proratePayForMidPeriodChange({
+    days: [
+      { date: new Date(2026, 6, 22), seconds: 8 * 3600 },
+      { date: new Date(2026, 6, 25), seconds: 4 * 3600 },
+    ],
+    isHsl: true,
+    history: historyMap([
+      { email: EMAIL, regularRate: 225, otRate: 281.25, effectiveFrom: new Date(2026, 0, 1) },
+    ]),
+    histEmail: EMAIL,
+    fallbackReg: 225,
+    fallbackOt: 337.5, // cache says 1.5× — history's stored OT disagrees, but neither pays
+  });
+  assert.equal(constant, null);
 });

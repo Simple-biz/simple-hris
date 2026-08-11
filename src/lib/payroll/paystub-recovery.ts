@@ -28,6 +28,7 @@
  */
 import { getAppSetting, getAppSettings } from "@/lib/supabase/app-settings";
 import type { ProrationBlockRaw } from "@/lib/payroll/paystub-view";
+import type { HoganSheetBlockRaw } from "@/lib/payroll/hogan-week-pay";
 
 /** One employee's exact figures from `payroll.wizard.final_pay.<sourceFile>`. */
 export interface WizardFinalPayEntry {
@@ -81,6 +82,12 @@ export interface WizardFinalPayEntry {
    *  mid-period change; undefined (older snapshots) = the merge keeps whatever
    *  block the staged payload already carries. */
   proration?: ProrationBlockRaw | null;
+  /** The Hogan sheet-form legs (added 2026-08-11), payload-shaped — the
+   *  M-F / Weekend / OT-Differential lines the statement renders for HSL.
+   *  Same travel-together contract as the weekend block: null = not an HSL
+   *  sheet-form row; undefined (older snapshots) = the merge keeps whatever
+   *  block the staged payload already carries. */
+  hoganSheet?: HoganSheetBlockRaw | null;
 }
 
 /** The discretionary overlay recovered for one employee + week. */

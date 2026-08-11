@@ -658,3 +658,77 @@ test('parseProrationBlock: normalizes a full block, dropping malformed segments'
 test('deriveProrationFields: null block → null view', () => {
   assert.equal(deriveProrationFields(null, null), null);
 });
+
+// ── Hogan sheet-form payloads (2026-08-11): M-F / Weekend / OT-Differential ──
+// Kane's rule (see hogan-week-pay.ts): every HSL hour base-paid once, ALL
+// weekend hours at (regular + 15), overtime = hours-past-40 × (regular × 0.5).
+// The payload's `hogan_sheet` block carries the three legs; the view renders
+// them instead of the capped-bucket subtraction, whose weekday HOURS would be
+// wrong (hours.regular is the 40h bucket; the sheet's AB includes past-cap).
+
+/** angelicaco@ 2026-08-02 week, as the wizard stages it: M-F 34.38h + Sat
+ *  8.97h at ₱235, cap crossed mid-Saturday. Sheet legs 8,079.30 + 2,242.50 +
+ *  3.35 × 117.50 = ₱10,715.43 (+ ₱5,400 bonuses = ₱16,115.43 — Kane's pin). */
+function hoganSheetPayload(): Record<string, unknown> {
+  return {
+    name: 'Angelica Comilang',
+    department_name: 'Hogan Smith Law',
+    hours: { total: 43.35, regular: 40, ot: 3.3517 },
+    weekend: {
+      hours: { regular: 8.970556, ot: 0 },
+      pay_php: { regular: 2242.5, ot: 0 },
+      premium_php_per_hour: 15,
+    },
+    hogan_sheet: {
+      mf_hours: 34.38,
+      we_hours: 8.97,
+      ot_hours: 3.35,
+      rates_php: { regular: 235, weekend: 250, ot_differential: 117.5 },
+      pay_php: { base: 8079.3, weekend: 2242.5, ot_differential: 393.63 },
+    },
+    rates_php: { regular: 235, ot: 117.5 },
+    pay_php: {
+      regular: 10321.8,
+      ot: 393.63,
+      initial: 10715.43,
+      bonuses_total: 5400,
+      perfect_attendance_bonus: 5000,
+      tech_bonus: 0,
+      other_bonuses: 400,
+      adjustment: 0,
+      mesa_deduction: 0,
+      mesa_disbursement: 0,
+      orphanage_pay: 0,
+      final: 16115.43,
+    },
+    pay_period: { week: { start: '2026-08-02', end: '2026-08-08' }, fx_rate: 61 },
+  };
+}
+
+test('sheet-form payload renders the three Hogan legs (angelicaco pin)', () => {
+  const v = mapPayloadToPayStub(hoganSheetPayload());
+  assert.equal(v.otIsDifferential, true);
+  assert.equal(v.hasWeekend, true);
+  // M-F hours come from the block — NOT 40 − 8.97 = 31.03.
+  assert.equal(v.weekdayHours, 34.38);
+  assert.equal(v.weekdayPay, 8079.3);
+  // ALL weekend hours on one line at the premium-inclusive rate.
+  assert.equal(v.weekendHours, 8.97);
+  assert.equal(v.weekendPay, 2242.5);
+  assert.deepEqual(v.weekendBasis, [{ ratePhp: 250, hours: 8.97 }]);
+  // The OT line is the 0.5× differential.
+  assert.equal(v.weekdayOtHours, 3.35);
+  assert.equal(v.weekdayOtPay, 393.63);
+  assert.equal(v.otRate, 117.5);
+  // The three lines sum to initial, and the stub reconciles to Kane's total.
+  const earnings = v.weekdayPay + v.weekdayOtPay + v.weekendPay;
+  assert.equal(Math.round(earnings * 100) / 100, 10715.43);
+  assert.equal(v.totalPayPhp, 16115.43);
+});
+
+test('payloads without hogan_sheet keep otIsDifferential false (legacy render)', () => {
+  assert.equal(mapPayloadToPayStub(hslPayload()).otIsDifferential, false);
+  const p = hslPayload();
+  delete p.weekend;
+  assert.equal(mapPayloadToPayStub(p).otIsDifferential, false);
+});

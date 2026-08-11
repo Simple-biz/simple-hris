@@ -128,6 +128,11 @@ import {
   type MidPeriodProrationResult,
 } from '@/lib/payroll/prorate-mid-period';
 import {
+  computeHoganWeekPay,
+  hoganSheetBlockFromWeekPay,
+  type HoganSheetBlockRaw,
+} from '@/lib/payroll/hogan-week-pay';
+import {
   mapPayloadToPayStub,
   type ProrationBlockRaw,
 } from '@/lib/payroll/paystub-view';
@@ -536,11 +541,13 @@ type CalcRow = {
   otPay: number | null;
   initialPay: number | null;
   /**
-   * HSL-only weekend (Sat+Sun) itemization for the paystub. Hours are the
-   * weekend portion of each bucket (a weekend day past the 40h cap is weekend
-   * OT); pay is those hours at (rate + ₱15/h premium), already INCLUDED in
-   * `regularPay`/`otPay` — this is a breakdown, never an addition. Null for
-   * non-HSL rows and for rows with no per-day columns (weekend unknowable).
+   * HSL-only weekend (Sat+Sun) itemization for the paystub. Since 2026-08-11
+   * `regularHours`/`regularPay` cover ALL weekend hours — past-cap included —
+   * at (rate + ₱15/h premium), already INCLUDED in `regularPay` above; this is
+   * a breakdown, never an addition. `otHours`/`otPay` are structurally zero
+   * (the differential is the Overtime line's money) and survive only so
+   * payloads staged before 2026-08-07 keep their shape. Null for non-HSL rows
+   * and for rows with no per-day columns (weekend unknowable).
    */
   weekend?: {
     regularHours: number;
@@ -548,6 +555,15 @@ type CalcRow = {
     regularPay: number | null;
     otPay: number | null;
   } | null;
+  /**
+   * The Hogan sheet's three-stage form for this HSL week (Kane 2026-08-11) —
+   * M-F hours × regular, ALL weekend hours × (regular + 15), and the derived
+   * 0.5× OT differential — the legs the statement renders and the money
+   * behind `regularPay` (= base + weekend) and `otPay` (= differential).
+   * `rates_php` is null on a genuinely prorated week (segments carry the
+   * rates then). Null for non-HSL rows and HSL rows without daily columns.
+   */
+  hogan?: HoganSheetBlockRaw | null;
   /** Set when a pay-rate change took effect MID-PERIOD (e.g. a transfer): the
    *  reg/OT pay above is prorated per day (old rate before the effective date,
    *  new rate after), matching Payment Dispatch. Drives the Step-2 badge. */
@@ -645,21 +661,34 @@ type DispatchEmployee = {
    * HSL-only weekend (Sat+Sun) itemization for the paystub. `hours` above and
    * `pay_php` below stay FULL-week totals (weekend included) — this block only
    * carves the weekend portion out so statements (in-app + email) can render
-   * the merged "Weekend Hours" line. Since 2026-08-07 the weekend OT RATE is
-   * gone (Kane): a weekend hour past the 40h cap is plain overtime at the
-   * regular OT rate, so newly staged rows always carry `ot: 0` here and the
-   * premium applies to regular-bucket weekend hours only. The `ot` half of the
-   * shape survives because payloads staged BEFORE the change carry a real
-   * weekend-OT carve (at otRate + ₱15/h) and must keep rendering as staged.
-   * Null for non-HSL rows and for rows whose upload had no daily columns
-   * (weekend unknowable). Consumers must treat an absent/null block as "render
-   * the classic two-line earnings section".
+   * the merged "Weekend Hours" line. Since 2026-08-11 the `regular` half
+   * carries ALL weekend hours — past-cap included — at (rate + ₱15/h), the
+   * sheet's AD×AE leg; `ot` is always 0 on newly staged rows (the derived
+   * differential is the Overtime line's money). The `ot` half of the shape
+   * survives because payloads staged BEFORE 2026-08-07 carry a real weekend-OT
+   * carve (at otRate + ₱15/h) and must keep rendering as staged. Null for
+   * non-HSL rows and for rows whose upload had no daily columns (weekend
+   * unknowable). Consumers must treat an absent/null block as "render the
+   * classic two-line earnings section".
    */
   weekend: {
     hours: { regular: number; ot: number };
     pay_php: { regular: number | null; ot: number | null };
     premium_php_per_hour: number;
   } | null;
+  /**
+   * The Hogan sheet's three-stage form for an HSL week (Kane 2026-08-11):
+   * M-F hours × regular + ALL weekend hours × (regular + 15) + the derived
+   * 0.5× OT differential on hours past 40. The three `pay_php` legs sum to
+   * `pay_php.initial` exactly; statements render them as the M-F / Weekend /
+   * OT-Differential lines (hours here are the sheet's 2dp values — `mf_hours`
+   * INCLUDES past-cap hours, like the sheet's AB column). `rates_php` is null
+   * on a genuinely prorated week (the proration segments carry each line's
+   * basis then). Null for non-HSL payloads, HSL rows without daily columns,
+   * and every payload staged before 2026-08-11 — consumers must fall back to
+   * the classic weekend-block rendering then.
+   */
+  hogan_sheet: HoganSheetBlockRaw | null;
   /**
    * Mid-week rate-change proration (a transfer / dated raise landing INSIDE the
    * pay week): the effective date, both rate pairs, and the per-rate segments
@@ -6352,36 +6381,29 @@ export default function PayrollWizard({
   }, [payDaysByEmail]);
 
   /**
-   * HSL weekend pay premium: +15 PHP/h for Saturday and Sunday hours within the
-   * HSL (Mon→Sun) pay week — REGULAR-bucket hours only. Since 2026-08-07 there
-   * is no weekend OVERTIME rate: a weekend hour past the 40h cap is plain
-   * overtime, priced at the regular OT rate and shown on the Overtime line.
-   * Also carries the weekend regular SECONDS so the paystub can itemize the
-   * weekend hours themselves (not just the premium). Entries exist only when
-   * premium-earning weekend hours were actually logged — HSL rows without any
-   * stage a zeroed weekend block.
+   * HSL pay-week seconds, split M-F vs Sat/Sun for the sheet-form computation
+   * (Kane 2026-08-11 — see hogan-week-pay.ts): every HSL hour is base-paid
+   * once, ALL weekend hours earn the +₱15/h premium (past-cap included), and
+   * overtime is the derived 0.5× differential on hours past 40. Day-scoped for
+   * a mid-week transfer INTO HSL: a weekend day worked BEFORE the effective
+   * date is an old-department day — it counts as M-F here (plain rate, no
+   * premium, no weekend line). Every HSL row with daily columns gets an entry,
+   * weekend hours or not, so the whole department prices on the sheet form.
    */
-  const weekendPremiumByEmail = useMemo<Map<string, { regPremiumPHP: number; regSec: number }>>(() => {
-    const map = new Map<string, { regPremiumPHP: number; regSec: number }>();
-    const REG_CAP_SEC = 40 * 3600;
+  const hslWeekSecsByEmail = useMemo<Map<string, { mfSec: number; weekendSec: number }>>(() => {
+    const map = new Map<string, { mfSec: number; weekendSec: number }>();
     for (const [em, { isHsl, hslFrom, days }] of payDaysByEmail) {
       if (!isHsl) continue;
-      let usedRegSec = 0, wkndRegSec = 0;
+      let mfSec = 0, weekendSec = 0;
       for (const d of days) {
-        const remaining = Math.max(0, REG_CAP_SEC - usedRegSec);
-        const dayRegSec = Math.min(d.seconds, remaining);
-        usedRegSec += dayRegSec;
         const dow = d.date.getDay();
-        // Day-scoped: a weekend day worked BEFORE a mid-week transfer into HSL
-        // is an old-department day — plain rate, no premium, no weekend line.
         if ((dow === 0 || dow === 6) && (!hslFrom || d.date.getTime() >= hslFrom.getTime())) {
-          wkndRegSec += dayRegSec;
+          weekendSec += d.seconds;
+        } else {
+          mfSec += d.seconds;
         }
       }
-      const regPremiumPHP = phpHourlyPayFromSeconds(15, wkndRegSec);
-      if (regPremiumPHP !== 0) {
-        map.set(em, { regPremiumPHP, regSec: wkndRegSec });
-      }
+      map.set(em, { mfSec, weekendSec });
     }
     return map;
   }, [payDaysByEmail]);
@@ -6463,12 +6485,26 @@ export default function PayrollWizard({
       let otPay =
         otSec > 0 ? (otRate != null ? phpHourlyPayFromSeconds(otRate, otSec) : null) : 0;
 
-      // Apply HSL weekend premium (+15 PHP/h for Sat/Sun REGULAR-bucket hours).
-      // OT gets NO premium: weekend hours past the 40h cap are plain overtime
-      // at the regular OT rate (2026-08-07 — the weekend OT rate is gone).
-      const wknd = em ? weekendPremiumByEmail.get(em) : undefined;
-      if (wknd) {
-        if (regularPay != null) regularPay = Math.round((regularPay + wknd.regPremiumPHP) * 100) / 100;
+      // ── HSL: the Hogan sheet's three-stage form (Kane 2026-08-11) ──
+      // M-F hours × regular + ALL weekend hours × (regular + 15) + the derived
+      // 0.5× differential on hours past 40 — 2dp HOURS per leg, exactly like
+      // the sheet, so the staged total equals column AN to the centavo. The
+      // stored OT rate is NOT a money input for HSL (an off-ratio stored value
+      // can no longer misprice OT). `pay_php.regular` carries base + weekend;
+      // `pay_php.ot` carries the differential. HSL rows without daily columns
+      // (weekend unknowable) keep the legacy two-bucket formula below.
+      const hslSecs = em ? hslWeekSecsByEmail.get(em) : undefined;
+      let hogan: CalcRow['hogan'] = null;
+      if (hslSecs && regularRate != null) {
+        const sheet = computeHoganWeekPay({
+          mfHours: hslSecs.mfSec / 3600,
+          weHours: hslSecs.weekendSec / 3600,
+          regularRatePhp: regularRate,
+        });
+        hogan = hoganSheetBlockFromWeekPay(sheet);
+        regularPay = Math.round((sheet.basePayPhp + sheet.weekendPayPhp) * 100) / 100;
+        otPay = sheet.otDifferentialPayPhp;
+        displayOtRate = sheet.otDifferentialPhp;
       }
 
       // ── Mid-period rate change (e.g. a mid-week transfer) ──
@@ -6559,12 +6595,54 @@ export default function PayrollWizard({
                 paidRegular: paidReg,
                 sheetOt: otRate,
                 paidOt: prorated.otRatesUsed.length === 1 ? prorated.otRatesUsed[0] : null,
-                // What the week would have paid at the sheet rate, minus what it did.
+                // What the week would have paid at the sheet rate, minus what it
+                // did. HSL expects the sheet's three-stage form — pricing it as
+                // hours × stored OT rate would double-count the base the sheet
+                // form already pays on every hour.
                 shortfallPhp:
                   Math.round(
-                    ((regularHours * regularRate + otHours * (otRate ?? regularRate * 1.5)) -
+                    ((hslSecs
+                      ? computeHoganWeekPay({
+                          mfHours: hslSecs.mfSec / 3600,
+                          weHours: hslSecs.weekendSec / 3600,
+                          regularRatePhp: regularRate,
+                        }).totalHourlyPayPhp
+                      : regularHours * regularRate + otHours * (otRate ?? regularRate * 1.5)) -
                       ((prorated.regularPay ?? 0) + (prorated.otPay ?? 0))) * 100,
                   ) / 100,
+              };
+            }
+
+            // Rebuild the sheet-form legs from the per-day result so the
+            // statement's M-F / Weekend / OT-Differential lines stay hour-true
+            // on a prorated week: base = regular minus the weekend carve,
+            // differential = the OT leg. Rates are only stated when ONE
+            // regular rate paid the whole week (the constant-history
+            // override); a genuine mid-week change leaves them null and the
+            // proration segments carry each line's basis instead.
+            if (payDay.isHsl && hslSecs) {
+              const weekendLeg = prorated.weekend.regularPay ?? 0;
+              const otLeg = otSec > 0 ? prorated.otPay ?? 0 : 0;
+              const r0 =
+                prorated.regularRatesUsed.length === 1 ? prorated.regularRatesUsed[0] : null;
+              const diff0 = prorated.otRatesUsed.length === 1 ? prorated.otRatesUsed[0] : null;
+              hogan = {
+                mf_hours: Math.round((hslSecs.mfSec / 3600) * 100) / 100,
+                we_hours: Math.round((hslSecs.weekendSec / 3600) * 100) / 100,
+                ot_hours: Math.round((otSec / 3600) * 100) / 100,
+                rates_php:
+                  r0 != null
+                    ? {
+                        regular: r0,
+                        weekend: Math.round((r0 + 15) * 100) / 100,
+                        ot_differential: diff0 ?? Math.round(r0 * 0.5 * 100) / 100,
+                      }
+                    : null,
+                pay_php: {
+                  base: Math.round(((prorated.regularPay ?? 0) - weekendLeg) * 100) / 100,
+                  weekend: Math.round(weekendLeg * 100) / 100,
+                  ot_differential: Math.round(otLeg * 100) / 100,
+                },
               };
             }
           }
@@ -6572,15 +6650,15 @@ export default function PayrollWizard({
       }
 
       // ── Weekend (Sat+Sun) itemization for HSL paystubs ──
-      // The weekend REGULAR hours/pay are already INSIDE regularPay (base rate ×
-      // hours + the ₱15/h premium) — this block only carves them out so the
-      // statement can show them as their own Earnings line. The OT bucket is
-      // structurally ZERO on newly staged rows (2026-08-07): weekend hours past
-      // the 40h cap are plain overtime at the regular OT rate and stay on the
-      // Overtime line. Prorated weeks take the exact per-day figures; single-rate
-      // weeks price the weekend seconds at (rate + 15) directly. HSL rows with no
-      // daily columns can't know which hours fell on the weekend → null
-      // (statement falls back to two lines).
+      // ALL weekend hours/pay — past-cap included (2026-08-11) — are already
+      // INSIDE regularPay (the sheet's weekend leg: hours × (rate + 15)); this
+      // block only carves them out so the statement can show them as their own
+      // Earnings line. The OT bucket is structurally ZERO: the differential is
+      // the Overtime line's money, never a weekend sub-bucket (the shape
+      // survives for payloads staged before 2026-08-07). Prorated weeks take
+      // the exact per-day figures; single-rate weeks take the sheet leg. HSL
+      // rows with no daily columns can't know which hours fell on the weekend
+      // → null (statement falls back to two lines).
       let weekend: CalcRow['weekend'] = null;
       if (payDay?.isHsl) {
         if (proratedWeekend) {
@@ -6591,12 +6669,15 @@ export default function PayrollWizard({
             otPay: proratedWeekend.otPay,
           };
         } else {
-          const wkndRegSec = wknd?.regSec ?? 0;
+          const weekendSec = hslSecs?.weekendSec ?? 0;
           weekend = {
-            regularHours: wkndRegSec / 3600,
+            regularHours: weekendSec / 3600,
             otHours: 0,
-            regularPay:
-              regularRate != null ? phpHourlyPayFromSeconds(regularRate + 15, wkndRegSec) : null,
+            regularPay: hogan
+              ? hogan.pay_php.weekend
+              : regularRate != null
+                ? phpHourlyPayFromSeconds(regularRate + 15, weekendSec)
+                : null,
             otPay: 0,
           };
         }
@@ -6619,8 +6700,11 @@ export default function PayrollWizard({
         regularHours,
         otHours,
         weekend,
+        hogan,
         // The rate actually applied — never the sheet cache when pay came from
         // elsewhere. This is what makes hours × rate reconcile on the statement.
+        // For HSL sheet-form rows `otRate` is the DERIVED 0.5× differential —
+        // the rate the Overtime line actually shows and pays.
         regularRate: displayRegularRate,
         otRate: displayOtRate,
         regularPay,
@@ -6631,11 +6715,16 @@ export default function PayrollWizard({
         rateDisagreement,
         // No per-day override ⇒ pay came straight from the cache rate, so that IS
         // the rate paid. Recording it (rather than leaving it null) keeps the
-        // consistency check on its exact path for every row.
+        // consistency check on its exact path for every row. Sheet-form HSL rows
+        // paid OT at the derived differential, never the stored cache OT rate.
         ratesPaid:
           ratesPaid ?? {
             regular: regularRate != null ? [regularRate] : [],
-            ot: otRate != null ? [otRate] : [],
+            ot: hogan?.rates_php
+              ? [hogan.rates_php.ot_differential]
+              : otRate != null
+                ? [otRate]
+                : [],
           },
       };
     });
@@ -6643,7 +6732,7 @@ export default function PayrollWizard({
     hubstaffData,
     ratesByEmail,
     masterIndex,
-    weekendPremiumByEmail,
+    hslWeekSecsByEmail,
     payHoursByEmail,
     payDaysByEmail,
     rateHistoryByEmail,
@@ -7854,6 +7943,7 @@ export default function PayrollWizard({
               premium_php_per_hour: 15,
             }
           : null,
+        hogan_sheet: r.hogan ?? null,
         proration: prorationBlockFromCalcRow(r),
         rates_php: { regular: r.regularRate, ot: r.otRate },
         pay_php: {
@@ -7905,6 +7995,28 @@ export default function PayrollWizard({
                       ot: r.prorationSegments.weekendOt,
                     }
                   : null,
+            }
+          : null,
+        // Sheet-form legs (HSL 2026-08-11): the checker validates the three
+        // displayed lines from these and skips the bucket checks, which no
+        // longer correspond to any rendered line.
+        hogan: r.hogan
+          ? {
+              mfHours: r.hogan.mf_hours,
+              weHours: r.hogan.we_hours,
+              otHours: r.hogan.ot_hours,
+              rates: r.hogan.rates_php
+                ? {
+                    regular: r.hogan.rates_php.regular,
+                    weekend: r.hogan.rates_php.weekend,
+                    otDifferential: r.hogan.rates_php.ot_differential,
+                  }
+                : null,
+              pay: {
+                base: r.hogan.pay_php.base,
+                weekend: r.hogan.pay_php.weekend,
+                otDifferential: r.hogan.pay_php.ot_differential,
+              },
             }
           : null,
       });
@@ -8023,6 +8135,10 @@ export default function PayrollWizard({
         otHours: r.otHours,
         regularRate: r.regularRate,
         otRate: r.otRate,
+        // Sheet-form rows display the derived 0.5× differential as the OT rate
+        // (rates_php set ⇒ a single rate priced the week) — the ot_ratio audit
+        // must expect regular × 0.5 for them, not 1.5×.
+        otRateIsDifferential: r.hogan?.rates_php != null,
         regularPay: r.regularPay,
         otPay: r.otPay,
         initialPay: r.initialPay,
@@ -8159,6 +8275,11 @@ export default function PayrollWizard({
       // Null = no mid-period change; older snapshots omit the field entirely
       // and the merge keeps the staged payload's block untouched.
       proration: ProrationBlockRaw | null;
+      // The Hogan sheet-form legs (2026-08-11) — same travel-together contract
+      // as the weekend block: they explain the regular/OT figures, so the
+      // freshness merge must move them in the same write. Null = non-HSL row;
+      // older snapshots omit the field and the staged block stays untouched.
+      hoganSheet: HoganSheetBlockRaw | null;
     }> = {};
     for (const r of dispatchData.rows) {
       const entry = {
@@ -8189,6 +8310,7 @@ export default function PayrollWizard({
         weekendRegularPay: r.weekend ? r.weekend.pay_php.regular : null,
         weekendOtPay: r.weekend ? r.weekend.pay_php.ot : null,
         proration: r.proration,
+        hoganSheet: r.hogan_sheet,
       };
       const we = r.email?.trim().toLowerCase();
       const pe = r.personal_email?.trim().toLowerCase();
@@ -14746,8 +14868,10 @@ export default function PayrollWizard({
                                   {r.totalHours != null ? r.totalHours.toFixed(2) : '—'}
                                 </td>
                                 {(() => {
-                                  const wp = weekendPremiumByEmail.get(em);
-                                  const wkndTotal = wp ? Math.round(wp.regPremiumPHP * 100) / 100 : 0;
+                                  // Sheet form: the premium is ₱15 on ALL weekend hours (2026-08-11).
+                                  const wkndTotal = r.hogan
+                                    ? Math.round(r.hogan.we_hours * 15 * 100) / 100
+                                    : 0;
                                   return (
                                     <td className="px-3 py-3 text-right font-mono text-[11px] tabular-nums" title="+15 PHP/h for Sat/Sun hours">
                                       {wkndTotal > 0 ? (
@@ -14956,8 +15080,7 @@ export default function PayrollWizard({
                               const st = effectivePabStatus.get(em) ?? 'in_progress';
                               if (st === 'eligible' && isPabDeptEligible(r.email) && !isPabExcluded(r.email)) totalPab += pabAmountForEmail(r.email);
                               if (techBonusEligible.has(r.email) && isTechDeptEligible(r.email)) totalTech += techAmountForEmail(r.email);
-                              const wp = weekendPremiumByEmail.get(em);
-                              if (wp) totalWkndPremium += wp.regPremiumPHP;
+                              if (r.hogan) totalWkndPremium += r.hogan.we_hours * 15;
                               const memail = normEmail(r.email) ?? '';
                               const memailRateRow = ratesByEmail.get(memail);
                               const disb = mesaDisbursements.get(memail) ?? 0;
@@ -18621,10 +18744,10 @@ export default function PayrollWizard({
           // the eligibility engine (checkHslPabEligibility) and what is paid.
           const hslSunSat = isHsl && hslWeekModel === 'sun_sat';
 
-          // Weekend premium for this pay week (current source file only)
-          const wkndPremiumData = isHsl ? weekendPremiumByEmail.get(normEmpEmail) : undefined;
-          const wkndPremiumTotal = wkndPremiumData
-            ? Math.round(wkndPremiumData.regPremiumPHP * 100) / 100
+          // Weekend premium for this pay week (current source file only) —
+          // ₱15 on ALL weekend hours under the sheet form (2026-08-11).
+          const wkndPremiumTotal = isHsl && emp?.hogan
+            ? Math.round(emp.hogan.we_hours * 15 * 100) / 100
             : 0;
           const breakdown = isHsl
             ? (employeeAllDaysHours.get(normEmpEmail) ?? [])

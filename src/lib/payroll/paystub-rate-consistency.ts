@@ -139,6 +139,33 @@ export interface RateConsistencyInput {
       ot?: Array<{ ratePhp: number; hours: number; payPhp: number }> | null;
     } | null;
   } | null;
+  /**
+   * The Hogan sheet-form legs, when the payload carries them (HSL,
+   * 2026-08-11). The statement renders M-F / Weekend / OT-Differential from
+   * THESE, so they are what must reconcile: each leg is hours × rate with no
+   * headroom at all. The regular/OT BUCKET checks are skipped for these rows —
+   * `pay_php.regular` = base + weekend legs against the 40h-capped
+   * `hours.regular`, so the bucket arithmetic no longer corresponds to any
+   * displayed line and would only manufacture false surpluses.
+   *
+   * `rates` is null on a genuinely prorated week; the weekend `segments` path
+   * above validates the bases the stub actually prints then.
+   */
+  hogan?: {
+    mfHours?: number | null;
+    weHours?: number | null;
+    otHours?: number | null;
+    rates?: {
+      regular?: number | null;
+      weekend?: number | null;
+      otDifferential?: number | null;
+    } | null;
+    pay?: {
+      base?: number | null;
+      weekend?: number | null;
+      otDifferential?: number | null;
+    } | null;
+  } | null;
 }
 
 /** Rounding slack. Per-day accumulation rounds once at the end, so allow a cent or two. */
@@ -276,8 +303,68 @@ function checkLine(
 export function findRateConsistencyIssues(
   input: RateConsistencyInput,
 ): RateConsistencyIssue[] {
-  const { hours, ratesPhp, payPhp, ratesPaid, isHsl, hasMidPeriodChange, weekend } = input ?? {};
+  const { hours, ratesPhp, payPhp, ratesPaid, isHsl, hasMidPeriodChange, weekend, hogan } =
+    input ?? {};
   const out: RateConsistencyIssue[] = [];
+
+  // ── Sheet-form rows (HSL, 2026-08-11): validate the three displayed legs ──
+  // Each leg's rate fully explains its pay (premium and differential included
+  // in the rate), so there is no headroom anywhere — strictly tighter than the
+  // bucket checks it replaces. A prorated week (rates null) validates the
+  // weekend line through the segments path below, exactly what the stub shows.
+  if (hogan) {
+    if (hogan.rates) {
+      const mf = checkLine(
+        'regular',
+        hogan.mfHours,
+        hogan.rates.regular,
+        hogan.pay?.base,
+        null,
+        false,
+        !!hasMidPeriodChange,
+      );
+      if (mf) out.push(mf);
+      const diff = checkLine(
+        'ot',
+        hogan.otHours,
+        hogan.rates.otDifferential,
+        hogan.pay?.otDifferential,
+        null,
+        false,
+        !!hasMidPeriodChange,
+      );
+      if (diff) out.push(diff);
+      const we = checkLine(
+        'weekend',
+        hogan.weHours,
+        hogan.rates.weekend,
+        hogan.pay?.weekend,
+        null,
+        false,
+        !!hasMidPeriodChange,
+      );
+      if (we) out.push(we);
+      return out;
+    }
+    const segs = [...(weekend?.segments?.regular ?? []), ...(weekend?.segments?.ot ?? [])].filter(
+      (s) => s && finite(s.ratePhp) != null && finite(s.hours) != null && finite(s.payPhp) != null,
+    );
+    const premium = finite(weekend?.premiumPhpPerHour) ?? HSL_WEEKEND_PREMIUM_PHP_PER_HOUR;
+    for (const s of segs) {
+      const issue = checkLine(
+        'weekend',
+        s.hours,
+        round(s.ratePhp + premium, 2),
+        s.payPhp,
+        null,
+        false,
+        !!hasMidPeriodChange,
+      );
+      if (issue) out.push(issue);
+    }
+    return out;
+  }
+
   const reg = checkLine(
     'regular',
     hours?.regular,
