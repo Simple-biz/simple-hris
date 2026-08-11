@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useLayoutEffect as useLayoutEffectImpl, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect as useLayoutEffectImpl, useMemo, useState } from 'react';
 import { resolveFirstName } from '@/lib/name/first-name';
 
 // `useLayoutEffect` warns on the server (no DOM). Map to `useEffect` during SSR
@@ -97,13 +97,13 @@ import {
 } from '@/lib/pab-period-settings';
 import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from '@/lib/payment-catalog/system-bonus';
+import { resolveDeptKeyWithRegistry } from '@/lib/departments/registry';
 import {
   effectiveUsdToCopRateFromStored,
   officialFxRates,
   type FxRates,
 } from '@/lib/fx/currency-fx';
 import { effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
-import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
@@ -2471,6 +2471,26 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     () => resolveSystemBonuses(initialData?.systemBonuses ?? [], fx),
     [initialData, fx],
   );
+  /**
+   * Department label → key for system-bonus eligibility.
+   *
+   * `normalizeDeptToKey` alone knows only the built-in departments, so every
+   * in-app Payment Catalog department resolved to `null` here — and
+   * `isDeptEligible` fail-opens on `null` (deliberately, so an unmapped or
+   * mistyped department string doesn't silently lose a bonus). The result was
+   * that a custom department counted as PAB/Tech eligible in the accrual stats
+   * and the PAB calendar even though the allowlist omits it, disagreeing with
+   * the Payroll Wizard, which already resolves through the registry.
+   *
+   * The registry rides the accounting prefetch because its own endpoint is
+   * gated by `requireRateVisibilitySession`. Absent registry → built-in-only
+   * behaviour, i.e. exactly what this used to do.
+   */
+  const deptKeyOf = useCallback(
+    (raw: string | null | undefined): string | null =>
+      resolveDeptKeyWithRegistry(raw, initialData?.departmentRegistry ?? []),
+    [initialData],
+  );
   const prefetchedRatesRef = React.useRef<import('@/lib/supabase/employee-hourly-rates').EmployeeHourlyRateRow[] | null>(
     initialData?.hourlyRates ?? null,
   );
@@ -2920,7 +2940,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     const byEmail = new Map<string, boolean | null>();
     for (const e of employees) {
       // Skip departments excluded from the Tech bonus allowlist (e.g. US managers).
-      if (!isDeptEligible(sysBonusCfg.tech, normalizeDeptToKey(e.department ?? null))) continue;
+      if (!isDeptEligible(sysBonusCfg.tech, deptKeyOf(e.department ?? null))) continue;
       considered += 1;
       const emailKey = normEmail(e.work_email ?? e.personal_email ?? '') ?? '';
       if (!e.start_date) {
@@ -2944,7 +2964,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       techBonusEligibility: { eligible, pending, unknown, total: considered },
       techEligibilityByEmail: byEmail,
     };
-  }, [employees, sysBonusCfg]);
+  }, [employees, sysBonusCfg, deptKeyOf]);
 
   const fetchEmployees = React.useCallback(async (signal?: AbortSignal) => {
     const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
@@ -3585,7 +3605,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
           // so they don't inflate the eligible count / accrual. The dept key is
           // kept so the accrual can price each person at their department's
           // amount (custom currency variants override the base).
-          const deptKey = normalizeDeptToKey(e.department ?? null);
+          const deptKey = deptKeyOf(e.department ?? null);
           if (!isDeptEligible(sysBonusCfg.pab, deptKey)) continue;
           const wRow = w ? rowsByEmail.get(w) : undefined;
           const pRow = p ? rowsByEmail.get(p) : undefined;
@@ -3706,7 +3726,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     // `employees.length` (not the full array) so the 60s refetch of the same
     // roster doesn't churn this expensive effect; size changes capture
     // hires/leavers. `hslMasterEmailsKey` already covers HSL membership shifts.
-  }, [sourceFiles, selectedSourceFile, monthFilter, hslMasterEmailsKey, employees.length, sysBonusCfg]);
+  }, [sourceFiles, selectedSourceFile, monthFilter, hslMasterEmailsKey, employees.length, sysBonusCfg, deptKeyOf]);
 
   /** Master-list rows only. Hubstaff-only workers are no longer merged into
    *  Overview totals — the master list is the single source of truth. */

@@ -50,7 +50,8 @@ import {
   orphanageHoursByCoveredDate,
 } from '@/lib/payroll/orphanage-pab-coverage';
 import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from '@/lib/payment-catalog/system-bonus';
-import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { getDepartmentRegistry } from '@/lib/departments/registry-db';
+import { resolveDeptKeyWithRegistry } from '@/lib/departments/registry';
 import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import {
   buildPabCalendarWeeks,
@@ -483,7 +484,7 @@ export async function computeMemberMonthlyPay(args: {
 
   // Step 1: Fetch master + rates + PAB overrides in parallel. We need the master
   // row first to know this employee's alias emails before querying Hubstaff.
-  const [masterMin, rates, pabOverridesValue, pabExclusionsValue, techWeekOverridesValue, rateHistory, holidaySettings, fxValues, payStructuresResult, systemBonusesResult] =
+  const [masterMin, rates, pabOverridesValue, pabExclusionsValue, techWeekOverridesValue, rateHistory, holidaySettings, fxValues, payStructuresResult, systemBonusesResult, deptRegistry] =
     await Promise.all([
       fetchMasterRowsForEmail(new Set([emailNorm])),
       getEmployeeHourlyRatesRows(),
@@ -495,6 +496,11 @@ export async function computeMemberMonthlyPay(args: {
       getAppSettings(['usd_to_php_rate', USD_TO_COP_SETTINGS_KEY]),
       listPayStructures(),
       listSystemBonuses(),
+      // See current-pay.ts: an in-app Payment Catalog department must resolve to
+      // its real key, or `isDeptEligible`'s null fail-open reads it as eligible
+      // for PAB/Tech. Best-effort — a failed read degrades to the built-in-only
+      // behaviour that shipped before this.
+      getDepartmentRegistry().catch(() => null),
     ]);
   // USD-anchored FX (usdToPhp + usdToCop) used to resolve catalog rates.
   const fx = buildFxRates(fxValues);
@@ -591,7 +597,10 @@ export async function computeMemberMonthlyPay(args: {
   const mesaSince = rateRow?.mesa_member_since ?? null;
 
   // System-bonus dept eligibility (master department wins, rate dept is fallback).
-  const empDeptKey = normalizeDeptToKey(masterRow?.department ?? rateRow?.department ?? null);
+  const empDeptKey = resolveDeptKeyWithRegistry(
+    masterRow?.department ?? rateRow?.department ?? null,
+    deptRegistry ?? [],
+  );
   const pabDeptEligible = isDeptEligible(sysBonuses.pab, empDeptKey);
   const techDeptEligible = isDeptEligible(sysBonuses.tech, empDeptKey);
   // Per-week MESA contribution, gated per week by `mesa_member_since` below.

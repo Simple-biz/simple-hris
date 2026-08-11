@@ -82,6 +82,8 @@ import { listPayStructures } from "@/lib/supabase/pay-structures-db";
 import { listSystemBonuses } from "@/lib/supabase/system-bonuses-db";
 import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from "@/lib/payment-catalog/system-bonus";
 import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
+import { getDepartmentRegistry } from "@/lib/departments/registry-db";
+import { resolveDeptKeyWithRegistry } from "@/lib/departments/registry";
 import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
 import { currencyForCountry } from "@/lib/onboarding/countries";
 import type { PayCurrency } from "@/lib/payment-catalog/pay-structure";
@@ -650,6 +652,7 @@ export async function computeCurrentPay(
     systemBonusesResult,
     onboardingCountryRows,
     hslTransferEffective,
+    deptRegistry,
   ] = await Promise.all([
     hubstaffPromise,
     getEmployeeHourlyRatesRows(),
@@ -676,6 +679,12 @@ export async function computeCurrentPay(
     // Into-HSL transfer effective dates — day-scopes the Weekend Hours
     // treatment in a transfer week (resolveHslWeekScope).
     fetchHslTransferEffectiveByEmail(),
+    // In-app Payment Catalog departments, so a custom department resolves to its
+    // REAL key below instead of null. Best-effort, matching every other registry
+    // read in the codebase (payroll-readiness, /api/departments): a failed read
+    // degrades to the built-in-only behaviour that shipped before this, never to
+    // something worse.
+    getDepartmentRegistry().catch(() => null),
   ]);
 
   // Deferred: the full-table Hubstaff scan (every row, every upload) is ONLY
@@ -708,6 +717,20 @@ export async function computeCurrentPay(
   // a native USD/COP amount converted here via `fx`. Falls back to the legacy
   // constants + "applies to everyone" when no rows exist (pre-migration).
   const sysBonuses = resolveSystemBonuses(systemBonusesResult.bonuses, fx);
+
+  // System-bonus eligibility keys on a department KEY, and `isDeptEligible`
+  // fail-opens when that key is null (deliberate: an unmapped/typo department
+  // string must not silently lose a bonus everyone else gets). `normalizeDeptToKey`
+  // only knows the built-in departments, so every in-app Payment Catalog
+  // department resolved to null here and fell straight through that fail-open —
+  // reading as ELIGIBLE for PAB/Tech even though the allowlist deliberately
+  // omits them. This path is the one Payment Dispatch falls back to when a week
+  // is dispatched BEFORE the wizard locks it, so that read a real overpay.
+  // Resolving with the registry gives a custom department its real key, which
+  // then correctly fails the allowlist. The fail-open itself is untouched.
+  const deptRegistrySafe = deptRegistry ?? [];
+  const deptKeyOf = (raw: string | null | undefined): string | null =>
+    resolveDeptKeyWithRegistry(raw, deptRegistrySafe);
 
   // Index rates by both work_email and personal_email (lowercased) so a
   // hubstaff row keyed on either still resolves to a rate.
@@ -1117,7 +1140,7 @@ export async function computeCurrentPay(
     // rates row). Used both for bonus-eligibility keying below and surfaced on
     // the entry so Payment Dispatch can show a department for EVERY payee.
     const empDeptRaw = masterDeptByEmail.get(em) ?? deptByEmail.get(em) ?? null;
-    const empDeptKey = normalizeDeptToKey(empDeptRaw);
+    const empDeptKey = deptKeyOf(empDeptRaw);
     // Canonical label when the key resolved; otherwise keep the raw source
     // string (trimmed) so an unmapped-but-present department still shows.
     const empDeptName =

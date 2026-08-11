@@ -9,6 +9,8 @@ import {
 } from '@/lib/supabase/hubstaff-hours-db';
 import { listSystemBonuses } from '@/lib/supabase/system-bonuses-db';
 import type { SystemBonus } from '@/lib/payment-catalog/system-bonus';
+import { getDepartmentRegistry } from '@/lib/departments/registry-db';
+import type { DepartmentRegistryEntry } from '@/lib/departments/registry';
 
 export type HubstaffUploadMeta = {
   id: string;
@@ -27,6 +29,14 @@ export type InitialAccountingData = {
   hubstaffUploads: HubstaffUploadMeta[];
   /** Editable PAB + Tech bonus rows (Payment Catalog System Bonuses tab). */
   systemBonuses: SystemBonus[];
+  /** In-app Payment Catalog departments. Needed wherever a department label is
+   *  turned into a KEY for system-bonus eligibility: `normalizeDeptToKey` knows
+   *  only the built-ins, returns null for a custom department, and
+   *  `isDeptEligible` fail-opens on null — so without this a custom department
+   *  reads as eligible for PAB/Tech that its allowlist deliberately omits.
+   *  Carried on the prefetch (rather than fetched client-side) because the
+   *  registry endpoint is gated by `requireRateVisibilitySession`. */
+  departmentRegistry: DepartmentRegistryEntry[];
 };
 
 // `hr_coordinator` was decoupled from Accounting on 2026-06-22 — HR coordinators
@@ -41,12 +51,16 @@ export function hasAccountingRole(roles: string[]): boolean {
 }
 
 export async function prefetchAccountingData(): Promise<InitialAccountingData> {
-  const [employeesResult, ratesResult, uploadsResult, systemBonusesResult] = await Promise.all([
-    getEmployees().catch(() => ({ employees: [] as EmployeeRow[], error: null })),
-    getEmployeeHourlyRatesRows().catch(() => ({ rows: [] as EmployeeHourlyRateRow[], error: null })),
-    listHubstaffUploads().catch(() => [] as Awaited<ReturnType<typeof listHubstaffUploads>>),
-    listSystemBonuses().catch(() => ({ bonuses: [] as SystemBonus[], error: null })),
-  ]);
+  const [employeesResult, ratesResult, uploadsResult, systemBonusesResult, registryResult] =
+    await Promise.all([
+      getEmployees().catch(() => ({ employees: [] as EmployeeRow[], error: null })),
+      getEmployeeHourlyRatesRows().catch(() => ({ rows: [] as EmployeeHourlyRateRow[], error: null })),
+      listHubstaffUploads().catch(() => [] as Awaited<ReturnType<typeof listHubstaffUploads>>),
+      listSystemBonuses().catch(() => ({ bonuses: [] as SystemBonus[], error: null })),
+      // Best-effort, like every other registry read: a failure degrades to the
+      // built-in-only resolution that shipped before this, never to worse.
+      getDepartmentRegistry().catch(() => [] as DepartmentRegistryEntry[]),
+    ]);
 
   // Accounting surfaces (Payroll Wizard + Overview) follow the Initialized batch:
   // put the is_current upload first so `sourceFiles[0]` is the active payroll week.
@@ -76,5 +90,6 @@ export async function prefetchAccountingData(): Promise<InitialAccountingData> {
     sourceFiles,
     hubstaffUploads: orderedUploads,
     systemBonuses: systemBonusesResult.bonuses ?? [],
+    departmentRegistry: registryResult ?? [],
   };
 }

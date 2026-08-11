@@ -157,6 +157,40 @@ same null-for-unknown contract as `normalizeDeptToKey`.
   department is selectable in HR onboarding, Roles & permissions, transfer
   targets, etc. even before any roster row carries its label (best-effort: a
   registry read failure never takes down the roster-derived list).
+- **System-bonus eligibility** (2026-08-11) — PAB and Technology Bonus carry an
+  explicit `department_keys` allowlist seeded with the built-in `DEPARTMENTS`
+  keys only, so an in-app department is **not** eligible by design. Getting that
+  right depends entirely on which resolver a surface uses, because
+  `isDeptEligible` **fail-opens when the key is `null`** (deliberate — an
+  unmapped or mistyped department string must not silently lose a bonus
+  everyone else gets, `system-bonus.ts:194-206`). A surface using
+  `normalizeDeptToKey` alone therefore resolved every custom department to
+  `null` and fell straight through that fail-open, reading them as **eligible**.
+  Four surfaces did: `current-pay.ts`, `member-monthly-pay.ts`, `Overview.tsx`
+  (PAB accrual counts + calendar) and `EmployeeDashboard.tsx`. The first is the
+  one Payment Dispatch falls back to when a week is dispatched **before** the
+  wizard locks it, so that was a live overpay path, not just a display bug —
+  the Payroll Wizard itself always resolved through the registry, so its
+  published pay was correct and the two disagreed.
+
+  All but the employee dashboard now resolve with `resolveDeptKeyWithRegistry`.
+  **`isDeptEligible`'s fail-open is deliberately untouched** — the fix is to
+  stop producing a spurious `null`, not to change what `null` means. Every
+  registry read on these paths is best-effort (`.catch(() => null)`, then
+  `?? []`), matching `payroll-readiness.ts` and `/api/departments`: a failed
+  read degrades to the built-in-only behaviour that shipped before, never to
+  something worse. `Overview.tsx` gets the registry from
+  `prefetchAccountingData` (`src/lib/accounting/prefetch.ts`) rather than
+  fetching it, because the registry endpoint is gated by
+  `requireRateVisibilitySession`.
+
+  > **Still open — `EmployeeDashboard.tsx`.** The employee's own "My Hours"
+  > view still resolves built-in-only, so a custom-department employee sees
+  > PAB/Tech they will not be paid. Employees do **not** hold
+  > `requireRateVisibilitySession`, so it cannot simply fetch the registry; it
+  > needs the eligibility decided server-side and shipped on a payload the
+  > employee may read. Display-only — no money moves on this path.
+
 - **Rate resolution** (`cbdd962`) — `resolveDeptCatalogRate` accepts a raw
   name, a canonical key, **or the label's slug**: when the built-in alias map
   misses, it tries `slugifyDeptKey(deptRaw)` against the catalog index. So a
