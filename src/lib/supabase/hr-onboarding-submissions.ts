@@ -41,6 +41,11 @@ export type HrOnboardingSubmissionRow = {
    *  directly rather than re-parsing the blob. Null on rows that predate the
    *  split migration (2026-07-20_split_onboarding_name_columns.sql). */
   first_name: string | null;
+  /** Middle name / middle initial as typed. Captured for HR records only: it is
+   *  deliberately NOT composed into `full_name` and never reaches any derivation
+   *  (see docs/features/onboarding-name-parts.md). Null when not supplied and on
+   *  rows predating add_middle_name_to_onboarding.sql. */
+  middle_name: string | null;
   /** Whole surname as typed ("Dela Cruz") — NOT reduced to the last token. */
   last_name: string | null;
   /** Generational suffix (Jr./Sr./II/III/IV) the hire entered separately. */
@@ -159,6 +164,8 @@ export type SubmitOnboardingInput = {
    *  them server-side (see composeFullName). `full_name` may still be sent as a
    *  fallback for any legacy caller, but the parts win when present. */
   first_name?: string | null;
+  /** Stored for HR records only — never composed into `full_name`. */
+  middle_name?: string | null;
   last_name?: string | null;
   name_extension?: string | null;
   full_name: string;
@@ -439,6 +446,13 @@ export async function submitHrOnboarding(
   const firstName = toTitleCaseNameOrNull(input.first_name);
   const lastName = toTitleCaseNameOrNull(input.last_name);
   const nameExtension = toTitleCaseNameOrNull(input.name_extension);
+  // The middle name is captured for HR records and is deliberately LEFT OUT of
+  // composeFullName: `full_name` feeds the master-list "Name", payroll
+  // name-matching and the surname-first display trigger, whose go-by rule takes
+  // the last given token — folding a middle name in would rename
+  // "Jane Marie Santos" to `Santos, Jane Marie "Marie"` everywhere the Payroll
+  // Wizard prints her. See docs/features/onboarding-name-parts.md.
+  const middleName = toTitleCaseNameOrNull(input.middle_name);
   const composedFullName =
     composeFullName(input.first_name, input.last_name, input.name_extension) ||
     input.full_name;
@@ -453,6 +467,7 @@ export async function submitHrOnboarding(
     // Structured parts, stored verbatim (only Unicode-folded + title-cased) so
     // downstream reads them directly instead of splitting full_name.
     first_name: firstName,
+    middle_name: middleName,
     last_name: lastName,
     name_extension: nameExtension,
     // gmail_surname is the @simple.biz Google account surname — kept verbatim
@@ -531,6 +546,14 @@ export async function submitHrOnboarding(
       test: /first_name|last_name|name_extension/i,
       keys: ["first_name", "last_name", "name_extension"],
       note: "references/sql/migrate/2026-07-20_split_onboarding_name_columns.sql",
+    },
+    // Its OWN family, not folded into the split-name one above: middle_name
+    // shipped in a later migration, so a database that has first/last/extension
+    // but not yet middle_name must drop only the one column it is missing.
+    {
+      test: /middle_name/i,
+      keys: ["middle_name"],
+      note: "references/sql/alter/add_middle_name_to_onboarding.sql",
     },
   ];
   for (let attempt = 0; ; attempt++) {

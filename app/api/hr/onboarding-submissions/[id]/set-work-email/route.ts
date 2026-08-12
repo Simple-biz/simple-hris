@@ -212,6 +212,7 @@ export async function POST(
       {
         name,
         first_name: row.first_name,
+        middle_name: row.middle_name,
         last_name: row.last_name,
         name_extension: row.name_extension,
         work_email: workEmail,
@@ -233,6 +234,7 @@ export async function POST(
     const { row: created, error: createErr } = await createHrPendingEmployee({
       name,
       first_name: row.first_name,
+      middle_name: row.middle_name,
       last_name: row.last_name,
       name_extension: row.name_extension,
       personal_email: personalEmail,

@@ -111,6 +111,7 @@ export async function GET(
         // than re-splitting full_name (null on pre-split-migration rows — the
         // form falls back to splitName(full_name) then).
         first_name: row.first_name ?? null,
+        middle_name: row.middle_name ?? null,
         last_name: row.last_name ?? null,
         name_extension: row.name_extension ?? null,
         gmail_surname: row.gmail_surname,
@@ -182,6 +183,11 @@ export async function POST(
   // below (and storage) still key off it — the parts remain the source of truth
   // and are persisted separately. Falls back to any full_name a legacy client
   // sent so an older form build keeps working.
+  //
+  // `middle_name` is deliberately NOT an argument: it is stored beside the other
+  // parts for HR records but never enters the composed name, which feeds the
+  // master-list "Name", payroll name-matching and the surname-first display
+  // trigger. See docs/features/onboarding-name-parts.md.
   body.full_name =
     composeFullName(body.first_name, body.last_name, body.name_extension) ||
     (body.full_name ?? "");
@@ -343,6 +349,7 @@ export async function POST(
           name: stagedName,
           // Carry the structured parts through so nothing re-parses downstream.
           first_name: row.first_name,
+          middle_name: row.middle_name,
           last_name: row.last_name,
           name_extension: row.name_extension,
           personal_email: row.invite_personal_email ?? row.email ?? body.email!,

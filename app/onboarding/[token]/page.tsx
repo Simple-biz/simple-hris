@@ -19,6 +19,7 @@ import {
   PartyPopper,
   Shield,
   Sparkles,
+  TriangleAlert,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -51,6 +52,7 @@ type PriorData = {
   /** Structured parts (source of truth); null on pre-split-migration rows, in
    *  which case the form falls back to splitName(full_name). */
   first_name: string | null;
+  middle_name: string | null;
   last_name: string | null;
   name_extension: string | null;
   gmail_surname: string | null;
@@ -116,6 +118,11 @@ type FormState = {
    *  slice lengthening until unique (mirrors the Gmail Surname rule). Empty for
    *  every other department. */
   calltools_username: string;
+  /** Optional middle name / middle initial. Captured for HR records ONLY: it is
+   *  never folded into the composed full_name and never feeds the Gmail Surname,
+   *  work-email or CallTools derivation — those read first + last alone. See
+   *  docs/features/onboarding-name-parts.md. */
+  middle_name: string;
   last_name: string;
   /** Optional name extension / generational suffix (Jr., Sr., II, III, IV) shown
    *  beside the last name. Folded into the stored full_name for HR + contracts,
@@ -162,6 +169,7 @@ const emptyForm: FormState = {
   first_name: '',
   nickname: '',
   calltools_username: '',
+  middle_name: '',
   last_name: '',
   extension: '',
   gmail_surname: '',
@@ -228,6 +236,11 @@ const STEP_TITLES = [
   'Contract Worker Agreement',
 ] as const;
 
+/** Index of the step that collects the hire's name — the one the name-order
+ *  check interrupts on the way out. Derived from STEP_TITLES so re-ordering the
+ *  wizard can never point the check at the wrong step. */
+const WELCOME_STEP = STEP_TITLES.indexOf('Welcome');
+
 // Directional slide+fade for step navigation. `direction` is +1 going forward
 // (Next) and -1 going back (Previous): the incoming step enters from the side
 // you're heading toward, the outgoing step leaves the opposite way.
@@ -261,6 +274,11 @@ export default function OnboardingFormPage() {
   const [surnameLoading, setSurnameLoading] = useState(false);
   // Same, for the CallTools-username lookup on the Lead Gen Welcome step.
   const [calltoolsLoading, setCalltoolsLoading] = useState(false);
+  // The one-time "did you put them in the right boxes?" check on the way out of
+  // the Welcome step. `acknowledged` is set the moment it opens, so it can only
+  // ever interrupt once per session no matter how it's dismissed.
+  const [nameCheckOpen, setNameCheckOpen] = useState(false);
+  const [nameCheckAcknowledged, setNameCheckAcknowledged] = useState(false);
   // Preview-only: lets HR flip the sample form into the Lead Gen experience
   // (editable nickname + auto-minted CallTools username) to test it. Real links
   // get Lead Gen behaviour from their invite_department instead.
@@ -329,6 +347,9 @@ export default function OnboardingFormPage() {
             first_name: priorFirst,
             nickname: leadGen ? prior.calltools_nickname ?? '' : priorFirst,
             calltools_username: '', // preview-only display value; never prefilled
+            // Middle name has no full_name fallback to re-split out of — it was
+            // never composed into one — so a pre-column row simply restores blank.
+            middle_name: prior.middle_name ?? '',
             last_name: priorLast,
             extension: priorExtension,
             gmail_surname: prior.gmail_surname ?? '',
@@ -625,6 +646,20 @@ export default function OnboardingFormPage() {
         return;
       }
     }
+    // Leaving the Welcome step is the last moment a swapped First/Last name is
+    // cheap to fix — after this it is baked into the @simple.biz account, the
+    // Gmail Surname, the contracts and the master list. Interrupt ONCE to make
+    // them look at what they typed. Deliberately outside the isPreview guard
+    // above (preview skips validation) so HR sees it too, and gated on an
+    // acknowledged flag rather than the name's content: it's a prompt to check,
+    // not a claim that anything is wrong, and it must never trap anyone on the
+    // step. Dismissing it — either button, Escape, or the backdrop — sets the
+    // flag, so the very next Next goes through.
+    if (step === WELCOME_STEP && !nameCheckAcknowledged) {
+      setNameCheckAcknowledged(true);
+      setNameCheckOpen(true);
+      return;
+    }
     // The Intellectual Property step is deliberately ISOLATED: the name signed
     // on the IP document must NOT seed the Welcome step's first/last/extension.
     // Doing so cascaded a mis-split of the full legal name into Welcome, and
@@ -634,7 +669,15 @@ export default function OnboardingFormPage() {
     setDirection(1);
     setStep((s) => Math.min(STEP_TITLES.length - 1, s + 1));
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [step, validateStep, isPreview]);
+  }, [step, validateStep, isPreview, nameCheckAcknowledged]);
+
+  // "They're correct — continue": close and move on in one action. Safe to call
+  // goNext() straight away because opening the dialog already set the
+  // acknowledged flag, so the check can't re-fire and bounce them back.
+  const confirmNameCheck = useCallback(() => {
+    setNameCheckOpen(false);
+    goNext();
+  }, [goNext]);
 
   const goPrev = useCallback(() => {
     setDirection(-1);
@@ -706,6 +749,9 @@ export default function OnboardingFormPage() {
           // Extension (Jr./Sr./III) still rides along and is folded into the
           // composed full_name; it never reaches the workspace-account webhook.
           first_name: form.first_name.trim(),
+          // HR-record only — the server never folds it into the composed
+          // full_name (docs/features/onboarding-name-parts.md).
+          middle_name: form.middle_name.trim() || null,
           last_name: form.last_name.trim(),
           name_extension: form.extension.trim() || null,
           gmail_surname: form.gmail_surname.trim() || null,
@@ -953,8 +999,167 @@ export default function OnboardingFormPage() {
         </p>
       </div>
 
+      <NameOrderCheckDialog
+        open={nameCheckOpen}
+        first={form.first_name}
+        middle={form.middle_name}
+        last={form.last_name}
+        extension={form.extension}
+        onFix={() => setNameCheckOpen(false)}
+        onConfirm={confirmNameCheck}
+      />
+
       <Toaster richColors position="top-center" />
     </main>
+  );
+}
+
+// ─── Name-order check (one-time, on the way out of the Welcome step) ─────────
+
+/**
+ * A deliberately alarming-looking interrupt that is NOT an error: it fires once
+ * when the hire leaves the Welcome step and asks them to look at the First and
+ * Last boxes before their name is baked into their @simple.biz account, the
+ * Gmail Surname, the signed contracts and the master list. Swapping the two is
+ * the single most common mistake on this form and the most expensive to undo.
+ *
+ * It never blocks: both buttons, Escape and the backdrop all dismiss it, and the
+ * caller has already recorded the acknowledgement, so the next Next always goes
+ * through. Rendered inline (not portalled) — this public page has no app shell
+ * or theme provider, so a portal would only lose the `onboarding-public` scope.
+ */
+function NameOrderCheckDialog({
+  open,
+  first,
+  middle,
+  last,
+  extension,
+  onFix,
+  onConfirm,
+}: {
+  open: boolean;
+  first: string;
+  middle: string;
+  last: string;
+  extension: string;
+  /** Dismiss and stay on the step so they can edit the boxes. */
+  onFix: () => void;
+  /** Dismiss and advance in one action. */
+  onConfirm: () => void;
+}) {
+  const reduceMotion = useReducedMotion();
+  const confirmRef = useRef<HTMLButtonElement | null>(null);
+
+  // Escape dismisses (equivalent to "Let me check"), and the page behind is
+  // scroll-locked while it's up so the backdrop can't be scrolled past.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onFix();
+    };
+    document.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    // Focus the primary action so the dialog is immediately keyboard-operable.
+    const t = window.setTimeout(() => confirmRef.current?.focus(), 60);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+      window.clearTimeout(t);
+    };
+  }, [open, onFix]);
+
+  const Row = ({ label, value }: { label: string; value: string }) => (
+    <div className="flex items-baseline justify-between gap-4 py-1.5">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-rose-700/80">{label}</span>
+      <span
+        className={cn(
+          'min-w-0 truncate text-right text-sm font-semibold',
+          value.trim() ? 'text-zinc-900' : 'text-zinc-400',
+        )}
+      >
+        {value.trim() || '—'}
+      </span>
+    </div>
+  );
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 p-4 backdrop-blur-[2px]"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: reduceMotion ? 0.12 : 0.2 }}
+          onClick={onFix}
+        >
+          <motion.div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="name-order-title"
+            aria-describedby="name-order-body"
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-rose-200 bg-white shadow-2xl"
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: 12 }}
+            animate={reduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1, y: 0 }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: 8 }}
+            transition={{ duration: reduceMotion ? 0.12 : 0.24, ease: [0.22, 1, 0.36, 1] }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3.5 border-b border-rose-100 bg-rose-50 px-5 py-4">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-600 text-white shadow-sm shadow-rose-600/30">
+                <TriangleAlert className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <h2 id="name-order-title" className="text-base font-bold text-rose-900">
+                  Hold on — check your name
+                </h2>
+                <p className="mt-0.5 text-xs leading-relaxed text-rose-800">
+                  A lot of people fill these two in the wrong way round.
+                </p>
+              </div>
+            </div>
+
+            <div className="px-5 py-4">
+              <p id="name-order-body" className="text-sm leading-relaxed text-zinc-600">
+                Please make sure your <strong className="font-semibold text-zinc-900">first name</strong> isn&rsquo;t
+                sitting in the last-name box, and the other way round. Here&rsquo;s exactly what you typed:
+              </p>
+              <div className="mt-3.5 divide-y divide-rose-100 rounded-xl border border-rose-100 bg-rose-50/50 px-4 py-1.5">
+                <Row label="First name" value={first} />
+                <Row label="Middle name" value={middle} />
+                <Row label="Last name" value={last} />
+                {extension.trim() && <Row label="Extension" value={extension} />}
+              </div>
+              <p className="mt-3 text-[11px] leading-relaxed text-zinc-500">
+                Your @simple.biz account, your contracts and your payroll record are all generated from this — it
+                takes HR a lot longer to fix afterwards than it takes you to check now.
+              </p>
+            </div>
+
+            <div className="flex flex-col-reverse gap-2 border-t border-zinc-100 bg-zinc-50/70 px-5 py-3.5 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                className="border-zinc-300 text-zinc-700"
+                onClick={onFix}
+              >
+                Let me check again
+              </Button>
+              <Button
+                ref={confirmRef}
+                type="button"
+                className="bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25 hover:opacity-95"
+                onClick={onConfirm}
+              >
+                <Check className="mr-1.5 h-4 w-4" />
+                They&rsquo;re correct — continue
+              </Button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -1138,35 +1343,50 @@ function Step1Welcome({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="First name" required>
-          <Input
-            value={form.first_name ?? ''}
-            onChange={(e) => update('first_name', e.target.value)}
-            onBlur={(e) => update('first_name', toTitleCaseName(e.target.value))}
-            placeholder="Jane"
-            autoComplete="given-name"
-            autoFocus
-          />
-        </Field>
-        <div className="grid grid-cols-[1fr_5.5rem] gap-3">
-          <Field label="Last name" required>
+        {/* The legal-name line — First · Middle · (Last + Extension) — spans the
+            whole two-column grid so the boxes read as one name instead of
+            wrapping apart. Stacked on mobile, First/Middle paired at sm with the
+            surname block full-width beneath, all three abreast from md up. */}
+        <div className="grid gap-4 sm:col-span-2 sm:grid-cols-2 md:grid-cols-[1fr_0.75fr_1.35fr]">
+          <Field label="First name" required>
             <Input
-              value={form.last_name ?? ''}
-              onChange={(e) => update('last_name', e.target.value)}
-              onBlur={(e) => update('last_name', toTitleCaseName(e.target.value))}
-              placeholder="Dela Cruz"
-              autoComplete="family-name"
+              value={form.first_name ?? ''}
+              onChange={(e) => update('first_name', e.target.value)}
+              onBlur={(e) => update('first_name', toTitleCaseName(e.target.value))}
+              placeholder="Jane"
+              autoComplete="given-name"
+              autoFocus
             />
           </Field>
-          <Field label="Extension">
+          <Field label="Middle name">
             <Input
-              value={form.extension ?? ''}
-              onChange={(e) => update('extension', e.target.value)}
-              onBlur={(e) => update('extension', toTitleCaseName(e.target.value))}
-              placeholder="Jr."
-              autoComplete="honorific-suffix"
+              value={form.middle_name ?? ''}
+              onChange={(e) => update('middle_name', e.target.value)}
+              onBlur={(e) => update('middle_name', toTitleCaseName(e.target.value))}
+              placeholder="Marie"
+              autoComplete="additional-name"
             />
           </Field>
+          <div className="grid grid-cols-[1fr_5.5rem] gap-3 sm:col-span-2 md:col-span-1">
+            <Field label="Last name" required>
+              <Input
+                value={form.last_name ?? ''}
+                onChange={(e) => update('last_name', e.target.value)}
+                onBlur={(e) => update('last_name', toTitleCaseName(e.target.value))}
+                placeholder="Dela Cruz"
+                autoComplete="family-name"
+              />
+            </Field>
+            <Field label="Extension">
+              <Input
+                value={form.extension ?? ''}
+                onChange={(e) => update('extension', e.target.value)}
+                onBlur={(e) => update('extension', toTitleCaseName(e.target.value))}
+                placeholder="Jr."
+                autoComplete="honorific-suffix"
+              />
+            </Field>
+          </div>
         </div>
         {/* Preview-only: the Lead Gen switch sits right on top of the Nickname
             field so HR can flip it and watch the field change from the

@@ -174,6 +174,9 @@ type SubmissionRow = {
   // the list query omits them for pre-migration safety; only the detail modal's
   // full-row fetch hydrates them. Null on pre-split-migration / manual hires.
   first_name?: string | null;
+  // HR record only — deliberately absent from `full_name` and from every name
+  // derivation. See docs/features/onboarding-name-parts.md.
+  middle_name?: string | null;
   last_name?: string | null;
   name_extension?: string | null;
   // DERIVED surname-first display name (`Surname, Given... "GoBy"`) from the DB
@@ -6132,9 +6135,16 @@ function SubmissionDetailDialog({
                         <DetailRow label="Full name" value={row.full_name} />
                         {/* Structured parts the hire typed (source of truth) —
                             shown when the row has them (post-split-migration). */}
-                        {(row.first_name || row.last_name) && (
+                        {(row.first_name || row.middle_name || row.last_name) && (
                           <>
                             <DetailRow label="First name" value={row.first_name} />
+                            {/* Middle name is captured for HR records only — it is
+                                never part of the Full name above (see
+                                docs/features/onboarding-name-parts.md), so this
+                                row is the ONLY place it surfaces. */}
+                            {row.middle_name && (
+                              <DetailRow label="Middle name" value={row.middle_name} />
+                            )}
                             <DetailRow label="Last name" value={row.last_name} />
                             {row.name_extension && (
                               <DetailRow label="Extension" value={row.name_extension} />

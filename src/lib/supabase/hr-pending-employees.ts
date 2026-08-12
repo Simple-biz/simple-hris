@@ -113,6 +113,9 @@ export type HrPendingEmployeeRow = {
    *  manually-added ("Add person") hires and rows predating the split migration
    *  — consumers fall back to splitting `name` then. */
   first_name: string | null;
+  /** HR-record only — deliberately absent from the composed `name`
+   *  (docs/features/onboarding-name-parts.md). */
+  middle_name: string | null;
   last_name: string | null;
   name_extension: string | null;
   personal_email: string;
@@ -183,6 +186,7 @@ export type CreateHrPendingInput = {
    *  submission. Optional — "Add person" hires have only the single `name`
    *  field, so these stay null and consumers fall back to splitting `name`. */
   first_name?: string | null;
+  middle_name?: string | null;
   last_name?: string | null;
   name_extension?: string | null;
   personal_email: string;
@@ -204,6 +208,26 @@ export type CreateHrPendingInput = {
 export type UpdateHrPendingInput = Partial<
   Omit<CreateHrPendingInput, "created_by">
 > & { status?: HrPendingStatus };
+
+/**
+ * Column families this table may not have yet (a migration not yet run). A write
+ * that trips one strips just that family and retries, so staging still works and
+ * only the not-yet-migrated extras drop — the row always lands with its composed
+ * `name`. Shared by insert AND update so both survive the same gap, and so a
+ * database missing TWO families still succeeds (the loop is bounded by the
+ * family count, one strip per attempt).
+ */
+const OPTIONAL_COLUMN_FAMILIES: Array<{ test: RegExp; keys: string[] }> = [
+  { test: /project_names/i, keys: ["project_names"] },
+  {
+    test: /first_name|last_name|name_extension/i,
+    keys: ["first_name", "last_name", "name_extension"],
+  },
+  // Its own family, not folded into the split-name one: middle_name shipped in a
+  // later migration (add_middle_name_to_onboarding.sql), so a database that has
+  // first/last/extension but not middle_name drops only the column it lacks.
+  { test: /middle_name/i, keys: ["middle_name"] },
+];
 
 function client() {
   const sb = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
@@ -307,6 +331,7 @@ export async function createHrPendingEmployee(
     // Structured parts carried from the submission (already sanitized upstream);
     // `name` above stays the composed authoritative value.
     first_name: input.first_name?.trim() || null,
+    middle_name: input.middle_name?.trim() || null,
     last_name: input.last_name?.trim() || null,
     name_extension: input.name_extension?.trim() || null,
     personal_email: input.personal_email.trim().toLowerCase(),
@@ -328,18 +353,6 @@ export async function createHrPendingEmployee(
     status,
   };
 
-  // Degrade gracefully on a database missing an optional column family (a
-  // migration not yet run): strip those columns and retry so staging still
-  // works. Covers project_names (add_project_names_to_hr_pending.sql) and the
-  // split-name columns (2026-07-20_split_onboarding_name_columns.sql) — the row
-  // still lands with its composed `name`, only the not-yet-migrated extras drop.
-  const OPTIONAL_COLUMN_FAMILIES: Array<{ test: RegExp; keys: string[] }> = [
-    { test: /project_names/i, keys: ["project_names"] },
-    {
-      test: /first_name|last_name|name_extension/i,
-      keys: ["first_name", "last_name", "name_extension"],
-    },
-  ];
   for (let attempt = 0; ; attempt++) {
     const { data, error } = await sb.from(TABLE).insert(payload).select("*").single();
     if (!error) return { row: data as HrPendingEmployeeRow, error: null };
@@ -364,6 +377,7 @@ export async function updateHrPendingEmployee(
   };
   set("name", input.name?.trim());
   if (input.first_name !== undefined) payload["first_name"] = input.first_name?.trim() || null;
+  if (input.middle_name !== undefined) payload["middle_name"] = input.middle_name?.trim() || null;
   if (input.last_name !== undefined) payload["last_name"] = input.last_name?.trim() || null;
   if (input.name_extension !== undefined)
     payload["name_extension"] = input.name_extension?.trim() || null;
@@ -398,30 +412,26 @@ export async function updateHrPendingEmployee(
     payload["status"] = "ready";
   }
 
-  const { data, error } = await sb
-    .from(TABLE)
-    .update(payload)
-    .eq("id", id)
-    .select("*")
-    .single();
-  if (error) {
-    // Pre-migration DB without the split-name columns
-    // (2026-07-20_split_onboarding_name_columns.sql): retry without them so the
-    // update still lands (name/rates/etc. stay in sync; only the parts drop).
-    if (
-      /first_name|last_name|name_extension/i.test(error.message) &&
-      ("first_name" in payload || "last_name" in payload || "name_extension" in payload)
-    ) {
-      delete payload.first_name;
-      delete payload.last_name;
-      delete payload.name_extension;
-      const retry = await sb.from(TABLE).update(payload).eq("id", id).select("*").single();
-      if (retry.error) return { row: null, error: retry.error.message };
-      return { row: retry.data as HrPendingEmployeeRow, error: null };
+  // Same bounded strip-and-retry as the insert (shared OPTIONAL_COLUMN_FAMILIES):
+  // a pre-migration database drops one family per attempt and the update still
+  // lands, so name/rates/etc. stay in sync even when MORE THAN ONE family is
+  // missing — a single one-shot retry could only ever survive the first gap.
+  for (let attempt = 0; ; attempt++) {
+    const { data, error } = await sb
+      .from(TABLE)
+      .update(payload)
+      .eq("id", id)
+      .select("*")
+      .single();
+    if (!error) return { row: data as HrPendingEmployeeRow, error: null };
+    const family = OPTIONAL_COLUMN_FAMILIES.find(
+      (f) => f.test.test(error.message) && f.keys.some((k) => k in payload),
+    );
+    if (!family || attempt >= OPTIONAL_COLUMN_FAMILIES.length) {
+      return { row: null, error: error.message };
     }
-    return { row: null, error: error.message };
+    for (const k of family.keys) delete payload[k];
   }
-  return { row: data as HrPendingEmployeeRow, error: null };
 }
 
 /**
