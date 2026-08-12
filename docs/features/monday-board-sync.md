@@ -20,8 +20,9 @@ Shipped 2026-08-11 (skill + 2026-08-11 pass: 12 rows created, 7 Done, 5 Backlog,
 | Shared API lib — retries, budget fast-fail, label assertions | `.claude/skills/monday-board-sync/scripts/monday.mts` |
 | Per-pass data + `selfcheck()` | `.claude/skills/monday-board-sync/scripts/pass.mts` |
 | The review Kane approves (writes `proposal.json` + hash) | `.claude/skills/monday-board-sync/scripts/review.mts` |
-| The only writer | `.claude/skills/monday-board-sync/scripts/apply.mts` |
+| The only writer (`--only-new` = the 6-call lean path) | `.claude/skills/monday-board-sync/scripts/apply.mts` |
 | Re-read verification / standalone audit | `.claude/skills/monday-board-sync/scripts/verify.mts` |
+| Re-read ONE row in a single call (after `--only-new`) | `.claude/skills/monday-board-sync/scripts/verify-one.mts` |
 | Read-only board dump, groups, live labels | `.claude/skills/monday-board-sync/scripts/pull-state.mts` |
 | Read-only git evidence for a sprint | `.claude/skills/monday-board-sync/scripts/sprint-evidence.mts` |
 | CSV export of a pass | `.claude/skills/monday-board-sync/scripts/export-csv.mts` |
@@ -131,6 +132,26 @@ write. Ask only for the columns you read: pulling all ~21 columns across 2,172 i
 expensive call available. A full `apply.mts` is ~200 calls because the reconciler patches all 135
 tasks and 37 epics every run — the honest cost of driving the app path. `monday.mts` raises
 `DailyLimitExceeded` immediately rather than retrying into a wall.
+
+### `--only-new` — the lean path for an add-and-correct pass
+
+Added 2026-08-12 (Kane: "we can't just add 1 run and 1 api call?"). For a pass that only creates
+rows and sets their execution state, ~199 of those 200 calls re-assert values that are already
+correct. `apply.mts --only-new` skips the reconciler and does the job in **6 calls**: 3 for the
+label gate, 1 exact-name lookup (`items_page_by_column_values`, not a full board page), 1
+`create_item` carrying **every** reconciler-owned column at once, 1 evidence update. Verify with
+`verify-one.mts <itemId>` (1 call) rather than `verify.mts`, which pages the whole board.
+
+It is safe against the recreate-forever trap for one reason: the name it creates is
+`taskItemName(plan.name)` read from the same `PLAN_TASKS` entry the reconciler matches on, so a
+later full sync **adopts** the row. A hand-typed name would not be safe, which is why the writer
+re-asserts the plan lookup and refuses a name it cannot find.
+
+What it deliberately does not write: **board relations** (the epic link and the project rollup are
+full-set overwrites — writing one erases the rest), epic creation, and any re-patch of rows the
+pass does not name. Those stay unset until a full reconcile runs. A row created this way is
+correctly grouped, typed, scored and statused, but **not yet linked to its epic** — so the Roadmap
+& Epics rollup lags until then.
 
 ## Deploy notes
 

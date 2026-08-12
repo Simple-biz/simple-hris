@@ -141,6 +141,15 @@ One Gridline pass left verification dead for 5.5 hours.
   2,172 items is the most expensive thing these scripts can do.
 - A full `apply.mts` is ~200 calls: the reconciler patches all 135 tasks and 37 epics every run.
   That is the honest cost of driving the app path. Do not run it repeatedly to poke at one row.
+- **`apply.mts --only-new` is 6 calls** — use it when the pass only ADDS rows and corrects them
+  (3 label-gate reads, 1 exact-name lookup, 1 `create_item` carrying every reconciler-owned column,
+  1 evidence update). Verify with `verify-one.mts <itemId>` (1 call), never `verify.mts`, which
+  pages the whole board. It is safe only because the name it creates is `taskItemName(plan.name)`
+  from the same `PLAN_TASKS` entry the reconciler matches byte-exact on, so a later full sync
+  ADOPTS the row instead of recreating it — the writer re-asserts that plan lookup and refuses a
+  name it cannot find. **It still writes no relation**, so the row is correctly grouped, typed,
+  scored and statused but NOT linked to its epic until a full reconcile runs. Reach for the full
+  path when the pass changes structure (new epic, re-scored rows, a sprint move).
 - `monday.mts` raises `DailyLimitExceeded` immediately instead of retrying, so a blown budget is loud.
 
 ## Traps — all verified against the live board 2026-08-11

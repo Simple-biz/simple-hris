@@ -267,6 +267,47 @@ export async function postUpdate(itemId: string, body: string) {
   await gql(M_POST_UPDATE, { item: String(itemId), body });
 }
 
+export const M_CREATE_ITEM = `mutation($board:ID!,$group:String!,$name:String!,$vals:JSON!){
+  create_item(board_id:$board,group_id:$group,item_name:$name,column_values:$vals,
+    create_labels_if_missing:false){id}}`;
+
+/**
+ * ONE exact-name lookup instead of paging all ~2,300 items. Returns every id that carries the name,
+ * because duplicates are a real hazard on this board — the reconciler's Map silently keeps the last
+ * one, so a caller that picked arbitrarily could write to the row nobody reads. Callers must refuse
+ * an ambiguous result rather than guess.
+ *
+ * `items_page_by_column_values` matches the "name" pseudo-column EXACTLY, which is the same
+ * byte-exact rule sync.ts uses — no trim, no case fold, no unicode normalisation.
+ */
+export async function findItemIdsByExactName(boardId: string, name: string): Promise<string[]> {
+  const d = await gql<{ items_page_by_column_values: { items: { id: string; name: string }[] } }>(
+    `query($b:ID!,$n:String!){items_page_by_column_values(board_id:$b,limit:50,
+       columns:[{column_id:"name",column_values:[$n]}]){items{id name}}}`,
+    { b: boardId, n: name },
+  );
+  // The API can match loosely on some column types — re-assert byte-exactness locally so a
+  // near-miss can never be mistaken for the row we meant.
+  return (d.items_page_by_column_values?.items ?? []).filter((i) => i.name === name).map((i) => i.id);
+}
+
+/** Creates one item with its columns in a single call. Never writes a board relation — those are
+ *  full-set overwrites owned by the reconciler (see sync.ts). */
+export async function createItem(
+  boardId: string,
+  groupId: string,
+  name: string,
+  vals: Record<string, unknown>,
+): Promise<string> {
+  const d = await gql<{ create_item: { id: string } }>(M_CREATE_ITEM, {
+    board: boardId,
+    group: groupId,
+    name,
+    vals: JSON.stringify(vals),
+  });
+  return d.create_item.id;
+}
+
 // ── name filters ─────────────────────────────────────────────────────────────────────────────────
 // The boards are SHARED with other teams: Sprint Tasks holds ~1,950 items and Roadmap & Epics 212,
 // of which 175 are not ours. A group listing is mostly not our work — always filter by name.

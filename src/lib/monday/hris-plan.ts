@@ -385,4 +385,10 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-03b', name: 'Paystub email HTML rendered in-app (n8n Gmail becomes a pipe) + System Bonus snapshot columns on payment_dispatches', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
   { epic: 'HRIS-01a', name: 'Offboarding is delete-only: suspend is its own path, suspended-person offboards escalate to delete, and leavers get a correct final check', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
   { epic: 'HRIS-06', name: 'One HSL department + required sub-department that sets the base rate, wired through the Payment Catalog', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
+  // ── Sprint 26 third pass — committed 0cda107..3d74e09 (Aug 12 2026) ──────────────────────────
+  // In-sprint, NOT backlog: this is active work, not a shipped-but-blocked row. done:false because
+  // both commits are still unpushed (local main is 7 ahead of origin/main), so the skill's corrector
+  // marks it In Progress. 3 SP against the Sprint 26 band (1–5, avg ~3.5): narrower than the 3-SP
+  // name-split row it sits beside, plus a dialog, a migration + apply script and a feature doc.
+  { epic: 'HRIS-01a', name: 'Onboarding paperwork: Middle name box + one-time first/last name-order check', type: 'Bug', sp: 3, done: false, sprint: 'S26' },
 ];

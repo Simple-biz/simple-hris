@@ -30,9 +30,15 @@ import {
   PROPOSAL_PATH,
   SKILL_DIR,
   TASK_COLS,
+  TASK_GROUPS,
+  TASK_PRIORITY_INDEX,
+  TASK_SPRINT_INDEX,
   TASK_STATUS_INDEX,
+  TASK_TYPE_INDEX,
   assertLabelsUnchanged,
   assertNameIsSafe,
+  createItem,
+  findItemIdsByExactName,
   isOurTask,
   listBoardItems,
   loadToken,
@@ -45,6 +51,26 @@ import { PASS_DATE, ROWS, selfcheck, updateBody } from './pass.mts';
 
 const args = process.argv.slice(2);
 const APPLY = args.includes('--apply');
+/**
+ * LEAN MODE — for a pass that only ADDS rows and corrects them.
+ *
+ * The default path runs the real reconciler, which re-patches all 135 task rows and 37 epics and
+ * then reads all ~2,300 board items to resolve ids: ~200 calls against a DAILY complexity budget,
+ * to add one row. This mode does the same job for that row in three calls — an exact-name lookup,
+ * a create carrying every reconciler-owned column, and the evidence update.
+ *
+ * It is safe against the recreate-forever trap for one reason only: the reconciler matches
+ * BYTE-EXACT on `taskItemName(plan.name)`, and that is the exact string created here, sourced from
+ * the same PLAN_TASKS entry. A name typed by hand would NOT be safe.
+ *
+ * What it deliberately does not do, and why the full pass still has to run eventually:
+ *   • no board relations — Linked Tasks / Sprint Tasks are full-set OVERWRITES (writing one from
+ *     here would erase the rest), so the epic link and project rollup stay unset until a reconcile
+ *   • no epic creation, no re-patching of rows this pass does not name
+ * Refuses outright if any row is missing from the board, since correcting an absent row is the one
+ * thing this mode cannot do without the reconciler.
+ */
+const ONLY_NEW = args.includes('--only-new');
 const approved = args[args.indexOf('--approve') + 1];
 const tag = APPLY ? 'APPLY' : 'DRY';
 
@@ -105,8 +131,89 @@ if (overlap.length) {
 for (const row of ROWS) assertNameIsSafe(taskItemName({ name: row.name }));
 
 await withLock(async () => {
-  // ── phase 1: structure, via the real reconciler ────────────────────────────────────────────────
   process.env.MONDAY = loadToken();
+
+  // ── LEAN PATH — create only the rows this pass names, then correct them ────────────────────────
+  if (ONLY_NEW) {
+    console.log(`\n[${tag}] LEAN — reconciler skipped; only the ${ROWS.length} row(s) in this pass are touched`);
+    console.log('  NOT written by this mode: epic relation, project rollup, and any re-patch of');
+    console.log('  other rows. A later full reconcile fills those in — it matches this row by name.');
+
+    const applied: { item: string; id: string; status: string }[] = [];
+    const skipped: string[] = [];
+
+    for (const row of ROWS) {
+      const plan = PLAN_TASKS.find((t) => t.name === row.name);
+      // selfcheck already enforces this, but the writer re-asserts rather than trusting a caller:
+      // a name that is not in the plan is exactly the input that recreates rows forever.
+      if (!plan) {
+        skipped.push(`no PLAN_TASKS entry — refusing to create an unrecognised name: ${row.name.slice(0, 60)}`);
+        continue;
+      }
+      const itemName = taskItemName({ name: plan.name });
+      const existing = await findItemIdsByExactName(MONDAY_BOARDS.tasks, itemName);
+      if (existing.length > 1) {
+        skipped.push(`AMBIGUOUS — ${existing.length} board rows share this name, fix the duplicate first: ${itemName.slice(0, 60)}`);
+        continue;
+      }
+
+      let id = existing[0];
+      if (!id) {
+        // Every reconciler-owned column rides the create, so the row is fully scored in one call
+        // and a later reconcile has nothing to correct. Relations are deliberately absent.
+        const createVals: Record<string, unknown> = {
+          [TASK_COLS.owner]: { personsAndTeams: [{ id: KANE_USER_ID, kind: 'person' }] },
+          [TASK_COLS.type]: { index: TASK_TYPE_INDEX[plan.type] },
+          [TASK_COLS.status]: { index: TASK_STATUS_INDEX[row.status] },
+          [TASK_COLS.estimatedSp]: String(plan.sp),
+          [TASK_COLS.sprint]: { index: TASK_SPRINT_INDEX[plan.sprint] },
+          ...(plan.priority ? { [TASK_COLS.priority]: { index: TASK_PRIORITY_INDEX[plan.priority] } } : {}),
+          // Actual SP and Completed Date only ever accompany a Done row.
+          ...(row.status === 'Done' ? { [TASK_COLS.actualSp]: String(plan.sp) } : {}),
+          ...(row.status === 'Done' && row.completed ? { [TASK_COLS.completed]: { date: row.completed } } : {}),
+        };
+        console.log(`  create → ${plan.sprint} ${plan.sp}SP ${plan.type} ${row.status}  ${itemName.slice(0, 70)}`);
+        if (!APPLY) {
+          skipped.push(`would be created this pass: ${itemName.slice(0, 76)}`);
+          continue;
+        }
+        id = await createItem(MONDAY_BOARDS.tasks, TASK_GROUPS[plan.sprint], itemName, createVals);
+        console.log(`    created id ${id}`);
+      } else {
+        // Already on the board — this mode cannot patch reconciler-owned columns, so it corrects
+        // only execution state, exactly like the normal phase 2.
+        const vals: Record<string, unknown> = { [TASK_COLS.status]: { index: TASK_STATUS_INDEX[row.status] } };
+        if (row.status === 'Done' && row.completed) vals[TASK_COLS.completed] = { date: row.completed };
+        console.log(`  existing ${id} → ${row.status}  ${itemName.slice(0, 66)}`);
+        if (APPLY) await setColumns(MONDAY_BOARDS.tasks, id, vals);
+      }
+
+      if (APPLY) {
+        await postUpdate(id, updateBody(row));
+        applied.push({ item: itemName, id, status: row.status });
+      }
+    }
+
+    if (skipped.length) {
+      console.log('\n  skipped:');
+      for (const s of skipped) console.log(`    - ${s}`);
+    }
+    if (APPLY) {
+      fs.writeFileSync(
+        `${SKILL_DIR}/apply-result.json`,
+        JSON.stringify({ tag, mode: 'only-new', passDate: PASS_DATE, approved: approved ?? null, applied, skipped }, null, 2),
+        'utf8',
+      );
+    }
+    console.log(
+      APPLY
+        ? `\n[${tag}] ${applied.length} row(s) written. VERIFY by re-reading the board — never report a sync as done off the write log:\n  node --import tsx .claude/skills/monday-board-sync/scripts/verify.mts`
+        : `\n[${tag}] dry run only — nothing was written.`,
+    );
+    return;
+  }
+
+  // ── phase 1: structure, via the real reconciler ────────────────────────────────────────────────
   const { syncHrisBoard } = await import('../../../../src/lib/monday/sync');
 
   console.log(`\n[${tag}] phase 1 — structure (real reconciler)`);
