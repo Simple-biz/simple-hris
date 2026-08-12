@@ -386,11 +386,18 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-01a', name: 'Offboarding is delete-only: suspend is its own path, suspended-person offboards escalate to delete, and leavers get a correct final check', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
   { epic: 'HRIS-06', name: 'One HSL department + required sub-department that sets the base rate, wired through the Payment Catalog', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
   // ── Sprint 26 third pass — committed 0cda107..3d74e09 (Aug 12 2026) ──────────────────────────
-  // In-sprint, NOT backlog: this is active work, not a shipped-but-blocked row. done:false because
-  // both commits are still unpushed (local main is 7 ahead of origin/main), so the skill's corrector
-  // marks it In Progress. 3 SP against the Sprint 26 band (1–5, avg ~3.5): narrower than the 3-SP
-  // name-split row it sits beside, plus a dialog, a migration + apply script and a feature doc.
-  { epic: 'HRIS-01a', name: 'Onboarding paperwork: Middle name box + one-time first/last name-order check', type: 'Bug', sp: 3, done: false, sprint: 'S26' },
+  // done:true 2026-08-12, and this row is the clearest case yet for why the honesty gate exists: it
+  // sat at In Progress (unpushed), then Pending Deploy (pushed, migration un-run) before earning
+  // this. Kane applied add_middle_name_to_onboarding.sql and MEASUREMENT — not his claim — closed
+  // it: a read-only PostgREST probe returned both middle_name columns present, which also proves
+  // the PostgREST schema cache reloaded (a stale cache would keep rejecting the column with
+  // PGRST204 long after the DDL succeeded). With the columns live the optional-column retry no
+  // longer strips the key, so the middle name persists. Basis for Done is Kane's sign-off ON TOP OF
+  // that measurement; the form itself was NOT separately exercised, and the row's item update says
+  // so in those words rather than implying an end-to-end test nobody ran.
+  // 3 SP against the Sprint 26 band (1–5, avg ~3.5): narrower than the 3-SP name-split row it sits
+  // beside, plus a dialog, a migration + apply script and a feature doc.
+  { epic: 'HRIS-01a', name: 'Onboarding paperwork: Middle name box + one-time first/last name-order check', type: 'Bug', sp: 3, done: true, sprint: 'S26' },
   // ── Sprint 26 fourth pass — committed 5950b2e (Aug 11 2026) ─────────────────────────────────
   // done:true on Kane's prod confirmation 2026-08-12 ("Confirmed payroll wizard published" — the
   // Amount Source column reading "Payroll Wizard (published)"), plus his sign-off to close the row.
