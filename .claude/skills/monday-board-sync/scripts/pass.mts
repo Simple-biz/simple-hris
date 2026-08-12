@@ -20,6 +20,13 @@
  * SEPARATE cluster by file overlap — zero file overlap with the onboarding work — and is deliberately
  * NOT logged here. Kane asked for the onboarding change; inventing a second row he did not ask for
  * would be exactly the silent scope-widening this skill's review step exists to prevent.
+ *
+ * ── 2026-08-12 pass, second row (added same day) ──────────────────────────────────────────────────
+ * Kane asked for the Payment Dispatch wizard-values fix to go on the board. ONE commit, 5950b2e,
+ * carrying two defects that share `useDispatchQueue.ts` — so ONE row by the file-overlap rule, not
+ * two by commit-message reading. Unlike the row above it IS on origin/main, so its ceiling is
+ * Pending Deploy rather than In Progress; see the row's own basis for how that was established
+ * (the first ancestor read was ambiguous under concurrent sessions, so it was confirmed twice).
  */
 import { PLAN_TASKS } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
@@ -66,6 +73,44 @@ export const ROWS: PassRow[] = [
       'not pushed — 9b9fd40 and 3d74e09 are not ancestors of origin/main, so nothing is deployed',
       'references/sql/alter/add_middle_name_to_onboarding.sql not applied (measured absent in prod 2026-08-12); needs DATABASE_URL in .env.local, which is currently unset, then node scripts/apply-middle-name-columns.mjs',
       'nobody has clicked through it in production',
+    ],
+  },
+  // ── Pending Deploy · Sprint 26 · on origin/main, nobody has looked at it in prod ───────────────
+  {
+    name: 'Payment Dispatch prices every row from the Payroll Wizard — one shared snapshot-or-lock precedence — and syncs live across open screens',
+    status: 'Pending Deploy',
+    shas: ['5950b2e'],
+    basis:
+      'On origin/main — verified two ways, because the first read was ambiguous under three ' +
+      'concurrent sessions in this checkout: 5950b2e is a member of `git rev-list origin/main`, AND ' +
+      'the shipped content reads out of the remote tree (origin/main:src/lib/payroll/' +
+      'wizard-dispatch-values.ts exists, payment-dispatch.md carries the new §4.2.2, and ' +
+      'useDispatchQueue.ts carries the payment-dispatch-sync channel). It needs NO migration and NO ' +
+      'n8n import — the 21-file diff contains no .sql, no apply-*.mjs and no workflow json — so ' +
+      'Pending Deploy is the ceiling purely because nobody has clicked it through in production. ' +
+      'Two defects, one screen. (1) The queue priced each row by a LOOSER rule than the paystub ' +
+      'engine: it applied the wizard final_pay snapshot with none of the gates ' +
+      'mergeSnapshotIntoStaged requires (no newer-than-lock, no itemization, on wizard-held rows, ' +
+      'keyed on either email) and fell back to computeCurrentPay — which knows nothing of Adj., ' +
+      'Orphanage, KPI/dept bonuses or MESA — rather than to the locked values fetched 40 lines away ' +
+      'in the same function. MEASURED on the live 2026-08-02 cycle: 680 of 1,067 rows carried a ' +
+      'wizard TOTAL beside a recomputed ₱0 bonus split (angelo@ ₱3,750 shown as ₱0; alisone@ ' +
+      '₱7,000 as ₱0), so the export worksheet did not add up and Mark Paid froze those same wrong ' +
+      'figures into payment_dispatches.system_bonus_php. Fixed by extracting the precedence into ' +
+      'one pure module both engines call (wizard-dispatch-values.ts, 29 unit tests): the published ' +
+      'snapshot only when it qualifies, else the LOCKED stage, else a recompute the row must ' +
+      'declare. A re-lock now demotes an older snapshot, which is what makes unlock/re-lock ' +
+      'authoritative over this screen. (2) Marking someone paid moved only the browser that did it ' +
+      '— no subscription, no poll — so a second clerk kept a stale pending count indefinitely. Now ' +
+      'Realtime Broadcast on payment-dispatch-sync plus a 15s ?signature=1 poll while visible. ' +
+      'postgres_changes cannot work here (the browser is anon, the table is RLS-protected) — the ' +
+      'lesson usePaymentsLive already paid for — so no publication change was needed. Verified: ' +
+      'scripts/verify-dispatch-carryover.mts runs the real function against live rows (1067/1067 ' +
+      'wizard-priced, 0 recomputed, 0 non-reconciling), 947 tests pass, tsc clean. Docs: ' +
+      'payment-dispatch.md §4.2.2 + §5.1.1, payroll-wizard-final-pay.md §5, INDEX invariant.',
+    blockers: [
+      'nobody has clicked through it in production — the rose "Check these amounts" banner and the cross-screen live update are both unobserved outside this machine',
+      'the 2026-08-02 cycle still wants a re-lock: aimei@ (locked ₱6,023.50 vs ₱6,272.06 shown) and theresaa@ (₱7,535.59 vs ₱7,017.05) were re-priced two hours after the lock, so the queue legitimately shows the newer figure and flags it until re-locked',
     ],
   },
 ];

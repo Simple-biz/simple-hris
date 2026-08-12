@@ -391,4 +391,16 @@ export const PLAN_TASKS: PlanTask[] = [
   // marks it In Progress. 3 SP against the Sprint 26 band (1–5, avg ~3.5): narrower than the 3-SP
   // name-split row it sits beside, plus a dialog, a migration + apply script and a feature doc.
   { epic: 'HRIS-01a', name: 'Onboarding paperwork: Middle name box + one-time first/last name-order check', type: 'Bug', sp: 3, done: false, sprint: 'S26' },
+  // ── Sprint 26 fourth pass — committed 5950b2e (Aug 11 2026) ─────────────────────────────────
+  // done:false because nobody has clicked it through in production. It IS on origin/main (verified
+  // by rev-list membership AND by reading the module, the doc section and the sync channel out of
+  // origin/main's tree), and it needs no migration and no n8n import — so the corrector marks it
+  // Pending Deploy, which is the ceiling until someone looks at it in prod.
+  // 5 SP against the Sprint 26 band (1–5, avg ~3.5): the peer of the 5-SP "Paystub freshness"
+  // row, whose engine this one extracts the shared precedence OUT of, and broader than the 3-SP
+  // "Staged-only dispatch placement guard" / "Paystub rate-consistency guard" rows beside it —
+  // 21 files, a new pure module with 29 tests, five QueueRow construction sites, a new API read
+  // mode, a Realtime channel + fallback poll, and a live verifier. Not 8: single screen, no new
+  // subsystem.
+  { epic: 'HRIS-03a', name: 'Payment Dispatch prices every row from the Payroll Wizard — one shared snapshot-or-lock precedence — and syncs live across open screens', type: 'Bug', sp: 5, done: false, sprint: 'S26' },
 ];

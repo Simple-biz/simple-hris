@@ -104,6 +104,24 @@ A doc or memory line saying PENDING is **evidence, not proof** — several such 
 contradicted by later evidence. A wrongly-blocked row is also a wrong board; show it as `UNVERIFIED`
 and ask rather than silently downgrading.
 
+### The push check needs two reads in a shared checkout (2026-08-12)
+
+`git merge-base --is-ancestor <sha> origin/main` is not trustworthy on its own here. Three sessions
+share this working tree, and mid-flight ref churn produced flatly contradictory answers for one sha:
+both `--is-ancestor` directions returned "yes", `git log -4 main` showed a lineage that did not
+contain the commit at all (it lists by commit DATE, and concurrent commits carried later dates), and
+`git branch --contains` disagreed with `merge-base`.
+
+Settle it with **membership plus content**, both cheap and both immune to date ordering:
+
+```bash
+git rev-list origin/main | grep -q "^<full-sha>$"        # is it on the remote at all
+git cat-file -e origin/main:<a file the commit added>    # is the work in the remote TREE
+```
+
+Reading a distinctive line back out of `origin/main:<file>` is the strongest form — it proves the
+deployed branch carries the actual change, not merely a sha with the right ancestry.
+
 ## Story points
 
 Fibonacci only (1, 2, 3, 5, 8), per dev-resources.simple.biz/story-points. **Over 8 is an epic**, so
