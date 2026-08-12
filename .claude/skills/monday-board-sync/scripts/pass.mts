@@ -9,31 +9,30 @@
  * angle bracket in a name, a name that is not in PLAN_TASKS byte-exact, a Completed Date on a row
  * that is not Done, and a Done row with no stated basis. Never bypass it.
  *
- * ── 2026-08-12 pass ──────────────────────────────────────────────────────────────────────────────
- * Audited 0cda107..3d74e09 (Aug 12 2026, 3 commits) clustered by file overlap. ONE row.
+ * ── 2026-08-12 pass, fifth row ────────────────────────────────────────────────────────────────────
+ * Kane asked for the Accounting → Documents rebuild to go on the board. ONE commit, 6b8921f, one
+ * cluster by file overlap (AccountingDocuments.tsx + the types module it pulls its formatters from
+ * + that surface's own feature doc). The two commits around it are not ours to log: 3da807d is a
+ * cleanup that predates the ask, and ce83a73 "PUSH" carries only .claude/settings.json and two
+ * .tsbuildinfo files — no code, so no row.
  *
- * Nothing here is Done, and no confirmation could make it so: `git merge-base --is-ancestor` fails
- * for every sha because local main is 7 commits ahead of origin/main. Unpushed is In Progress —
- * Vercel deploys origin/main, so code that never left this machine cannot be live.
+ * Pending Deploy, not Done. It IS on origin/main and needs no external step, so the only thing
+ * between it and Done is a human opening the modal in production. I said plainly at hand-off that I
+ * had not exercised the blob-preview path in a browser, and an assertion that it "obviously works"
+ * is exactly the rationalization the honesty gate names. If Kane clicks it through, say so and it
+ * moves — that confirmation becomes the recorded basis.
  *
- * The third commit in the range (e96e499, dispatch auto-seed + Stop download review findings) is a
- * SEPARATE cluster by file overlap — zero file overlap with the onboarding work — and is deliberately
- * NOT logged here. Kane asked for the onboarding change; inventing a second row he did not ask for
- * would be exactly the silent scope-widening this skill's review step exists to prevent.
- *
- * ── 2026-08-12 pass, second row (added same day) ──────────────────────────────────────────────────
- * Kane asked for the Payment Dispatch wizard-values fix to go on the board. ONE commit, 5950b2e,
- * carrying two defects that share `useDispatchQueue.ts` — so ONE row by the file-overlap rule, not
- * two by commit-message reading. Unlike the row above it IS on origin/main, so its ceiling is
- * Pending Deploy rather than In Progress; see the row's own basis for how that was established
- * (the first ancestor read was ambiguous under concurrent sessions, so it was confirmed twice).
+ * EARLIER PASSES THIS DAY, already applied and deliberately not re-sent: the onboarding paperwork
+ * row (In Progress, unpushed at the time) and the Payment Dispatch wizard-values row (Done on
+ * Kane's prod confirmation). Re-listing an applied row here would rewrite its item update for no
+ * reason; the plan file still carries both, which is what the reconciler needs.
  */
 import { PLAN_TASKS } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
 export const PASS_DATE = '2026-08-12';
-export const AUDIT_RANGE = '0cda107..3d74e09';
-export const AUDIT_COMMITS = 3;
+export const AUDIT_RANGE = '3da807d..ce83a73';
+export const AUDIT_COMMITS = 2;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -50,67 +49,58 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // ── In Progress · Sprint 26 · unpushed, so it cannot be higher than this ───────────────────────
+  // ── Pending Deploy · Sprint 26 · on origin/main, no external step, nobody has clicked it ───────
   {
-    name: 'Onboarding paperwork: Middle name box + one-time first/last name-order check',
-    status: 'In Progress',
-    shas: ['9b9fd40', '3d74e09'],
-    basis:
-      'Committed to local main only — NOT an ancestor of origin/main (local main is 7 ahead), so ' +
-      'Vercel has not deployed it and no hire or HR user can reach it yet. In Progress is the ' +
-      'ceiling until it is pushed; it would then be Pending Deploy, not Done, because the ' +
-      'middle_name column does not exist in production. That was MEASURED on 2026-08-12, not ' +
-      'assumed: both hr_onboarding_submissions.middle_name and hr_pending_employees.middle_name ' +
-      'both returned a column-does-not-exist error. Until the migration runs, a hire typing one has ' +
-      'it silently stripped by the optional-column retry — the form still saves, the middle name ' +
-      'does not. Scope: a Middle name box on the Welcome step stored for HR records only (never ' +
-      'composed into full_name, because the display trigger takes the last given token as the go-by ' +
-      'and would rename Jane Marie Santos to Santos, Jane Marie “Marie” everywhere the Payroll ' +
-      'Wizard prints her), plus a one-time non-blocking dialog on the way out of that step asking ' +
-      'the hire to check they have not swapped first and last name. Doc: ' +
-      'docs/features/onboarding-name-parts.md.',
-    blockers: [
-      'not pushed — 9b9fd40 and 3d74e09 are not ancestors of origin/main, so nothing is deployed',
-      'references/sql/alter/add_middle_name_to_onboarding.sql not applied (measured absent in prod 2026-08-12); needs DATABASE_URL in .env.local, which is currently unset, then node scripts/apply-middle-name-columns.mjs',
-      'nobody has clicked through it in production',
-    ],
-  },
-  // ── Pending Deploy · Sprint 26 · on origin/main, nobody has looked at it in prod ───────────────
-  {
-    name: 'Payment Dispatch prices every row from the Payroll Wizard — one shared snapshot-or-lock precedence — and syncs live across open screens',
+    name: 'Documents queue rebuilt on the MESA anatomy — KPI cards, full-width table and a View modal that renders the signed copy inline',
     status: 'Pending Deploy',
-    shas: ['5950b2e'],
+    shas: ['6b8921f'],
     basis:
-      'On origin/main — verified two ways, because the first read was ambiguous under three ' +
-      'concurrent sessions in this checkout: 5950b2e is a member of `git rev-list origin/main`, AND ' +
-      'the shipped content reads out of the remote tree (origin/main:src/lib/payroll/' +
-      'wizard-dispatch-values.ts exists, payment-dispatch.md carries the new §4.2.2, and ' +
-      'useDispatchQueue.ts carries the payment-dispatch-sync channel). It needs NO migration and NO ' +
-      'n8n import — the 21-file diff contains no .sql, no apply-*.mjs and no workflow json — so ' +
-      'Pending Deploy is the ceiling purely because nobody has clicked it through in production. ' +
-      'Two defects, one screen. (1) The queue priced each row by a LOOSER rule than the paystub ' +
-      'engine: it applied the wizard final_pay snapshot with none of the gates ' +
-      'mergeSnapshotIntoStaged requires (no newer-than-lock, no itemization, on wizard-held rows, ' +
-      'keyed on either email) and fell back to computeCurrentPay — which knows nothing of Adj., ' +
-      'Orphanage, KPI/dept bonuses or MESA — rather than to the locked values fetched 40 lines away ' +
-      'in the same function. MEASURED on the live 2026-08-02 cycle: 680 of 1,067 rows carried a ' +
-      'wizard TOTAL beside a recomputed ₱0 bonus split (angelo@ ₱3,750 shown as ₱0; alisone@ ' +
-      '₱7,000 as ₱0), so the export worksheet did not add up and Mark Paid froze those same wrong ' +
-      'figures into payment_dispatches.system_bonus_php. Fixed by extracting the precedence into ' +
-      'one pure module both engines call (wizard-dispatch-values.ts, 29 unit tests): the published ' +
-      'snapshot only when it qualifies, else the LOCKED stage, else a recompute the row must ' +
-      'declare. A re-lock now demotes an older snapshot, which is what makes unlock/re-lock ' +
-      'authoritative over this screen. (2) Marking someone paid moved only the browser that did it ' +
-      '— no subscription, no poll — so a second clerk kept a stale pending count indefinitely. Now ' +
-      'Realtime Broadcast on payment-dispatch-sync plus a 15s ?signature=1 poll while visible. ' +
-      'postgres_changes cannot work here (the browser is anon, the table is RLS-protected) — the ' +
-      'lesson usePaymentsLive already paid for — so no publication change was needed. Verified: ' +
-      'scripts/verify-dispatch-carryover.mts runs the real function against live rows (1067/1067 ' +
-      'wizard-priced, 0 recomputed, 0 non-reconciling), 947 tests pass, tsc clean. Docs: ' +
-      'payment-dispatch.md §4.2.2 + §5.1.1, payroll-wizard-final-pay.md §5, INDEX invariant.',
+      'On origin/main — verified two ways, because three sessions share this checkout and a single ' +
+      'ancestor read has been ambiguous here before: 6b8921f is a member of `git rev-list ' +
+      'origin/main`, AND the shipped content reads out of the remote tree (origin/main:src/' +
+      'components/accounting/AccountingDocuments.tsx carries DocumentDetailDialog, ' +
+      'src/lib/documents/types.ts carries formatDocumentDateTime, and documents-tab.md carries the ' +
+      'new "The Accounting queue (UI)" section). Kane pushed it as ce83a73. NO external step stands ' +
+      'between it and live: the 4-file diff contains no .sql, no apply-*.mjs and no workflow json, ' +
+      'and it needs no migration, no n8n import, no new env var and no server change at all. ' +
+      'Pending Deploy purely because NOBODY HAS CLICKED IT THROUGH IN PRODUCTION — and that is not ' +
+      'a formality on this one. The modal renders the PDF by re-fetching the signed URL and ' +
+      're-wrapping the bytes as a blob: URL, which is the one path typechecking cannot prove: it ' +
+      'depends on Supabase Storage answering the browser fetch with permissive CORS. If it does ' +
+      'not, the pane degrades to an error card offering "Open it in a new tab instead" rather than ' +
+      'breaking the screen, but the headline feature would be dead. I said at hand-off that I had ' +
+      'not exercised it in a browser; one look at a signed row settles it. ' +
+      'SCOPE. Accounting → Documents rebuilt on the MESA anatomy (icon tile, tracked eyebrow, ' +
+      'text-2xl title, lede → stats → toolbar → full-bleed table Card) recolored into the ' +
+      'Accounting orange family per ui-standards §1.2/§1.3. The max-w-6xl wrapper is gone, so the ' +
+      'table is full width; two columns added (Reference ID, and requested/decision now carry ' +
+      'relative age plus turnaround) and the min-width went 880px → 1080px. Five KPI cards ' +
+      '(Total / Awaiting signature / Signed and returned / Rejected / Avg. turnaround) computed ' +
+      'from the rows already in state, no extra fetch; turnaround only counts rows carrying both ' +
+      'stamps in order, so a missing or inverted pair is dropped rather than averaged as zero. A ' +
+      'search box joined the existing status pills, which are unchanged. New Actions → View modal: ' +
+      'both PDFs inline, both timestamps to the minute in Manila (new formatDocumentDateTime — the ' +
+      'same clock the certification page prints, so the screen and the PDF cannot disagree), ' +
+      'signer name/title/account, Reference ID, stored bucket paths, employee note, rejection ' +
+      'reason. ' +
+      'THREE THINGS IN IT ARE LOAD-BEARING and will look like bugs to anyone who "simplifies" them. ' +
+      '(1) It defaults to the SIGNED copy. A COE\'s stored original.pdf is a watermarked UNSIGNED ' +
+      'DRAFT and the certificate is re-rendered from live data at signing time, so the original is ' +
+      'not the document that was signed; the other pane is labelled "As submitted" / "Generated ' +
+      'draft" and carries an amber caveat banner. (2) The blob: re-wrap above is not incidental — ' +
+      'signedUrlForDocumentFile mints the signed copy with a download option, i.e. ' +
+      'Content-Disposition: attachment, which an iframe downloads instead of painting. Kane ' +
+      'declined a server-side disposition=inline param, so the client-side wrap is the sanctioned ' +
+      'fix and the shared employee route stays untouched; the object URL is revoked on close and ' +
+      'on pane switch. (3) View needs `view`; Approve / Reject / Delete only render with `edit` and ' +
+      'hand off to the existing confirm dialogs, so no decision is ever taken inside the modal. ' +
+      'VERIFIED: tsc --noEmit clean (the only errors are pre-existing stale .next/types entries for ' +
+      'the retired Pay Cycle Reports routes). next build deliberately NOT run — a dev server was ' +
+      'live on :3000 and they share .next/. No tests were added; the surface has none. ' +
+      'Docs: documents-tab.md gains "The Accounting queue (UI)", INDEX row picks up the new memory ' +
+      'entry documents-tab-queue-ui.',
     blockers: [
-      'nobody has clicked through it in production — the rose "Check these amounts" banner and the cross-screen live update are both unobserved outside this machine',
-      'the 2026-08-02 cycle still wants a re-lock: aimei@ (locked ₱6,023.50 vs ₱6,272.06 shown) and theresaa@ (₱7,535.59 vs ₱7,017.05) were re-priced two hours after the lock, so the queue legitimately shows the newer figure and flags it until re-locked',
+      'nobody has opened the View modal in production — the blob: PDF preview depends on Supabase Storage answering the browser fetch with permissive CORS, which typechecking cannot prove',
     ],
   },
 ];

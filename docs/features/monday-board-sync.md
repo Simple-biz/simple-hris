@@ -171,6 +171,10 @@ pass does not name. Those stay unset until a full reconcile runs. A row created 
 correctly grouped, typed, scored and statused, but **not yet linked to its epic** — so the Roadmap
 & Epics rollup lags until then.
 
+Exercised three times on 2026-08-12 (items `12786252360`, `12788029554`, `12789400254`), each
+verified by re-read. **Three Sprint 26 rows are therefore unlinked from their epics** (HRIS-01a,
+HRIS-03a, HRIS-18) and will stay that way until the next full `apply.mts` adopts them by name.
+
 ## Deploy notes
 
 **No migration.** No Supabase involvement anywhere in this feature.
