@@ -1075,7 +1075,10 @@ function NameOrderCheckDialog({
       <span
         className={cn(
           'min-w-0 truncate text-right text-sm font-semibold',
-          value.trim() ? 'text-zinc-900' : 'text-zinc-400',
+          // The em-dash still reads as "you left this blank" — but it stays
+          // legible on the rose panel rather than fading out, because "which box
+          // is empty" is exactly what this dialog asks them to check.
+          value.trim() ? 'text-zinc-900' : 'text-zinc-500',
         )}
       >
         {value.trim() || '—'}
