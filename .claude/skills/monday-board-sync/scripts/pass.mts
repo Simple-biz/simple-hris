@@ -80,7 +80,94 @@ export interface PassRow {
   blockers?: string[];
 }
 
+const N8N_LIVE =
+  'THE WORKFLOW IS LIVE. Kane deployed across all three systems 2026-08-12 ("Pushed - and deployed ' +
+  'on vercel github and n8n") and showed the n8n Executions tab: workflow Paystub Automation, ' +
+  'Published, runs succeeding in ~1.1s. The node chain in that screenshot goes Normalize Email → ' +
+  'Throttle (600ms) → Send PayStub with NO pay_vars node between them, which is the single ' +
+  'clearest tell that the new pipe workflow replaced the old template-carrying one. ' +
+  'MEASURED INDEPENDENTLY, read-only against production the same evening: local and origin/main ' +
+  'both at 83042ff (0 ahead, 0 behind) so the deploy has the code; 40 paystub rows stamped sent_at ' +
+  'after 17:00Z including 32 HSL, the latest at 22:57; 30 of those HSL payloads carry the ' +
+  'hogan_sheet block; and ZERO rows across all 40 carry a last_error. A skipped item would have ' +
+  'landed "Skipped — ..." in last_error, so nothing was skipped and nothing failed. ';
+
+const N8N_LIMIT =
+  'WHAT IS STILL NOT PROVEN, stated because it is the honest edge of this evidence: no email BODY ' +
+  'was opened and compared against the in-app Pay Stub modal. Zero-errors does not by itself ' +
+  'discriminate old workflow from new — the old one also returns clean summaries, it just renders ' +
+  'its own stale HTML. The discriminating field is `skipped`, which the new summary node returns ' +
+  'and the old one does not, but the HRIS does not persist it. So the workflow identity rests on ' +
+  'Kane\'s deployment confirmation plus the screenshot; everything else above is measured. ';
+
 export const ROWS: PassRow[] = [
+  // ── Done · Sprint 26 · the sheet-form pay rule, measured end to end ───────────────────────────
+  {
+    name: 'HSL pay = the Hogan sheet column AN verbatim — hogan-week-pay becomes the single rate authority, reversing the 2026-08-07 weekend-OT removal',
+    status: 'Done',
+    completed: '2026-08-12',
+    shas: ['e0028b8'],
+    basis:
+      'DONE 2026-08-12. This row has the strongest evidence of the three: it rests on a ' +
+      'MEASUREMENT, not a sign-off. ' +
+      'Kane unlocked and re-locked the 2026-08-02..08 cycle, and a read-only replay of the staged ' +
+      'payload for angelicaco@simple.biz reproduces the sheet exactly: hogan_sheet legs ' +
+      'base 8,079.30 (34.38h x 235) + weekend 2,242.50 (8.97h x 250) + ot_differential 393.63 ' +
+      '(3.35h x 117.50) = 10,715.43, which reconciles to pay_php.initial to the centavo, and ' +
+      'amount_php 16,115.43 — the figure Kane specified before any code was written. Rates on the ' +
+      'block are 235 / 250 / 117.50, so the OT leg is the derived 0.5x differential rather than a ' +
+      'stored OT rate. ' +
+      'AT SCALE, not just one person: 30 HSL payloads sent after 17:00Z on 2026-08-12 carry the ' +
+      'hogan_sheet block, with zero last_error across all 40 sends in that window. ' +
+      'THE RULE, for anyone reading this later: M-F hours always pay at the regular rate and never ' +
+      're-rate; ALL Sat/Sun hours earn regular + 15, past-cap hours included; the only overtime ' +
+      'money is max(0, total - 40) x 0.5 x regular. This REVERSED 5eb398a, which had scoped the ' +
+      'premium to within-cap weekend hours only and left HRIS disagreeing with the sheet by ' +
+      'PHP 15 per weekend-OT hour. Deployed: e0028b8 is an ancestor of origin/main (83042ff). ' +
+      'Doc: docs/features/hsl-sheet-form-pay-rule is summarised in the memory of the same name.',
+  },
+  // ── Done · Sprint 26 · the merged Weekend Hours line, now visible in email too ────────────────
+  {
+    name: 'One merged Weekend Hours line + dated rate-change disclosure on statement, email and export',
+    status: 'Done',
+    completed: '2026-08-12',
+    shas: ['0a731ed', 'c97d0b5'],
+    basis:
+      'DONE 2026-08-12. The in-app half shipped 2026-08-07 and was never in doubt; what held this ' +
+      'row was the EMAIL half, which could not be true while live n8n rendered its own HTML. ' +
+      N8N_LIVE +
+      'WHY THE EMAIL HALF MATTERED HERE SPECIFICALLY: the old template had no weekend row at all, ' +
+      'so an HSL employee saw a merged Weekend Hours line in the app and nothing corresponding in ' +
+      'the inbox — one breakdown in two places, which is the exact defect this row exists to close. ' +
+      'On angelicaco\'s 2026-08-02..08 statement the missing line was PHP 2,242.50. ' +
+      'SCOPE: one merged Weekend Hours row carrying both pay buckets with a per-rate basis ' +
+      '(0a731ed), plus the dated rate-change disclosure that chips a weekend paid on the old side ' +
+      'of a rate change (c97d0b5) — the case where a whole weekend sits on one side of the change ' +
+      'so no bucket spans it and nothing used to signal the difference. ' +
+      N8N_LIMIT,
+  },
+  // ── Done · Sprint 26 · the pipe itself + the snapshot columns ─────────────────────────────────
+  {
+    name: 'Paystub email HTML rendered in-app (n8n Gmail becomes a pipe) + System Bonus snapshot columns on payment_dispatches',
+    status: 'Done',
+    completed: '2026-08-12',
+    shas: ['02dc5aa'],
+    basis:
+      'DONE 2026-08-12. Two deliverables, both now satisfied. ' +
+      'ONE — the emailed statement is rendered by the HRIS (src/lib/payroll/paystub-email-html.ts) ' +
+      'and posted as paystub_html, with the n8n Gmail node reduced to ' +
+      'subject = {{ $json.paystub_subject }} / message = {{ $json.paystub_html }}. ' + N8N_LIVE +
+      'TWO — the System Bonus snapshot columns exist on payment_dispatches, VERIFIED by direct ' +
+      'read: rows return system_bonus_php and system_bonus_label, so the DDL is applied in ' +
+      'production rather than merely written. ' +
+      'WHY THIS ROW EXISTED AT ALL: the statement HTML used to live inside the n8n Gmail node ' +
+      'against a flat pay_vars Set node, so every statement change needed a hand-edit in live n8n. ' +
+      'Twice it never happened, and employees read one breakdown in their Pay Stubs tab and a ' +
+      'different one in their inbox for the same payment. Moving the render into the app makes ' +
+      'that class of drift structurally impossible — statement changes no longer touch the ' +
+      'workflow, which is also why the 2026-08-06 JSON was still current three statement commits ' +
+      'later. ' + N8N_LIMIT,
+  },
   // ── Done · Sprint 26 · Kane confirmed the new workflow is live ────────────────────────────────
   {
     name: 'Import paystub-dispatch.workflow.json into live n8n so emailed statements match the app',

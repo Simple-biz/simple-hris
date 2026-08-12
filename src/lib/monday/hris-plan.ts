@@ -380,9 +380,9 @@ export const PLAN_TASKS: PlanTask[] = [
   // payload contract (hogan_sheet) consumed by five render surfaces + four
   // validators. Scored with this pass's other multi-subsystem 8s, not with the
   // single-surface HSL 5s. Still a task — over 8 is the epic line.
-  { epic: 'HRIS-02b', name: 'HSL pay = the Hogan sheet column AN verbatim — hogan-week-pay becomes the single rate authority, reversing the 2026-08-07 weekend-OT removal', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
-  { epic: 'HRIS-03b', name: 'One merged Weekend Hours line + dated rate-change disclosure on statement, email and export', type: 'Feature', sp: 5, done: false, sprint: 'BL' },
-  { epic: 'HRIS-03b', name: 'Paystub email HTML rendered in-app (n8n Gmail becomes a pipe) + System Bonus snapshot columns on payment_dispatches', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
+  { epic: 'HRIS-02b', name: 'HSL pay = the Hogan sheet column AN verbatim — hogan-week-pay becomes the single rate authority, reversing the 2026-08-07 weekend-OT removal', type: 'Feature', sp: 8, done: true, sprint: 'BL' },
+  { epic: 'HRIS-03b', name: 'One merged Weekend Hours line + dated rate-change disclosure on statement, email and export', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
+  { epic: 'HRIS-03b', name: 'Paystub email HTML rendered in-app (n8n Gmail becomes a pipe) + System Bonus snapshot columns on payment_dispatches', type: 'Feature', sp: 8, done: true, sprint: 'BL' },
   { epic: 'HRIS-01a', name: 'Offboarding is delete-only: suspend is its own path, suspended-person offboards escalate to delete, and leavers get a correct final check', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
   { epic: 'HRIS-06', name: 'One HSL department + required sub-department that sets the base rate, wired through the Payment Catalog', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
   // ── Sprint 26 third pass — committed 0cda107..3d74e09 (Aug 12 2026) ──────────────────────────
