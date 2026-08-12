@@ -46,6 +46,17 @@ import AnimatedNumber from './AnimatedNumber';
 import DispatchLoader from './DispatchLoader';
 import { PROCESSORS, DISPATCH_PROCESSORS, parseCyclePeriodFromFile, formatCycleLabelFromFile, type ArrearsInfo, type ExcludedRow, type ProcessorId, type QueueRow } from './mock-queue';
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
+import type { CycleCloseoutRecord } from '@/lib/payroll/cycle-closeout';
+import {
+  buildFinalCloseoutCsv,
+  buildPrematureSnapshotWorkbook,
+  closeReportFilename,
+  downloadCsvFile,
+  downloadWorkbookFile,
+  projectPaidDetailRows,
+  type PrematureUnpaidRow,
+  type UnpaidAmountSource,
+} from '@/lib/payroll/cycle-close-report-export';
 import { useDispatchQueue } from './useDispatchQueue';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
@@ -264,6 +275,10 @@ export default function PayrollDispatch() {
   // permanent record that can't be re-filed, so it must be a deliberate act, not
   // a setting that quietly stays on from last week.
   const [closeCycleOn, setCloseCycleOn] = useState(false);
+  // The Stop dialog's "download a report" checkbox. Default ON each open
+  // (Kane: "it should just ask me to download") — unlike the close toggle,
+  // a download is harmless to repeat, so the friendly default is offered.
+  const [downloadReportOn, setDownloadReportOn] = useState(true);
   // Source files that already carry a close-out record. `null` = not loaded yet.
   const [closedCycles, setClosedCycles] = useState<Set<string> | null>(null);
   // When the Start/Prepare modal closes, fade out the "stage prepped" sound so
@@ -272,7 +287,11 @@ export default function PayrollDispatch() {
   useEffect(() => {
     if (!confirmingLockToggle) stopStagePrepped();
     // Closing a cycle is never sticky — every visit to this dialog starts off.
-    if (!confirmingLockToggle) setCloseCycleOn(false);
+    // The download checkbox resets too, back to its friendly ON.
+    if (!confirmingLockToggle) {
+      setCloseCycleOn(false);
+      setDownloadReportOn(true);
+    }
   }, [confirmingLockToggle]);
   // Unknown (`null`, the fetch hasn't landed or failed) reads as NOT closed: the
   // server refuses a duplicate anyway, so the honest failure is "you tried and
@@ -1121,11 +1140,60 @@ export default function PayrollDispatch() {
     );
   };
 
+  /**
+   * Build + download the requested close report. NEVER throws — a download
+   * failure is toast-only and must not abort the stop, reorder the close-out
+   * POST, or block `setLocked` (docs/features/cycle-closeout.md § ordering).
+   */
+  const generateCloseReportSafe = (
+    model: Parameters<typeof buildFinalCloseoutCsv>[0] | Parameters<typeof buildPrematureSnapshotWorkbook>[0],
+  ): void => {
+    try {
+      if (model.kind === 'final') {
+        downloadCsvFile(
+          closeReportFilename('final', model.record.label, model.generatedAt),
+          buildFinalCloseoutCsv(model),
+        );
+      } else {
+        downloadWorkbookFile(
+          closeReportFilename('premature', model.label, model.generatedAt),
+          buildPrematureSnapshotWorkbook(model),
+        );
+      }
+    } catch (e) {
+      toast.error(
+        `Report download failed — nothing else was affected. ${
+          model.kind === 'final'
+            ? 'Re-download it any time from the Stop dialog (the record is filed).'
+            : 'The snapshot is derived from this screen; reopen the Stop dialog to try again.'
+        }`,
+      );
+      console.warn('[cycle-close-report] build/download failed:', e);
+    }
+  };
+
+  /** The premature unpaid list: the unpaidPayable memo verbatim, plus per-row
+   *  amount provenance off the pending queue (marker rows carry none). */
+  const buildPrematureUnpaidRows = (): PrematureUnpaidRow[] => {
+    const sourceByEmail = new Map<string, UnpaidAmountSource | null>(
+      pending.map((r) => [r.email.trim().toLowerCase(), r.valuesSource ?? null]),
+    );
+    return unpaidPayable.map((p) => ({
+      ...p,
+      amountSource: sourceByEmail.get(p.email.trim().toLowerCase()) ?? null,
+    }));
+  };
+
   const handleLockToggle = async () => {
     if (togglingLock) return;
     setTogglingLock(true);
     const goingLocked = !lockState.locked;
     const closingCycle = !goingLocked && closeCycleOn && !cycleAlreadyClosed && Boolean(period.sourceFile);
+    // Read the checkbox at confirm time, same caller-owned channel as closeCycleOn.
+    // Only meaningful on a STOP with a real cycle on screen (the dialog withholds
+    // the block otherwise, so the state can only be stale-true — guard anyway).
+    const wantsReport =
+      !goingLocked && downloadReportOn && !viewingPastWeek && Boolean(period.sourceFile);
     // Fire the "stage prepped" alert the instant Start is confirmed — synced
     // with the optimistic retract + the Preparing Dispatch scene. Start only.
     if (goingLocked) playStagePrepped();
@@ -1154,6 +1222,7 @@ export default function PayrollDispatch() {
         const json = (await res.json().catch(() => ({}))) as {
           already?: boolean;
           error?: string | null;
+          closeout?: CycleCloseoutRecord | null;
         };
         if (!res.ok || json.error) {
           throw new Error(
@@ -1175,6 +1244,28 @@ export default function PayrollDispatch() {
               }`,
           { icon: '🗄️' },
         );
+        // ── FINAL report download ─────────────────────────────────────────────
+        // Rendered VERBATIM from the server-computed record in the response —
+        // never a client tally (docs/features/cycle-closeout.md). On
+        // `already:true` the response carries the ORIGINAL record, so the file
+        // shows the original closer, never this click. Non-throwing: a download
+        // problem cannot abort the setLocked below.
+        if (wantsReport) {
+          if (json.closeout) {
+            generateCloseReportSafe({
+              kind: 'final',
+              record: json.closeout,
+              // Live per-payee paid rows, behind the mandatory disclosure — the
+              // record itself stores totals only, by design.
+              livePaidRows: json.already ? null : projectPaidDetailRows(paid),
+              generatedAt: new Date(),
+            });
+          } else {
+            toast.error(
+              'The close succeeded but the report payload was missing — reopen the Stop dialog to download the filed record.',
+            );
+          }
+        }
       }
       await Promise.all([setLocked(goingLocked), minShow]);
       toast.success(
@@ -1183,6 +1274,64 @@ export default function PayrollDispatch() {
           : 'Processing stopped — employees can file issues again',
         { icon: goingLocked ? '🔒' : '🔓' },
       );
+      // ── PREMATURE snapshot download (stopped WITHOUT closing) ───────────────
+      // Fire-and-forget AFTER the stop already went through, so the best-effort
+      // GET below can never delay or abort setLocked. If a close-out record
+      // already exists for this week (an earlier stop here, or another session),
+      // the FILED record downloads instead — a file stamped NOT YET CLOSED about
+      // a closed week would be the premature lie in the other direction. On GET
+      // failure, unknown reads as not-closed and the premature label stands
+      // (same rule as the dialog's already-closed state).
+      if (wantsReport && !closingCycle) {
+        const sourceFile = period.sourceFile ?? '';
+        const label = sourceFile ? formatCycleLabelFromFile(sourceFile) : 'cycle';
+        const paidSnapshot = projectPaidDetailRows(paid);
+        const unpaidSnapshot = buildPrematureUnpaidRows();
+        const distinctPaid = distinctPaidCount;
+        const periodStart = period.start;
+        const periodEnd = period.end;
+        void (async () => {
+          let filed: CycleCloseoutRecord | null = null;
+          try {
+            const res = await fetch(
+              `/api/payment-dispatches/cycle-closeout?source_file=${encodeURIComponent(sourceFile)}`,
+              { cache: 'no-store', signal: AbortSignal.timeout(4000) },
+            );
+            if (res.ok) {
+              const json = (await res.json()) as {
+                closeout?: CycleCloseoutRecord | null;
+                error?: string | null;
+              };
+              if (!json.error) filed = json.closeout ?? null;
+            }
+          } catch {
+            /* unknown reads as not-closed — the premature label stands */
+          }
+          if (filed) {
+            toast.info(
+              'This week already has a close-out — downloading the filed record instead of a snapshot.',
+            );
+            generateCloseReportSafe({
+              kind: 'final',
+              record: filed,
+              livePaidRows: null,
+              generatedAt: new Date(),
+            });
+          } else {
+            generateCloseReportSafe({
+              kind: 'premature',
+              label,
+              sourceFile,
+              periodStart,
+              periodEnd,
+              generatedAt: new Date(),
+              paidRows: paidSnapshot,
+              distinctPaidCount: distinctPaid,
+              unpaid: unpaidSnapshot,
+            });
+          }
+        })();
+      }
       // Close after success so the dialog gracefully animates out alongside
       // the parent state changes — feels like one motion, not two.
       setConfirmingLockToggle(false);
@@ -1577,6 +1726,8 @@ export default function PayrollDispatch() {
                 unpaidPHP: unpaidPayablePHP,
                 paidCount: distinctPaidCount,
                 paidUSD: totalPaidUSD,
+                downloadReport: downloadReportOn,
+                onDownloadReportChange: setDownloadReportOn,
               }
         }
       />

@@ -13,7 +13,7 @@
 
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { AlertTriangle, Archive, CheckCircle2, Lock, Play, Send, StopCircle } from 'lucide-react';
+import { AlertTriangle, Archive, CheckCircle2, FileDown, Lock, Play, Send, StopCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
@@ -206,9 +206,7 @@ function PreparingScene({ firstName, stopping }: { firstName: string; stopping: 
  *
  * Payment Dispatch passes this; the Payroll Wizard does not, so the wizard's
  * Start/Stop panel keeps the exact dialog it has always had. Closing writes a
- * permanent close-out record to Payment Dispatch → Reports — see
- * `src/lib/payroll/cycle-closeout.ts` for why that is a different artifact from
- * a published pay-cycle report.
+ * permanent close-out record — see `src/lib/payroll/cycle-closeout.ts`.
  */
 export interface LockToggleCloseOut {
   /** Toggle state, owned by the caller so the confirm handler can read it. */
@@ -225,6 +223,15 @@ export interface LockToggleCloseOut {
   /** Distinct payees already settled, and what went out. */
   paidCount: number;
   paidUSD: number;
+  /**
+   * Download-a-report checkbox, caller-owned like `enabled` so the confirm
+   * handler can read it. What downloads depends on the close toggle:
+   * closing → the FINAL close-out CSV (from the filed record); just stopping →
+   * a PREMATURE XLSX snapshot stamped NOT YET CLOSED; already closed → a
+   * re-download of the filed record's CSV.
+   */
+  downloadReport: boolean;
+  onDownloadReportChange: (next: boolean) => void;
 }
 
 function formatPHP(n: number): string {
@@ -233,6 +240,48 @@ function formatPHP(n: number): string {
 
 function formatUSD(n: number): string {
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/**
+ * The download-report line under the close-out block. What the file IS depends
+ * on the close toggle, and the copy says so out loud — a premature snapshot
+ * must never be mistaken for the filed record.
+ */
+function DownloadReportRow({ closeOut }: { closeOut: LockToggleCloseOut }) {
+  const { alreadyClosed, enabled, downloadReport } = closeOut;
+  const closing = alreadyClosed || enabled;
+  return (
+    <label className="mt-2.5 flex cursor-pointer items-start gap-2 rounded-lg border border-zinc-200 bg-white/70 px-2.5 py-2 dark:border-zinc-700 dark:bg-zinc-900/50">
+      <input
+        type="checkbox"
+        checked={downloadReport}
+        onChange={(e) => closeOut.onDownloadReportChange(e.target.checked)}
+        className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-violet-600"
+      />
+      <span className="min-w-0">
+        <span className="flex items-center gap-1.5 text-[12px] font-semibold text-zinc-800 dark:text-zinc-100">
+          <FileDown className="h-3.5 w-3.5 text-zinc-500 dark:text-zinc-400" />
+          {alreadyClosed ? 'Download the filed close-out (CSV)' : 'Download a report when I stop'}
+        </span>
+        <span className="mt-0.5 block text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+          {alreadyClosed ? (
+            <>Re-downloads the permanent record exactly as it was filed — frozen totals and the unpaid list.</>
+          ) : closing ? (
+            <>
+              Final close-out <span className="font-medium">CSV</span>, rendered from the filed
+              record — frozen totals, per-processor split, and the unpaid list.
+            </>
+          ) : (
+            <>
+              Premature <span className="font-medium">XLSX</span> snapshot, stamped{' '}
+              <span className="font-semibold text-amber-600 dark:text-amber-400">NOT YET CLOSED</span>{' '}
+              with a timestamp — figures are live and may still move.
+            </>
+          )}
+        </span>
+      </span>
+    </label>
+  );
 }
 
 function CloseOutBlock({ closeOut }: { closeOut: LockToggleCloseOut }) {
@@ -256,14 +305,14 @@ function CloseOutBlock({ closeOut }: { closeOut: LockToggleCloseOut }) {
           <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
             {alreadyClosed ? (
               <>
-                <span className="font-medium">{closeOut.cycleLabel}</span> already has a close-out
-                record in Reports. Stopping again won&apos;t write a second one.
+                <span className="font-medium">{closeOut.cycleLabel}</span> already has a permanent
+                close-out record. Stopping again won&apos;t write a second one.
               </>
             ) : (
               <>
-                Files a close-out for <span className="font-medium">{closeOut.cycleLabel}</span> in{' '}
-                <span className="font-medium">Reports</span> — who was paid, through which
-                processor, and who wasn&apos;t.
+                Files a permanent close-out record for{' '}
+                <span className="font-medium">{closeOut.cycleLabel}</span> — who was paid, through
+                which processor, and who wasn&apos;t.
               </>
             )}
           </p>
@@ -350,6 +399,10 @@ function CloseOutBlock({ closeOut }: { closeOut: LockToggleCloseOut }) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* The choice must be made BEFORE confirm — PreparingScene replaces the
+          whole modal while submitting, so no prompt can live after the click. */}
+      <DownloadReportRow closeOut={closeOut} />
     </div>
   );
 }
@@ -439,8 +492,8 @@ export default function LockToggleConfirmDialog({
                   ) : closingCycle ? (
                     <>
                       Ends processing <span className="font-medium">and closes the whole payroll
-                      cycle</span>. Employees can file issues again, and a close-out record is filed
-                      in Reports. It can&apos;t be re-filed for this week afterwards.
+                      cycle</span>. Employees can file issues again, and a permanent close-out
+                      record is filed. It can&apos;t be re-filed for this week afterwards.
                     </>
                   ) : (
                     <>

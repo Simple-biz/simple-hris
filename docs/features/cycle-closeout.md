@@ -6,10 +6,11 @@ naming who was paid, through which processor, and — the part nothing else reco
 **payable** people were not paid. Shipped 2026-08-10.
 
 The record's on-screen viewer (a `Closed` badge and panel in Payment Dispatch → Reports) was
-removed with that tab on 2026-08-12. The dialog's "Pay cycle already closed" state still reads
-the close-out list, and `GET /api/payment-dispatches/cycle-closeout?source_file=` still returns
-the full record; a downloadable close-out report generated at Stop time is the replacement
-human-readable artifact (next commit after the tab removal).
+removed with that tab on 2026-08-12. The replacement human-readable artifact is the
+**downloadable report generated at Stop time** — see § Downloadable report below. The dialog's
+"Pay cycle already closed" state still reads the close-out list, and
+`GET /api/payment-dispatches/cycle-closeout?source_file=` returns the full record (the
+re-download path).
 
 Built because Accounting needs to end a week that isn't perfect. The Pay Cycle Reports publish
 button (retired 2026-08-12, see `documents-tab.md`) refused exactly that case, on purpose.
@@ -22,8 +23,9 @@ button (retired 2026-08-12, see `documents-tab.md`) refused exactly that case, o
 | Unit tests | [`src/lib/payroll/cycle-closeout.test.ts`](../../src/lib/payroll/cycle-closeout.test.ts) |
 | Persistence | [`src/lib/payroll/cycle-closeout-store.ts`](../../src/lib/payroll/cycle-closeout-store.ts) |
 | API | [`app/api/payment-dispatches/cycle-closeout/route.ts`](../../app/api/payment-dispatches/cycle-closeout/route.ts) |
-| The toggle | [`src/components/payroll/LockToggleConfirmDialog.tsx`](../../src/components/payroll/LockToggleConfirmDialog.tsx) |
-| Trigger + unpaid list | [`src/components/payroll-clerk/PayrollDispatch.tsx`](../../src/components/payroll-clerk/PayrollDispatch.tsx) |
+| The toggle + download checkbox | [`src/components/payroll/LockToggleConfirmDialog.tsx`](../../src/components/payroll/LockToggleConfirmDialog.tsx) |
+| Trigger + unpaid list + download wiring | [`src/components/payroll-clerk/PayrollDispatch.tsx`](../../src/components/payroll-clerk/PayrollDispatch.tsx) |
+| Report builders (pure) + tests | [`src/lib/payroll/cycle-close-report-export.ts`](../../src/lib/payroll/cycle-close-report-export.ts) · `.test.ts` |
 | ~~Badge + panel~~ | ~~DispatchReports.tsx~~ — viewer removed with the Reports tab, 2026-08-12 |
 
 ## A close-out is the only per-cycle record now (history: the published report)
@@ -106,6 +108,47 @@ when Accounting stopped.
 processing has stopped, the clerk has no second chance to file it from that dialog. So a failed
 write aborts the entire action — processing stays on, the error is loud, and the toast says they
 can turn the toggle off and stop plainly. Do not "helpfully" reorder this to stop first.
+
+## Downloadable report (added 2026-08-12)
+
+The Stop dialog's close-out block carries a **"Download a report when I stop"** checkbox —
+default **ON**, reset each open (Kane: "it should just ask me"). What downloads depends on the
+close toggle, and the two artifacts are a discriminated union in
+`cycle-close-report-export.ts`, so a premature file structurally cannot wear a FINAL header:
+
+| Close toggle | Artifact | Source of truth |
+|---|---|---|
+| **ON** (closing) | `cycle-closeout-<label>-FINAL-<local ts>.csv` | The `CycleCloseoutRecord` in the **POST response**, rendered **verbatim** — headline, per-processor split, unpaid list, truncation notice, `records_outstanding` footer. Client tallies cannot enter: the builder takes the whole record object. |
+| **OFF** (just stopping) | `cycle-snapshot-<label>-PREMATURE-<local ts>.xlsx` | The live client memos the screen shows (`unpaidPayable`, `status==='paid'` projections, `distinctPaidCount`). Every sheet's first row is a **`NOT YET CLOSED — PREMATURE SNAPSHOT`** banner; the Summary sheet carries a STATUS row; pending amounts carry an **Amount Source** column so a recomputed figure is never laundered into settled truth. |
+| inert (already closed) | the FINAL CSV again | `GET ?source_file=` — the **re-download path**. The stop-without-closing flow also runs this GET best-effort first: if a record exists (stale client, another session closed), the FILED record downloads instead of a snapshot; on GET failure the premature label stands (unknown reads as not-closed, same as the dialog). |
+
+Rules the builders enforce (each pinned by a test in `cycle-close-report-export.test.ts`):
+
+- **Ordering is untouched.** The close-out POST still runs before `setLocked(false)` and still
+  aborts the stop on failure. The download is non-throwing (`generateCloseReportSafe`) and the
+  premature GET fires **after** the stop went through — a download problem can only ever cost
+  the file, never the stop or the record.
+- **`already:true` shows the ORIGINAL closer** — the response carries the existing record, so
+  the file never claims this click closed the week.
+- Paid-detail inputs are `status === 'paid'` **projections** — the raw `paid[]` state carries
+  superseded markers that would double-count. Live paid rows appear only under a mandatory
+  "live, not part of the frozen record" disclosure, on both artifacts.
+- **Bank details are last-4 only** (Kane, 2026-08-12); SWIFT codes and full account numbers
+  have no field in the projection types — `QueueRow.details` is not an input of the module.
+- Per-processor sections are **sum-preserving**: all six rails (even zero) plus stray keys
+  (`unknown`, legacy rails) — never a fixed-key map.
+- Null marker amounts stay **blank**, never `0.00`; `records_outstanding: null` renders
+  "unavailable", never 0, and always under its "includes Excluded — not the headline" label.
+- CSV: UTF-8 BOM, CRLF, RFC 4180, ungrouped 2-dp money, and **formula-injection
+  neutralization** (`=`/`+`/`-`/`@` prefixes on text cells go inert) — a class every sibling
+  export still carries open.
+- Filenames and the words in the files never say "Pay Cycle Report" — that was the retired,
+  gated artifact. These say **Cycle Close-Out** / **Cycle Snapshot**.
+- No new route, no writes, no webhooks, no audit entry (matching every client-side export
+  sibling; the close itself is still audit-logged awaited). The Payroll Wizard's dialog is
+  untouched — the new fields live inside the optional `closeOut` prop it never passes. The
+  standalone `/payroll-clerk` surface has no Stop dialog, so the feature is
+  Payment-Dispatch-embed-only by construction.
 
 ## No celebration email
 
