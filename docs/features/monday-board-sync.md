@@ -168,6 +168,28 @@ never against the bulk-import epics, which were scored at whole-feature granular
 with zero task rows. The Gridline sum-to-parent invariant is deliberately not implemented here;
 asserting it would fail on almost every epic.
 
+### An external step can be a row
+
+Work tracked here is normally a commit cluster, but an action in an external system can earn its own
+row when it blocks scored work. Item `12789862863` (2026-08-12, Sprint 26, `n8n Workflow`, 2 SP) is
+the live import of `references/n8n/paystub-dispatch.workflow.json`; it is the named blocker on three
+Pending Deploy rows worth 21 SP.
+
+Two rules that case established:
+
+- **Status is `Ready to Start`, never `Pending Deploy`.** Pending Deploy means code is complete and
+  waiting on an external step. When the row *is* the external step, Pending Deploy would leave the
+  board showing four rows waiting on each other with nothing naming the actual next action.
+- **Cite the commit that produced the artefact**, not a commit that implements the row — `selfcheck()`
+  requires evidence, and for this class the honest evidence is provenance. Check the artefact for
+  staleness explicitly rather than assuming: the workflow JSON predates three later statement commits
+  and is still current, because the Gmail node is now a `{{ $json.paystub_html }}` pipe.
+
+Prefer a dedicated row over an existing catch-all. `HRIS-15`'s "Run outstanding Supabase migrations +
+re-import n8n workflows" nominally covered this, but it sits in a closed sprint, its premise is
+largely folklore (21 of 25 "pending" migrations were already applied), and nobody would mark it Done
+for importing one specific workflow.
+
 ## Never group a commit audit by message
 
 Cluster by **file overlap**. In the 78-commit range audited 2026-08-11, message-based grouping would

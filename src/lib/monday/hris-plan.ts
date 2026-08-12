@@ -425,4 +425,18 @@ export const PLAN_TASKS: PlanTask[] = [
   // over fields the row already carries. Not 5: one component, zero new endpoints, no new query,
   // no migration, no data path touched. The 5-SP rows beside it each added a fetch or a tab.
   { epic: 'HRIS-18', name: 'Documents queue rebuilt on the MESA anatomy — KPI cards, full-width table and a View modal that renders the signed copy inline', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  // ── Sprint 26 sixth pass — the external step itself, as a row (Kane approved 2026-08-12) ─────
+  // Its own row rather than the HRIS-15 "Run outstanding Supabase migrations + re-import n8n
+  // workflows" chore: that one is a catch-all sitting in S25 whose premise is largely folklore
+  // (21 of 25 "pending" migrations were already applied), and nobody would mark it Done for
+  // importing one specific workflow. This row can be marked Done the moment the import lands.
+  // done:false ⇒ Ready to Start, NOT Pending Deploy. Pending Deploy means code is complete and
+  // waiting on an external step; here the row IS the external step, and it has not been started.
+  // It is the blocker on three scored rows (8 + 5 + 8 = 21 SP): the column-AN rule, the merged
+  // Weekend Hours line, and paystub email rendered in-app. All three become Done-eligible after it.
+  // 2 SP against the Sprint 26 band (1–5, avg ~3.5): an import plus verifying the Gmail node
+  // bindings, the three response field names the HRIS parses, and one test send. Not 1 — the
+  // summary node carries two traps that were both live bugs (.isExecuted guards, skipped items
+  // counting into failed), so this is a verify job, not a file upload.
+  { epic: 'HRIS-03b', name: 'Import paystub-dispatch.workflow.json into live n8n so emailed statements match the app', type: 'n8n Workflow', sp: 2, done: false, sprint: 'S26', priority: 'High' },
 ];
