@@ -1,14 +1,12 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { motion } from 'motion/react';
 import {
   AlertTriangle,
   CheckCircle2,
   Download,
   Eye,
   FileSignature,
-  FileSpreadsheet,
   Inbox,
   Loader2,
   PenLine,
@@ -32,7 +30,6 @@ import {
 import { cn } from '@/lib/utils';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import SignaturePad from '@/components/common/SignaturePad';
-import PayCycleReports from '@/components/accounting/PayCycleReports';
 import {
   DOCUMENT_STATUS_LABELS,
   documentTypeLabel,
@@ -51,11 +48,8 @@ const STATUS_STYLE: Record<DocumentRequestStatus, string> = {
   rejected: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300',
 };
 
-type DocumentsTab = 'queue' | 'reports';
-const DOCUMENTS_TAB_STORAGE_KEY = 'accounting-documents-tab';
-
 /**
- * Accounting → Documents. Three jobs, split across two tabs:
+ * Accounting → Documents. Two jobs:
  *   1. The signing queue — employee-submitted PDFs (pay stubs, COEs, awards)
  *      that Accounting reviews and either signs (stamping the saved signature +
  *      requested/signed dates into the PDF, returned to the employee) or
@@ -63,12 +57,8 @@ const DOCUMENTS_TAB_STORAGE_KEY = 'accounting-documents-tab';
  *   2. The signature manager — the Accounting Head draws their signature once,
  *      it's saved to Supabase, and the switch revokes it at any time. With the
  *      switch off (or no signature saved) approvals are blocked.
- *   3. The Reports tab — pay cycle reports Accounting publishes once every
- *      payment in a cycle has gone out, with CSV/XLSX/PDF export. Rendered by
- *      PayCycleReports; this file only owns the tab shell, the badge count,
- *      and routing Refresh to whichever tab is active.
- * Jobs 1 and 2 live on the "Signing queue" tab (the default); job 3 is its
- * own "Reports" tab.
+ * A "Reports" tab (published pay-cycle reports) lived here until 2026-08-12;
+ * that surface was removed along with the publish flow.
  */
 export default function AccountingDocuments({
   sessionEmail,
@@ -81,16 +71,6 @@ export default function AccountingDocuments({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('pending');
-
-  // Tab shell (Task 7) — defaults to the signing queue so today's behaviour
-  // is exactly what an existing user still sees on first load. Restored from
-  // localStorage after mount (effect below) so SSR markup stays
-  // deterministic. `readyCount` is the Reports badge; `reportsRefreshKey` is
-  // bumped by the header's Refresh button while the Reports tab is active
-  // (undefined until the first bump — see PayCycleReports' refreshKey prop).
-  const [tab, setTab] = useState<DocumentsTab>('queue');
-  const [readyCount, setReadyCount] = useState(0);
-  const [reportsRefreshKey, setReportsRefreshKey] = useState<number | undefined>(undefined);
 
   const [signature, setSignature] = useState<DocumentSignatureRow | null>(null);
   const [signatureLoaded, setSignatureLoaded] = useState(false);
@@ -142,33 +122,6 @@ export default function AccountingDocuments({
     void fetchRows();
     void fetchSignature();
   }, [fetchRows, fetchSignature]);
-
-  // Restore the last-used tab after mount so SSR markup stays deterministic.
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(DOCUMENTS_TAB_STORAGE_KEY);
-      if (stored === 'queue' || stored === 'reports') setTab(stored);
-    } catch {
-      /* storage unavailable — keep default */
-    }
-  }, []);
-
-  const changeTab = (next: DocumentsTab) => {
-    setTab(next);
-    try {
-      window.localStorage.setItem(DOCUMENTS_TAB_STORAGE_KEY, next);
-    } catch {
-      /* storage unavailable — preference just won't persist */
-    }
-  };
-
-  // Refresh follows whichever tab is active: the signing queue re-fetches
-  // its rows directly, while Reports has no fetch of its own here — it owns
-  // that inside PayCycleReports, so bump the counter that component watches.
-  const refreshActiveTab = () => {
-    if (tab === 'queue') void fetchRows();
-    else setReportsRefreshKey((k) => (k ?? 0) + 1);
-  };
 
   // New submissions float in live (table is in the Realtime publication); the
   // poll + focus refresh are the backstop if the socket drops.
@@ -348,53 +301,24 @@ export default function AccountingDocuments({
               Documents
             </h1>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
-              {tab === 'queue' ? (
-                <>
-                  Employee-submitted documents (pay stubs, COEs, awards) awaiting the Accounting
-                  Head&rsquo;s signature. Signed copies are returned to the employee&rsquo;s profile.
-                </>
-              ) : (
-                'Pay cycle reports published by Accounting once every payment in a cycle has gone out. Export any report as CSV, XLSX or PDF.'
-              )}
+              Employee-submitted documents (pay stubs, COEs, awards) awaiting the Accounting
+              Head&rsquo;s signature. Signed copies are returned to the employee&rsquo;s profile.
             </p>
           </div>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            onClick={refreshActiveTab}
+            onClick={() => void fetchRows()}
             className="h-8 gap-1.5 border-orange-200 text-orange-700 hover:bg-orange-50 dark:border-orange-800 dark:text-orange-300"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', tab === 'queue' && loading && 'animate-spin')} />
+            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
             Refresh
           </Button>
         </div>
-
-        <div role="tablist" className="mt-3 inline-flex items-center rounded-lg border border-orange-100 bg-orange-50/50 p-0.5 dark:border-orange-950/40 dark:bg-orange-950/20">
-          <DocumentsTabButton
-            active={tab === 'queue'}
-            onClick={() => changeTab('queue')}
-            icon={FileSignature}
-            label="Signing queue"
-            count={counts.pending}
-          />
-          <DocumentsTabButton
-            active={tab === 'reports'}
-            onClick={() => changeTab('reports')}
-            icon={FileSpreadsheet}
-            label="Reports"
-            count={readyCount}
-            highlight
-          />
-        </div>
       </div>
 
-      <div
-        className={cn(
-          'min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]',
-          tab === 'queue' ? '' : 'hidden',
-        )}
-      >
+      <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
         <div className="mx-auto w-full max-w-6xl space-y-5">
           {/* ── Signature manager ─────────────────────────────────────────── */}
           <section className="rounded-2xl border border-orange-100/80 bg-white p-4 sm:p-5 dark:border-orange-950/40 dark:bg-zinc-950">
@@ -679,14 +603,6 @@ export default function AccountingDocuments({
         </div>
       </div>
 
-      <div className={cn('min-h-0 flex-1', tab === 'reports' ? '' : 'hidden')}>
-        <PayCycleReports
-          canEdit={canEdit}
-          onReadyCountChange={setReadyCount}
-          refreshKey={reportsRefreshKey}
-        />
-      </div>
-
       {/* ── Delete confirmation ─────────────────────────────────────────────── */}
       <Dialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
         <DialogContent className="sm:max-w-md">
@@ -922,57 +838,3 @@ export default function AccountingDocuments({
   );
 }
 
-function DocumentsTabButton({
-  active, onClick, icon: Icon, label, count, highlight = false,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  count?: number;
-  /** Amber-pulse the count when there is work waiting (Reports: cycles ready
-   *  to publish), so the call to action is visible from the other tab. */
-  highlight?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      onClick={onClick}
-      className={cn(
-        'relative inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors duration-200',
-        active
-          ? 'text-white'
-          : 'text-zinc-600 hover:bg-orange-100/70 hover:text-orange-700 dark:text-zinc-400 dark:hover:bg-orange-950/40 dark:hover:text-orange-200',
-      )}
-    >
-      {active && (
-        <motion.span
-          layoutId="accounting-documents-tab-pill"
-          aria-hidden
-          className="absolute inset-0 rounded-md bg-gradient-to-r from-orange-500 to-rose-500 shadow-sm"
-          transition={{ type: 'spring', stiffness: 380, damping: 32 }}
-        />
-      )}
-      <span className="relative z-10 inline-flex items-center gap-1.5">
-        <Icon className="h-3.5 w-3.5" />
-        {label}
-        {count != null && count > 0 && (
-          <span
-            className={cn(
-              'rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums',
-              active
-                ? 'bg-white/25 text-white'
-                : highlight
-                  ? 'animate-pulse bg-amber-200 text-amber-900 dark:bg-amber-500/25 dark:text-amber-200'
-                  : 'bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
-            )}
-          >
-            {count}
-          </span>
-        )}
-      </span>
-    </button>
-  );
-}

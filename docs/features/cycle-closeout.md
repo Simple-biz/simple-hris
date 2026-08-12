@@ -3,12 +3,16 @@
 Payment Dispatch's **Stop processing** dialog carries a **Close the pay cycle** toggle. Flip it
 and the dialog becomes **"Close Pay Cycle?"**: stopping also files a permanent close-out record
 naming who was paid, through which processor, and — the part nothing else records — which
-**payable** people were not paid. The record surfaces in **Payment Dispatch → Reports** as a
-`Closed` badge and a panel at the top of that week's report. Shipped 2026-08-10.
+**payable** people were not paid. Shipped 2026-08-10.
 
-Built because Accounting needs to end a week that isn't perfect. The existing
-[Pay Cycle Reports](./documents-tab.md#reports-pay-cycle-reports) publish button refuses exactly
-that case, on purpose.
+The record's on-screen viewer (a `Closed` badge and panel in Payment Dispatch → Reports) was
+removed with that tab on 2026-08-12. The dialog's "Pay cycle already closed" state still reads
+the close-out list, and `GET /api/payment-dispatches/cycle-closeout?source_file=` still returns
+the full record; a downloadable close-out report generated at Stop time is the replacement
+human-readable artifact (next commit after the tab removal).
+
+Built because Accounting needs to end a week that isn't perfect. The Pay Cycle Reports publish
+button (retired 2026-08-12, see `documents-tab.md`) refused exactly that case, on purpose.
 
 ## Key files
 
@@ -20,28 +24,23 @@ that case, on purpose.
 | API | [`app/api/payment-dispatches/cycle-closeout/route.ts`](../../app/api/payment-dispatches/cycle-closeout/route.ts) |
 | The toggle | [`src/components/payroll/LockToggleConfirmDialog.tsx`](../../src/components/payroll/LockToggleConfirmDialog.tsx) |
 | Trigger + unpaid list | [`src/components/payroll-clerk/PayrollDispatch.tsx`](../../src/components/payroll-clerk/PayrollDispatch.tsx) |
-| Badge + panel | [`src/components/payroll-clerk/DispatchReports.tsx`](../../src/components/payroll-clerk/DispatchReports.tsx) |
+| ~~Badge + panel~~ | ~~DispatchReports.tsx~~ — viewer removed with the Reports tab, 2026-08-12 |
 
-## A close-out is NOT a published pay-cycle report
+## A close-out is the only per-cycle record now (history: the published report)
 
-The single most important rule here, and the one a future session will try to "simplify" away.
+Until 2026-08-12 two artifacts existed with two different promises: a **published pay-cycle
+report** (Accounting → Documents → Reports, gated on the cycle being 100% settled — see the
+RETIRED section in `documents-tab.md`) and this close-out. Both report tabs were removed that
+day, the publish gate went with its surface, and the close-out became the single per-cycle
+record. Its promise is unchanged and still the load-bearing part:
 
-Two artifacts exist, with two different promises:
-
-| | Published pay-cycle report | Cycle close-out |
-|---|---|---|
-| Where | Accounting → Documents → Reports | Payment Dispatch → Reports |
-| Says | "this cycle completed — here is the frozen record" | "Accounting stopped here — this is what had gone out, and this is who was still owed" |
-| Gate | all three publish conditions (`documents-tab.md:244-286`) | none — it is allowed to record failure |
-| Key | `documents.pay_cycle_report.<source_file>` | `dispatch.cycle_closeout.<source_file>` |
-
-**Closing a cycle does not publish, and never relaxes the publish gate.** Condition 1 of that
-gate (`documents-tab.md:246-253`) exists to stop a report claiming a week was settled while
-somebody is owed money. A week that is genuinely 100% can still be published as a real frozen
-report *afterwards* — closing it first does not consume or block that.
-
-If a future ask is "make Close Pay Cycle publish the report too", that is a change to the publish
-gate, not to this feature. Take it back to the gate's own doc.
+- It says "Accounting stopped here — this is what had gone out, and this is who was still owed".
+- It is **allowed to record failure**; there is no completeness gate and there must not be one.
+- It never claims a week was settled. Anything rendering it (including the downloadable report)
+  must keep the paid-at-close vs unpaid split visible — collapsing them recreates the lie the
+  old publish gate existed to prevent.
+- Key: `dispatch.cycle_closeout.<source_file>` in `app_settings`. Old published snapshots
+  survive as orphaned `documents.pay_cycle_report.*` rows, deliberately left in place.
 
 ## What is frozen, and what is not
 
@@ -49,10 +48,11 @@ gate, not to this feature. Take it back to the gate's own doc.
 `byProcessor` split, and the unpaid list. These are what the clerk approved at close time and must
 survive a later undo.
 
-**Not copied:** the per-payee *paid* rows. Payment Dispatch → Reports already renders those live
-from `payment_dispatches` and always has — duplicating 800+ rows into a settings value would
-create a second copy free to disagree with the first. The panel says out loud that the live stats
-below it are recomputed and will differ if anything moved afterwards.
+**Not copied:** the per-payee *paid* rows. `payment_dispatches` remains the live source for
+those — duplicating 800+ rows into a settings value would create a second copy free to disagree
+with the first. Any surface that shows live paid rows next to the frozen headline must say out
+loud that the live side is recomputed and will differ if anything moved afterwards (the old
+Reports-tab panel did; the downloadable report keeps the same disclosure).
 
 ## The paid side is server-computed; the unpaid side cannot be
 
@@ -112,7 +112,7 @@ can turn the toggle off and stop plainly. Do not "helpfully" reorder this to sto
 The `payment_cycle_complete` confetti webhook is a **separate** trigger that fires when the
 progress strip genuinely reaches 100% (`payment-dispatch.md` §12.7). Closing a cycle deliberately
 does **not** fire it: congratulating the whole Accounting team over a week closed with people
-unpaid would be a lie. Publishing a pay-cycle report sends no email either.
+unpaid would be a lie.
 
 ## Nothing is truncated silently
 
@@ -127,8 +127,8 @@ this record exists to prevent.
 `GET` rides `requireRateVisibilityOrFeatureEdit('accounting', 'payment_dispatch')` — whoever can
 see the queue can see whether its week was declared closed. `POST` requires
 `requireFeatureEdit('accounting', 'payment_dispatch')`, because closing writes a permanent
-declaration. No new permission was introduced. Note this differs from the pay-cycle report, which
-rides the `documents` grant.
+declaration. No new permission was introduced. (The retired pay-cycle report rode the
+`documents` grant instead — a difference that died with it.)
 
 The toggle is withheld entirely while viewing a **past week** (the Stop button is disabled there
 anyway — the processing lock is global, not week-scoped) and when no cycle is loaded.
@@ -142,9 +142,8 @@ PostgREST truncates at 1,000 rows even with `.range()`.
 ## Deploy notes
 
 **No migration.** One `app_settings` row per cycle, keyed `dispatch.cycle_closeout.<source_file>` —
-the same reasoning as the pay-cycle report: every other fact is derivable, the only new one is the
-declaration itself, and `app_settings` needs no DDL. Nothing for Kane to run. No env vars, no n8n
-import, no cron.
+every other fact is derivable, the only new one is the declaration itself, and `app_settings`
+needs no DDL. Nothing for Kane to run. No env vars, no n8n import, no cron.
 
 Audit action: `payment_cycle.closed` on resource `app_settings`, written **awaited** — it is the
 trail for a declaration that money was left unpaid.

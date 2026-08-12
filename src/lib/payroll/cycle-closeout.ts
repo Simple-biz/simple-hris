@@ -2,29 +2,20 @@
  * Cycle close-out — Accounting declaring a pay week finished from Payment
  * Dispatch, including when money is still owed.
  *
- * ── Why this is NOT a published pay-cycle report ────────────────────────────
- * Accounting → Documents → Reports already freezes a cycle
- * (`documents.pay_cycle_report.<source_file>`), but only when the cycle is
- * genuinely complete: condition 1 of that gate requires zero not-paid /
- * threshold / problem / never-dispatched rows, precisely so a report can never
- * claim a week was settled while someone is owed money
- * (docs/features/documents-tab.md § "The completeness rule"). Kane's ask —
- * close the cycle and record it *even though N payable people were not paid* —
- * cannot ride that gate without relaxing it, and relaxing it is the one thing
- * that feature exists to prevent.
- *
- * So this is a different artifact with a different promise. A close-out says
- * "Accounting stopped processing this week on this date, this is what had gone
- * out, and these payable people had NOT been paid". It never pretends the week
- * was complete, and it leaves the publish gate untouched: a cycle that is
- * genuinely 100% can still be published as a real frozen report afterwards.
+ * ── What this artifact promises ─────────────────────────────────────────────
+ * A close-out says "Accounting stopped processing this week on this date, this
+ * is what had gone out, and these payable people had NOT been paid". It never
+ * pretends the week was complete — recording failure is its whole point.
+ * (Until 2026-08-12 a separate published pay-cycle report existed whose gate
+ * refused incomplete cycles; both report surfaces are gone, and the close-out
+ * is now the only per-cycle record.)
  *
  * ── Frozen headline, live detail ────────────────────────────────────────────
  * The paid TOTALS are frozen here (they are the numbers the clerk approved at
  * close time, and they must survive a later undo). The per-payee paid rows are
- * NOT copied: Payment Dispatch → Reports renders those live from
- * `payment_dispatches` and always has. Duplicating 800+ rows into a settings
- * value would add a second copy that can silently disagree with the first.
+ * NOT copied: `payment_dispatches` remains the live source for those.
+ * Duplicating 800+ rows into a settings value would add a second copy that can
+ * silently disagree with the first.
  *
  * The unpaid list is the opposite case and IS stored, because it cannot be
  * re-derived later: "payable but unpaid" is a fact about Payment Dispatch's
@@ -33,8 +24,8 @@
  * `disbursement_records` does not know who Accounting excluded.
  *
  * Storage: ONE `app_settings` row per cycle, `dispatch.cycle_closeout.<file>`.
- * No DDL, no migration, no deploy step — same reasoning as the pay-cycle
- * report, and the same reason it can ship without Kane running SQL.
+ * No DDL, no migration, no deploy step — every other fact is derivable; the
+ * only new one is the declaration itself, so it ships without Kane running SQL.
  */
 
 import { tallyPaidDispatches, type PayCycleDispatchLike } from '@/lib/accounting/pay-cycle-report-snapshot';

@@ -20,13 +20,14 @@ export const runtime = "nodejs";
  * Cycle close-out — Accounting declaring a pay week finished from Payment
  * Dispatch, INCLUDING when payable people were never paid.
  *
- * This is deliberately NOT the pay-cycle report publish route
- * (`/api/accounting/pay-cycle-reports`). That one refuses a cycle with money
- * still owed, by design, and nothing here relaxes it: a genuinely complete week
- * can still be published as a frozen report afterwards. See
- * `src/lib/payroll/cycle-closeout.ts` for the split.
+ * Historical note: until 2026-08-12 a separate published pay-cycle report
+ * existed (`/api/accounting/pay-cycle-reports`) that refused any cycle with
+ * money still owed; this route was deliberately NOT that. Both report tabs
+ * are gone now — the close-out is the ONLY per-cycle record, and it is still
+ * allowed to record failure. See `src/lib/payroll/cycle-closeout.ts`.
  *
- * GET  — every close-out (summaries; unpaid rows omitted) for the Reports tab.
+ * GET  — every close-out (summaries; unpaid rows omitted) — the Stop dialog's
+ *        "already closed" state; `?source_file=` returns one full record.
  * POST — close one cycle. Plain INSERT, so the first close of a week wins and a
  *        double-click reports `already` instead of overwriting the record.
  */
