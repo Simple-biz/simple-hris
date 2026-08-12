@@ -121,6 +121,59 @@ export function formatDocumentDate(iso: string | null | undefined): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+/** "Mar 4, 2026, 4:12 PM" in **Manila** time — the same clock the certification
+ *  page prints its "Requested on" / "Signed on" lines in, so the detail modal
+ *  and the PDF can never disagree about what day something happened. */
+export function formatDocumentDateTime(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'Asia/Manila',
+  });
+}
+
+/** "4 days ago" / "in 2 hours" — relative to now, for queue-age cues. */
+export function formatRelativeTime(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '—';
+  const mins = Math.round((then - Date.now()) / 60_000);
+  const abs = Math.abs(mins);
+  const rtf = new Intl.RelativeTimeFormat('en-US', { numeric: 'auto' });
+  if (abs < 60) return rtf.format(mins, 'minute');
+  if (abs < 60 * 24) return rtf.format(Math.round(mins / 60), 'hour');
+  if (abs < 60 * 24 * 30) return rtf.format(Math.round(mins / (60 * 24)), 'day');
+  return rtf.format(Math.round(mins / (60 * 24 * 30)), 'month');
+}
+
+/** Elapsed time between two timestamps as "6h" / "2.4d"; null when either is
+ *  missing or the pair is out of order. */
+export function elapsedLabel(
+  fromIso: string | null | undefined,
+  toIso: string | null | undefined,
+): string | null {
+  if (!fromIso || !toIso) return null;
+  const from = new Date(fromIso).getTime();
+  const to = new Date(toIso).getTime();
+  if (Number.isNaN(from) || Number.isNaN(to) || to < from) return null;
+  const hours = (to - from) / 3_600_000;
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))}m`;
+  if (hours < 48) return `${Math.round(hours)}h`;
+  return `${(hours / 24).toFixed(1)}d`;
+}
+
+/** Short, human-quotable form of the request id — the Reference ID printed on
+ *  the certification page. Full id stays available for copy/verify. */
+export function shortReferenceId(id: string): string {
+  return id.length > 8 ? id.slice(0, 8).toUpperCase() : id.toUpperCase();
+}
+
 /** Human file size ("1.4 MB"). */
 export function formatFileSize(bytes: number | null | undefined): string {
   if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '—';

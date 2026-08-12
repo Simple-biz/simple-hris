@@ -33,6 +33,63 @@ reference id), so the document can be verified as real.
    - The signed copy is stored next to the original; the employee gets a `documents.signed`
      notification ("returned back as a signed document").
 
+## The Accounting queue (UI)
+
+*Rebuilt 2026-08-12.* The tab follows the **MESA anatomy** (`AccountingMesa.tsx`) — icon tile +
+tracked eyebrow + `text-2xl` title + lede, then stats, toolbar, and a full-bleed table Card —
+recolored into Accounting's **orange** family rather than MESA's teal, per the branded-surface
+accent in [`ui-standards.md`](../design/ui-standards.md) § 1.2 / § 1.3. It is **full width**: the
+old `max-w-6xl` wrapper is gone, so the table gets the whole content area and the row set no
+longer sits in a column with empty gutters either side.
+
+**KPI cards** (`DocStat`, the § 6.3 stat tile — ring wash, gradient icon tile, sub-line) are
+derived entirely from the rows already loaded, with **no extra fetch**:
+
+| Card | Tone | Sub-line |
+|---|---|---|
+| Total requests | orange (hero) | distinct employees |
+| Awaiting signature | amber; border warms while > 0 | age of the oldest pending row |
+| Signed & returned | emerald | signed so far this calendar month |
+| Rejected | rose | share of *decided* requests |
+| Avg. turnaround | sky | mean `requested_at → signed_at`, hours under 2 days then days |
+
+Turnaround only counts rows carrying **both** stamps in order; a missing or inverted pair is
+dropped rather than averaged as zero. The status filter pills are unchanged (they still drive the
+documented Pending / Signed / Rejected views and their counts); a search box was added beside
+them over name, email, type, period, filename, signer and the request id.
+
+### The detail modal
+
+**Actions → View** opens a read-only dossier for one request: both PDFs rendered inline, both
+timestamps to the minute, the signer, the Reference ID and the stored paths.
+
+Three rules it exists to honour:
+
+- **The signed copy is the default pane.** A COE's stored `original.pdf` is a watermarked
+  *UNSIGNED DRAFT* and the certificate is re-rendered from live data at signing time
+  ([§ Draft vs signed](#draft-vs-signed)), so showing the original as "the document that was
+  signed" would be false. When a signed copy exists it opens first; the other pane is labelled
+  **As submitted**, or **Generated draft** for a system-generated type, and that pane carries an
+  amber banner spelling the draft caveat out.
+- **Reads need `view`; decisions need `edit`.** The modal renders for anyone who can see the tab
+  and only grows Approve / Reject / Delete when `canEdit` — the same split
+  `requireFeatureAccess` / `requireFeatureEdit` enforce server-side. Choosing a decision closes
+  the modal and hands off to the existing confirm dialog; no decision is ever taken from inside it.
+- **The PDF is re-wrapped as a `blob:` URL before it reaches the `<iframe>`.** The signed copy's
+  1-hour signed URL is minted with a `download` option, i.e. `Content-Disposition: attachment`
+  (`signedUrlForDocumentFile`), which an iframe *downloads* instead of painting. The modal fetches
+  that same URL, re-wraps the bytes as `application/pdf` and points the frame at the object URL,
+  revoking it on close or pane switch. **Nothing server-side changed** — same route, same auth
+  gate, same 1-hour TTL, and the employee route is untouched. If the blob fetch fails the pane
+  degrades to an error card with "Open it in a new tab instead" on the raw signed URL.
+
+Timestamps in the modal use `formatDocumentDateTime` — **Manila time**, the same clock the
+certification page prints its "Requested on" / "Signed on" lines in, so the screen and the PDF can
+never disagree about what day something happened.
+
+A Realtime nudge or refresh that replaces the open row re-points the modal at the live copy; a row
+that disappears (deleted elsewhere) closes it.
+
 ## Certificate of Engagement
 
 *Added 2026-07-31.* Every other type in this flow is a PDF the worker already has. A COE is the
