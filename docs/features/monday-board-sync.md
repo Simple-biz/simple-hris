@@ -64,6 +64,41 @@ an Actual SP. Pending Deploy / Waiting for Review / In Progress are written by t
 after creation — which is why an unproven row can never carry an invented Actual SP, and why adding
 the honesty gate required **no change to `sync.ts`**.
 
+### The Actual SP hole, and why `done: true` alone never moves an existing row (2026-08-12)
+
+The row above was the *intent*; for the skill's first three weeks it was not the *behaviour*. Nobody
+wrote Actual SP on a row that already existed:
+
+- `sync.ts` writes it **only** in its create payload (`sync.ts:256`); its update payload
+  (`sync.ts:239-245`) is type / Estimated SP / sprint / priority / relations and omits it.
+- `apply.mts`'s corrector wrote only Status and Completed Date.
+
+So a row created as Pending Deploy and later flipped to `done: true` in the plan kept a **blank
+Actual SP forever**, and flipping the plan alone changed nothing on the board at all — `done: true`
+has no effect outside the create path. That is not cosmetic: Actual SP is what SP Completed and the
+bonus rollup read.
+
+It surfaced on `12788029554` (Payment Dispatch wizard-values). Commit `0cafeff` flipped it to
+`done: true` on Kane's prod confirmation, and the board sat on Pending Deploy with a blank Actual SP
+because the row had been created a pass earlier and the Done had nowhere to land.
+
+The fix keeps both writers disjoint, because Actual SP was never in the reconciler's update set:
+
+- `CORRECTOR_COLS` gains `TASK_COLS.actualSp`, so gate 4's runtime collision assert still covers it.
+- One shared `correctionValues(row, plan.sp)` builds the payload for **both** write paths, so the
+  full path and `--only-new` cannot drift apart.
+- Actual SP is always `plan.sp` — never a number chosen at the call site — matching what the create
+  path writes for the same row.
+- A row moving **off** Done has its Actual SP and Completed Date **cleared**, not left behind: a
+  non-Done row carrying either is exactly the phantom `verify.mts` sweeps for.
+
+`review.mts` prints the Actual SP transition and includes it in the hashed proposal, so an approval
+covers the score being written rather than just the status.
+
+**Still open:** the 74 pre-existing Done rows with no Completed Date (and now visibly no Actual SP)
+predate the corrector. Backfilling them is a separate pass, and it must refuse to write a date inside
+the live sprint so a historical backfill can never read as a fresh claim.
+
 ### Three traps that look like bugs but are not
 
 1. **Projects Portfolio Status is not create-only.** `sync.ts:313` rewrites it to `Live` on every
@@ -174,6 +209,15 @@ correctly grouped, typed, scored and statused, but **not yet linked to its epic*
 Exercised three times on 2026-08-12 (items `12786252360`, `12788029554`, `12789400254`), each
 verified by re-read. **Three Sprint 26 rows are therefore unlinked from their epics** (HRIS-01a,
 HRIS-03a, HRIS-18) and will stay that way until the next full `apply.mts` adopts them by name.
+
+It also serves a **correct-only** pass, where every row already exists and nothing is created. The
+Sprint 26 close-out later the same day took all three of those rows in one run — two to Done with an
+Actual SP and a Completed Date, one from In Progress to Pending Deploy — in **12 calls**: 3 for the
+label gate, then per row 1 exact-name lookup + 1 `change_multiple_column_values` + 1 evidence update.
+The full path would have cost ~200 to write the same three rows. It is the right mode whenever the
+pass changes no structure: no new row, no re-score, no sprint move. Flipping `done: true` in the plan
+is **not** a structural change — the reconciler's update payload ignores it (see the Actual SP hole
+above), so it needs the corrector either way.
 
 ## Deploy notes
 

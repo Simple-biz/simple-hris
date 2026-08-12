@@ -48,6 +48,7 @@ import {
   withLock,
 } from './monday.mts';
 import { PASS_DATE, ROWS, selfcheck, updateBody } from './pass.mts';
+import type { PassRow } from './pass.mts';
 
 const args = process.argv.slice(2);
 const APPLY = args.includes('--apply');
@@ -113,7 +114,11 @@ await assertLabelsUnchanged();
 console.log('labels verified against hris-plan.ts');
 
 // ── gate 4: the corrector's columns must not overlap the reconciler's update payload ─────────────
-const CORRECTOR_COLS = [TASK_COLS.status, TASK_COLS.completed] as const;
+// Actual SP belongs here, not to the reconciler: sync.ts writes it ONLY in its create payload
+// (sync.ts:256), and its update payload (sync.ts:239-245) omits it — so on a row that already
+// exists, nobody wrote Actual SP at all and a row flipped to Done later kept a blank one forever.
+// It stays disjoint from RECONCILER_UPDATE_COLS below, so the collision guard still holds.
+const CORRECTOR_COLS = [TASK_COLS.status, TASK_COLS.completed, TASK_COLS.actualSp] as const;
 /** What sync.ts writes on an EXISTING row (sync.ts:239-248 / :180-184). Verified 2026-08-11. */
 const RECONCILER_UPDATE_COLS = new Set<string>([
   TASK_COLS.type,
@@ -129,6 +134,28 @@ if (overlap.length) {
   process.exit(1);
 }
 for (const row of ROWS) assertNameIsSafe(taskItemName({ name: row.name }));
+
+/**
+ * The execution-state payload for ONE row — used by BOTH write paths so the rule cannot drift
+ * between them.
+ *
+ * Actual SP and Completed Date are a RECORD of shipped work, so they accompany Done and nothing
+ * else. On a row moving OFF Done they are actively CLEARED rather than left behind: a Pending
+ * Deploy row still carrying an Actual SP is precisely the phantom verify.mts sweeps for. Actual SP
+ * is never invented — it is always the plan's own `sp`, the identical value the create path writes.
+ */
+function correctionValues(row: PassRow, planSp: number): Record<string, unknown> {
+  const done = row.status === 'Done';
+  return {
+    [TASK_COLS.status]: { index: TASK_STATUS_INDEX[row.status] },
+    [TASK_COLS.actualSp]: done ? String(planSp) : '',
+    [TASK_COLS.completed]: done && row.completed ? { date: row.completed } : '',
+  };
+}
+
+/** How a correction reads in the console — the same facts the proposal hash was taken over. */
+const describe = (row: PassRow, planSp: number) =>
+  `${row.status}${row.status === 'Done' ? ` · actual ${planSp} SP · completed ${row.completed}` : ''}`;
 
 await withLock(async () => {
   process.env.MONDAY = loadToken();
@@ -182,9 +209,8 @@ await withLock(async () => {
       } else {
         // Already on the board — this mode cannot patch reconciler-owned columns, so it corrects
         // only execution state, exactly like the normal phase 2.
-        const vals: Record<string, unknown> = { [TASK_COLS.status]: { index: TASK_STATUS_INDEX[row.status] } };
-        if (row.status === 'Done' && row.completed) vals[TASK_COLS.completed] = { date: row.completed };
-        console.log(`  existing ${id} → ${row.status}  ${itemName.slice(0, 66)}`);
+        const vals = correctionValues(row, plan.sp);
+        console.log(`  existing ${id} → ${describe(row, plan.sp)}  ${itemName.slice(0, 56)}`);
         if (APPLY) await setColumns(MONDAY_BOARDS.tasks, id, vals);
       }
 
@@ -253,11 +279,16 @@ await withLock(async () => {
       skipped.push(`AMBIGUOUS — ${hit.count} board rows share this name, fix the duplicate first: ${itemName.slice(0, 66)}`);
       continue;
     }
-    const vals: Record<string, unknown> = { [TASK_COLS.status]: { index: TASK_STATUS_INDEX[row.status] } };
-    // Completed Date is written ONLY for Done. Anything else would be an invented record.
-    if (row.status === 'Done' && row.completed) vals[TASK_COLS.completed] = { date: row.completed };
+    // selfcheck already enforces this; the writer re-asserts rather than trusting a caller, because
+    // Actual SP must come from the plan and never from a number chosen here.
+    const plan = PLAN_TASKS.find((t) => t.name === row.name);
+    if (!plan) {
+      skipped.push(`no PLAN_TASKS entry — refusing to score a row the plan does not declare: ${row.name.slice(0, 60)}`);
+      continue;
+    }
+    const vals = correctionValues(row, plan.sp);
 
-    console.log(`  ${hit.id} → ${row.status}${row.completed ? ` · completed ${row.completed}` : ''}  ${row.name.slice(0, 62)}`);
+    console.log(`  ${hit.id} → ${describe(row, plan.sp)}  ${row.name.slice(0, 52)}`);
     if (APPLY) {
       await setColumns(MONDAY_BOARDS.tasks, hit.id, vals);
       await postUpdate(hit.id, updateBody(row));

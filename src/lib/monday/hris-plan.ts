@@ -406,13 +406,16 @@ export const PLAN_TASKS: PlanTask[] = [
   // subsystem.
   { epic: 'HRIS-03a', name: 'Payment Dispatch prices every row from the Payroll Wizard — one shared snapshot-or-lock precedence — and syncs live across open screens', type: 'Bug', sp: 5, done: true, sprint: 'S26' },
   // ── Sprint 26 fifth pass — committed 6b8921f (Aug 12 2026) ──────────────────────────────────
-  // In-sprint, NOT backlog: shipped work awaiting a click-through, not a blocked row. done:false
-  // because nobody has opened the View modal in production — it IS on origin/main (Kane pushed as
-  // ce83a73) and the 4-file diff carries no .sql, no apply-*.mjs and no workflow json, so there is
-  // no external step between it and live and the corrector's ceiling is Pending Deploy.
+  // done:true on Kane's prod confirmation 2026-08-12: he opened Documents → Actions → View in
+  // production and the signed PDF rendered. That is the ONE thing typechecking could not prove —
+  // the pane re-fetches the signed URL and re-wraps the bytes as a blob: URL, which only works if
+  // Supabase Storage answers the browser fetch with permissive CORS — so his click retires the
+  // sole blocker this row ever carried. It was already on origin/main (Kane pushed as ce83a73) and
+  // the 4-file diff carries no .sql, no apply-*.mjs and no workflow json, so no external step ever
+  // stood between it and live.
   // 3 SP against the Sprint 26 band (1–5, avg ~3.5): the peer of the 3-SP "My Team: MESA-style
   // table + card parity" row — the same restyle-onto-the-MESA-pattern job — plus a read-only modal
   // over fields the row already carries. Not 5: one component, zero new endpoints, no new query,
   // no migration, no data path touched. The 5-SP rows beside it each added a fetch or a tab.
-  { epic: 'HRIS-18', name: 'Documents queue rebuilt on the MESA anatomy — KPI cards, full-width table and a View modal that renders the signed copy inline', type: 'Feature', sp: 3, done: false, sprint: 'S26' },
+  { epic: 'HRIS-18', name: 'Documents queue rebuilt on the MESA anatomy — KPI cards, full-width table and a View modal that renders the signed copy inline', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
 ];

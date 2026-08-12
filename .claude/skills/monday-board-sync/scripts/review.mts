@@ -82,19 +82,35 @@ const corrections: {
   name: string;
   itemName: string;
   exists: boolean;
-  from: { status: string; completed: string };
-  to: { status: string; completed: string };
+  from: { status: string; completed: string; actualSp: string };
+  to: { status: string; completed: string; actualSp: string };
   changes: string[];
 }[] = [];
 
 for (const row of ROWS) {
   const itemName = taskItemName({ name: row.name });
   const live = taskByName.get(itemName);
-  const from = { status: live?.cols[TASK_COLS.status] ?? '(new)', completed: live?.cols[TASK_COLS.completed] ?? '' };
-  const to = { status: row.status, completed: row.completed ?? '' };
+  // Actual SP is the plan's own sp, never a number chosen here — and it accompanies Done alone,
+  // so a row moving OFF Done shows the clear as an explicit change rather than a silent leftover.
+  const planSp = PLAN_TASKS.find((t) => t.name === row.name)?.sp;
+  const from = {
+    status: live?.cols[TASK_COLS.status] ?? '(new)',
+    completed: live?.cols[TASK_COLS.completed] ?? '',
+    actualSp: live?.cols[TASK_COLS.actualSp] ?? '',
+  };
+  const to = {
+    status: row.status,
+    completed: row.completed ?? '',
+    actualSp: row.status === 'Done' ? String(planSp ?? '') : '',
+  };
   const changes: string[] = [];
   if (from.status !== to.status) changes.push(`Status ${from.status || '(blank)'} → ${to.status}`);
-  if (to.completed && from.completed !== to.completed) changes.push(`Completed Date ${from.completed || '(blank)'} → ${to.completed}`);
+  if (from.actualSp !== to.actualSp) {
+    changes.push(`Actual SP ${from.actualSp || '(blank)'} → ${to.actualSp || '(cleared — not Done)'}`);
+  }
+  if (to.completed !== from.completed) {
+    changes.push(`Completed Date ${from.completed || '(blank)'} → ${to.completed || '(cleared — not Done)'}`);
+  }
   changes.push('post evidence update');
   corrections.push({ name: row.name, itemName, exists: Boolean(live), from, to, changes });
   console.log(`  ${row.status === 'Done' ? '✓' : '·'} ${(live ? live.id : 'NEW').padEnd(12)} ${row.status.padEnd(18)} ${row.name.slice(0, 74)}`);
@@ -129,7 +145,16 @@ fs.writeFileSync(PROPOSAL_PATH, JSON.stringify({ hash, generatedFor: PASS_DATE, 
 
 console.log('\n' + '─'.repeat(96));
 console.log(`SUMMARY  ${willCreate.length} rows created · ${willPatch} patched · ${corrections.length} corrected`);
-console.log(`         ${doneRows.length} Done (Completed Date ${PASS_DATE}) · ${ROWS.length - doneRows.length} not Done, kept in Backlog`);
+// Say where the held rows actually SIT — they are not all Backlog, and a summary that assumes so
+// misreports the one thing this line exists to convey.
+const heldBySprint = new Map<string, number>();
+for (const r of ROWS.filter((r) => r.status !== 'Done')) {
+  const sprint = PLAN_TASKS.find((t) => t.name === r.name)?.sprint;
+  const label = sprint ? TASK_SPRINT_LABELS[sprint] : '(not in plan)';
+  heldBySprint.set(label, (heldBySprint.get(label) ?? 0) + 1);
+}
+const heldText = [...heldBySprint].map(([label, n]) => `${n} in ${label}`).join(', ') || 'none';
+console.log(`         ${doneRows.length} Done (Completed Date ${PASS_DATE}) · ${ROWS.length - doneRows.length} held short of Done (${heldText})`);
 console.log(`         SP going Done this pass: ${doneRows.reduce((a, r) => a + (PLAN_TASKS.find((t) => t.name === r.name)?.sp ?? 0), 0)}`);
 console.log(`\nproposal: ${PROPOSAL_PATH}`);
 console.log(`APPROVAL HASH: ${hash}`);
