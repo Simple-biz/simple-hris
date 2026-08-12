@@ -264,6 +264,8 @@ with nobody in it. Only take it when the team really is scored on its own.
    `HSL_PLACEMENT_ONLY_SUB_TEAMS` with its display name and the `scoredUnder`
    calculator (two edits, same shape as 7a).
 2. Set its base rate on the Pay Structure rail — until you do, it rides the parent.
+   Note the rail only lists a key **after the code deploys**, so a pre-deploy seed
+   has to go through `scripts/seed-hsl-placement-subdept-rates.mts` (see below).
 3. Tell the scoring manager to keep the people on the `scoredUnder` team's
    `hsl_team_members` roster — that is where the bonus is actually entered.
 
@@ -276,7 +278,34 @@ placement validation all pick it up with no further edits.
 
 Currently placement-only: **Simple Texting** and **Lead Nurture**, both scored
 under **Callback Team** (Successfully Transferred Calls ₱50 · Sign ups from
-Transferred Calls ₱250).
+Transferred Calls ₱250). Both were seeded at **₱225.00 / ₱337.50 OT PHP** on
+2026-08-12 (Kane) — department scope, identical to the parent base.
+
+### Seeding a placement-only rate before the code deploys
+
+`scripts/seed-hsl-placement-subdept-rates.mts` (`--apply` gated) writes exactly
+what a department-scope Pay Structure save writes — one row per `department_key`,
+employee columns null, PHP, **no** `employee_rate_history` / rates-sheet / Pay Plan
+sheet / notification side effects, since those are employee-scope only
+(`pay-structures/route.ts:205`). It adds one `audit_log` row, which the UI route
+omits for department saves: a script-driven production rate write should be
+attributable.
+
+Four guards, all failing closed: the payroll processing lock, key validity (checked
+by importing `HSL_PLACEMENT_ONLY_SUB_KEYS` from the code, so it cannot seed a key
+the app does not recognise), occupied-slot refusal (changing an existing base rate
+is a rate CHANGE for everyone riding it, not a seed), and a disk backup of every
+HSL-family structure before any write.
+
+**The locked-cycle exemption.** The processing lock exists to stop a rate edit
+desyncing STAGED amounts mid-run, which requires somebody in the run to resolve
+their rate through the key being written. `--seed-while-locked-proven-no-op` is
+honoured only when four preconditions prove nobody can: zero master-list cells on
+the key, zero `employee_hourly_rates` rows, zero employee-scope structures, and
+seeded figures exactly equal to the parent base. If any precondition fails the
+script aborts **even with the flag** — the flag rides a proof, it never widens the
+guard. The 2026-08-12 seed used it (Payment Dispatch was locked on the 08-02 cycle)
+with all four proven.
 
 ## 8. Still open (not shipped 2026-08-10)
 
