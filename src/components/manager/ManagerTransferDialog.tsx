@@ -76,9 +76,11 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
    *
    * Rules:
    *  - a sub-team grant → that one labeled sub-team target;
-   *  - a PARENT HSL grant → all 12 labeled sub-teams, and NOT the bare family
-   *    label, because a transfer into HSL must land in a specific sub-team (the
-   *    sub-team is what carries the base rate);
+   *  - a PARENT HSL grant → EVERY labeled sub-team (`hslSubDeptOptions()`, which
+   *    covers both the KPI-scoring teams and the placement-only ones — see
+   *    docs/features/hsl-subdepartments.md §1.1), and NOT the bare family label,
+   *    because a transfer into HSL must land in a specific sub-team (the sub-team
+   *    is what carries the base rate);
    *  - anything else → itself.
    * Deduped by value; the submitted `to_department` is always the canonical value.
    */
@@ -109,7 +111,7 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
   }, [myDepartments]);
 
   // Default the target ONLY when there is exactly one real choice. A parent-HSL
-  // manager now has 12 and must pick explicitly — no silent sub-team default.
+  // manager has every sub-team and must pick explicitly — no silent default.
   const soleDept = targetChoices.length === 1 ? targetChoices[0].value : '';
 
   // Reset on open; default the target dept when the manager owns exactly one.

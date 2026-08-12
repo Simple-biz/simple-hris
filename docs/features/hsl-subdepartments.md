@@ -40,12 +40,74 @@ Everything that knows these rules lives in one client-safe module:
 |---|---|
 | `HSL_FAMILY_DEPT_LABEL` | the single label (`'HSL'`) every picker shows |
 | `collapseHslFamilyLabel(raw)` | building a picker/filter option list — **never** a value written to the cell |
-| `hslSubDeptOptions()` | the 12 `{value,label}` sub-team options |
+| `hslSubDeptOptions()` | the 14 `{value,label}` sub-team options (both keyspaces, see §1.1) |
+| `isHslKpiDeptKey(key)` | "does this sub-team have its OWN calculator?" |
+| `isHslPlacementOnlySubKey(key)` | "is this sub-team scored under a different one?" |
+| `hslSubTeamName(key)` | display name, from whichever keyspace owns the key |
 | `isPlaceableDeptLabel(raw)` | gate on any NEW placement: refuses a bare `HSL` |
 | `formatDeptLabel(raw)` | display |
 | `isHslFamilyLabel(raw)` | "is this person HSL?" — **use this, never `dept === 'hsl'`** |
 | `hslSubKeyFromRaw` / `hslSubDeptLabel` / `isHslSubDeptLabel` | parse / compose / test a sub label |
 | `deptCellMatchesSource` / `deptCellSatisfiesTarget` | transfer + sheet matching |
+
+## 1.1 Two keyspaces: "can I place someone here?" ≠ "does it have a calculator?"
+
+Added 2026-08-12. These are **different questions** and they now have different
+answers, in different files.
+
+| Keyspace | Lives in | Means |
+|---|---|---|
+| `HSL_DEPT_KEYS` / `HSL_DEPTS` | `src/lib/hsl-bonus/schema.ts` | the sub-team has its **own KPI calculator** |
+| `HSL_PLACEMENT_ONLY_SUB_KEYS` / `HSL_PLACEMENT_ONLY_SUB_TEAMS` | `src/lib/departments/hsl-subdept.ts` | placeable + priceable, but **scored under another sub-team's calculator** |
+
+**Why.** Kane relaying Carla, 2026-08-12: *"Successfully Transferred Calls - 50
+each / Sign ups from Transferred Calls - 250 each. We calculate it under the
+callback team bonus on HSL. Callback and Simpletexting have the same bonus, so
+they are calculated under one calculator."* **Simple Texting** and **Lead
+Nurture** are real HSL teams people work in and transfer into — but they have no
+calculator of their own, and putting them in `HSL_DEPT_KEYS` to make them
+placeable would have cost two things nobody wanted:
+
+- **a duplicate KPI Calculator card** for a bonus Carla already scores under
+  Callback Team. `simple_texting` was deleted from `HSL_DEPT_KEYS` on 2026-08-04
+  precisely to remove that card; **that removal stands.**
+- **a permanent `draft` row in Payroll Readiness → KPI Submissions.**
+  `payroll-readiness.ts:571` iterates every `HSL_DEPT_KEYS` with **no grant
+  filter and no roster filter**, and its HSL branch has **no zero-roster
+  `no_bonus` downgrade** — that exists only for custom departments (`:550`). A
+  sub-team with nobody in it counts in `kpiDue` (`:1879`) and never in
+  `kpiSubmitted` (`:1880`), so each one would hold the 25 %-weight KPI dimension,
+  and the headline readiness score, under 100 **every week, forever**, unless a
+  manager marked an empty department "ready".
+
+`scoredUnder` is typed `HslDeptKey`, so the calculator a placement-only team
+rides cannot be renamed or retired without a compile error — the pointer can't
+rot into a dangling string. `hsl-subdept.test.ts` pins the two keyspaces
+**disjoint**: if anyone adds either key to `HSL_DEPT_KEYS` later, the suite fails
+with the reason spelled out.
+
+**Nothing in this keyspace reaches a KPI surface.** Every KPI consumer
+(`HslBonusCalculator`, `AdminRoles`, `use-bonus-scoring-queue`,
+`ManagerBonusHistory`, `payroll-readiness`, `PayrollWizard`,
+`employee-kpi-results`, `Overview`) reads `HSL_DEPT_KEYS` / `HSL_DEPTS` directly
+and never routes through `hsl-subdept.ts` — which is what makes widening the
+placement helpers safe.
+
+Consequences worth knowing:
+
+- **Pay is unaffected and needed no edits.** `normalizeDeptToKey` already
+  collapses any `hsl:*` → `hogan_smith_law` (`normalize-dept-key.ts:11`), so the
+  HSL week model, the +₱15/h weekend premium and every payout path treat
+  `hsl:simple_texting` as HSL on day one.
+- **Rates work on day one too.** `resolveDeptCatalogRate('hsl:simple_texting')`
+  tries the sub-team's own row, then the parent ₱225 — never ₱0 (§2).
+- **They get no Admin Roles grant checkbox** (`AdminRoles.tsx:1291` iterates
+  `HSL_DEPT_KEYS`), which is correct: there is no calculator to gate. Transfer
+  targets and release ownership therefore run through the **parent** HSL grant,
+  the same as the other twelve.
+- **The Payroll Wizard's HSL rail buckets them "Unassigned"** — that rail keys on
+  `hsl_team_members.dept_key` (the KPI roster), not the master cell. A display
+  bucket, not a pay path.
 
 ## 2. Rate resolution — sub first, parent as fallback
 
@@ -123,7 +185,7 @@ so they cannot drift.
 | **HR → Onboarding → Bypass** (writes master + Sheet) | `DepartmentSelect hslSubDepartment` — Verify/Add gated by `isPlaceableDeptLabel`; the route **400s** on a bare HSL |
 | **HR → Onboarding → set work email** (stages the hire) | same selector; the route 400s on a bare HSL, including one inherited from `invite_department` |
 | **HR → Onboarding → bulk group** | same selector; a whole batch can't be set without a sub-team |
-| **Manager/HR transfer in** | a PARENT HSL grant expands to all 12 labeled sub-team targets; plain `HSL` is **not** an offered target; submit blocked on a bare HSL |
+| **Manager/HR transfer in** | a PARENT HSL grant expands to **every** labeled sub-team target, both keyspaces (14 as of 2026-08-12); plain `HSL` is **not** an offered target; submit blocked on a bare HSL |
 | **Admin → Roles & permissions** | unchanged — sub-team **access grants** already come from `HSL_DEPT_KEYS`, not from `/api/departments` |
 
 Deliberately **left on the plain family label** — the department there selects a
@@ -164,8 +226,9 @@ Two deliberate carve-outs:
 - **Targets** come from the manager's grants **expanded**, never raw. `myDepartments`
   is the access-control keyspace; feeding it in directly is how `hsl:intake_specialist`
   got written into master `Department` cells and rendered as a department. A parent
-  grant now yields 12 labeled sub-team targets and **no silent default** — `soleDept`
-  defaults only when exactly one real choice remains.
+  grant now yields **every** labeled sub-team target — placement-only teams included
+  — and **no silent default**: `soleDept` defaults only when exactly one real choice
+  remains.
 - **Release queues** use `managerOwnsSourceDept(grants, from_department)`: exact match
   first; a parent Hogan grant owns every family source; an `hsl:<sub>` grant owns
   exactly its own sub-team — not siblings, not the family. A raw `Set.has` left
@@ -177,14 +240,43 @@ Two deliberate carve-outs:
 
 ## 7. Adding a new sub-team
 
+**First decide which keyspace it belongs in (§1.1):** does this team get its *own*
+KPI calculator, or is its bonus scored under an existing one? Getting this wrong
+is not cosmetic — the wrong choice costs a duplicate calculator card and a
+permanent Readiness "Pending" row.
+
+### 7a. It has its own KPI calculator
+
 1. `src/lib/hsl-bonus/schema.ts` — add the key to `HSL_DEPT_KEYS` **and** a config to
    `HSL_DEPTS` (two edits; everything else derives from these).
-2. `hsl_team_members.dept_key` — SQL to populate the roster, if it has KPI scoring.
+2. `hsl_team_members.dept_key` — SQL to populate the roster.
 3. Grant it in Admin → Roles & permissions (the `hsl:<key>` checkbox appears itself).
 4. Set its base rate on the Pay Structure rail — until you do, it rides the parent.
 
-The picker, the transfer targets, the display label and the validation all pick it up
-with no further edits.
+**Cost of this path:** the dept joins Payroll Readiness → KPI Submissions
+immediately and reads `draft` until a manager marks it ready, **every week**, even
+with nobody in it. Only take it when the team really is scored on its own.
+
+### 7b. Its bonus is scored under another sub-team
+
+1. `src/lib/departments/hsl-subdept.ts` — add the key to
+   `HSL_PLACEMENT_ONLY_SUB_KEYS` **and** an entry to
+   `HSL_PLACEMENT_ONLY_SUB_TEAMS` with its display name and the `scoredUnder`
+   calculator (two edits, same shape as 7a).
+2. Set its base rate on the Pay Structure rail — until you do, it rides the parent.
+3. Tell the scoring manager to keep the people on the `scoredUnder` team's
+   `hsl_team_members` roster — that is where the bonus is actually entered.
+
+No Admin Roles checkbox, no KPI card, no Readiness row. Do **not** also add it to
+`HSL_DEPT_KEYS`; the test suite fails on purpose if you do.
+
+Either way the picker, the transfer targets, the onboarding sub-department
+selector, the display label, the Pay Structure rail, the catalog export and the
+placement validation all pick it up with no further edits.
+
+Currently placement-only: **Simple Texting** and **Lead Nurture**, both scored
+under **Callback Team** (Successfully Transferred Calls ₱50 · Sign ups from
+Transferred Calls ₱250).
 
 ## 8. Still open (not shipped 2026-08-10)
 

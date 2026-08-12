@@ -12,8 +12,13 @@ import {
   hslSubDeptOptions,
   deptCellMatchesSource,
   deptCellSatisfiesTarget,
+  HSL_PLACEMENT_ONLY_SUB_KEYS,
+  HSL_PLACEMENT_ONLY_SUB_TEAMS,
+  isHslKpiDeptKey,
+  isHslPlacementOnlySubKey,
+  hslSubTeamName,
 } from './hsl-subdept';
-import { HSL_DEPT_KEYS } from '@/lib/hsl-bonus/schema';
+import { HSL_DEPT_KEYS, HSL_DEPTS } from '@/lib/hsl-bonus/schema';
 
 test('hslSubKeyFromRaw parses canonical and sloppy labels', () => {
   assert.equal(hslSubKeyFromRaw('hsl:intake_specialist'), 'intake_specialist');
@@ -106,9 +111,72 @@ test('isPlaceableDeptLabel refuses a bare HSL but accepts every sub-team', () =>
   assert.ok(isPlaceableDeptLabel('Executive Assistants'));
 });
 
+test('the two sub-team keyspaces stay disjoint — a placement-only team NEVER gains a calculator', () => {
+  // This is the load-bearing assertion of the whole split. Simple Texting was
+  // deleted from HSL_DEPT_KEYS on 2026-08-04 at Kane's explicit request, and
+  // Carla scores both of these under the Callback Team calculator. If someone
+  // "helpfully" adds either key to HSL_DEPT_KEYS later, they get a duplicate
+  // calculator card AND a permanent draft row in Payroll Readiness → KPI
+  // Submissions that pins the readiness score under 100 every week. Fail loudly.
+  for (const key of HSL_PLACEMENT_ONLY_SUB_KEYS) {
+    assert.equal(
+      isHslKpiDeptKey(key),
+      false,
+      `${key} must NOT be in HSL_DEPT_KEYS — it is scored under ${HSL_PLACEMENT_ONLY_SUB_TEAMS[key].scoredUnder}, not by its own calculator`,
+    );
+  }
+  for (const key of HSL_DEPT_KEYS) {
+    assert.equal(isHslPlacementOnlySubKey(key), false, `${key} owns a calculator; it is not placement-only`);
+  }
+  // The calculator each placement-only team rides must actually exist — a
+  // dangling `scoredUnder` would mean nobody can score them at all.
+  for (const key of HSL_PLACEMENT_ONLY_SUB_KEYS) {
+    const under = HSL_PLACEMENT_ONLY_SUB_TEAMS[key].scoredUnder;
+    assert.ok(isHslKpiDeptKey(under), `${key}.scoredUnder=${under} must be a real KPI dept`);
+    assert.ok(HSL_DEPTS[under], `${under} must have a calculator config`);
+  }
+  // Both teams ride Callback Team, whose rules ARE the bonus Carla described:
+  // Successfully Transferred Calls ₱50 + Sign ups from Transferred Calls ₱250.
+  const callbackRates = HSL_DEPTS.callback_team.rules.map((r) => ('rate' in r ? r.rate : null));
+  assert.deepEqual(callbackRates, [50, 250]);
+});
+
+test('hslSubTeamName resolves a display name from either keyspace', () => {
+  assert.equal(hslSubTeamName('intake_specialist'), 'Intake Specialist');
+  assert.equal(hslSubTeamName('simple_texting'), 'Simple Texting');
+  assert.equal(hslSubTeamName('lead_nurture'), 'Lead Nurture');
+});
+
+test('placement-only sub-teams are placeable, parseable and prettily labeled', () => {
+  for (const key of HSL_PLACEMENT_ONLY_SUB_KEYS) {
+    const label = hslSubDeptLabel(key);
+    assert.equal(label, `hsl:${key}`);
+    assert.equal(hslSubKeyFromRaw(label), key, 'must round-trip out of a master cell');
+    assert.ok(isHslSubDeptLabel(label), 'must count as a specific sub-team, not the bare family');
+    assert.ok(isHslFamilyLabel(label), 'must stay inside the HSL cohort (week model, weekend premium)');
+    assert.ok(isPlaceableDeptLabel(label), `${label} must be a legal placement`);
+    assert.equal(collapseHslFamilyLabel(label), HSL_FAMILY_DEPT_LABEL, 'pickers still show ONE HSL');
+    assert.equal(formatDeptLabel(label), `HSL — ${HSL_PLACEMENT_ONLY_SUB_TEAMS[key].name}`);
+  }
+  // Sloppy casing from a hand-edited sheet cell still resolves.
+  assert.equal(hslSubKeyFromRaw(' HSL:Simple_Texting '), 'simple_texting');
+  assert.equal(formatDeptLabel('hsl:lead_nurture'), 'HSL — Lead Nurture');
+  // A sub-team TARGET demands the exact cell, placement-only included — a plain
+  // "HSL" person must still be relabeled, and a sibling is not a no-op.
+  assert.equal(deptCellSatisfiesTarget('HSL', 'hsl:simple_texting'), false);
+  assert.equal(deptCellSatisfiesTarget('hsl:lead_nurture', 'hsl:simple_texting'), false);
+  assert.ok(deptCellSatisfiesTarget('hsl:simple_texting', 'hsl:simple_texting'));
+  // ...and moving someone OUT of one is an HSL-family source move.
+  assert.ok(deptCellMatchesSource('hsl:simple_texting', 'HSL'));
+});
+
 test('hslSubDeptOptions offers every sub-team, canonically valued and prettily labeled', () => {
   const opts = hslSubDeptOptions();
-  assert.equal(opts.length, HSL_DEPT_KEYS.length);
+  assert.equal(opts.length, HSL_DEPT_KEYS.length + HSL_PLACEMENT_ONLY_SUB_KEYS.length);
+  // Regression witness for the pre-split list: these two were absent from every
+  // transfer dropdown, onboarding picker, Pay Structure rail and catalog export.
+  assert.ok(opts.some((o) => o.value === 'hsl:simple_texting'));
+  assert.ok(opts.some((o) => o.value === 'hsl:lead_nurture'));
   // Values are the canonical cell labels; each round-trips back to its key.
   for (const o of opts) {
     assert.ok(isHslSubDeptLabel(o.value), `${o.value} must be a canonical hsl:<key> label`);

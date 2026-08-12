@@ -24,18 +24,94 @@ import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
  */
 export const HSL_FAMILY_DEPT_LABEL = 'HSL';
 
+// ── Two sub-team keyspaces, deliberately separate ────────────────────────────
+//
+// `HSL_DEPT_KEYS` (src/lib/hsl-bonus/schema.ts) answers "does this sub-team have
+// its OWN KPI calculator?". It is NOT the same question as "can I place someone
+// here?", and conflating the two is what this split fixes.
+//
+// Kane relaying Carla, 2026-08-12: *"Successfully Transferred Calls - 50 each /
+// Sign ups from Transferred Calls - 250 each. We calculate it under the callback
+// team bonus on HSL. Callback and Simpletexting have the same bonus, so they are
+// calculated under one calculator."*
+//
+// So Simple Texting and Lead Nurture are real HSL teams — placeable, priceable,
+// transferable — whose bonuses are scored inside the Callback Team calculator.
+// Adding them to HSL_DEPT_KEYS would have given each one:
+//   - its own KPI Calculator card (HslBonusCalculator) — the duplicate calculator
+//     Carla explicitly does NOT want, and exactly what `simple_texting`'s
+//     2026-08-04 removal deleted. That removal STANDS;
+//   - a permanent `draft` row in Payroll Readiness → KPI Submissions:
+//     payroll-readiness.ts:571 iterates every HSL_DEPT_KEYS with no grant filter
+//     and no roster filter, and its HSL branch has no zero-roster `no_bonus`
+//     downgrade (that exists only for custom depts, :550). A dept with nobody in
+//     it counts in `kpiDue` and never in `kpiSubmitted`, so it would hold the
+//     25%-weight KPI dimension — and the readiness score — under 100 every week,
+//     forever, until a manager marked an empty department "ready".
+//
+// Nothing here reaches a KPI surface: every KPI consumer (HslBonusCalculator,
+// AdminRoles, use-bonus-scoring-queue, ManagerBonusHistory, payroll-readiness,
+// PayrollWizard, employee-kpi-results, Overview) reads HSL_DEPT_KEYS / HSL_DEPTS
+// directly and never routes through this module.
+
+/** Ordered placement-only sub-team keys. Add one here + an entry below (the same
+ *  two-edit shape as HSL_DEPT_KEYS + HSL_DEPTS). */
+export const HSL_PLACEMENT_ONLY_SUB_KEYS = ['simple_texting', 'lead_nurture'] as const;
+
+export type HslPlacementOnlySubKey = (typeof HSL_PLACEMENT_ONLY_SUB_KEYS)[number];
+
+/**
+ * Sub-teams you can place into but that have no calculator of their own.
+ * `scoredUnder` is typed `HslDeptKey`, so the calculator that actually scores
+ * them cannot be renamed or retired without a compile error here — the pointer
+ * can never rot into a dangling string.
+ */
+export const HSL_PLACEMENT_ONLY_SUB_TEAMS: Record<
+  HslPlacementOnlySubKey,
+  { readonly name: string; readonly scoredUnder: HslDeptKey }
+> = {
+  simple_texting: { name: 'Simple Texting', scoredUnder: 'callback_team' },
+  lead_nurture: { name: 'Lead Nurture', scoredUnder: 'callback_team' },
+};
+
+/** Every sub-team key that may legitimately appear in a master `Department`
+ *  cell — the KPI-scoring teams plus the placement-only ones. */
+export type HslSubTeamKey = HslDeptKey | HslPlacementOnlySubKey;
+
+/** Does this key name a sub-team with its OWN KPI calculator? */
+export function isHslKpiDeptKey(key: string): key is HslDeptKey {
+  return (HSL_DEPT_KEYS as readonly string[]).includes(key);
+}
+
+/** Does this key name a placement-only sub-team (scored under another one)? */
+export function isHslPlacementOnlySubKey(key: string): key is HslPlacementOnlySubKey {
+  return (HSL_PLACEMENT_ONLY_SUB_KEYS as readonly string[]).includes(key);
+}
+
+/** Display name for any sub-team key, from whichever keyspace owns it. */
+export function hslSubTeamName(key: HslSubTeamKey): string {
+  return isHslPlacementOnlySubKey(key)
+    ? HSL_PLACEMENT_ONLY_SUB_TEAMS[key].name
+    : HSL_DEPTS[key].name;
+}
+
 /** Canonical master-list Department label for an HSL sub-department. */
-export function hslSubDeptLabel(key: HslDeptKey): string {
+export function hslSubDeptLabel(key: HslSubTeamKey): string {
   return `hsl:${key}`;
 }
 
-/** The HslDeptKey inside a raw `hsl:*` label, or null when the label is not a
- *  known sub-team (plain "HSL", unknown key, non-HSL label). */
-export function hslSubKeyFromRaw(raw: string | null | undefined): HslDeptKey | null {
+/** The sub-team key inside a raw `hsl:*` label, or null when the label is not a
+ *  known sub-team (plain "HSL", unknown key, non-HSL label). Covers BOTH
+ *  keyspaces: a placement-only team is every bit as real a placement as a
+ *  KPI-scoring one, and callers that mean "has a calculator" must ask
+ *  `isHslKpiDeptKey`, not this. */
+export function hslSubKeyFromRaw(raw: string | null | undefined): HslSubTeamKey | null {
   const s = (raw ?? '').trim().toLowerCase();
   if (!s.startsWith('hsl:')) return null;
   const key = s.slice(4);
-  return (HSL_DEPT_KEYS as readonly string[]).includes(key) ? (key as HslDeptKey) : null;
+  if (isHslKpiDeptKey(key)) return key;
+  if (isHslPlacementOnlySubKey(key)) return key;
+  return null;
 }
 
 /** True when `raw` names a SPECIFIC HSL sub-team (not just the family). */
@@ -69,7 +145,7 @@ export function isHslFamilyLabel(raw: string | null | undefined): boolean {
  *  Every other label passes through trimmed. */
 export function formatDeptLabel(raw: string | null | undefined): string {
   const sub = hslSubKeyFromRaw(raw);
-  if (sub) return `HSL — ${HSL_DEPTS[sub].name}`;
+  if (sub) return `HSL — ${hslSubTeamName(sub)}`;
   const s = (raw ?? '').trim();
   // Unknown `hsl:*` sub-key: still never show the bare slug to a human.
   if (s.toLowerCase().startsWith('hsl:')) return `HSL — ${s.slice(4)}`;
@@ -101,6 +177,11 @@ export function collapseHslFamilyLabel(raw: string | null | undefined): string {
  * what carries the base rate, so accepting a bare "HSL" would put a new hire on
  * the parent fallback with nobody having chosen it. Existing plain-"HSL" rows
  * are untouched by this — it gates new writes only, never reads.
+ *
+ * Placement-only sub-teams pass. Having no calculator of their own says nothing
+ * about whether someone can WORK there, and `resolveDeptCatalogRate` prices them
+ * exactly like any other sub-team (own `hsl:<key>` rate first, parent as the
+ * permanent fallback) — so a placement here can never resolve ₱0.
  */
 export function isPlaceableDeptLabel(raw: string | null | undefined): boolean {
   const s = (raw ?? '').trim();
@@ -108,11 +189,16 @@ export function isPlaceableDeptLabel(raw: string | null | undefined): boolean {
   return isHslFamilyLabel(s) ? isHslSubDeptLabel(s) : true;
 }
 
-/** One `{value,label}` per HSL sub-team, for every sub-department selector.
- *  Single definition so the onboarding picker, the transfer dialog and the Pay
- *  Structure rail can never drift on which teams exist or how they read. */
+/** One `{value,label}` per HSL sub-team — BOTH keyspaces, because every one of
+ *  them is a place a person can actually sit. Single definition so the onboarding
+ *  picker, the transfer dialog, the Pay Structure rail and the catalog export can
+ *  never drift on which teams exist or how they read.
+ *
+ *  Placement-only teams come last, after the KPI-scoring ones, so the existing
+ *  order (and anyone's muscle memory for it) is undisturbed. */
 export function hslSubDeptOptions(): Array<{ value: string; label: string }> {
-  return HSL_DEPT_KEYS.map((key) => ({
+  const keys: readonly HslSubTeamKey[] = [...HSL_DEPT_KEYS, ...HSL_PLACEMENT_ONLY_SUB_KEYS];
+  return keys.map((key) => ({
     value: hslSubDeptLabel(key),
     label: formatDeptLabel(hslSubDeptLabel(key)),
   }));
