@@ -180,8 +180,9 @@ export async function runHubstaffWeeklySync(params: {
 
   // Seed disbursement_records for the new week — an API sync is a new payroll
   // week too (replaces the removed Reports-tab "Seed" button, 2026-08-12).
-  // Best-effort; never fails the sync. The seeder's own gates skip already-
-  // seeded files and non-weekly uploads, so cron retries never recompute.
+  // Best-effort; never fails the sync. A cron retry re-seeds the same filename
+  // (estimates refresh, paid state preserved, partial seeds heal); a week
+  // already seeded under a different filename is refused (double-count guard).
   let seeded: WeeklySyncResult["seeded"] = null;
   try {
     const seedRes = await seedMissingDisbursementRecords({ sourceFiles: [fileName] });

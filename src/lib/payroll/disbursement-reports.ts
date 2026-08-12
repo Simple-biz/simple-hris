@@ -12,7 +12,7 @@ import {
   createSupabaseServerClient,
   createSupabaseServiceRoleClient,
 } from "@/lib/supabase/server";
-import { listHubstaffUploads } from "@/lib/supabase/hubstaff-hours-db";
+import { collapseToSingleUploadBatch, listHubstaffUploads } from "@/lib/supabase/hubstaff-hours-db";
 import {
   parseDateRangeFromFilename,
   payWeekFromUploadStart,
@@ -868,10 +868,14 @@ function isSeedableWeeklyUpload(sourceFile: string): boolean {
  */
 export async function seedMissingDisbursementRecords(opts: {
   /**
-   * When provided, only these source_files are seeded (still gated by the same
-   * already-seeded and isSeedableWeeklyUpload checks — a caller can't force a
-   * non-weekly or already-seeded file through). Omit to seed all unseeded
-   * seedable uploads, preserving the original "Seed all" behaviour.
+   * When provided, only these source_files are processed (still gated by
+   * isSeedableWeeklyUpload — a caller can't force a non-weekly file through).
+   * An already-seeded file in this list is RE-seeded: estimates refresh from
+   * the (possibly corrected) hours while paid state is preserved, and a
+   * partially-failed earlier seed heals. A file whose pay week is already
+   * seeded under a DIFFERENT filename is refused (double-count guard).
+   * Omit to seed all unseeded seedable uploads, which never reprocesses an
+   * already-seeded file — the original "Seed all" behaviour.
    */
   sourceFiles?: string[];
 } = {}): Promise<{
@@ -904,17 +908,46 @@ export async function seedMissingDisbursementRecords(opts: {
     }
   }
 
-  // Unseeded uploads worth seeding. Only a canonical single-week payroll file
-  // becomes a cycle (see {@link isSeedableWeeklyUpload}) — backfills, the
-  // time-activity export, and "(2)" re-uploads are skipped.
+  // Week ranges of already-seeded files, for the twin-file guard below. Both
+  // ingest paths produce a seedable file for the SAME pay week under different
+  // names (`simple-biz_api_sync_…` from the cron, `simple-biz_daily_report_…`
+  // from a manual upload) — seeding both would put two full cycles for one week
+  // into every money reader (CEO Financial Reports sums per source_file), and
+  // the sibling that dispatches don't key on would read as fully unpaid forever.
+  const seededWeeks = new Map<string, string>(); // "startMs|endMs" → first seeded file
+  for (const f of seededFiles) {
+    const r = parseDateRangeFromFilename(f);
+    if (r) {
+      const key = `${r.start.getTime()}|${r.end.getTime()}`;
+      if (!seededWeeks.has(key)) seededWeeks.set(key, f);
+    }
+  }
+
+  // Candidate uploads. Only a canonical single-week payroll file becomes a
+  // cycle (see {@link isSeedableWeeklyUpload}) — backfills, the time-activity
+  // export, and "(2)" re-uploads are skipped. Already-seeded handling differs
+  // by mode:
+  //   • explicit sourceFiles (the ingest tails): a re-ingest of the SAME
+  //     filename RE-SEEDS it — corrected hours land in the estimates (the whole
+  //     point of sharing the wizard's calculator), and a partially-failed first
+  //     seed heals on the next run. Paid state is preserved below.
+  //   • seed-all (no targets): already-seeded files are never reprocessed, the
+  //     original conservative behaviour.
   const uploads = await safeListHubstaffUploads();
-  const unseeded = uploads.filter(
-    (u) =>
-      u.source_file &&
-      !seededFiles.has(u.source_file) &&
-      isSeedableWeeklyUpload(u.source_file) &&
-      (!targetFiles || targetFiles.has(u.source_file)),
-  );
+  const unseeded = uploads.filter((u) => {
+    if (!u.source_file || !isSeedableWeeklyUpload(u.source_file)) return false;
+    if (targetFiles && !targetFiles.has(u.source_file)) return false;
+    if (seededFiles.has(u.source_file)) return Boolean(targetFiles);
+    const r = parseDateRangeFromFilename(u.source_file);
+    const twin = r ? seededWeeks.get(`${r.start.getTime()}|${r.end.getTime()}`) : undefined;
+    if (twin && twin !== u.source_file) {
+      console.warn(
+        `[disbursement-reports] NOT seeding ${u.source_file}: its pay week is already seeded under ${twin} — a second cycle would double-count the week in every reader`,
+      );
+      return false;
+    }
+    return true;
+  });
   if (unseeded.length === 0) return { seeded: 0, error: null };
 
   // FX rates from app_settings — same effective resolution the wizard uses.
@@ -1096,6 +1129,7 @@ export async function seedMissingDisbursementRecords(opts: {
   }
 
   let seeded = 0;
+  const chunkErrors: string[] = [];
 
   for (const upload of unseeded) {
     const sourceFile = upload.source_file as string;
@@ -1113,7 +1147,7 @@ export async function seedMissingDisbursementRecords(opts: {
     // Fetch all hourly rows for this upload using select('*') — column names
     // in hubstaff_hours match the CSV headers (e.g. "Email", "Member", "Total worked").
     const PAGE = 1000;
-    const allHours: Record<string, unknown>[] = [];
+    const fetchedHours: Record<string, unknown>[] = [];
     let from = 0;
     while (true) {
       const { data: hoursPage, error: hoursErr } = await supabase
@@ -1123,16 +1157,81 @@ export async function seedMissingDisbursementRecords(opts: {
         .range(from, from + PAGE - 1);
       if (hoursErr) break;
       const page = (hoursPage ?? []) as Record<string, unknown>[];
-      allHours.push(...page);
+      fetchedHours.push(...page);
       if (page.length < PAGE) break;
       from += PAGE;
     }
+    // A cron retry / manual re-run of the same filename leaves rows from TWO
+    // upload batches under one source_file (replaceHubstaffHoursFromCsvText
+    // never deletes) — every canonical reader collapses to one batch, and the
+    // seeder must too or it computes a person's week twice and the duplicate
+    // pair aborts its upsert chunk (Postgres 21000). Prefer this upload's own
+    // batch id, the same rule the paystub readers use.
+    const allHours = collapseToSingleUploadBatch(fetchedHours, upload.id ?? null);
+    if (allHours.length < fetchedHours.length) {
+      console.warn(
+        `[disbursement-reports] ${sourceFile}: collapsed ${fetchedHours.length} hubstaff_hours rows across multiple upload batches to ${allHours.length} (preferred batch ${upload.id})`,
+      );
+    }
     if (allHours.length === 0) continue;
 
+    // On an explicit RE-seed of an already-seeded file, existing rows' paid
+    // state must survive the refresh: a person whose status was set by a direct
+    // UPDATE (no dispatch row to re-derive from) would otherwise be knocked
+    // back to 'pending' by a hours correction. Live dispatch state still wins —
+    // this is only the fallback between prior record and 'pending'.
+    const priorByEmail = new Map<
+      string,
+      {
+        status: string | null;
+        paid_amount_usd: number | string | null;
+        paid_at: string | null;
+        bank_used: string | null;
+        transaction_id: string | null;
+        dispatch_id: string | null;
+      }
+    >();
+    if (seededFiles.has(sourceFile)) {
+      const priorRes = await selectAllPaged<{
+        recipient_email: string;
+        status: string | null;
+        paid_amount_usd: number | string | null;
+        paid_at: string | null;
+        bank_used: string | null;
+        transaction_id: string | null;
+        dispatch_id: string | null;
+      }>((f, t) =>
+        supabase
+          .from("disbursement_records")
+          .select("recipient_email, status, paid_amount_usd, paid_at, bank_used, transaction_id, dispatch_id")
+          .eq("source_file", sourceFile)
+          .order("recipient_email", { ascending: true })
+          .range(f, t),
+      );
+      if (priorRes.error) {
+        // Refusing the refresh beats refreshing blind: without the prior rows we
+        // could downgrade direct-UPDATE paid statuses to pending.
+        console.warn(
+          `[disbursement-reports] ${sourceFile}: could not read existing records before re-seed (${priorRes.error}) — skipping the refresh for this file`,
+        );
+        continue;
+      }
+      for (const r of priorRes.rows) priorByEmail.set(r.recipient_email, r);
+    }
+
     const rows: Record<string, unknown>[] = [];
+    const seenEmails = new Set<string>();
     for (const h of allHours) {
       const email = normEmail(h["Email"] as string | null);
       if (!email) continue;
+      // One row per (source_file, email) — the table's unique key. A duplicate
+      // email inside one batch (a malformed CSV) would abort its whole upsert
+      // chunk with Postgres 21000; first row wins, loudly.
+      if (seenEmails.has(email)) {
+        console.warn(`[disbursement-reports] ${sourceFile}: duplicate hours row for ${email} — keeping the first`);
+        continue;
+      }
+      seenEmails.add(email);
 
       // Day-scoped HSL-ness for a mid-week transfer INTO HSL — same rule as
       // current-pay.ts: weekend treatment from the effective date, none at all
@@ -1217,6 +1316,11 @@ export async function seedMissingDisbursementRecords(opts: {
 
       const dispKey = `${sourceFile}|${email}`;
       const dispatch = dispatchMap.get(dispKey);
+      // Paid-state precedence: live dispatch row → prior record when it had
+      // already left 'pending' (direct-UPDATE statuses have no dispatch row to
+      // re-derive from) → pending. Estimates always refresh from the hours.
+      const prior = priorByEmail.get(email);
+      const keepPrior = !dispatch && prior != null && prior.status != null && prior.status !== "pending";
 
       rows.push({
         cycle_period_start: period.start,
@@ -1233,12 +1337,12 @@ export async function seedMissingDisbursementRecords(opts: {
         amount_php: amountPHP,
         amount_usd: amountUSD,
         fx_rate: fxRate || null,
-        status: dispatch?.status ?? "pending",
-        paid_amount_usd: dispatch?.amount_usd ?? null,
-        paid_at: dispatch?.sent_date ?? null,
-        bank_used: dispatch?.bank_used ?? null,
-        transaction_id: dispatch?.transaction_id ?? null,
-        dispatch_id: dispatch?.id ?? null,
+        status: dispatch?.status ?? (keepPrior ? prior.status : "pending"),
+        paid_amount_usd: dispatch?.amount_usd ?? (keepPrior ? prior.paid_amount_usd : null),
+        paid_at: dispatch?.sent_date ?? (keepPrior ? prior.paid_at : null),
+        bank_used: dispatch?.bank_used ?? (keepPrior ? prior.bank_used : null),
+        transaction_id: dispatch?.transaction_id ?? (keepPrior ? prior.transaction_id : null),
+        dispatch_id: dispatch?.id ?? (keepPrior ? prior.dispatch_id : null),
       });
     }
 
@@ -1251,10 +1355,25 @@ export async function seedMissingDisbursementRecords(opts: {
         .upsert(rows.slice(i, i + BATCH), {
           onConflict: "source_file,recipient_email",
         });
-      if (!upsertErr) seeded += Math.min(BATCH, rows.length - i);
+      if (upsertErr) {
+        // Never silent: a swallowed chunk failure reads as a fully-seeded week
+        // while ~200 people are missing from every money reader. The error also
+        // travels back to the ingest tail's log via the return value.
+        console.warn(
+          `[disbursement-reports] ${sourceFile}: upsert chunk ${i}-${Math.min(i + BATCH, rows.length)} failed: ${upsertErr.message}`,
+        );
+        chunkErrors.push(`${sourceFile} rows ${i}-${Math.min(i + BATCH, rows.length)}: ${upsertErr.message}`);
+      } else {
+        seeded += Math.min(BATCH, rows.length - i);
+      }
     }
   }
 
-  return { seeded, error: null };
+  return {
+    seeded,
+    error: chunkErrors.length > 0
+      ? `${chunkErrors.length} upsert chunk(s) failed — the week is PARTIALLY seeded and will heal on the next re-ingest of the same file. First: ${chunkErrors[0]}`
+      : null,
+  };
 }
 

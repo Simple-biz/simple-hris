@@ -230,7 +230,7 @@ Flat analytic table — one row per (Hubstaff cycle, employee). Originally built
 - `payment_dispatches_unsync_disbursement` trigger (revert on delete)
 - Manual SQL UPDATEs (e.g. mass mark-as-paid for demo data) — these use the `bank_used = 'BACKFILL'` sentinel so they can be reverted in bulk.
 
-**Re-seed safety**: `INSERT ... SELECT … ON CONFLICT (source_file, recipient_email) DO UPDATE SET …` makes the seed idempotent. Run any time you ingest a new Hubstaff CSV (DONE 2026-08-12: seeding now fires automatically after ingest — both `POST /api/hubstaff-hours` and `run-weekly-sync.ts` call `seedMissingDisbursementRecords({ sourceFiles: [fileName] })` best-effort; it never fails the upload/sync, and its gates skip already-seeded and non-weekly files).
+**Re-seed safety**: `INSERT ... SELECT … ON CONFLICT (source_file, recipient_email) DO UPDATE SET …` makes the seed idempotent. Run any time you ingest a new Hubstaff CSV (DONE 2026-08-12: seeding now fires automatically after ingest — both `POST /api/hubstaff-hours` and `run-weekly-sync.ts` call `seedMissingDisbursementRecords({ sourceFiles: [fileName] })` best-effort; it never fails the upload/sync; same-filename re-ingests re-seed with paid state preserved, and a week already seeded under a different filename is refused).
 
 ---
 

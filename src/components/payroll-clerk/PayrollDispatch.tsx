@@ -1141,6 +1141,39 @@ export default function PayrollDispatch() {
   };
 
   /**
+   * Fetch the FILED close-out record and download its FINAL CSV (record-only).
+   * The retry path behind the failure toasts — the Stop dialog itself is
+   * unreachable once processing has stopped (it reopens on the Start side), so
+   * a toast that pointed there would be promising a door that no longer exists.
+   */
+  const downloadFiledRecord = async (sourceFile: string): Promise<void> => {
+    try {
+      const res = await fetch(
+        `/api/payment-dispatches/cycle-closeout?source_file=${encodeURIComponent(sourceFile)}`,
+        { cache: 'no-store' },
+      );
+      const json = (await res.json()) as {
+        closeout?: CycleCloseoutRecord | null;
+        error?: string | null;
+      };
+      if (!res.ok || json.error || !json.closeout) {
+        throw new Error(json.error ?? `HTTP ${res.status}`);
+      }
+      generateCloseReportSafe({
+        kind: 'final',
+        record: json.closeout,
+        livePaidRows: null,
+        generatedAt: new Date(),
+      });
+    } catch (e) {
+      console.warn('[cycle-close-report] filed-record fetch failed:', e);
+      toast.error('Could not fetch the filed close-out record.', {
+        action: { label: 'Retry', onClick: () => void downloadFiledRecord(sourceFile) },
+      });
+    }
+  };
+
+  /**
    * Build + download the requested close report. NEVER throws — a download
    * failure is toast-only and must not abort the stop, reorder the close-out
    * POST, or block `setLocked` (docs/features/cycle-closeout.md § ordering).
@@ -1161,26 +1194,38 @@ export default function PayrollDispatch() {
         );
       }
     } catch (e) {
-      toast.error(
-        `Report download failed — nothing else was affected. ${
-          model.kind === 'final'
-            ? 'Re-download it any time from the Stop dialog (the record is filed).'
-            : 'The snapshot is derived from this screen; reopen the Stop dialog to try again.'
-        }`,
-      );
       console.warn('[cycle-close-report] build/download failed:', e);
+      if (model.kind === 'final') {
+        // The record is safely filed — offer a real retry (a fresh GET + build),
+        // not directions to a dialog that reopens on the Start side.
+        const sourceFile = model.record.source_file;
+        toast.error('Report download failed — the close-out record itself is safely filed.', {
+          action: { label: 'Retry download', onClick: () => void downloadFiledRecord(sourceFile) },
+        });
+      } else {
+        toast.error('Snapshot download failed — nothing else was affected.');
+      }
     }
   };
 
   /** The premature unpaid list: the unpaidPayable memo verbatim, plus per-row
-   *  amount provenance off the pending queue (marker rows carry none). */
+   *  amount provenance off the pending queue. Keyed by (email, payee kind), not
+   *  email alone — dual-identity payees (Claire: salary row + invoice rows on
+   *  one email) would otherwise blank the RECOMPUTED warning on the salary row
+   *  or stamp wizard provenance onto invoice amounts the wizard never priced.
+   *  Contractor invoice rows deliberately carry no valuesSource, and marker
+   *  (problem/threshold) rows aren't in `pending` at all → both stay blank. */
   const buildPrematureUnpaidRows = (): PrematureUnpaidRow[] => {
-    const sourceByEmail = new Map<string, UnpaidAmountSource | null>(
-      pending.map((r) => [r.email.trim().toLowerCase(), r.valuesSource ?? null]),
+    const sourceByIdentity = new Map<string, UnpaidAmountSource | null>(
+      pending.map((r) => [
+        `${r.email.trim().toLowerCase()}|${r.payeeKind === 'contractor' ? 'contractor' : 'employee'}`,
+        r.valuesSource ?? null,
+      ]),
     );
     return unpaidPayable.map((p) => ({
       ...p,
-      amountSource: sourceByEmail.get(p.email.trim().toLowerCase()) ?? null,
+      amountSource:
+        sourceByIdentity.get(`${p.email.trim().toLowerCase()}|${p.payeeType}`) ?? null,
     }));
   };
 
@@ -1261,9 +1306,12 @@ export default function PayrollDispatch() {
               generatedAt: new Date(),
             });
           } else {
-            toast.error(
-              'The close succeeded but the report payload was missing — reopen the Stop dialog to download the filed record.',
-            );
+            const sf = period.sourceFile;
+            toast.error('The close succeeded but the report payload was missing.', {
+              action: sf
+                ? { label: 'Download filed record', onClick: () => void downloadFiledRecord(sf) }
+                : undefined,
+            });
           }
         }
       }
@@ -1290,6 +1338,10 @@ export default function PayrollDispatch() {
         const distinctPaid = distinctPaidCount;
         const periodStart = period.start;
         const periodEnd = period.end;
+        // The client's own closed-cycles list is a POSITIVE assertion — when it
+        // says closed, "unknown reads as not-closed" does not apply and a
+        // premature fallback would stamp NOT YET CLOSED on a closed week.
+        const knownClosed = cycleAlreadyClosed;
         void (async () => {
           let filed: CycleCloseoutRecord | null = null;
           try {
@@ -1305,19 +1357,31 @@ export default function PayrollDispatch() {
               if (!json.error) filed = json.closeout ?? null;
             }
           } catch {
-            /* unknown reads as not-closed — the premature label stands */
+            /* handled below: knownClosed fails honestly, otherwise premature stands */
           }
           if (filed) {
-            toast.info(
-              'This week already has a close-out — downloading the filed record instead of a snapshot.',
-            );
+            if (!knownClosed) {
+              toast.info(
+                'This week already has a close-out — downloading the filed record instead of a snapshot.',
+              );
+            }
             generateCloseReportSafe({
               kind: 'final',
               record: filed,
               livePaidRows: null,
               generatedAt: new Date(),
             });
+          } else if (knownClosed) {
+            // The dialog promised the FILED record for an already-closed week.
+            // Never substitute a live snapshot wearing a NOT YET CLOSED banner —
+            // fail honestly, with a real retry.
+            toast.error(
+              'This week is already closed, but the filed record could not be fetched — no file was generated (a snapshot would wrongly say NOT YET CLOSED).',
+              { action: { label: 'Retry', onClick: () => void downloadFiledRecord(sourceFile) } },
+            );
           } else {
+            // GET failure on a week with no known close-out: unknown reads as
+            // not-closed (same rule as the dialog) and the premature label stands.
             generateCloseReportSafe({
               kind: 'premature',
               label,

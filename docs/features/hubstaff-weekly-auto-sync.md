@@ -47,9 +47,14 @@ thrown errors to HTTP statuses.
      opted-in member, idempotent per member/week;
    - `seedMissingDisbursementRecords({ sourceFiles: [fileName] })` *(added
      2026-08-12, replacing the removed Reports-tab "Seed" button)* — seeds the
-     new week's `disbursement_records`. The seeder's own gates skip
-     already-seeded files and non-weekly uploads, so a cron retry never
-     recomputes a seeded week. `WeeklySyncResult` carries the row count as
+     new week's `disbursement_records`. A cron retry re-ingests the same
+     filename and **re-seeds it**: estimates refresh from the (possibly
+     corrected) hours, the seeder collapses to the preferred upload batch,
+     paid state is preserved, and a partially-failed earlier seed heals.
+     Non-weekly uploads are refused, and so is a file whose pay week is
+     already seeded under a **different** filename — seeding both the cron's
+     `_api_sync_` file and a manual export of the same week would double-count
+     it in every money reader. `WeeklySyncResult` carries the row count as
      `seeded` (`null` = the seed failed).
 
 So a cron run produces exactly what a manual CSV upload does: a current

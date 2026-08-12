@@ -439,7 +439,7 @@ export async function probeDisbursementRecords(): Promise<ProbeResult> {
       status: 'healthy',
       summary: `${count ?? 0} disbursement rows on file.`,
       details: [
-        'Per-(week, employee) snapshot powering Reports tab.',
+        'Per-(week, employee) snapshot powering CEO financial reports and People payroll history.',
         'Sync triggers from payment_dispatches keep statuses fresh.',
       ],
       suggestedChecks: [

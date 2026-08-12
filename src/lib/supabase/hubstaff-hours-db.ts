@@ -922,7 +922,7 @@ export async function getUploadedSourceFiles(): Promise<string[]> {
  * one). Single-batch files (including legacy rows with no upload_id) pass
  * through unchanged.
  */
-function collapseToSingleUploadBatch(
+export function collapseToSingleUploadBatch(
   rows: Record<string, unknown>[],
   preferredUploadId: string | null,
 ): Record<string, unknown>[] {

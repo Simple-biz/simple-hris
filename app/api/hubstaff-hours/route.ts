@@ -612,10 +612,11 @@ export async function POST(req: NextRequest) {
     // the Reports tab's manual "Seed" button when that surface was removed
     // (2026-08-12) — without it a new week is invisible to every reader of
     // disbursement_records. Best-effort: a seed failure never fails the upload
-    // (the hours already landed). Safe on re-uploads: the seeder skips files that
-    // already have records and refuses non-weekly files (backfills,
-    // time-activity exports, "(2)" duplicates), so a seeded week is never
-    // recomputed.
+    // (the hours already landed). Re-uploading the SAME filename re-seeds it —
+    // corrected hours land in the estimates and a partial earlier seed heals,
+    // while paid state is preserved. Non-weekly files (backfills, time-activity
+    // exports, "(2)" duplicates) are refused, and so is a file whose pay week is
+    // already seeded under a different filename (double-count guard).
     let seeded: number | null = null;
     if (fileName) {
       try {
