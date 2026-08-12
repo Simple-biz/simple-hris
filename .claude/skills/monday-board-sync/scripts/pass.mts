@@ -15,11 +15,15 @@
  * system — so the evidence cited is the commit that PRODUCED the artefact to import, not a commit
  * that implements the row.
  *
- * Status is Ready to Start, and that is deliberately NOT Pending Deploy. Pending Deploy means code
- * is complete and waiting on an external step; here the row IS the external step and nobody has
- * begun it. Getting this wrong in the other direction would be worse: three other rows are already
- * correctly Pending Deploy BECAUSE of this one, and if this row also read Pending Deploy the board
- * would show four rows waiting on each other with nothing identifying the actual next action.
+ * It was created Ready to Start and moved to DONE the same day, when Kane confirmed the new workflow
+ * is live. Ready to Start — never Pending Deploy — was correct at creation: Pending Deploy means code
+ * is complete and waiting on an external step, and here the row WAS the external step. Had it read
+ * Pending Deploy the board would have shown four rows waiting on each other with nothing naming the
+ * actual next action. Same-day Ready to Start → Done is the gate working, not a change of mind.
+ *
+ * The Done is recorded as SIGN-OFF and says so, because no test send has been made yet. The first
+ * dispatch through the new workflow is the real proof, and it is cheap to check without opening n8n:
+ * the new summary node returns a `skipped` field and the old one does not.
  *
  * Why it earns its own row rather than the HRIS-15 catch-all: see the rationale comment in
  * hris-plan.ts beside the entry. Short version — that chore sits in S25, its premise is largely
@@ -77,49 +81,52 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // ── Ready to Start · Sprint 26 · the external step, tracked as work ───────────────────────────
+  // ── Done · Sprint 26 · Kane confirmed the new workflow is live ────────────────────────────────
   {
     name: 'Import paystub-dispatch.workflow.json into live n8n so emailed statements match the app',
-    status: 'Ready to Start',
+    status: 'Done',
+    completed: '2026-08-12',
     shas: ['02dc5aa', '0a731ed', 'c97d0b5', 'e0028b8'],
     basis:
-      'READY TO START 2026-08-12 — this row tracks an action in an EXTERNAL system, not a commit. ' +
-      'The artefact to import is references/n8n/paystub-dispatch.workflow.json, produced by ' +
-      '02dc5aa (2026-08-06), which moved the emailed pay statement into the app ' +
-      '(src/lib/payroll/paystub-email-html.ts) and reduced the n8n Gmail node to a pipe: ' +
-      'subject = {{ $json.paystub_subject }}, message = {{ $json.paystub_html }}. The pay_vars Set ' +
-      'node and the entire HTML template are deleted from it, which is why the correct file is the ' +
-      'SMALLEST of the three paystub JSONs in references/n8n (13.8 KB, vs 1,090 KB for the old ' +
-      '"Paystub Automation.json" that still carries the template inline, and 21 KB for ' +
-      'n8n_paystub_dispatch.json from Jul 13). Importing either of the other two re-creates the ' +
-      'exact regression this replaced. ' +
-      'NOT Pending Deploy: that status means code is complete and waiting on an external step. Here ' +
-      'the row IS the external step and it has not been begun. Three rows are already Pending ' +
-      'Deploy because of this one — the column-AN rule (8 SP), the merged Weekend Hours line ' +
-      '(5 SP) and paystub email rendered in-app (8 SP) — so 21 SP unblocks the moment it lands. ' +
-      'WHY IT IS NOW URGENT rather than housekeeping: e0028b8 changed what the payload legs MEAN. ' +
-      'pay_php.regular is now base + weekend (angelicaco 2026-08-02 week: PHP 10,321.80) and ' +
-      'pay_php.ot is the derived 0.5x differential only (PHP 393.63), not hours x a stored OT rate. ' +
-      'A renderer still assuming the old meanings prints line items that do not reconcile — a ' +
-      '"Regular 40.00h x PHP 235" label above PHP 10,321.80, and an Overtime line whose implied ' +
-      'rate is PHP 117.50 rather than PHP 352.50. The totals stay correct, so this is silent. At ' +
-      'least one HSL statement has already been sent in that state (that queue row stamped sent_at ' +
-      '2026-08-12 00:26 after Kane re-locked the cycle), which is the same "one breakdown in the ' +
-      'app, a different one in the inbox" failure the in-app renderer was built to end. ' +
-      'STALENESS CHECKED, NOT ASSUMED: the JSON predates three later statement commits (0a731ed, ' +
-      'c97d0b5, e0028b8) and is still current, because the pipe design means statement changes no ' +
-      'longer touch the workflow. ' +
-      'DONE REQUIRES more than uploading the file: confirm the Gmail node bindings above, confirm ' +
-      'the response still returns succeeded / failed / failed_emails by those exact names (the HRIS ' +
-      'parses all three), and do not hand-edit the summary node\'s two guards back out — the ' +
-      '.isExecuted guard on cross-node references, and skipped items counting into failed. Both ' +
-      'were live bugs. Doc: docs/features/paystub-dispatch.md lines 578-611.',
-    blockers: [
-      'Kane imports references/n8n/paystub-dispatch.workflow.json into the live n8n instance (not the two older lookalikes)',
-      'Verify Gmail node: subject = {{ $json.paystub_subject }}, message = {{ $json.paystub_html }}',
-      'Verify the summary response still returns succeeded / failed / failed_emails by those exact names',
-      'One test send confirming the emailed breakdown matches the in-app Pay Stub modal',
-    ],
+      'DONE 2026-08-12 on Kane\'s confirmation that the new workflow is live ("its now live"). ' +
+      'Recorded as sign-off, which is what the evidence actually is. ' +
+      'WHAT THIS DONE DOES NOT CLAIM: no test send was made comparing an emailed statement against ' +
+      'the in-app Pay Stub modal, and no dispatch has run through the new workflow yet, so nobody ' +
+      'has watched a correct breakdown arrive in an inbox. The next real send is the first proof. ' +
+      'A cheap independent check exists once one runs: the NEW summary node returns a `skipped` ' +
+      'field and the old one does not, so the first response the HRIS records after this settles ' +
+      'which workflow served it, without anyone having to open n8n. ' +
+      'HOW THE OLD ONE WAS IDENTIFIED, since it nearly passed as the new: Kane pasted the live ' +
+      'export and it still carried the pay_vars1 Set node, a Gmail message beginning with a raw ' +
+      'DOCTYPE and a full HTML document instead of {{ $json.paystub_html }}, five If1 conditions ' +
+      'instead of six ' +
+      '(no paystub_html guard), and an unguarded $items(\'Send PayStub1\') in the summary. Any one ' +
+      'of those is conclusive; searching a workflow for "pay_vars" is the three-second version. ' +
+      'The likely reason a first import appeared to do nothing: n8n IMPORTS AS A NEW WORKFLOW ' +
+      'rather than replacing, and the old one stays Active holding the /confirm-dispatch ' +
+      'production path, so it keeps answering while the new one sits idle. Deactivating the old ' +
+      'before activating the new is part of this work, not a footnote. ' +
+      'WHAT IT FIXES, measured on a real statement: angelicaco\'s Aug 2-8 stub sent 2026-08-12 ' +
+      '00:26 through the OLD template, which labels lines from hours x rates_php while taking ' +
+      'amounts from pay_php. After e0028b8 those legs mean different things — pay_php.regular is ' +
+      'base + weekend and pay_php.ot is the 0.5x differential only — so her email read ' +
+      '"Regular 40.00h x PHP 235.00" above PHP 10,321.80 (the label implies 9,400) and ' +
+      '"Overtime 3.35h x PHP 352.50" above PHP 393.63 (the label implies 1,181.25), with no ' +
+      'Weekend line for the PHP 2,242.50 at all. The TOTAL was correct at PHP 16,115.43 and she ' +
+      'was paid correctly; the Overtime line was the hazard, reading as though PHP 787.62 were ' +
+      'missing when those hours were already paid in full inside the base leg. ' +
+      'UNBLOCKS three rows worth 21 SP that named this import as their blocker: the column-AN rule ' +
+      '(8), the merged Weekend Hours line (5), and paystub email rendered in-app (8). Their status ' +
+      'is NOT moved by this pass — Kane confirmed the import, not those three, and each is asked ' +
+      'about separately rather than swept along. ' +
+      'ORIGINAL SCOPE: the artefact is references/n8n/paystub-dispatch.workflow.json, produced ' +
+      'by 02dc5aa (2026-08-06), which moved the emailed statement into the app ' +
+      '(src/lib/payroll/paystub-email-html.ts) and reduced the Gmail node to a pipe. It is the ' +
+      'SMALLEST of the three paystub JSONs in references/n8n at 13.8 KB — the 1,090 KB ' +
+      '"Paystub Automation.json" still carries the template inline and the 21 KB ' +
+      'n8n_paystub_dispatch.json is from Jul 13; importing either re-creates this exact bug. ' +
+      'Staleness was checked, not assumed: the JSON predates three later statement commits and is ' +
+      'still current, because the pipe design means statement changes no longer touch the workflow.',
   },
 ];
 

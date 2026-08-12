@@ -430,13 +430,14 @@ export const PLAN_TASKS: PlanTask[] = [
   // workflows" chore: that one is a catch-all sitting in S25 whose premise is largely folklore
   // (21 of 25 "pending" migrations were already applied), and nobody would mark it Done for
   // importing one specific workflow. This row can be marked Done the moment the import lands.
-  // done:false ⇒ Ready to Start, NOT Pending Deploy. Pending Deploy means code is complete and
-  // waiting on an external step; here the row IS the external step, and it has not been started.
-  // It is the blocker on three scored rows (8 + 5 + 8 = 21 SP): the column-AN rule, the merged
-  // Weekend Hours line, and paystub email rendered in-app. All three become Done-eligible after it.
+  // done:true from 2026-08-12 — Kane confirmed the new workflow is LIVE. It travelled
+  // Ready to Start → Done within the day, which is the honesty gate working, not a change of mind:
+  // it was never Pending Deploy, because the row WAS the external step rather than code waiting on
+  // one. It had been the blocker on three scored rows (8 + 5 + 8 = 21 SP): the column-AN rule, the
+  // merged Weekend Hours line, and paystub email rendered in-app — all three are now unblocked.
   // 2 SP against the Sprint 26 band (1–5, avg ~3.5): an import plus verifying the Gmail node
   // bindings, the three response field names the HRIS parses, and one test send. Not 1 — the
   // summary node carries two traps that were both live bugs (.isExecuted guards, skipped items
   // counting into failed), so this is a verify job, not a file upload.
-  { epic: 'HRIS-03b', name: 'Import paystub-dispatch.workflow.json into live n8n so emailed statements match the app', type: 'n8n Workflow', sp: 2, done: false, sprint: 'S26', priority: 'High' },
+  { epic: 'HRIS-03b', name: 'Import paystub-dispatch.workflow.json into live n8n so emailed statements match the app', type: 'n8n Workflow', sp: 2, done: true, sprint: 'S26', priority: 'High' },
 ];
