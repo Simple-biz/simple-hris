@@ -107,7 +107,41 @@ Same arrangement, one table: `PaidRecordsPanel.tsx` backs all four sub-views of 
 - **From Bank** — processor label plus `bank_used`, the account the money actually left, as keyed at Mark Paid. Gated by `showFromBankColumn` (renamed from `showProcessorColumn`): on for the All tab's log views and Done, which span every rail; off inside a single-processor sub-view where it would repeat the tab you're standing in.
 - **To Recipient Bank** — the frozen `recipient_*` snapshot (bank, account number, holder, SWIFT in the tooltip), never re-resolved from the employee's current profile, so a historical record keeps showing where the money actually went. Rows written before those columns existed read "Not recorded".
 - **TXN ID** — click to copy, same as pending.
+- **Department** — see §3.4.3. Resolved for the cycle, **not** frozen on the record.
 - **Action** — "View" (the pay stub this dispatch settled, scoped to the record's own `cycle_source_file` rather than the tab's current week) alongside the existing Undo / Clear. The panel owns its own `PayStubModal` instance. Contractor records get no View, for the reason in §3.4.1.
+
+##### 3.4.3 Department on a dispatch record (2026-08-12)
+
+Every log view — the four in-table sub-views on each processor tab **and** the global
+Done tab — has a **Department** column and a dedicated **department filter**, the same
+`SmoothSelect` the Pending worksheet uses (`ProcessorQueue`). Both are `PaidRecordsPanel`'s,
+so all five views got them at once.
+
+`payment_dispatches` carries **no department column**, and a paid person is filtered
+out of the pending queue, so the department can't come off the row or off `rows`.
+It comes from **`useDispatchQueue().deptByEmail`** — a lowercased-email → department
+map built once per load for the *whole cycle*, including everyone already paid
+(from `active` / `excluded`, the pre-`lockedEmails` builds). Rules:
+
+- **Precedence is the Excluded tab's**, so one person reads the same department on
+  both sides of a Mark Paid: wizard-**staged** `department_key` → the queue row's own
+  `departmentName` (`resolvePayeeDept`: pay layer, then the rates-row cell) → the pay
+  layer's `departmentName`. First write wins.
+- **Work AND personal email are indexed** — a dispatch can be recorded against either.
+- **It is a per-cycle resolution, not a snapshot.** Unlike *To Recipient Bank* (§3.4.2),
+  which must stay frozen because it says where money actually went, department is a
+  display + filter facet; freezing it would need DDL and a Mark Paid write, which this
+  deliberately does not do. A person who changes department later reads as the new one
+  on old records.
+- **A filter never hides a row.** A payee no source could place is absent from the map,
+  renders a dash, and is reachable under the **"No department"** option (which only
+  appears when such a record exists). "All departments" always shows everything, the
+  selection resets to it if that department leaves the records, and both the filter and
+  the search reset pagination.
+- The panel's **Export CSV** follows the filters and carries a **Department** column
+  (`SENT_COLUMNS`); `buildSentRows(records, deptByEmail)` takes the map as a **required**
+  argument so a caller can't ship a silently blank column. The standalone clerk app's
+  **Sent payments** table is unchanged apart from getting the map for its export.
 
 Click the row to expand the processor-specific contact details (Hurupay email, Higlobe email + account name, phone, full address, city, province/state) with copy buttons on each.
 

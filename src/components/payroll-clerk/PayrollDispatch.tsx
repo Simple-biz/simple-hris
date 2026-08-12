@@ -205,6 +205,7 @@ export default function PayrollDispatch() {
     rows: fetched,
     excluded,
     paid,
+    deptByEmail,
     period,
     wizardReady,
     loading,
@@ -1075,6 +1076,7 @@ export default function PayrollDispatch() {
       return (
         <DoneQueue
           records={paid}
+          deptByEmail={deptByEmail}
           periodStart={period.start}
           periodEnd={period.end}
           onRefresh={refresh}
@@ -1103,6 +1105,7 @@ export default function PayrollDispatch() {
           onRefresh={refresh}
           nativeCurrency="COP"
           txnRecords={paid}
+          deptByEmail={deptByEmail}
           allLabel={{
             title: 'COP payments',
             subtitle: 'People paid in Colombian pesos — handled separately from the peso payroll. Mark each paid as it goes out.',
@@ -1123,6 +1126,7 @@ export default function PayrollDispatch() {
         // Not paid / Threshold / Problem) span every processor; each processor
         // tab stays scoped to its own dispatches.
         paidRecords={activeTab === 'all' ? paid : paidByProcessor[activeTab]}
+        deptByEmail={deptByEmail}
       />
     );
   };

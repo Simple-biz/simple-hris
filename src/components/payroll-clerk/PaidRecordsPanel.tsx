@@ -17,9 +17,11 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { formatPHP, formatUSD, formatCOP, PROCESSORS } from './mock-queue';
 import QueuePagination from './QueuePagination';
 import ContractorChip from './ContractorChip';
+import DeptChip from './DeptChip';
 import { PayStubModal } from '@/components/paystub/PayStubModal';
 import type { PaymentDispatchRow, PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
 import {
@@ -75,9 +77,21 @@ const STATUS_UI: Record<
   },
 };
 
+/** Sentinel dept-filter value for records whose payee resolves to no department
+ *  (real names can't collide with it — departments never start with "__"). */
+const NO_DEPT = '__none__';
+
 interface PaidRecordsPanelProps {
   /** Dispatch rows for the scope (any status — filtered to `statusFilter`). */
   records: PaymentDispatchRow[];
+  /**
+   * Lowercased email → department name for this cycle
+   * ({@link DispatchQueueState.deptByEmail}), which is how these rows get a
+   * department at all: `payment_dispatches` has no department column, and a paid
+   * person is filtered out of the pending queue. Required rather than optional so
+   * a new caller can't silently ship a panel where every row reads "No department".
+   */
+  deptByEmail: Record<string, string>;
   /**
    * Which dispatch status this panel shows. Defaults to 'paid' (the Done /
    * per-processor Paid view). The non-paid outcomes reuse this same panel so
@@ -207,6 +221,7 @@ const PAGE_SIZE = 25;
  */
 export default function PaidRecordsPanel({
   records,
+  deptByEmail,
   statusFilter = 'paid',
   periodStart,
   periodEnd,
@@ -229,6 +244,9 @@ export default function PaidRecordsPanel({
   );
 
   const [query, setQuery] = useState('');
+  // '' = every department; NO_DEPT = records whose payee resolves to none; else an
+  // exact department name.
+  const [deptFilter, setDeptFilter] = useState('');
   // Rows ticked for the bulk "Undo selected" action. Persists across search.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // Optimistically hidden rows (sent back, awaiting the silent refresh). Cleared
@@ -258,25 +276,68 @@ export default function PaidRecordsPanel({
     });
   }, [paid]);
 
+  // Department of the person a record paid. Null when no source in this cycle
+  // could place them — they stay visible under "No department" rather than
+  // dropping out of the table.
+  const deptOf = useCallback(
+    (rec: PaymentDispatchRow): string | null =>
+      deptByEmail[rec.recipient_email.trim().toLowerCase()] ?? null,
+    [deptByEmail],
+  );
+
+  // Departments present in THESE records, for the filter dropdown. Built off the
+  // unfiltered status list (not the searched one) so the options don't shift under
+  // the pointer while typing. The "No department" bucket appears only when some
+  // record actually has none.
+  const deptOptions = useMemo(() => {
+    const names = new Set<string>();
+    let hasNone = false;
+    for (const r of paid) {
+      const name = deptOf(r);
+      if (name) names.add(name);
+      else hasNone = true;
+    }
+    const opts = [
+      { value: '', label: 'All departments' },
+      ...[...names].sort((a, b) => a.localeCompare(b)).map((n) => ({ value: n, label: n })),
+    ];
+    if (hasNone) opts.push({ value: NO_DEPT, label: 'No department' });
+    return opts;
+  }, [paid, deptOf]);
+
+  // A department that disappears from the records (undo, a refresh, a status
+  // switch) must not leave the panel filtered to nothing with no way back — drop
+  // the selection to "All departments" instead.
+  useEffect(() => {
+    if (deptFilter && !deptOptions.some((o) => o.value === deptFilter)) setDeptFilter('');
+  }, [deptOptions, deptFilter]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = paid.filter((r) => !hiddenIds.has(r.id));
+    if (deptFilter) {
+      list =
+        deptFilter === NO_DEPT
+          ? list.filter((r) => deptOf(r) == null)
+          : list.filter((r) => deptOf(r) === deptFilter);
+    }
     if (q) {
       list = list.filter(
         (r) =>
           (r.recipient_name ?? '').toLowerCase().includes(q) ||
           r.recipient_email.toLowerCase().includes(q) ||
           r.transaction_id.toLowerCase().includes(q) ||
+          (deptOf(r) ?? '').toLowerCase().includes(q) ||
           (r.created_by ?? '').toLowerCase().includes(q),
       );
     }
     return [...list].sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
-  }, [paid, hiddenIds, query]);
+  }, [paid, hiddenIds, query, deptFilter, deptOf]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   useEffect(() => {
     setPage(1);
-  }, [query]);
+  }, [query, deptFilter]);
   useEffect(() => {
     if (page > pageCount) setPage(pageCount);
   }, [page, pageCount]);
@@ -408,7 +469,8 @@ export default function PaidRecordsPanel({
 
   const exportCsv = () => {
     if (filtered.length === 0) return;
-    const csv = sentRowsToCsv(buildSentRows(filtered));
+    // Exports exactly what the filters show, department column included.
+    const csv = sentRowsToCsv(buildSentRows(filtered, deptByEmail));
     const filename = dispatchClientFilename({
       prefix: csvPrefix,
       processor: csvProcessor,
@@ -464,13 +526,28 @@ export default function PaidRecordsPanel({
             </div>
           )}
 
+          {/* Department filter — the same control the Pending worksheet uses, so
+              the log views narrow to one team the same way. Hidden when there is
+              only the "All departments" entry (nothing to choose between). */}
+          {deptOptions.length > 1 && (
+            <SmoothSelect
+              aria-label="Filter by department"
+              value={deptFilter}
+              onChange={setDeptFilter}
+              triggerClassName="h-8 w-[13rem] text-[11px]"
+              searchable={deptOptions.length > 8}
+              searchPlaceholder="Search departments…"
+              options={deptOptions}
+            />
+          )}
+
           <div className="relative ml-auto w-full max-w-[260px]">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search name, email, txn, who paid"
+              placeholder="Search name, email, txn, dept, who paid"
               className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-7 text-xs placeholder:text-zinc-400 focus:border-emerald-300 focus:outline-none focus:ring-1 focus:ring-emerald-300/60 dark:border-zinc-700 dark:bg-zinc-900 dark:placeholder:text-zinc-600"
             />
             {query && (
@@ -513,14 +590,18 @@ export default function PaidRecordsPanel({
                 {paid.length === 0 ? emptyTitle : 'No matches'}
               </h2>
               <p className="mt-1 text-xs text-[#71717a] dark:text-zinc-500">
-                {paid.length === 0 ? emptyHint : 'Try a different search.'}
+                {paid.length === 0
+                  ? emptyHint
+                  : deptFilter
+                    ? 'Try a different search, or another department.'
+                    : 'Try a different search.'}
               </p>
             </div>
           </div>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-[#ececec] bg-white dark:border-zinc-800 dark:bg-zinc-950">
             <table
-              className={cn('w-full text-xs', showFromBankColumn ? 'min-w-[1660px]' : 'min-w-[1520px]')}
+              className={cn('w-full text-xs', showFromBankColumn ? 'min-w-[1780px]' : 'min-w-[1640px]')}
             >
               <thead className="bg-[#fafaf8] text-[10px] uppercase tracking-wide text-[#71717a] dark:bg-zinc-900 dark:text-zinc-400">
                 <tr>
@@ -535,7 +616,8 @@ export default function PaidRecordsPanel({
                     />
                   </th>
                   {/* Same order as the Pending queue's worksheet: Recipient → the
-                      three currencies → System Bonus → From/To bank → TXN ID → the rest. */}
+                      three currencies → System Bonus → From/To bank → TXN ID →
+                      Department → the rest. */}
                   <th className="px-4 py-2.5 text-left font-medium">Recipient</th>
                   <th className="px-4 py-2.5 text-right font-medium">USD Value</th>
                   <th className="px-4 py-2.5 text-right font-medium">PHP Value</th>
@@ -546,6 +628,7 @@ export default function PaidRecordsPanel({
                   )}
                   <th className="px-4 py-2.5 text-left font-medium">To Recipient Bank</th>
                   <th className="px-4 py-2.5 text-left font-medium">TXN ID</th>
+                  <th className="px-4 py-2.5 text-left font-medium">Department</th>
                   <th className="px-4 py-2.5 text-left font-medium">Sent</th>
                   <th className="px-4 py-2.5 text-left font-medium">Marked paid</th>
                   <th className="px-4 py-2.5 text-right font-medium">Action</th>
@@ -658,6 +741,17 @@ export default function PaidRecordsPanel({
                           >
                             {rec.transaction_id.trim()}
                           </button>
+                        ) : (
+                          <span className="font-mono text-[11px] text-zinc-400">—</span>
+                        )}
+                      </td>
+                      {/* Resolved for the cycle, not frozen on the record (there is no
+                          department column on payment_dispatches) — so a payee no
+                          source could place reads as a dash and still shows up under
+                          the filter's "No department". */}
+                      <td className="max-w-[150px] px-4 py-2.5">
+                        {deptOf(rec) ? (
+                          <DeptChip name={deptOf(rec)} />
                         ) : (
                           <span className="font-mono text-[11px] text-zinc-400">—</span>
                         )}

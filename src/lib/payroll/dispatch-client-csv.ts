@@ -59,6 +59,10 @@ const SENT_COLUMNS: { key: string; header: string }[] = [
   { key: 'recipient_name',            header: 'Name' },
   { key: 'recipient_email',           header: 'Email' },
   { key: 'payee_type',                header: 'Payee Type' },
+  // Resolved for the cycle from the dispatch screen's dept map — `payment_dispatches`
+  // stores no department. Blank means no source could place that payee, never that
+  // they have no department.
+  { key: 'department',                header: 'Department' },
   { key: 'amount_usd',                header: 'Amount (USD)' },
   { key: 'amount_php',                header: 'Amount (PHP)' },
   { key: 'bank_used',                 header: 'Bank Used' },
@@ -143,7 +147,16 @@ export function buildPendingRows(rows: QueueRow[]): CsvRow[] {
   }));
 }
 
-export function buildSentRows(records: PaymentDispatchRow[]): CsvRow[] {
+/**
+ * @param deptByEmail  Lowercased email → department name for the cycle these
+ *   records belong to (`useDispatchQueue().deptByEmail`). Required, not optional:
+ *   the column exists on every sent export, and a caller that forgot to thread the
+ *   map would silently ship a blank Department column for a whole cycle.
+ */
+export function buildSentRows(
+  records: PaymentDispatchRow[],
+  deptByEmail: Record<string, string>,
+): CsvRow[] {
   return records.map((r) => ({
     sent_date: r.sent_date,
     arrival_date: r.arrival_date ?? '',
@@ -152,6 +165,7 @@ export function buildSentRows(records: PaymentDispatchRow[]): CsvRow[] {
     recipient_name: r.recipient_name ?? '',
     recipient_email: r.recipient_email,
     payee_type: r.payee_type === 'contractor' ? 'Contractor' : 'Employee',
+    department: deptByEmail[r.recipient_email.trim().toLowerCase()] ?? '',
     amount_usd: fmtMoney(r.amount_usd),
     amount_php: fmtMoney(r.amount_php),
     bank_used: r.bank_used,

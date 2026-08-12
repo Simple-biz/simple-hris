@@ -66,6 +66,10 @@ function StatusBadge({ status }: { status: PaymentDispatchStatus }) {
 
 interface SentPaymentsHistoryProps {
   records: PaymentDispatchRow[];
+  /** Lowercased email → department for the cycle (`useDispatchQueue().deptByEmail`).
+   *  This table stays as it is; the map fills the export's Department column, which
+   *  would otherwise be blank for every row of this one CSV. */
+  deptByEmail: Record<string, string>;
   /** Period info passed from PayrollDispatch — used for the CSV filename. */
   periodStart?: string | null;
   periodEnd?: string | null;
@@ -73,6 +77,7 @@ interface SentPaymentsHistoryProps {
 
 export default function SentPaymentsHistory({
   records,
+  deptByEmail,
   periodStart,
   periodEnd,
 }: SentPaymentsHistoryProps) {
@@ -100,7 +105,7 @@ export default function SentPaymentsHistory({
             type="button"
             onClick={() => {
               if (records.length === 0) return;
-              const csv = sentRowsToCsv(buildSentRows(records));
+              const csv = sentRowsToCsv(buildSentRows(records, deptByEmail));
               const filename = dispatchClientFilename({
                 prefix: 'sent',
                 periodStart,

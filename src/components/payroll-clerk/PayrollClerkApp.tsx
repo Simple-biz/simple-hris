@@ -47,6 +47,7 @@ export default function PayrollClerkApp() {
     rows: fetched,
     excluded,
     paid,
+    deptByEmail,
     period,
     wizardReady,
     loading,
@@ -284,7 +285,12 @@ export default function PayrollClerkApp() {
     }
     if (activeTab === 'history') {
       return (
-        <SentPaymentsHistory records={paid} periodStart={period.start} periodEnd={period.end} />
+        <SentPaymentsHistory
+          records={paid}
+          deptByEmail={deptByEmail}
+          periodStart={period.start}
+          periodEnd={period.end}
+        />
       );
     }
     if (activeTab === 'excluded') {
@@ -298,6 +304,7 @@ export default function PayrollClerkApp() {
         onMarkPaid={handleOpenMarkPaid}
         periodStart={period.start}
         periodEnd={period.end}
+        deptByEmail={deptByEmail}
       />
     );
   };

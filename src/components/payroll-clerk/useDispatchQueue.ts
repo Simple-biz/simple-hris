@@ -37,6 +37,9 @@ type CachedQueue = {
   rows: QueueRow[];
   excluded: ExcludedRow[];
   paid: PaymentDispatchRow[];
+  /** See {@link DispatchQueueState.deptByEmail}. Cached with the rows so a warm
+   *  repaint doesn't drop every log view's department filter to "No department". */
+  deptByEmail: Record<string, string>;
   period: PayrollPeriod;
   fxRate: number;
   wizardReady: boolean;
@@ -105,6 +108,20 @@ interface DispatchQueueState {
   excluded: ExcludedRow[];
   /** Already-paid records for the current cycle. */
   paid: PaymentDispatchRow[];
+  /**
+   * Lowercased email → department name for **every** payee in this cycle,
+   * including the people who have already been paid (they are filtered out of
+   * {@link rows}, so their department is otherwise unknowable client-side —
+   * `payment_dispatches` carries no department column).
+   *
+   * This is what lets the dispatch-log views (Paid / Not paid / Threshold /
+   * Problem / Done) filter by department. Precedence mirrors the Excluded tab
+   * (staged wizard dept wins, then the queue's own resolution, then the pay
+   * layer), so one person reads the same department on both sides of a Mark
+   * Paid. Work AND personal email are indexed, because a dispatch can be
+   * recorded against either.
+   */
+  deptByEmail: Record<string, string>;
   period: PayrollPeriod;
   fxRate: number;
   /**
@@ -173,6 +190,7 @@ function seedState(cacheKey: string): Omit<DispatchQueueState, 'refresh'> {
     rows: cached?.rows ?? [],
     excluded: cached?.excluded ?? [],
     paid: cached?.paid ?? [],
+    deptByEmail: cached?.deptByEmail ?? {},
     period: cached?.period ?? EMPTY_PERIOD,
     fxRate: cached?.fxRate ?? 0,
     wizardReady: cached?.wizardReady ?? true,
@@ -206,6 +224,8 @@ async function loadAll(
   rows: QueueRow[];
   excluded: ExcludedRow[];
   paid: PaymentDispatchRow[];
+  /** See {@link DispatchQueueState.deptByEmail}. */
+  deptByEmail: Record<string, string>;
   period: PayrollPeriod;
   fxRate: number;
   wizardReady: boolean;
@@ -268,6 +288,7 @@ async function loadAll(
       rows: [],
       excluded: [],
       paid: [],
+      deptByEmail: {},
       period: EMPTY_PERIOD,
       fxRate: 0,
       wizardReady: true,
@@ -947,6 +968,40 @@ async function loadAll(
     return parts.length > 0 ? parts.join(' ') : null;
   })();
 
+  // ── Department by email, for the whole cycle ───────────────────────────────
+  // The dispatch-log views (Paid / Not paid / Threshold / Problem / Done) need a
+  // department per RECORD, and `payment_dispatches` has no department column: a
+  // paid person is filtered out of `rows`, so their department would otherwise be
+  // unknowable on screen. Built here, from the same sources the queue rows use, so
+  // one person reads the same department before and after a Mark Paid.
+  //
+  // Precedence is the Excluded tab's (staged wizard dept wins, then the queue's own
+  // resolution, then the pay layer) — first write wins, so the sources are visited
+  // in that order. Work AND personal email are indexed because a dispatch can be
+  // recorded against either. A payee no source can place stays absent and reads as
+  // "No department" downstream; it is never a reason to hide the row.
+  const deptByEmail: Record<string, string> = {};
+  const noteDept = (email: string | null | undefined, name: string | null | undefined) => {
+    const key = email?.trim().toLowerCase();
+    const label = name?.trim();
+    if (!key || !label) return;
+    if (deptByEmail[key] == null) deptByEmail[key] = label;
+  };
+  for (const s of stagedItems) {
+    const name = deptNameFromKey(s.department_key);
+    noteDept(s.recipient_email, name);
+    noteDept(s.personal_email, name);
+  }
+  // `active` / `excluded` are the pre-filter builds, so they still carry the people
+  // who have already been paid — precisely the ones the log views are about.
+  for (const r of [...active, ...excluded]) {
+    noteDept(r.id, r.departmentName);
+    noteDept(r.email, r.departmentName);
+  }
+  for (const [email, entry] of Object.entries(payByEmail)) {
+    noteDept(email, entry?.departmentName ?? null);
+  }
+
   return {
     // Until the wizard locks this cycle, Payment Dispatch shows NO queue data —
     // just the "not ready" note. (Reports / Urgent / Orphanage are separate and
@@ -954,6 +1009,9 @@ async function loadAll(
     rows: wizardReady ? routedPending : [],
     excluded: wizardReady ? routedExcluded : [],
     paid: wizardReady ? paid : [],
+    // Not gated on `wizardReady`: it labels whatever records ARE on screen, and an
+    // empty queue simply means nothing looks it up.
+    deptByEmail,
     period,
     fxRate: payJson.fxRate ?? 0,
     wizardReady,
@@ -1008,6 +1066,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
           rows: result.rows,
           excluded: result.excluded,
           paid: result.paid,
+          deptByEmail: result.deptByEmail,
           period: result.period,
           fxRate: result.fxRate,
           wizardReady: result.wizardReady,
@@ -1018,6 +1077,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
         rows: result.rows,
         excluded: result.excluded,
         paid: result.paid,
+        deptByEmail: result.deptByEmail,
         period: result.period,
         fxRate: result.fxRate,
         wizardReady: result.wizardReady,
@@ -1040,6 +1100,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
         rows: [],
         excluded: [],
         paid: [],
+        deptByEmail: {},
         period: EMPTY_PERIOD,
         fxRate: 0,
         wizardReady: true,

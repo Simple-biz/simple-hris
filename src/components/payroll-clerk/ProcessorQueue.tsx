@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { SmoothSelect } from '@/components/ui/smooth-select';
+import DeptChip from './DeptChip';
 import { PROCESSORS, formatPHP, formatUSD, formatCOP, isSmallWiresAmountPHP, type ProcessorId, type QueueRow } from './mock-queue';
 import { resolveMarkPaidDefaults } from '@/lib/payroll/mark-paid-defaults';
 import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
@@ -161,6 +162,13 @@ interface ProcessorQueueProps {
    * nothing here. Never drives the tab strip — that stays keyed on `paidRecords`.
    */
   txnRecords?: PaymentDispatchRow[];
+  /**
+   * Lowercased email → department for this cycle
+   * (`useDispatchQueue().deptByEmail`). Handed to the log sub-views, which have no
+   * `QueueRow` to read a department off: the pending rows carry their own
+   * `departmentName`, a dispatch record does not.
+   */
+  deptByEmail: Record<string, string>;
 }
 
 /** Sentinel filter value for rows with no known department (real names can't
@@ -202,20 +210,6 @@ const PROCESSOR_DOT: Record<ProcessorId, string> = {
   jeeves: 'bg-pink-500',
   wires: 'bg-zinc-700 dark:bg-zinc-300',
 };
-
-/** Small muted pill showing the payee's payroll department. Renders nothing
- *  when the row has no known department (e.g. MESA urgent payments). */
-function DeptChip({ name }: { name: string | null }) {
-  if (!name) return null;
-  return (
-    <span
-      className="inline-flex max-w-full items-center truncate rounded-full bg-zinc-100 px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-800/70 dark:text-zinc-400"
-      title={`Department: ${name}`}
-    >
-      {name}
-    </span>
-  );
-}
 
 function BankCell({
   processor,
@@ -395,7 +389,7 @@ function initials(name: string) {
   return (parts[0]?.[0] || '?').toUpperCase();
 }
 
-function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStart, periodEnd, onRefresh, allLabel, nativeCurrency, paidRecords, txnRecords }: ProcessorQueueProps) {
+function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStart, periodEnd, onRefresh, allLabel, nativeCurrency, paidRecords, txnRecords, deptByEmail }: ProcessorQueueProps) {
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 250);
   // '' = all departments; NO_DEPT = rows without a department; else exact name.
@@ -715,6 +709,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
         >
           <PaidRecordsPanel
             records={paidRecords ?? []}
+            deptByEmail={deptByEmail}
             statusFilter={logStatus}
             periodStart={periodStart}
             periodEnd={periodEnd}

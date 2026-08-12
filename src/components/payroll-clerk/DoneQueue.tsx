@@ -8,6 +8,9 @@ import PaidRecordsPanel from './PaidRecordsPanel';
 interface DoneQueueProps {
   /** Every dispatch row for the current cycle (any status). */
   records: PaymentDispatchRow[];
+  /** Lowercased email → department for the cycle — drives the Department column
+   *  and its filter (see `useDispatchQueue().deptByEmail`). */
+  deptByEmail: Record<string, string>;
   periodStart?: string | null;
   periodEnd?: string | null;
   /** Silent re-pull after a send-back, to reconcile the pending queue. */
@@ -16,6 +19,7 @@ interface DoneQueueProps {
 
 export default function DoneQueue({
   records,
+  deptByEmail,
   periodStart,
   periodEnd,
   onRefresh,
@@ -38,6 +42,7 @@ export default function DoneQueue({
       <div className="min-h-0 flex-1">
         <PaidRecordsPanel
           records={records}
+          deptByEmail={deptByEmail}
           periodStart={periodStart}
           periodEnd={periodEnd}
           onRefresh={onRefresh}
