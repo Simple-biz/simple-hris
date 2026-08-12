@@ -485,8 +485,7 @@ Used in: `AuditLogPanel.tsx`, `AdminRoles.tsx` table view.
 ### 5.2 Editorial card-list (the main pattern)
 
 Used in `Rates`, `AdminGlobalMasterList`, `ProcessorQueue` (Payroll Clerk),
-`SentPaymentsHistory`, `DispatchReports.dispatches`. Each row is a flex card,
-not a `<tr>`. Reasons:
+`SentPaymentsHistory`. Each row is a flex card, not a `<tr>`. Reasons:
 
 - Each row mixes inline meta with avatars, status pills, and CTAs that are
   awkward to style as `<td>`s.
@@ -530,8 +529,9 @@ Key rules:
 
 ### 5.3 Ledger row (financial / temporal data)
 
-A specialty pattern used in the Reports tab drilldown and any per-employee
-financial history. Characterized by:
+A specialty pattern for per-employee financial history. Its shipped reference
+(the Payment Dispatch Reports drilldown) was retired 2026-08-12, so treat this
+section as the spec. Characterized by:
 
 - Left "index" stub (`N°001`)
 - Vertical date stamp (`APR / 12 → 18 / '26`)

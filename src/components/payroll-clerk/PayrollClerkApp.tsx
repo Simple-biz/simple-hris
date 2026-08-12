@@ -19,7 +19,6 @@ import ProcessorQueue from './ProcessorQueue';
 import DispatchLoader from './DispatchLoader';
 import ExcludedQueue from './ExcludedQueue';
 import SentPaymentsHistory from './SentPaymentsHistory';
-import DispatchReports from './DispatchReports';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
 import UrgentPaymentsQueue from './UrgentPaymentsQueue';
 import { PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
@@ -138,7 +137,6 @@ export default function PayrollClerkApp() {
   // What to show the CEO in the live roster — a live "N left to pay" while on a
   // queue tab, or what they're reviewing otherwise.
   const liveActivity = useMemo(() => {
-    if (activeTab === 'reports') return 'Reviewing reports';
     if (activeTab === 'urgent') return 'Urgent payments';
     if (activeTab === 'history') return 'Reviewing paid records';
     if (activeTab === 'excluded') return 'Reviewing excluded';
@@ -228,11 +226,6 @@ export default function PayrollClerkApp() {
   const isDark = mounted ? resolvedTheme === 'dark' : false;
 
   const renderContent = () => {
-    // Reports view stands on its own — it doesn't need the dispatch queue or
-    // a "ready" cycle because it's reading historical Hubstaff uploads.
-    if (activeTab === 'reports') {
-      return <DispatchReports />;
-    }
     if (activeTab === 'urgent') {
       return <UrgentPaymentsQueue onCountChange={setUrgentCount} />;
     }
@@ -362,13 +355,13 @@ export default function PayrollClerkApp() {
           {/* The amounts on screen are not the wizard's for at least one payee.
               Above the contractor banners on purpose: a wrong amount, once sent,
               cannot be taken back. Mirrors PayrollDispatch. */}
-          {valuesWarning && !['reports', 'urgent', 'history'].includes(activeTab) && (
+          {valuesWarning && !['urgent', 'history'].includes(activeTab) && (
             <div className="mx-4 mt-3 rounded-lg border border-rose-300/70 bg-rose-50 px-3 py-2 text-[11px] text-rose-900 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
               <strong className="font-semibold">Check these amounts against the Payroll Wizard</strong>{' '}
               {valuesWarning}
             </div>
           )}
-          {contractorError && !['reports', 'urgent', 'history', 'excluded'].includes(activeTab) && (
+          {contractorError && !['urgent', 'history', 'excluded'].includes(activeTab) && (
             <div className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-[11px] text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
               <span>
                 <strong className="font-semibold">Contractor invoices could not be loaded</strong> —
@@ -377,7 +370,7 @@ export default function PayrollClerkApp() {
               </span>
             </div>
           )}
-          {contractorAdvisory && !['reports', 'urgent', 'history'].includes(activeTab) && (
+          {contractorAdvisory && !['urgent', 'history'].includes(activeTab) && (
             <div className="mx-4 mt-3 rounded-lg border border-fuchsia-300/70 bg-fuchsia-50 px-3 py-2 text-[11px] text-fuchsia-900 dark:border-fuchsia-500/30 dark:bg-fuchsia-500/10 dark:text-fuchsia-200">
               <strong className="font-semibold">Contractor invoices need attention</strong>{' '}
               {contractorAdvisory}

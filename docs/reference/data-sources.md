@@ -186,7 +186,7 @@ Employee-entered identity and payout table. This is the Supabase table used by t
 
 ### 5. `disbursement_records` *(added 2026-04-28)*
 
-Flat analytic table — one row per (Hubstaff cycle, employee). Backs the Weekly Disbursement Reports feature in Payment Dispatch. See [PAYMENT_DISPATCH.md §6.5](../features/payment-dispatch.md) for the full spec.
+Flat analytic table — one row per (Hubstaff cycle, employee). Originally built for the Payment Dispatch Reports tab (retired 2026-08-12); today it backs the CEO financial reports, the CEO overview KPIs, payments-live, Penny's ceo-tools, `/api/urgent-payments/dispatches`, and the cycle close-out `records_outstanding` cross-check. See [PAYMENT_DISPATCH.md](../features/payment-dispatch.md) for the dispatch feature doc.
 
 **Columns:**
 
@@ -217,9 +217,12 @@ Flat analytic table — one row per (Hubstaff cycle, employee). Backs the Weekly
 - `payment_dispatches_sync_disbursement` (on `payment_dispatches`) — write-through on INSERT/UPDATE matching `(cycle_source_file, LOWER(recipient_email))`.
 - `payment_dispatches_unsync_disbursement` (on `payment_dispatches`) — DELETE reverts the record to `status='pending'`.
 
-**Who reads it:**
-- `GET /api/payment-dispatches/reports` → `src/lib/payroll/disbursement-reports.ts: listDisbursementReports()`
-- `GET /api/payment-dispatches/reports/[cycleId]` → `getDisbursementReportDetail()`
+**Who reads it** *(the Payment Dispatch Reports tab and its `/api/payment-dispatches/reports/*` routes were retired 2026-08-12; `src/lib/payroll/disbursement-reports.ts` survives for these readers)*:
+- Penny's CEO tools (`src/lib/anthropic/ceo-tools.ts`) and the CEO overview KPIs (`src/lib/ceo/overview-kpis.ts`) → `listDisbursementReports()`
+- CEO financial reports (`src/lib/ceo/financial-reports.ts`) — pages the table directly; report names via `formatDisbursementReportName()`
+- CEO payments-live (`src/lib/ceo/payments-live.ts`) — per-cycle row/paid counts; report names via `formatDisbursementReportName()`
+- `GET /api/urgent-payments/dispatches` → `loadUrgentDispatchRows()`
+- The Stop dialog's cycle close-out record — its `records_outstanding` cross-check (`src/lib/payroll/cycle-closeout.ts` via `app/api/payment-dispatches/cycle-closeout`)
 
 **Who writes it:**
 - `references/sql/seed/seed_disbursement_records.sql` (seed + re-seed via `ON CONFLICT … DO UPDATE`); the triggers live in `references/sql/seed/seed_disbursement_records_sync.sql`
@@ -227,7 +230,7 @@ Flat analytic table — one row per (Hubstaff cycle, employee). Backs the Weekly
 - `payment_dispatches_unsync_disbursement` trigger (revert on delete)
 - Manual SQL UPDATEs (e.g. mass mark-as-paid for demo data) — these use the `bank_used = 'BACKFILL'` sentinel so they can be reverted in bulk.
 
-**Re-seed safety**: `INSERT ... SELECT … ON CONFLICT (source_file, recipient_email) DO UPDATE SET …` makes the seed idempotent. Run any time you ingest a new Hubstaff CSV (TODO: trigger this from `replaceHubstaffHoursFromCsvText` so it's automatic).
+**Re-seed safety**: `INSERT ... SELECT … ON CONFLICT (source_file, recipient_email) DO UPDATE SET …` makes the seed idempotent. Run any time you ingest a new Hubstaff CSV (DONE 2026-08-12: seeding now fires automatically after ingest — both `POST /api/hubstaff-hours` and `run-weekly-sync.ts` call `seedMissingDisbursementRecords({ sourceFiles: [fileName] })` best-effort; it never fails the upload/sync, and its gates skip already-seeded and non-weekly files).
 
 ---
 
@@ -555,7 +558,7 @@ The roster crossed 1,000 during July (**1,296** on Jul 30) and several tables ar
 | Symptom found in live data | Reader |
 |---|---|
 | **Payment Dispatch queue routing was missing 20 people** — the cycle stages 1,020 rows, the routing read returned exactly 1,000 | `src/lib/supabase/payment-dispatches.ts`, `paystub-dispatch-queue.ts` |
-| **Outstanding-pay totals missing ~470 recipients** — the Reports detail capped pending rows at 500 while live cycles have 972 / 935 | `src/lib/payroll/disbursement-reports.ts` |
+| **Outstanding-pay totals missing ~470 recipients** — the Reports detail capped pending rows at 500 while live cycles have 972 / 935 *(surface retired 2026-08-12)* | `src/lib/payroll/disbursement-reports.ts` |
 | **~296 people never received "Salary Ready to View" notifications** | `src/lib/notifications/payroll-available.ts` |
 | **126 of 448 HSL people windowed on the wrong week model** | `src/lib/payroll/hsl-week-snapshot.ts`, `member-monthly-pay.ts` |
 | **~296 people missing from manager Team pages** | `src/lib/supabase/team-roster.ts` |
@@ -626,8 +629,6 @@ All routes are `export const dynamic = "force-dynamic"` (no caching).
 | `/api/app-settings` | GET/POST | Anon read; service role preferred write | `app_settings` table |
 | `/api/import-daily-report` | POST | `DATABASE_URL` (pg direct) | `src/lib/supabase/import-daily-report.ts` |
 | `/api/payment-dispatches` | GET/POST | Service role preferred | `src/lib/supabase/payment-dispatches.ts` |
-| `/api/payment-dispatches/reports` *(2026-04-28)* | GET | Service role preferred | `src/lib/payroll/disbursement-reports.ts: listDisbursementReports()` |
-| `/api/payment-dispatches/reports/[cycleId]` *(2026-04-28)* | GET | Service role preferred | `src/lib/payroll/disbursement-reports.ts: getDisbursementReportDetail()` |
 | `/api/payroll-current-pay` | GET | Service role preferred | `src/lib/payroll/current-pay.ts` |
 | `/api/payroll-dispatch-lock` | GET/POST | Service role preferred | `src/lib/supabase/payroll-dispatch-lock.ts` |
 | `/api/mesa-requests` | GET/POST | Self (`?email=`) or elevated | `app/api/mesa-requests/route.ts` |

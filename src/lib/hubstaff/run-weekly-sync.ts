@@ -7,6 +7,7 @@ import {
 } from "@/lib/hubstaff/api-client";
 import { apiSyncFileName, buildWeeklySummaryCsv } from "@/lib/hubstaff/build-weekly-summary";
 import { replaceHubstaffHoursFromCsvText } from "@/lib/supabase/hubstaff-hours-db";
+import { seedMissingDisbursementRecords } from "@/lib/payroll/disbursement-reports";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { notifyPayrollAvailable } from "@/lib/notifications/payroll-available";
 import { recordMesaWeeklyContributions } from "@/lib/mesa/record-weekly-contributions";
@@ -53,6 +54,8 @@ export type WeeklySyncResult = {
   memberCount: number;
   notified: Awaited<ReturnType<typeof notifyPayrollAvailable>> | null;
   mesaRecorded: Awaited<ReturnType<typeof recordMesaWeeklyContributions>> | null;
+  /** disbursement_records rows seeded for this new week (null = seed failed). */
+  seeded: number | null;
 };
 
 /** Error carrying an HTTP `status` (and optional `code`) for the route to map. */
@@ -175,7 +178,23 @@ export async function runHubstaffWeeklySync(params: {
     console.warn("[hubstaff api_sync] MESA weekly contribution record failed:", mesaErr);
   }
 
-  return { rowCount, uploadId, fileName, csvText, memberCount, notified, mesaRecorded };
+  // Seed disbursement_records for the new week — an API sync is a new payroll
+  // week too (replaces the removed Reports-tab "Seed" button, 2026-08-12).
+  // Best-effort; never fails the sync. The seeder's own gates skip already-
+  // seeded files and non-weekly uploads, so cron retries never recompute.
+  let seeded: WeeklySyncResult["seeded"] = null;
+  try {
+    const seedRes = await seedMissingDisbursementRecords({ sourceFiles: [fileName] });
+    if (seedRes.error) {
+      console.warn("[hubstaff api_sync] disbursement seed failed:", seedRes.error);
+    } else {
+      seeded = seedRes.seeded;
+    }
+  } catch (seedErr) {
+    console.warn("[hubstaff api_sync] disbursement seed failed:", seedErr);
+  }
+
+  return { rowCount, uploadId, fileName, csvText, memberCount, notified, mesaRecorded, seeded };
 }
 
 /**

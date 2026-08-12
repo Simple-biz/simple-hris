@@ -4,10 +4,10 @@
  * AuditTrailPanel — drop-in section that renders the audit timeline for a
  * single payroll cycle.
  *
- * Accepts EITHER a `cycleId` (when invoked from a disbursement report where a
- * cycle_id already exists) OR a `sourceFile` (when invoked from the Payroll
- * Wizard, which only knows the active Hubstaff filename). The component picks
- * the matching API route and renders the same UI.
+ * Takes a `sourceFile` (the active Hubstaff filename — the Payroll Wizard is
+ * the only mount) and reads /api/payroll-wizard/audit. A `cycleId` variant
+ * existed for the Payment Dispatch → Reports tab; it was removed with that
+ * surface (2026-08-12).
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
@@ -139,8 +139,6 @@ function describeEventValue(ev: AuditEvent): string {
 }
 
 export type AuditTrailPanelProps = {
-  /** Provide one of cycleId OR sourceFile. */
-  cycleId?: string | null;
   sourceFile?: string | null;
   periodStart?: string | null;
   periodEnd?: string | null;
@@ -151,7 +149,6 @@ export type AuditTrailPanelProps = {
 };
 
 export default function AuditTrailPanel({
-  cycleId,
   sourceFile,
   periodStart,
   periodEnd,
@@ -166,14 +163,8 @@ export default function AuditTrailPanel({
   const [page, setPage] = useState(0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Build the fetch + export URLs from whichever identifier was provided.
+  // Build the fetch + export URLs from the wizard's source-file identifier.
   const { fetchUrl, exportUrl } = useMemo(() => {
-    if (cycleId) {
-      return {
-        fetchUrl: `/api/payment-dispatches/reports/${encodeURIComponent(cycleId)}/audit`,
-        exportUrl: `/api/payment-dispatches/reports/${encodeURIComponent(cycleId)}/audit/export`,
-      };
-    }
     if (sourceFile) {
       const params = new URLSearchParams({ source_file: sourceFile });
       if (periodStart) params.set('period_start', periodStart);
@@ -185,7 +176,7 @@ export default function AuditTrailPanel({
       };
     }
     return { fetchUrl: null, exportUrl: null };
-  }, [cycleId, sourceFile, periodStart, periodEnd]);
+  }, [sourceFile, periodStart, periodEnd]);
 
   useEffect(() => {
     if (!fetchUrl) {

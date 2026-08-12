@@ -7,19 +7,19 @@ import {
   isSmallWiresAmountPHP,
   type QueueRow,
 } from './mock-queue';
-import { buildDispatchExportRows } from '@/lib/payroll/dispatch-export-csv';
-import type { DisbursementRecordRow } from '@/lib/payroll/disbursement-reports';
-import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
-import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 
 /**
  * Owner rule (2026-07-29): a wires-routed employee whose pay for the week is
  * UNDER ₱7,000 is paid through Wise that week instead — wire fees dwarf small
  * transfers. The reroute is computed per cycle from the final amount being
  * sent and never persisted, so a ≥₱7k week routes the person straight back to
- * Wires. These tests pin the boundary (exactly ₱7,000 stays on Wires), the
- * exemptions (contractors, USD/COP payees, null/zero amounts) and the Reports
- * CSV mirror (recorded dispatches are never rewritten).
+ * Wires. These tests pin the boundary (exactly ₱7,000 stays on Wires) and the
+ * exemptions (contractors, USD/COP payees, null/zero amounts).
+ *
+ * A second block here used to pin the Reports-tab CSV export mirror
+ * (dispatch-export-csv.ts); it was removed with that surface (2026-08-12).
+ * The live queue analogue — a recorded dispatch is never rewritten — is
+ * enforced upstream: useDispatchQueue applies the reroute to PENDING rows only.
  */
 
 function queueRow(over: Partial<QueueRow> = {}): QueueRow {
@@ -108,76 +108,4 @@ test('isSmallWiresAmountPHP pins the boundary', () => {
   assert.equal(isSmallWiresAmountPHP(null), false);
   assert.equal(isSmallWiresAmountPHP(undefined), false);
   assert.equal(isSmallWiresAmountPHP(Number.NaN), false);
-});
-
-// ── Reports CSV mirror ───────────────────────────────────────────────────────
-
-function record(over: Partial<DisbursementRecordRow> = {}): DisbursementRecordRow {
-  return {
-    recipient_email: 'maria@simple.biz',
-    recipient_name: 'Maria Santos',
-    status: 'pending',
-    amount_usd: 105.2,
-    paid_amount_usd: null,
-    amount_php: 6500,
-    transaction_id: null,
-    bank_used: null,
-    paid_at: null,
-    ...over,
-  } as DisbursementRecordRow;
-}
-
-function wiresChooser(): EmployeeIdRow {
-  return {
-    work_email: 'maria@simple.biz',
-    personal_email: null,
-    bank_preferred: 'wires',
-    preferred_processor: null,
-  } as EmployeeIdRow;
-}
-
-test('CSV export: pending sub-₱7k wires row exports as wise', () => {
-  const rows = buildDispatchExportRows([record()], [], [], [wiresChooser()]);
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0]!.processor, 'wise');
-});
-
-test('CSV export: pending ₱7,000+ wires row stays wires', () => {
-  const rows = buildDispatchExportRows([record({ amount_php: 7000 })], [], [], [wiresChooser()]);
-  assert.equal(rows[0]!.processor, 'wires');
-});
-
-test('CSV export: a recorded dispatch is never rewritten', () => {
-  const dispatch = {
-    recipient_email: 'maria@simple.biz',
-    recipient_name: 'Maria Santos',
-    payee_type: 'employee',
-    processor: 'wires',
-    status: 'paid',
-    created_at: '2026-07-28T10:00:00Z',
-    sent_date: '2026-07-28',
-  } as PaymentDispatchRow;
-  const rows = buildDispatchExportRows(
-    [record({ status: 'paid', paid_amount_usd: 105.2 })],
-    [dispatch],
-    [],
-    [wiresChooser()],
-  );
-  // The clerk actually sent this one by wire — the export must say so.
-  assert.equal(rows[0]!.processor, 'wires');
-});
-
-test('CSV export: backfilled paid row without a dispatch keeps the stored rail', () => {
-  const rows = buildDispatchExportRows(
-    [record({ status: 'paid', paid_amount_usd: 105.2, paid_at: '2026-07-28T10:00:00Z' })],
-    [],
-    [],
-    [wiresChooser()],
-  );
-  assert.equal(rows[0]!.processor, 'wires');
-});
-
-test('CSV export: null PHP amount (USD payee) never flips', () => {
-  const rows = buildDispatchExportRows([record({ amount_php: null })], [], [], [wiresChooser()]);
-  assert.equal(rows[0]!.processor, 'wires');
 });

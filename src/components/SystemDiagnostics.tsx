@@ -564,7 +564,7 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
       status: 'healthy',
       summary: 'Flat weekly report table available.',
       details: [
-        'Per-(week, employee) snapshot powering Reports tab.',
+        'Per-(week, employee) snapshot powering CEO financial reports and People payroll history.',
         'Sync triggers from payment_dispatches keep statuses fresh.',
       ],
       suggestedChecks: [

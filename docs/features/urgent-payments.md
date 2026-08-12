@@ -24,7 +24,7 @@ An urgent `payment_dispatches` row is identified by its `cycle_source_file` star
 
 Two invariants worth keeping:
 
-- **Every** bucket name keeps the `urgent_` prefix, including the no-date fallback (`urgent_unbucketed`). `getDisbursementReportDetail` locates an urgent week by that prefix alone, so a name without it (the old `mesa_urgent` / `oneoff_urgent`) makes the payment unopenable in the report detail view.
+- **Every** bucket name keeps the `urgent_` prefix, including the no-date fallback (`urgent_unbucketed`). The prefix is still the contract: `buildUrgentWeeklyReports` / `loadUrgentDispatchRows` bucket urgent payouts by it, and `GET /api/urgent-payments/dispatches` serves the current week's slice — so a name without it (the old `mesa_urgent` / `oneoff_urgent`) drops the payment out of every urgent view. (The report detail view that used to open these weeks was removed 2026-08-12 with the Reports tab.)
 - `_` is a single-character wildcard in SQL `LIKE`, so the server-side `like('cycle_source_file','urgent_%')` is a *prefilter*; `isUrgentSourceFile` re-checks each row exactly.
 
 Covered by `src/lib/payroll/urgent-cycle.test.ts`.
@@ -35,7 +35,7 @@ Covered by `src/lib/payroll/urgent-cycle.test.ts`.
 
 - **Accounting → Payment Dispatch** (`src/components/payroll-clerk/PayrollDispatch.tsx`) — the URGENT card sits **directly above Hurupay** in the processor filter rail (right after "All pending"), amber/Zap themed with a pulsing glow.
 - **Payroll Clerk** (`/payroll-clerk` → `PayrollClerkApp.tsx` + `PayrollClerkSidebar.tsx`) — a pre-existing "Urgent Payments" sidebar entry. Both surfaces render the same `UrgentPaymentsQueue`.
-- **Reports** — weekly "Urgent · &lt;dates&gt;" cards appear in the Reports grid on both surfaces.
+- **Reports** — weekly "Urgent · &lt;dates&gt;" cards appeared in the Reports grid on both surfaces until the Reports tab was removed (2026-08-12); the weekly summary buckets survive in `listDisbursementReports()` (see **Weekly-bucket reports**).
 
 ---
 
@@ -197,7 +197,7 @@ Returns a single normalized list combining both sources:
   - `amount_usd = amount_php / fx` (current FX rate); `amount_php` preserved.
   - `cycle_source_file = urgent_<week>` computed from `sent_date` (→ `paid_at` → `created_at` fallback) via the same Sun–Sat `sundayWeekRange`.
 
-Both the summary builder and the detail view consume this loader, so summary totals and the detail table never diverge.
+The summary builder (`buildUrgentWeeklyReports`) and `/api/urgent-payments/dispatches` both consume this loader, so the weekly buckets and the Urgent tab's Paid/Not-paid views never diverge. (The report detail table was a third consumer until the Reports tab's removal, 2026-08-12.)
 
 ### `buildUrgentWeeklyReports()`
 
@@ -208,20 +208,9 @@ Groups `loadUrgentDispatchRows()` by `cycle_source_file` into `DisbursementRepor
 
 `listDisbursementReports()` appends these (additively, in a `try/catch` so a failure can't break the regular cycle reports) before sorting newest-period-first. Their `urgent_…` source files never match a Hubstaff upload, so they don't affect the "unseeded uploads" banner.
 
-### `getDisbursementReportDetail()`
+### `getDisbursementReportDetail()` — deleted *(2026-08-12)*
 
-When `summary.sourceFile` starts with `urgent_`, the detail's `dispatches` come from `loadUrgentDispatchRows()` filtered to that week (no `disbursement_records`, so `outstanding = []`).
-
-### Reports UI
-
-**File:** `src/components/payroll-clerk/DispatchReports.tsx`
-
-- The old flat "Urgent MESA disbursements" panel was **removed** — weekly cards replace it.
-- Cards whose `sourceFile` starts with `urgent_` get a **Zap icon + amber** treatment and an "Urgent" badge.
-- **Mark-all-paid is hidden** for urgent reports (it targets `disbursement_records`, which urgent rows don't have).
-- CSV export: the `[cycleId]/export` route falls back to `buildDispatchExportRowsFromDispatches(report.dispatches, rates)` when there are no `disbursement_records` (i.e. urgent reports), so the export still lists every urgent payout.
-
-> Paid budget requests therefore appear in **two** places in Reports: the existing **Orphanage Payments** panel (budgets + gifts) and the weekly **Urgent** card (MESA + budgets). This duplication is intentional ("weekly urgent report too").
+The function is gone, removed with the Payment Dispatch Reports tab. The urgent weekly **summary** buckets survive inside `listDisbursementReports()` — Penny's CEO tools and the CEO financial reports consume them — but the on-screen "Urgent · &lt;week&gt;" cards and their detail view died with the tab on 2026-08-12. **Open gap:** once the current week rolls over, dispatched urgent rows are no longer visible in any UI — only Penny can see them.
 
 ---
 
@@ -247,7 +236,7 @@ MESA:
     → POST /api/mesa-requests/[id]/dispatch        payment_dispatches (cycle_id=NULL,
                                                     cycle_source_file=urgent_<week>, amount_usd)
                                                     + mesa_requests.dispatched_at stamped
-    → listDisbursementReports → "Urgent · <week>" report card
+    → listDisbursementReports ("Urgent · <week>" summary bucket)
 
 Orphanage budget:
   approved orphanage_budget_requests (unpaid)
@@ -255,7 +244,7 @@ Orphanage budget:
     → UrgentPaymentsQueue (Budget section)        clerk → Pay wire (OrphanageMarkPaidDialog)
     → POST /api/orphanage-dispatches              orphanage_dispatches row (status=paid)
     → removed from BOTH Urgent + Orphanage queues (dedup on orphanage_dispatches existence)
-    → Orphanage Payments panel  AND  "Urgent · <week>" report card (PHP→USD, processor=Wires)
+    → listDisbursementReports "Urgent · <week>" summary bucket (PHP→USD, processor=Wires)
 ```
 
 ---
@@ -298,8 +287,8 @@ The company match was **lowered from ₱400 to ₱300** (weekly total previously
 | `src/components/payroll-clerk/OrphanageQueue.tsx` | **Edited** — imports the extracted dialog; dropped the inlined copy |
 | `src/components/payroll-clerk/PayrollDispatch.tsx` | **Edited** — `'urgent'` tab + URGENT card above Hurupay (`glowBorder`) + render branch + `urgentCount` |
 | `src/components/payroll-clerk/ProcessorCard.tsx` | **Edited** — opt-in `glowBorder` pulsing amber outer glow |
-| `src/components/payroll-clerk/DispatchReports.tsx` | **Edited** — removed flat urgent panel; urgent card styling; mark-all-paid hidden for urgent |
+| `src/components/payroll-clerk/DispatchReports.tsx` | **Edited** — removed flat urgent panel; urgent card styling; mark-all-paid hidden for urgent *(surface removed 2026-08-12)* |
 | `src/lib/payroll/disbursement-reports.ts` | **Edited** — `sundayWeekRange`, `loadUrgentDispatchRows` (MESA + synthetic orphanage budgets), `buildUrgentWeeklyReports`, urgent branch in `getDisbursementReportDetail` |
-| `src/lib/payroll/dispatch-export-csv.ts` | **Edited** — `buildDispatchExportRowsFromDispatches` fallback for record-less (urgent) reports |
-| `app/api/payment-dispatches/reports/[cycleId]/export/route.ts` | **Edited** — uses the dispatches-only export builder when there are no `disbursement_records` |
+| `src/lib/payroll/dispatch-export-csv.ts` | **Edited** — `buildDispatchExportRowsFromDispatches` fallback for record-less (urgent) reports *(file deleted 2026-08-12 with the Reports tab)* |
+| `app/api/payment-dispatches/reports/[cycleId]/export/route.ts` | **Edited** — uses the dispatches-only export builder when there are no `disbursement_records` *(surface removed 2026-08-12)* |
 | `references/add_mesa_dispatched_at.sql` | **Prereq** — `mesa_requests.dispatched_at` + urgent-queue index |

@@ -11,7 +11,7 @@ stamps a diagonal **PAID** watermark on the rendered invoice. Built 2026-07-09; 
 > (`orphanage_vendors`, `orphanage_vendor_invoices`) and **never** touches the payroll-clerk dispatch
 > machinery (`orphanage_dispatches` / `payment_dispatches` / `disbursement_records`). **No n8n
 > automation fires** — creating an invoice writes a row, marking it paid just stamps a payment record
-> and the watermark. Do not wire it into DispatchReports or the disbursement tables.
+> and the watermark. Do not wire it into Payment Dispatch reporting or the disbursement tables.
 
 Key files:
 

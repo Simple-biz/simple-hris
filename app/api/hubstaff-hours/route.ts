@@ -29,6 +29,7 @@ import {
   hubstaffApiConfigured,
 } from "@/lib/hubstaff/api-client";
 import { normEmail } from "@/lib/email/norm-email";
+import { seedMissingDisbursementRecords } from "@/lib/payroll/disbursement-reports";
 import { getSessionActor } from "@/lib/auth/session-actor";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { rejectWhilePayrollProcessing } from "@/lib/payroll/processing-guard";
@@ -111,6 +112,10 @@ function clientIp(req: NextRequest): string | null {
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+// Ingest + notify + MESA + disbursement seeding for a ~700-person week can
+// exceed the platform default. Same ceiling the retired standalone
+// seed-missing route used.
+export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -602,7 +607,30 @@ export async function POST(req: NextRequest) {
       console.warn("[POST /api/hubstaff-hours] MESA weekly contribution record failed:", mesaErr);
     }
 
-    return NextResponse.json({ success: true, rowCount, uploadId, notified, mesaRecorded });
+    // Seed this cycle's `disbursement_records` so CEO Financial Reports, overview
+    // KPIs, Penny, and People payroll history can see the new week. This replaced
+    // the Reports tab's manual "Seed" button when that surface was removed
+    // (2026-08-12) — without it a new week is invisible to every reader of
+    // disbursement_records. Best-effort: a seed failure never fails the upload
+    // (the hours already landed). Safe on re-uploads: the seeder skips files that
+    // already have records and refuses non-weekly files (backfills,
+    // time-activity exports, "(2)" duplicates), so a seeded week is never
+    // recomputed.
+    let seeded: number | null = null;
+    if (fileName) {
+      try {
+        const seedRes = await seedMissingDisbursementRecords({ sourceFiles: [fileName] });
+        if (seedRes.error) {
+          console.warn("[POST /api/hubstaff-hours] disbursement seed failed:", seedRes.error);
+        } else {
+          seeded = seedRes.seeded;
+        }
+      } catch (seedErr) {
+        console.warn("[POST /api/hubstaff-hours] disbursement seed failed:", seedErr);
+      }
+    }
+
+    return NextResponse.json({ success: true, rowCount, uploadId, notified, mesaRecorded, seeded });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[POST /api/hubstaff-hours]", msg);

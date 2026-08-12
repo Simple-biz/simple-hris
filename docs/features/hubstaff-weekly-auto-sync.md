@@ -44,10 +44,17 @@ thrown errors to HTTP statuses.
    - `notifyPayrollAvailable` — "Salary Ready to View" `payroll.available`
      notification per employee, de-duped per (recipient, source_file);
    - `recordMesaWeeklyContributions` — the weekly MESA ledger deposit per
-     opted-in member, idempotent per member/week.
+     opted-in member, idempotent per member/week;
+   - `seedMissingDisbursementRecords({ sourceFiles: [fileName] })` *(added
+     2026-08-12, replacing the removed Reports-tab "Seed" button)* — seeds the
+     new week's `disbursement_records`. The seeder's own gates skip
+     already-seeded files and non-weekly uploads, so a cron retry never
+     recomputes a seeded week. `WeeklySyncResult` carries the row count as
+     `seeded` (`null` = the seed failed).
 
 So a cron run produces exactly what a manual CSV upload does: a current
-`hubstaff_hours` batch, the payroll notifications, and the MESA deposits.
+`hubstaff_hours` batch, the payroll notifications, the MESA deposits, and the
+week's seeded `disbursement_records`.
 
 **`mostRecentlyCompletedPayWeek(now)`** — pure-UTC math returning the last
 fully-completed Sun→Sat week. The cron fires early Sunday UTC, when the new

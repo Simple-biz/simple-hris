@@ -15,7 +15,6 @@
  */
 
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
-import { getDisbursementReportDetail } from '@/lib/payroll/disbursement-reports';
 import type { AuditLogEntry } from '@/lib/supabase/audit-log';
 
 /** Actions surfaced in the cycle audit trail. Keep in sync with AuditAction. */
@@ -74,8 +73,10 @@ type ResolvedCycle = {
 
 /**
  * Core fetcher — given a resolved cycle (any combination of source_file +
- * period bounds), pull every audit event tied to it. Used by both the
- * cycleId-keyed reports endpoint and the wizard-keyed source_file endpoint.
+ * period bounds), pull every audit event tied to it. Reached via the
+ * wizard-keyed source_file endpoint (/api/payroll-wizard/audit); the
+ * cycleId-keyed variant died with the Payment Dispatch Reports tab
+ * (2026-08-12).
  */
 async function fetchEventsForResolvedCycle(
   resolved: ResolvedCycle,
@@ -133,26 +134,6 @@ async function fetchEventsForResolvedCycle(
     bundle: { ...resolved, events: merged },
     error: null,
   };
-}
-
-/**
- * Resolve the cycle by `cycleId` (via the disbursement report listing) and
- * fetch every audit event tied to it. Used by the standalone Reports tab.
- */
-export async function getCycleAuditTrail(
-  cycleId: string,
-): Promise<{ bundle: CycleAuditBundle | null; error: string | null }> {
-  const { report, error: reportErr } = await getDisbursementReportDetail(cycleId);
-  if (reportErr || !report) {
-    return { bundle: null, error: reportErr ?? 'Cycle not found' };
-  }
-  return fetchEventsForResolvedCycle({
-    cycleId,
-    sourceFile: report.sourceFile,
-    periodStart: report.periodStart,
-    periodEnd: report.periodEnd,
-    reportName: report.reportName,
-  });
 }
 
 /**

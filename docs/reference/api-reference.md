@@ -21,7 +21,6 @@ Complete documentation for all REST API endpoints. Base URL: `http://localhost:3
 9. [Avatar (Gravatar)](#9-avatar-gravatar)
 10. [PAB Day Disputes](#10-pab-day-disputes)
 11. [Payment Dispatches](#11-payment-dispatches)
-12. [Disbursement Reports](#12-disbursement-reports)
 12.5. [Leave Requests](#125-leave-requests)
 12.7. [Admin Diagnostics](#127-admin-diagnostics)
 12.9. [Time Adjustment Requests](#129-time-adjustment-requests)
@@ -1378,115 +1377,6 @@ Side effects:
 ### `GET /api/payroll-dispatch-lock` & `POST /api/payroll-dispatch-lock`
 
 Read / set the global `payroll.dispatch_locked` flag. Documented in [PAYMENT_DISPATCH.md §6](../features/payment-dispatch.md).
-
----
-
-## 12. Disbursement Reports
-
-> Added 2026-04-28. Backed by `public.disbursement_records` (one row per (week, employee)) seeded by `references/seed_disbursement_records.sql`. See [PAYMENT_DISPATCH.md §6.5](../features/payment-dispatch.md) for the full feature doc.
-
-### `GET /api/payment-dispatches/reports`
-
-Returns a per-cycle summary list, newest period first. One entry per Hubstaff upload (one row per source CSV).
-
-**Response** `200`:
-```json
-{
-  "reports": [
-    {
-      "cycleId": "…uuid…",
-      "periodStart": "2026-04-12",
-      "periodEnd": "2026-04-18",
-      "sourceFile": "simple-biz_daily_report_2026-04-12_to_2026-04-18.csv",
-      "uploadedAt": "2026-04-19T03:12:55.802Z",
-      "uploadedBy": "kaner@simple.biz",
-      "rowCount": 738,
-      "isCurrent": true,
-      "reportName": "April 12-18, 2026",
-      "totals": {
-        "paidCount": 738,
-        "paidUSD": 106963.89,
-        "paidPHP": 5936420.51,
-        "notPaidCount": 0,
-        "thresholdCount": 0,
-        "problemCount": 0,
-        "pendingDispatchedUSD": 0,
-        "sentCount": 738,
-        "totalDispatchedUSD": 106963.89,
-        "outstandingCount": 0,
-        "outstandingUSD": 0,
-        "totalRecipients": 738,
-        "totalOwedUSD": 106963.89
-      },
-      "byProcessor": {
-        "hurupay": { "count": 510, "usd": 72100.40 },
-        "wepay": { "count": 0, "usd": 0 },
-        "higlobe": { "count": 95, "usd": 14903.20 },
-        "wise": { "count": 60, "usd": 9100.50 },
-        "jeeves": { "count": 5, "usd": 805.30 },
-        "wires": { "count": 68, "usd": 10054.49 }
-      }
-    }
-  ],
-  "error": null
-}
-```
-
-`cycleId` is the matching `hubstaff_uploads.id` UUID, or a `source:<filename>` synthetic id when no upload row exists. The detail endpoint accepts both forms.
-
-`reportName` is computed by `formatDisbursementReportName()`:
-- Same month: `"April 12-18, 2026"`
-- Cross-month: `"April 30 - May 3, 2026"`
-- Cross-year: `"December 30, 2025 - January 5, 2026"`
-
-`byProcessor` is derived per-row from `employee_hourly_rates."Bank Preferred"` (using `processorIdFromBankPreferred`), not from `payment_dispatches.processor`. This is so the breakdown still works for backfilled / direct-UPDATE rows that don't have a `payment_dispatches` parent.
-
-**Tables**: `disbursement_records`, `hubstaff_uploads`, `employee_hourly_rates`
-**Service Role**: Uses service role when available, else server client.
-
-### `GET /api/payment-dispatches/reports/[cycleId]`
-
-Returns a single report's full detail. `cycleId` accepts:
-- A `hubstaff_uploads.id` UUID
-- A `source:<filename>` synthetic id from the list endpoint
-
-**Response** `200`:
-```json
-{
-  "report": {
-    "cycleId": "…",
-    "periodStart": "2026-04-12",
-    "periodEnd":   "2026-04-18",
-    "sourceFile":  "simple-biz_daily_report_2026-04-12_to_2026-04-18.csv",
-    "uploadedAt":  "…",
-    "uploadedBy":  "…",
-    "rowCount":    738,
-    "isCurrent":   true,
-    "reportName":  "April 12-18, 2026",
-    "totals":      { …same shape as list endpoint… },
-    "byProcessor": { …same shape… },
-    "dispatches": [
-      { …PaymentDispatchRow with processor + banking detail… }
-    ],
-    "outstanding": [
-      { "email": "ada@simple.biz", "amountUSD": 312.40, "amountPHP": 17338.20 }
-    ],
-    "outstandingUSD": 312.40
-  },
-  "error": null
-}
-```
-
-`outstanding` is sourced from `disbursement_records WHERE source_file=… AND status='pending'`, ordered by `amount_usd DESC` (limit 500). It works for **any cycle**, not just the current one — because `disbursement_records` already stores the per-row pay snapshot.
-
-`dispatches` is sourced from `payment_dispatches WHERE cycle_source_file=…`, ordered by `created_at DESC`. The flat record table doesn't store processor / banking, so the table view still uses `payment_dispatches` for those columns.
-
-**Error responses**:
-- `400` — missing `cycleId`
-- `404` — cycle not found in `disbursement_records` (i.e. no rows for that source_file)
-- `500` — DB error
-
-**Tables**: `disbursement_records`, `payment_dispatches`, `hubstaff_uploads`, `employee_hourly_rates`
 
 ---
 

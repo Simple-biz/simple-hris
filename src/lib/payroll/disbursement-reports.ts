@@ -131,8 +131,9 @@ export interface DisbursementReportSummary {
 
 /**
  * A Hubstaff upload that has hours data but no `disbursement_records` rows yet.
- * Surfaced so the Reports UI can list exactly which uploads are missing records
- * and let the clerk seed them individually (rather than a blind bulk action).
+ * Since 2026-08-12 new uploads are seeded automatically at ingest time
+ * (see the seed calls in /api/hubstaff-hours and run-weekly-sync), so this
+ * surfaces only historical gaps.
  */
 export interface UnseededUpload {
   /** hubstaff_uploads.id */
@@ -152,21 +153,6 @@ export interface UnseededUpload {
    * can't silently disagree with what "Seed all" does.
    */
   seedable: boolean;
-}
-
-export interface DisbursementReportDetail extends DisbursementReportSummary {
-  dispatches: PaymentDispatchRow[];
-  /**
-   * For the *current* cycle only — recipients who are eligible for pay but
-   * have no dispatch row yet. Empty array for past cycles.
-   */
-  outstanding: Array<{
-    email: string;
-    amountUSD: number | null;
-    amountPHP: number | null;
-  }>;
-  /** Total USD still owed for outstanding (not-yet-dispatched) recipients. */
-  outstandingUSD: number;
 }
 
 const EMPTY_TOTALS = (): DisbursementReportTotals => ({
@@ -407,8 +393,7 @@ async function loadProcessorByEmail(): Promise<Map<string, string>> {
  *     (cycle_source_file = `urgent_<weekStart>_to_<weekEnd>`) so they merge into
  *     the same weekly bucket as MESA payouts. Gift purchases are NOT urgent and
  *     are excluded.
- * Both `buildUrgentWeeklyReports` (summary) and `getDisbursementReportDetail`
- * (table) consume this, so summary totals and the detail table never diverge.
+ * `buildUrgentWeeklyReports` (summary) consumes this.
  * Exported for /api/urgent-payments/dispatches, which shows the current week's
  * slice of the same rows inside the Payment Dispatch Urgent bucket — one loader
  * so the bucket's Paid/Not paid views can never disagree with the weekly report.
@@ -819,27 +804,6 @@ export async function listDisbursementReports(): Promise<{
   return { reports, error: null, unseeded, unseededCount };
 }
 
-/**
- * Bulk-marks all `disbursement_records` rows for a given cycle as paid.
- * Returns the number of rows updated.
- */
-export async function markAllDisbursementRecordsPaid(
-  sourceFile: string,
-): Promise<{ updated: number; error: string | null }> {
-  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
-  if (!supabase) return { updated: 0, error: "No Supabase client" };
-
-  const { data, error } = await supabase
-    .from("disbursement_records")
-    .update({ status: "paid" })
-    .eq("source_file", sourceFile)
-    .neq("status", "paid")
-    .select("id");
-
-  if (error) return { updated: 0, error: error.message };
-  return { updated: (data ?? []).length, error: null };
-}
-
 function parseWorkedHours(raw: string | null | undefined): number {
   if (!raw) return 0;
   const parts = raw.split(":");
@@ -875,8 +839,8 @@ function parseLocalIsoDate(iso: string | null | undefined): Date | null {
  * additive Sunday-overlap backfills (`backfill-*`), the multi-week
  * `time-activity-report-*` export, and accidental duplicate re-uploads
  * (`… (2).csv`) — none of which represent a payable weekly cycle, so none should
- * ever seed a phantom cycle into `disbursement_records` (Reports tab + People
- * payroll history).
+ * ever seed a phantom cycle into `disbursement_records` (CEO financial
+ * reports + People payroll history).
  */
 function isSeedableWeeklyUpload(sourceFile: string): boolean {
   const name = sourceFile.toLowerCase();
@@ -1294,90 +1258,3 @@ export async function seedMissingDisbursementRecords(opts: {
   return { seeded, error: null };
 }
 
-/**
- * Detail view for a single cycle. Pulls:
- *   • Summary + outstanding from `disbursement_records`.
- *   • Full dispatch detail (with processor + banking) from
- *     `payment_dispatches` so the table can show what we sent.
- *
- * `cycleId` may be either a `hubstaff_uploads.id` (UUID) or a
- * `source:<filename>` synthetic id from the list endpoint.
- */
-export async function getDisbursementReportDetail(
-  cycleId: string,
-): Promise<{ report: DisbursementReportDetail | null; error: string | null }> {
-  const { reports, error } = await listDisbursementReports();
-  if (error) return { report: null, error };
-  const summary = reports.find((r) => r.cycleId === cycleId);
-  if (!summary || !summary.sourceFile) {
-    return { report: null, error: "Cycle not found" };
-  }
-
-  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
-  if (!supabase) {
-    return {
-      report: { ...summary, dispatches: [], outstanding: [], outstandingUSD: 0 },
-      error: null,
-    };
-  }
-
-  // Urgent (MESA + orphanage budget) weeks have no disbursement_records — the
-  // dispatch rows come from the same combined loader the summary was built
-  // from, filtered to this week's bucket. No outstanding for urgent reports.
-  if (isUrgentSourceFile(summary.sourceFile)) {
-    const all = await loadUrgentDispatchRows();
-    const dispatches = all.filter((d) => d.cycle_source_file === summary.sourceFile);
-    return {
-      report: { ...summary, dispatches, outstanding: [], outstandingUSD: 0 },
-      error: null,
-    };
-  }
-
-  // Fetch dispatches + outstanding records in parallel. BOTH must page: a
-  // cycle pays 1,000+ people now, so the un-ranged dispatch read hit
-  // PostgREST's silent 1,000-row cap, and the outstanding read's .limit(500)
-  // dropped ~470 pending recipients from live cycles' outstanding totals.
-  const [dispatchRes, outstandingRes] = await Promise.all([
-    selectAllPaged<PaymentDispatchRow>((from, to) =>
-      supabase
-        .from("payment_dispatches")
-        .select("*")
-        .eq("cycle_source_file", summary.sourceFile)
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: false })
-        .range(from, to),
-    ),
-    selectAllPaged<{
-      recipient_email: string;
-      amount_usd: number | string | null;
-      amount_php: number | string | null;
-      status: string | null;
-    }>((from, to) =>
-      supabase
-        .from("disbursement_records")
-        .select("recipient_email, amount_usd, amount_php, status")
-        .eq("source_file", summary.sourceFile)
-        .eq("status", "pending")
-        .order("amount_usd", { ascending: false, nullsFirst: false })
-        .order("recipient_email", { ascending: true })
-        .range(from, to),
-    ),
-  ]);
-
-  if (dispatchRes.error) return { report: null, error: dispatchRes.error };
-  if (outstandingRes.error) return { report: null, error: outstandingRes.error };
-
-  const dispatches = dispatchRes.rows;
-  const outstanding = outstandingRes.rows.map((r) => ({
-    email: r.recipient_email,
-    amountUSD: r.amount_usd == null ? null : num(r.amount_usd),
-    amountPHP: r.amount_php == null ? null : num(r.amount_php),
-  }));
-
-  const outstandingUSD = outstanding.reduce((sum, r) => sum + (r.amountUSD ?? 0), 0);
-
-  return {
-    report: { ...summary, dispatches, outstanding, outstandingUSD },
-    error: null,
-  };
-}

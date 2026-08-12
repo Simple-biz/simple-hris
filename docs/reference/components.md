@@ -1264,7 +1264,7 @@ The **payment-dispatch** surface -- the screen the payroll clerk ("Lenny") uses 
 - **`/payroll-clerk`** -> `PayrollClerkApp` (standalone, sidebar-nav-driven, leaner).
 - **Accounting -> "Payment Dispatch" tab** -> `PayrollDispatch` is also mounted inside `src/App.tsx`. `PayrollDispatch` is the richer variant (card rail, hero stats, processing-lock toggle, Orphanage tab) and is the one wired into production via Accounting.
 
-Both consume the same `useDispatchQueue` hook and `MarkPaidDialog`. **Core concept:** each owed employee is a `QueueRow` routed to a **processor** (channel / "Bank Preferred"): `hurupay | wepay | higlobe | wise | jeeves | wires`. The clerk filters by processor, sends money externally, then **Mark paid** logs a `payment_dispatches` row (status `paid | not_paid | threshold | problem`). `paid` rows drop out of the pending queue. The **Excluded** queue shows people who cannot be paid (missing bank/pay/hours); the **Orphanage** queue is a separate flow for approved charity payouts. **Sent payments** + **Reports** are history views.
+Both consume the same `useDispatchQueue` hook and `MarkPaidDialog`. **Core concept:** each owed employee is a `QueueRow` routed to a **processor** (channel / "Bank Preferred"): `hurupay | wepay | higlobe | wise | jeeves | wires`. The clerk filters by processor, sends money externally, then **Mark paid** logs a `payment_dispatches` row (status `paid | not_paid | threshold | problem`). `paid` rows drop out of the pending queue. The **Excluded** queue shows people who cannot be paid (missing bank/pay/hours); the **Orphanage** queue is a separate flow for approved charity payouts. **Sent payments** is the history view.
 
 ### `app/payroll-clerk/page.tsx`
 
@@ -1272,15 +1272,15 @@ Route entry; `Suspense`-wraps `<PayrollClerkApp />`. Orange-ring spinner.
 
 ### `src/components/payroll-clerk/PayrollClerkApp.tsx`
 
-Standalone shell -- sidebar + tab routing + shared `MarkPaidDialog`. Tabs: `all` + the six processor ids -> `ProcessorQueue`; `history` -> `SentPaymentsHistory`; `excluded` -> `ExcludedQueue`; `reports` -> `DispatchReports`; `notifications` (badge only). Pulls `{ rows, excluded, paid, period, loading, error, refresh }` from `useDispatchQueue()`, mirrors `fetched` into local `pending` in a `useLayoutEffect` gated by a `hydrated` flag so the table never paints stale rows. `handleConfirmPaid` optimistically removes the row, `POST /api/payment-dispatches`, then `refresh()` (re-inserts on failure). **`cycleReady` here is a demo UI toggle defaulting `true`** (with a "(Demo) Toggle cycle ready" button) -- not derived from real data, unlike PayrollDispatch. The leaner shell: no lock toggle, no Orphanage tab, no hero stats.
+Standalone shell -- sidebar + tab routing + shared `MarkPaidDialog`. Tabs: `all` + the six processor ids -> `ProcessorQueue`; `history` -> `SentPaymentsHistory`; `excluded` -> `ExcludedQueue`; `notifications` (badge only). Pulls `{ rows, excluded, paid, period, loading, error, refresh }` from `useDispatchQueue()`, mirrors `fetched` into local `pending` in a `useLayoutEffect` gated by a `hydrated` flag so the table never paints stale rows. `handleConfirmPaid` optimistically removes the row, `POST /api/payment-dispatches`, then `refresh()` (re-inserts on failure). **`cycleReady` here is a demo UI toggle defaulting `true`** (with a "(Demo) Toggle cycle ready" button) -- not derived from real data, unlike PayrollDispatch. The leaner shell: no lock toggle, no Orphanage tab, no hero stats.
 
 ### `src/components/payroll-clerk/PayrollClerkSidebar.tsx`
 
-Left nav with a **cycle-status pill** and two groups: **Queues** (All pending + one button per `PROCESSORS` entry with a `PROCESSOR_ICONS` glyph + count badge) and **History** (Sent payments, Weekly reports, Excluded, Notifications [red pulse when locked]). Footer: `ViewSwitcher currentView="accounting"` (the clerk switches under the accounting view), theme toggle, avatar, Sign Out.
+Left nav with a **cycle-status pill** and two groups: **Queues** (All pending + one button per `PROCESSORS` entry with a `PROCESSOR_ICONS` glyph + count badge) and **History** (Sent payments, Excluded, Notifications [red pulse when locked]). Footer: `ViewSwitcher currentView="accounting"` (the clerk switches under the accounting view), theme toggle, avatar, Sign Out.
 
 ### `src/components/payroll-clerk/PayrollDispatch.tsx`
 
-The full-featured "Payment dispatch" view, mounted as the Accounting "Payment Dispatch" tab. Renders an animated hero (first name via `useSession`), a `PeriodPill`, a `ProcessingPill` + Start/Stop `ProcessingToggleButton`, a **processor card rail** (`ProcessorCard` per channel + All/History/Reports/Orphanage/Excluded cards) acting as the tab filter, three `HeroStat` cards (Pending count, Sent count, Paid USD), and a body switching between `ProcessorQueue`, `SentPaymentsHistory`, `ExcludedQueue`, `DispatchReports`, `OrphanageQueue`, and `NotificationsPanel`. **`cycleReady = Boolean(period.cycleId)`** (real, no demo toggle). **Processing lock:** `useDispatchLock()` + a `LockToggleConfirmDialog`; starting processing **disables employees' File-a-Dispute button live** (Realtime on `app_settings.payroll.dispatch_locked`). Headline stats count only `status==='paid'` rows so the number "does not lie". Heavy `motion` + `React.memo` discipline because the queue can be ~1000 rows. Lock via `GET/POST /api/payroll-dispatch-lock` (through the hook); mark-paid via `POST /api/payment-dispatches`.
+The full-featured "Payment dispatch" view, mounted as the Accounting "Payment Dispatch" tab. Renders an animated hero (first name via `useSession`), a `PeriodPill`, a `ProcessingPill` + Start/Stop `ProcessingToggleButton`, a **processor card rail** (`ProcessorCard` per channel + All/History/Orphanage/Excluded cards) acting as the tab filter, three `HeroStat` cards (Pending count, Sent count, Paid USD), and a body switching between `ProcessorQueue`, `SentPaymentsHistory`, `ExcludedQueue`, `OrphanageQueue`, and `NotificationsPanel`. **`cycleReady = Boolean(period.cycleId)`** (real, no demo toggle). **Processing lock:** `useDispatchLock()` + a `LockToggleConfirmDialog`; starting processing **disables employees' File-a-Dispute button live** (Realtime on `app_settings.payroll.dispatch_locked`). Headline stats count only `status==='paid'` rows so the number "does not lie". Heavy `motion` + `React.memo` discipline because the queue can be ~1000 rows. Lock via `GET/POST /api/payroll-dispatch-lock` (through the hook); mark-paid via `POST /api/payment-dispatches`.
 
 ### `src/components/payroll-clerk/ProcessorQueue.tsx`
 
@@ -1305,19 +1305,6 @@ The **Orphanage** tab (PayrollDispatch only) -- approved orphanage **budget requ
 ### `src/components/payroll-clerk/SentPaymentsHistory.tsx`
 
 The **Sent payments** tab -- confirmations logged for the *current* pay cycle (the `paid: PaymentDispatchRow[]` prop from `useDispatchQueue`, i.e. `payment_dispatches` for the current cycle). Header with client-side **Export CSV**, and a wide table: Recipient, `StatusBadge`, processor, USD, PHP, "Sent to" details, bank used, txn id, sent/arrival dates, note. Paginated 25/page.
-
-### `src/components/payroll-clerk/DispatchReports.tsx`
-
-The **Reports / Weekly reports** tab -- historical disbursement reports across all payroll cycles plus a paid-orphanage panel. Self-fetching; renders regardless of cycle-ready state. List view = search + an `OrphanageReportsPanel` + a paginated grid (6/page) of `ReportCard`s (period, upload, mini-stats Paid/Sent/Pending, total paid USD, "Current" badge). Detail view = back button, meta, **Export CSV** (a real server endpoint), four `DetailStat` cards, a per-processor paid breakdown, an outstanding "Not yet dispatched" panel (current cycle only), a searchable "Paid this week" recipients panel, and a full dispatch-detail table.
-
-| Method/Endpoint | Use |
-|---|---|
-| `GET /api/payment-dispatches/reports` | summaries (one per cycle) |
-| `GET /api/payment-dispatches/reports/{cycleId}` | full detail |
-| `GET /api/payment-dispatches/reports/{cycleId}/export` | server-rendered CSV download |
-| `GET /api/orphanage-dispatches?paid=1` | paid orphanage panel |
-
-This is the historical/cross-cycle view (vs SentPaymentsHistory's current-cycle-only).
 
 ### `src/components/payroll-clerk/MarkPaidDialog.tsx`
 

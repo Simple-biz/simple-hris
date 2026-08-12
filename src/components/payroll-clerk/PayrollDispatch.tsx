@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ClipboardCheck,
-  ClipboardList,
   Coins,
   DollarSign,
   FileSpreadsheet,
@@ -36,7 +35,6 @@ import { playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
 import ProcessorQueue from './ProcessorQueue';
 import ExcludedQueue from './ExcludedQueue';
 import DoneQueue from './DoneQueue';
-import DispatchReports from './DispatchReports';
 import OrphanageQueue from './OrphanageQueue';
 import UrgentPaymentsQueue from './UrgentPaymentsQueue';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
@@ -54,7 +52,7 @@ import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
 import { usePaymentsLivePublisher } from '@/hooks/usePaymentsLive';
 
-type TabId = 'all' | 'cop' | 'urgent' | 'done' | 'reports' | 'excluded' | 'orphanage' | 'notifications' | ProcessorId;
+type TabId = 'all' | 'cop' | 'urgent' | 'done' | 'excluded' | 'orphanage' | 'notifications' | ProcessorId;
 
 interface ProcessorVisual {
   Icon: React.ComponentType<{ className?: string }>;
@@ -122,13 +120,6 @@ const DONE_VISUAL: ProcessorVisual = {
   accent: 'from-emerald-500 to-green-600',
   glow: 'from-emerald-100/80 via-green-50/60 to-white dark:from-emerald-950/40 dark:via-green-950/30 dark:to-zinc-900',
   blurb: 'Paid this cycle',
-};
-
-const REPORTS_VISUAL: ProcessorVisual = {
-  Icon: ClipboardList,
-  accent: 'from-violet-500 to-fuchsia-500',
-  glow: 'from-violet-100/80 via-fuchsia-50/60 to-white dark:from-violet-950/40 dark:via-fuchsia-950/30 dark:to-zinc-900',
-  blurb: 'Weekly summary',
 };
 
 const EXCLUDED_VISUAL: ProcessorVisual = {
@@ -1056,7 +1047,6 @@ export default function PayrollDispatch() {
   const renderBody = () => {
     // Show the skeleton while the network is still in flight OR while we
     // haven't mirrored the first server snapshot into local state yet.
-    if (activeTab === 'reports') return <DispatchReports />;
     if (activeTab === 'notifications') return <NotificationsPanel viewerEmail={session?.user?.email} accent="zinc" view="accounting" />;
     if (activeTab === 'orphanage') return <OrphanageQueue />;
     if (activeTab === 'urgent') {
@@ -1178,7 +1168,7 @@ export default function PayrollDispatch() {
         toast.success(
           json.already
             ? 'This pay cycle was already closed — no second record written'
-            : `Pay cycle closed — filed in Reports${
+            : `Pay cycle closed — close-out record filed${
                 unpaidPayable.length > 0
                   ? ` with ${unpaidPayable.length} unpaid ${unpaidPayable.length === 1 ? 'person' : 'people'}`
                   : ''
@@ -1475,18 +1465,6 @@ export default function PayrollDispatch() {
             </motion.div>
             <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
               <ProcessorCard
-                label="Reports"
-                subtitle={REPORTS_VISUAL.blurb}
-                Icon={REPORTS_VISUAL.Icon}
-                accent={REPORTS_VISUAL.accent}
-                glow={REPORTS_VISUAL.glow}
-                active={activeTab === 'reports'}
-                onClick={() => setActiveTab('reports')}
-                iconOnlyFallback
-              />
-            </motion.div>
-            <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
-              <ProcessorCard
                 label="Orphanage"
                 subtitle={ORPHANAGE_VISUAL.blurb}
                 Icon={ORPHANAGE_VISUAL.Icon}
@@ -1518,7 +1496,7 @@ export default function PayrollDispatch() {
           <AnimatePresence mode="wait">
             <motion.div
               key={
-                activeTab === 'reports' || activeTab === 'excluded' || activeTab === 'orphanage' || activeTab === 'urgent' || activeTab === 'cop'
+                activeTab === 'excluded' || activeTab === 'orphanage' || activeTab === 'urgent' || activeTab === 'cop'
                   ? activeTab
                   : activeTab +
                     (loading || !hydrated
@@ -1535,9 +1513,9 @@ export default function PayrollDispatch() {
               transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
               className="flex h-full min-h-0 flex-col"
             >
-              {/* Only over queue views — Reports / Urgent / Orphanage / Notifications
+              {/* Only over queue views — Urgent / Orphanage / Notifications
                   do not read the contractor source. */}
-              {!['reports', 'notifications', 'orphanage', 'urgent'].includes(activeTab) && (
+              {!['notifications', 'orphanage', 'urgent'].includes(activeTab) && (
                 <>
                   {valuesWarningBanner}
                   {contractorErrorBanner}

@@ -7,7 +7,6 @@ import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
   Banknote,
   Bell,
-  ClipboardList,
   ShieldOff,
   Coins,
   Globe2,
@@ -216,7 +215,6 @@ export default function PayrollClerkSidebar({
           </p>
           <nav className="flex flex-col gap-px">
             {navBtn('history', 'Sent payments', Banknote)}
-            {navBtn('reports', 'Weekly reports', ClipboardList)}
             {navBtn('excluded', 'Excluded', ShieldOff)}
             {navBtn(
               'notifications',
