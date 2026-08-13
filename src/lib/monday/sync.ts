@@ -7,6 +7,11 @@
  *   • existing items → STRUCTURE patched (SP, type, sprint, quarter, priority,
  *     epic + project relations). Status and Actual SP are never overwritten —
  *     the board owns execution state.
+ *   • an existing TASK whose group disagrees with its plan sprint is MOVED to
+ *     the right group, because the group and the Sprint label are one fact and
+ *     writing only the label leaves the row filed under the wrong heading.
+ *     Epics are NOT moved between quarter groups — that same gap still exists
+ *     on the epic path and no plan quarter has changed yet.
  *   • project rollup refreshed: Total SP = Σ plan Epic SP; SP Completed =
  *     Σ Epic SP of epics whose LIVE board status is Shipped.
  *   • every epic's Linked Tasks and the project's Sprint Tasks relations are
@@ -42,6 +47,8 @@ export interface SyncReport {
   epicsUpdated: number;
   tasksCreated: string[];
   tasksUpdated: number;
+  /** Rows whose GROUP disagreed with the plan's sprint, as `plan name → sprint key`. */
+  tasksMoved: string[];
   projectTotalSp: number;
   projectCompletedSp: number;
   warnings: string[];
@@ -51,6 +58,8 @@ interface BoardItem {
   id: string;
   name: string;
   statusText: string | null;
+  /** Which group the row physically sits in — needed to detect a sprint re-attribution. */
+  groupId: string;
 }
 
 function token(): string {
@@ -96,7 +105,7 @@ async function gql<T = Record<string, unknown>>(
   throw lastError instanceof Error ? lastError : new Error('Monday API unreachable');
 }
 
-/** All items on a board with the given status column's text (paginated). */
+/** All items on a board with the given status column's text and their group (paginated). */
 async function listItems(boardId: string, statusColumnId: string): Promise<BoardItem[]> {
   const items: BoardItem[] = [];
   let cursor: string | null = null;
@@ -105,17 +114,27 @@ async function listItems(boardId: string, statusColumnId: string): Promise<Board
       boards: {
         items_page: {
           cursor: string | null;
-          items: { id: string; name: string; column_values: { id: string; text: string | null }[] }[];
+          items: {
+            id: string;
+            name: string;
+            group: { id: string } | null;
+            column_values: { id: string; text: string | null }[];
+          }[];
         };
       }[];
     }>(
-      `query($b:[ID!],$c:String,$col:[String!]){boards(ids:$b){items_page(limit:500,cursor:$c){cursor items{id name column_values(ids:$col){id text}}}}}`,
+      `query($b:[ID!],$c:String,$col:[String!]){boards(ids:$b){items_page(limit:500,cursor:$c){cursor items{id name group{id} column_values(ids:$col){id text}}}}}`,
       { b: [boardId], c: cursor, col: [statusColumnId] },
     );
     const page = data.boards[0]?.items_page;
     if (!page) break;
     for (const it of page.items) {
-      items.push({ id: it.id, name: it.name, statusText: it.column_values[0]?.text ?? null });
+      items.push({
+        id: it.id,
+        name: it.name,
+        statusText: it.column_values[0]?.text ?? null,
+        groupId: it.group?.id ?? '',
+      });
     }
     cursor = page.cursor;
   } while (cursor);
@@ -124,6 +143,14 @@ async function listItems(boardId: string, statusColumnId: string): Promise<Board
 
 const M_CREATE = `mutation($board:ID!,$group:String,$name:String!,$cols:JSON){create_item(board_id:$board,group_id:$group,item_name:$name,column_values:$cols){id}}`;
 const M_UPDATE = `mutation($board:ID!,$item:ID!,$cols:JSON!){change_multiple_column_values(board_id:$board,item_id:$item,column_values:$cols){id}}`;
+/**
+ * A row's GROUP and its Sprint label are the same fact stated twice, so one writer has to own both.
+ * The update payload has always written the Sprint label; before this mutation existed it could not
+ * write the group, so re-attributing a task left it under its original sprint heading with a Sprint
+ * column naming a different one — a half-move that reads worse on the board than no move at all.
+ * Only issued when the group actually differs, so a steady-state pass costs zero extra calls.
+ */
+const M_MOVE_GROUP = `mutation($item:ID!,$group:String!){move_item_to_group(item_id:$item,group_id:$group){id}}`;
 
 /** Run promise factories with bounded concurrency (Monday tolerates ~6 well). */
 async function pool<T>(jobs: (() => Promise<T>)[], size = 5): Promise<T[]> {
@@ -147,6 +174,7 @@ export async function syncHrisBoard(opts: { dryRun?: boolean; ownerId?: number }
     epicsUpdated: 0,
     tasksCreated: [],
     tasksUpdated: 0,
+    tasksMoved: [],
     projectTotalSp: 0,
     projectCompletedSp: 0,
     warnings: [],
@@ -243,8 +271,15 @@ export async function syncHrisBoard(opts: { dryRun?: boolean; ownerId?: number }
         ...(task.priority ? { [TASK_COLS.priority]: { index: TASK_PRIORITY_INDEX[task.priority] } } : {}),
         ...relationCols,
       });
+      // The group is only moved when it disagrees with the plan's sprint, so the common case adds
+      // no calls. Reported by name because a silent re-grouping is indistinguishable from a
+      // hand-drag by whoever reads the board next.
+      const targetGroup: string = TASK_GROUPS[task.sprint];
+      const needsMove = live.groupId !== '' && live.groupId !== targetGroup;
+      if (needsMove) report.tasksMoved.push(`${task.name} → ${task.sprint}`);
       taskUpdateJobs.push(async () => {
         await gql(M_UPDATE, { board: MONDAY_BOARDS.tasks, item: live.id, cols });
+        if (needsMove) await gql(M_MOVE_GROUP, { item: live.id, group: targetGroup });
       });
     } else {
       report.tasksCreated.push(task.name);

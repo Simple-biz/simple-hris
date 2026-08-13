@@ -175,8 +175,19 @@ One Gridline pass left verification dead for 5.5 hours.
 - **Re-query `groups{id title}` every pass.** A cached list goes stale; Sprint 26 was absent from the
   earlier notes entirely.
 - **There is no Sprint 27 label or group**, and the API cannot create one. When Sprint 26 ends
-  (Aug 15), someone adds it on the board by hand and mirrors it into `TASK_SPRINT_LABELS`. Until then,
-  **hard-stop** rather than silently dumping new work into Backlog.
+  (Aug 15), someone adds it on the board by hand and mirrors it into `TASK_SPRINT_LABELS` **and
+  `TASK_SPRINT_WINDOWS`**. Until then, **hard-stop** rather than silently dumping new work into Backlog.
+  Mirroring the window is not optional bookkeeping: it is what re-bounds Sprint 26 to Aug 4-15 + its
+  own gap instead of leaving Aug 16-17 attributable to nothing.
+- **A sprint label asserts a date range, and `selfcheck()` enforces it.** Windows live in
+  `TASK_SPRINT_WINDOWS`, mirrored from the board group titles (`Sprint 26 · Aug 4-15`, …). A row whose
+  Completed Date falls outside its sprint is refused. Sprints run **Tue → Sat**, so Sun+Mon between two
+  sprints belong to no window; `taskSprintAttribution()` gives those gap days to the sprint that
+  **closed** (Kane 2026-08-13: Sprint 26 is Aug 4-15 only), never to the one about to open.
+- **The board label is not what re-files a row — the GROUP is.** `sync.ts` writes the Sprint label on
+  update but wrote the group only at create until 2026-08-13, so a plan relabel alone left rows filed
+  under their old sprint heading. `move_item_to_group` now runs from the update path when the two
+  disagree. Epics are still NOT moved between quarter groups — the same gap, unexercised so far.
 - **Never `git push`.** Kane handles every push.
 
 ## Known drift
@@ -186,7 +197,11 @@ One Gridline pass left verification dead for 5.5 hours.
   corrected. It currently costs 12 SP of SP Completed.
 - **Nine epics carry 220 SP with zero task rows** (HRIS-01, 16, 17, 22, 23, 25, 29, 31, 32).
 - **74 pre-existing Done rows have no Completed Date** — HRIS never wrote the column before this
-  skill. Backfilling is a separate pass; if you do it, refuse to write a date inside the live sprint
-  so a historical backfill can never read as a fresh claim.
+  skill. Backfilling is a separate pass. The old rule here — "refuse to write a date inside the live
+  sprint" — is **superseded**: it would have blocked the 20 rows that genuinely finished inside the
+  live sprint on 2026-08-13. What replaced it is stronger, not looser: `selfcheck()` runs `git log` and
+  refuses any Completed Date that is not the commit date of the row's last sha, so a stale backfill
+  cannot read as fresh *and* a flattering guess cannot pass either. `dateBasis: 'external'` is the one
+  exemption, for work that is an action in another system, and it must name a confirmation.
 - **`MONDAY` is still unset in Vercel**, so the in-app button 502s in production. This skill is
   unaffected — it reads `.env` locally.

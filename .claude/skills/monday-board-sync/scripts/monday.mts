@@ -37,6 +37,8 @@ export const {
   TASK_PRIORITY_INDEX,
   TASK_SPRINT_INDEX,
   TASK_SPRINT_LABELS,
+  TASK_SPRINT_WINDOWS,
+  taskSprintAttribution,
   TASK_STATUS_INDEX,
   TASK_TYPE_INDEX,
   epicItemName,

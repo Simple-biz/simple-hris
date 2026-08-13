@@ -5,66 +5,59 @@
  * whether a row exists and its structure; a row's Status beyond Done/Ready to Start, its Completed
  * Date, and the evidence update all live here.
  *
- * `selfcheck()` is the guard rail. It refuses a non-Fibonacci score, a task over the 8-SP cap, an
- * angle bracket in a name, a name that is not in PLAN_TASKS byte-exact, a Completed Date on a row
- * that is not Done, and a Done row with no stated basis. Never bypass it.
+ * `selfcheck()` is the guard rail. Never bypass it.
  *
- * ── 2026-08-12 pass, EIGHTH — the external step itself becomes a row ──────────────────────────────
- * Kane approved adding ONE row: the live n8n import of paystub-dispatch.workflow.json. This is the
- * unusual case where the work being tracked is not a commit at all — it is an action in an external
- * system — so the evidence cited is the commit that PRODUCED the artefact to import, not a commit
- * that implements the row.
+ * ── 2026-08-13 pass — SPRINT RE-ATTRIBUTION, 57 rows ──────────────────────────────────────────────
+ * Kane: "Move all sprint tasks from Sprint 26 and move it to its proper period because sprint 26 is
+ * for August 4-15 only, make sure all completed dates are within that period."
  *
- * It was created Ready to Start and moved to DONE the same day, when Kane confirmed the new workflow
- * is live. Ready to Start — never Pending Deploy — was correct at creation: Pending Deploy means code
- * is complete and waiting on an external step, and here the row WAS the external step. Had it read
- * Pending Deploy the board would have shown four rows waiting on each other with nothing naming the
- * actual next action. Same-day Ready to Start → Done is the gate working, not a change of mind.
+ * WHAT WAS WRONG. `5a6c52f` (2026-08-05) filed "1 epic + 46 tasks for Jul 29–Aug 5" into Sprint 26 in
+ * one go. But the board's own group titles say Sprint 25 covers Jul 21–Aug 1 and Sprint 26 starts
+ * Aug 4, so most of that span was already Sprint 25's work when it was filed. Measured per row
+ * against git rather than re-read off the commit message: of the 57 rows labelled Sprint 26,
+ * **37 finished before Aug 4** — 94 SP of Sprint 25's work that the board credited to Sprint 26.
  *
- * The Done is recorded as SIGN-OFF and says so, because no test send has been made yet. The first
- * dispatch through the new workflow is the real proof, and it is cheap to check without opening n8n:
- * the new summary node returns a `skipped` field and the old one does not.
+ * The 11 rows added by the later passes (2026-08-11/12) were all correctly dated Aug 6–12 and stay.
  *
- * Why it earns its own row rather than the HRIS-15 catch-all: see the rationale comment in
- * hris-plan.ts beside the entry. Short version — that chore sits in S25, its premise is largely
- * folklore, and nobody would mark it Done for importing one specific workflow.
+ * HOW EVERY DATE WAS DERIVED. Each row's date is the commit date of its LAST implementing commit,
+ * found by clustering the range on FILE OVERLAP, never on commit message — this range is exactly the
+ * trap the skill warns about: `799d6df` "Push" carries five unrelated features (the active_employees
+ * restore, /api/roster/gml-status, the collab admin setting, the document preview panel and the
+ * webhook sample payloads), `6907393` "asda" carries the whole payout-extras API, and `87e0773`
+ * "Major Update -" carries both the staged-placement guard and the paystub catalog guard. Nothing
+ * here is hand-typed: `selfcheck()` re-runs `git log` per row and refuses a date git does not confirm.
  *
- * NOTE ON STALENESS, checked rather than assumed: the JSON is dated 2026-08-06 (02dc5aa) while the
- * statement changed three times after it (0a731ed, c97d0b5, e0028b8). It is still current anyway,
- * and that is the entire point of the redesign — the Gmail node is now `{{ $json.paystub_html }}`,
- * a dumb pipe, so statement changes no longer touch the workflow. A pre-02dc5aa workflow is what
- * renders its own stale HTML.
+ * THE GAP DAYS, which needed a ruling. Sprints run Tuesday → Saturday, so Sunday+Monday between two
+ * sprints fall in NO window, and 10 rows finished on Monday 2026-08-03. Kane's call: Sprint 26 is
+ * Aug 4-15 **only**, so they are filed under the sprint that closed (Sprint 25). Recorded because the
+ * dates alone cannot settle it and a later reader would otherwise re-litigate it.
  *
- * ── 2026-08-12 pass, seventh — CORRECTION to the basis posted on 12786252360 ──────────────────────
- * Kane read the Sprint 26 close-out and said he thought the onboarding row was done too. Re-measured
- * instead of re-asserting: it is NOT, and the row's status does not move. But checking it exposed an
- * error in the basis THIS SKILL POSTED to that row hours earlier, and a wrong audit trail on a board
- * whose whole value is a trustworthy audit trail has to be corrected in place.
+ * WHAT THIS PASS DOES NOT DO. No status moves and no Actual SP is recomputed — every one of the 57
+ * rows was already Done and keeps its score. The project rollup is computed from EPIC SP and epic
+ * status and never reads a task's sprint, so SP Completed and anything riding on it are untouched.
+ * This is attribution, not money.
  *
- * WHAT WAS WRONG. The close-out basis claimed a read-only probe returned 42703 for "ALL FOUR target
- * columns", naming hr_onboarding_submissions.name_order_confirmed_at and
- * hr_pending_employees.name_order_confirmed_at alongside the two middle_name columns. Those two do
- * not exist anywhere in the design — not in add_middle_name_to_onboarding.sql, not in the app, not
- * in any type. I invented them for the probe and then cited their absence as evidence. The
- * name-order check persists NOTHING by design: it is React state (`nameCheckAcknowledged`,
- * page.tsx:279-281), fires once per session however it is dismissed, and needs no column at all.
+ * WHY IT NEEDED A CODE CHANGE. Flipping `sprint:` in the plan alone would have half-moved the rows:
+ * the reconciler wrote the Sprint LABEL on update but set the group only at create, so 37 rows would
+ * have sat under the "Sprint 26 · Aug 4-15" heading with a Sprint column reading "Sprint 25". The
+ * group is now reconciled alongside the label (`M_MOVE_GROUP`, issued only when they disagree).
  *
- * WHAT SURVIVES, AND IS THE ONLY REASON THIS ROW IS STILL HELD. The migration adds exactly TWO
- * columns and both are genuinely missing in production, measured twice ~40 minutes apart. The
- * `middle_name` half is therefore deployed and silently lossy; the name-order half is fully working.
- * Overstating the evidence made a correct verdict rest on a false specific, which is worse than a
- * thin one — anyone re-checking would have found two of my four columns fictional and had every
- * reason to discard the whole finding, including the true part.
+ * NOT TOUCHED, deliberately. Five rows sit in **Backlog** whose work landed INSIDE Aug 4-15 — the
+ * mirror image of this bug (the column-AN pay rule Aug 11, merged Weekend Hours Aug 7, paystub email
+ * in-app Aug 6, offboard delete-only Aug 10, HSL sub-departments Aug 10). Kane's call 2026-08-13: out
+ * of scope for this pass. They are named here so the next pass does not have to rediscover them.
  *
- * Status is UNCHANGED at Pending Deploy. One row, `--only-new`, ~6 calls: the write is the corrected
- * item update, with the status set re-asserted to the value it already holds.
+ * COST. This is a FULL-PATH pass (structure changes), ~200 reconciler calls + 57 corrections + 57
+ * evidence updates + the verify read. Run it as the day's only board work — the daily complexity
+ * budget was already exhausted on 2026-08-13 before this could be applied.
  */
-import { PLAN_TASKS } from './monday.mts';
+import { execFileSync } from 'node:child_process';
+import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-08-12';
-export const AUDIT_RANGE = '02dc5aa..e0028b8';
-export const AUDIT_COMMITS = 67;
+export const PASS_DATE = '2026-08-13';
+export const AUDIT_RANGE = '83b25e4..HEAD';
+export const AUDIT_COMMITS = 345;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -74,150 +67,435 @@ export interface PassRow {
   /** Written ONLY when status is Done. A date on an unshipped row is an invented record. */
   completed?: string;
   shas: string[];
+  /**
+   * How the Completed Date is justified. Default `'commit'` means it MUST equal the commit date of
+   * the last sha — selfcheck asks git, so a mistyped or optimistic date fails rather than lands.
+   *
+   * `'external'` is the narrow exemption for a row whose work is an action in another system (an n8n
+   * import, a migration run), where the shas produced the artefact and the completion is the day
+   * someone did the thing. It still has to fall inside the sprint's window, and `basis` still has to
+   * say who confirmed it — it buys freedom from the sha date, nothing else.
+   */
+  dateBasis?: 'commit' | 'external';
   /** Why this status and not a higher one. Goes onto the board as the item update. */
   basis: string;
   /** Named external steps still open. Must be empty when status is Done. */
   blockers?: string[];
 }
 
-const N8N_LIVE =
-  'THE WORKFLOW IS LIVE. Kane deployed across all three systems 2026-08-12 ("Pushed - and deployed ' +
-  'on vercel github and n8n") and showed the n8n Executions tab: workflow Paystub Automation, ' +
-  'Published, runs succeeding in ~1.1s. The node chain in that screenshot goes Normalize Email → ' +
-  'Throttle (600ms) → Send PayStub with NO pay_vars node between them, which is the single ' +
-  'clearest tell that the new pipe workflow replaced the old template-carrying one. ' +
-  'MEASURED INDEPENDENTLY, read-only against production the same evening: local and origin/main ' +
-  'both at 83042ff (0 ahead, 0 behind) so the deploy has the code; 40 paystub rows stamped sent_at ' +
-  'after 17:00Z including 32 HSL, the latest at 22:57; 30 of those HSL payloads carry the ' +
-  'hogan_sheet block; and ZERO rows across all 40 carry a last_error. A skipped item would have ' +
-  'landed "Skipped — ..." in last_error, so nothing was skipped and nothing failed. ';
-
-const N8N_LIMIT =
-  'WHAT IS STILL NOT PROVEN, stated because it is the honest edge of this evidence: no email BODY ' +
-  'was opened and compared against the in-app Pay Stub modal. Zero-errors does not by itself ' +
-  'discriminate old workflow from new — the old one also returns clean summaries, it just renders ' +
-  'its own stale HTML. The discriminating field is `skipped`, which the new summary node returns ' +
-  'and the old one does not, but the HRIS does not persist it. So the workflow identity rests on ' +
-  'Kane\'s deployment confirmation plus the screenshot; everything else above is measured. ';
-
 export const ROWS: PassRow[] = [
-  // ── Done · Sprint 26 · the sheet-form pay rule, measured end to end ───────────────────────────
+  // ── RE-ATTRIBUTED to Sprint 25 ──────────────────────────────────────────────────────────────
   {
-    name: 'HSL pay = the Hogan sheet column AN verbatim — hogan-week-pay becomes the single rate authority, reversing the 2026-08-07 weekend-OT removal',
+    name: 'Sub-₱7k PHP wires reroute to Wise + Under ₱7k dispatch filter chip',
     status: 'Done',
-    completed: '2026-08-12',
-    shas: ['e0028b8'],
-    basis:
-      'DONE 2026-08-12. This row has the strongest evidence of the three: it rests on a ' +
-      'MEASUREMENT, not a sign-off. ' +
-      'Kane unlocked and re-locked the 2026-08-02..08 cycle, and a read-only replay of the staged ' +
-      'payload for angelicaco@simple.biz reproduces the sheet exactly: hogan_sheet legs ' +
-      'base 8,079.30 (34.38h x 235) + weekend 2,242.50 (8.97h x 250) + ot_differential 393.63 ' +
-      '(3.35h x 117.50) = 10,715.43, which reconciles to pay_php.initial to the centavo, and ' +
-      'amount_php 16,115.43 — the figure Kane specified before any code was written. Rates on the ' +
-      'block are 235 / 250 / 117.50, so the OT leg is the derived 0.5x differential rather than a ' +
-      'stored OT rate. ' +
-      'AT SCALE, not just one person: 30 HSL payloads sent after 17:00Z on 2026-08-12 carry the ' +
-      'hogan_sheet block, with zero last_error across all 40 sends in that window. ' +
-      'THE RULE, for anyone reading this later: M-F hours always pay at the regular rate and never ' +
-      're-rate; ALL Sat/Sun hours earn regular + 15, past-cap hours included; the only overtime ' +
-      'money is max(0, total - 40) x 0.5 x regular. This REVERSED 5eb398a, which had scoped the ' +
-      'premium to within-cap weekend hours only and left HRIS disagreeing with the sheet by ' +
-      'PHP 15 per weekend-OT hour. Deployed: e0028b8 is an ancestor of origin/main (83042ff). ' +
-      'Doc: docs/features/hsl-sheet-form-pay-rule is summarised in the memory of the same name.',
+    completed: '2026-07-29',
+    shas: ['b77cb57', 'cf34d08', '1ffa01f', '57f07a5'],
+    basis: 'Completed 2026-07-29; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 57f07a5 (2026-07-29), from the 4-commit cluster b77cb57, cf34d08, 1ffa01f, 57f07a5. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
   },
-  // ── Done · Sprint 26 · the merged Weekend Hours line, now visible in email too ────────────────
   {
-    name: 'One merged Weekend Hours line + dated rate-change disclosure on statement, email and export',
+    name: 'Staged-only dispatch placement guard',
     status: 'Done',
-    completed: '2026-08-12',
-    shas: ['0a731ed', 'c97d0b5'],
-    basis:
-      'DONE 2026-08-12. The in-app half shipped 2026-08-07 and was never in doubt; what held this ' +
-      'row was the EMAIL half, which could not be true while live n8n rendered its own HTML. ' +
-      N8N_LIVE +
-      'WHY THE EMAIL HALF MATTERED HERE SPECIFICALLY: the old template had no weekend row at all, ' +
-      'so an HSL employee saw a merged Weekend Hours line in the app and nothing corresponding in ' +
-      'the inbox — one breakdown in two places, which is the exact defect this row exists to close. ' +
-      'On angelicaco\'s 2026-08-02..08 statement the missing line was PHP 2,242.50. ' +
-      'SCOPE: one merged Weekend Hours row carrying both pay buckets with a per-rate basis ' +
-      '(0a731ed), plus the dated rate-change disclosure that chips a weekend paid on the old side ' +
-      'of a rate change (c97d0b5) — the case where a whole weekend sits on one side of the change ' +
-      'so no bucket spans it and nothing used to signal the difference. ' +
-      N8N_LIMIT,
+    completed: '2026-07-29',
+    shas: ['87e0773'],
+    basis: 'Completed 2026-07-29; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 87e0773 (2026-07-29), from the 1-commit cluster 87e0773. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
   },
-  // ── Done · Sprint 26 · the pipe itself + the snapshot columns ─────────────────────────────────
   {
-    name: 'Paystub email HTML rendered in-app (n8n Gmail becomes a pipe) + System Bonus snapshot columns on payment_dispatches',
+    name: 'Paystub rate-consistency guard — Payment Catalog is the source of truth',
     status: 'Done',
-    completed: '2026-08-12',
-    shas: ['02dc5aa'],
-    basis:
-      'DONE 2026-08-12. Two deliverables, both now satisfied. ' +
-      'ONE — the emailed statement is rendered by the HRIS (src/lib/payroll/paystub-email-html.ts) ' +
-      'and posted as paystub_html, with the n8n Gmail node reduced to ' +
-      'subject = {{ $json.paystub_subject }} / message = {{ $json.paystub_html }}. ' + N8N_LIVE +
-      'TWO — the System Bonus snapshot columns exist on payment_dispatches, VERIFIED by direct ' +
-      'read: rows return system_bonus_php and system_bonus_label, so the DDL is applied in ' +
-      'production rather than merely written. ' +
-      'WHY THIS ROW EXISTED AT ALL: the statement HTML used to live inside the n8n Gmail node ' +
-      'against a flat pay_vars Set node, so every statement change needed a hand-edit in live n8n. ' +
-      'Twice it never happened, and employees read one breakdown in their Pay Stubs tab and a ' +
-      'different one in their inbox for the same payment. Moving the render into the app makes ' +
-      'that class of drift structurally impossible — statement changes no longer touch the ' +
-      'workflow, which is also why the 2026-08-06 JSON was still current three statement commits ' +
-      'later. ' + N8N_LIMIT,
+    completed: '2026-07-29',
+    shas: ['87e0773'],
+    basis: 'Completed 2026-07-29; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 87e0773 (2026-07-29), from the 1-commit cluster 87e0773. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
   },
-  // ── Done · Sprint 26 · Kane confirmed the new workflow is live ────────────────────────────────
+  {
+    name: 'Rate snapshots toggle on Dispatch — floating People/Catalog cards',
+    status: 'Done',
+    completed: '2026-07-30',
+    shas: ['06b3fd7'],
+    basis: 'Completed 2026-07-30; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 06b3fd7 (2026-07-30), from the 1-commit cluster 06b3fd7. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 2 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Mid-week rate-change proration on the statement — catalog-consistent history, both engines',
+    status: 'Done',
+    completed: '2026-07-30',
+    shas: ['9a767a4', '5b66a40'],
+    basis: 'Completed 2026-07-30; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 5b66a40 (2026-07-30), from the 2-commit cluster 9a767a4, 5b66a40. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Urgent payments: week-long bucket (Pending/Paid/Not Paid) + Undo + n8n alert',
+    status: 'Done',
+    completed: '2026-07-30',
+    shas: ['5c82064', 'b2ff805', '3f4240b'],
+    basis: 'Completed 2026-07-30; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 3f4240b (2026-07-30), from the 3-commit cluster 5c82064, b2ff805, 3f4240b. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Colombian payees show/copy their native COP amount',
+    status: 'Done',
+    completed: '2026-07-30',
+    shas: ['9f235c7'],
+    basis: 'Completed 2026-07-30; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 9f235c7 (2026-07-30), from the 1-commit cluster 9f235c7. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Payment cycle 100% paid → completion email to Accounting',
+    status: 'Done',
+    completed: '2026-07-30',
+    shas: ['836f68f'],
+    basis: 'Completed 2026-07-30; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 836f68f (2026-07-30), from the 1-commit cluster 836f68f. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 2 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'HSL Weekend Hours itemized under Earnings + transfer-week day scoping',
+    status: 'Done',
+    completed: '2026-07-30',
+    shas: ['3d820c3', '9e17ac9'],
+    basis: 'Completed 2026-07-30; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 9e17ac9 (2026-07-30), from the 2-commit cluster 3d820c3, 9e17ac9. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Payment Catalog Overview → Summary pay-mix dashboard',
+    status: 'Done',
+    completed: '2026-07-30',
+    shas: ['fee8f00', '9fd132c', 'dd2fed5', 'e997c0e', '8764d67'],
+    basis: 'Completed 2026-07-30; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 8764d67 (2026-07-30), from the 5-commit cluster fee8f00, 9fd132c, dd2fed5, e997c0e, 8764d67. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Payment Catalog Department cards + Search hero dock-to-top glide',
+    status: 'Done',
+    completed: '2026-07-30',
+    shas: ['3e77bb1', '773acf1'],
+    basis: 'Completed 2026-07-30; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 773acf1 (2026-07-30), from the 2-commit cluster 3e77bb1, 773acf1. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 2 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Shared master-list email merged two people\'s KPI bonuses',
+    status: 'Done',
+    completed: '2026-07-30',
+    shas: ['5cd515c'],
+    basis: 'Completed 2026-07-30; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 5cd515c (2026-07-30), from the 1-commit cluster 5cd515c. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Custom System Bonuses in COP/USD (PAB & Tech currency variants)',
+    status: 'Done',
+    completed: '2026-07-30',
+    shas: ['c4663e8'],
+    basis: 'Completed 2026-07-30; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit c4663e8 (2026-07-30), from the 1-commit cluster c4663e8. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Overview Total Payout hero counts the full pay run (payout extras)',
+    status: 'Done',
+    completed: '2026-07-30',
+    shas: ['6907393', '640e3af'],
+    basis: 'Completed 2026-07-30; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 640e3af (2026-07-30), from the 2-commit cluster 6907393, 640e3af. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Observe mirror portaled to the document body so the sidebar cannot overlap it',
+    status: 'Done',
+    completed: '2026-07-30',
+    shas: ['3bb0efa'],
+    basis: 'Completed 2026-07-30; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 3bb0efa (2026-07-30), from the 1-commit cluster 3bb0efa. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 1 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Page every roster/pay read past PostgREST\'s silent 1000-row cap',
+    status: 'Done',
+    completed: '2026-07-30',
+    shas: ['2829a6d'],
+    basis: 'Completed 2026-07-30; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 2829a6d (2026-07-30), from the 1-commit cluster 2829a6d. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'HR Transfers tab shows the full transfer trail again',
+    status: 'Done',
+    completed: '2026-07-30',
+    shas: ['19e504b'],
+    basis: 'Completed 2026-07-30; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 19e504b (2026-07-30), from the 1-commit cluster 19e504b. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 2 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Accounting-only dispatch log panel on the Pay Stub modal + Excluded/Paid Records rework',
+    status: 'Done',
+    completed: '2026-07-31',
+    shas: ['f2d9c83', 'c39b9ab'],
+    basis: 'Completed 2026-07-31; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit c39b9ab (2026-07-31), from the 2-commit cluster f2d9c83, c39b9ab. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Tech bonus on recovered weeks + one paystub row per week',
+    status: 'Done',
+    completed: '2026-07-31',
+    shas: ['aa6942c'],
+    basis: 'Completed 2026-07-31; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit aa6942c (2026-07-31), from the 1-commit cluster aa6942c. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'MESA disbursement receipts — Receipt column, gallery, Approved/Paid from dispatch',
+    status: 'Done',
+    completed: '2026-07-31',
+    shas: ['3a0be89', 'c6d6ea0', 'f23a2b6'],
+    basis: 'Completed 2026-07-31; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit f23a2b6 (2026-07-31), from the 3-commit cluster 3a0be89, c6d6ea0, f23a2b6. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'HRIS generates the Certificate of Engagement — no upload',
+    status: 'Done',
+    completed: '2026-07-31',
+    shas: ['d9128c6', 'a129c93', '8d297d0', '9874e4c'],
+    basis: 'Completed 2026-07-31; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 9874e4c (2026-07-31), from the 4-commit cluster d9128c6, a129c93, 8d297d0, 9874e4c. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Checklist lock webhook sanitizes emails so one bad cell cannot strand the week',
+    status: 'Done',
+    completed: '2026-07-31',
+    shas: ['f4a53e2'],
+    basis: 'Completed 2026-07-31; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit f4a53e2 (2026-07-31), from the 1-commit cluster f4a53e2. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 2 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Contractor invoices period-scoped to the pay cycle; dispatch rows open the invoice',
+    status: 'Done',
+    completed: '2026-07-31',
+    shas: ['9e5ae52', 'f2d9c83'],
+    basis: 'Completed 2026-07-31; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit f2d9c83 (2026-07-31), from the 2-commit cluster 9e5ae52, f2d9c83. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Penny AI: full audit-log visibility (timeline, notes history, action catalogue)',
+    status: 'Done',
+    completed: '2026-07-31',
+    shas: ['e5e2aec'],
+    basis: 'Completed 2026-07-31; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit e5e2aec (2026-07-31), from the 1-commit cluster e5e2aec. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Pay-cycle report snapshot model + publish/list/unpublish API',
+    status: 'Done',
+    completed: '2026-07-31',
+    shas: ['81b0048', 'e907c3f', 'a61f2f1'],
+    basis: 'Completed 2026-07-31; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit a61f2f1 (2026-07-31), from the 3-commit cluster 81b0048, e907c3f, a61f2f1. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Reports tab: list, detail view + CSV/XLSX/PDF export',
+    status: 'Done',
+    completed: '2026-07-31',
+    shas: ['dd53af5', 'bb5f365', 'e87d768', 'e0f97ad'],
+    basis: 'Completed 2026-07-31; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit e0f97ad (2026-07-31), from the 4-commit cluster dd53af5, bb5f365, e87d768, e0f97ad. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Publish-gate + unpublish-audit hardening',
+    status: 'Done',
+    completed: '2026-08-01',
+    shas: ['98fb88e', 'f401e50', 'cda5fc5', 'c218725'],
+    basis: 'Completed 2026-08-01; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit c218725 (2026-08-01), from the 4-commit cluster 98fb88e, f401e50, cda5fc5, c218725. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'PAB exclusion → employee notification (route + DDL + wizard toggle)',
+    status: 'Done',
+    completed: '2026-08-03',
+    shas: ['38c6399', '88b5d52', '422e455', 'c41f1b3', '3ce712f'],
+    basis: 'Completed 2026-08-03; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 3ce712f (2026-08-03), from the 5-commit cluster 38c6399, 88b5d52, 422e455, c41f1b3, 3ce712f. GAP-DAY (Mon Aug 3, between sprints) — filed under the sprint that closed, per Kane 2026-08-13. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'security_invoker on active_employees blanked the wizard dept source — restore + verifier',
+    status: 'Done',
+    completed: '2026-08-03',
+    shas: ['799d6df'],
+    basis: 'Completed 2026-08-03; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 799d6df (2026-08-03), from the 1-commit cluster 799d6df. GAP-DAY (Mon Aug 3, between sprints) — filed under the sprint that closed, per Kane 2026-08-13. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Roster bulk check hit an RLS-blocked view — direct GML read via /api/roster/gml-status',
+    status: 'Done',
+    completed: '2026-08-03',
+    shas: ['799d6df'],
+    basis: 'Completed 2026-08-03; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 799d6df (2026-08-03), from the 1-commit cluster 799d6df. GAP-DAY (Mon Aug 3, between sprints) — filed under the sprint that closed, per Kane 2026-08-13. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Employee Pay snapshot grid + one-page Pay Summary PDF',
+    status: 'Done',
+    completed: '2026-08-03',
+    shas: ['0e18f47', '4fd7e42', '3176550', '2807f52'],
+    basis: 'Completed 2026-08-03; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 2807f52 (2026-08-03), from the 4-commit cluster 0e18f47, 4fd7e42, 3176550, 2807f52. GAP-DAY (Mon Aug 3, between sprints) — filed under the sprint that closed, per Kane 2026-08-13. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Collab on/off as an admin system setting',
+    status: 'Done',
+    completed: '2026-08-03',
+    shas: ['799d6df'],
+    basis: 'Completed 2026-08-03; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 799d6df (2026-08-03), from the 1-commit cluster 799d6df. GAP-DAY (Mon Aug 3, between sprints) — filed under the sprint that closed, per Kane 2026-08-13. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Webhooks admin: sample payloads for every configured slug',
+    status: 'Done',
+    completed: '2026-08-03',
+    shas: ['799d6df'],
+    basis: 'Completed 2026-08-03; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 799d6df (2026-08-03), from the 1-commit cluster 799d6df. GAP-DAY (Mon Aug 3, between sprints) — filed under the sprint that closed, per Kane 2026-08-13. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 2 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Employee document preview panel',
+    status: 'Done',
+    completed: '2026-08-03',
+    shas: ['799d6df'],
+    basis: 'Completed 2026-08-03; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 799d6df (2026-08-03), from the 1-commit cluster 799d6df. GAP-DAY (Mon Aug 3, between sprints) — filed under the sprint that closed, per Kane 2026-08-13. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Wizard Setup readiness checklist as its own first tab + week-scoped roster + step-1 CSV modal',
+    status: 'Done',
+    completed: '2026-08-03',
+    shas: ['7a0ca42', 'f3c6999', '6f76f5f'],
+    basis: 'Completed 2026-08-03; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 6f76f5f (2026-08-03), from the 3-commit cluster 7a0ca42, f3c6999, 6f76f5f. GAP-DAY (Mon Aug 3, between sprints) — filed under the sprint that closed, per Kane 2026-08-13. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Payroll Notes FAB readiness ring + Readiness leads the tab strip',
+    status: 'Done',
+    completed: '2026-08-03',
+    shas: ['d9a0e33', '547cd09', '257ae10'],
+    basis: 'Completed 2026-08-03; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 257ae10 (2026-08-03), from the 3-commit cluster d9a0e33, 547cd09, 257ae10. GAP-DAY (Mon Aug 3, between sprints) — filed under the sprint that closed, per Kane 2026-08-13. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Payroll Notes tab cache — board, readiness + rates no longer re-pulled',
+    status: 'Done',
+    completed: '2026-08-03',
+    shas: ['44bc1bd'],
+    basis: 'Completed 2026-08-03; filed under Sprint 25 (Jul 21–Aug 1). DATE BASIS: last implementing commit 44bc1bd (2026-08-03), from the 1-commit cluster 44bc1bd. GAP-DAY (Mon Aug 3, between sprints) — filed under the sprint that closed, per Kane 2026-08-13. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 2 SP; no status moved and no Actual SP was recomputed.',
+  },
+  // ── CONFIRMED Sprint 26 ─────────────────────────────────────────────────────────────────────
+  {
+    name: 'Per-cycle FX zero placeholders — dispatch hard-blocked until both legs are set',
+    status: 'Done',
+    completed: '2026-08-04',
+    shas: ['5bc3413', '0b36d46', '0dbc294'],
+    basis: 'Completed 2026-08-04; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit 0dbc294 (2026-08-04), from the 3-commit cluster 5bc3413, 0b36d46, 0dbc294. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Rate-history effective_from snapped to the pay-week start',
+    status: 'Done',
+    completed: '2026-08-04',
+    shas: ['c39fad3'],
+    basis: 'Completed 2026-08-04; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit c39fad3 (2026-08-04), from the 1-commit cluster c39fad3. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'HSL OT-rate arrears audit + remediation — weekend premium sat in the OT column',
+    status: 'Done',
+    completed: '2026-08-04',
+    shas: ['28a87fe', 'b3ab13a'],
+    basis: 'Completed 2026-08-04; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit b3ab13a (2026-08-04), from the 2-commit cluster 28a87fe, b3ab13a. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: '“Set rate” updates the existing pay structure instead of dying on a duplicate key',
+    status: 'Done',
+    completed: '2026-08-04',
+    shas: ['d9f34ef'],
+    basis: 'Completed 2026-08-04; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit d9f34ef (2026-08-04), from the 1-commit cluster d9f34ef. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 2 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Bank Info per-week Temporary Exemption',
+    status: 'Done',
+    completed: '2026-08-04',
+    shas: ['f45c1c2'],
+    basis: 'Completed 2026-08-04; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit f45c1c2 (2026-08-04), from the 1-commit cluster f45c1c2. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Payroll Notes Offboarded tab — final-pay rate/bank for leavers',
+    status: 'Done',
+    completed: '2026-08-04',
+    shas: ['32d498f', '2e311a2', 'aac0a5c'],
+    basis: 'Completed 2026-08-04; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit aac0a5c (2026-08-04), from the 3-commit cluster 32d498f, 2e311a2, aac0a5c. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Collections TL + Simple Texting removed from the HSL schema + DB purge',
+    status: 'Done',
+    completed: '2026-08-04',
+    shas: ['243e3ee'],
+    basis: 'Completed 2026-08-04; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit 243e3ee (2026-08-04), from the 1-commit cluster 243e3ee. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 2 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Manager Suspend + Reactivation (temp-pause) riding the offboarding-deactivate flow',
+    status: 'Done',
+    completed: '2026-08-05',
+    shas: ['68aa6a0', 'b929b3e'],
+    basis: 'Completed 2026-08-05; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit b929b3e (2026-08-05), from the 2-commit cluster 68aa6a0, b929b3e. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'My Team: MESA-style table + card parity with row actions',
+    status: 'Done',
+    completed: '2026-08-05',
+    shas: ['c0ba7f9', 'b929b3e'],
+    basis: 'Completed 2026-08-05; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit b929b3e (2026-08-05), from the 2-commit cluster c0ba7f9, b929b3e. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Wizard Validation step shows the full per-person calculation with red and amber flags',
+    status: 'Done',
+    completed: '2026-08-07',
+    shas: ['4490333', '5eb2e1a', 'd39ff41', 'ba33b4b', 'fac504e', '4ab5714'],
+    basis: 'Completed 2026-08-07; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit 4ab5714 (2026-08-07), from the 6-commit cluster 4490333, 5eb2e1a, d39ff41, ba33b4b, fac504e, 4ab5714. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Wizard week selector replays that week\'s own bonuses, monthly HSL period and readiness instead of today\'s',
+    status: 'Done',
+    completed: '2026-08-10',
+    shas: ['54e91a1', 'c207482', '7124ed6', 'a29c93c'],
+    basis: 'Completed 2026-08-10; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit a29c93c (2026-08-10), from the 4-commit cluster 54e91a1, c207482, 7124ed6, a29c93c. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Close Pay Cycle from the Stop dialog — permanent close-out record naming who was left unpaid',
+    status: 'Done',
+    completed: '2026-08-10',
+    shas: ['275619c'],
+    basis: 'Completed 2026-08-10; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit 275619c (2026-08-10), from the 1-commit cluster 275619c. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Disbursement report, contractor and app-settings API routes gated by matching role — 2026-08-10 SECURITY_AUDIT re-verify',
+    status: 'Done',
+    completed: '2026-08-10',
+    shas: ['a7ecd4c'],
+    basis: 'Completed 2026-08-10; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit a7ecd4c (2026-08-10), from the 1-commit cluster a7ecd4c. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Eleven departments permanently retired from the KPI Calculator + Callback accepts external members',
+    status: 'Done',
+    completed: '2026-08-10',
+    shas: ['1a133ca', '7d14e04'],
+    basis: 'Completed 2026-08-10; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit 7d14e04 (2026-08-10), from the 2-commit cluster 1a133ca, 7d14e04. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Configurable Tech Bonus payout week (System Bonus modal, Sun–Sat) wired to every gate + KPI bonuses in the employee Estimated Take-Home',
+    status: 'Done',
+    completed: '2026-08-10',
+    shas: ['2b0935e', '9440650', 'b3e66e2', 'a0de67c'],
+    basis: 'Completed 2026-08-10; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit a0de67c (2026-08-10), from the 4-commit cluster 2b0935e, 9440650, b3e66e2, a0de67c. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Bank rail parity: People, wizard preview, Urgent cards and the bank-update form resolve the rail Payment Dispatch actually pays on; USD bucket retired',
+    status: 'Done',
+    completed: '2026-08-10',
+    shas: ['265eb64', '684b305', 'b13530d', 'a7ecd4c'],
+    basis: 'Completed 2026-08-10; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit a7ecd4c (2026-08-10), from the 4-commit cluster 265eb64, 684b305, b13530d, a7ecd4c. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Payment Dispatch prices every row from the Payroll Wizard — one shared snapshot-or-lock precedence — and syncs live across open screens',
+    status: 'Done',
+    completed: '2026-08-11',
+    shas: ['5950b2e'],
+    basis: 'Completed 2026-08-11; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit 5950b2e (2026-08-11), from the 1-commit cluster 5950b2e. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.',
+  },
   {
     name: 'Import paystub-dispatch.workflow.json into live n8n so emailed statements match the app',
     status: 'Done',
     completed: '2026-08-12',
+    dateBasis: 'external',
     shas: ['02dc5aa', '0a731ed', 'c97d0b5', 'e0028b8'],
-    basis:
-      'DONE 2026-08-12 on Kane\'s confirmation that the new workflow is live ("its now live"). ' +
-      'Recorded as sign-off, which is what the evidence actually is. ' +
-      'WHAT THIS DONE DOES NOT CLAIM: no test send was made comparing an emailed statement against ' +
-      'the in-app Pay Stub modal, and no dispatch has run through the new workflow yet, so nobody ' +
-      'has watched a correct breakdown arrive in an inbox. The next real send is the first proof. ' +
-      'A cheap independent check exists once one runs: the NEW summary node returns a `skipped` ' +
-      'field and the old one does not, so the first response the HRIS records after this settles ' +
-      'which workflow served it, without anyone having to open n8n. ' +
-      'HOW THE OLD ONE WAS IDENTIFIED, since it nearly passed as the new: Kane pasted the live ' +
-      'export and it still carried the pay_vars1 Set node, a Gmail message beginning with a raw ' +
-      'DOCTYPE and a full HTML document instead of {{ $json.paystub_html }}, five If1 conditions ' +
-      'instead of six ' +
-      '(no paystub_html guard), and an unguarded $items(\'Send PayStub1\') in the summary. Any one ' +
-      'of those is conclusive; searching a workflow for "pay_vars" is the three-second version. ' +
-      'The likely reason a first import appeared to do nothing: n8n IMPORTS AS A NEW WORKFLOW ' +
-      'rather than replacing, and the old one stays Active holding the /confirm-dispatch ' +
-      'production path, so it keeps answering while the new one sits idle. Deactivating the old ' +
-      'before activating the new is part of this work, not a footnote. ' +
-      'WHAT IT FIXES, measured on a real statement: angelicaco\'s Aug 2-8 stub sent 2026-08-12 ' +
-      '00:26 through the OLD template, which labels lines from hours x rates_php while taking ' +
-      'amounts from pay_php. After e0028b8 those legs mean different things — pay_php.regular is ' +
-      'base + weekend and pay_php.ot is the 0.5x differential only — so her email read ' +
-      '"Regular 40.00h x PHP 235.00" above PHP 10,321.80 (the label implies 9,400) and ' +
-      '"Overtime 3.35h x PHP 352.50" above PHP 393.63 (the label implies 1,181.25), with no ' +
-      'Weekend line for the PHP 2,242.50 at all. The TOTAL was correct at PHP 16,115.43 and she ' +
-      'was paid correctly; the Overtime line was the hazard, reading as though PHP 787.62 were ' +
-      'missing when those hours were already paid in full inside the base leg. ' +
-      'UNBLOCKS three rows worth 21 SP that named this import as their blocker: the column-AN rule ' +
-      '(8), the merged Weekend Hours line (5), and paystub email rendered in-app (8). Their status ' +
-      'is NOT moved by this pass — Kane confirmed the import, not those three, and each is asked ' +
-      'about separately rather than swept along. ' +
-      'ORIGINAL SCOPE: the artefact is references/n8n/paystub-dispatch.workflow.json, produced ' +
-      'by 02dc5aa (2026-08-06), which moved the emailed statement into the app ' +
-      '(src/lib/payroll/paystub-email-html.ts) and reduced the Gmail node to a pipe. It is the ' +
-      'SMALLEST of the three paystub JSONs in references/n8n at 13.8 KB — the 1,090 KB ' +
-      '"Paystub Automation.json" still carries the template inline and the 21 KB ' +
-      'n8n_paystub_dispatch.json is from Jul 13; importing either re-creates this exact bug. ' +
-      'Staleness was checked, not assumed: the JSON predates three later statement commits and is ' +
-      'still current, because the pipe design means statement changes no longer touch the workflow.',
+    basis: 'Completed 2026-08-12; filed under Sprint 26 (Aug 4–15). DATE BASIS IS NOT A COMMIT, and this is the one row in the pass where that is correct: the work IS an action in an external system — importing the workflow into live n8n and deactivating the old one. The date is the day Kane confirmed it live ("its now live"), which the 2026-08-12 pass already recorded; the shas are the commits that PRODUCED the artefact (latest e0028b8, 2026-08-11), not commits that implement the row. Both dates sit inside Sprint 26 either way, so the sprint verdict does not turn on this. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 2 SP; no status moved and no Actual SP was recomputed.',
   },
-];
+  {
+    name: 'Onboarding paperwork: Middle name box + one-time first/last name-order check',
+    status: 'Done',
+    completed: '2026-08-12',
+    shas: ['9b9fd40', '3d74e09'],
+    basis: 'Completed 2026-08-12; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit 3d74e09 (2026-08-12), from the 2-commit cluster 9b9fd40, 3d74e09. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },
+  {
+    name: 'Documents queue rebuilt on the MESA anatomy — KPI cards, full-width table and a View modal that renders the signed copy inline',
+    status: 'Done',
+    completed: '2026-08-12',
+    shas: ['6b8921f'],
+    basis: 'Completed 2026-08-12; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit 6b8921f (2026-08-12), from the 1-commit cluster 6b8921f. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
+  },];
 
 const FIB = new Set([1, 2, 3, 5, 8]);
+
+/** Commit date of a sha, `YYYY-MM-DD`. Throws if git cannot resolve it — unverifiable is a failure. */
+function shaDate(sha: string): string {
+  return execFileSync('git', ['log', '-1', '--date=short', '--format=%ad', sha], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  }).trim();
+}
 
 export function selfcheck(): string[] {
   const bad: string[] = [];
@@ -259,6 +537,50 @@ export function selfcheck(): string[] {
     }
     if (!row.basis.trim()) bad.push(`no stated basis: ${row.name.slice(0, 55)}`);
     if (!row.shas.length) bad.push(`no commit evidence: ${row.name.slice(0, 55)}`);
+
+    if (!row.completed) continue;
+
+    // ── the date must be GIT-PROVABLE, not merely plausible ──────────────────────────────────────
+    // This replaces the old blanket "never write a date inside the live sprint" rule, which was aimed
+    // at stopping a historical backfill from reading as fresh work but would also have blocked the
+    // 20 rows here that genuinely finished inside the live sprint. Tying the date to the evidence is
+    // strictly stronger: it rejects both a stale backfill AND a flattering guess.
+    const basis = row.dateBasis ?? 'commit';
+    if (basis === 'commit') {
+      const last = row.shas[row.shas.length - 1];
+      let actual: string;
+      try {
+        actual = shaDate(last);
+      } catch {
+        bad.push(`git cannot resolve ${last}, so the Completed Date is unverifiable: ${row.name.slice(0, 50)}`);
+        continue;
+      }
+      if (actual !== row.completed) {
+        bad.push(
+          `Completed Date ${row.completed} disagrees with git: last sha ${last} landed ${actual}. ` +
+            `Fix the date, reorder the shas, or declare dateBasis:'external' and say why — ${row.name.slice(0, 40)}`,
+        );
+      }
+    } else if (!/\bconfirm|\blive\b|\bapplied\b|\bran\b/i.test(row.basis)) {
+      // An external date has no commit backing it, so the only thing standing behind it is the
+      // stated human confirmation. Refuse the exemption when the basis does not actually give one.
+      bad.push(`dateBasis:'external' but the basis names no confirmation: ${row.name.slice(0, 50)}`);
+    }
+
+    // ── the date must fall inside the window of the sprint the row is filed under ────────────────
+    // The bug this whole pass exists to fix, turned into a permanent check. Measured against the
+    // sprint's ATTRIBUTION range, not its scheduled window: the two differ only by the Sun+Mon gap a
+    // closed sprint absorbs, and without that the 10 gap-day rows Kane assigned to Sprint 25 would be
+    // unrepresentable. Backlog is exempt — it is unscheduled, so no date can be wrong for it.
+    if (plan.sprint !== 'BL') {
+      const w = taskSprintAttribution(plan.sprint);
+      if (row.completed < w.start || row.completed > w.end) {
+        bad.push(
+          `Completed ${row.completed} is OUTSIDE ${TASK_SPRINT_LABELS[plan.sprint]} (${w.start}..${w.end}) — ` +
+            `the row is mis-attributed: ${row.name.slice(0, 45)}`,
+        );
+      }
+    }
   }
   return bad;
 }
@@ -283,7 +605,13 @@ export function updateBody(row: PassRow): string {
 if (import.meta.filename === process.argv[1]) {
   const bad = selfcheck();
   const done = ROWS.filter((r) => r.status === 'Done');
+  const bySprint = new Map<string, number>();
+  for (const r of ROWS) {
+    const s = PLAN_TASKS.find((t) => t.name === r.name)?.sprint ?? '?';
+    bySprint.set(s, (bySprint.get(s) ?? 0) + 1);
+  }
   console.log(`pass ${PASS_DATE}: ${ROWS.length} rows — ${done.length} Done, ${ROWS.length - done.length} not`);
+  console.log(`  by plan sprint: ${[...bySprint].sort().map(([s, n]) => `${s}=${n}`).join(' · ')}`);
   console.log('SELFCHECK: ' + (bad.length ? `FAIL\n  ${bad.join('\n  ')}` : 'PASS'));
   if (bad.length) process.exit(1);
 }

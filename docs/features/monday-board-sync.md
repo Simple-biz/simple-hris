@@ -199,6 +199,60 @@ carried three and named a department that was a different commit, `0b66a8e` "HSL
 offboarding n8n workflow, and `5eb398a`'s weekend-OT pricing was **reversed** by `e0028b8` — so one
 row must describe the current rule rather than two contradictory rows.
 
+## A sprint label is a claim about dates, and it is now checked (2026-08-13)
+
+Sprint windows are **board facts** — they are in the group titles: `Sprint 26 · Aug 4-15 · Backlog
+Pull`, `Sprint 25 · Jul 21-Aug 1`, `Sprint 24 · Jul 7-18`, back to Sprint 7. They are mirrored into
+`TASK_SPRINT_WINDOWS` in `hris-plan.ts` so a Completed Date can be checked against the sprint it is
+filed under, and `pass.mts`'s `selfcheck()` **refuses** a row whose date falls outside its sprint.
+
+That check exists because filing by feel failed at scale. `5a6c52f` (2026-08-05) filed *"1 epic + 46
+tasks for Jul 29–Aug 5"* into Sprint 26 in a single pass. Sprint 25 ran to Aug 1, so most of that span
+was already Sprint 25's. Re-measured per row against git on 2026-08-13: **37 of the 57 Sprint 26 rows
+had finished before Aug 4** — 94 SP of Sprint 25's work credited to Sprint 26 for eight days. A sprint
+label is not a filing convenience; it is an assertion that the work happened in that window.
+
+### Two guards, and why neither can be relaxed
+
+**The date must be git-provable.** `selfcheck()` runs `git log -1` on the row's last sha and refuses a
+Completed Date that disagrees with it. This **replaced** the older rule ("never write a date inside the
+live sprint"), which was aimed at stopping a historical backfill from reading as fresh work but would
+also have blocked the 20 rows that genuinely finished inside the live sprint. Tying the date to the
+evidence is strictly stronger — it rejects a stale backfill *and* a flattering guess.
+
+The one exemption is `dateBasis: 'external'`, for a row whose work is an action in another system (an
+n8n import, a migration run) where the shas produced the artefact and the completion is the day
+someone did the thing. It still must fall inside the sprint window, and `selfcheck()` refuses the
+exemption unless `basis` actually names a confirmation. Exactly one row uses it: the live n8n paystub
+import, Done 2026-08-12 on Kane's confirmation, whose newest commit landed 08-11.
+
+**Gap days belong to the sprint that closed.** Sprints run **Tuesday → Saturday**, so the Sunday and
+Monday between two of them fall in no window — and 10 rows finished on Monday 2026-08-03. Kane's
+ruling: Sprint 26 is Aug 4-15 **only**, so gap work is filed under the sprint that just closed.
+`taskSprintAttribution()` encodes that: a sprint accepts dates through *the day before the next sprint
+starts*, or through its own end when it has no successor. The ranges therefore tile the calendar with
+no gaps and no overlaps — S24 accepts to Jul 20, S25 to **Aug 3**, S26 to Aug 15 — and the live sprint
+is never widened past its stated end, because its own gap has not happened yet. Adding Sprint 27 later
+extends Sprint 26 by its gap automatically, the same treatment every closed sprint got.
+
+### The group and the Sprint label are one fact
+
+Re-attributing a row needs **both**, and until 2026-08-13 the reconciler could only write one:
+`TASK_GROUPS[task.sprint]` appeared solely in the create payload, so an existing row kept its original
+group forever. A plan-only relabel would have left 37 rows sitting under the "Sprint 26 · Aug 4-15"
+heading with a Sprint column reading "Sprint 25" — a half-move that reads worse on the board than no
+move at all.
+
+`sync.ts` now issues `move_item_to_group` from its **update** path, and only when the live group
+disagrees with the plan's sprint, so a steady-state pass costs zero extra calls. Moves are reported as
+`SyncReport.tasksMoved` and appear in the `GET` dry-run preview, because a silent re-grouping is
+indistinguishable from someone hand-dragging rows. Ownership is unchanged: group placement was always
+the reconciler's, and the corrector still never touches it — the runtime disjointness assert in
+`apply.mts` is unaffected because a group is not a column.
+
+**Still open:** epics are not moved between quarter groups. The identical gap exists on the epic path;
+no plan quarter has changed yet, so nothing is wrong today.
+
 ## API budget
 
 The account has a **daily** complexity budget. Exceeding it returns `429 DAILY_LIMIT_EXCEEDED` and
