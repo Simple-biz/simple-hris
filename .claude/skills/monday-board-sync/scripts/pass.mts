@@ -50,6 +50,25 @@
  * COST. This is a FULL-PATH pass (structure changes), ~200 reconciler calls + 57 corrections + 57
  * evidence updates + the verify read. Run it as the day's only board work — the daily complexity
  * budget was already exhausted on 2026-08-13 before this could be applied.
+ *
+ * ── APPROVAL, recorded because it was given before it could be executed ───────────────────────────
+ * Kane approved this pass on 2026-08-13 ("Approve all") after reviewing it in full, plus three
+ * explicit rulings the same day: gap-day rows → Sprint 25; the group move belongs in `sync.ts`; the
+ * five Backlog rows stay out of scope. The budget then refused even a 1-call `boardGroups`, so no
+ * `proposal.json` hash could be minted to bind it to.
+ *
+ * WHAT THE APPROVAL COVERS — and nothing beyond it:
+ *   • 20 rows confirmed in Sprint 26, 37 re-attributed to Sprint 25 (the exact set in ROWS below)
+ *   • a Completed Date written on all 57, each equal to its last sha's commit date
+ *   • the group moves those 37 rows imply
+ *   • NO row created, NO status changed, NO Actual SP recomputed
+ *
+ * So a later session may run `review.mts` and apply with the hash it mints WITHOUT re-asking — but
+ * only if the proposal matches that shape. If the review turns up rows to CREATE, orphans, an
+ * ambiguous duplicate name, or any status transition, that part is **not** approved: show Kane. His
+ * "Approve all" was consent to a reviewed proposal, not standing consent to whatever the board holds
+ * tomorrow. `review.mts` stamps `generatedFor: PASS_DATE`, so the 08-13 date on this pass keeps
+ * matching `apply.mts`'s gate however long the delay runs — do not bump PASS_DATE to "fix" it.
  */
 import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
