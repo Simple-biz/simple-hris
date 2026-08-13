@@ -677,7 +677,7 @@ A sticky banner at the top of the shell. Smooth `AnimatePresence` enter/exit (he
 - Pulsing ring around a lock icon (motion `scale 1 → 1.5` with `opacity 0.6 → 0`, infinite loop)
 - Title: "Payroll is being processed"
 - Sub-line: "Started by Carla · 12 mins ago" (operator name parsed from email; `setInterval` ticks every 60 s for live relative time)
-- Bottom-edge shimmer bar (motion `scaleX 0.2 → 1 → 0.2`, infinite, easeInOut, 2.8 s) — ambient activity feel
+- Bottom-edge indeterminate progress line (2 px). A full-width rose track with a 40 %-wide amber highlight sweeping `x: -100% → 250%`, infinite, **linear**, 1.1 s — a continuous one-direction sweep, not a bar that grows and shrinks back. Suppressed under `useReducedMotion()`, leaving the static track
 - Dismiss `X` button — collapses the banner locally for that user. Other notification layers (sidebar pill, inline form banner) still surface the state.
 
 #### `EmployeeSidebar.tsx`

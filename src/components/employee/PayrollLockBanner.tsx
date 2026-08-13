@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Lock, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { PayrollDispatchLockState } from '@/lib/supabase/payroll-dispatch-lock';
@@ -32,6 +32,7 @@ function relativeTime(iso: string | null): string | null {
 export default function PayrollLockBanner({ state }: PayrollLockBannerProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [tick, setTick] = useState(0);
+  const reduceMotion = useReducedMotion() ?? false;
 
   // Reset collapsed state when the lock toggles so a fresh notice shows fully.
   useEffect(() => {
@@ -108,13 +109,21 @@ export default function PayrollLockBanner({ state }: PayrollLockBannerProps) {
             </button>
           </div>
 
-          {/* Progress shimmer along the bottom edge — purely visual, evokes activity */}
-          <motion.div
-            className="h-[2px] origin-left bg-gradient-to-r from-rose-400 via-amber-400 to-rose-400"
-            animate={{ scaleX: [0.2, 1, 0.2] }}
-            transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
+          {/* Indeterminate progress line along the bottom edge. The track is always
+              full width, and a highlight sweeps left → right and wraps — so the line
+              reads as continuous work, never as a bar growing and shrinking back. */}
+          <div
+            className="relative h-[2px] overflow-hidden bg-rose-300/60 dark:bg-rose-800/60"
             aria-hidden
-          />
+          >
+            {!reduceMotion && (
+              <motion.div
+                className="absolute inset-y-0 left-0 w-2/5 bg-gradient-to-r from-transparent via-amber-400 to-transparent dark:via-amber-300"
+                animate={{ x: ['-100%', '250%'] }}
+                transition={{ duration: 1.1, repeat: Infinity, ease: 'linear' }}
+              />
+            )}
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

@@ -1517,7 +1517,7 @@ Dashboard nudge shown after sign-in when an employee still needs a profile photo
 
 ### `src/components/employee/PayrollLockBanner.tsx`
 
-Global "payroll is being processed" banner at the top of the employee shell -- while locked, employee disputes are paused (the dispatch-lock pattern). Renders nothing normally; when locked, an animated rose/amber banner ("Disputes are temporarily paused", "Started by {operator} - {relative time}", progress shimmer). Re-renders every 60s to keep the relative time fresh. Driven by `state: PayrollDispatchLockState`.
+Global "payroll is being processed" banner at the top of the employee shell -- while locked, employee disputes are paused (the dispatch-lock pattern). Renders nothing normally; when locked, an animated rose/amber banner ("Disputes are temporarily paused", "Started by {operator} - {relative time}", a 2px indeterminate progress line whose highlight sweeps left -> right on a continuous track). Re-renders every 60s to keep the relative time fresh. Driven by `state: PayrollDispatchLockState`.
 
 ### `src/components/employee/HiddenValue.tsx`
 
