@@ -1,11 +1,15 @@
 /**
- * Seed the department-scope Payment Catalog base rate for the two PLACEMENT-ONLY
+ * Seed the department-scope Payment Catalog base rate for the PLACEMENT-ONLY
  * HSL sub-teams (see docs/features/hsl-subdepartments.md §1.1):
  *
  *     hsl:simple_texting   →  ₱225.00 regular / ₱337.50 OT  (PHP)
- *     hsl:lead_nurture     →  ₱225.00 regular / ₱337.50 OT  (PHP)
  *
  * Kane, 2026-08-12: "just put them on 225 please and ot 337.50".
+ *
+ * `hsl:lead_nurture` was seeded here on 2026-08-12 and RETIRED on 2026-08-13 —
+ * it named the same team as Simple Texting (see §7c). Its row is removed by
+ * scripts/remove-hsl-lead-nurture-rate.mts. Do not re-add it to SEED: Guard 2
+ * imports HSL_PLACEMENT_ONLY_SUB_KEYS from the code and would abort anyway.
  *
  * WHAT THIS MIRRORS. It replicates exactly what Accounting → Payment Catalog →
  * Pay Structure does for a DEPARTMENT-scope save (`upsertPayStructure` in
@@ -69,7 +73,6 @@ const ACTOR = 'kaner@simple.biz';
  *  src/lib/departments/hsl-subdept.ts — validated against it below. */
 const SEED = [
   { departmentKey: 'hsl:simple_texting', name: 'HSL — Simple Texting', regularRate: 225, otRate: 337.5 },
-  { departmentKey: 'hsl:lead_nurture', name: 'HSL — Lead Nurture', regularRate: 225, otRate: 337.5 },
 ] as const;
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;

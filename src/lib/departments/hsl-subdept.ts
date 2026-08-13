@@ -35,9 +35,9 @@ export const HSL_FAMILY_DEPT_LABEL = 'HSL';
 // team bonus on HSL. Callback and Simpletexting have the same bonus, so they are
 // calculated under one calculator."*
 //
-// So Simple Texting and Lead Nurture are real HSL teams — placeable, priceable,
-// transferable — whose bonuses are scored inside the Callback Team calculator.
-// Adding them to HSL_DEPT_KEYS would have given each one:
+// So Simple Texting is a real HSL team — placeable, priceable, transferable —
+// whose bonuses are scored inside the Callback Team calculator.
+// Adding it to HSL_DEPT_KEYS would have given it:
 //   - its own KPI Calculator card (HslBonusCalculator) — the duplicate calculator
 //     Carla explicitly does NOT want, and exactly what `simple_texting`'s
 //     2026-08-04 removal deleted. That removal STANDS;
@@ -55,8 +55,17 @@ export const HSL_FAMILY_DEPT_LABEL = 'HSL';
 // directly and never routes through this module.
 
 /** Ordered placement-only sub-team keys. Add one here + an entry below (the same
- *  two-edit shape as HSL_DEPT_KEYS + HSL_DEPTS). */
-export const HSL_PLACEMENT_ONLY_SUB_KEYS = ['simple_texting', 'lead_nurture'] as const;
+ *  two-edit shape as HSL_DEPT_KEYS + HSL_DEPTS); retire one by removing both (§7c).
+ *
+ *  RETIRED — do not re-add without asking Carla first:
+ *    `lead_nurture` shipped 2026-08-12 and was withdrawn 2026-08-13. Carla and CJ
+ *    settled that it named the SAME team as Simple Texting and collided with
+ *    Lucky's separate Lead Nurture team; CJ: *"We can use HSL – SimpleTexting to
+ *    avoid any confusion with Lucky's Lead Nurture Team."* Kane: *"we need to
+ *    remove the other one."* Nobody was ever placed in it (0 master cells, 0
+ *    rates rows, 0 grants, 0 roster rows), so the withdrawal repriced nobody.
+ *    `hsl-subdept.test.ts` pins it absent so it cannot drift back in. */
+export const HSL_PLACEMENT_ONLY_SUB_KEYS = ['simple_texting'] as const;
 
 export type HslPlacementOnlySubKey = (typeof HSL_PLACEMENT_ONLY_SUB_KEYS)[number];
 
@@ -71,7 +80,6 @@ export const HSL_PLACEMENT_ONLY_SUB_TEAMS: Record<
   { readonly name: string; readonly scoredUnder: HslDeptKey }
 > = {
   simple_texting: { name: 'Simple Texting', scoredUnder: 'callback_team' },
-  lead_nurture: { name: 'Lead Nurture', scoredUnder: 'callback_team' },
 };
 
 /** Every sub-team key that may legitimately appear in a master `Department`

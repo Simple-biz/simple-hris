@@ -63,10 +63,10 @@ answers, in different files.
 **Why.** Kane relaying Carla, 2026-08-12: *"Successfully Transferred Calls - 50
 each / Sign ups from Transferred Calls - 250 each. We calculate it under the
 callback team bonus on HSL. Callback and Simpletexting have the same bonus, so
-they are calculated under one calculator."* **Simple Texting** and **Lead
-Nurture** are real HSL teams people work in and transfer into — but they have no
-calculator of their own, and putting them in `HSL_DEPT_KEYS` to make them
-placeable would have cost two things nobody wanted:
+they are calculated under one calculator."* **Simple Texting** is a real HSL team
+people work in and transfer into — but it has no calculator of its own, and
+putting it in `HSL_DEPT_KEYS` to make it placeable would have cost two things
+nobody wanted:
 
 - **a duplicate KPI Calculator card** for a bonus Carla already scores under
   Callback Team. `simple_texting` was deleted from `HSL_DEPT_KEYS` on 2026-08-04
@@ -83,8 +83,15 @@ placeable would have cost two things nobody wanted:
 `scoredUnder` is typed `HslDeptKey`, so the calculator a placement-only team
 rides cannot be renamed or retired without a compile error — the pointer can't
 rot into a dangling string. `hsl-subdept.test.ts` pins the two keyspaces
-**disjoint**: if anyone adds either key to `HSL_DEPT_KEYS` later, the suite fails
+**disjoint**: if anyone adds the key to `HSL_DEPT_KEYS` later, the suite fails
 with the reason spelled out.
+
+> **`lead_nurture` was retired 2026-08-13** — one day after it shipped. It named
+> the **same team** as Simple Texting and collided with Lucky's separate Lead
+> Nurture team. CJ: *"We can use HSL – SimpleTexting to avoid any confusion with
+> Lucky's Lead Nurture Team."* Kane: *"we need to remove the other one."* Nobody
+> was ever placed in it, so the withdrawal repriced nobody. See §7c. A test pins
+> the key **absent** from both keyspaces so it cannot drift back in.
 
 **Nothing in this keyspace reaches a KPI surface.** Every KPI consumer
 (`HslBonusCalculator`, `AdminRoles`, `use-bonus-scoring-queue`,
@@ -238,7 +245,9 @@ Two deliberate carve-outs:
   sub→sub reshuffle can't re-scope someone's +₱15/h Sat/Sun day-scoping. A **bulk**
   relabel must never write `department_transfer_requests` rows at all.
 
-## 7. Adding a new sub-team
+## 7. Adding — or retiring — a sub-team
+
+Adding: §7a (own calculator) or §7b (scored under another). Retiring: §7c.
 
 **First decide which keyspace it belongs in (§1.1):** does this team get its *own*
 KPI calculator, or is its bonus scored under an existing one? Getting this wrong
@@ -276,10 +285,12 @@ Either way the picker, the transfer targets, the onboarding sub-department
 selector, the display label, the Pay Structure rail, the catalog export and the
 placement validation all pick it up with no further edits.
 
-Currently placement-only: **Simple Texting** and **Lead Nurture**, both scored
-under **Callback Team** (Successfully Transferred Calls ₱50 · Sign ups from
-Transferred Calls ₱250). Both were seeded at **₱225.00 / ₱337.50 OT PHP** on
-2026-08-12 (Kane) — department scope, identical to the parent base.
+Currently placement-only: **Simple Texting** only, scored under **Callback Team**
+(Successfully Transferred Calls ₱50 · Sign ups from Transferred Calls ₱250).
+Seeded at **₱225.00 / ₱337.50 OT PHP** on 2026-08-12 (Kane) — department scope,
+identical to the parent base. **8 people** sit in it as of 2026-08-13.
+
+`lead_nurture` was also seeded that day and **retired on 2026-08-13** (§7c).
 
 ### Seeding a placement-only rate before the code deploys
 
@@ -306,6 +317,59 @@ seeded figures exactly equal to the parent base. If any precondition fails the
 script aborts **even with the flag** — the flag rides a proof, it never widens the
 guard. The 2026-08-12 seed used it (Payment Dispatch was locked on the 08-02 cycle)
 with all four proven.
+
+### 7c. Retiring a sub-team
+
+Added 2026-08-13, when `lead_nurture` was withdrawn one day after shipping. §7a and
+§7b only covered *adding*, and a retirement touches a **rate row** — so it needs a
+written path rather than improvisation.
+
+**The order matters: code first, then the rate row.** Removing the key stops any
+new placement immediately (`isPlaceableDeptLabel` rejects it, every picker drops
+it). The leftover catalog row is inert while it waits, because nothing can hold the
+key. Delete the row first and you have the opposite: a live, placeable, offered
+sub-team with **no base rate of its own**, silently riding the parent.
+
+1. **Prove it's unoccupied.** Zero master-list `Department` cells, zero
+   `employee_hourly_rates` rows, zero employee-scope pay structures, zero
+   `hsl_team_members` rows, zero **live** `department_managers` grants
+   (`revoked_at IS NULL` — revoked rows are tombstones, not access), zero transfer
+   requests. **Page every read**: PostgREST truncates at 1000 rows even with
+   `.range()`, and `employee_hourly_rates` alone is 22k rows, so an unpaged probe
+   reports a comfortable zero it has not earned.
+2. **If anyone IS placed there, stop.** That is a department move for real people,
+   not a retirement: transfer them to the surviving sub-team first, through the
+   normal transfer flow, so the sheet write-back and rate history stay consistent.
+3. **Remove the two code edits from §7b** — the key from
+   `HSL_PLACEMENT_ONLY_SUB_KEYS` and the entry from
+   `HSL_PLACEMENT_ONLY_SUB_TEAMS`. Everything else de-derives on its own.
+4. **Pin it retired.** Add the key to the `RETIRED` list in the "retired sub-team
+   keys stay retired" test in `hsl-subdept.test.ts`. It asserts the key resolves
+   nowhere, is not placeable, appears in no picker, *and* still counts as
+   HSL-family for pay (week model, +₱15/h weekend premium, parent ₱225 fallback) —
+   a stale cell must degrade, never strand somebody outside HSL or at ₱0.
+   Re-point any test that named the key rather than deleting the assertion: the
+   invariants those lines were testing (a sibling target is not a no-op, the
+   em-dash display form) still need a live subject.
+5. **Delete the orphaned rate row** with a script, `--apply` gated, backup to
+   `reports/` first — `scripts/remove-hsl-lead-nurture-rate.mts` is the worked
+   example. Its Guard 1 is the **inverse** of the seed's: it imports both keyspaces
+   and refuses to run while the key is still live, which is what enforces the
+   code-first order above. It deletes **by primary key**, never by a
+   `department_key` filter — a filter deletes whatever matches at execution time,
+   an id deletes the row you proved. It refuses on any row count other than 1, and
+   refuses if the figures **differ** from the parent base (a different figure means
+   somebody set a real rate on purpose — a decision, not an orphan).
+6. **Leave the audit trail alone.** The original `payroll.rate.set` row stays; the
+   deletion adds a `payroll.rate.delete` row beside it. History is never rewritten.
+7. **Do not delete the row if people are still in the key** — see step 2. Deleting a
+   base rate that somebody rides is a rate CHANGE for them, and it belongs in
+   Payment Catalog → Pay Structure with the normal guards.
+
+The locked-cycle exemption applies exactly as it does to a seed, with the same
+P1–P4 proof; for a delete, P4 means *the row being removed equals the parent
+fallback that replaces it*, so resolution is numerically unchanged. The 2026-08-13
+removal ran under it (`payroll.dispatch_locked` had been true since 08-11).
 
 ## 8. Still open (not shipped 2026-08-10)
 
