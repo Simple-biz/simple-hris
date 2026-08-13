@@ -677,7 +677,7 @@ A sticky banner at the top of the shell. Smooth `AnimatePresence` enter/exit (he
 - Pulsing ring around a lock icon (motion `scale 1 → 1.5` with `opacity 0.6 → 0`, infinite loop)
 - Title: "Payroll is being processed"
 - Sub-line: "Started by Carla · 12 mins ago" (operator name parsed from email; `setInterval` ticks every 60 s for live relative time)
-- Bottom-edge indeterminate progress line (2 px). A full-width rose track with a 40 %-wide amber highlight sweeping `x: -100% → 250%`, infinite, **linear**, 1.1 s — a continuous one-direction sweep, not a bar that grows and shrinks back. Suppressed under `useReducedMotion()`, leaving the static track
+- Bottom-edge indeterminate progress line (2 px). A full-width rose track with a 40 %-wide amber highlight sweeping `translateX(-100% → 250%)`, infinite, **linear**, 1.1 s — a continuous one-direction sweep, not a bar that grows and shrinks back. Driven by the `.payroll-lock-sweep` **CSS** keyframes in `src/index.css`, not by motion/react: percentage transform keyframes inside this `AnimatePresence` subtree render static. Under `prefers-reduced-motion: reduce` the highlight stops travelling and fades in and out across the full track instead (the signal is never removed — it is the only cue that work is in flight)
 - Dismiss `X` button — collapses the banner locally for that user. Other notification layers (sidebar pill, inline form banner) still surface the state.
 
 #### `EmployeeSidebar.tsx`

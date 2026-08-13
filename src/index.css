@@ -819,6 +819,38 @@
   }
 }
 
+/* ==========================================================================
+   Employee "Payroll is being processed" banner — indeterminate progress line.
+   A full-width 2px track with a highlight that travels left → right and wraps.
+   One direction, never a bar that grows and shrinks back.
+
+   Driven by CSS keyframes rather than motion/react on purpose: the `transition:
+   none !important` rule above and any JS reduced-motion gate can both silence a
+   library animation, and this line is the only thing telling an employee that
+   work is actually in flight. The reduced-motion accommodation below swaps
+   travel for a breathe — it does NOT delete the signal.
+   ========================================================================== */
+@keyframes payroll-lock-sweep {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(250%); }
+}
+@keyframes payroll-lock-breathe {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 1; }
+}
+.payroll-lock-sweep {
+  animation: payroll-lock-sweep 1.1s linear infinite;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* No travel: the highlight fills the track and fades in and out in place. */
+  .payroll-lock-sweep {
+    width: 100%;
+    transform: none;
+    animation: payroll-lock-breathe 2.4s ease-in-out infinite;
+  }
+}
+
 /* Initial Calculation table — skeleton shimmer (Payroll Wizard step 2) */
 @layer utilities {
   @keyframes initial-calc-skeleton-shimmer {
