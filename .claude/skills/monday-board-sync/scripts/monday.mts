@@ -88,9 +88,19 @@ export async function gql<T = Record<string, unknown>>(
       });
       const text = await res.text();
       if (/DAILY_LIMIT_EXCEEDED/.test(text)) {
+        // Surface everything the response knows about the reset. The old message threw away the body
+        // and headers, which is why "when does it refresh?" has never had a measured answer — the
+        // budget is only observable at the moment it refuses, so that moment must be recorded.
+        const hints = ['retry-after', 'x-ratelimit-reset', 'ratelimit-reset', 'x-ratelimit-remaining']
+          .map((h) => [h, res.headers.get(h)] as const)
+          .filter(([, v]) => v)
+          .map(([h, v]) => `${h}: ${v}`);
         throw new DailyLimitExceeded(
           'Monday daily API budget exhausted. Nothing further will succeed today, INCLUDING ' +
-            'read-only verification. Do not report this pass as verified.',
+            'read-only verification. Do not report this pass as verified.\n' +
+            `  observed at: ${new Date().toISOString()}\n` +
+            `  reset hints: ${hints.length ? hints.join(' · ') : '(none in headers)'}\n` +
+            `  response:    ${text.slice(0, 400)}`,
         );
       }
       if (res.status === 429 || res.status >= 500) {

@@ -136,6 +136,13 @@ The account has a **daily** complexity budget, not just per-minute. Exceeding it
 `429 DAILY_LIMIT_EXCEEDED` and **nothing** succeeds until reset, including read-only verification.
 One Gridline pass left verification dead for 5.5 hours.
 
+- **The error tells you when it resets — read it.** The `DAILY_LIMIT_EXCEEDED` body carries
+  `retry_in_seconds`, mirrored in a `retry-after` header, and `monday.mts` now prints both. Measured
+  2026-08-13: observed 13:09:02Z with `retry_in_seconds: 39057`, which lands on **00:00 UTC** — so the
+  budget is a clean UTC-day bucket (20:00 EDT / 21:00 EST). Never guess this again; the number is free.
+- **A whole day's budget can vanish before you start.** On 2026-08-13 it was already spent by 12:00 UTC
+  with no pass having run that UTC day, and the cause was never identified. Assume nothing about how
+  much is left: probe with one cheap call (`boardGroups`) before planning a 300-call pass.
 - **Budget the verify, not just the write.** A write you cannot verify is not done.
 - Ask only for the columns you read — `column_values(ids: [...])`. Pulling all ~21 columns across
   2,172 items is the most expensive thing these scripts can do.

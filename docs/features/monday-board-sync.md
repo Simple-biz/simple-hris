@@ -21,6 +21,7 @@ Shipped 2026-08-11 (skill + 2026-08-11 pass: 12 rows created, 7 Done, 5 Backlog,
 | Per-pass data + `selfcheck()` | `.claude/skills/monday-board-sync/scripts/pass.mts` |
 | The review Kane approves (writes `proposal.json` + hash) | `.claude/skills/monday-board-sync/scripts/review.mts` |
 | The only writer (`--only-new` = the 6-call lean path) | `.claude/skills/monday-board-sync/scripts/apply.mts` |
+| One-shot runner for an approved-but-unwritten pass | `.claude/skills/monday-board-sync/scripts/run-approved-pass.mts` |
 | Re-read verification / standalone audit | `.claude/skills/monday-board-sync/scripts/verify.mts` |
 | Re-read ONE row in a single call (after `--only-new`) | `.claude/skills/monday-board-sync/scripts/verify-one.mts` |
 | Read-only board dump, groups, live labels | `.claude/skills/monday-board-sync/scripts/pull-state.mts` |
@@ -257,7 +258,17 @@ no plan quarter has changed yet, so nothing is wrong today.
 
 The account has a **daily** complexity budget. Exceeding it returns `429 DAILY_LIMIT_EXCEEDED` and
 nothing succeeds until reset — **including read-only verification**. Budget the verify, not just the
-write. Ask only for the columns you read: pulling all ~21 columns across 2,172 items is the most
+write.
+
+**The reset time is in the error, so stop guessing it.** The response body carries
+`extensions.retry_in_seconds` and a matching `retry-after` header; `monday.mts` prints both plus the
+observation timestamp. Measured 2026-08-13: observed `13:09:02Z` with `retry_in_seconds: 39057`, which
+lands on **00:00 UTC** — the budget is a clean UTC-day bucket (20:00 EDT / 21:00 EST).
+
+**A full day's budget can be gone before you make a call.** On 2026-08-13 the first read of the day
+failed at 12:00 UTC even though no pass had run in that UTC window, and the cause was never
+identified. So probe with one cheap `boardGroups` call before committing to a ~300-call pass, and treat
+a big pass as the day's only board work. Ask only for the columns you read: pulling all ~21 columns across 2,172 items is the most
 expensive call available. A full `apply.mts` is ~200 calls because the reconciler patches all 135
 tasks and 37 epics every run — the honest cost of driving the app path. `monday.mts` raises
 `DailyLimitExceeded` immediately rather than retrying into a wall.
