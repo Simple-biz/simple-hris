@@ -40,7 +40,7 @@ Everything that knows these rules lives in one client-safe module:
 |---|---|
 | `HSL_FAMILY_DEPT_LABEL` | the single label (`'HSL'`) every picker shows |
 | `collapseHslFamilyLabel(raw)` | building a picker/filter option list — **never** a value written to the cell |
-| `hslSubDeptOptions()` | the 14 `{value,label}` sub-team options (both keyspaces, see §1.1) |
+| `hslSubDeptOptions()` | the 15 `{value,label}` sub-team options (both keyspaces, see §1.1) |
 | `isHslKpiDeptKey(key)` | "does this sub-team have its OWN calculator?" |
 | `isHslPlacementOnlySubKey(key)` | "is this sub-team scored under a different one?" |
 | `hslSubTeamName(key)` | display name, from whichever keyspace owns the key |
@@ -192,7 +192,7 @@ so they cannot drift.
 | **HR → Onboarding → Bypass** (writes master + Sheet) | `DepartmentSelect hslSubDepartment` — Verify/Add gated by `isPlaceableDeptLabel`; the route **400s** on a bare HSL |
 | **HR → Onboarding → set work email** (stages the hire) | same selector; the route 400s on a bare HSL, including one inherited from `invite_department` |
 | **HR → Onboarding → bulk group** | same selector; a whole batch can't be set without a sub-team |
-| **Manager/HR transfer in** | a PARENT HSL grant expands to **every** labeled sub-team target, both keyspaces (14 as of 2026-08-12); plain `HSL` is **not** an offered target; submit blocked on a bare HSL |
+| **Manager/HR transfer in** | a PARENT HSL grant expands to **every** labeled sub-team target, both keyspaces (15 as of 2026-08-14); plain `HSL` is **not** an offered target; submit blocked on a bare HSL |
 | **Admin → Roles & permissions** | unchanged — sub-team **access grants** already come from `HSL_DEPT_KEYS`, not from `/api/departments` |
 
 Deliberately **left on the plain family label** — the department there selects a
@@ -266,6 +266,32 @@ permanent Readiness "Pending" row.
 immediately and reads `draft` until a manager marks it ready, **every week**, even
 with nobody in it. Only take it when the team really is scored on its own.
 
+#### 7a-roster-only: a real team with NO bonus program (`noKpi`)
+
+Added 2026-08-14 for **Executive Guest Services**: a real ~31-person Hogan cohort
+that was scored nowhere (`hsl_team_members.dept_key` NULL) and has **no defined
+KPI rules** — and rules are never guessed, because they change pay (the
+Attestation tier guess mispriced 11 rows). For that shape, take §7a but set
+`noKpi: true` with `rules: []`:
+
+- the KPI Calculator renders a **roster-only card** ("Roster only — no KPI
+  inputs"), so managers can see and manage the team;
+- the Admin Roles `hsl:<key>` checkbox, transfer targets, onboarding picker,
+  Pay Structure rail and catalog export all derive as usual;
+- **Payroll Readiness reads the dept `no_bonus`** ("Ready by definition"), not a
+  permanent weekly `draft` — `payroll-readiness.ts` special-cases `noKpi` in its
+  HSL branch, so the readiness cost above does NOT apply;
+- `hsl-subdept.test.ts` pins the pairing both ways: a `noKpi` dept must have zero
+  rules, and a rules-less dept must declare `noKpi` (or `perEmployee`).
+
+When the bonus program is defined later, add the `BonusRule` entries and drop
+`noKpi` — the card, the Readiness row and weekly auto-dispatch derive on their
+own. Roster seed for the initial cohort: `scripts/seed-hsl-egs-roster.mts`
+(email-keyed, NULL-only, backup-first, `--apply` gated). The 2026-08-14 run set
+31 rows; it deliberately left `jaya@`/`syr@` (already scored under Collections —
+moving them is a scoring decision) and `arr@` ("Guest Services Manager") for
+Kane to rule on.
+
 ### 7b. Its bonus is scored under another sub-team
 
 1. `src/lib/departments/hsl-subdept.ts` — add the key to
@@ -285,12 +311,20 @@ Either way the picker, the transfer targets, the onboarding sub-department
 selector, the display label, the Pay Structure rail, the catalog export and the
 placement validation all pick it up with no further edits.
 
-Currently placement-only: **Simple Texting** only, scored under **Callback Team**
-(Successfully Transferred Calls ₱50 · Sign ups from Transferred Calls ₱250).
-Seeded at **₱225.00 / ₱337.50 OT PHP** on 2026-08-12 (Kane) — department scope,
-identical to the parent base. **8 people** sit in it as of 2026-08-13.
+Currently placement-only (two):
 
-`lead_nurture` was also seeded that day and **retired on 2026-08-13** (§7c).
+- **Simple Texting**, scored under **Callback Team** (Successfully Transferred
+  Calls ₱50 · Sign ups from Transferred Calls ₱250). Seeded at **₱225.00 /
+  ₱337.50 OT PHP** on 2026-08-12 (Kane) — department scope, identical to the
+  parent base. **8 people** sit in it as of 2026-08-13.
+- **Hearing Prep Team – Mail Sorting** (key `hearing_prep_mail_sorting`), added
+  2026-08-14 (Kane), scored under **Pre-Hearing / Post-Hearing Prep** — where
+  all 3 live members (role_raw "Hearing Prep Team-Mail Sorting") were already
+  sitting on `hsl_team_members.dept_key='post_hearing_prep'` when it was added.
+  No rate row of its own — it rides the parent fallback until Accounting sets
+  one on the Pay Structure rail.
+
+`lead_nurture` was seeded 2026-08-12 and **retired on 2026-08-13** (§7c).
 
 ### Seeding a placement-only rate before the code deploys
 

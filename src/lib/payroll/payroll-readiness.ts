@@ -568,6 +568,10 @@ async function buildKpiReadiness(
   // HSL sub-departments (monthly ones are only "due" on the month's final week).
   // Pausing the Hogan Smith Law payroll department pauses every sub-dept with it —
   // they stay listed but read 'excluded'.
+  // A roster-only dept (`noKpi`, e.g. executive_guest_services) has no KPI inputs,
+  // so there is never a submission due from its manager: it reads 'no_bonus'
+  // ("Ready by definition", same as a custom dept with nothing to submit) instead
+  // of holding the 25%-weight KPI dimension at 'draft' every week forever.
   for (const key of HSL_DEPT_KEYS as readonly HslDeptKey[]) {
     const hslExcluded = paused.has('hogan_smith_law') || paused.has(key);
     const cfg = HSL_DEPTS[key];
@@ -580,7 +584,13 @@ async function buildKpiReadiness(
       name: cfg.name,
       source: 'hsl',
       cadence: cfg.cadence,
-      status: hslExcluded ? 'excluded' : !due ? 'na' : ((status?.status ?? 'draft') as KpiDeptStatus),
+      status: hslExcluded
+        ? 'excluded'
+        : !due
+          ? 'na'
+          : cfg.noKpi
+            ? 'no_bonus'
+            : ((status?.status ?? 'draft') as KpiDeptStatus),
       scoredCount: agg?.scoredCount ?? 0,
       employeeCount: agg?.employeeCount ?? 0,
       totalBonus: Math.round(agg?.totalBonus ?? 0),

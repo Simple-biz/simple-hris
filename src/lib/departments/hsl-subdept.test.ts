@@ -135,10 +135,38 @@ test('the two sub-team keyspaces stay disjoint — a placement-only team NEVER g
     assert.ok(isHslKpiDeptKey(under), `${key}.scoredUnder=${under} must be a real KPI dept`);
     assert.ok(HSL_DEPTS[under], `${under} must have a calculator config`);
   }
-  // Both teams ride Callback Team, whose rules ARE the bonus Carla described:
-  // Successfully Transferred Calls ₱50 + Sign ups from Transferred Calls ₱250.
+  // The host mapping is a decision, not a default — pin each one to the team
+  // that actually scores it. Simple Texting rides Callback Team, whose rules ARE
+  // the bonus Carla described (Successfully Transferred Calls ₱50 + Sign ups
+  // from Transferred Calls ₱250). Hearing Prep Team – Mail Sorting rides
+  // Pre-/Post-Hearing Prep — where all 3 live members were already scored when
+  // it was added (2026-08-14).
+  assert.equal(HSL_PLACEMENT_ONLY_SUB_TEAMS.simple_texting.scoredUnder, 'callback_team');
+  assert.equal(HSL_PLACEMENT_ONLY_SUB_TEAMS.hearing_prep_mail_sorting.scoredUnder, 'post_hearing_prep');
   const callbackRates = HSL_DEPTS.callback_team.rules.map((r) => ('rate' in r ? r.rate : null));
   assert.deepEqual(callbackRates, [50, 250]);
+});
+
+test('a rules-less HSL dept is roster-only on purpose — never an empty calculator by accident', () => {
+  // executive_guest_services shipped 2026-08-14 with NO scoring rules: the
+  // cohort is real (~31 people) but nobody has defined a bonus program, and
+  // amounts are never guessed (the Attestation tier guess mispriced 11 rows).
+  // `noKpi` is what makes that safe: the card renders roster-only, and
+  // payroll-readiness reads the dept as 'no_bonus' ("Ready by definition")
+  // instead of minting a permanent weekly 'draft' row that pins the readiness
+  // score under 100. So the two must travel together, both directions.
+  for (const key of HSL_DEPT_KEYS) {
+    const cfg = HSL_DEPTS[key];
+    if (cfg.noKpi) {
+      assert.equal(cfg.rules.length, 0, `${key} is noKpi (roster-only) — it must not carry scoring rules`);
+    }
+    if (cfg.rules.length === 0 && !cfg.perEmployee) {
+      assert.ok(cfg.noKpi, `${key} has no rules and no per-employee sets — it must declare noKpi or gain real rules`);
+    }
+  }
+  assert.ok(HSL_DEPTS.executive_guest_services.noKpi);
+  assert.ok(isHslKpiDeptKey('executive_guest_services'));
+  assert.ok(isPlaceableDeptLabel('hsl:executive_guest_services'));
 });
 
 test('hslSubTeamName resolves a display name from either keyspace', () => {
@@ -162,6 +190,10 @@ test('placement-only sub-teams are placeable, parseable and prettily labeled', (
   // Sloppy casing from a hand-edited sheet cell still resolves.
   assert.equal(hslSubKeyFromRaw(' HSL:Simple_Texting '), 'simple_texting');
   assert.equal(formatDeptLabel('hsl:simple_texting'), 'HSL — Simple Texting');
+  assert.equal(hslSubKeyFromRaw(' HSL:Hearing_Prep_Mail_Sorting '), 'hearing_prep_mail_sorting');
+  // The name keeps Kane's en-dash INSIDE the team name; the em-dash after "HSL"
+  // is the family separator. Two different dashes, both load-bearing.
+  assert.equal(formatDeptLabel('hsl:hearing_prep_mail_sorting'), 'HSL — Hearing Prep Team – Mail Sorting');
   // A sub-team TARGET demands the exact cell, placement-only included — a plain
   // "HSL" person must still be relabeled, and a sibling is not a no-op.
   assert.equal(deptCellSatisfiesTarget('HSL', 'hsl:simple_texting'), false);

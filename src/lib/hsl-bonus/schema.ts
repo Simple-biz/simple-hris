@@ -108,6 +108,7 @@ export const HSL_DEPT_KEYS = [
   'healthcare_team_lead',
   'attestation',
   'case_managers',
+  'executive_guest_services',
   'hsl_managers',
 ] as const;
 
@@ -319,6 +320,22 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
       { type: 'per_unit', key: 'task',           label: 'Task',           rate: 250 },
       { type: 'per_unit', key: 'referral_leads', label: 'Referral Leads', rate: 250 },
     ],
+  },
+
+  executive_guest_services: {
+    key: 'executive_guest_services',
+    name: 'Executive Guest Services',
+    cadence: 'weekly',
+    color: '#ec4899',
+    headerBg: 'bg-pink-950/40',
+    badgeCls: 'bg-pink-900/60 text-pink-300',
+    // Roster-only (Kane, 2026-08-14): a real ~31-person Hogan cohort that was
+    // scored nowhere (29 hsl_team_members rows sat at dept_key=NULL). No KPI
+    // bonus program has been defined for it, and scoring rules are never
+    // guessed — they change pay. When Carla supplies the rules, add them here
+    // and drop `noKpi`; the card, readiness row and dispatch derive on their own.
+    rules: [],
+    noKpi: true,
   },
 
   hsl_managers: {

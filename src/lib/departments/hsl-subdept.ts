@@ -65,7 +65,7 @@ export const HSL_FAMILY_DEPT_LABEL = 'HSL';
  *    remove the other one."* Nobody was ever placed in it (0 master cells, 0
  *    rates rows, 0 grants, 0 roster rows), so the withdrawal repriced nobody.
  *    `hsl-subdept.test.ts` pins it absent so it cannot drift back in. */
-export const HSL_PLACEMENT_ONLY_SUB_KEYS = ['simple_texting'] as const;
+export const HSL_PLACEMENT_ONLY_SUB_KEYS = ['simple_texting', 'hearing_prep_mail_sorting'] as const;
 
 export type HslPlacementOnlySubKey = (typeof HSL_PLACEMENT_ONLY_SUB_KEYS)[number];
 
@@ -80,6 +80,14 @@ export const HSL_PLACEMENT_ONLY_SUB_TEAMS: Record<
   { readonly name: string; readonly scoredUnder: HslDeptKey }
 > = {
   simple_texting: { name: 'Simple Texting', scoredUnder: 'callback_team' },
+  // Kane, 2026-08-14. All 3 live members already sit on the Pre-/Post-Hearing
+  // Prep roster (hsl_team_members.dept_key='post_hearing_prep', role_raw
+  // "Hearing Prep Team-Mail Sorting"), so scoredUnder mirrors how they are
+  // scored today — the Simple Texting pattern, not a new calculator.
+  hearing_prep_mail_sorting: {
+    name: 'Hearing Prep Team – Mail Sorting',
+    scoredUnder: 'post_hearing_prep',
+  },
 };
 
 /** Every sub-team key that may legitimately appear in a master `Department`
