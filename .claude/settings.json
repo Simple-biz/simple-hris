@@ -1031,7 +1031,37 @@
       "PowerShell(Set-Location c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris; node --import tsx --test src/lib/departments/hsl-subdept.test.ts src/lib/payment-catalog/catalog-export.test.ts src/lib/payroll/kpi-calculator-depts.test.ts 2>$null; \"EXIT=$LASTEXITCODE\")",
       "PowerShell(Set-Location c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris; npm test 2>$null | Select-Object -Last 12; \"EXIT=$LASTEXITCODE\")",
       "PowerShell(Set-Location c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris; npx tsc --noEmit 2>$null | Select-Object -First 30; \"EXIT=$LASTEXITCODE\")",
-      "PowerShell(Set-Location c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris; \\(Get-Content scripts\\\\seed-hsl-egs-roster.mts -Raw\\) -replace 'email, name, role_raw, dept_key, upload_id', 'email, full_name, role_raw, dept_key, upload_id' -replace '  name: string \\\\| null;', '  full_name: string | null;' -replace 'r\\\\.name \\\\?\\\\? ''\\\\?''', \"r.full_name ?? '?'\" | Set-Content scripts\\\\seed-hsl-egs-roster.mts -Encoding utf8 -NoNewline; node --import tsx scripts/seed-hsl-egs-roster.mts)"
+      "PowerShell(Set-Location c:\\\\Users\\\\Kane\\\\Desktop\\\\simple-hris; \\(Get-Content scripts\\\\seed-hsl-egs-roster.mts -Raw\\) -replace 'email, name, role_raw, dept_key, upload_id', 'email, full_name, role_raw, dept_key, upload_id' -replace '  name: string \\\\| null;', '  full_name: string | null;' -replace 'r\\\\.name \\\\?\\\\? ''\\\\?''', \"r.full_name ?? '?'\" | Set-Content scripts\\\\seed-hsl-egs-roster.mts -Encoding utf8 -NoNewline; node --import tsx scripts/seed-hsl-egs-roster.mts)",
+      "Bash(rg -n \"DEPARTMENTS\\\\b\" src/lib/payroll/*.ts src/lib/*.ts)",
+      "Bash(rg -rn \"export const DEPARTMENTS\" src/)",
+      "Bash(rg -rn \"normalizeDeptToKey\" src/lib/ --files-with-matches)",
+      "Bash(rg -n -i \"automation|ai/api|ai_api|\\\\bdevs\\\\b\" src/lib/departments/*.ts)",
+      "WebFetch(domain:www.simple.biz)",
+      "Bash(cd \"c:/Users/Kane/Desktop/simple-hris\" && cp \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/adc5bdf7-148d-45ba-86d2-265a25af116f/scratchpad/probe-depts.mts\" scripts/tmp-probe-depts.mts && npx tsx scripts/tmp-probe-depts.mts 2>&1 | tail -75)",
+      "Bash(rg -n \"sp\\\\??:\\\\s*number|actualSp|Actual SP\" src/lib/monday/*.ts)",
+      "Bash(rg -n \"^#{1,3} \" docs/design/ui-standards.md)",
+      "Bash(rg -n \"25%|50%|0\\\\.25|0\\\\.5\\\\b\" --glob '!**/node_modules/**' --glob '*.{ts,tsx,md}' src/ docs/)",
+      "Bash(rg -n \"'formula'|\\\\\"formula\\\\\"\" src/lib/payment-catalog/*.ts src/lib/supabase/*.ts)",
+      "Bash(rg -n \"selectAllPaged\" src/lib/supabase/*.ts)",
+      "Bash(rg -n \"team-roster\" src/lib/auth/*.ts docs/features/route-authorization.md)",
+      "Bash(rg -rn \"team-roster\" --glob '!**/node_modules/**' --glob '!**/.next/**' .)",
+      "Bash(node --import tsx --test src/lib/supabase/team-rankings.test.ts)",
+      "Bash(node --import tsx --test src/lib/policies/team-policies.test.ts)",
+      "Bash(grep -oE '\\(eyJ[A-Za-z0-9_-]{10,}\\\\.eyJ[A-Za-z0-9_-]{10,}\\\\.[A-Za-z0-9_-]{10,}\\)|\\(sb_secret_[A-Za-z0-9_-]+\\)|\\(sbp_[a-f0-9]{40}\\)|\\(service_role\\)')",
+      "Bash(gh repo *)",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"https://api.github.com/repos/Simple-biz/simple-hris\" -UseBasicParsing -TimeoutSec 20; $j = $r.Content | ConvertFrom-Json; \"STATUS: $\\($r.StatusCode\\)\"; \"private: $\\($j.private\\)\"; \"visibility: $\\($j.visibility\\)\"; \"pushed_at: $\\($j.pushed_at\\)\" } catch { \"ERROR/STATUS: $\\($_.Exception.Response.StatusCode.value__\\) $\\($_.Exception.Message\\)\" })",
+      "Bash(node \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/b7ef7794-7403-4e9a-824f-ff9c7eeff18a/scratchpad/strip-key.mjs\")",
+      "Bash(cp \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/61f58ab8-4f3f-4c79-bd17-17b8f5722d31/scratchpad/backlog-audit.mts\" ./tmp-backlog-audit.mts)",
+      "Bash(sed -i \"s#from '../../../../../../../Users/Kane/Desktop/simple-hris/src/lib/monday/hris-plan.ts'#from './src/lib/monday/hris-plan.ts'#\" ./tmp-backlog-audit.mts)",
+      "Bash(rm -f tmp-backlog-audit.mts)",
+      "Bash(cp \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/61f58ab8-4f3f-4c79-bd17-17b8f5722d31/scratchpad/backlog-audit.mts\" .claude/skills/monday-board-sync/scripts/tmp-backlog-audit.mts)",
+      "Bash(sed -i \"s#from '../../../../../../../Users/Kane/Desktop/simple-hris/src/lib/monday/hris-plan.ts'#from './monday.mts'#\" .claude/skills/monday-board-sync/scripts/tmp-backlog-audit.mts)",
+      "Bash(cd \"c:/Users/Kane/Desktop/simple-hris\" && cat .claude/skills/monday-board-sync/.gitignore && rm -f .claude/skills/monday-board-sync/scripts/tmp-backlog-audit.mts && echo \"removed\" && git status --short)",
+      "Bash(cd \"c:/Users/Kane/Desktop/simple-hris\" && cp \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/bedd0f13-2b5a-4804-88ee-bce356b08bcb/scratchpad/probe-hsl-subdept-state.mts\" ./tmp-probe-hsl-subdept-state.mts && node --import tsx ./tmp-probe-hsl-subdept-state.mts 2>&1 | head -200)",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"https://api.github.com/repos/Simple-biz/simple-hris\" -UseBasicParsing -TimeoutSec 20; $j = $r.Content | ConvertFrom-Json; \"forks_count:      $\\($j.forks_count\\)\"; \"network_count:    $\\($j.network_count\\)\"; \"subscribers:      $\\($j.subscribers_count\\)\"; \"stargazers:       $\\($j.stargazers_count\\)\"; \"created_at:       $\\($j.created_at\\)\" } catch { \"ERROR: $\\($_.Exception.Message\\)\" })",
+      "Bash(NODE_PATH=\"c:/Users/Kane/Desktop/simple-hris/node_modules\" npx tsx \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/89bbff5f-e968-4031-9bf9-f7acced1dc47/scratchpad/read-webhooks.mts\")",
+      "Bash(cd \"c:/Users/Kane/Desktop/simple-hris\" && cp \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/89bbff5f-e968-4031-9bf9-f7acced1dc47/scratchpad/read-webhooks.mts\" ./tmp-read-webhooks.mts && npx tsx ./tmp-read-webhooks.mts 2>&1 | tail -40; rm -f ./tmp-read-webhooks.mts)",
+      "Bash(cd \"c:/Users/Kane/Desktop/simple-hris\" && rm -f \"0\" \"stop\" \"celebration.\" && git status --short && echo \"=== my INDEX row landed in: ===\" && git log --oneline -1 -S \"isCycleFullyPaid\" -- docs/features/INDEX.md)"
     ],
     "additionalDirectories": [
       "\\tmp",
@@ -1048,7 +1078,8 @@
       "C:\\Users\\Kane\\Desktop\\simple-hris\\docs\\features",
       "c:\\Users\\Kane\\Desktop\\simple-hris",
       "C:\\Users\\Kane\\AppData\\Local\\Temp\\claude\\c--Users-Kane-Desktop-simple-hris\\e43e323a-7a56-459d-aaeb-754fb23c6f4c\\scratchpad",
-      "C:\\Users\\Kane\\AppData\\Local\\Temp\\claude\\c--Users-Kane-Desktop-simple-hris\\deba3809-86e2-41ee-a7fa-3e80daea2e5b\\scratchpad"
+      "C:\\Users\\Kane\\AppData\\Local\\Temp\\claude\\c--Users-Kane-Desktop-simple-hris\\deba3809-86e2-41ee-a7fa-3e80daea2e5b\\scratchpad",
+      "c:\\Users\\Kane\\Desktop\\simple-hris\\.claude\\skills\\monday-board-sync\\scripts"
     ]
   }
 }

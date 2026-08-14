@@ -1,0 +1,10 @@
+{
+  "backed_up_at": "2026-08-14T21:25:19.865Z",
+  "rows": [
+    {
+      "key": "dispatch.cycle_complete_notified.simple-biz_daily_report_2026-08-02_to_2026-08-08.csv",
+      "value": "{\"at\":\"2026-08-14T21:13:00.881Z\",\"by\":\"kaner@simple.biz\",\"suppressed_by\":\"reopen\",\"notified\":0}",
+      "updated_at": "2026-08-14T21:13:00.881+00:00"
+    }
+  ]
+}
