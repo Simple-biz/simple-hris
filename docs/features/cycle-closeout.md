@@ -26,7 +26,11 @@ button (retired 2026-08-12, see `documents-tab.md`) refused exactly that case, o
 | The toggle + download checkbox | [`src/components/payroll/LockToggleConfirmDialog.tsx`](../../src/components/payroll/LockToggleConfirmDialog.tsx) |
 | Trigger + unpaid list + download wiring | [`src/components/payroll-clerk/PayrollDispatch.tsx`](../../src/components/payroll-clerk/PayrollDispatch.tsx) |
 | Report builders (pure) + tests | [`src/lib/payroll/cycle-close-report-export.ts`](../../src/lib/payroll/cycle-close-report-export.ts) · `.test.ts` |
-| Celebration gate (pure, shared with the 100% trigger) + tests | [`src/lib/payroll/cycle-complete-trigger.ts`](../../src/lib/payroll/cycle-complete-trigger.ts) · `.test.ts` |
+| Celebration gate + claim key (pure, shared with the 100% trigger) + tests | [`src/lib/payroll/cycle-complete-trigger.ts`](../../src/lib/payroll/cycle-complete-trigger.ts) · `.test.ts` |
+| Reopen — archive key, role gate (pure) | [`src/lib/payroll/cycle-closeout.ts`](../../src/lib/payroll/cycle-closeout.ts) (`cycleReopenedKey`, `CYCLE_REOPEN_ROLES`) |
+| Reopen — the three writes | [`src/lib/payroll/cycle-closeout-store.ts`](../../src/lib/payroll/cycle-closeout-store.ts) (`reopenCycle`) |
+| Reopen — API | `DELETE` in [`app/api/payment-dispatches/cycle-closeout/route.ts`](../../app/api/payment-dispatches/cycle-closeout/route.ts) |
+| Confetti canvas (shared) | [`components/ui/confetti-burst.tsx`](../../components/ui/confetti-burst.tsx) |
 | ~~Badge + panel~~ | ~~DispatchReports.tsx~~ — viewer removed with the Reports tab, 2026-08-12 |
 
 ## A close-out is the only per-cycle record now (history: the published report)
@@ -102,13 +106,59 @@ which is why that memo returns its sets alongside its counts.
 **Plain INSERT, never upsert.** `app_settings.key` is unique, so the first close of a week wins;
 a double-click, two clerks racing, or a later stop all get `already: true` and write nothing. The
 dialog reads the existing close-outs on mount and says *"Pay cycle already closed"* with the toggle
-locked on and inert. There is no reopen — the record's whole value is that it says what was true
-when Accounting stopped.
+locked on and inert. Closing is still once per key — but the key can now be **freed by an explicit
+reopen**, which archives the record rather than deleting it (§ Reopening below, added 2026-08-14).
+The invariant that matters is unchanged: **no close ever overwrites another's declaration.**
 
 **The close-out POST runs before `setLocked(false)`.** The record is the un-redoable half: once
 processing has stopped, the clerk has no second chance to file it from that dialog. So a failed
 write aborts the entire action — processing stays on, the error is loud, and the toast says they
 can turn the toggle off and stop plainly. Do not "helpfully" reorder this to stop first.
+
+## Reopening a closed cycle (added 2026-08-14)
+
+A week closed by mistake used to be closed forever. It can now be reopened — but the reopen is
+built so it does **not** cost the thing a close-out is for.
+
+**The record is archived, never destroyed.** `reopenCycle` copies the stored value **verbatim** to
+`dispatch.cycle_reopened.<source_file>.<iso>` and only then deletes the live key. The archived
+record still says what was true when Accounting stopped; it simply stops being the current one. The
+copy is byte-for-byte rather than re-serialized from a parsed object, so a record written by a
+future version cannot silently lose fields on the way to the archive.
+
+**That archive prefix is deliberately outside `dispatch.cycle_closeout.`** — `listCycleCloseouts`
+scans `dispatch.cycle_closeout.%`, and an archived record caught by that scan would make Payment
+Dispatch believe a reopened week is still closed, which is the exact bug a reopen exists to fix.
+A test pins the two prefixes disjoint, modelling SQL `LIKE` properly (`_` is a wildcard, `.` is not).
+
+**A reopen permanently silences the celebration.** It INSERTs the celebration claim
+`dispatch.cycle_complete_notified.<source_file>` (marked `suppressed_by: 'reopen'`) if it is not
+already there. Both triggers in `payment-dispatch.md` §12.7 check that exact key and go silent on
+`23505`, so "the automation must never fire again after a reopen" needs no separate gate and cannot
+be forgotten by a future caller. **Consequence, accepted (Kane, 2026-08-14):** a week whose email
+never actually delivered — the claim is released on delivery failure — will not get one after a
+reopen either. The instruction is unconditional on purpose.
+
+**Write order is chosen so no failure loses a declaration:** burn the claim → archive → delete.
+A failed archive aborts before the delete, so the week stays closed and the only casualty is a
+burned celebration. A failed delete leaves an orphaned archive row and the week still closed,
+reported as an error and never as a successful reopen. A week with no record at all returns
+`notFound` (404) and touches nothing.
+
+**Reopening is narrower than closing.** `POST` needs `requireFeatureEdit('accounting',
+'payment_dispatch')` — anyone who runs payroll. `DELETE` needs that **and** one of
+`CYCLE_REOPEN_ROLES` (`payroll_manager`, `admin`), the same tier `delete-authorization.md` uses for
+destructive deletes, checked from the session's roles. The screen's `canReopen` flag decides only
+whether to render the control; the route re-checks and is the gate.
+
+**The control is on the screen, not in the Stop dialog.** The dialog's close-out block renders only
+on the STOP side, so a button there would be unreachable the moment you have stopped. It sits beside
+Start/Stop as a `Closed · Reopen` pill with a two-step confirm, and unlike the close toggle it is
+**not lock-bound** — a past week can be reopened while browsing it, because a reopen touches only
+the record.
+
+Audit action: `payment_cycle.reopened`, **awaited**, carrying the archive key and the prior record's
+closer/totals — after the delete, the log plus the archive row are the trail.
 
 ## Downloadable report (added 2026-08-12)
 
@@ -187,6 +237,13 @@ What has **not** changed: closing is still gate-free (§ above). The celebration
 of the numbers, never a condition on closing — a week with 400 unpaid people closes exactly as
 readily as a clean one, in silence.
 
+**In-app confetti rides the same gate** (2026-08-14). A clean close also fires `ConfettiBurst` on
+the Payment Dispatch screen, erupting from the Start/Stop cluster — the same `isCycleFullyPaid`
+rule, so the confetti and the email can never disagree about whether a week was clean. A close that
+owes money gets none: the dialog was showing a rose *"N payable people have not been paid"* warning
+a second earlier. Reduced motion skips the burst entirely (the success toast is the moment), matching
+`payroll-readiness.md`'s 100% celebration.
+
 ## Nothing is truncated silently
 
 `MAX_STORED_UNPAID` (1000) bounds the stored rows; whatever it drops is counted in
@@ -216,7 +273,8 @@ PostgREST truncates at 1,000 rows even with `.range()`.
 
 **No migration.** One `app_settings` row per cycle, keyed `dispatch.cycle_closeout.<source_file>` —
 every other fact is derivable, the only new one is the declaration itself, and `app_settings`
-needs no DDL. Nothing for Kane to run. No env vars, no cron.
+needs no DDL. Nothing for Kane to run. No env vars, no cron. The reopen (2026-08-14) adds one more
+key family, `dispatch.cycle_reopened.<source_file>.<iso>`, in the same table — still no DDL.
 
 **n8n:** the close's celebration trigger (2026-08-14) introduces no new endpoint — it reuses the
 already-active `payment_cycle_complete` slug (verified active in `webhooks.config` on 2026-08-14,

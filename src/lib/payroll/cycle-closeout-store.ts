@@ -7,8 +7,13 @@ import 'server-only';
  * ONE `app_settings` row per cycle, `dispatch.cycle_closeout.<source_file>`,
  * written with a plain INSERT so two clerks racing (or a double-click) cannot
  * overwrite an existing declaration — the first close stands, the second is
- * told `already`. Reopening a closed week is deliberately NOT offered here: the
- * record's whole value is that it says what was true when Accounting stopped.
+ * told `already`.
+ *
+ * Reopening (added 2026-08-14) does not contradict that: `reopenCycle` MOVES the
+ * filed record to `dispatch.cycle_reopened.<file>.<iso>` before freeing the live
+ * key, so a declaration is never destroyed — it stops being the current one.
+ * A re-close then writes a fresh record by plain INSERT, exactly as the first
+ * one did. Only `payroll_manager`/`admin` may do it (`CYCLE_REOPEN_ROLES`).
  */
 
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
@@ -17,11 +22,13 @@ import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import {
   buildCycleCloseoutRecord,
   cycleCloseoutKey,
+  cycleReopenedKey,
   parseCycleCloseout,
   CYCLE_CLOSEOUT_PREFIX,
   type CycleCloseoutRecord,
   type CycleCloseoutRecordsOutstanding,
 } from './cycle-closeout';
+import { cycleCompleteNotifiedKey } from './cycle-complete-trigger';
 
 /** A close-out without its unpaid rows — what the Reports list needs to badge a
  *  card without dragging every payee across the wire. */
@@ -211,4 +218,120 @@ export async function closeCycle(input: {
   }
 
   return { closeout: record, already: false, error: null };
+}
+
+/**
+ * Reopen a closed week: unseat its close-out so the cycle can be worked and
+ * closed again.
+ *
+ * Three writes, in an order chosen so no failure can lose a declaration:
+ *
+ *   1. **Burn the celebration claim.** INSERT `dispatch.cycle_complete_notified.
+ *      <file>` if absent, marked `suppressed_by: 'reopen'`. Both celebration
+ *      triggers (the 100% strip effect and the close path) check that exact key
+ *      and go silent on `23505`, so this is the whole of "the automation must
+ *      never fire again" — no new gate, nothing a future caller can forget.
+ *      Consequence, accepted (Kane, 2026-08-14): a week whose email never
+ *      actually delivered — the claim is released on delivery failure — will not
+ *      get one after a reopen either.
+ *   2. **Archive the record VERBATIM** under `dispatch.cycle_reopened.<file>.
+ *      <iso>`. The stored string is copied byte-for-byte rather than
+ *      re-serialized from a parsed object, so a record written by a future
+ *      version cannot silently lose fields on the way to the archive, and any
+ *      existing reader can still `parseCycleCloseout` it. Who reopened it lives
+ *      in the audit log (`payment_cycle.reopened`), the same way
+ *      `delete-authorization.md` keeps deleted rows traceable.
+ *   3. **Delete the live key**, which is what actually reopens the week.
+ *
+ * A failure at 2 aborts before 3, so the week stays closed and the only casualty
+ * is a burned celebration. A failure at 3 leaves the archive row orphaned and the
+ * week still closed — reported as an error, never as a successful reopen.
+ *
+ * `notFound` is distinct from an error: the key genuinely does not exist, so the
+ * week was already open and nothing was touched.
+ */
+export async function reopenCycle(input: {
+  sourceFile: string;
+  reopenedByEmail: string;
+}): Promise<{
+  reopened: boolean;
+  notFound: boolean;
+  /** The record as it stood, for the audit trail. `null` when the stored JSON
+   *  was unreadable — the raw value is still archived either way. */
+  prior: CycleCloseoutRecord | null;
+  archiveKey: string | null;
+  error: string | null;
+}> {
+  const miss = (error: string | null, notFound = false) => ({
+    reopened: false,
+    notFound,
+    prior: null,
+    archiveKey: null,
+    error,
+  });
+
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return miss('Supabase client unavailable');
+
+  const liveKey = cycleCloseoutKey(input.sourceFile);
+
+  // Read the RAW stored value: `getCycleCloseout` cannot tell "no such week"
+  // apart from "stored JSON is junk", and those must not share an outcome — one
+  // is a no-op, the other still needs archiving before the delete.
+  const { data, error: readErr } = await supabase
+    .from('app_settings')
+    .select('value')
+    .eq('key', liveKey)
+    .limit(1);
+  if (readErr) return miss(readErr.message);
+  const row = (data ?? [])[0] as { value?: string | null } | undefined;
+  if (!row) return miss(null, true);
+  const rawValue = typeof row.value === 'string' ? row.value : '';
+  const prior = rawValue ? parseCycleCloseout(rawValue) : null;
+
+  const reopenedAt = new Date().toISOString();
+
+  // 1 — burn the celebration claim. A 23505 means it was already claimed (the
+  // email either went out or is already suppressed), which is the desired end
+  // state either way, so it is NOT an error.
+  const { error: burnErr } = await supabase.from('app_settings').insert({
+    key: cycleCompleteNotifiedKey(input.sourceFile),
+    value: JSON.stringify({
+      at: reopenedAt,
+      by: input.reopenedByEmail || '—',
+      suppressed_by: 'reopen',
+      notified: 0,
+    }),
+    updated_at: reopenedAt,
+  });
+  if (burnErr && burnErr.code !== '23505') {
+    // Could not guarantee silence → do not reopen. Reopening anyway risks the
+    // celebration firing on the re-close, which is the one thing Kane ruled out.
+    return miss(`Could not suppress the celebration: ${burnErr.message}`);
+  }
+
+  // 2 — archive verbatim.
+  const archiveKey = cycleReopenedKey(input.sourceFile, reopenedAt);
+  const { error: archiveErr } = await supabase.from('app_settings').insert({
+    key: archiveKey,
+    value: rawValue,
+    updated_at: reopenedAt,
+  });
+  if (archiveErr) {
+    return miss(`Could not archive the close-out record: ${archiveErr.message}`);
+  }
+
+  // 3 — free the live key. This is the reopen.
+  const { error: delErr } = await supabase.from('app_settings').delete().eq('key', liveKey);
+  if (delErr) {
+    return {
+      reopened: false,
+      notFound: false,
+      prior,
+      archiveKey,
+      error: `Close-out archived but could not be cleared: ${delErr.message}`,
+    };
+  }
+
+  return { reopened: true, notFound: false, prior, archiveKey, error: null };
 }

@@ -59,3 +59,18 @@ export function cycleStartedCount(s: CycleSettlement): number {
 export function isCycleFullyPaid(s: CycleSettlement): boolean {
   return payableUnpaidCount(s) === 0 && s.paidCount > 0;
 }
+
+/**
+ * The once-per-cycle-EVER claim key. `app_settings.key` is unique, so the route
+ * INSERTs this before mailing and any later trigger hitting `23505` stays
+ * silent. It is released ONLY when the webhook delivery itself failed.
+ *
+ * Shared deliberately: the route claims it, and `reopenCycle` BURNS it (inserts
+ * it unsent) so a reopened week can never celebrate again. Two spellings of this
+ * string would be two different guarantees, so there is exactly one.
+ */
+export const CYCLE_COMPLETE_NOTIFIED_PREFIX = 'dispatch.cycle_complete_notified.';
+
+export function cycleCompleteNotifiedKey(sourceFile: string): string {
+  return `${CYCLE_COMPLETE_NOTIFIED_PREFIX}${sourceFile}`;
+}

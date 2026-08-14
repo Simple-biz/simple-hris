@@ -2,9 +2,10 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AlertCircle,
+  Archive,
   Banknote,
   CalendarRange,
   Check,
@@ -20,6 +21,7 @@ import {
   Loader2,
   Lock,
   Play,
+  RotateCcw,
   Send,
   ShieldOff,
   Sparkles,
@@ -27,6 +29,7 @@ import {
   Wallet,
   Wallet2,
   Wifi,
+  X,
   Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -46,7 +49,8 @@ import AnimatedNumber from './AnimatedNumber';
 import DispatchLoader from './DispatchLoader';
 import { PROCESSORS, DISPATCH_PROCESSORS, parseCyclePeriodFromFile, formatCycleLabelFromFile, type ArrearsInfo, type ExcludedRow, type ProcessorId, type QueueRow } from './mock-queue';
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
-import type { CycleCloseoutRecord } from '@/lib/payroll/cycle-closeout';
+import { canReopenCycle, type CycleCloseoutRecord } from '@/lib/payroll/cycle-closeout';
+import { ConfettiBurst } from '@/components/ui/confetti-burst';
 import {
   cycleStartedCount,
   isCycleFullyPaid,
@@ -304,6 +308,30 @@ export default function PayrollDispatch() {
   const cycleAlreadyClosed = Boolean(
     period.sourceFile && closedCycles?.has(period.sourceFile),
   );
+  // ── Reopening a closed cycle ────────────────────────────────────────────────
+  // Tighter than closing: `CYCLE_REOPEN_ROLES` (payroll_manager / admin), the
+  // same tier delete-authorization.md uses for destructive deletes. This flag is
+  // ONLY about whether to render the control — the route re-checks the session's
+  // roles itself and is the actual gate.
+  const canReopen = canReopenCycle(
+    (session?.user as { roles?: string[] } | undefined)?.roles,
+  );
+  // Two-step confirm, armed by the first click. A modal-in-a-modal for this
+  // would fight the Stop dialog, and an unguarded single click on something
+  // that unseats a permanent record is not acceptable.
+  const [reopenArmed, setReopenArmed] = useState(false);
+  const [reopening, setReopening] = useState(false);
+  // Unlike the close toggle (withheld on a past week because the processing lock
+  // is global), reopening is not lock-bound at all — it only touches the record,
+  // so a week closed by mistake can be reopened while browsing it.
+  const reopenVisible = cycleAlreadyClosed && canReopen && Boolean(period.sourceFile);
+  const reduceMotion = useReducedMotion();
+  // Confetti when a close lands on a week that owes NOBODY — same
+  // `isCycleFullyPaid` rule as the celebration email, so the in-app moment and
+  // the email agree. Counter, not a boolean: each firing remounts the burst.
+  const [celebration, setCelebration] = useState(0);
+  const [confettiOrigins, setConfettiOrigins] = useState<{ x: number; y: number }[] | undefined>();
+  const stopClusterRef = useRef<HTMLDivElement | null>(null);
   // Lenny can only dispatch when she's "started processing" (i.e. lock=true)
   // and a Hubstaff cycle is loaded. The "ready" mental model from the meeting
   // maps cleanly onto: cycle exists AND processing started.
@@ -1257,6 +1285,47 @@ export default function PayrollDispatch() {
     }));
   };
 
+  /**
+   * Reopen the loaded week — unseat its close-out so the cycle can be worked and
+   * closed again. The server archives the filed record before freeing the key
+   * (`cycle-closeout.md` § Reopening), so nothing is destroyed, and it burns the
+   * celebration claim so the `payment_cycle_complete` email can never fire for
+   * this week again. Both facts are said out loud in the toast — a clerk should
+   * not have to read the docs to know what they just did.
+   */
+  const handleReopenCycle = async () => {
+    const sourceFile = period.sourceFile;
+    if (!sourceFile || reopening) return;
+    setReopening(true);
+    try {
+      const res = await fetch(
+        `/api/payment-dispatches/cycle-closeout?source_file=${encodeURIComponent(sourceFile)}`,
+        { method: 'DELETE' },
+      );
+      const json = (await res.json().catch(() => ({}))) as {
+        reopened?: boolean;
+        error?: string | null;
+      };
+      if (!res.ok || !json.reopened) throw new Error(json.error ?? `HTTP ${res.status}`);
+      // Drop it from the closed set so the Stop dialog offers the close toggle
+      // again instead of the inert "already closed" state.
+      setClosedCycles((prev) => {
+        const next = new Set(prev ?? []);
+        next.delete(sourceFile);
+        return next;
+      });
+      setReopenArmed(false);
+      toast.success(
+        'Pay cycle reopened — the filed record was archived, and the celebration email stays off for this week',
+        { icon: '🗃️' },
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not reopen the pay cycle');
+    } finally {
+      setReopening(false);
+    }
+  };
+
   const handleLockToggle = async () => {
     if (togglingLock) return;
     setTogglingLock(true);
@@ -1365,6 +1434,24 @@ export default function PayrollDispatch() {
       // mailed the week.
       if (closingCycle && cycleFullyPaid && period.sourceFile) {
         void reportCycleComplete(period.sourceFile);
+        // The in-app half of the same moment (Kane, 2026-08-14), on the same
+        // gate — so the confetti and the email can never disagree about whether
+        // a week was clean. A close that owes money files in silence: the dialog
+        // was showing a rose "N payable people have not been paid" warning a
+        // second ago, and confetti over that is the lie this record exists to
+        // prevent. Reduced motion skips it — the success toast is the moment.
+        if (!reduceMotion) {
+          const rect = stopClusterRef.current?.getBoundingClientRect();
+          setConfettiOrigins(
+            rect && rect.width > 0
+              ? [
+                  { x: rect.left + rect.width * 0.2, y: rect.top + rect.height * 0.5 },
+                  { x: rect.left + rect.width * 0.8, y: rect.top + rect.height * 0.5 },
+                ]
+              : undefined,
+          );
+          setCelebration((n) => n + 1);
+        }
       }
       // ── PREMATURE snapshot download (stopped WITHOUT closing) ───────────────
       // Fire-and-forget AFTER the stop already went through, so the best-effort
@@ -1503,13 +1590,74 @@ export default function PayrollDispatch() {
               <PeriodPill period={period} />
               <CycleSelector value={selectedSourceFile} onChange={setSelectedSourceFile} />
             </div>
-            <div className="flex items-center gap-2">
+            <div ref={stopClusterRef} className="flex flex-wrap items-center justify-end gap-2">
               <ProcessingPill locked={lockState.locked} />
               <ProcessingToggleButton
                 locked={lockState.locked}
                 onClick={() => setConfirmingLockToggle(true)}
                 disabled={viewingPastWeek}
               />
+              {/* Closed-week state + Reopen. Only rendered for payroll_manager /
+                  admin (the route re-checks), and NOT lock-bound — a week closed
+                  by mistake can be reopened while browsing it. Two-step: the
+                  first click arms, the second commits. */}
+              {reopenVisible && (
+                <AnimatePresence mode="wait" initial={false}>
+                  {reopenArmed ? (
+                    <motion.div
+                      key="armed"
+                      initial={{ opacity: 0, scale: 0.96 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.96 }}
+                      transition={{ duration: reduceMotion ? 0 : 0.18 }}
+                      className="flex items-center gap-1 rounded-full border border-rose-300 bg-rose-50 py-1 pr-1 pl-2.5 dark:border-rose-800/70 dark:bg-rose-950/40"
+                    >
+                      <span className="text-[11px] font-semibold text-rose-700 dark:text-rose-300">
+                        Reopen this cycle?
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void handleReopenCycle()}
+                        disabled={reopening}
+                        className="flex items-center gap-1 rounded-full bg-rose-600 px-2 py-0.5 text-[11px] font-semibold text-white transition-colors hover:bg-rose-700 disabled:opacity-60"
+                      >
+                        {reopening ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RotateCcw className="h-3 w-3" />
+                        )}
+                        Yes, reopen
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReopenArmed(false)}
+                        disabled={reopening}
+                        aria-label="Cancel reopening the cycle"
+                        className="rounded-full p-1 text-rose-500 transition-colors hover:bg-rose-100 disabled:opacity-60 dark:hover:bg-rose-900/40"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </motion.div>
+                  ) : (
+                    <motion.button
+                      key="idle"
+                      type="button"
+                      onClick={() => setReopenArmed(true)}
+                      initial={{ opacity: 0, scale: 0.96 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.96 }}
+                      transition={{ duration: reduceMotion ? 0 : 0.18 }}
+                      title="This week has a filed close-out record. Reopening archives it and frees the week to be closed again."
+                      className="flex items-center gap-1.5 rounded-full border border-violet-300 bg-violet-50 px-2.5 py-1 text-[11px] font-semibold text-violet-700 transition-colors hover:bg-violet-100 dark:border-violet-800/70 dark:bg-violet-950/40 dark:text-violet-300 dark:hover:bg-violet-900/50"
+                    >
+                      <Archive className="h-3 w-3" />
+                      Closed
+                      <span className="text-violet-400 dark:text-violet-600">·</span>
+                      <span className="underline decoration-dotted underline-offset-2">Reopen</span>
+                    </motion.button>
+                  )}
+                </AnimatePresence>
+              )}
             </div>
           </div>
         </motion.div>
@@ -1839,6 +1987,17 @@ export default function PayrollDispatch() {
               }
         }
       />
+
+      {/* Closed-a-clean-cycle celebration — keyed on the counter so a later
+          close fires a fresh burst; unmounts when the canvas reports done. Only
+          ever mounted when nothing was owed (see handleLockToggle). */}
+      {celebration > 0 && (
+        <ConfettiBurst
+          key={celebration}
+          origins={confettiOrigins}
+          onDone={() => setCelebration(0)}
+        />
+      )}
     </div>
   );
 }

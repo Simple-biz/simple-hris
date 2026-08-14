@@ -9,6 +9,7 @@ import {
   postCycleCompleteCelebration,
   resolveCycleCompleteWebhook,
 } from "@/lib/payroll/cycle-complete-notify";
+import { cycleCompleteNotifiedKey } from "@/lib/payroll/cycle-complete-trigger";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -45,7 +46,9 @@ interface PostBody {
   total_paid_php?: unknown;
 }
 
-const claimKeyFor = (sourceFile: string) => `dispatch.cycle_complete_notified.${sourceFile}`;
+// One spelling of the claim key, shared with `reopenCycle` (which burns it so a
+// reopened week can never celebrate again). See cycle-complete-trigger.ts.
+const claimKeyFor = cycleCompleteNotifiedKey;
 
 function cleanStr(v: unknown, max = 200): string | null {
   if (typeof v !== "string") return null;

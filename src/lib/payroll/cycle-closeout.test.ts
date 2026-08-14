@@ -1,10 +1,15 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CYCLE_CLOSEOUT_PREFIX,
   CYCLE_CLOSEOUT_VERSION,
+  CYCLE_REOPENED_PREFIX,
+  CYCLE_REOPEN_ROLES,
   MAX_STORED_UNPAID,
   buildCycleCloseoutRecord,
+  canReopenCycle,
   cycleCloseoutKey,
+  cycleReopenedKey,
   normalizeReportedUnpaid,
   parseCycleCloseout,
 } from './cycle-closeout';
@@ -216,5 +221,58 @@ describe('parseCycleCloseout', () => {
     assert.deepEqual(back.unpaid.payees, []);
     assert.equal(back.label, back.source_file);
     assert.equal(back.closed_by, 'lenny@simple.biz');
+  });
+});
+
+/**
+ * Reopening a closed week (2026-08-14). The archive must be invisible to the
+ * "which weeks are closed" scan, or a reopened week reads as still closed —
+ * which is the exact thing a reopen exists to undo.
+ */
+describe('reopen — archive key and role gate', () => {
+  const SF = 'simple-biz_daily_report_2026-08-02_to_2026-08-08.csv';
+  const TS = '2026-08-14T12:34:56.789Z';
+
+  /** SQL LIKE, as PostgREST applies it in listCycleCloseouts: `%` spans any run
+   *  of characters and `_` matches exactly one. Modelling it (rather than a
+   *  startsWith) is the point — `_` is a WILDCARD in the closeout prefix. */
+  const likeMatches = (key: string, pattern: string): boolean => {
+    let rx = '';
+    for (const ch of pattern) {
+      if (ch === '%') rx += '[\\s\\S]*';
+      else if (ch === '_') rx += '[\\s\\S]';
+      // Everything else is literal — `.` included, which is why a plain
+      // startsWith would model this wrong in the other direction.
+      else rx += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+    return new RegExp(`^${rx}$`).test(key);
+  };
+
+  test('the closeout prefix scan never catches an archived record', () => {
+    const scan = `${CYCLE_CLOSEOUT_PREFIX}%`;
+    assert.equal(likeMatches(cycleCloseoutKey(SF), scan), true);
+    assert.equal(likeMatches(cycleReopenedKey(SF, TS), scan), false);
+  });
+
+  test('the two prefixes are disjoint — neither is a prefix of the other', () => {
+    assert.equal(CYCLE_REOPENED_PREFIX.startsWith(CYCLE_CLOSEOUT_PREFIX), false);
+    assert.equal(CYCLE_CLOSEOUT_PREFIX.startsWith(CYCLE_REOPENED_PREFIX), false);
+  });
+
+  test('each reopen gets its own key — closing twice never overwrites history', () => {
+    const a = cycleReopenedKey(SF, TS);
+    const b = cycleReopenedKey(SF, '2026-08-15T09:00:00.000Z');
+    assert.notEqual(a, b);
+    assert.ok(a.includes(SF));
+  });
+
+  test('reopen is admin / payroll_manager only — closing rights are not enough', () => {
+    assert.deepEqual([...CYCLE_REOPEN_ROLES], ['payroll_manager', 'admin']);
+    assert.equal(canReopenCycle(['admin']), true);
+    assert.equal(canReopenCycle(['payroll_manager']), true);
+    assert.equal(canReopenCycle(['payroll_coordinator', 'finance', 'accounting']), false);
+    assert.equal(canReopenCycle([]), false);
+    assert.equal(canReopenCycle(null), false);
+    assert.equal(canReopenCycle(undefined), false);
   });
 });

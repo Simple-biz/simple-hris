@@ -41,6 +41,47 @@ export function cycleCloseoutKey(sourceFile: string): string {
 }
 
 /**
+ * Where a REOPENED week's record goes (added 2026-08-14).
+ *
+ * Reopening moves the filed record here and then frees the live key, so a
+ * declaration is never destroyed — only unseated. That is what lets a reopen
+ * exist without breaking the promise above: the archived record still says what
+ * was true when Accounting stopped, it just stops being the current one.
+ *
+ * This prefix is deliberately NOT under `CYCLE_CLOSEOUT_PREFIX`. `listCycleCloseouts`
+ * scans `dispatch.cycle_closeout.%`, and an archived record caught by that scan
+ * would make Payment Dispatch believe a reopened week is still closed — the
+ * exact bug a reopen exists to fix. A test pins the two prefixes disjoint.
+ *
+ * One key per reopen (timestamped), because a week can be closed and reopened
+ * more than once and each declaration is its own historical fact.
+ */
+export const CYCLE_REOPENED_PREFIX = 'dispatch.cycle_reopened.';
+
+export function cycleReopenedKey(sourceFile: string, reopenedAt: string): string {
+  return `${CYCLE_REOPENED_PREFIX}${sourceFile}.${reopenedAt}`;
+}
+
+/**
+ * Who may reopen a closed cycle — deliberately TIGHTER than who may close one.
+ *
+ * Closing rides `requireFeatureEdit('accounting', 'payment_dispatch')`: anyone
+ * who runs payroll can file the declaration. Unseating a filed declaration is a
+ * different weight of act, so it follows `docs/features/delete-authorization.md`
+ * and takes the same narrow tier as a destructive delete. Kane, 2026-08-14.
+ *
+ * Lives in this pure module (not the `server-only` store) because the Payment
+ * Dispatch screen imports it to decide whether to render the control at all.
+ * The route enforces it independently from the session — the UI flag is a UI
+ * flag, never the gate.
+ */
+export const CYCLE_REOPEN_ROLES: readonly string[] = ['payroll_manager', 'admin'];
+
+export function canReopenCycle(roles: readonly string[] | null | undefined): boolean {
+  return (roles ?? []).some((r) => CYCLE_REOPEN_ROLES.includes(r));
+}
+
+/**
  * Hard cap on stored unpaid rows. A week closed very early could carry the whole
  * roster, and one settings value should not grow without bound. Whatever the cap
  * drops is counted in `unpaid.truncated` and rendered — a silent truncation

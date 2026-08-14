@@ -7,10 +7,14 @@ import { deniedResponse } from "@/lib/auth/authorize-email";
 import { getSessionActor } from "@/lib/auth/session-actor";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/auth/auth-options";
+import { CYCLE_REOPEN_ROLES, canReopenCycle } from "@/lib/payroll/cycle-closeout";
 import {
   closeCycle,
   getCycleCloseout,
   listCycleCloseouts,
+  reopenCycle,
 } from "@/lib/payroll/cycle-closeout-store";
 
 export const dynamic = "force-dynamic";
@@ -26,10 +30,13 @@ export const runtime = "nodejs";
  * are gone now — the close-out is the ONLY per-cycle record, and it is still
  * allowed to record failure. See `src/lib/payroll/cycle-closeout.ts`.
  *
- * GET  — every close-out (summaries; unpaid rows omitted) — the Stop dialog's
- *        "already closed" state; `?source_file=` returns one full record.
- * POST — close one cycle. Plain INSERT, so the first close of a week wins and a
- *        double-click reports `already` instead of overwriting the record.
+ * GET    — every close-out (summaries; unpaid rows omitted) — the Stop dialog's
+ *          "already closed" state; `?source_file=` returns one full record.
+ * POST   — close one cycle. Plain INSERT, so the first close of a week wins and a
+ *          double-click reports `already` instead of overwriting the record.
+ * DELETE — reopen one cycle (2026-08-14). Archives the filed record, frees the
+ *          live key, and permanently suppresses the celebration email. Narrower
+ *          than POST: `CYCLE_REOPEN_ROLES` only.
  */
 
 interface PostBody {
@@ -158,4 +165,88 @@ export async function POST(req: NextRequest) {
   });
 
   return NextResponse.json({ closeout, already: false, error: null });
+}
+
+/**
+ * DELETE /api/payment-dispatches/cycle-closeout?source_file=…
+ *
+ * Reopen a closed pay cycle. Deliberately NOT gated like POST: closing is
+ * something anyone running payroll may do, unseating a filed declaration is not.
+ * Same narrow tier as a destructive delete (`docs/features/delete-authorization.md`),
+ * checked from the session's roles exactly like the PAB admin-delete path.
+ *
+ * The audit entry is AWAITED and carries the whole prior record — after this the
+ * live key is gone, so the log plus the archive row are the trail.
+ */
+export async function DELETE(req: NextRequest) {
+  // Feature gate first (must be able to edit Payment Dispatch at all), then the
+  // narrower role gate on top of it.
+  const authz = await requireFeatureEdit("accounting", "payment_dispatch");
+  if (!authz.ok) return deniedResponse(authz);
+
+  const session = await getServerSession(authOptions);
+  const user = session?.user as { email?: string | null; roles?: string[] } | undefined;
+  const roles = user?.roles ?? [];
+  if (!canReopenCycle(roles)) {
+    return NextResponse.json(
+      {
+        reopened: false,
+        error: `Reopening a closed cycle requires one of: ${CYCLE_REOPEN_ROLES.join(", ")}`,
+      },
+      { status: 403 },
+    );
+  }
+
+  const sourceFile = cleanStr(req.nextUrl.searchParams.get("source_file"), 300);
+  if (!sourceFile) {
+    return NextResponse.json(
+      { reopened: false, error: "source_file is required" },
+      { status: 400 },
+    );
+  }
+
+  const actor = await getSessionActor();
+  const { reopened, notFound, prior, archiveKey, error } = await reopenCycle({
+    sourceFile,
+    reopenedByEmail: actor.user_name !== "anonymous" ? actor.user_name : "",
+  });
+
+  if (notFound) {
+    // Nothing was touched: the week has no close-out, so it is already open.
+    return NextResponse.json(
+      { reopened: false, notFound: true, error: "This pay cycle has no close-out record." },
+      { status: 404 },
+    );
+  }
+  if (error || !reopened) {
+    return NextResponse.json(
+      { reopened: false, error: error ?? "Could not reopen the pay cycle" },
+      { status: 500 },
+    );
+  }
+
+  await insertAuditLog({
+    user_name: actor.user_name,
+    user_role: actor.user_role,
+    action: "payment_cycle.reopened",
+    resource: "app_settings",
+    resource_id: sourceFile,
+    details: {
+      source_file: sourceFile,
+      archive_key: archiveKey,
+      celebration_suppressed: true,
+      prior_closed_at: prior?.closed_at ?? null,
+      prior_closed_by: prior?.closed_by ?? null,
+      prior_label: prior?.label ?? null,
+      prior_paid_payee_count: prior?.paid.payeeCount ?? null,
+      prior_paid_usd: prior?.paid.paidUSD ?? null,
+      prior_paid_php: prior?.paid.paidPHP ?? null,
+      prior_unpaid_count: prior?.unpaid.count ?? null,
+      prior_unpaid_php: prior?.unpaid.totalPHP ?? null,
+      /** null when the stored JSON was unreadable — the raw value is archived regardless. */
+      prior_record_readable: prior !== null,
+    },
+  });
+
+  return NextResponse.json({ reopened: true, notFound: false, archiveKey, error: null });
 }
