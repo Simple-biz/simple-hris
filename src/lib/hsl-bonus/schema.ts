@@ -109,6 +109,7 @@ export const HSL_DEPT_KEYS = [
   'attestation',
   'case_managers',
   'executive_guest_services',
+  'executive_assistants',
   'hsl_managers',
 ] as const;
 
@@ -334,6 +335,32 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     // bonus program has been defined for it, and scoring rules are never
     // guessed — they change pay. When Carla supplies the rules, add them here
     // and drop `noKpi`; the card, readiness row and dispatch derive on their own.
+    rules: [],
+    noKpi: true,
+  },
+
+  executive_assistants: {
+    key: 'executive_assistants',
+    name: 'Executive Assistants',
+    cadence: 'weekly',
+    color: '#c084fc',
+    headerBg: 'bg-fuchsia-950/40',
+    badgeCls: 'bg-fuchsia-900/60 text-fuchsia-300',
+    // Roster-only (Kane, 2026-08-14): "Lets create a new department called
+    // HSL - Executive Assistants and put them in there please". The cohort is
+    // the three EA/assistant roles the bulk sub-department assignment could not
+    // map to any existing team — "Dan Smith EA", "Dan Smith EA- Med Rec" and
+    // "Rick's Assistant" (docs/features/hsl-subdepartments.md §9). No KPI bonus
+    // program has been defined for them and scoring rules are never guessed,
+    // so this takes §7a-roster-only exactly like executive_guest_services:
+    // `noKpi` keeps Payroll Readiness at 'no_bonus' instead of a permanent
+    // weekly 'draft'. When Carla supplies rules, add them here and drop noKpi.
+    //
+    // NOT to be confused with the BARE `executive_assistants` slug, which is a
+    // separate in-app registry department whose calculator card was retired
+    // (department-bonus.ts KPI_CALCULATOR_RETIRED_DEPT_KEYS). That set holds
+    // unnamespaced slugs; this key only ever appears as `hsl:executive_assistants`,
+    // so the two never meet — pinned by a test.
     rules: [],
     noKpi: true,
   },

@@ -167,6 +167,55 @@ test('a rules-less HSL dept is roster-only on purpose — never an empty calcula
   assert.ok(HSL_DEPTS.executive_guest_services.noKpi);
   assert.ok(isHslKpiDeptKey('executive_guest_services'));
   assert.ok(isPlaceableDeptLabel('hsl:executive_guest_services'));
+  // Executive Assistants, added 2026-08-14, is the second dept of this shape.
+  assert.ok(HSL_DEPTS.executive_assistants.noKpi);
+  assert.ok(isHslKpiDeptKey('executive_assistants'));
+  assert.ok(isPlaceableDeptLabel('hsl:executive_assistants'));
+});
+
+test('the Payroll Wizard HSL rail only recognises HSL_DEPT_KEYS — a §7b key buckets "Unassigned"', () => {
+  // PayrollWizard.tsx:14504 builds `hslKeySet = new Set(HSL_DEPT_KEYS)` and maps a
+  // row via hsl_team_members.dept_key: `k && hslKeySet.has(k) ? k : 'unassigned'`.
+  // So the rail — and with it the manager-facing KPI Bonus Period cards — can only
+  // ever show a key that is in HSL_DEPT_KEYS. This is the whole reason
+  // `executive_assistants` took §7a (noKpi) rather than §7b: Kane 2026-08-14 asked
+  // that "the Payroll Wizard - Managers will get this", and a placement-only key
+  // would have put all three people in the Unassigned pile with no way out.
+  const railRecognises = (deptKey: string) => (HSL_DEPT_KEYS as readonly string[]).includes(deptKey);
+
+  assert.ok(
+    railRecognises('executive_assistants'),
+    'hsl:executive_assistants must be in HSL_DEPT_KEYS or the Wizard rail buckets its people "Unassigned"',
+  );
+  assert.ok(railRecognises('executive_guest_services'));
+
+  // The converse is deliberate, not an oversight: placement-only teams are
+  // knowingly invisible to this rail (docs §1.1 — "a display bucket, not a pay
+  // path"). Pinned so nobody "fixes" it by widening HSL_DEPT_KEYS, which would
+  // mint the duplicate calculator card and the permanent Readiness draft row.
+  for (const key of HSL_PLACEMENT_ONLY_SUB_KEYS) {
+    assert.equal(
+      railRecognises(key),
+      false,
+      `${key} is placement-only — adding it to HSL_DEPT_KEYS to fix the Wizard rail would cost a duplicate KPI card and a permanent Readiness draft`,
+    );
+  }
+});
+
+test('HSL sub-team keys never collide with a retired in-app registry slug', () => {
+  // `executive_assistants` exists TWICE in this codebase with different meanings:
+  // the bare slug is an in-app registry department whose KPI card was retired
+  // (department-bonus.ts KPI_CALCULATOR_RETIRED_DEPT_KEYS), and `hsl:executive_
+  // assistants` is the HSL sub-team added 2026-08-14. They must stay distinct:
+  // the retired set holds UNNAMESPACED slugs, and every HSL placement label
+  // carries the `hsl:` prefix, so a retired bare slug can never suppress an HSL
+  // sub-team's card.
+  for (const key of HSL_DEPT_KEYS) {
+    const label = hslSubDeptLabel(key);
+    assert.ok(label.startsWith('hsl:'), `${key} must only ever be placed as hsl:${key}`);
+    assert.equal(hslSubKeyFromRaw(key), null, `a BARE "${key}" must not parse as an HSL placement`);
+    assert.equal(hslSubKeyFromRaw(label), key);
+  }
 });
 
 test('hslSubTeamName resolves a display name from either keyspace', () => {

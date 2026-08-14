@@ -1,0 +1,48 @@
+{
+  "plan": [
+    {
+      "email": "vanessad@simple.biz",
+      "role": "Dan Smith EA",
+      "masterId": "b836f570-4626-4f2c-a944-1fd4d647d8c2",
+      "departmentBefore": "HSL",
+      "departmentAfter": "hsl:executive_assistants",
+      "rosterBefore": null,
+      "rosterAfter": "executive_assistants"
+    },
+    {
+      "email": "angelicai@simple.biz",
+      "role": "Dan Smith EA- Med Rec",
+      "masterId": "676809ad-3e8b-4bb4-9f58-cb9502709ca5",
+      "departmentBefore": "HSL",
+      "departmentAfter": "hsl:executive_assistants",
+      "rosterBefore": null,
+      "rosterAfter": "executive_assistants"
+    },
+    {
+      "email": "amiea@simple.biz",
+      "role": "Rick's Assistant",
+      "masterId": "5c0262c2-4b22-449b-81f9-e88980b14a11",
+      "departmentBefore": "HSL",
+      "departmentAfter": "hsl:executive_assistants",
+      "rosterBefore": null,
+      "rosterAfter": "executive_assistants"
+    }
+  ],
+  "sheetCells": [
+    {
+      "range": "'MASTERLIST'!A164",
+      "email": "vanessad@simple.biz",
+      "before": "HSL"
+    },
+    {
+      "range": "'MASTERLIST'!A137",
+      "email": "angelicai@simple.biz",
+      "before": "HSL"
+    },
+    {
+      "range": "'MASTERLIST'!A283",
+      "email": "amiea@simple.biz",
+      "before": "HSL"
+    }
+  ]
+}

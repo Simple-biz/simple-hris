@@ -40,7 +40,7 @@ Everything that knows these rules lives in one client-safe module:
 |---|---|
 | `HSL_FAMILY_DEPT_LABEL` | the single label (`'HSL'`) every picker shows |
 | `collapseHslFamilyLabel(raw)` | building a picker/filter option list — **never** a value written to the cell |
-| `hslSubDeptOptions()` | the 15 `{value,label}` sub-team options (both keyspaces, see §1.1) |
+| `hslSubDeptOptions()` | the 16 `{value,label}` sub-team options (both keyspaces, see §1.1) |
 | `isHslKpiDeptKey(key)` | "does this sub-team have its OWN calculator?" |
 | `isHslPlacementOnlySubKey(key)` | "is this sub-team scored under a different one?" |
 | `hslSubTeamName(key)` | display name, from whichever keyspace owns the key |
@@ -154,12 +154,12 @@ Mirrored as of 2026-08-10:
 `person-comp` resolves the sub rate but keeps `deptKey` on the **parent** on purpose:
 the same key drives dept-scoped bonus matching, and HSL bonuses are assigned on
 `hogan_smith_law`. Splitting them per sub-team would stop every HSL common bonus
-reaching anyone. For the same reason the 12 sub-teams are on the **Pay Structure** rail
+reaching anyone. For the same reason the sub-teams are on the **Pay Structure** rail
 only, never the **Bonus Assignments** rail.
 
 ## 3. Setting a sub-department rate
 
-Accounting → **Payment Catalog → Pay Structure**. The rail lists the 12 sub-teams as
+Accounting → **Payment Catalog → Pay Structure**. The rail lists all 16 sub-teams as
 `HSL — <Name>` directly under the built-ins; saving one writes a dept-scope structure
 keyed `hsl:<key>` through the existing `saveDept` path (`pay_structures_dept_uniq` keys
 on `department_key`, so each sub-team gets exactly one row).
@@ -192,7 +192,7 @@ so they cannot drift.
 | **HR → Onboarding → Bypass** (writes master + Sheet) | `DepartmentSelect hslSubDepartment` — Verify/Add gated by `isPlaceableDeptLabel`; the route **400s** on a bare HSL |
 | **HR → Onboarding → set work email** (stages the hire) | same selector; the route 400s on a bare HSL, including one inherited from `invite_department` |
 | **HR → Onboarding → bulk group** | same selector; a whole batch can't be set without a sub-team |
-| **Manager/HR transfer in** | a PARENT HSL grant expands to **every** labeled sub-team target, both keyspaces (15 as of 2026-08-14); plain `HSL` is **not** an offered target; submit blocked on a bare HSL |
+| **Manager/HR transfer in** | a PARENT HSL grant expands to **every** labeled sub-team target, both keyspaces (16 as of 2026-08-14); plain `HSL` is **not** an offered target; submit blocked on a bare HSL |
 | **Admin → Roles & permissions** | unchanged — sub-team **access grants** already come from `HSL_DEPT_KEYS`, not from `/api/departments` |
 
 Deliberately **left on the plain family label** — the department there selects a
@@ -283,6 +283,22 @@ Attestation tier guess mispriced 11 rows). For that shape, take §7a but set
   HSL branch, so the readiness cost above does NOT apply;
 - `hsl-subdept.test.ts` pins the pairing both ways: a `noKpi` dept must have zero
   rules, and a rules-less dept must declare `noKpi` (or `perEmployee`).
+
+**Executive Assistants** (`executive_assistants`) is the second dept of this
+shape, added 2026-08-14 — Kane: *"Lets create a new department called HSL -
+Executive Assistants and put them in there please."* Its cohort is the three
+EA/assistant roles the bulk assignment could not map to any existing team
+("Dan Smith EA", "Dan Smith EA- Med Rec", "Rick's Assistant"). Seeded by
+`scripts/seed-hsl-executive-assistants.mts` (§10), which writes the placement
+**and** the roster, because those are two different things.
+
+> **Do not confuse it with the BARE `executive_assistants` slug**, which is a
+> separate in-app registry department whose KPI card was *retired*
+> (`KPI_CALCULATOR_RETIRED_DEPT_KEYS`, `department-bonus.ts:269`). That set holds
+> **unnamespaced** slugs; this key only ever appears as
+> `hsl:executive_assistants`, so a retired bare slug can never suppress the HSL
+> sub-team's card. A test pins that every `HSL_DEPT_KEYS` entry is placeable only
+> in its `hsl:` form and that a bare key never parses as a placement.
 
 When the bonus program is defined later, add the `BonusRule` entries and drop
 `noKpi` — the card, the Readiness row and weekly auto-dispatch derive on their
@@ -419,7 +435,8 @@ These are the remaining plan tasks; nothing below is required for the two rules 
   (`update-master-sheet-department.ts:121`) — out-of-HSL midweek moves can still snap back.
 - No transfer-aware stale-row guard in the master sync.
 - ~~No bulk sub-department assignment tool~~ — **SHIPPED 2026-08-14, see §9.**
-  575 of 579 active HSL-family people now carry an `hsl:<key>` cell.
+  **579 of 579** active HSL-family people now carry an `hsl:<key>` cell — the parent
+  holds NOBODY (see §10).
 - No `seed-hsl-subdept-rates.mts` / `remove-hsl-parent-base-rate.mts`. Exactly **one**
   `hsl:*` rate row exists (`hsl:simple_texting`, ₱225/₱337.50, seeded 2026-08-12 and
   deliberately identical to the parent) — every other sub-team rides the parent
@@ -520,8 +537,8 @@ ruling, 3 already moved to Lead Gen, 1 offboarded.
 | Healthcare Team Lead | 1 | 1 |
 | Medical Records | 0 | 10 |
 
-**576 of 579** active HSL-family people now carry an `hsl:<key>` cell; the 3 Kane
-ruled unmapped remain plain `HSL`. Backup:
+**576 of 579** at this point; the last 3 were placed the same day by §10, taking
+it to **579 of 579**. Backup:
 `reports/backup_hsl_master_dept_2026-08-14T18-42-49-520Z.json`.
 
 ### Follow-ups, same day — `scripts/fix-hsl-subdept-followups.mts`
@@ -548,3 +565,71 @@ the DB — zero mismatches, zero missing, zero duplicate active rows.** CJ's 14
 Transfers-tab moves of 2026-08-14 were verified untouched: zero overlap with the
 bulk write set, and zero of the 106 applied transfers into an `hsl:*` sub-team
 ever intersected it.
+
+## 10. HSL — Executive Assistants, and the Wizard-rail trap (2026-08-14)
+
+Kane: *"Lets create a new department called HSL - Executive Assistants and put
+them in there please - now I want you to make sure and hardenn that the Payroll
+Wizard - Managers will get this please."*
+
+`scripts/seed-hsl-executive-assistants.mts` (`--apply` gated). Placed
+`vanessad@` ("Dan Smith EA"), `angelicai@` ("Dan Smith EA- Med Rec") and
+`amiea@` ("Rick's Assistant") — the three §9 could not map. **Plain `HSL` now
+holds ZERO people: 579 of 579 are sub-labeled.**
+
+### The trap: placement and roster are two different writes
+
+This is the part that is easy to get wrong, and it is what "make sure the
+Payroll Wizard - Managers will get this" is actually about.
+
+| Write | Table | Governs |
+|---|---|---|
+| **Placement** | `global_master_list."Department"` + the Google Sheet | pricing, every picker, transfers, Payment Catalog |
+| **KPI roster** | `hsl_team_members.dept_key` | **the Payroll Wizard's HSL rail, and nothing else** |
+
+`PayrollWizard.tsx:14504` maps a row with
+`k = hslDeptByEmail[email]; return k && hslKeySet.has(k) ? k : 'unassigned'`,
+where `hslKeySet = new Set(HSL_DEPT_KEYS)`. So a person is bucketed **Unassigned**
+in the Wizard — and drops out of the manager-facing KPI Bonus Period cards — if
+*either*:
+
+- their `hsl_team_members` row is missing or has a NULL `dept_key`, **or**
+- their `dept_key` is not in `HSL_DEPT_KEYS`.
+
+Doing the placement write alone leaves them correctly priced and still
+Unassigned. The seed script does both, and reports loudly when a person has no
+roster row at all.
+
+### Why §7a-roster-only rather than §7b
+
+A §7b placement-only key is **deliberately absent** from `HSL_DEPT_KEYS`, so it
+fails the rail's gate by construction (§1.1 — "a display bucket, not a pay
+path"). Choosing §7b here would have put all three in Unassigned with no manager
+card and no Admin Roles checkbox — the opposite of the request. §7a with
+`noKpi: true` + `rules: []` gives the rail entry, the
+`hsl:executive_assistants` grant checkbox and a roster-only card, while
+Payroll Readiness reads the dept `no_bonus` rather than a permanent weekly
+`draft` (`payroll-readiness.ts:591`). No bonus rules were invented.
+
+### What the tests pin
+
+`hsl-subdept.test.ts` gained two, both stating the failure in the message:
+
+- **"the Payroll Wizard HSL rail only recognises HSL_DEPT_KEYS"** — asserts
+  `executive_assistants` is in `HSL_DEPT_KEYS`, *and* asserts the converse for
+  every placement-only key, so nobody "fixes" a §7b team's Unassigned bucket by
+  widening `HSL_DEPT_KEYS` and silently buying a duplicate calculator card plus a
+  permanent Readiness draft.
+- **"HSL sub-team keys never collide with a retired in-app registry slug"** —
+  every `HSL_DEPT_KEYS` entry is placeable only as `hsl:<key>`, and a bare key
+  never parses as a placement. This is what keeps `hsl:executive_assistants`
+  clear of the retired bare `executive_assistants` registry dept.
+
+### Verified after the run
+
+3 placed (DB + Sheet), 3 roster `dept_key` set NULL→`executive_assistants`, all
+three bucket to `executive_assistants` in a rail simulation, Readiness reads
+`no_bonus`, zero `department_transfer_requests` rows, and no rate moved — the
+team has no base rate row so it rides the parent ₱225, and all three hold
+individual catalog rates that outrank it anyway. Backup:
+`reports/backup_hsl_executive_assistants_2026-08-14T19-30-30-670Z.json`.
