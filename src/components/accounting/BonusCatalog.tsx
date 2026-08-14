@@ -2271,12 +2271,22 @@ function IndividualPayAdder({
   const deptMatched = useMemo(() => {
     // Built-in departments match via the alias map; custom (Department-tab)
     // departments have no alias entry, so fall back to the exact label match.
+    // Namespaced sub-teams (hsl:<key>, <parent>:<sub>) need the RAW cell match:
+    // normalizeDeptToKey collapses `hsl:collections` to the parent
+    // `hogan_smith_law` (≠ the selected key), and the display name
+    // ("HSL — Collections") never equals the cell — so without this clause a
+    // sub-team's own people read "no employees found" while the rest of the
+    // catalog resolves them fine.
     const nameKey = deptName.trim().toLowerCase();
-    return roster.filter(
-      (r) =>
+    const rawKey = deptKey.trim().toLowerCase();
+    return roster.filter((r) => {
+      const cell = r.department.trim().toLowerCase();
+      return (
         normalizeDeptToKey(r.department) === deptKey ||
-        (nameKey !== '' && r.department.trim().toLowerCase() === nameKey),
-    );
+        cell === rawKey ||
+        (nameKey !== '' && cell === nameKey)
+      );
+    });
   }, [roster, deptKey, deptName]);
   const list = useMemo(() => {
     const base = filterByDept ? deptMatched : roster;
