@@ -214,12 +214,15 @@ condition failed for months on end (one marker exists in production, for the wee
 
 So the close is now a **second trigger point for the same email** (Kane, 2026-08-14):
 
-- **Same gate, shared in code.** Both trigger points call `isCycleFullyPaid` from
-  [`cycle-complete-trigger.ts`](../../src/lib/payroll/cycle-complete-trigger.ts): nothing pending,
-  nobody on **Problem**, nobody held at **Threshold**, and at least one person actually paid.
-  That is the progress strip's own denominator and exactly the set this record's `unpaid` list
-  names — so **a close that files any unpaid person cannot fire the email**, by construction.
-  The Excluded tab is not payable and never enters the count.
+- **The close IS the event — unpaid people do not silence it** (Kane, 2026-08-14, superseding the
+  same day's first rule: *"I don't care if people were unpaid, if it's closed it's closed"*). The
+  shortfall is not hidden to achieve that: the report carries `trigger: 'cycle_closed'` and an
+  honest `unpaid_count`, and the server validates **that arm on its own terms**
+  (`isReportableCycleComplete`) instead of the strip's `paid === total`.
+  **The strip's arm did not weaken** — it still means 100% and still demands equality; that is why
+  there are two arms rather than one relaxed rule. Both arms still refuse a report naming **nobody
+  paid**, or more paid than the cycle ever held: a congratulations listing zero payees is a bug, not
+  a policy. `isCycleFullyPaid` now gates the strip trigger only.
 - **Same body, built once.** `buildCycleCompleteBody` in `PayrollDispatch.tsx` serves both, so the
   two can never describe one week two different ways. `total_count` comes from the shared
   `cycleStartedCount`, which is what makes the route's `paid_count === total_count > 0` check
@@ -233,16 +236,21 @@ So the close is now a **second trigger point for the same email** (Kane, 2026-08
 - **An already-closed week does not re-fire it.** The trigger rides `closingCycle`, i.e. a real
   close performed by this click.
 
-What has **not** changed: closing is still gate-free (§ above). The celebration is a consequence
-of the numbers, never a condition on closing — a week with 400 unpaid people closes exactly as
-readily as a clean one, in silence.
+What has **not** changed: closing is still gate-free (§ above). The celebration is a consequence of
+the close, never a condition on it — a week with 400 unpaid people closes exactly as readily as a
+clean one, and now celebrates too.
 
-**In-app confetti rides the same gate** (2026-08-14). A clean close also fires `ConfettiBurst` on
-the Payment Dispatch screen, erupting from the Start/Stop cluster — the same `isCycleFullyPaid`
-rule, so the confetti and the email can never disagree about whether a week was clean. A close that
-owes money gets none: the dialog was showing a rose *"N payable people have not been paid"* warning
-a second earlier. Reduced motion skips the burst entirely (the success toast is the moment), matching
+**In-app confetti rides the same trigger.** A close fires `ConfettiBurst` on the Payment Dispatch
+screen, erupting from the Start/Stop cluster, so the confetti and the email always agree about what
+just happened. Reduced motion skips the burst entirely (the success toast is the moment), matching
 `payroll-readiness.md`'s 100% celebration.
+
+**History, so nobody re-litigates it from the git log:** this section said "no celebration email"
+until 2026-08-14 morning, then "only a close owing nobody", then this. The load-bearing rule that
+survived all three is the one above about honesty — the email may not *imply* a clean week when the
+week was not clean, which is why `unpaid_count` and `trigger` are in the payload rather than a
+paid-count massaged up to match the total. The n8n workflow owns the wording and should read those
+two fields before congratulating anyone.
 
 ## Nothing is truncated silently
 

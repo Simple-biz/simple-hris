@@ -55,6 +55,7 @@ import {
   cycleStartedCount,
   isCycleFullyPaid,
   payableUnpaidCount,
+  type CycleCompleteTrigger,
 } from '@/lib/payroll/cycle-complete-trigger';
 import {
   buildFinalCloseoutCsv,
@@ -597,14 +598,19 @@ export default function PayrollDispatch() {
    *  `paid_count === total_count` check structurally satisfiable rather than a
    *  coincidence (see cycle-complete-trigger.test.ts). */
   const buildCycleCompleteBody = useCallback(
-    (sourceFile: string) => ({
+    (sourceFile: string, trigger: CycleCompleteTrigger) => ({
       source_file: sourceFile,
+      trigger,
       cycle_id: period.cycleId,
       label: formatCycleLabelFromFile(sourceFile),
       period_start: period.start,
       period_end: period.end,
       paid_count: cycleSettlement.paidCount,
       total_count: cycleStartedCount(cycleSettlement),
+      // Reported honestly rather than hidden: on a `cycle_closed` report this is
+      // allowed to be non-zero, and the server validates that arm on its own
+      // terms instead of demanding paid === total.
+      unpaid_count: payableUnpaidCount(cycleSettlement),
       total_paid_usd: totalPaidUSD,
       total_paid_php: paidRows.reduce((sum, r) => sum + (r.amount_php ?? 0), 0),
     }),
@@ -615,12 +621,12 @@ export default function PayrollDispatch() {
    *  answer is final (any non-5xx): auth/validation failures won't heal on
    *  retry, only transient server trouble earns another attempt. */
   const reportCycleComplete = useCallback(
-    async (sourceFile: string): Promise<boolean> => {
+    async (sourceFile: string, trigger: CycleCompleteTrigger): Promise<boolean> => {
       try {
         const res = await fetch('/api/payment-dispatches/cycle-complete', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(buildCycleCompleteBody(sourceFile)),
+          body: JSON.stringify(buildCycleCompleteBody(sourceFile, trigger)),
         });
         return res.ok || res.status < 500;
       } catch {
@@ -647,7 +653,7 @@ export default function PayrollDispatch() {
     if (viewingPastWeek && !sawIncompleteRef.current.has(sourceFile)) return;
     if (celebrateAttemptedRef.current.has(sourceFile)) return;
     celebrateAttemptedRef.current.add(sourceFile);
-    void reportCycleComplete(sourceFile).then((settled) => {
+    void reportCycleComplete(sourceFile, 'fully_paid').then((settled) => {
       if (!settled) celebrateAttemptedRef.current.delete(sourceFile);
     });
   }, [
@@ -1419,27 +1425,27 @@ export default function PayrollDispatch() {
           : 'Processing stopped — employees can file issues again',
         { icon: goingLocked ? '🔒' : '🔓' },
       );
-      // ── Closed with nothing owed → celebrate the Accounting team ────────────
-      // The second trigger point for `payment_cycle_complete` (Kane, 2026-08-14).
-      // Gated on the SAME `isCycleFullyPaid` rule as the automatic 100% effect,
-      // so a cycle closed with anyone still pending, on Problem or held at
-      // Threshold stays silent — the close-out exists precisely to record those
-      // weeks, and congratulating the team over one would be a lie.
+      // ── Closed → celebrate the Accounting team ──────────────────────────────
+      // CLOSING IS THE EVENT (Kane, 2026-08-14: "I don't care if people were
+      // unpaid, if it's closed it's closed"). This deliberately supersedes the
+      // morning's rule that a close only celebrated a week owing nobody: the
+      // shortfall is not hidden, it rides along as `unpaid_count` and the server
+      // validates the `cycle_closed` arm on its own terms.
+      //
+      // The STRIP trigger above keeps its strict 100% gate — it means something
+      // different ("the queue emptied"), and weakening it would have made two
+      // events indistinguishable.
       //
       // Fire-and-forget, and only AFTER the stop already went through: the
       // close-out POST and `setLocked` own the ordering (cycle-closeout.md
       // § "Closing is once, and it happens before the lock flips"), and a
       // celebration must never be able to abort, delay or reorder either. The
       // server's once-per-cycle claim makes this silent when the strip already
-      // mailed the week.
-      if (closingCycle && cycleFullyPaid && period.sourceFile) {
-        void reportCycleComplete(period.sourceFile);
-        // The in-app half of the same moment (Kane, 2026-08-14), on the same
-        // gate — so the confetti and the email can never disagree about whether
-        // a week was clean. A close that owes money files in silence: the dialog
-        // was showing a rose "N payable people have not been paid" warning a
-        // second ago, and confetti over that is the lie this record exists to
-        // prevent. Reduced motion skips it — the success toast is the moment.
+      // mailed the week — or when a reopen burned the claim.
+      if (closingCycle && period.sourceFile) {
+        void reportCycleComplete(period.sourceFile, 'cycle_closed');
+        // The in-app half of the same moment, on the same trigger. Reduced
+        // motion skips it — the success toast is the moment there.
         if (!reduceMotion) {
           const rect = stopClusterRef.current?.getBoundingClientRect();
           setConfettiOrigins(

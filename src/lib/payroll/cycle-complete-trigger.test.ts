@@ -1,24 +1,20 @@
-import { test } from 'node:test';
+import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  asCycleCompleteTrigger,
   cycleStartedCount,
   isCycleFullyPaid,
+  isReportableCycleComplete,
   payableUnpaidCount,
   type CycleSettlement,
 } from './cycle-complete-trigger';
 
 /**
- * The celebration gate, shared by both trigger points (the strip hitting 100%
- * and closing the pay cycle). These tests lock the promises that keep the email
- * honest:
- *   1. Nobody payable unpaid AND somebody paid = the only way to celebrate.
- *   2. Problem and Threshold are money still owed — each one alone silences it.
- *      (This is the whole reason a CLOSE may fire it: cycle-closeout.md exists
- *      for weeks that end with people unpaid, and those must stay silent.)
- *   3. An empty week is not a victory.
- *   4. Any body built from these functions passes the server's
- *      `paid_count === total_count > 0` check — structurally, not by luck.
+ * `isCycleFullyPaid` — what the STRIP trigger means by 100%: nobody pending, on
+ * Problem or at Threshold, and somebody actually paid. Since 2026-08-14 it gates
+ * that trigger only; the CLOSE trigger fires on the close itself and reports its
+ * shortfall (see `describe('report arms')` at the bottom).
  */
 
 const settled = (over: Partial<CycleSettlement> = {}): CycleSettlement => ({
@@ -55,21 +51,79 @@ test('payable-unpaid sums all three reasons; started = paid + owed', () => {
   assert.equal(cycleStartedCount(s), 26);
 });
 
-test('a celebrating body always satisfies the route: paid_count === total_count > 0', () => {
-  // The server 400s on any other shape, so this equivalence is the contract.
+test('a fully-paid body always satisfies the strict arm: paid_count === total_count > 0', () => {
+  // The server 400s a `fully_paid` report in any other shape, so this
+  // equivalence is the contract for the STRIP trigger.
   for (const pendingCount of [0, 1, 5]) {
     for (const blockedCount of [0, 1]) {
       for (const heldCount of [0, 2]) {
         for (const paidCount of [0, 1, 27]) {
           const s = { pendingCount, blockedCount, heldCount, paidCount };
-          const serverWouldAccept = cycleStartedCount(s) === s.paidCount && s.paidCount > 0;
-          assert.equal(
-            isCycleFullyPaid(s),
-            serverWouldAccept,
-            `mismatch at ${JSON.stringify(s)}`,
-          );
+          const serverWouldAccept = isReportableCycleComplete({
+            trigger: 'fully_paid',
+            paidCount: s.paidCount,
+            totalCount: cycleStartedCount(s),
+          });
+          assert.equal(isCycleFullyPaid(s), serverWouldAccept, `mismatch at ${JSON.stringify(s)}`);
         }
       }
     }
   }
+});
+
+/**
+ * The two arms (2026-08-14). Kane: "if it's closed it's closed" — a close reports
+ * a real shortfall instead of pretending everyone was paid. The strip's arm did
+ * NOT weaken to allow it; that is the whole reason there are two.
+ */
+describe('report arms', () => {
+  const paid = (paidCount: number, totalCount: number) => ({ paidCount, totalCount });
+
+  test('a close reports its shortfall and is still sendable', () => {
+    // Carla's real week: 1051 paid, 17 payable-unpaid.
+    assert.equal(
+      isReportableCycleComplete({ trigger: 'cycle_closed', ...paid(1051, 1068) }),
+      true,
+    );
+    // The same numbers on the strip's arm stay refused — it means "100%".
+    assert.equal(
+      isReportableCycleComplete({ trigger: 'fully_paid', ...paid(1051, 1068) }),
+      false,
+    );
+  });
+
+  test('nothing paid is never sendable, on EITHER arm', () => {
+    assert.equal(isReportableCycleComplete({ trigger: 'cycle_closed', ...paid(0, 40) }), false);
+    assert.equal(isReportableCycleComplete({ trigger: 'fully_paid', ...paid(0, 0) }), false);
+  });
+
+  test('more paid than the cycle held is a broken report, on EITHER arm', () => {
+    assert.equal(isReportableCycleComplete({ trigger: 'cycle_closed', ...paid(50, 40) }), false);
+    assert.equal(isReportableCycleComplete({ trigger: 'fully_paid', ...paid(50, 40) }), false);
+  });
+
+  test('non-finite counts are refused rather than coerced', () => {
+    assert.equal(
+      isReportableCycleComplete({ trigger: 'cycle_closed', ...paid(NaN, 10) }),
+      false,
+    );
+    assert.equal(
+      isReportableCycleComplete({ trigger: 'cycle_closed', ...paid(5, Infinity) }),
+      false,
+    );
+  });
+
+  test('an unlabelled trigger falls back to the STRICTER arm', () => {
+    assert.equal(asCycleCompleteTrigger(undefined), 'fully_paid');
+    assert.equal(asCycleCompleteTrigger('nonsense'), 'fully_paid');
+    assert.equal(asCycleCompleteTrigger('cycle_closed'), 'cycle_closed');
+    // …so a body that forgot the field cannot inherit the close's permission.
+    assert.equal(
+      isReportableCycleComplete({
+        trigger: asCycleCompleteTrigger(undefined),
+        ...paid(1051, 1068),
+      }),
+      false,
+    );
+  });
 });

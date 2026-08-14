@@ -9,7 +9,11 @@ import {
   postCycleCompleteCelebration,
   resolveCycleCompleteWebhook,
 } from "@/lib/payroll/cycle-complete-notify";
-import { cycleCompleteNotifiedKey } from "@/lib/payroll/cycle-complete-trigger";
+import {
+  asCycleCompleteTrigger,
+  cycleCompleteNotifiedKey,
+  isReportableCycleComplete,
+} from "@/lib/payroll/cycle-complete-trigger";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -44,6 +48,10 @@ interface PostBody {
   total_count?: unknown;
   total_paid_usd?: unknown;
   total_paid_php?: unknown;
+  /** 'fully_paid' (strip hit 100%) | 'cycle_closed' (Accounting closed the week). */
+  trigger?: unknown;
+  /** Payable people left unpaid — only meaningful on the `cycle_closed` arm. */
+  unpaid_count?: unknown;
 }
 
 // One spelling of the claim key, shared with `reopenCycle` (which burns it so a
@@ -80,11 +88,24 @@ export async function POST(req: NextRequest) {
   if (!sourceFile) {
     return NextResponse.json({ fired: false, error: "source_file is required" }, { status: 400 });
   }
-  // Defensive server-side sanity: a completion report must actually describe a
-  // fully-paid, non-empty cycle.
-  if (!paidCount || !totalCount || paidCount !== totalCount) {
+  // Defensive server-side sanity, per arm (`cycle-complete-trigger.ts`):
+  // `fully_paid` still demands paid === total; `cycle_closed` accepts a real
+  // shortfall — Accounting closed the week — but still refuses a report naming
+  // nobody paid, or more paid than the cycle ever held.
+  const trigger = asCycleCompleteTrigger(body.trigger);
+  if (
+    paidCount === null ||
+    totalCount === null ||
+    !isReportableCycleComplete({ trigger, paidCount, totalCount })
+  ) {
     return NextResponse.json(
-      { fired: false, error: "paid_count and total_count must be equal and > 0" },
+      {
+        fired: false,
+        error:
+          trigger === "cycle_closed"
+            ? "paid_count must be > 0 and total_count >= paid_count"
+            : "paid_count and total_count must be equal and > 0",
+      },
       { status: 400 },
     );
   }
@@ -117,8 +138,10 @@ export async function POST(req: NextRequest) {
     value: JSON.stringify({
       at: completedAt,
       by: actor.user_name,
+      trigger,
       paid_count: paidCount,
       total_count: totalCount,
+      unpaid_count: cleanNum(body.unpaid_count) ?? 0,
       notified: recipients.length,
     }),
     updated_at: completedAt,
@@ -156,6 +179,7 @@ export async function POST(req: NextRequest) {
     webhook,
     {
       sourceFile,
+      trigger,
       cycleId: cleanStr(body.cycle_id),
       label: cleanStr(body.label, 120),
       periodStart: cleanStr(body.period_start, 40),
@@ -167,6 +191,7 @@ export async function POST(req: NextRequest) {
         total_count: totalCount,
         total_paid_usd: cleanNum(body.total_paid_usd),
         total_paid_php: cleanNum(body.total_paid_php),
+        unpaid_count: cleanNum(body.unpaid_count) ?? 0,
       },
     },
     recipients,
@@ -192,8 +217,10 @@ export async function POST(req: NextRequest) {
     details: {
       source_file: sourceFile,
       cycle_id: cleanStr(body.cycle_id),
+      trigger,
       paid_count: paidCount,
       total_count: totalCount,
+      unpaid_count: cleanNum(body.unpaid_count) ?? 0,
       total_paid_usd: cleanNum(body.total_paid_usd),
       total_paid_php: cleanNum(body.total_paid_php),
       notified: recipients.length,

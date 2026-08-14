@@ -3,6 +3,7 @@ import "server-only";
 import { resolveWebhookUrl } from "@/lib/webhooks/resolve-webhook";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { normEmail } from "@/lib/email/norm-email";
+import type { CycleCompleteTrigger } from "@/lib/payroll/cycle-complete-trigger";
 
 /**
  * "Payment cycle 100% complete" celebration email to the Accounting team.
@@ -31,6 +32,9 @@ export interface CycleCompleteRecipient {
 
 export interface CycleCompleteCelebrationInput {
   sourceFile: string;
+  /** Which event produced this report — see `CycleCompleteTrigger`. A
+   *  `cycle_closed` report may legitimately carry a shortfall. */
+  trigger: CycleCompleteTrigger;
   cycleId?: string | null;
   /** Human cycle label, e.g. "Jul 19 – 25, 2026" (client-formatted). */
   label?: string | null;
@@ -45,6 +49,9 @@ export interface CycleCompleteCelebrationInput {
     total_count: number;
     total_paid_usd?: number | null;
     total_paid_php?: number | null;
+    /** Payable people the cycle still owed at report time. 0 on the
+     *  `fully_paid` arm by definition; non-zero only on a close. */
+    unpaid_count?: number | null;
   };
 }
 
@@ -127,6 +134,9 @@ export async function postCycleCompleteCelebration(
       headers,
       body: JSON.stringify({
         event: "payment_cycle.completed",
+        // Which event fired this. `cycle_closed` reports may carry
+        // `stats.unpaid_count > 0` — the workflow should not assume a clean week.
+        trigger: input.trigger,
         cycle: {
           source_file: input.sourceFile,
           cycle_id: input.cycleId ?? null,
@@ -141,6 +151,7 @@ export async function postCycleCompleteCelebration(
           total_count: input.stats.total_count,
           total_paid_usd: input.stats.total_paid_usd ?? null,
           total_paid_php: input.stats.total_paid_php ?? null,
+          unpaid_count: input.stats.unpaid_count ?? 0,
         },
         recipients,
         sent_by: "system",

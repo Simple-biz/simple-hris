@@ -1167,28 +1167,31 @@ themed "Preparing Dispatch…" confirm modal.
 
 ### 12.7 Cycle fully paid → confetti email to the Accounting team (2026-07-30; second trigger 2026-08-14)
 
-When a cycle owes **nobody** — nothing pending, nobody on Problem, nobody held
-at Threshold, and ≥1 person actually paid, the same math as the progress strip —
-the screen POSTs `/api/payment-dispatches/cycle-complete` and the server emails
+The screen POSTs `/api/payment-dispatches/cycle-complete` and the server emails
 **everyone holding the `accounting` role** a confetti-and-balloons
-congratulations for the completed payment cycle, via an n8n webhook.
+congratulations for the payment cycle, via an n8n webhook.
 
-**Two trigger points, one rule.** The gate lives in
+**Two trigger points, two arms of ONE boundary rule.** The rule lives in
 [`cycle-complete-trigger.ts`](../../src/lib/payroll/cycle-complete-trigger.ts)
-(`isCycleFullyPaid`, pure + unit-tested) and the request body is built by a
-single `buildCycleCompleteBody` in `PayrollDispatch.tsx`, so the two paths can
-never describe one week two different ways:
+(pure + unit-tested) and the request body is built by a single
+`buildCycleCompleteBody` in `PayrollDispatch.tsx`, so the two paths can never
+describe one week two different ways:
 
-| # | Fires when | Added |
-|---|---|---|
-| 1 | the strip reaches 100% while the screen is open | 2026-07-30 |
-| 2 | **the pay cycle is closed** from the Stop dialog and the same gate passes | 2026-08-14 |
+| # | `trigger` | Fires when | Requires | Added |
+|---|---|---|---|---|
+| 1 | `fully_paid` | the strip reaches 100% while the screen is open | `paid === total`, `paid > 0` (`isCycleFullyPaid`) | 2026-07-30 |
+| 2 | `cycle_closed` | **the pay cycle is closed** from the Stop dialog | `paid > 0`, `total >= paid` — a shortfall is legitimate and rides along as `unpaid_count` | 2026-08-14 |
 
 Trigger 2 exists because trigger 1 is missable — it needs a browser sitting on
 Payment Dispatch at the moment the last payment lands *and* the webhook already
-configured. A close that leaves anyone unpaid stays silent; see
+configured. **It deliberately fires on a week that still owes people** (Kane:
+"if it's closed it's closed") — the honesty is preserved in the payload, not by
+withholding the email: `trigger` and `stats.unpaid_count` tell the workflow
+exactly what it is congratulating, and the strip's arm never weakened to let this
+through. Both arms still refuse a report naming nobody paid. See
 [cycle-closeout.md](./cycle-closeout.md) § Celebration email for the ordering
-guarantees (it runs after the stop, fire-and-forget, and can never abort it).
+guarantees (it runs after the stop, fire-and-forget, and can never abort it), and
+§ Reopening for the one thing that permanently silences a week.
 
 - **Trigger 1 (client)** — an effect in `PayrollDispatch.tsx` right after the
   `paidPct` computation. Gated on `hydrated && !loading && wizardReady &&
@@ -1209,10 +1212,12 @@ guarantees (it runs after the stop, fire-and-forget, and can never abort it).
 - **Audience (server)** — `employee_roles` where `role='accounting'` and
   `revoked_at IS NULL`; names resolved from `employee_ids` via a targeted
   `.in()` (1000-row-cap safe). Same audience as `/api/ceo/accounting-team`.
-- **Payload** — `{ event: 'payment_cycle.completed', cycle: { source_file,
-  cycle_id, label, period_start, period_end, completed_at, completed_by },
-  stats: { paid_count, total_count, total_paid_usd, total_paid_php },
-  recipients: [{ email, name }] }`. `completed_by` = display name of whoever's
+- **Payload** — `{ event: 'payment_cycle.completed', trigger:
+  'fully_paid' | 'cycle_closed', cycle: { source_file, cycle_id, label,
+  period_start, period_end, completed_at, completed_by }, stats: { paid_count,
+  total_count, unpaid_count, total_paid_usd, total_paid_php },
+  recipients: [{ email, name }] }`. **`unpaid_count` can be > 0** on a
+  `cycle_closed` report — the workflow must not assume a clean week. `completed_by` = display name of whoever's
   browser reported 100% (best-effort from `employee_ids`, else email local
   part). Audit log action: `payment_cycle.completed`.
 - **n8n side** — **wired and proven in production.** The `payment_cycle_complete`

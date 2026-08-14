@@ -54,10 +54,58 @@ export function cycleStartedCount(s: CycleSettlement): number {
   return s.paidCount + payableUnpaidCount(s);
 }
 
-/** The one gate both triggers ask. True only for a week that owes nothing and
- *  actually paid somebody — an empty cycle (0 paid, 0 owed) is not a victory. */
+/** True only for a week that owes nothing and actually paid somebody — an empty
+ *  cycle (0 paid, 0 owed) is not a victory. This is what the STRIP trigger means
+ *  by "100%", and it still gates that trigger exactly as before. Since
+ *  2026-08-14 it no longer gates the CLOSE trigger — see `CycleCompleteTrigger`. */
 export function isCycleFullyPaid(s: CycleSettlement): boolean {
   return payableUnpaidCount(s) === 0 && s.paidCount > 0;
+}
+
+/**
+ * WHY a completion is being reported. Two events, two different truth claims —
+ * kept as a discriminator rather than one loosened numeric rule, so neither arm
+ * has to weaken to let the other through.
+ *
+ *  - `fully_paid`   — the progress strip genuinely reached 100%. Requires
+ *                     `paid === total`, exactly as it always has.
+ *  - `cycle_closed` — Accounting CLOSED the week (Kane, 2026-08-14: "if it's
+ *                     closed it's closed"). A shortfall is legitimate here and
+ *                     is reported honestly as `unpaid_count`, never hidden by
+ *                     inflating `paid_count` to match `total_count`.
+ */
+export type CycleCompleteTrigger = 'fully_paid' | 'cycle_closed';
+
+export const CYCLE_COMPLETE_TRIGGERS: readonly CycleCompleteTrigger[] = [
+  'fully_paid',
+  'cycle_closed',
+];
+
+export function asCycleCompleteTrigger(v: unknown): CycleCompleteTrigger {
+  // Unknown/missing reads as the STRICTER arm: an unlabelled report must not
+  // inherit the close's permission to carry a shortfall.
+  return v === 'cycle_closed' ? 'cycle_closed' : 'fully_paid';
+}
+
+/**
+ * The server-side boundary check, shared with the client so the two can't
+ * disagree about what is sendable. Per-arm strict:
+ *
+ *   - nothing paid at all is never reportable, on either arm — a "congratulations"
+ *     naming zero payees is a bug, not a policy;
+ *   - `total < paid` is a broken report on either arm (more people paid than the
+ *     cycle ever had);
+ *   - `fully_paid` additionally demands equality.
+ */
+export function isReportableCycleComplete(input: {
+  trigger: CycleCompleteTrigger;
+  paidCount: number;
+  totalCount: number;
+}): boolean {
+  const { trigger, paidCount, totalCount } = input;
+  if (!Number.isFinite(paidCount) || !Number.isFinite(totalCount)) return false;
+  if (paidCount <= 0 || totalCount < paidCount) return false;
+  return trigger === 'cycle_closed' ? true : paidCount === totalCount;
 }
 
 /**
