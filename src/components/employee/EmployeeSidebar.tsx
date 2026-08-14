@@ -23,6 +23,7 @@ import {
   Trophy,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { collapseHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ConstructionMark from '@/components/common/ConstructionMark';
@@ -99,6 +100,18 @@ export default function EmployeeSidebar({
 }: EmployeeSidebarProps) {
   const isHidden = (id: string) => hiddenTabs.includes(id);
   const isConstr = (id: string) => constructionTabs.includes(id);
+
+  // The team tab is named after the viewer's OWN department ("AI/API Team"),
+  // falling back to "My Team" until the master record resolves. An `hsl:*` cell
+  // collapses to a single "HSL" (hsl-subdepartments.md).
+  //
+  // The Pages registry (`src/lib/pages/visibility.ts`) deliberately keeps the
+  // static "My Team" label for this tab: it is a workspace-wide admin control,
+  // so it cannot carry a per-viewer name. Same for `humanizeTabId`, which feeds
+  // presence and the document title — those stay comparable across the org.
+  const teamTabLabel = collapseHslFamilyLabel(department ?? '') || 'My Team';
+  const labelFor = (item: { id: string; label: string }) =>
+    item.id === 'team' ? teamTabLabel : item.label;
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
@@ -142,7 +155,7 @@ export default function EmployeeSidebar({
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
-                title={collapsed ? item.label : undefined}
+                title={collapsed ? labelFor(item) : undefined}
                 style={{
                   // Stagger each nav item on mobile drawer open — no-op on desktop because
                   // md: utilities pin opacity/translate to the visible state.
@@ -184,7 +197,7 @@ export default function EmployeeSidebar({
                     <SidebarCollapsedDot collapsed={collapsed} tone="bg-emerald-500" />
                   )}
                 </span>
-                <span className={cn('truncate text-left sb-collapse-fade')}>{item.label}</span>
+                <span className={cn('truncate text-left sb-collapse-fade')}>{labelFor(item)}</span>
                 {isConstr(item.id) && <span className={cn('sb-collapse-fade')}><ConstructionMark active={activeTab === item.id} /></span>}
                 {item.id === 'profile' && profileIncomplete && activeTab !== 'profile' && (
                   <span
