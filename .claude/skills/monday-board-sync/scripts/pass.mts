@@ -51,32 +51,66 @@
  * evidence updates + the verify read. Run it as the day's only board work — the daily complexity
  * budget was already exhausted on 2026-08-13 before this could be applied.
  *
- * ── APPROVAL, recorded because it was given before it could be executed ───────────────────────────
- * Kane approved this pass on 2026-08-13 ("Approve all") after reviewing it in full, plus three
- * explicit rulings the same day: gap-day rows → Sprint 25; the group move belongs in `sync.ts`; the
- * five Backlog rows stay out of scope. The budget then refused even a 1-call `boardGroups`, so no
- * `proposal.json` hash could be minted to bind it to.
+ * ── 2026-08-14 — THE BACKLOG HALF OF THE SAME BUG, +3 rows ────────────────────────────────────────
+ * Kane: "Check all our backlogs and arrange them properly to where they belong but only those who are
+ * already Done put them in their proper Sprint dates."
+ *
+ * The 08-13 pass fixed rows sitting in a sprint their work had NOT finished in. This adds the mirror
+ * case: rows whose work DID finish inside Sprint 26 but that were parked in the Backlog. **Backlog is
+ * not a status.** All three were held there only because they shared one blocker — the n8n paystub
+ * import — which landed 2026-08-12; they went Done that same day and nobody re-filed them, leaving
+ * 21 SP of Sprint 26's work filed as unscheduled.
+ *
+ * Nothing about them is re-judged here. Each is already Done, already carries Actual SP (8 / 5 / 8)
+ * and already carries Completed Date 2026-08-12 — inside Sprint 26's window — so the corrector writes
+ * no field on them at all. `hris-plan.ts` moves the sprint; the only board write is the evidence
+ * update saying why. They take `dateBasis: 'external'` because their completion was an action in
+ * another system (the import) rather than a commit: the newest sha is 2026-08-11, and the honest
+ * Completed Date is the day the import made them provable, which is exactly what that exemption is
+ * for. Without it a future selfcheck would fail all three on a date that is not wrong.
+ *
+ * WHAT WAS SCOPED OUT, on Kane's call 2026-08-14 — the Backlog still holds 44 rows:
+ *   • 2 rows are NOT Done (offboard delete-only 8 SP, HSL sub-departments 8 SP) and stay. His
+ *     instruction was Done-only. The HSL row's blocker may have gone stale — see hris-plan.ts.
+ *   • 42 Done rows are pre-sprint history dating 2026-04-07 … 2026-07-24 (163 SP). All 42 were dated
+ *     from git this session (14 by the commit that added their feature doc — they are title-cased doc
+ *     slugs — 16 by the commit that introduced their API route, the rest by pickaxe; 31 high / 6
+ *     medium / 5 low confidence). Filing them needs group ids and label indices for Sprints 17-23,
+ *     which are NOT in this plan and could not be read (dead budget), and it rewrites nine sprints'
+ *     recorded velocity. Deferred whole. If it is ever run: Kane's standing call is that the 5
+ *     low-confidence rows stay in the Backlog rather than be filed on a guess.
+ *
+ * ── APPROVAL ──────────────────────────────────────────────────────────────────────────────────────
+ * Kane approved the 57-row re-attribution on 2026-08-13 ("Approve all") after reviewing it in full,
+ * plus three rulings the same day: gap-day rows → Sprint 25; the group move belongs in `sync.ts`; the
+ * Backlog rows out of scope. The budget then refused even a 1-call `boardGroups` on 08-13 AND again on
+ * 08-14, so no `proposal.json` hash was ever minted to bind it to.
+ *
+ * On 2026-08-14 he approved that same set PLUS the three Backlog rows above, after a review of all 47
+ * Backlog rows. That is why PASS_DATE moved to 08-14: the content changed and the approval is a new
+ * one. This is NOT bumping the date to clear a hash mismatch — that remains forbidden, because a
+ * mismatch on unchanged content means the board moved under you and the guard is working.
  *
  * WHAT THE APPROVAL COVERS — and nothing beyond it:
  *   • 20 rows confirmed in Sprint 26, 37 re-attributed to Sprint 25 (the exact set in ROWS below)
- *   • a Completed Date written on all 57, each equal to its last sha's commit date
- *   • the group moves those 37 rows imply
+ *   • 3 rows re-filed Backlog → Sprint 26, unchanged in every other respect
+ *   • a Completed Date on all 60, each equal to its last sha's commit date bar the 3 marked external
+ *   • the group moves those 40 rows imply
  *   • NO row created, NO status changed, NO Actual SP recomputed
  *
  * So a later session may run `review.mts` and apply with the hash it mints WITHOUT re-asking — but
  * only if the proposal matches that shape. If the review turns up rows to CREATE, orphans, an
- * ambiguous duplicate name, or any status transition, that part is **not** approved: show Kane. His
- * "Approve all" was consent to a reviewed proposal, not standing consent to whatever the board holds
- * tomorrow. `review.mts` stamps `generatedFor: PASS_DATE`, so the 08-13 date on this pass keeps
- * matching `apply.mts`'s gate however long the delay runs — do not bump PASS_DATE to "fix" it.
+ * ambiguous duplicate name, or any status transition, that part is **not** approved: show Kane. An
+ * "Approve all" is consent to a reviewed proposal, not standing consent to whatever the board holds
+ * tomorrow.
  */
 import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-08-13';
+export const PASS_DATE = '2026-08-14';
 export const AUDIT_RANGE = '83b25e4..HEAD';
-export const AUDIT_COMMITS = 345;
+export const AUDIT_COMMITS = 356;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -504,7 +538,44 @@ export const ROWS: PassRow[] = [
     completed: '2026-08-12',
     shas: ['6b8921f'],
     basis: 'Completed 2026-08-12; filed under Sprint 26 (Aug 4–15). DATE BASIS: last implementing commit 6b8921f (2026-08-12), from the 1-commit cluster 6b8921f. This pass changed ATTRIBUTION ONLY — the row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.',
-  },];
+  },
+  // ── RE-FILED out of the Backlog into Sprint 26 (2026-08-14) ─────────────────────────────────────
+  // The mirror of everything above: work that finished INSIDE Sprint 26 but was parked as
+  // unscheduled. Each was blocked on the same external step — importing paystub-dispatch.workflow
+  // .json into live n8n — which landed 2026-08-12; all three went Done that day and none was
+  // re-filed. Every field the corrector owns is already correct on the board (Done · Actual SP 8/5/8
+  // · Completed 2026-08-12), so these three write NO column: the sprint move is the reconciler's and
+  // the only board write here is the evidence update.
+  //
+  // dateBasis 'external' on all three. The date is not the last sha's (2026-08-11, 08-07, 08-06) and
+  // is not meant to be: the completion was an ACTION IN ANOTHER SYSTEM, and 2026-08-12 is the day the
+  // import made these provable. Kane chose that rule explicitly on 08-12 — dating a row to its ship
+  // date would back-date a completion to before its own evidence existed.
+  {
+    name: 'HSL pay = the Hogan sheet column AN verbatim — hogan-week-pay becomes the single rate authority, reversing the 2026-08-07 weekend-OT removal',
+    status: 'Done',
+    completed: '2026-08-12',
+    shas: ['5eb398a', 'e0028b8'],
+    dateBasis: 'external',
+    basis: 'RE-FILED Backlog → Sprint 26 on 2026-08-14. Nothing about this row is re-judged: it was already Done with Actual SP 8 and Completed Date 2026-08-12, and this pass writes no column on it — only its sprint filing changes. It sat in the Backlog because it was blocked on the n8n paystub import, not because it was unscheduled, and Backlog is not a status. DATE BASIS external: the code landed e0028b8 (2026-08-11) but stayed unprovable until the import went live on 2026-08-12, confirmed by Kane ("Pushed - and deployed on vercel github and n8n") with an n8n Executions screenshot; independently measured the same day — angelicaco Aug 2-8 restaged at PHP 16,115.43 with hogan_sheet legs 8,079.30 + 2,242.50 + 393.63 reconciling to pay_php.initial. 2026-08-12 falls inside Sprint 26 (Aug 4-15).',
+  },
+  {
+    name: 'One merged Weekend Hours line + dated rate-change disclosure on statement, email and export',
+    status: 'Done',
+    completed: '2026-08-12',
+    shas: ['0a731ed', 'c97d0b5'],
+    dateBasis: 'external',
+    basis: 'RE-FILED Backlog → Sprint 26 on 2026-08-14. Already Done with Actual SP 5 and Completed Date 2026-08-12; this pass writes no column on it and re-judges nothing — only its sprint filing changes. Parked in the Backlog on a shared blocker (the n8n paystub import), which is a blocker, not a schedule. DATE BASIS external: last implementing commit c97d0b5 (2026-08-07), but the merged Weekend Hours line only reached anyone once the import went live on 2026-08-12 — the old template rendered a non-reconciling Overtime line above a correct total. Confirmed live by Kane 2026-08-12. Inside Sprint 26 (Aug 4-15).',
+  },
+  {
+    name: 'Paystub email HTML rendered in-app (n8n Gmail becomes a pipe) + System Bonus snapshot columns on payment_dispatches',
+    status: 'Done',
+    completed: '2026-08-12',
+    shas: ['02dc5aa'],
+    dateBasis: 'external',
+    basis: 'RE-FILED Backlog → Sprint 26 on 2026-08-14. Already Done with Actual SP 8 and Completed Date 2026-08-12; no column is written and nothing is re-judged — only its sprint filing changes. DATE BASIS external: the renderer landed 02dc5aa (2026-08-06) but the Gmail node only became a {{ $json.paystub_html }} pipe when the new workflow was imported and activated on 2026-08-12, confirmed live by Kane; measured the same day — 40 paystubs sent after 17:00Z, 32 HSL, 30 carrying the hogan_sheet block, 0 rows with last_error. The honest limit stands: no email BODY was opened and compared to the in-app modal, and zero-errors does not discriminate the old workflow from the new. Inside Sprint 26 (Aug 4-15).',
+  },
+];
 
 const FIB = new Set([1, 2, 3, 5, 8]);
 

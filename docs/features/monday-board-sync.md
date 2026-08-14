@@ -254,6 +254,41 @@ the reconciler's, and the corrector still never touches it — the runtime disjo
 **Still open:** epics are not moved between quarter groups. The identical gap exists on the epic path;
 no plan quarter has changed yet, so nothing is wrong today.
 
+### Backlog is not a status (2026-08-14)
+
+The same bug has a mirror image, and it hides in the Backlog. A row parked there because it was
+*blocked* stays there after the blocker clears, because clearing a blocker moves the Status and
+nothing moves the sprint. Three rows worth **21 SP** sat in the Backlog for two days after going Done
+— all three held on one shared external step, the n8n paystub import, which landed 2026-08-12.
+
+So the rule has two directions, not one:
+
+- a row filed in a sprint asserts its work finished in that window (`selfcheck()` enforces it), and
+- **a Done row filed in the Backlog asserts its work finished nowhere** — which is only ever true of
+  work that predates sprint tracking.
+
+`selfcheck()` cannot catch the second: Backlog is deliberately exempt from the window check, because
+it is unscheduled and no date can be wrong for it. That exemption is right, and it is exactly what
+lets a Done row hide there. **The check is a review-time question, not a code guard:** every pass
+should ask which Backlog rows are Done, and re-file the ones whose work has a date.
+
+When re-filing, the completion is often an action in another system rather than a commit, so
+`dateBasis: 'external'` is the normal case here, not the exception — the code lands days before the
+import or migration that makes it real, and dating the row to its ship date would back-date a
+completion to before its own evidence existed.
+
+**Backlog rows that are NOT Done stay put, and a stale-looking blocker is not a promotion.** A row is
+only ever moved to Done by evidence, never because its recorded blocker appears to have been overtaken
+by later work.
+
+**What the Backlog actually holds** (audited in full 2026-08-14, 47 rows): 2 genuinely open, and 42
+Done rows of pre-sprint history dating 2026-04-07 … 2026-07-24, worth 163 SP. All 42 are datable from
+git — 14 are title-cased **feature-doc slugs**, so the commit that added the doc dates them (use
+`git log --follow --diff-filter=A`; without `--follow`, the `4b323de` docs reorganisation masquerades
+as three features shipping on 2026-05-27), and 16 more are dated by the commit that introduced their
+API route directory. Filing them needs group ids and label indices for Sprints 17-23, which are not in
+`hris-plan.ts`, and rewrites nine sprints' recorded velocity — deferred, not forgotten.
+
 ## API budget
 
 The account has a **daily** complexity budget. Exceeding it returns `429 DAILY_LIMIT_EXCEEDED` and

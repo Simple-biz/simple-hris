@@ -421,14 +421,27 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-19', name: 'Bank rail parity: People, wizard preview, Urgent cards and the bank-update form resolve the rail Payment Dispatch actually pays on; USD bucket retired', type: 'Bug', sp: 5, done: true, sprint: 'S26' },
   { epic: 'HRIS-05', name: 'Disbursement report, contractor and app-settings API routes gated by matching role — 2026-08-10 SECURITY_AUDIT re-verify', type: 'Bug', sp: 5, done: true, sprint: 'S26' },
   { epic: 'HRIS-06', name: 'Eleven departments permanently retired from the KPI Calculator + Callback accepts external members', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
-  // Blocked on an un-run external step — Backlog, corrected to Pending Deploy by the skill.
+  // These three were filed in the Backlog because each was blocked on the same un-run external step
+  // — the n8n paystub import. That import landed 2026-08-12 and all three went Done the same day, but
+  // nobody moved them out of the Backlog, so 21 SP of Sprint 26's work sat under "unscheduled" for two
+  // days. **Backlog is not a status.** A Done row belongs in the sprint its work finished in, and all
+  // three finished inside Sprint 26's window (Aug 4-15) — which is the exact mirror of the 2026-08-13
+  // re-attribution, where 37 rows sat in a sprint their work had NOT finished in. Re-filed to S26 on
+  // Kane's call 2026-08-14. Their Completed Date (2026-08-12, the day the import made them provable)
+  // is already on the board and already inside the window, so this is a group+label move only.
+  //
   // 8, not 5 (Kane 2026-08-11): three pay engines repriced in lockstep + a new
   // payload contract (hogan_sheet) consumed by five render surfaces + four
   // validators. Scored with this pass's other multi-subsystem 8s, not with the
   // single-surface HSL 5s. Still a task — over 8 is the epic line.
-  { epic: 'HRIS-02b', name: 'HSL pay = the Hogan sheet column AN verbatim — hogan-week-pay becomes the single rate authority, reversing the 2026-08-07 weekend-OT removal', type: 'Feature', sp: 8, done: true, sprint: 'BL' },
-  { epic: 'HRIS-03b', name: 'One merged Weekend Hours line + dated rate-change disclosure on statement, email and export', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-03b', name: 'Paystub email HTML rendered in-app (n8n Gmail becomes a pipe) + System Bonus snapshot columns on payment_dispatches', type: 'Feature', sp: 8, done: true, sprint: 'BL' },
+  { epic: 'HRIS-02b', name: 'HSL pay = the Hogan sheet column AN verbatim — hogan-week-pay becomes the single rate authority, reversing the 2026-08-07 weekend-OT removal', type: 'Feature', sp: 8, done: true, sprint: 'S26' },
+  { epic: 'HRIS-03b', name: 'One merged Weekend Hours line + dated rate-change disclosure on statement, email and export', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  { epic: 'HRIS-03b', name: 'Paystub email HTML rendered in-app (n8n Gmail becomes a pipe) + System Bonus snapshot columns on payment_dispatches', type: 'Feature', sp: 8, done: true, sprint: 'S26' },
+  // Still blocked on an un-run external step — Backlog, corrected to Pending Deploy by the skill.
+  // Deliberately NOT moved on 2026-08-14: Kane's instruction was Done-only, and neither of these is
+  // Done. The HSL row's recorded blocker (zero `hsl:*` rate rows) may have cleared when 210b9ad seeded
+  // the placement-only base rates at 225 / 337.50 — that is a status judgement for Kane, and a row is
+  // never promoted just because its blocker LOOKS stale.
   { epic: 'HRIS-01a', name: 'Offboarding is delete-only: suspend is its own path, suspended-person offboards escalate to delete, and leavers get a correct final check', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
   { epic: 'HRIS-06', name: 'One HSL department + required sub-department that sets the base rate, wired through the Payment Catalog', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
   // ── Sprint 26 third pass — committed 0cda107..3d74e09 (Aug 12 2026) ──────────────────────────

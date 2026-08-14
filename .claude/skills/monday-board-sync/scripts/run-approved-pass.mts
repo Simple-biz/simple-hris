@@ -27,10 +27,16 @@ import { PASS_DATE, ROWS, selfcheck } from './pass.mts';
 const APPLY = process.argv.includes('--apply');
 const SCRIPTS = '.claude/skills/monday-board-sync/scripts';
 
-/** What Kane approved on 2026-08-13, as assertions. Change these only with a NEW approval. */
+/**
+ * What Kane approved, as assertions. Change these only with a NEW approval.
+ *
+ * 2026-08-13: the 57-row Sprint 26 → Sprint 25 re-attribution ("Approve all").
+ * 2026-08-14: that same set PLUS 3 rows re-filed Backlog → Sprint 26, after a review of all 47
+ * Backlog rows. 42 further Backlog rows were dated but deliberately scoped OUT — see pass.mts.
+ */
 const APPROVED = {
-  passDate: '2026-08-13',
-  corrections: 57,
+  passDate: '2026-08-14',
+  corrections: 60,
   epicsToCreate: 0,
   tasksToCreate: 0,
   orphans: 0,

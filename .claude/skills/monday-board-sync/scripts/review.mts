@@ -154,7 +154,17 @@ for (const r of ROWS.filter((r) => r.status !== 'Done')) {
   heldBySprint.set(label, (heldBySprint.get(label) ?? 0) + 1);
 }
 const heldText = [...heldBySprint].map(([label, n]) => `${n} in ${label}`).join(', ') || 'none';
-console.log(`         ${doneRows.length} Done (Completed Date ${PASS_DATE}) · ${ROWS.length - doneRows.length} held short of Done (${heldText})`);
+// Each row carries its OWN Completed Date — the date the work finished, which is the whole point of
+// selfcheck's git check. Printing PASS_DATE here claimed 60 rows completed today when they span
+// Jul 29–Aug 12, i.e. it asserted in the approval-critical summary the exact error this skill exists
+// to prevent. Show the real range instead.
+const doneDates = doneRows.map((r) => r.completed).filter((d): d is string => Boolean(d)).sort();
+const dateSpan = doneDates.length
+  ? doneDates[0] === doneDates[doneDates.length - 1]
+    ? doneDates[0]
+    : `${doneDates[0]} … ${doneDates[doneDates.length - 1]}`
+  : 'none';
+console.log(`         ${doneRows.length} Done (Completed Dates ${dateSpan}) · ${ROWS.length - doneRows.length} held short of Done (${heldText})`);
 console.log(`         SP going Done this pass: ${doneRows.reduce((a, r) => a + (PLAN_TASKS.find((t) => t.name === r.name)?.sp ?? 0), 0)}`);
 console.log(`\nproposal: ${PROPOSAL_PATH}`);
 console.log(`APPROVAL HASH: ${hash}`);
