@@ -409,17 +409,119 @@ removal ran under it (`payroll.dispatch_locked` had been true since 08-11).
 
 These are the remaining plan tasks; nothing below is required for the two rules above.
 
-- **HARD HOLD:** `current-pay.ts:970` and `disbursement-reports.ts:1192` still prefer the
-  `employee_hourly_rates."Department"` label, which the HSL mirror flattens to
-  `"Hogan Smith Law"`. Flipping them to master-label-first **before** the 12 sub-rate rows
-  exist would strand the sub-labeled people with no department base. That edit ships in
-  the **same change** as `seed-hsl-subdept-rates.mts --apply`, never on its own.
+- **HARD HOLD (now load-bearing for 575 people):** `current-pay.ts:1047` and
+  `disbursement-reports.ts:1255` still prefer the `employee_hourly_rates."Department"`
+  label, which the HSL mirror flattens to `"Hogan Smith Law"` on all 1,734 HSL rows.
+  Flipping them to master-label-first **before** the sub-rate rows exist would strand
+  every sub-labeled person with no department base. That edit ships in the **same
+  change** as `seed-hsl-subdept-rates.mts --apply`, never on its own.
 - Sheet write-back is still `rowDept === from` exact
   (`update-master-sheet-department.ts:121`) — out-of-HSL midweek moves can still snap back.
 - No transfer-aware stale-row guard in the master sync.
-- No bulk sub-department assignment tool: 528 of 598 active HSL people are still plain
-  `HSL` and ride the parent rate.
-- No `seed-hsl-subdept-rates.mts` / `remove-hsl-parent-base-rate.mts`. **Zero `hsl:*`
-  rate rows exist yet** — the rail can now create them; the figures are Kane's to supply.
+- ~~No bulk sub-department assignment tool~~ — **SHIPPED 2026-08-14, see §9.**
+  575 of 579 active HSL-family people now carry an `hsl:<key>` cell.
+- No `seed-hsl-subdept-rates.mts` / `remove-hsl-parent-base-rate.mts`. Exactly **one**
+  `hsl:*` rate row exists (`hsl:simple_texting`, ₱225/₱337.50, seeded 2026-08-12 and
+  deliberately identical to the parent) — every other sub-team rides the parent
+  fallback. The rail can create the rest; the figures are Kane's to supply.
 - HSL-as-separate-organization (a QuickBooks-style org toggle) is explicitly **out of
   scope**, recorded as the long-term direction from the 2026-08 meeting.
+
+## 9. The bulk sub-department assignment (2026-08-14)
+
+`scripts/bulk-assign-hsl-subdepartments.mts` — the tool §8 spent a month listing as
+missing. It relabels the master `Department` cell of active, plain-`HSL` people to
+`hsl:<sub-team>`, in `global_master_list` **and** the master Google Sheet.
+
+**It is not a transfer.** Per §6 it writes **zero** `department_transfer_requests`
+rows — those feed `buildHslTransferEffectiveMap`, and a row dated today would
+re-scope the +₱15/h Sat/Sun premium for everyone in it. Consequence to state out
+loud: the move appears in **no** Transfers tab and sends no `transfer.applied`
+notification. The audit trail is one `hsl.subdept.bulk_assign` row plus the plan
+and backup files in `reports/`.
+
+### The source of truth is the KPI Role column
+
+Kane, 2026-08-14: *"We will be using the KPI Role Column as their Sub
+Departments"* and *"Please make sure people under EGS is under EGS use the KPI
+Role Column as the sub department"*. That deliberately **overrides** the input
+CSV's own `Proposed Sub-department` column, which was derived from
+`hsl_team_members.dept_key` and predates the 2026-08-14 EGS + Mail-Sorting work.
+23 people landed differently as a result — including `jaya@` and `syr@` → EGS,
+the two the EGS roster seed had left for Kane (§7a-roster-only).
+
+`ROLE_TO_SUBKEY` in the script is the whole decision and it is **declared, never
+inferred**: 52 role strings → 14 keys. A role string not in the table is
+**skipped and reported**, never guessed. Three roles are unmapped *on purpose* —
+Kane ruled on 2026-08-14 that "Dan Smith EA", "Dan Smith EA- Med Rec" and
+"Rick's Assistant" stay on the plain `HSL` cell. Leaving them out of the table is
+what enacts that; do not "complete" it without asking.
+
+Two translations worth knowing, because the role string names no key:
+
+- **"Pre-Hearing Litigation" → `ssd_medical_records`.** Not a guess: all 55 live
+  `hsl_team_members` rows for those roles already sat there.
+- **"Intake Callback" → `callback_team`.** The one place the role column and the
+  KPI roster genuinely disagree — the roster has these 34 people on
+  `intake_specialist` and `callback_team` had zero roster rows. The role column
+  wins by Kane's rule, which makes Callback Team a real 34-person priceable team.
+
+### Rate neutrality is a guard, not a hope
+
+Kane's constraint was *"we will take their current rates from the Hogan Smith Law
+Department which was individually set"*. A relabel cannot move an individual rate:
+`buildCatalogRateIndex` keys employee-scope structures by **email alone**
+(`resolve-rate.ts:68-80`), and the sheet leg is email-keyed too. Only the
+department leg reads a department, and §2's parent fallback makes an unpriced
+sub-team numerically identical.
+
+**Guard 6 proves it per run** and aborts if it ever stops being true: if any
+target `hsl:<key>` department-scope structure exists whose figures differ from the
+parent base, the script refuses — a differing figure would reprice whoever rides
+the department base, which is a rate change, not a placement, and belongs in
+Payment Catalog → Pay Structure.
+
+### Guard 8: the DB write set is the SHEET-MATCHED set
+
+Learned on the first run. `valeriec@` had a DB cell of `HSL` but a **Sheet** row
+reading `Lead Gen` — the Sheet had drifted two weeks past the last sync
+(2026-07-30). The Sheet matcher correctly declined her row; the DB write ran
+anyway, so the DB briefly asserted an HSL sub-team the Sheet contradicted. It was
+reverted by primary key the same session.
+
+The Sheet is the roster's source of truth, so **a DB row the Sheet disagrees with
+is not a placement, it is a pending clobber** (§6 of `department-transfers.md`).
+The script now drops anyone whose Sheet cell is not sitting in the source
+department from the DB write and reports what the Sheet actually says. It also
+writes the **Sheet first**: if the DB half fails, the next sync resolves toward
+the sub-team rather than away from it.
+
+### Run record — 2026-08-14
+
+483 planned · **482 relabeled** (`valeriec@` reverted) · 482 Sheet cells · 0
+failures · 0 transfer rows · **₱0 movement**. 7 skipped: 3 unmapped by Kane's
+ruling, 3 already moved to Lead Gen, 1 offboarded.
+
+| Sub-team | +this run | live total |
+|---|---|---|
+| Intake Specialist | 142 | 196 |
+| Filing Specialist | 57 | 68 |
+| SSD Medical Records | 55 | 55 |
+| Case Managers | 51 | 56 |
+| Attestation | 41 | 42 |
+| Callback Team | 34 | 34 |
+| Executive Guest Services | 32 | 35 |
+| Collections | 30 | 30 |
+| Pre-/Post-Hearing Prep | 24 | 24 |
+| Simple Texting | 5 | 13 |
+| Hearing Prep – Mail Sorting | 5 | 6 |
+| Care Team | 4 | 4 |
+| Managers Weekly | 1 | 1 |
+| Healthcare Team Lead | 1 | 1 |
+| Medical Records | 0 | 10 |
+
+**575 of 579** active HSL-family people now carry an `hsl:<key>` cell; 4 remain
+plain `HSL` (the 3 Kane ruled on, plus `valeriec@`). A post-run Sheet-vs-DB sweep
+over all 579 came back with **one** mismatch — `valeriec@`, the pre-existing
+`Lead Gen` drift, which is a real department question for a manager, not a
+relabel. Backup: `reports/backup_hsl_master_dept_2026-08-14T18-42-49-520Z.json`.
