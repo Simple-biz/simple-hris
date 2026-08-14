@@ -1,0 +1,53 @@
+{
+  "masterRows": [
+    {
+      "id": "3929e0d2-95c7-4a8a-ad60-7d979e2db400",
+      "Name": "Cacanindin, Valerie \"Valerie\"",
+      "Work Email": "valeriec@simple.biz",
+      "Personal Email": "vcac1402@gmail.com",
+      "Department": "HSL",
+      "off_boarded_at": null,
+      "last_seen_upload_id": "ad9b4a25-6e3b-439c-aaef-ab8cf22ba14c"
+    },
+    {
+      "id": "c1bdae8f-6da0-43ce-868e-c09f9ef4fda1",
+      "Name": "Orbiso, Charisma \"Charis\"",
+      "Work Email": "chariso@simple.biz",
+      "Personal Email": "chariing1513@gmail.com",
+      "Department": "Lead Gen",
+      "off_boarded_at": null,
+      "last_seen_upload_id": "ad9b4a25-6e3b-439c-aaef-ab8cf22ba14c"
+    }
+  ],
+  "sheetCells": [
+    {
+      "cell": "A888",
+      "email": "valeriec@simple.biz",
+      "before": "Lead Gen",
+      "after": "hsl:ssd_medical_records"
+    },
+    {
+      "cell": "A483",
+      "email": "chariso@simple.biz",
+      "before": "Lead Gen",
+      "after": "Client VA"
+    }
+  ],
+  "updates": [
+    {
+      "id": "3929e0d2-95c7-4a8a-ad60-7d979e2db400",
+      "who": "valeriec@simple.biz",
+      "expect": "HSL",
+      "to": "hsl:ssd_medical_records",
+      "why": "Kane 2026-08-14: HSL, Pre-Hearing Litigation (→ ssd_medical_records, as for the other 55)"
+    }
+  ],
+  "deletes": [
+    {
+      "id": "c1bdae8f-6da0-43ce-868e-c09f9ef4fda1",
+      "who": "chariso@simple.biz",
+      "expect": "Lead Gen",
+      "why": "Kane 2026-08-14: \"chariso@simple.biz - is clientVA please\" — redundant duplicate; the Client VA row survives"
+    }
+  ]
+}

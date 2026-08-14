@@ -506,7 +506,7 @@ ruling, 3 already moved to Lead Gen, 1 offboarded.
 |---|---|---|
 | Intake Specialist | 142 | 196 |
 | Filing Specialist | 57 | 68 |
-| SSD Medical Records | 55 | 55 |
+| SSD Medical Records | 56 | 56 |
 | Case Managers | 51 | 56 |
 | Attestation | 41 | 42 |
 | Callback Team | 34 | 34 |
@@ -520,8 +520,31 @@ ruling, 3 already moved to Lead Gen, 1 offboarded.
 | Healthcare Team Lead | 1 | 1 |
 | Medical Records | 0 | 10 |
 
-**575 of 579** active HSL-family people now carry an `hsl:<key>` cell; 4 remain
-plain `HSL` (the 3 Kane ruled on, plus `valeriec@`). A post-run Sheet-vs-DB sweep
-over all 579 came back with **one** mismatch — `valeriec@`, the pre-existing
-`Lead Gen` drift, which is a real department question for a manager, not a
-relabel. Backup: `reports/backup_hsl_master_dept_2026-08-14T18-42-49-520Z.json`.
+**576 of 579** active HSL-family people now carry an `hsl:<key>` cell; the 3 Kane
+ruled unmapped remain plain `HSL`. Backup:
+`reports/backup_hsl_master_dept_2026-08-14T18-42-49-520Z.json`.
+
+### Follow-ups, same day — `scripts/fix-hsl-subdept-followups.mts`
+
+Guard 8's two reports were both real, and both were Sheet-side errors that Kane
+ruled on. The fix script addresses every row **by primary key**, re-reads and
+requires the expected state before writing, backs up to `reports/` first, and
+writes the **Sheet and the DB** — a DB-only fix is re-minted on the next sync.
+
+- **`valeriec@`** — Kane: *"valeriec@ is HSL she is pre hearing litigation in the
+  CSV File I referenced for you."* So the SHEET was the wrong side, not the DB.
+  Sheet `Lead Gen` → `hsl:ssd_medical_records`, DB likewise.
+- **`chariso@` (Orbiso, Charisma)** — Kane: *"is clientVA please."* Two active
+  master rows because the **Sheet carries two rows for her** (483 `Lead Gen`, 490
+  `Client VA`); deleting the DB row alone would have been re-minted. Sheet 483 is
+  set to `Client VA` — a **cell edit, not a row deletion**, so the sync's
+  (Personal Email, Department) identity collapses to one and neither row can mint
+  a wrong department. Row 483 is now redundant and is HR's tidy-up: deleting a row
+  shifts every row beneath it in a live shared document, which is not a script's
+  call. The duplicate DB row was deleted per `department-transfers.md` §6.
+
+**Post-fix sweep: 579 of 579 active HSL-family people match between the Sheet and
+the DB — zero mismatches, zero missing, zero duplicate active rows.** CJ's 14
+Transfers-tab moves of 2026-08-14 were verified untouched: zero overlap with the
+bulk write set, and zero of the 106 applied transfers into an `hsl:*` sub-team
+ever intersected it.
