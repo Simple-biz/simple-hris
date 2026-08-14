@@ -1,0 +1,4718 @@
+[
+  {
+    "id": "pay_mqffor8r3j5jo6xg",
+    "scope": "department",
+    "department_key": "hogan_smith_law",
+    "employee_email": null,
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffpjgjdwclgvtu",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "gyd@simple.biz",
+    "regular_rate": 500,
+    "ot_rate": 750,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffpp6ewdye8sud",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "eulap@simple.biz",
+    "regular_rate": 425,
+    "ot_rate": 637.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffpujqlvlgo3fw",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "emss@simple.biz",
+    "regular_rate": 425,
+    "ot_rate": 637.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffq06rw2ik58w5",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "stara@simple.biz",
+    "regular_rate": 425,
+    "ot_rate": 637.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffq5lirdavc3ab",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "applef@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffqf5abve1j6iz",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "andret@simple.biz",
+    "regular_rate": 425,
+    "ot_rate": 637.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffqkpajob8jffv",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mariely@simple.biz",
+    "regular_rate": 425,
+    "ot_rate": 637.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffqpka7gkos1os",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jazzr@simple.biz",
+    "regular_rate": 425,
+    "ot_rate": 637.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffqv1u1y6ht8re",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "veec@simple.biz",
+    "regular_rate": 425,
+    "ot_rate": 637.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffr132fc7v7jao",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "arr@simple.biz",
+    "regular_rate": 425,
+    "ot_rate": 637.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffr6gw62beqbp6",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "dana@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffrb1igc9106mw",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "juliec@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffrgxu9me0c4m3",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jayh@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffroceqpi2vm7t",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rosep@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffrtwzjtyiwl3o",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "sherwins@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffrygbgg6yr3hg",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "nics@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffs64nkcoql5au",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jemm@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffsar2sxz3ekry",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "danmp@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffsfuyw1lmp5b7",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "lorar@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffsjse71kltq8q",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "johnwp@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffso0u6a5res7z",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "brixf@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfft08lr80rwlvk",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jemt@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfft9nqy0xffykq",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "chrise@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfftdz2xiasynxi",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "aremb@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfftip3tz0raxs7",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "elaz@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfftnaanxdl1vrz",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ede@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfftvlm9mv8ifeo",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "brianr@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffu0q2wqszbykx",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jazminer@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffu4sy91rqax1q",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "amiea@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffu8si64eessgh",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rochelled@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffuf92hthadx14",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "acea@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfful85lwjlkz7o",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ara@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffupodyp16j67b",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ashleyb@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffuu6mnv3xpyh9",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jenl@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffuzetx250wk7h",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "annel@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffv3we3h87f47l",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "vanessac@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffvjro7n24xpvd",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "camillm@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffv8dximf6udyr",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "brandong@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffvfahniwbs6hj",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kathl@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffvog29yt3f97o",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "chrism@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffvukfo2w8mp60",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "dancp@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqffw0yap18rby18",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "cliffl@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmsyey9itf6gbm",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "tonc@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmt61in9a73wa1",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "linkm@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmtbvm30kf487q",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "dales@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmtk2tc7uskug5",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "elmob@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmtq6puohgrx2o",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "johnl@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmtw8zw3qbp5me",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mikep@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmu1mig8fkv21f",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "hendryp@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmu6570aw7gmen",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ivym@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmubg20yku91pa",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jannj@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmugpa8g7hfay3",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "joloe@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmulpy7d3xifwh",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "janinec@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmuqspcbdbw60z",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "joyb@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmuw7yw6uav2ar",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "juliane@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmv0me0qqas1m9",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "keithc@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmv6p12plu28xb",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kayea@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmvctydjb1yaig",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kellyc@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmvk5e3meeulh6",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jebr@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmvsvhl3n60jli",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mariec@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmvyzm5c6fznpm",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "miket@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmw38ax85dhhhe",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mayi@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmw7nmwn1jx97p",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "miaj@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmwc0kx378mjih",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "karminad@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmwgitmsv36rrz",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mikekja@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmwku6cs0bfg6t",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "nadinec@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmwrq0e8egqdbf",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "olie@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmwwx214qwfjdd",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "queenb@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmx17ohcs8wprg",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "patv@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmx5mwgwabcome",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rend@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmxa12mo1oyhw7",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "lawrenced@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmxerv5ef3l3xf",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rosed@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmxjfi5y7n03aw",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "sarahf@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmxp2wfqnn70xw",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "johannas@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmxv0e29exmfji",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "tobic@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmxzktxwycd4c9",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "isaact@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmy7u8623uiuo4",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "iant@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmycmwb72b89id",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jhabbye@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmyh170xpa6r1f",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "preciousa@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmymhywyruw5ws",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mariettac@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmyqw63ls3bbt3",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "field@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmyvftyvxah784",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jamg@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmzpzjy0i0qagl",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mariberto@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmz0lid4tn8nba",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "aja@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmzfyyqi7fblvo",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "donb@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmzl371c90ak0z",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "tinb@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmzw46jbgogepg",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jubp@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo05cra6g12xt9",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "danm@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo0ap8064zlwwm",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "cathd@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo0g57lw3oeun2",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "emill@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo0lfca8n8ohxs",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "hannan@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo0tejp24i8wfx",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mickyr@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo18kqyy0jl8my",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "inchetm@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo41u75ybealnf",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "nesm@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo47qjitawp5dw",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ulyg@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo4hdf21e2p2gv",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ellef@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo4lh6turecqm5",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "williamb@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo4q8bm0xl2liw",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "glensp@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo4uacicqg5re0",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "joes@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo4zvqcwy1b9ps",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jonj@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo5484hwgihjz3",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "maricorc@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo59jc73kqrpjd",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "richardm@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo5evx1bsewzrl",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "applee@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo5ja9uaehh0k1",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "elaizaha@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo5o66jar8hhae",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "grahama@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo5tbcn7om5ofo",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jms@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo5z9phitaci8q",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mariea@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo64g7l5h4ipuw",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rafa@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo6efykrpa1ix4",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "judyannc@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo6ldko07ttc3z",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "crisc@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo6x0vcn3gowbg",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "alenm@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo71mz7jmckrnu",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "robp@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo75ubvgj62bbh",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "gericog@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo7bdju2lbgzmf",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "reuvent@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo7gq80wd8dhvw",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "litoe@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo7l34wjbvmtx5",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jamesm@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo7prvojtnqyi8",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "carlc@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo7ujno7jjxjqg",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "lyne@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo7z8a2dkboroh",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "josephu@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo84n3k89lpu72",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "anggeb@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo8b2nc9e51vxd",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "joanneg@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo8fuu2t6yyyyd",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kylam@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo8p2sk8izsfpy",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "maisonm@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo8u5qtcuul7gx",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "alexm@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo8zklevj6fnvt",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "geev@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo93yf8qlcx1g6",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "zeussb@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo9830u196aopr",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "yamp@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo9j43jhom3iev",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "crisn@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo9x2rtpw1hne8",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "loretoj@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoaexiz6khgzbk",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "karens@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoal6jwxvleghe",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "majorl@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfobdf43y8z45ra",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "queenierynm@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoblfr1vppgdqk",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ireshd@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoclimtj1kj0yu",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "denylm@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfofc92fsd3wi4k",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "brendap@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfogylb8mgj3wd8",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "josephinet@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfohokxkr9ak7rj",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kimv@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo9duj7mja2hqx",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "debbief@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo9qr9djtsgeko",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "glennc@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoa5mj5wwl6isq",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jaymiec@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfob6i4fh9mszuo",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kriziah@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfod8scvwal08dy",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kevincc@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfodh0aslr6ihpd",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "nolianq@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfodtwlyb3ixj23",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rizalloydp@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfogfl5u7pe8ut6",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "marissat@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfogk9u624ly4i7",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "meriamy@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfohtf6wm0amdzm",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "gabrielp@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoivd80rh46atj",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "beijayh@simple.biz",
+    "regular_rate": 245,
+    "ot_rate": 367.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoaun9i2561o02",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "victorl@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfobuou29nfbxyk",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "charissag@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoiafur9oynm2i",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "zamb@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoj0koolf3ge4b",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "villev@simple.biz",
+    "regular_rate": 245,
+    "ot_rate": 367.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoc367mox6zttq",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "byronb@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfodcxi3t9z1vys",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ladys@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoeaakmbowpoc1",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rame@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfog4u2uzvdclvh",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "monam@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfogoqb2tyckuse",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "gracec@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfogtsntsl3v2w0",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mikee@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfocb5xjyjyj615",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "johnca@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoef9li1ubdvd2",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "wynd@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfogaop5q1idacl",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "hano@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfocg0vmy7x1lsf",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "carrenm@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfocpycscl3hy85",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "maee@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfocua70b2u03ls",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "joeyf@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfocyzua583ujzp",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "joeg@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfodlcc1189xsac",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "marylouc@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoeyy7tqmkk3cd",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "wilf@simple.biz",
+    "regular_rate": 375,
+    "ot_rate": 562.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfofqb4un71sg3x",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kerviev@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfofuprez4yzhx2",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kayem@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfohedcju2xf42y",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jaya@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfohk4khwbz8j6z",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "syr@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoi4cnau1loq1w",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "anar@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoinrka0fmymzb",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "elvil@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfod4m0uurgpu2a",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "canetho@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfodpkr8ydgmbrc",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "lyrahp@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfodyg35u64bady",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "niczm@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoe5h3f5wvtioh",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "nikkaj@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoem2aa9h7ljid",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "marionb@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoetj3hsq0gu4h",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jehdb@simple.biz",
+    "regular_rate": 375,
+    "ot_rate": 562.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfof3eypn79anrt",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "angm@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfofh7dt9ht3tka",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "edwardt@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoflw6qx79opcu",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "arjayc@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfofyngiuh4tcg8",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "maryo@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoh2z9dlrhen0m",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "anaroselp@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoh7cl1hyeforw",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ericav@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfohzpqz5ixhkpw",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "johnml@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoiewkg7nujyfo",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rachellew@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoijgm76xc6ihw",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "myraf@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfojihhmaittmpt",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "chelzyc@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfojntbl2w5w9fb",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jeromea@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfojtc9mehxeu52",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "noimeg@simple.biz",
+    "regular_rate": 285,
+    "ot_rate": 427.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfok1dufm1j4iwf",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "vanp@simple.biz",
+    "regular_rate": 285,
+    "ot_rate": 427.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfokk5wai6lwjka",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ninac@simple.biz",
+    "regular_rate": 285,
+    "ot_rate": 427.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfokpyn3xqxuimz",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "johnbv@simple.biz",
+    "regular_rate": 285,
+    "ot_rate": 427.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfokwoy4z8ctghc",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "nete@simple.biz",
+    "regular_rate": 285,
+    "ot_rate": 427.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfol23bue9pgo69",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "geloa@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfol7pi29hampot",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "zaka@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfolcvib10pcbhc",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "cannys@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfolibxntssade0",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "carlylec@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfolndxjvbz60r3",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "cassiusc@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfols6qq9rs47es",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "cindyg@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfolxabkp7uiu4m",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "edryckm@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfom2ripfkzyecj",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kimbr@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfom8ix9zxv2at3",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "charlesc@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfomdnm5lx1n6v9",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "cjc@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfomimcnuia9ebf",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "angeld@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfomnbt6gf2272c",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jedp@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfomroe1oy3lf8m",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "dextert@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfomwbfcydqfz3n",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "melvsf@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfon1zjbwmjc5o6",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "edm@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfon88yxegj1vr7",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "guiaq@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfonf9ubh5d56i1",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jomsa@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfonl02m2w79kq3",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "gleng@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfonp4qt3k7qy24",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "hannaa@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfooxks735lf9wr",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "miahl@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfopfxtbld38qy4",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mikeb@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfouitq9hiyg4t0",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "clarizr@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfont7y4ixt5ve9",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jammers@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfotxxvpx849gor",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ferdieb@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfonyqmzcuzlcyl",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jeriemym@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoo3nn42hx37qe",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jaysond@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfov4j50pt6rrpg",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jeni@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfovnquj1xwvrhv",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "lovelyc@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoo8qbyrm8w58q",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "marjunm@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoomqfimozttki",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "maddies@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoq7qkv6p3jjh0",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "airahe@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfosk7hiow9hx1r",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "wesleyg@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoodhl4bc37blp",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kailab@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfooiqzd8ocxgx6",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ralfp@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfop5r7vrr5xzxm",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "melchezedeks@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoqcn2zrysz7zx",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "chet@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfosdiksp2t8dss",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ruffag@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfot4cr7kt99sqd",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "anng@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfou9xmycoqg2ac",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "choloh@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoordmwe5uvbx1",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "marjf@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfopapy2dtxqi9y",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mayt@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoplek9cdnw7j0",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ralphr@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoqla51z73uw6l",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "tonrayc@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfor909t5k7zdno",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "vinzm@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfot01mbxidktod",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "algiem@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfouw4w57x9udqn",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kennm@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfopq9mc66mtnpr",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "reeds@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfotinfhb93hpgf",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "aurai@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfopybdi41chl20",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "robt@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoqgvczgkff7pp",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "roda@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfountbpbfq1uem",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mariam@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoqpnjmjrwi6qc",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "tinem@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfou4big68dhbaq",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "breen@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfouscbll90l1i9",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "melm@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfov9k6r9sz094p",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "josephf@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfovepb0212tjid",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "khrism@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfow0xyk5gcrlvm",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "michaelb@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoqufdfibwltct",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "janp@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfosqp1zu6pg7pl",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rockym@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfot96rjufra2c2",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "aprilc@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfotnn74ikwkwva",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "argylt@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfovw7d5954k8if",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "markv@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfosvbpl6z1fo7f",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "andym@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfote19pc2xjhcs",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "arvsn@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfovs4ecj5z68ls",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mackyj@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfotss1pdnharxu",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jaket@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfov05d4yjlporg",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jct@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfovjo0mvy6ifm0",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "angelicac@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfow53ulwxerg5m",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "lauricej@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfow9p98sqwj88n",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "nerryd@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfowhca4ta238um",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "royg@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfowlx77hi62qt2",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "bela@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfowqdyiwesogxe",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "stephc@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfowvzaysx9b2lb",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jcp@simple.biz",
+    "regular_rate": 300,
+    "ot_rate": 450,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfox2dhp4kbdi4q",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jakej@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfox8t2eipb8fny",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "lovelyb@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoxeo07ubss6k7",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "chrestac@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoxjqe6g8bxog6",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "angelicai@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoxs2xtoycwg95",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "vanessad@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqgn4qo11gyg80hs",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rennd@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrv1mha9bybvbiq6",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "shirlinao@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrv1viveuhdoepgm",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "cathl@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrv3q531tzy376o4",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mackp@simple.biz",
+    "regular_rate": 175,
+    "ot_rate": 262.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrvzp0y1orew1knh",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "maycp@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrw5nsockewvc03n",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "cozyc@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrw5s668k95zud55",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "crystalyna@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrw6xasu8fts0q1p",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "indic@simple.biz",
+    "regular_rate": 260,
+    "ot_rate": 390,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrw73xm5lvvxegt3",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "allanc@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfo4cjgkr069fsx",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "zyberb@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrw8c6lejryqvq9t",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "maryma@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrw8nxc5tyrwrtqy",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kingslyc@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrw97kl71bxva4de",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "reat@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrwa36ztvnb7iyj2",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "lanf@simple.biz",
+    "regular_rate": 245,
+    "ot_rate": 367.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrwacm3agqd6hxa2",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "fredn@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrwaghs7qppjlo6b",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "benc@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrwakzpawd1n9pii",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "berne@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrwalaofelrzwvb5",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "gibsn@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrwalk2v28vgymm4",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "aianr@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrwan9qst8xu6h5t",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "marchw@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrwaoe4oire9wsj1",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "johnma@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrw6o3gpo4m3kx82",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mitchb@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrwbp9zd9n7khs2l",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jdd@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrwd53w1sc3ej6jb",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "markre@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrwewlcd6ev14dnc",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "liccac@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrwlljly645l5dww",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "aimei@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz1v3d0386q6124",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "abegaeleg@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz2e1xac0etbky2",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "alisone@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz2ssavwqfcts17",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "angellener@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz2tv0kkqfazjt1",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ariannec@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz2vtlr3puq8bkd",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "bryana@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz33d0vxcl61qrv",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "charlyna@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz3w7n1yuoybt66",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "daebrielb@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz3wnvqxxqmt6fy",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "daniellel@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz3y7mfhs39ucll",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "dexies@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz3z5ztxc0qmwhh",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "dong@simple.biz",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz43qyou1mdkf8t",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ianl@simple.biz",
+    "regular_rate": 210,
+    "ot_rate": 315,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz48znvg3z8igti",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jayrhomb@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz49wy1cto7l9df",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jaysonma@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz4xip46cc56l66",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "drisd@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz52n9mg26lzk1h",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "johnd@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz534pjp3nsf9nd",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "katrinam@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz55smq0zjaotmx",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "johnli@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz58ph9qip19ir7",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "maripaze@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz59mbzhz11dtj3",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "markvi@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz5ahwjysavsrq8",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "micaelom@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz5b1ychf2i9ec4",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "marcda@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz5bwg15eana354",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "richardmil@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz5cf33ygymfgc4",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rodneys@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz5d4uyeud5ucl8",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rudithc@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz5dqfor62ka3lg",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "roxannel@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz5ic9m4sihlwyl",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "maryoc@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz68bbe7olhsx8w",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "reap@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz699p3bg0xem8b",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rhejillm@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz69qdnkm7yrqjt",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "shanneillee@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz6ao7lsnkm111u",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "zigfredoa@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz6b6tupi4ssd2w",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "zoiloa@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz7dsa2xk34kfl7",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "reggiel@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz8fgbyesjz8f01",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "gilbertt@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms0a575sdqnnf05t",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "josec@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms0a5rav17qbazn2",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "willg@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms3kb9vk3w602jsg",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "marlonc@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms3kbft3tk38mgqm",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rolandod@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms3z359td2p2e36k",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "roselyna@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms3z3l1d1k1np862",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jeorgiac@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms3z3y0xho0kkapk",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "roldand@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms3z49mkkf96kkp9",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "betonioe@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms3z4ivojtkr0lel",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "sophiac@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms3z5hs9r7gxu79v",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "galiciaa@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms3z5tnwwjebv5w2",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "raulpocholoa@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms3z8c02m4h9l2e7",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jeralyna@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms3z9s91ont5a5gq",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jayveeg@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms3zb2i826csxatw",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "markcn@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms3zbdi159t3wf5w",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jaywlc@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "a4490f20-4041-4d7e-9670-5e699979273e",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "lykac@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "36ad974a-b2df-4da3-946c-93c0119f7c6e",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "nield@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7hygwoukwetf9p",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "neaneliep@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7i342bsf1j22o7",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "nikaa@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mrz1wd8sl73ud8rf",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "lacernaa@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfoj5jb1cixt1xr",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "talat@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7i76d6axvf9epn",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "aubreyt@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7i84j7awm161e7",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "desf@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7i8pj53y5urkhn",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mariaga@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7i8v5py0mxb5qz",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "crinnap@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7i9k6bpwluik7s",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "johnq@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7ibxwvqpugweh4",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "zent@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7ic8yiymxgpzkf",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "josen@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7icu3mpj00j2y9",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "johns@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7id06kth32ll68",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "emsg@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mqfmy3t2llq0h4nd",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "francisf@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7ihiia41y0d9zr",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "peteb@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7ijs88g72b1ehw",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "lincolnm@simple.biz",
+    "regular_rate": 245,
+    "ot_rate": 367.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7ilw5viuard7t5",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "stanre@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7inuh5sxfqdkt2",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "francistone@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7iox60nzth1gky",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ariesl@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7iraq10tiaeaft",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "melindaq@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7iprtd3k7htdbr",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "lanceb@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7ipt5yt3myou4u",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "edilbertoj@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7iqr7dwtdcor8b",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ryd@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7irf6gu1xj3rmc",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "giahs@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7irv6qmxevv3hl",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "cinderellar@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7ish8wrlpfl1qb",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "christianzl@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7istb9jhi9ufwh",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jiselb@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7itvgz3agvlzrw",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kyleb@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7iuz4lc2ih0mg1",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "gracechellem@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7ivly1ghpft65f",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "marca@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7iw08bfhilgavt",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kenjim@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7iwoncg0dat9go",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "czarellem@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7ixb23micymkg4",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rossh@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7iycpdca16qjuz",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "willianb@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7iz62p7xy39i0n",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "karenl@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7izu9ywyab5uyl",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "karena@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7jch4gi4q8egju",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "evanniea@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7j35vw9bvosv9n",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "angelog@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7j433w67gjuca5",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "gioanneb@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7j5miolu0a6lkt",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "trixieg@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7j6moclf3imhh6",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "analizad@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7y6evefcrvynqv",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kylep@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7j8nsaw8s2kguo",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "marya@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7ja2yyqul9gcgx",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "patrickb@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7jbmj1byss9snk",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "airav@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7jbrvortbbcc9u",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "anjv@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7yyjqnp6nfciwx",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "joy@hogansmith.com",
+    "regular_rate": 305,
+    "ot_rate": 457.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7wa1ok80l75li4",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "diannev@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7wki6jgnd6quoc",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "cherryv@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7wllvp93vzit6e",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "sherwinl@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7wrcnsn7efb3kh",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "erjiee@simple.biz",
+    "regular_rate": 355,
+    "ot_rate": 532.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7xoxtv21jjjt14",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "thadeusa@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7xzgme1k6loyiw",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "gilmarb@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7y2ii7hseojlvc",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "markcc@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7y4kc5j5qyt8kj",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "edeno@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7y5i4brffp6yau",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "lizc@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7z3nh2ww5l5yxx",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "vernona@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7y5yfsafjfb3qz",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jadeg@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7z4vssdkk4gnko",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jesonn@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms80h9h73s8yfg9q",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "glaizag@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7y9funzmdsul7g",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "bobd@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7ya77bqyfztlzd",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "janetter@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7yaroxwvqiesuo",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "markb@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7ybaxdg0scw1ft",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kyleg@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms7yb9kct9325z8d",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "allans@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms83ntd31yp2z889",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "geraldc@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms84073ff3cl30z6",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jeraldint@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_ms83zr82ca8gve07",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "judithb@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2bbkrb8lq13jg",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "angelicab@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2kqcs46maqo7b",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "dariuses@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2px71azf0w9y5",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "dansu@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2q95kqd5n67y2",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "deleverioc@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2qqbiiv29jip6",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kaorif@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2qydqye220hs8",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "joyp@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2r6rn4enh0r1v",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "gaiteraj@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2rf6pvj2tteah",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "michaelj@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2rnlefgnahc7y",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "dumalod@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2rw8lqsc75t0d",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "floresa@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2s66kqwvfbqxp",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jamiem@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2utm8zajeugcz",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "nervyy@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2uzmlmnohgwbr",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jernielynb@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2vbf9wy279hsg",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "camillec@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2wauqpspu2xh7",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "denrickc@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2x0m8nceshp1p",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "cervantesn@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2x9e6hazy4svs",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "johng@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse35j5ap1rdme8k",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "gefersong@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2tbtvp83ye3n6",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "dominicr@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2tkq321hhtgby",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ortizv@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2tw1n78l3qnyr",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "isiem@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2u8y43rx511yo",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "vienm@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2ukf7hda7c9kg",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "jobd@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2vkab4fah2ksu",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "margauxm@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2vtx650ne8cgt",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "rishielp@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2w2lb40i7ikdf",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "michellec@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_mse2wj6qsioke4ik",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "mayuelaj@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msercqe9hx6ep7h8",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "shainan@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msesfo97y6kmdyvg",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "orvenr@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msevptwrfpr3abwr",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ralphl@simple.biz",
+    "regular_rate": 175,
+    "ot_rate": 262.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msnpbwjcr11q35up",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "dangieg@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msnpd2bs8i5fjlwc",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "charlese@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msiy91ck9mw4hnko",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "laurenc@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msnpdmwk7dm64oa2",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "laraa@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msnpdzgd9ttnc19n",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "krhisnab@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msnpecige8ipdvq9",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "myleenc@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msnpgwxwbqse0jqm",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "ramielm@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msnph66zy2478iss",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "renzm@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msnphov8g0ci5gfo",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "leanen@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msnpi9vffx9e25c9",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "adrianmo@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msnpivmwf8xc5vyy",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "raishad@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msnpj5jkcd8jjrxi",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "vanb@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msnpjfmztgfit559",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "pagalane@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msowi1p1nq100nxi",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "cabisonm@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msowt44p155u76ie",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "desireev@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msowvnk4yumy7r2b",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "paulov@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "pay_msoww39q4c5m5ucl",
+    "scope": "employee",
+    "department_key": "hogan_smith_law",
+    "employee_email": "kaes@simple.biz",
+    "regular_rate": 235,
+    "ot_rate": 352.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "c22d11fb-3586-4860-821b-8e4df7ce1b18",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "glendac@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "4d2c6998-7399-4472-ab11-5ebfcf78b786",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "rachelr@simple.biz",
+    "regular_rate": 265,
+    "ot_rate": 397.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "840633bb-4f4e-4392-a371-b1ac967ff147",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "christianf@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "804e6a0c-3964-4655-bcaf-9782bfb0e5ba",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "domv@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "ae01c21e-256e-4711-b6d0-771131901021",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "beao@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "a7ecf40c-eac3-4dc2-b5d6-4808c464cd64",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "markl@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "ceadd081-36f3-4486-bb51-f82dcc398a92",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "danp@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "f45924ce-23c2-447a-ad68-ace1d6c74af3",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "gile@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "64dd60cf-30f2-4060-a8ec-b8b34e4ac25c",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "claudep@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "a99c60fb-96ad-42e9-8ab6-59eb8ed74850",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "febb@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "25445391-8e01-4027-9b59-1be03697f4a5",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "blakeg@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "cf9174a7-de51-4f7d-b646-ca0351713802",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "kimerl@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "822bec7c-f546-4ffb-958e-16e693ef3259",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "artm@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "2364f132-9827-490d-9d01-5a145a48a4df",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "jayhe@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "9a9cc7f6-909c-40db-9940-3cc839ac69ef",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "fredj@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "dfeff270-6065-4ef1-8a39-ef8adc157bba",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "mikez@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "4d8fc363-de7e-403f-9020-4d172c7a5b25",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "mariag@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "5340a334-1efc-490d-8a66-24573ac684c6",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "jamesv@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "cdd8cd9a-e13c-4579-9989-c951877371dd",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "jayarp@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "298d28e3-6aa5-40b0-8be2-6194311025ec",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "jedc@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "1f29acdc-a2a7-4764-88ad-0a1e74a9c97c",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "alexr@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "3afd1f75-3c5d-476e-93b8-d58cc495e0dd",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "janicer@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "db956c32-43b1-4239-8ef2-f5192030243b",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "francem@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "5299bbfe-072e-45ca-9104-d84ff0b3b71e",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "drews@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "cf8a3d79-33f5-4b04-b80d-737833101c25",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "joshr@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "069831d6-a7c4-49c5-b9e5-184074826e76",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "kits@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "e2ee22e3-82de-4f71-ba2c-4bf2a69e29de",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "rayo@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "24a94aab-269c-4c1f-8da3-31d5666d7826",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "luisd@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "a22185d9-4a85-4c7a-a064-1a756b09b001",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "jenh@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "16a3baa1-760f-4a28-8a72-b78c173fd67a",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "duanec@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "aa79b568-c354-4293-a46a-f8e825fd0cfc",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "jayg@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "0f87f8df-6c74-4de2-91e5-3b4e80ff5742",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "karlm@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "18a904f3-1d9e-451e-b4a1-07b3f01e51cc",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "pearlm@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "80e483dd-8188-44b8-bfee-63a4060f5aeb",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "alexb@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "65235f2b-7259-477a-9ae1-aff0b971a28c",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "gracea@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "8f081a18-54a3-41fe-8d90-b88cbfac29e0",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "rond@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "e3f939da-ba33-444b-9698-4609a5bd4cd8",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "kathb@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "e52f917e-c270-4a03-91b0-ca79b98d3223",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "joee@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "ce7b5d04-5229-4149-b90a-c4a369a7008b",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "mikeyh@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "d73ce25a-8882-4014-b880-109b15093b46",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "trishc@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "b537405e-7a61-4a3e-b73a-d2b2370a80ff",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "franzs@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "1f6bfba9-21a9-4975-8795-54de5d9864c4",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "djg@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "99a20aaa-2104-4aa3-a9b8-5ba9a1e359a2",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "paus@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "f0688106-bd2e-4402-9d0b-1ed6591ec371",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "markmo@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "031f753d-be70-4ebe-a957-5e2e03c552a1",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "justiner@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "82c7e034-7da1-49c5-8988-263c2464e03f",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "richardr@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "da481afb-6f8f-4d34-abac-8691b6a1122d",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "renards@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "06789827-a62d-4f46-a10a-11446b15c5db",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "wilburta@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "f3bc44ad-2d51-4f61-a508-39a5835416fe",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "charlesd@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "91a3d62f-e740-431c-99b9-b025d2b5cf97",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "alonzos@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "31f60c3a-12cf-4f62-b82f-0252edc5c0e4",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "vincentt@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "b084b9dc-8b9f-42ac-aeb9-ced2939d607b",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "valp@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "04d329b8-ff7b-406a-b65b-66c890b94cfe",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "philu@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "fd551276-ebbc-4633-83d0-0b1b175e4651",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "jayveea@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "c4b9de7c-b038-4e11-8527-6aadf5f174bb",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "jesr@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "4e85fa99-cb83-4609-bedc-5bd57b14682c",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "jerryl@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "671ad5d1-3804-4744-af15-8126a32f186d",
+    "scope": "employee",
+    "department_key": "hsl",
+    "employee_email": "rainp@simple.biz",
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  },
+  {
+    "id": "fd61aaea-6e3a-48e9-9b4b-0b649fcfdea3",
+    "scope": "department",
+    "department_key": "hsl:simple_texting",
+    "employee_email": null,
+    "regular_rate": 225,
+    "ot_rate": 337.5,
+    "currency": "PHP"
+  }
+]

@@ -12,6 +12,7 @@ import {
   buildCatalogRateIndex,
   resolveDeptCatalogRate,
   resolveEmployeeCatalogRate,
+  resolveDeptLabelForRate,
 } from './resolve-rate';
 import type { PayStructure } from '@/lib/payment-catalog/pay-structure';
 
@@ -136,4 +137,59 @@ test('in-app sub-department keys resolve their own base rate', () => {
   // The parent label keeps resolving nothing here (no parent structure) —
   // sub rates never leak onto the parent key.
   assert.equal(resolveDeptCatalogRate(index, 'Medical Billing', FX), null);
+});
+
+// ── resolveDeptLabelForRate — the HARD HOLD release (2026-08-14) ─────────────
+//
+// Both payout engines preferred the `employee_hourly_rates."Department"` label
+// over the master cell. For HSL that label is hardcoded to "Hogan Smith Law" by
+// the rates mirror, which buried the sub-team and made every `hsl:*` base rate
+// unreachable. These pin the NARROW fix and, just as importantly, the blast
+// radius it deliberately refuses to take on.
+
+test('an HSL master cell beats the flattened rates-row label — the whole point of the release', () => {
+  // This is the case the mirror breaks: master names the sub-team, the rates row
+  // can only ever say the parent.
+  assert.equal(
+    resolveDeptLabelForRate('hsl:intake_specialist', 'Hogan Smith Law'),
+    'hsl:intake_specialist',
+  );
+  assert.equal(resolveDeptLabelForRate('hsl:callback_team', 'Hogan Smith Law'), 'hsl:callback_team');
+  // A plain family cell is still HSL-family and still wins — it just resolves
+  // the parent, which is the correct answer for an unplaced person.
+  assert.equal(resolveDeptLabelForRate('HSL', 'Hogan Smith Law'), 'HSL');
+});
+
+test('a NON-HSL master label never displaces the rates-row label', () => {
+  // Measured regression, 2026-08-14: flipping to master-first for EVERYONE moved
+  // carla@ from a ₱175 Lead Gen base to NO base, because her master cell says
+  // USEE and USEE has no rate row. The rule states the actual defect (the HSL
+  // mirror) rather than a superset of it, so that population is untouched.
+  assert.equal(resolveDeptLabelForRate('USEE', 'Lead Gen'), 'Lead Gen');
+  assert.equal(resolveDeptLabelForRate('Sales', 'Sales Assistant'), 'Sales Assistant');
+  assert.equal(resolveDeptLabelForRate('Client VA', 'PM Team'), 'PM Team');
+});
+
+test('resolveDeptLabelForRate falls back rather than returning nothing', () => {
+  assert.equal(resolveDeptLabelForRate(null, 'Lead Gen'), 'Lead Gen');
+  assert.equal(resolveDeptLabelForRate('Lead Gen', null), 'Lead Gen');
+  assert.equal(resolveDeptLabelForRate('  ', '  '), null);
+  assert.equal(resolveDeptLabelForRate(null, null), null);
+  // An HSL master cell with no rates row at all still resolves the sub-team.
+  assert.equal(resolveDeptLabelForRate('hsl:collections', null), 'hsl:collections');
+});
+
+test('the release makes a sub-team base reachable that the mirror had buried', () => {
+  const cutoverStructures: PayStructure[] = [
+    { id: 'p', scope: 'department', departmentKey: 'hogan_smith_law', regularRate: 225, otRate: 337.5, currency: 'PHP' },
+    { id: 's', scope: 'department', departmentKey: 'hsl:case_managers', regularRate: 305, otRate: 457.5, currency: 'PHP' },
+  ];
+  const idx = buildCatalogRateIndex(cutoverStructures);
+  // BEFORE: the rates-row label wins → the parent base.
+  assert.equal(resolveDeptCatalogRate(idx, 'Hogan Smith Law', FX)?.regNative, 225);
+  // AFTER: the master cell wins → the sub-team base.
+  assert.equal(
+    resolveDeptCatalogRate(idx, resolveDeptLabelForRate('hsl:case_managers', 'Hogan Smith Law'), FX)?.regNative,
+    305,
+  );
 });

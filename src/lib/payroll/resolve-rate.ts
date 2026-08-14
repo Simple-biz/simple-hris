@@ -38,6 +38,7 @@ import { phpPerUnit, type FxRates } from '@/lib/fx/currency-fx';
 import { normEmail } from '@/lib/email/norm-email';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
+import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 
 /** Indexed view of the catalog for O(1) per-employee resolution. */
 export interface CatalogRateIndex {
@@ -119,6 +120,45 @@ export function resolveEmployeeCatalogRate(
     if (s) return toResolved(s, fx);
   }
   return null;
+}
+
+/**
+ * Which department label the DEPARTMENT-base leg should resolve through.
+ *
+ * Both payout engines historically preferred the label on the employee's
+ * `employee_hourly_rates` row over the master-list cell. That is right almost
+ * everywhere — the rates row is the payroll-side record — but it is WRONG for
+ * HSL, because the HSL rates mirror hardcodes `"Hogan Smith Law"` on every HSL
+ * row (`hsl-upload-db.ts`). So a person whose master cell says
+ * `hsl:intake_specialist` had their sub-team buried under the flattened parent
+ * label, and no sub-team base rate could ever apply to them. That is the
+ * "HARD HOLD" recorded in docs/features/hsl-subdepartments.md §8.
+ *
+ * The fix is deliberately NARROW: prefer the master label **only when the master
+ * label is HSL-family**, which is precisely the case the mirror flattens.
+ * Everywhere else the rates-row label stays authoritative.
+ *
+ * Why not simply prefer the master label everywhere (which is how §8 phrased the
+ * pending edit): measured against live data on 2026-08-14, a blanket flip changed
+ * exactly one person — `carla@` (master `USEE`, rates row `Lead Gen`) — from a
+ * ₱175 department base to **no base at all**, because `USEE` has no rate row.
+ * Broadening the change to fix HSL would have introduced that regression for a
+ * population the HSL cutover has nothing to do with. So the rule states the
+ * actual defect instead of a superset of it.
+ *
+ * @param masterRaw the master-list `Department` cell (identity source of truth)
+ * @param ratesRaw  the `employee_hourly_rates."Department"` label
+ */
+export function resolveDeptLabelForRate(
+  masterRaw: string | null | undefined,
+  ratesRaw: string | null | undefined,
+): string | null {
+  const master = (masterRaw ?? '').trim();
+  const rates = (ratesRaw ?? '').trim();
+  // An HSL master cell names the SUB-TEAM; the rates row can only ever say the
+  // flattened parent, which resolves a strictly less specific rate.
+  if (master && isHslFamilyLabel(master)) return master;
+  return rates || master || null;
 }
 
 /**

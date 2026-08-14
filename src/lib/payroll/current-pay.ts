@@ -91,6 +91,7 @@ import {
   buildCatalogRateIndex,
   resolveEmployeeCatalogRate,
   resolveDeptCatalogRate,
+  resolveDeptLabelForRate,
 } from "@/lib/payroll/resolve-rate";
 import {
   US_HOLIDAYS_ENABLED_KEY,
@@ -1046,7 +1047,7 @@ export async function computeCurrentPay(
     const empCat = resolveEmployeeCatalogRate(catalogIndex, aliasesByEmail.get(em) ?? [em], fx);
     const deptCat = resolveDeptCatalogRate(
       catalogIndex,
-      deptByEmail.get(em) ?? masterDeptByEmail.get(em) ?? null,
+      resolveDeptLabelForRate(masterDeptByEmail.get(em) ?? null, deptByEmail.get(em) ?? null),
       fx,
     );
     const catalogOverride = empCat ? { reg: empCat.regPhp, ot: empCat.otPhp } : null;

@@ -133,9 +133,12 @@ which collapses every `hsl:*` label to the parent and would otherwise make sub-t
 structures unreachable. It is generalized — `medical_billing:intake_team` resolves the
 same way for in-app departments (`subDeptStructureKey`).
 
-**The parent fallback is permanent.** A sub-team Accounting has not priced yet resolves
-the parent ₱225 — never ₱0. The parent row is deleted only at cutover, by script, after
-every sub-team has its own row.
+**The parent fallback is permanent** — *until the cutover retires it (§11).* A sub-team
+Accounting has not priced yet resolves the parent ₱225, never ₱0. The parent row is
+deleted only at cutover, by script, after every sub-team has its own row. **All 16
+sub-teams have carried their own base rate since 2026-08-14**, so the fallback is no
+longer load-bearing for anybody; the parent row itself is still present pending §11
+step 5.
 
 ### Surfaces that MUST mirror this
 
@@ -425,22 +428,20 @@ removal ran under it (`payroll.dispatch_locked` had been true since 08-11).
 
 These are the remaining plan tasks; nothing below is required for the two rules above.
 
-- **HARD HOLD (now load-bearing for 575 people):** `current-pay.ts:1047` and
-  `disbursement-reports.ts:1255` still prefer the `employee_hourly_rates."Department"`
-  label, which the HSL mirror flattens to `"Hogan Smith Law"` on all 1,734 HSL rows.
-  Flipping them to master-label-first **before** the sub-rate rows exist would strand
-  every sub-labeled person with no department base. That edit ships in the **same
-  change** as `seed-hsl-subdept-rates.mts --apply`, never on its own.
+- ~~**HARD HOLD**~~ — **RELEASED 2026-08-14 (§11 step 3)**, in the same change as
+  `seed-hsl-subdept-rates.mts --apply` exactly as required. The release is
+  deliberately **narrower** than this line described: `resolveDeptLabelForRate`
+  prefers the master label **only when it is HSL-family**, because a blanket
+  master-first flip was measured to move `carla@` from a ₱175 base to none.
 - Sheet write-back is still `rowDept === from` exact
   (`update-master-sheet-department.ts:121`) — out-of-HSL midweek moves can still snap back.
 - No transfer-aware stale-row guard in the master sync.
 - ~~No bulk sub-department assignment tool~~ — **SHIPPED 2026-08-14, see §9.**
   **579 of 579** active HSL-family people now carry an `hsl:<key>` cell — the parent
   holds NOBODY (see §10).
-- No `seed-hsl-subdept-rates.mts` / `remove-hsl-parent-base-rate.mts`. Exactly **one**
-  `hsl:*` rate row exists (`hsl:simple_texting`, ₱225/₱337.50, seeded 2026-08-12 and
-  deliberately identical to the parent) — every other sub-team rides the parent
-  fallback. The rail can create the rest; the figures are Kane's to supply.
+- ~~No `seed-hsl-subdept-rates.mts`~~ — **SHIPPED 2026-08-14 (§11 step 2)**: all 16
+  sub-teams now carry their own department-scope base rate. `remove-hsl-parent-base-rate`
+  (§11 step 5) is still outstanding, blocked on the live payroll lock.
 - HSL-as-separate-organization (a QuickBooks-style org toggle) is explicitly **out of
   scope**, recorded as the long-term direction from the 2026-08 meeting.
 
@@ -633,3 +634,87 @@ three bucket to `executive_assistants` in a rail simulation, Readiness reads
 team has no base rate row so it rides the parent ₱225, and all three hold
 individual catalog rates that outrank it anyway. Backup:
 `reports/backup_hsl_executive_assistants_2026-08-14T19-30-30-670Z.json`.
+
+## 11. Cutover: annihilating the parent department (2026-08-14, IN PROGRESS)
+
+Kane: *"the main goal in here is to break Hogan Smith Law from being a general
+department into sub departments … and anhiallate the Main Department"*, then
+*"lets go and migrate"*.
+
+**What "annihilate" means — and the one thing it cannot mean.** `hogan_smith_law`
+is two things wearing one name: (a) a **placement and a base rate**, which is what
+dies; and (b) the **family key** every `hsl:*` label collapses into via
+`normalizeDeptToKey`, which drives the Mon–Sun HSL week model, the +₱15/h weekend
+premium, `isHslFamilyLabel`, and dept-scoped bonus matching. Deleting (b) would
+strip the weekend premium from all 579 people. **The department dies; the family
+key survives.**
+
+| Step | State |
+|---|---|
+| 1. People out of the parent | ✅ 579/579 (§9, §10) |
+| 2. A base rate per sub-team | ✅ 15 seeded 2026-08-14 |
+| 3. HARD HOLD released in both payout engines | ✅ scoped — see below |
+| 4. Employee-scope structures re-keyed off the parent | ⛔ blocked, live payroll lock |
+| 5. Parent base row deleted | ⛔ blocked, live payroll lock |
+
+### Step 2 — `scripts/seed-hsl-subdept-rates.mts`
+
+One department-scope row per sub-team, figures = each team's **modal effective
+rate** (approved by Kane with the per-team evidence). ₱225 Intake · ₱235 Filing ·
+₱305 Case Managers · ₱265 SSD Med Rec · ₱235 Attestation · ₱355 EGS · ₱225
+Callback · ₱265 Collections · ₱265 Pre-/Post-Hearing · ₱175 Medical Records ·
+₱265 Mail Sorting · ₱265 Care · ₱265 Executive Assistants · ₱355 Healthcare TL ·
+₱500 Managers Weekly. Simple Texting already had ₱225 and was skipped, not
+rewritten. OT = 1.5× (an audit figure for HSL — pay is column AN and OT is a
+derived differential).
+
+**Guard 4 is the one that matters:** it counts the people who *actually* resolve
+the department base — no individual catalog rate, no sheet rate — for each target
+key, and aborts naming them if any exist. It measured **zero**, so the seed
+repriced nobody. Two figures were flagged to Kane rather than silently accepted:
+**Medical Records ₱175** (all 10 members, but that is the old Lead Gen rate and is
+*below* the HSL parent — they transferred in on 2026-08-14 and may simply not have
+been repriced) and **Managers Weekly ₱500** (n=1).
+
+### Step 3 — the HARD HOLD release is NARROWER than §8 described
+
+§8 said both engines must "prefer the master label". Measured against live data
+first, a blanket flip changed exactly one person — **`carla@`** (master `USEE`,
+rates row `Lead Gen`) — from a ₱175 base to **no base at all**, because `USEE` has
+no rate row. Broadening the change to fix HSL would have imported that regression
+for a population the cutover has nothing to do with.
+
+So `resolveDeptLabelForRate(masterRaw, ratesRaw)` (`resolve-rate.ts`) states the
+**actual** defect: prefer the master label **only when it is HSL-family**, which is
+exactly the case the HSL rates mirror flattens to `"Hogan Smith Law"`
+(`hsl-upload-db.ts`). Everywhere else the rates-row label stays authoritative.
+Wired into `current-pay.ts` and `disbursement-reports.ts` — the latter had **no
+master-dept map at all**, so its department leg could only ever see the flattened
+label; it now builds one alongside `hslEmails`.
+
+Four tests pin it, including the regression that shaped it: *"a NON-HSL master
+label never displaces the rates-row label"* names `carla@` and the measurement.
+
+### Steps 4–5 are BLOCKED — and the guard is what caught it
+
+`payroll.dispatch_locked` flipped to **true at 2026-08-14T20:18:46**, one minute
+after the seed finished, and `aliviah@` had locked the `2026-08-02_to_2026-08-08`
+cycle at 18:32. That is a **live payroll run**. Both remaining scripts refuse to
+run while the global flag is true, and neither was forced.
+
+Nothing already applied touches that run: **zero HSL-family people resolve the
+department base** (re-verified after the seed), so neither the new sub-team rates
+nor the label rule can move a staged amount. The code change is also not deployed.
+
+Remaining when the lock clears:
+
+- **Step 4** `scripts/rekey-hsl-employee-pay-structures.mts` — moves the 522
+  employee-scope rows off `hogan_smith_law` (465) and the dead literal `hsl` (57)
+  onto each person's sub-team. Pay cannot move: `buildCatalogRateIndex` keys
+  employee rows by **email** and never reads `department_key`. It also fixes a live
+  bug — the 57 rows keyed to the literal `hsl` match **no** entry in the Pay
+  Structure rail or the export's department list, so those individual rates are
+  invisible on that screen and **silently dropped from every catalog export**
+  (`catalog-export.ts:113`).
+- **Step 5** delete the parent `hogan_smith_law` department-scope row. Safe only
+  after step 2 (done) — and it must be **last**.

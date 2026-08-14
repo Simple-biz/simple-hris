@@ -26,6 +26,7 @@ import {
   buildCatalogRateIndex,
   resolveEmployeeCatalogRate,
   resolveDeptCatalogRate,
+  resolveDeptLabelForRate,
 } from "@/lib/payroll/resolve-rate";
 import { fetchAllRateHistory } from "@/lib/payroll/rate-history";
 import { getEmployeeHourlyRatesRows } from "@/lib/supabase/employee-hourly-rates";
@@ -1000,10 +1001,20 @@ export async function seedMissingDisbursementRecords(opts: {
   // normalized dept match so 'HSL', 'hsl:*' sub-teams and 'Hogan Smith Law'
   // all count. Keyed on work + personal email.
   const hslEmails = new Set<string>();
+  // email → master-list Department cell. The DEPARTMENT-base leg needs this
+  // because the HSL rates mirror flattens every HSL row to "Hogan Smith Law",
+  // burying the sub-team the master cell names (see resolveDeptLabelForRate).
+  // current-pay.ts has always had this map; this engine did not, so its dept leg
+  // could only ever see the rates-row label.
+  const masterDeptByEmail = new Map<string, string>();
   for (const m of masterRows) {
-    if (normalizeDeptToKey(m["Department"] ?? "") !== "hogan_smith_law") continue;
     const we = normEmail(m["Work Email"]);
     const pe = normEmail(m["Personal Email"]);
+    const dept = m["Department"];
+    if (dept && String(dept).trim()) {
+      for (const e of [we, pe]) if (e && !masterDeptByEmail.has(e)) masterDeptByEmail.set(e, String(dept));
+    }
+    if (normalizeDeptToKey(dept ?? "") !== "hogan_smith_law") continue;
     if (we) hslEmails.add(we);
     if (pe) hslEmails.add(pe);
   }
@@ -1252,7 +1263,11 @@ export async function seedMissingDisbursementRecords(opts: {
       // rate is a pure fallback for employees with no sheet rate at all.
       const sheetRate = rateByEmail.get(email);
       const empCat = resolveEmployeeCatalogRate(catalogIndex, email, fx);
-      const deptCat = resolveDeptCatalogRate(catalogIndex, deptByEmail.get(email) ?? null, fx);
+      const deptCat = resolveDeptCatalogRate(
+        catalogIndex,
+        resolveDeptLabelForRate(masterDeptByEmail.get(email) ?? null, deptByEmail.get(email) ?? null),
+        fx,
+      );
       const catalogOverride = empCat ? { reg: empCat.regPhp, ot: empCat.otPhp } : null;
       const hasSheet = sheetRate != null && (sheetRate.reg != null || sheetRate.ot != null);
       const baseRate = hasSheet
