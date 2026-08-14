@@ -133,12 +133,13 @@ which collapses every `hsl:*` label to the parent and would otherwise make sub-t
 structures unreachable. It is generalized — `medical_billing:intake_team` resolves the
 same way for in-app departments (`subDeptStructureKey`).
 
-**The parent fallback is permanent** — *until the cutover retires it (§11).* A sub-team
-Accounting has not priced yet resolves the parent ₱225, never ₱0. The parent row is
-deleted only at cutover, by script, after every sub-team has its own row. **All 16
-sub-teams have carried their own base rate since 2026-08-14**, so the fallback is no
-longer load-bearing for anybody; the parent row itself is still present pending §11
-step 5.
+**The parent fallback is RETIRED (§11, 2026-08-14).** All 16 sub-teams carry their own
+base rate and the parent `hogan_smith_law` row is **deleted** — the resolver's
+`normalizeDeptToKey` fallback step still runs, it just finds no row. An unknown or
+retired `hsl:*` cell therefore resolves **no department base** (it still counts as
+HSL-family for the week model and the +₱15/h weekend premium); `isPlaceableDeptLabel`
+refuses such a cell for any new placement, and every live sub-team is priced, so the
+only way to hit this is a hand-pasted stale key.
 
 ### Surfaces that MUST mirror this
 
@@ -654,8 +655,11 @@ key survives.**
 | 1. People out of the parent | ✅ 579/579 (§9, §10) |
 | 2. A base rate per sub-team | ✅ 15 seeded 2026-08-14 |
 | 3. HARD HOLD released in both payout engines | ✅ scoped — see below |
-| 4. Employee-scope structures re-keyed off the parent | ⛔ blocked, live payroll lock |
-| 5. Parent base row deleted | ⛔ blocked, live payroll lock |
+| 4. Employee-scope structures re-keyed off the parent | ✅ 465 moved, 2026-08-14 |
+| 5. Parent base row deleted | ✅ `pay_mqffor8r3j5jo6xg`, 2026-08-14 |
+
+**COMPLETE.** Steps 4–5 ran the same day once Kane stopped the payroll run
+("Ive stopped the processing lets move") — the lock guard re-checked live.
 
 ### Step 2 — `scripts/seed-hsl-subdept-rates.mts`
 
@@ -706,15 +710,31 @@ Nothing already applied touches that run: **zero HSL-family people resolve the
 department base** (re-verified after the seed), so neither the new sub-team rates
 nor the label rule can move a staged amount. The code change is also not deployed.
 
-Remaining when the lock clears:
+### Steps 4–5 — run record (2026-08-14, after the lock cleared)
 
-- **Step 4** `scripts/rekey-hsl-employee-pay-structures.mts` — moves the 522
-  employee-scope rows off `hogan_smith_law` (465) and the dead literal `hsl` (57)
-  onto each person's sub-team. Pay cannot move: `buildCatalogRateIndex` keys
-  employee rows by **email** and never reads `department_key`. It also fixes a live
-  bug — the 57 rows keyed to the literal `hsl` match **no** entry in the Pay
-  Structure rail or the export's department list, so those individual rates are
-  invisible on that screen and **silently dropped from every catalog export**
+- **Step 4** `scripts/rekey-hsl-employee-pay-structures.mts --apply`: **465 rows**
+  moved off `hogan_smith_law` (413) and the dead literal `hsl` (52) onto each
+  person's sub-team, read from their live master cell. **57 skipped, correctly**:
+  48 off-roster leavers (no master cell to read a target from) and 9 people whose
+  master cell now says `Lead Gen` — re-filing an ex-HSL person's rate row is not a
+  cutover's call. Their rows stay keyed to the old labels, which is honest: they
+  are not HSL people. Pay could not move — employee rows resolve by **email**;
+  `department_key` is a grouping label. This also closed the live export bug: the
+  rows keyed to the literal `hsl` matched no entry in the Pay Structure rail or
+  the export department list and were silently dropped from every catalog export
   (`catalog-export.ts:113`).
-- **Step 5** delete the parent `hogan_smith_law` department-scope row. Safe only
-  after step 2 (done) — and it must be **last**.
+- **Step 5** `scripts/remove-hsl-parent-base-rate.mts --apply`: deleted the parent
+  department-scope row `pay_mqffor8r3j5jo6xg` (₱225/₱337.50 PHP) **by primary
+  key**, after re-proving all three preconditions live: lock false, all 16 live
+  sub-teams priced, and **zero active people resolve through the parent row**
+  (mirroring `resolveDeptLabelForRate` semantics, individual + sheet rates
+  excluded first). One `payroll.rate.delete` audit row; the original
+  `payroll.rate.set` history untouched.
+
+**End-state sweep (all 579 active HSL people):** 472 resolve an individual catalog
+rate, 107 a sheet/history rate, **0 the department base, 0 no rate at all**. The
+Pay Structure rail now reads real populations (Intake 138 · Filing 61 · Case
+Managers 55 · SSD Med Rec 51 · … ) instead of `1` everywhere, and the parent
+"Hogan Smith Law" entry prices nobody. Backups:
+`backup_hsl_rekey_employee_structures_2026-08-14T20-33-16-104Z.json` and
+`backup_hsl_pay_structures_2026-08-14T20-37-06-801Z.json`.
