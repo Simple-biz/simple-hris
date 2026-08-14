@@ -26,6 +26,7 @@ button (retired 2026-08-12, see `documents-tab.md`) refused exactly that case, o
 | The toggle + download checkbox | [`src/components/payroll/LockToggleConfirmDialog.tsx`](../../src/components/payroll/LockToggleConfirmDialog.tsx) |
 | Trigger + unpaid list + download wiring | [`src/components/payroll-clerk/PayrollDispatch.tsx`](../../src/components/payroll-clerk/PayrollDispatch.tsx) |
 | Report builders (pure) + tests | [`src/lib/payroll/cycle-close-report-export.ts`](../../src/lib/payroll/cycle-close-report-export.ts) · `.test.ts` |
+| Celebration gate (pure, shared with the 100% trigger) + tests | [`src/lib/payroll/cycle-complete-trigger.ts`](../../src/lib/payroll/cycle-complete-trigger.ts) · `.test.ts` |
 | ~~Badge + panel~~ | ~~DispatchReports.tsx~~ — viewer removed with the Reports tab, 2026-08-12 |
 
 ## A close-out is the only per-cycle record now (history: the published report)
@@ -150,12 +151,41 @@ Rules the builders enforce (each pinned by a test in `cycle-close-report-export.
   standalone `/payroll-clerk` surface has no Stop dialog, so the feature is
   Payment-Dispatch-embed-only by construction.
 
-## No celebration email
+## Celebration email — a close with nothing owed fires it (changed 2026-08-14)
 
-The `payment_cycle_complete` confetti webhook is a **separate** trigger that fires when the
-progress strip genuinely reaches 100% (`payment-dispatch.md` §12.7). Closing a cycle deliberately
-does **not** fire it: congratulating the whole Accounting team over a week closed with people
-unpaid would be a lie.
+**Until 2026-08-14 closing deliberately did not fire the `payment_cycle_complete` confetti
+webhook at all.** The reason was sound and still holds: congratulating the whole Accounting team
+over a week closed with people unpaid would be a lie. But the rule was written as a blanket "not
+from the close", and that left the honest case — a week closed owing *nobody* — depending
+entirely on a trigger that is easy to miss. The 100% effect needs a browser open on Payment
+Dispatch at the moment the last payment lands, and the webhook already configured; the first
+condition failed for months on end (one marker exists in production, for the week of
+2026-07-26), and the second was only satisfied when the slug went active.
+
+So the close is now a **second trigger point for the same email** (Kane, 2026-08-14):
+
+- **Same gate, shared in code.** Both trigger points call `isCycleFullyPaid` from
+  [`cycle-complete-trigger.ts`](../../src/lib/payroll/cycle-complete-trigger.ts): nothing pending,
+  nobody on **Problem**, nobody held at **Threshold**, and at least one person actually paid.
+  That is the progress strip's own denominator and exactly the set this record's `unpaid` list
+  names — so **a close that files any unpaid person cannot fire the email**, by construction.
+  The Excluded tab is not payable and never enters the count.
+- **Same body, built once.** `buildCycleCompleteBody` in `PayrollDispatch.tsx` serves both, so the
+  two can never describe one week two different ways. `total_count` comes from the shared
+  `cycleStartedCount`, which is what makes the route's `paid_count === total_count > 0` check
+  structurally satisfiable rather than coincidental (pinned in `cycle-complete-trigger.test.ts`).
+- **One email per cycle, ever, unchanged.** The server still owns that guarantee via the atomic
+  `dispatch.cycle_complete_notified.<source_file>` claim. Whichever trigger fires first wins;
+  the other gets `already` and sends nothing. Adding this trigger point cannot double-mail.
+- **It runs AFTER the stop, fire-and-forget.** The ordering below is untouched: close-out POST →
+  `setLocked(false)` → celebration. A webhook that is slow, down or unconfigured can only cost
+  the email — never the record, never the stop. It is not awaited and it raises no toast.
+- **An already-closed week does not re-fire it.** The trigger rides `closingCycle`, i.e. a real
+  close performed by this click.
+
+What has **not** changed: closing is still gate-free (§ above). The celebration is a consequence
+of the numbers, never a condition on closing — a week with 400 unpaid people closes exactly as
+readily as a clean one, in silence.
 
 ## Nothing is truncated silently
 
@@ -186,7 +216,11 @@ PostgREST truncates at 1,000 rows even with `.range()`.
 
 **No migration.** One `app_settings` row per cycle, keyed `dispatch.cycle_closeout.<source_file>` —
 every other fact is derivable, the only new one is the declaration itself, and `app_settings`
-needs no DDL. Nothing for Kane to run. No env vars, no n8n import, no cron.
+needs no DDL. Nothing for Kane to run. No env vars, no cron.
+
+**n8n:** the close's celebration trigger (2026-08-14) introduces no new endpoint — it reuses the
+already-active `payment_cycle_complete` slug (verified active in `webhooks.config` on 2026-08-14,
+pointing at `…/webhook/payment-cycle-complete`). Nothing to import for this change.
 
 Audit action: `payment_cycle.closed` on resource `app_settings`, written **awaited** — it is the
 trail for a declaration that money was left unpaid.

@@ -48,6 +48,11 @@ import { PROCESSORS, DISPATCH_PROCESSORS, parseCyclePeriodFromFile, formatCycleL
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import type { CycleCloseoutRecord } from '@/lib/payroll/cycle-closeout';
 import {
+  cycleStartedCount,
+  isCycleFullyPaid,
+  payableUnpaidCount,
+} from '@/lib/payroll/cycle-complete-trigger';
+import {
   buildFinalCloseoutCsv,
   buildPrematureSnapshotWorkbook,
   closeReportFilename,
@@ -533,78 +538,101 @@ export default function PayrollDispatch() {
   // people held under the payout threshold — the same numbers broadcast to the
   // CEO live card above, so every surface tells one story. "Started" is what the
   // week began with; it shrinks/grows only if the queue itself does.
-  const startedCount = pending.length + distinctPaidCount + blockedCount + heldCount;
+  const cycleSettlement = useMemo(
+    () => ({
+      pendingCount: pending.length,
+      blockedCount,
+      heldCount,
+      paidCount: distinctPaidCount,
+    }),
+    [pending.length, blockedCount, heldCount, distinctPaidCount],
+  );
+  const startedCount = cycleStartedCount(cycleSettlement);
   const paidPct = startedCount > 0 ? Math.round((distinctPaidCount / startedCount) * 100) : 0;
   // The week's full dollar bill = what already went out + what's still owed.
   const totalWeekUSD = totalPaidUSD + totalPendingUSD;
 
-  // ── 100% paid → celebrate the Accounting team ───────────────────────────────
-  // When the strip genuinely reaches 100% (nothing pending, nobody blocked or
-  // held, ≥1 paid), report it so the server can email every accounting-role holder a
-  // confetti congratulations via the `payment_cycle_complete` n8n webhook. The
-  // SERVER owns the once-per-cycle guarantee (an atomic app_settings claim), so
-  // any number of browsers/reloads can report the same completion and the team
-  // still gets exactly one email. Client-side we only keep the noise down: one
-  // attempt per source file per mount, and a PAST week celebrates only when this
-  // session actually watched its queue finish — opening an old fully-paid CSV
-  // must not toast it.
+  // ── Cycle fully paid → celebrate the Accounting team ────────────────────────
+  // ONE rule, TWO trigger points. Both ask `isCycleFullyPaid` (nothing pending,
+  // nobody on Problem or Threshold, ≥1 person paid — the strip's own
+  // denominator) and both send the SAME body, so they can never describe one
+  // week two ways:
+  //   1. the strip reaching 100% while the screen is open (the effect below);
+  //   2. closing the pay cycle from the Stop dialog (`handleLockToggle`) —
+  //      added 2026-08-14 because (1) is missable: it needs a browser open at
+  //      the moment the last payment lands AND the webhook already configured.
+  // The SERVER owns the once-per-cycle guarantee (an atomic app_settings
+  // claim), so whichever fires first wins and the other is silently `already`.
+  const cycleFullyPaid = isCycleFullyPaid(cycleSettlement);
+  /** The completion report, built in exactly one place. `total_count` comes
+   *  from the shared `cycleStartedCount`, which is what makes the route's
+   *  `paid_count === total_count` check structurally satisfiable rather than a
+   *  coincidence (see cycle-complete-trigger.test.ts). */
+  const buildCycleCompleteBody = useCallback(
+    (sourceFile: string) => ({
+      source_file: sourceFile,
+      cycle_id: period.cycleId,
+      label: formatCycleLabelFromFile(sourceFile),
+      period_start: period.start,
+      period_end: period.end,
+      paid_count: cycleSettlement.paidCount,
+      total_count: cycleStartedCount(cycleSettlement),
+      total_paid_usd: totalPaidUSD,
+      total_paid_php: paidRows.reduce((sum, r) => sum + (r.amount_php ?? 0), 0),
+    }),
+    [period.cycleId, period.start, period.end, cycleSettlement, totalPaidUSD, paidRows],
+  );
+  /** POST the completion report. Best-effort by contract — the server's claim
+   *  means an extra call is never an extra email. Resolves `true` when the
+   *  answer is final (any non-5xx): auth/validation failures won't heal on
+   *  retry, only transient server trouble earns another attempt. */
+  const reportCycleComplete = useCallback(
+    async (sourceFile: string): Promise<boolean> => {
+      try {
+        const res = await fetch('/api/payment-dispatches/cycle-complete', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(buildCycleCompleteBody(sourceFile)),
+        });
+        return res.ok || res.status < 500;
+      } catch {
+        return false;
+      }
+    },
+    [buildCycleCompleteBody],
+  );
+  // Client-side we only keep the noise down: one attempt per source file per
+  // mount, and a PAST week celebrates only when this session actually watched
+  // its queue finish — opening an old fully-paid CSV must not toast it.
   const celebrateAttemptedRef = useRef<Set<string>>(new Set());
   const sawIncompleteRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const sourceFile = period.sourceFile;
     if (!sourceFile || loading || !hydrated || !wizardReady || error || contractorError) return;
-    // Threshold holds count here too: money is still owed on those people, so a
-    // week carrying one hasn't finished paying — the confetti would be a lie.
-    if (pending.length > 0 || blockedCount > 0 || heldCount > 0) {
-      sawIncompleteRef.current.add(sourceFile);
+    if (!cycleFullyPaid) {
+      // Threshold holds count here too: money is still owed on those people, so
+      // a week carrying one hasn't finished paying — the confetti would be a
+      // lie. Seeing one is also what earns a past week the right to celebrate.
+      if (payableUnpaidCount(cycleSettlement) > 0) sawIncompleteRef.current.add(sourceFile);
       return;
     }
-    if (distinctPaidCount === 0 || startedCount === 0) return;
     if (viewingPastWeek && !sawIncompleteRef.current.has(sourceFile)) return;
     if (celebrateAttemptedRef.current.has(sourceFile)) return;
     celebrateAttemptedRef.current.add(sourceFile);
-    const totalPaidPHP = paidRows.reduce((sum, r) => sum + (r.amount_php ?? 0), 0);
-    void fetch('/api/payment-dispatches/cycle-complete', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        source_file: sourceFile,
-        cycle_id: period.cycleId,
-        label: formatCycleLabelFromFile(sourceFile),
-        period_start: period.start,
-        period_end: period.end,
-        paid_count: distinctPaidCount,
-        total_count: startedCount,
-        total_paid_usd: totalPaidUSD,
-        total_paid_php: totalPaidPHP,
-      }),
-    })
-      .then((res) => {
-        // Auth/validation failures won't heal on retry; only transient server
-        // trouble (5xx) earns another attempt on the next state change.
-        if (!res.ok && res.status >= 500) celebrateAttemptedRef.current.delete(sourceFile);
-      })
-      .catch(() => {
-        celebrateAttemptedRef.current.delete(sourceFile);
-      });
+    void reportCycleComplete(sourceFile).then((settled) => {
+      if (!settled) celebrateAttemptedRef.current.delete(sourceFile);
+    });
   }, [
     period.sourceFile,
-    period.cycleId,
-    period.start,
-    period.end,
     viewingPastWeek,
     loading,
     hydrated,
     wizardReady,
     error,
     contractorError,
-    pending.length,
-    blockedCount,
-    heldCount,
-    distinctPaidCount,
-    startedCount,
-    totalPaidUSD,
-    paidRows,
+    cycleFullyPaid,
+    cycleSettlement,
+    reportCycleComplete,
   ]);
 
   // ── Cycle close-out ─────────────────────────────────────────────────────────
@@ -1322,6 +1350,22 @@ export default function PayrollDispatch() {
           : 'Processing stopped — employees can file issues again',
         { icon: goingLocked ? '🔒' : '🔓' },
       );
+      // ── Closed with nothing owed → celebrate the Accounting team ────────────
+      // The second trigger point for `payment_cycle_complete` (Kane, 2026-08-14).
+      // Gated on the SAME `isCycleFullyPaid` rule as the automatic 100% effect,
+      // so a cycle closed with anyone still pending, on Problem or held at
+      // Threshold stays silent — the close-out exists precisely to record those
+      // weeks, and congratulating the team over one would be a lie.
+      //
+      // Fire-and-forget, and only AFTER the stop already went through: the
+      // close-out POST and `setLocked` own the ordering (cycle-closeout.md
+      // § "Closing is once, and it happens before the lock flips"), and a
+      // celebration must never be able to abort, delay or reorder either. The
+      // server's once-per-cycle claim makes this silent when the strip already
+      // mailed the week.
+      if (closingCycle && cycleFullyPaid && period.sourceFile) {
+        void reportCycleComplete(period.sourceFile);
+      }
       // ── PREMATURE snapshot download (stopped WITHOUT closing) ───────────────
       // Fire-and-forget AFTER the stop already went through, so the best-effort
       // GET below can never delay or abort setLocked. If a close-out record
