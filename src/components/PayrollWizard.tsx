@@ -6191,33 +6191,9 @@ export default function PayrollWizard({
     }
   }, []);
 
-  const removeFromDept = React.useCallback((email: string) => {
-    const ctx = auditCtxRef.current;
-    const prevValue = ctx.employeeDepts[email] ?? null;
-    setEmployeeDepts(prev => {
-      const next = { ...prev };
-      delete next[email];
-      return next;
-    });
-    // Pin the explicit unassign (`null`) so auto-populate can't re-add them.
-    setEmployeeDeptsManual(prev => ({ ...prev, [email]: null }));
-    if (prevValue !== null) {
-      void logAudit({
-        user_name: ctx.sessionEmail ?? 'anonymous',
-        user_role: sessionRole ?? 'user',
-        action: 'wizard.addition_edited',
-        resource: 'employee_department',
-        resource_id: email,
-        cycle: ctx.auditCycle,
-        details: {
-          employee_email: email,
-          field: 'department',
-          previous_value: prevValue,
-          new_value: null,
-        },
-      });
-    }
-  }, []);
+  // Per-row "Remove from department" (trashcan) was RETIRED 2026-08-17 (Kane).
+  // Departments now come from the master list / assign dropdown only — the
+  // explicit-unassign pin (`employeeDeptsManual[email] = null`) has no writer.
 
   const applyBonusToAllInDept = React.useCallback((
     bonusId: string,
@@ -12090,25 +12066,36 @@ export default function PayrollWizard({
             <div className="flex flex-col gap-4 rounded-xl border border-zinc-200/90 bg-gradient-to-br from-white via-zinc-50/80 to-indigo-50/30 p-4 shadow-sm sm:p-5 dark:border-zinc-800 dark:from-zinc-950/50 dark:via-zinc-900/40 dark:to-indigo-950/20">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">
-                  Additions — Department Bonuses
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">
+                    Additions — Department Bonuses
+                  </h3>
+                  {/* The step's what-is-this copy lives behind this icon (Kane
+                      2026-08-17) — same StepInfoButton affordance as step 2's
+                      formula/upload popovers. */}
+                  <StepInfoButton
+                    icon={<Info className="h-3.5 w-3.5" aria-hidden />}
+                    label="What this step does"
+                    tone="indigo"
+                  >
+                    <p>
+                      Assign employees to departments and apply bonuses. Assigned departments share a{' '}
+                      <span className="font-semibold text-indigo-600 dark:text-indigo-400">
+                        Technology Bonus ({formatPHP(techAmountPhp)})
+                      </span>{' '}
+                      and a{' '}
+                      <span className="font-semibold text-indigo-600 dark:text-indigo-400">
+                        Perfect Attendance Bonus ({formatPHP(pabAmountPhp)})
+                      </span>.
+                    </p>
+                  </StepInfoButton>
+                </div>
                 {calcSourceFile && (
                   <div className="mt-1 flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400">
                     <FileText className="h-3 w-3 shrink-0" />
                     <span className="font-mono">{calcSourceFile}</span>
                   </div>
                 )}
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  Assign employees to departments and apply bonuses. Assigned departments share a{' '}
-                  <span className="font-semibold text-indigo-600 dark:text-indigo-400">
-                    Technology Bonus ({formatPHP(techAmountPhp)})
-                  </span>{' '}
-                  and a{' '}
-                  <span className="font-semibold text-indigo-600 dark:text-indigo-400">
-                    Perfect Attendance Bonus ({formatPHP(pabAmountPhp)})
-                  </span>.
-                </p>
                 {pabMonthRange && (
                   <div className="mt-1.5 flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400">
                     <CalendarDays className="h-3 w-3 shrink-0" />
@@ -12122,6 +12109,24 @@ export default function PayrollWizard({
                       {pabExpectedMonFriCount !== 1 ? 's' : ''} in range
                       {pabMonthColumnCoverageComplete ? ' (complete)' : ' (need full month)'}
                     </span>
+                    {/* Coverage detail moved behind this amber icon (Kane 2026-08-17).
+                        The x/y count + "(need full month)" stay visible inline above,
+                        so the warning state itself is never hover-only — only the
+                        remediation text is. */}
+                    {hubstaffColsForPab && !pabMonthColumnCoverageComplete && (
+                      <StepInfoButton
+                        icon={<AlertCircle className="h-3.5 w-3.5" aria-hidden />}
+                        label="Monthly PAB coverage"
+                        tone="amber"
+                      >
+                        <p>
+                          <strong>Monthly PAB needs all workdays in range.</strong> Hubstaff has{' '}
+                          {weekdayColumnGroups.length} of {pabExpectedMonFriCount} Mon–Fri columns merged. Append or re-upload
+                          weekly exports in <strong>Step 1</strong> until every weekday in the PAB period is present — PAB will not
+                          use the single &quot;calc file&quot; week alone.
+                        </p>
+                      </StepInfoButton>
+                    )}
                   </div>
                 )}
 
@@ -13144,18 +13149,9 @@ export default function PayrollWizard({
                 );
               })()}
 
-              {/* PAB coverage / data warnings — full width */}
-              {pabMonthRange && hubstaffColsForPab && !pabMonthColumnCoverageComplete && (
-                <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-400">
-                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span>
-                    <strong>Monthly PAB needs all workdays in range.</strong> Hubstaff has{' '}
-                    {weekdayColumnGroups.length} of {pabExpectedMonFriCount} Mon–Fri columns merged. Append or re-upload
-                    weekly exports in <strong>Step 1</strong> until every weekday in the PAB period is present—PAB will not
-                    use the single &quot;calc file&quot; week alone.
-                  </span>
-                </div>
-              )}
+              {/* PAB coverage detail lives behind the amber icon on the PAB-period
+                  line above (Kane 2026-08-17); only the daily-data failure below
+                  still earns a full-width banner. */}
               {dailyDataMissing && (
                 <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
                   <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -14015,7 +14011,6 @@ export default function PayrollWizard({
                             <TableHead className="min-w-[72px] px-1 py-2 text-right text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
                               Final
                             </TableHead>
-                            <TableHead className="w-7 px-0.5" />
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -14415,18 +14410,6 @@ export default function PayrollWizard({
                                   ) : (
                                     <PhpWithUsd php={finalPay} usdToPhp={usdToPhpRate} />
                                   )}
-                                </TableCell>
-                                <TableCell className="px-0.5 py-1.5">
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6 text-zinc-400 hover:text-red-500"
-                                    onClick={() => removeFromDept(emp.email)}
-                                    title="Remove from department"
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </Button>
                                 </TableCell>
                               </TableRow>
                             );
