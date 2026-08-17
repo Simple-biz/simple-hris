@@ -1,8 +1,10 @@
 # Payroll Wizard Tutorial Mode — driver-only processing guide + week narrative
 
 When Payroll Processing is started (the dispatch lock flips on), the lock **driver** gets a
-floating guide rail that walks the shipped wizard steps 1→9 with per-step hints, live advisory
-status badges, and a spotlight ring over each step's key control. The Reports step additionally
+floating **chat head** (a small messenger-style bubble, bottom-right — explicitly NOT a panel
+or modal, Kane 2026-08-17) that walks the shipped wizard steps 1→9. Tapping the head toggles a
+compact speech balloon with the current step's hint, advisory note, and nine status dots; the
+teaching itself is done by spotlight rings drawn over each step's key indicators. The Reports step additionally
 gains a **Processing Narrative**: a templated, plain-English retelling of the calendar week's
 audit events — every Start/Stop toggle and what happened around them. Shipped 2026-08-17.
 
@@ -13,19 +15,21 @@ audit events — every Start/Stop toggle and what happened around them. Shipped 
 | Week window + narrative builder (pure) | `src/lib/payroll-wizard/tutorial/narrative.ts` |
 | Week-scoped audit query (server, paged) | `src/lib/payroll-wizard/tutorial/week-audit.ts` |
 | API route | `app/api/payroll-wizard/audit-week/route.ts` |
-| Guide rail + spotlight | `src/components/payroll-wizard/tutorial/TutorialGuide.tsx` |
+| Chat head + balloon + spotlight | `src/components/payroll-wizard/tutorial/TutorialGuide.tsx` |
 | Narrative section (Reports step) | `src/components/payroll-wizard/tutorial/ProcessingNarrative.tsx` |
 | Wizard wiring (marked blocks + anchors) | `src/components/PayrollWizard.tsx` — grep `[WIZARD-TUTORIAL]` and `data-tutorial-target` |
 
 ## The guide never gates — that is the contract, not a preference
 
 Kane's rule (2026-08-17): *tutorial mode, not a wizard-within-the-wizard*. The spotlight layer
-is `pointer-events-none`; the rail's statuses (`pending` / `attention` / `done`) are badges
-derived in `guide.ts` and grant or deny **nothing**; every step is skippable and the rail is
-collapsible/dismissible. The wizard's real gates (FX-zero hard-gating Step 8, the Step-7
-red-flag confirm) live where they always lived — do not move a gate into the guide, and do not
-"fix" a wrong badge by blocking navigation. It looks like a missing feature that "Next" works
-while a step shows `attention`; it is the feature.
+is `pointer-events-none`; the statuses (`pending` / `attention` / `done`) are badges derived in
+`guide.ts` and grant or deny **nothing**; every step is skippable; the balloon tucks away into
+the head and "Hide for this cycle" removes the whole thing until the next cycle. The head is
+UI-shaped like a chat head on purpose — a later redesign must not grow it back into a panel or
+modal. The wizard's real gates (FX-zero hard-gating Step 8, the Step-7 red-flag confirm) live
+where they always lived — do not move a gate into the guide, and do not "fix" a wrong badge by
+blocking navigation. It looks like a missing feature that "Next" works while a step shows
+`attention`; it is the feature.
 
 The guide mounts only for `isLockDriver && lockState.locked` — spectators are already in
 read-only follow mode (`useWizardFollow`) and must never see a second overlay.
@@ -69,7 +73,7 @@ one line each.
 Spotlight targets are `data-tutorial-target` attributes on stable wizard containers. The wizard
 stays mounted across dashboard tabs and re-renders freely, so `TutorialGuide` re-measures on
 step change/resize/scroll plus a slow interval; an anchor that is missing or collapsed (hidden
-tab pane) is simply skipped — the guide runs rail-only. Never anchor by text or DOM position.
+tab pane) is simply skipped — the guide runs head-only. Never anchor by text or DOM position.
 
 ## Adjacent, already-shipped behavior this feature leans on (do not duplicate)
 

@@ -1,26 +1,27 @@
 'use client';
 
 /**
- * [WIZARD-TUTORIAL] Processing Tutorial Mode — the floating guide rail +
- * spotlight ring shown to the LOCK DRIVER while Payroll Processing is on.
+ * [WIZARD-TUTORIAL] Processing Tutorial Mode — a floating CHAT HEAD (not a
+ * panel, not a modal — Kane, 2026-08-17 rework) shown to the LOCK DRIVER
+ * while Payroll Processing is on. The head sits bottom-right like a messenger
+ * bubble; tapping it toggles a compact speech balloon with the current step's
+ * hint. The actual teaching is done by the spotlight rings drawn around the
+ * step's [data-tutorial-target] indicators.
  *
  * Non-negotiable contract (Kane, 2026-08-17): this is a tutorial, never a
- * gate. The spotlight layer is pointer-events-none; the rail never disables
- * the wizard's own navigation; every step is skippable; the whole thing is
- * dismissible (and stays dismissed for this cycle only). Statuses are
- * advisory badges derived in `guide.ts` — they grant and deny nothing.
+ * gate. The spotlight layer is pointer-events-none; nothing here disables the
+ * wizard's own navigation; every step is skippable; the whole thing hides for
+ * the cycle on "Hide for this cycle". Statuses are advisory badges derived in
+ * `guide.ts` — they grant and deny nothing.
  *
  * Spectators never see this: they're already in read-only follow mode.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
-  CheckCircle2,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Circle,
   GraduationCap,
   X,
 } from 'lucide-react';
@@ -53,15 +54,11 @@ function writePersisted(storageKey: string, state: TutorialPersistedState) {
   }
 }
 
-function StatusIcon({ status }: { status: 'pending' | 'attention' | 'done' }) {
-  if (status === 'done') {
-    return <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />;
-  }
-  if (status === 'attention') {
-    return <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />;
-  }
-  return <Circle className="h-4 w-4 shrink-0 text-zinc-300 dark:text-zinc-600" />;
-}
+const DOT_TONE: Record<'pending' | 'attention' | 'done', string> = {
+  done: 'bg-emerald-500 dark:bg-emerald-400',
+  attention: 'bg-amber-500 dark:bg-amber-400',
+  pending: 'bg-zinc-300 dark:bg-zinc-600',
+};
 
 export default function TutorialGuide({
   signals,
@@ -73,7 +70,7 @@ export default function TutorialGuide({
   currentStep: number;
   /** The wizard's own setCurrentStep — the guide navigates, it never blocks. */
   onGoToStep: (step: number) => void;
-  /** Per (driver email, cycle) — dismissing one week never hides the next. */
+  /** Per (driver email, cycle) — hiding one week never hides the next. */
   storageKey: string;
 }) {
   const [persisted, setPersisted] = useState<TutorialPersistedState>(() =>
@@ -123,12 +120,15 @@ export default function TutorialGuide({
   const activeDef: TutorialStepDef | undefined = TUTORIAL_STEPS.find(
     (d) => d.stepId === currentStep,
   );
+  const activeStatus = activeDef ? statuses.get(activeDef.stepId) : undefined;
+  // `collapsed` = balloon closed, head only. The head is always reachable.
+  const balloonOpen = !persisted.collapsed;
 
   // ── Spotlight measurement ──────────────────────────────────────────────────
   // Finds this step's [data-tutorial-target] anchors and draws a ring around
-  // each. A missing anchor is fine — the guide degrades to rail-only.
+  // each. A missing anchor is fine — the guide degrades to head-only.
   const measure = useCallback(() => {
-    if (!activeDef || persisted.dismissed || persisted.collapsed) {
+    if (!activeDef || persisted.dismissed) {
       setSpots([]);
       return;
     }
@@ -141,7 +141,7 @@ export default function TutorialGuide({
       next.push({ top: r.top - 6, left: r.left - 6, width: r.width + 12, height: r.height + 12 });
     }
     setSpots(next);
-  }, [activeDef, persisted.dismissed, persisted.collapsed]);
+  }, [activeDef, persisted.dismissed]);
 
   useEffect(() => {
     measure();
@@ -157,21 +157,7 @@ export default function TutorialGuide({
     };
   }, [measure]);
 
-  if (persisted.dismissed) {
-    return (
-      <button
-        type="button"
-        onClick={() => persist({ ...persisted, dismissed: false })}
-        className="fixed bottom-5 right-5 z-[45] inline-flex items-center gap-2 rounded-full border border-indigo-300/70 bg-white/95 px-3.5 py-2 text-xs font-semibold text-indigo-700 shadow-lg backdrop-blur transition hover:bg-indigo-50 dark:border-indigo-700/60 dark:bg-zinc-900/95 dark:text-indigo-300 dark:hover:bg-indigo-950/40"
-        title="Reopen the processing guide"
-      >
-        <GraduationCap className="h-4 w-4" /> Guide
-      </button>
-    );
-  }
-
-  const activeStatus = activeDef ? statuses.get(activeDef.stepId) : undefined;
-  const doneCount = TUTORIAL_STEPS.filter((d) => statuses.get(d.stepId)?.status === 'done').length;
+  if (persisted.dismissed) return null;
 
   return (
     <>
@@ -186,130 +172,130 @@ export default function TutorialGuide({
         ))}
       </div>
 
-      {/* Guide rail */}
-      <aside
-        className="fixed right-4 top-20 z-[45] w-[300px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-indigo-200/80 bg-white/95 shadow-xl backdrop-blur dark:border-indigo-900/50 dark:bg-zinc-950/95"
-        aria-label="Payroll processing guide"
-      >
-        <div className="flex items-center gap-2 border-b border-indigo-100 bg-indigo-50/70 px-3.5 py-2.5 dark:border-indigo-900/40 dark:bg-indigo-950/30">
-          <GraduationCap className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-white">
-              Processing guide
+      {/* Speech balloon — compact, anchored above the head. */}
+      {balloonOpen && activeDef && (
+        <div
+          className="fixed bottom-[5.25rem] right-5 z-[45] w-[290px] max-w-[calc(100vw-2.5rem)] rounded-2xl rounded-br-md border border-indigo-200/80 bg-white/95 p-3.5 shadow-xl backdrop-blur dark:border-indigo-900/50 dark:bg-zinc-950/95"
+          role="status"
+          aria-label="Processing guide"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">
+              Step {activeDef.stepId} of 9 · {activeDef.kind === 'review' ? 'Review' : 'Action'}
             </p>
-            <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
-              {doneCount}/{TUTORIAL_STEPS.length} steps look done · advisory only
-            </p>
+            <button
+              type="button"
+              onClick={() => persist({ ...persisted, collapsed: true })}
+              className="-mr-1 -mt-1 rounded-md p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+              title="Tuck the balloon away (the head stays)"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => persist({ ...persisted, collapsed: !persisted.collapsed })}
-            className="rounded-md p-1 text-zinc-500 transition hover:bg-white/70 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-            title={persisted.collapsed ? 'Expand the guide' : 'Collapse the guide'}
-          >
-            <ChevronDown className={cn('h-4 w-4 transition-transform', persisted.collapsed && '-rotate-90')} />
-          </button>
-          <button
-            type="button"
-            onClick={() => persist({ ...persisted, dismissed: true })}
-            className="rounded-md p-1 text-zinc-500 transition hover:bg-white/70 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-            title="Dismiss for this cycle (reopen from the Guide pill)"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+          <p className="mt-0.5 text-[13px] font-semibold text-zinc-900 dark:text-white">
+            {activeDef.title}
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+            {activeDef.hint}
+          </p>
+          {activeStatus?.note && (
+            <p
+              className={cn(
+                'mt-2 rounded-lg px-2.5 py-1.5 text-[11px] leading-snug',
+                activeStatus.status === 'attention'
+                  ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                  : 'bg-zinc-50 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400',
+              )}
+            >
+              {activeStatus.note}
+            </p>
+          )}
 
-        {!persisted.collapsed && (
-          <div className="max-h-[min(60vh,540px)] overflow-y-auto">
-            {/* Current step hint */}
-            {activeDef && (
-              <div className="border-b border-zinc-100 px-3.5 py-3 dark:border-zinc-800/80">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">
-                  Step {activeDef.stepId} · {activeDef.kind === 'review' ? 'Review' : 'Action'}
-                </p>
-                <p className="mt-1 text-[13px] font-semibold text-zinc-900 dark:text-white">
-                  {activeDef.title}
-                </p>
-                <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-                  {activeDef.hint}
-                </p>
-                {activeStatus?.note && (
-                  <p
-                    className={cn(
-                      'mt-2 rounded-lg px-2.5 py-1.5 text-[11px] leading-snug',
-                      activeStatus.status === 'attention'
-                        ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
-                        : 'bg-zinc-50 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400',
-                    )}
-                  >
-                    {activeStatus.note}
-                  </p>
-                )}
-                <div className="mt-2.5 flex items-center justify-between">
-                  <button
-                    type="button"
-                    disabled={currentStep <= 1}
-                    onClick={() => onGoToStep(Math.max(1, currentStep - 1))}
-                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-zinc-600 transition hover:bg-zinc-100 disabled:opacity-40 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                  >
-                    <ChevronLeft className="h-3.5 w-3.5" /> Back
-                  </button>
-                  <button
-                    type="button"
-                    disabled={currentStep >= 9}
-                    onClick={() => onGoToStep(Math.min(9, currentStep + 1))}
-                    className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-40"
-                  >
-                    {activeStatus?.status === 'done' ? 'Next step' : 'Skip ahead'}
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* All steps */}
-            <ol className="px-2 py-2">
+          {/* Step dots — one per wizard step, colored by advisory status. */}
+          <div className="mt-2.5 flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
               {TUTORIAL_STEPS.map((def) => {
                 const st = statuses.get(def.stepId);
                 const isActive = def.stepId === currentStep;
                 return (
-                  <li key={def.stepId}>
-                    <button
-                      type="button"
-                      onClick={() => onGoToStep(def.stepId)}
-                      className={cn(
-                        'flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition',
-                        isActive
-                          ? 'bg-indigo-50 dark:bg-indigo-950/40'
-                          : 'hover:bg-zinc-50 dark:hover:bg-zinc-900',
-                      )}
-                    >
-                      <StatusIcon status={st?.status ?? 'pending'} />
-                      <span className="min-w-0">
-                        <span
-                          className={cn(
-                            'block truncate text-xs font-medium',
-                            isActive
-                              ? 'text-indigo-800 dark:text-indigo-300'
-                              : 'text-zinc-700 dark:text-zinc-300',
-                          )}
-                        >
-                          {def.stepId}. {def.title}
-                        </span>
-                        {st?.status === 'attention' && st.note && (
-                          <span className="block truncate text-[10px] text-amber-700 dark:text-amber-400">
-                            {st.note}
-                          </span>
-                        )}
-                      </span>
-                    </button>
-                  </li>
+                  <button
+                    key={def.stepId}
+                    type="button"
+                    onClick={() => onGoToStep(def.stepId)}
+                    title={`${def.stepId}. ${def.title}${st?.status === 'attention' && st.note ? ` — ${st.note}` : ''}`}
+                    className={cn(
+                      'h-2 rounded-full transition-all',
+                      DOT_TONE[st?.status ?? 'pending'],
+                      isActive ? 'w-4 ring-2 ring-indigo-400/60 dark:ring-indigo-500/60' : 'w-2 hover:scale-125',
+                    )}
+                  />
                 );
               })}
-            </ol>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                disabled={currentStep <= 1}
+                onClick={() => onGoToStep(Math.max(1, currentStep - 1))}
+                className="rounded-md p-1 text-zinc-500 transition hover:bg-zinc-100 disabled:opacity-35 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                title="Previous step"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                disabled={currentStep >= 9}
+                onClick={() => onGoToStep(Math.min(9, currentStep + 1))}
+                className="rounded-md bg-indigo-600 p-1 text-white transition hover:bg-indigo-700 disabled:opacity-35"
+                title={activeStatus?.status === 'done' ? 'Next step' : 'Skip ahead — nothing is ever required'}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
           </div>
+
+          <button
+            type="button"
+            onClick={() => persist({ ...persisted, dismissed: true })}
+            className="mt-2 text-[10px] font-medium text-zinc-400 underline-offset-2 transition hover:text-zinc-600 hover:underline dark:hover:text-zinc-300"
+          >
+            Hide for this cycle
+          </button>
+
+          {/* Balloon tail pointing at the head. */}
+          <div
+            aria-hidden
+            className="absolute -bottom-[7px] right-6 h-3.5 w-3.5 rotate-45 border-b border-r border-indigo-200/80 bg-white/95 dark:border-indigo-900/50 dark:bg-zinc-950/95"
+          />
+        </div>
+      )}
+
+      {/* The chat head. Click toggles the balloon. */}
+      <button
+        type="button"
+        onClick={() => persist({ ...persisted, collapsed: !persisted.collapsed })}
+        className={cn(
+          'fixed bottom-5 right-5 z-[45] flex h-12 w-12 items-center justify-center rounded-full border shadow-lg backdrop-blur transition hover:scale-105 active:scale-95',
+          'border-indigo-300/70 bg-gradient-to-br from-indigo-500 to-violet-600 text-white dark:border-indigo-700/60',
         )}
-      </aside>
+        title={balloonOpen ? 'Tuck the guide away' : 'Open the processing guide'}
+        aria-label="Processing guide"
+      >
+        <GraduationCap className="h-5 w-5" />
+        {/* Step number badge. */}
+        <span className="absolute -left-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full border border-white/70 bg-indigo-700 px-1 text-[10px] font-bold text-white shadow dark:border-zinc-900/70">
+          {currentStep}
+        </span>
+        {/* Attention pulse — advisory, mirrors the balloon's amber note. */}
+        {activeStatus?.status === 'attention' && (
+          <>
+            <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full border border-white/70 bg-amber-500 shadow dark:border-zinc-900/70">
+              <AlertTriangle className="h-2.5 w-2.5 text-white" />
+            </span>
+            <span className="pointer-events-none absolute inset-0 -z-10 animate-ping rounded-full bg-indigo-500/40 motion-reduce:hidden" />
+          </>
+        )}
+      </button>
     </>
   );
 }
