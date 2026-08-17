@@ -12595,43 +12595,107 @@ export default function PayrollWizard({
                                 · paid once per month to everyone past 30 days of service
                               </span>
                             </div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              {techOptions.map((o) => {
-                                const isSelected = o.mondayIso === selectedIso;
-                                return (
-                                  <button
-                                    key={o.mondayIso}
-                                    type="button"
-                                    disabled={pabSaveState === 'saving'}
-                                    onClick={() => {
-                                      if (isSelected) return;
-                                      // Picking the auto week = clearing the override, so a
-                                      // future rule change never fights a redundant pin.
-                                      void saveTechWeekOverride(o.isAuto ? null : o.mondayIso);
-                                    }}
-                                    title={`Pay week ${fmtShort(o.weekStart)} – ${fmtShort(o.weekEnd)} (Sun–Sat) · salary date ${fmtShort(o.salaryDate)}${o.isAuto ? ' · the automatic 3rd-week pick' : ''}`}
-                                    className={cn(
-                                      'flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left text-xs font-semibold transition disabled:cursor-not-allowed',
-                                      isSelected
-                                        ? 'border-sky-500 bg-sky-50 text-sky-700 shadow-sm ring-1 ring-sky-500/25 dark:border-sky-400 dark:bg-sky-950/60 dark:text-sky-200'
-                                        : 'border-zinc-200 bg-white text-zinc-700 hover:border-sky-300 hover:bg-sky-50/60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-sky-700 dark:hover:bg-sky-950/20',
-                                    )}
-                                  >
-                                    <span className="font-mono tabular-nums">
-                                      {fmtShort(o.weekStart)} – {fmtShort(o.weekEnd)}
-                                    </span>
-                                    <span className="flex items-center gap-1.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-                                      salary {fmtShort(o.salaryDate)}
-                                      {o.isAuto && (
-                                        <span className="rounded bg-zinc-100 px-1 py-[1px] font-bold uppercase leading-none text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                                          Auto
-                                        </span>
+                            {/* Week calendar — pick the week the Tech Bonus is released
+                                by clicking its row (Kane 2026-08-17: "like a calendar
+                                where we can select the week"). One row per PAYABLE week:
+                                `listTechBonusWeekOptions` still decides which weeks exist
+                                (salary Tuesday inside the month) and the row's seven days
+                                are laid out from the option's own Sun–Sat `weekStart`, so
+                                no week math is re-derived here and the stored key stays
+                                the owning Monday. */}
+                            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+                              {/* Weekday header — Sun–Sat, matching how pay weeks are presented. */}
+                              <div className="grid grid-cols-[auto_repeat(7,minmax(0,1fr))] items-center gap-px border-b border-zinc-200 bg-zinc-50 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                                <span className="w-16 pr-2" />
+                                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
+                                  <span key={d} className="text-center">{d}</span>
+                                ))}
+                              </div>
+                              {techOptions.length === 0 ? (
+                                <p className="px-3 py-4 text-center text-xs italic text-zinc-500 dark:text-zinc-400">
+                                  No payable week lands in this month.
+                                </p>
+                              ) : (
+                                techOptions.map((o) => {
+                                  const isSelected = o.mondayIso === selectedIso;
+                                  // The seven dates of this pay week, walked from the
+                                  // option's own Sunday — never recomputed from the month.
+                                  const days = Array.from({ length: 7 }, (_, i) =>
+                                    new Date(
+                                      o.weekStart.getFullYear(),
+                                      o.weekStart.getMonth(),
+                                      o.weekStart.getDate() + i,
+                                    ),
+                                  );
+                                  const salaryMs = new Date(
+                                    o.salaryDate.getFullYear(),
+                                    o.salaryDate.getMonth(),
+                                    o.salaryDate.getDate(),
+                                  ).getTime();
+                                  return (
+                                    <button
+                                      key={o.mondayIso}
+                                      type="button"
+                                      disabled={pabSaveState === 'saving'}
+                                      onClick={() => {
+                                        if (isSelected) return;
+                                        // Picking the auto week = clearing the override, so a
+                                        // future rule change never fights a redundant pin.
+                                        void saveTechWeekOverride(o.isAuto ? null : o.mondayIso);
+                                      }}
+                                      title={`Pay week ${fmtShort(o.weekStart)} – ${fmtShort(o.weekEnd)} (Sun–Sat) · salary date ${fmtShort(o.salaryDate)}${o.isAuto ? ' · the automatic 3rd-week pick' : ''}`}
+                                      className={cn(
+                                        'grid w-full grid-cols-[auto_repeat(7,minmax(0,1fr))] items-center gap-px border-b border-zinc-100 px-2 py-1.5 text-left transition last:border-b-0 disabled:cursor-not-allowed dark:border-zinc-800/70',
+                                        isSelected
+                                          ? 'bg-sky-50 ring-1 ring-inset ring-sky-500/40 dark:bg-sky-950/50 dark:ring-sky-400/40'
+                                          : 'hover:bg-sky-50/50 dark:hover:bg-sky-950/20',
                                       )}
-                                      {isSelected && <Check className="h-3 w-3 text-sky-500" />}
-                                    </span>
-                                  </button>
-                                );
-                              })}
+                                    >
+                                      {/* Row label: which week + the selected tick. */}
+                                      <span className="flex w-16 shrink-0 items-center gap-1 pr-2 text-[10px] font-semibold uppercase tracking-wide">
+                                        {isSelected ? (
+                                          <Check className="h-3 w-3 shrink-0 text-sky-500" />
+                                        ) : (
+                                          <span className="h-3 w-3 shrink-0" />
+                                        )}
+                                        <span className={isSelected ? 'text-sky-700 dark:text-sky-300' : 'text-zinc-400 dark:text-zinc-500'}>
+                                          {o.isAuto ? 'Auto' : 'Week'}
+                                        </span>
+                                      </span>
+                                      {days.map((d) => {
+                                        const isSalary =
+                                          new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() === salaryMs;
+                                        const isOtherMonth = d.getMonth() !== editMonth.month;
+                                        return (
+                                          <span
+                                            key={d.toISOString()}
+                                            className={cn(
+                                              'mx-auto flex h-7 w-7 items-center justify-center rounded-md font-mono text-[11px] tabular-nums',
+                                              isSelected
+                                                ? 'text-sky-900 dark:text-sky-100'
+                                                : isOtherMonth
+                                                  ? 'text-zinc-300 dark:text-zinc-600'
+                                                  : 'text-zinc-600 dark:text-zinc-300',
+                                              // The salary date is the day the money lands —
+                                              // the one date in the row worth calling out.
+                                              isSalary &&
+                                                'bg-sky-600 font-bold text-white shadow-sm dark:bg-sky-500 dark:text-white',
+                                            )}
+                                          >
+                                            {d.getDate()}
+                                          </span>
+                                        );
+                                      })}
+                                    </button>
+                                  );
+                                })
+                              )}
+                            </div>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <span className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                                <span className="h-3.5 w-3.5 rounded bg-sky-600 dark:bg-sky-500" aria-hidden />
+                                Highlighted day = salary date, when the bonus is released
+                              </span>
                               {savedIso && (
                                 <button
                                   type="button"
