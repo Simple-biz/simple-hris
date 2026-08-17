@@ -3,6 +3,7 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
+import { notifyKpiScored } from '@/lib/notifications/kpi-scored';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -60,6 +61,28 @@ export async function POST(req: NextRequest) {
     .select('id, department, period_start, employee_email');
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Entry saves are the HSL autosave path — safe for the same reason as
+  // bonus-catalog-applied: the notify helper exits on draft weeks and diffs
+  // per person on published ones. One call per dept-week in the batch
+  // (in practice a save carries a single dept-week). Best-effort.
+  {
+    const deptWeeks = new Map<string, { department: string; periodStart: string }>();
+    for (const e of body.entries) {
+      deptWeeks.set(`${e.department}::${e.period_start}`, {
+        department: e.department,
+        periodStart: e.period_start,
+      });
+    }
+    for (const dw of deptWeeks.values()) {
+      try {
+        await notifyKpiScored(dw);
+      } catch (e) {
+        console.warn('[kpi.scored] notify on hsl-entry save failed:', e);
+      }
+    }
+  }
+
   return NextResponse.json({ saved: data?.length ?? 0 });
 }
 

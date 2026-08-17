@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bell, CheckCheck, CheckCircle2, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, MessagesSquare, X, Search, ChevronLeft, ChevronRight, ArrowRight, Receipt, Info } from 'lucide-react';
+import { Bell, CheckCheck, CheckCircle2, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, MessagesSquare, X, Search, ChevronLeft, ChevronRight, ArrowRight, Receipt, Info, Trophy } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
@@ -573,7 +573,9 @@ export default function NotificationsPanel({
                   : positive
                     ? 'text-emerald-600 dark:text-emerald-400'
                     : 'text-zinc-500 dark:text-zinc-400';
-              const Icon = isAvailableStub ? Receipt : isPaidStub ? BadgeDollarSign : isTicket ? MessagesSquare : isPayrollStart ? Lock : isPayrollStop ? Unlock : positive ? PartyPopper : BadgeDollarSign;
+              // kpi.scored wears the Trophy so it reads as the same thing as the
+              // employee's KPI Results tab (which is where the number lives).
+              const Icon = n.type === 'kpi.scored' ? Trophy : isAvailableStub ? Receipt : isPaidStub ? BadgeDollarSign : isTicket ? MessagesSquare : isPayrollStart ? Lock : isPayrollStop ? Unlock : positive ? PartyPopper : BadgeDollarSign;
               // Resolve whenever the host declared its view; keep the action
               // only if we can actually act on it (self-routed href, or a
               // host-provided tab navigator).

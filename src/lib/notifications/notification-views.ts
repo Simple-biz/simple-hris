@@ -63,6 +63,10 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   // The recipient was assigned a ticket to fix. Same home as replies — the
   // assignee may hold NO board role, so the message itself carries the ask.
   'ticket.assigned': ['employee'],
+  // The manager published (or changed) this employee's KPI bonus for a
+  // dept-week — carries the peso amount. Fired on Mark Ready/Lock and on any
+  // change landing on an already-published week. Employee-only, ungated.
+  'kpi.scored': ['employee'],
   // A QC officer locked a week of KPI scores; the reviewing dept managers act on
   // it inside the KPI Calculator, which lives on the Manager dashboard.
   'qc.scores_submitted': ['manager'],

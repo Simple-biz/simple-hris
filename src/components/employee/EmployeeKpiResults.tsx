@@ -229,6 +229,19 @@ export default function EmployeeKpiResults({ employeeEmail }: { employeeEmail: s
     };
   }, [fetchResults]);
 
+  // Polling fallback: the postgres_changes subscription below never delivers
+  // for the anon browser client on RLS-guarded tables (the same reason
+  // dispatch live-sync moved to Broadcast), so without this the tab only
+  // refreshed on window focus. 30s matches useNotificationChime's poll — the
+  // "your bonus was scored" toast and this tab update within the same beat.
+  // Skipped while the tab is hidden; the focus refetch covers the return.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (!document.hidden) void fetchResults();
+    }, 30_000);
+    return () => window.clearInterval(id);
+  }, [fetchResults]);
+
   // Realtime: a manager marking a week ready / applying bonuses refetches live.
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();

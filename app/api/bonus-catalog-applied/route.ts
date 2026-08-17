@@ -9,6 +9,7 @@ import {
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
+import { notifyKpiScored } from '@/lib/notifications/kpi-scored';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -89,6 +90,18 @@ export async function POST(request: Request) {
     actor: authz.sessionEmail,
   });
   if (error) return NextResponse.json({ error }, { status: 500 });
+
+  // This POST is also the KPI Calculator's autosave path, so it fires on every
+  // score save — the notify helper makes that safe: it returns immediately
+  // unless the dept-week is ALREADY ready/locked, and then notifies only people
+  // whose visible total actually changed (a disputed bonus re-ordered onto a
+  // published week — Kane's 2026-08-17 re-notify rule). Best-effort.
+  try {
+    await notifyKpiScored({ department: body.department, periodStart: body.period_start });
+  } catch (e) {
+    console.warn('[kpi.scored] notify on applied-bonus save failed:', e);
+  }
+
   return NextResponse.json({ saved, error: null });
 }
 

@@ -6,6 +6,7 @@ import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { normalizeSource, sourceLabel, MANAGER_KPI_SOURCE } from '@/lib/payroll/readiness-audit';
+import { notifyKpiScored } from '@/lib/notifications/kpi-scored';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -66,6 +67,20 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // The week just became (or stayed) visible to employees → tell everyone whose
+  // KPI bonus total changed since their last kpi.scored notification. The
+  // helper itself gates on ready/locked and diffs per person, so Mark Ready
+  // notifies the whole dept-week once, a later Lock inserts nothing new, and a
+  // reopen→re-ready after a dispute re-notifies only the corrected people.
+  // Best-effort: a notify failure never fails the submission.
+  if (body.status === 'ready' || body.status === 'locked') {
+    try {
+      await notifyKpiScored({ department: body.department, periodStart: body.period_start });
+    } catch (e) {
+      console.warn('[kpi.scored] notify on status change failed:', e);
+    }
+  }
 
   // Audit the submission transition (Mark Ready / Lock / reopen) — this route
   // had no trail before. Tagged with its source so a Payroll-Wizard fix reads

@@ -24,6 +24,7 @@ import { Lock, Menu, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotificationsUnread';
+import { useNotificationChime } from '@/hooks/useNotificationChime';
 import { useMesaNewDeposits } from '@/hooks/useMesaNewDeposits';
 import { useBankInfoRequest } from '@/hooks/useBankInfoRequest';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
@@ -107,6 +108,12 @@ export default function EmployeeApp() {
   // indicator, and one-time toast notifications when the state flips.
   const { state: lockState, loading: lockLoading } = useDispatchLock();
   const unreadNotifications = useEmployeeNotificationsUnread(employeeEmail, 'employee');
+  // Live bell + toast for new employee-view notifications (KPI bonus scored,
+  // salary ready, paid, …). Scoped to 'employee' per notification-alerts.md —
+  // every useNotificationChime mount passes a view. Keyed on employeeEmail
+  // (the viewed identity), matching the unread badge above, so an elevated
+  // ?email= viewer hears what that panel shows — never their own other-role mix.
+  useNotificationChime(employeeEmail, { view: 'employee' });
   // New MESA contribution alert — badges the MESA tab when a deposit lands
   // (a CSV deposit loaded since the member last opened MESA); clears on open.
   const { newCount: mesaNewDeposits, markSeen: markMesaSeen } = useMesaNewDeposits(employeeEmail);

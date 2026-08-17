@@ -21,6 +21,7 @@ change so money never rings there.
 | Server-side view filter + feature gating | `app/api/employee-notifications/route.ts` |
 | HR mount (`view: 'hr'`) | `src/components/hr/HrApp.tsx` |
 | Accounting mount (`view: 'accounting'`) | `src/App.tsx` |
+| Employee mount (`view: 'employee'`) | `src/components/employee/EmployeeApp.tsx` |
 | Sidebar unread badge (already view-scoped) | `src/components/Sidebar.tsx` · `src/hooks/useEmployeeNotificationsUnread.ts` |
 
 ## Every mount passes a `view`. Never add an unscoped one.
@@ -85,10 +86,13 @@ replayed alert.
   *mapped* types, so a new flow that forgets its mapping degrades to visible-and-
   audible on every dashboard rather than vanishing. Prefer that failure
   direction; do not "fix" it by defaulting unmapped types to hidden.
-- **Only HR and Accounting announce.** Employee, Manager, CEO, QC, Orphanage and
+- **Only HR, Accounting and Employee announce.** Manager, CEO, QC, Orphanage and
   Admin have panels and badges but no chime. That is the current state, not an
   oversight to be closed casually — each new mount owes a `view` and a line in
-  the table above.
+  the table above. The Employee mount (2026-08-17, Kane's call with the
+  `kpi.scored` feature — see `kpi-scored-notification.md`) announces **every**
+  employee-view type, keyed on the VIEWED identity so it always matches the
+  panel beside it.
 
 ## Deploy notes
 
