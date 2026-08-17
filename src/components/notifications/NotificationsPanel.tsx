@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bell, CheckCheck, CheckCircle2, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, MessagesSquare, X, Search, ChevronLeft, ChevronRight, ArrowRight, Receipt } from 'lucide-react';
+import { Bell, CheckCheck, CheckCircle2, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, MessagesSquare, X, Search, ChevronLeft, ChevronRight, ArrowRight, Receipt, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
@@ -662,6 +662,22 @@ export default function NotificationsPanel({
                         >
                           {n.message}
                         </p>
+
+                        {/* Bonuses land later in the cycle, so the freshly
+                            uploaded week is hours-only at first — say so before
+                            anyone panics at a "low" number. payroll.paid cards
+                            deliberately don't carry this (bonuses are in by
+                            mark-paid). Render-side so every existing card shows
+                            it too; remove here when uploads include bonuses. */}
+                        {isAvailableStub && (
+                          <div className="mt-2.5 flex items-start gap-2 rounded-lg border border-amber-200/80 bg-amber-50/70 px-3 py-2 text-[12px] leading-relaxed text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
+                            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <span>
+                              Bonuses aren&rsquo;t added yet — this first figure is mostly your
+                              hours. Bonuses are applied later in the cycle, before payout.
+                            </span>
+                          </div>
+                        )}
 
                         {action && offboardResolution?.resolved ? (
                           /* Queue row already actioned — detail the outcome; the
