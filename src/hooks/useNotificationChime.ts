@@ -4,9 +4,10 @@ import { useEffect, useRef, type RefObject } from 'react';
 import { toast } from 'sonner';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { renderNotificationToast } from '@/components/notifications/NotificationToast';
+import type { AppView } from '@/lib/rbac/views';
 
 /** Stable id so repeated alerts replace one another — only ever one toast. */
-const NOTIF_TOAST_ID = 'hr-notification';
+const NOTIF_TOAST_ID = 'notification-alert';
 
 type NotificationRow = {
   id: string;
@@ -38,8 +39,26 @@ type NotificationRow = {
  * Gating is handled server-side: the GET excludes feature-gated types the
  * viewer isn't permitted to see (e.g. onboarding paperwork without the HR
  * Onboarding grant), so this hook needs no client-side predicate.
+ *
+ * `opts.view` scopes the alert to ONE dashboard's notifications, matching what
+ * that dashboard's panel and sidebar badge already show
+ * (`useEmployeeNotificationsUnread`). Pass it: unscoped, the GET returns EVERY
+ * type the viewer may see, so someone holding two roles gets alerted on the
+ * wrong dashboard — an accounting-only money alert (`people.banking.self_updated`
+ * is mapped away from HR in notification-views.ts) would still chime and toast
+ * while they sat on the HR dashboard.
  */
-const HW_KEY = (email: string) => `notif-chime-hw:${email}`;
+/**
+ * High-water-mark key, **view-scoped** whenever the caller scopes its fetch.
+ * Two dashboards alerting the same person read different SLICES of one unread
+ * set, so a shared mark lets a notification alerted on dashboard A push the mark
+ * past an older one belonging to dashboard B — silencing it permanently. The
+ * legacy (unscoped) key is read as a fallback when the scoped one is absent, so
+ * introducing the scope doesn't re-ring everybody's existing backlog once.
+ */
+const HW_KEY = (email: string, view?: AppView) =>
+  view ? `notif-chime-hw:${email}:${view}` : `notif-chime-hw:${email}`;
+const LEGACY_HW_KEY = (email: string) => `notif-chime-hw:${email}`;
 
 /** Two-tone bell: a bright strike plus a softer overtone, each decaying. */
 function playBell(ctx: AudioContext): void {
@@ -109,8 +128,14 @@ function tryChime(
     });
 }
 
-export function useNotificationChime(email?: string | null): void {
+export function useNotificationChime(
+  email?: string | null,
+  opts?: { view?: AppView },
+): void {
   const normalized = email ? email.trim().toLowerCase() : null;
+  // Read off the object so the effect depends on a primitive — an inline
+  // `{ view: 'accounting' }` is a new identity every render and would resubscribe.
+  const view = opts?.view;
   const audioCtxRef = useRef<AudioContext | null>(null);
   const pendingSoundRef = useRef(false);
   // Ids chimed this page session — guards against the same row arriving via
@@ -148,10 +173,13 @@ export function useNotificationChime(email?: string | null): void {
 
     const processUnread = (unread: NotificationRow[]) => {
       // High-water mark (epoch ms) of the newest notification already chimed,
-      // persisted per-email so a refresh / re-login doesn't re-ring the backlog.
+      // persisted per (email, view) so a refresh / re-login doesn't re-ring the
+      // backlog — and so one dashboard's alert can't silence another's.
       let hw = 0;
       try {
-        const raw = window.localStorage.getItem(HW_KEY(normalized));
+        const raw =
+          window.localStorage.getItem(HW_KEY(normalized, view)) ??
+          window.localStorage.getItem(LEGACY_HW_KEY(normalized));
         if (raw) hw = parseInt(raw, 10) || 0;
       } catch {
         /* localStorage unavailable (private mode) — fall back to session ids */
@@ -171,7 +199,7 @@ export function useNotificationChime(email?: string | null): void {
         if (Number.isFinite(ts) && ts > maxTs) maxTs = ts;
       }
       try {
-        window.localStorage.setItem(HW_KEY(normalized), String(maxTs));
+        window.localStorage.setItem(HW_KEY(normalized, view), String(maxTs));
       } catch {
         /* ignore */
       }
@@ -197,8 +225,12 @@ export function useNotificationChime(email?: string | null): void {
 
     const refetch = async () => {
       try {
+        // Same query shape as useEmployeeNotificationsUnread, so the alert and
+        // the sidebar badge can never disagree about what belongs to this view.
+        const params = new URLSearchParams({ email: normalized });
+        if (view) params.set('view', view);
         const res = await fetch(
-          `/api/employee-notifications?email=${encodeURIComponent(normalized)}`,
+          `/api/employee-notifications?${params.toString()}`,
           { cache: 'no-store' },
         );
         const json = (await res.json()) as { notifications?: NotificationRow[] };
@@ -250,5 +282,5 @@ export function useNotificationChime(email?: string | null): void {
       document.removeEventListener('visibilitychange', onFocus);
       if (supabase && channel) void supabase.removeChannel(channel);
     };
-  }, [normalized]);
+  }, [normalized, view]);
 }

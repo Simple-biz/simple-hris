@@ -113,7 +113,14 @@ export default function HrApp() {
   // The chime is driven by the gated unread set (mount-fetch + Realtime + poll),
   // so it self-heals dropped events and respects feature visibility server-side
   // (the GET already hides types this viewer can't see — no client gate needed).
-  useNotificationChime(viewerEmail);
+  //
+  // Scoped to 'hr' on purpose, matching the badge on the next line. HR must
+  // never be alerted about MONEY: bank-detail changes go to accounting/admin/ceo
+  // only (`people.banking.self_updated`, notification-views.ts) and are already
+  // absent from HR's panel — but unscoped, this chime returned every type the
+  // viewer may see, so an HR coordinator who also holds accounting/ceo heard
+  // payout changes ring here. The scope is what stops it.
+  useNotificationChime(viewerEmail, { view: 'hr' });
   const unreadNotifications = useEmployeeNotificationsUnread(viewerEmail, 'hr');
   // Global Pages overlay (admin-controlled visible / construction / hidden).
   const { ready: pagesReady, visibilityOf, rawVisibilityOf, isAdmin } = usePagesVisibility();

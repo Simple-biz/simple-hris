@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
+import { useNotificationChime } from '@/hooks/useNotificationChime';
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
 import { useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
@@ -99,6 +100,15 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
       preProcessingCollapsedRef.current = null;
     }
   }, [dispatchLock.locked, sidebarCollapsed, setSidebarCollapsed]);
+
+  // Live Accounting alerts: chime + toast the moment a notification lands, so a
+  // bank-detail change or a document signing request is noticed while the
+  // accountant is on some other tab. Until now this shell mounted only the
+  // sidebar's unread badge, so nothing here ever announced itself — the alert
+  // existed on HR alone. Scoped to 'accounting' to match that badge
+  // (Sidebar.tsx) and the Notifications panel; unscoped it would also ring for
+  // another dashboard's notifications on dual-role accounts.
+  useNotificationChime(sessionEmail, { view: 'accounting' });
 
   // JWT session roles — an offline fallback so tab gating survives a Supabase
   // outage (roles are in the cookie without a DB hit). Only trusted for the
