@@ -276,7 +276,9 @@ export default function TutorialGuide({
         onClick={() => persist({ ...persisted, collapsed: !persisted.collapsed })}
         className={cn(
           'fixed bottom-5 right-5 z-[45] flex h-12 w-12 items-center justify-center rounded-full border shadow-lg backdrop-blur transition hover:scale-105 active:scale-95',
-          'border-indigo-300/70 bg-gradient-to-br from-indigo-500 to-violet-600 text-white dark:border-indigo-700/60',
+          // Solid indigo-600 — the wizard's own accent (step-1 upload button,
+          // the spotlight rings, the balloon chrome), not a gradient.
+          'border-indigo-300/70 bg-indigo-600 text-white hover:bg-indigo-700 dark:border-indigo-700/60',
         )}
         title={balloonOpen ? 'Tuck the guide away' : 'Open the processing guide'}
         aria-label="Processing guide"
