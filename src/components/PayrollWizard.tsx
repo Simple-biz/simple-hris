@@ -54,7 +54,6 @@ import {
   Columns3,
   Cpu,
   HelpCircle,
-  ArrowLeftRight,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
@@ -79,6 +78,7 @@ import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { CurrencyFlagPair } from '@/components/ui/flag';
 import { toast } from 'sonner';
 import { MOCK_USERS, MOCK_TIME_RECORDS, MOCK_PAYMENTS } from '@/constants';
 import { User, TimeRecord, PaymentLineItem, HubstaffRow, ReconciliationIssue } from '@/types';
@@ -11027,8 +11027,8 @@ export default function PayrollWizard({
             {/* USD → PHP exchange rate */}
             <section className="flex flex-col gap-3 rounded-xl border border-blue-200/80 bg-blue-50/40 p-4 dark:border-blue-900/40 dark:bg-blue-950/20">
               <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-blue-200/90 bg-white dark:border-blue-800/60 dark:bg-blue-950/50">
-                  <DollarSign className="h-5 w-5 text-blue-700 dark:text-blue-400" aria-hidden />
+                <div className="flex h-10 shrink-0 items-center rounded-lg border border-blue-200/90 bg-white px-2 dark:border-blue-800/60 dark:bg-zinc-900">
+                  <CurrencyFlagPair from="US" to="PH" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-800/90 dark:text-blue-400/90">
@@ -11190,8 +11190,8 @@ export default function PayrollWizard({
                 rate), so a normal control must not wear it. */}
             <section className="flex flex-col gap-3 rounded-xl border border-teal-200/80 bg-teal-50/40 p-4 dark:border-teal-900/40 dark:bg-teal-950/20">
               <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-teal-200/90 bg-white dark:border-teal-800/60 dark:bg-teal-950/50">
-                  <DollarSign className="h-5 w-5 text-teal-700 dark:text-teal-400" aria-hidden />
+                <div className="flex h-10 shrink-0 items-center rounded-lg border border-teal-200/90 bg-white px-2 dark:border-teal-800/60 dark:bg-zinc-900">
+                  <CurrencyFlagPair from="US" to="CO" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-teal-800/90 dark:text-teal-400/90">
@@ -11352,8 +11352,8 @@ export default function PayrollWizard({
                 in the footer, which is what tells it apart from its neighbours. */}
             <section className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
               <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
-                  <ArrowLeftRight className="h-5 w-5 text-zinc-500 dark:text-zinc-400" aria-hidden />
+                <div className="flex h-10 shrink-0 items-center rounded-lg border border-zinc-200 bg-white px-2 dark:border-zinc-700 dark:bg-zinc-900">
+                  <CurrencyFlagPair from="PH" to="CO" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">

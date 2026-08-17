@@ -27,6 +27,13 @@ still governs the numbers: cards hydrate **raw** from
 
 - **The two FX rate strips are now cards**, matching the Initialize Payroll Data
   sync-card anatomy on step 1 (icon tile, eyebrow, title, body, footer control).
+  Each tile carries the **currency pair's two flags** (US+PH, US+CO, PH+CO) via
+  `CurrencyFlagPair` in [`components/ui/flag.tsx`](../../components/ui/flag.tsx).
+  These are **inline SVG, never emoji** — Windows ships no glyph for
+  regional-indicator pairs, so `🇺🇸` renders there as the letters "US". The tile
+  background is neutral (`bg-white dark:bg-zinc-900`) so the ring separating the
+  two overlapping circles matches the surface behind them; if you re-tint a tile,
+  pass a matching `ringClassName`.
   A third **read-only** card shows the derived `PHP ↔ COP` cross-rate that used to
   be buried in the COP strip's footnote. USD stays the anchor: that pair is
   computed, never set.
