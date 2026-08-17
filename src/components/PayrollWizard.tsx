@@ -2234,6 +2234,13 @@ export default function PayrollWizard({
   const [pabSaveState, setPabSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [pabRefreshing, setPabRefreshing] = useState(false);
   const [pabSettingsOpen, setPabSettingsOpen] = useState(false);
+  /** Tech-week calendar disclosure — a small click-to-open panel (Kane
+   *  2026-08-17: "a very small modal, opened and retracted when clicked").
+   *  Closed on every modal open so the section always starts compact. */
+  const [techCalendarOpen, setTechCalendarOpen] = useState(false);
+  useEffect(() => {
+    if (pabSettingsOpen) setTechCalendarOpen(false);
+  }, [pabSettingsOpen]);
   /**
    * Two-phase System Bonus modal open: the popup shell + header animate in on a
    * cheap first frame, then the heavy body (12-month grid, exclusions roster,
@@ -12594,17 +12601,32 @@ export default function PayrollWizard({
                               <span className="text-zinc-500 dark:text-zinc-400">
                                 · paid once per month to everyone past 30 days of service
                               </span>
+                              <button
+                                type="button"
+                                onClick={() => setTechCalendarOpen((v) => !v)}
+                                className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border border-sky-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-sky-700 shadow-sm transition hover:bg-sky-50 dark:border-sky-800/60 dark:bg-zinc-900 dark:text-sky-300 dark:hover:bg-sky-950/40"
+                                title={techCalendarOpen ? 'Retract the week calendar' : 'Open the small calendar to pick the payout week'}
+                              >
+                                <CalendarDays className="h-3.5 w-3.5" />
+                                {techCalendarOpen ? 'Close calendar' : 'Change week'}
+                                <ChevronDown
+                                  className={cn('h-3 w-3 transition-transform', techCalendarOpen && 'rotate-180')}
+                                />
+                              </button>
                             </div>
-                            {/* Tech-week calendar — a small, plain calendar (Kane
-                                2026-08-17: "a simple calendar where we can select the
-                                week where we pay it out"). One Sun–Sat row per PAYABLE
-                                week; clicking the row picks it. `listTechBonusWeekOptions`
-                                still decides which weeks exist, each row walks its own
-                                `weekStart`, and the stored key stays the owning Monday.
-                                NOTE the salary date is Monday+8 — the Tuesday AFTER the
-                                week — so it can never be highlighted inside the row; each
-                                row says "pays <date>" instead. */}
-                            <div className="w-fit rounded-xl border border-zinc-200 bg-white p-1.5 dark:border-zinc-800 dark:bg-zinc-950">
+                            {/* Tech-week calendar — a small, plain calendar behind a
+                                click-to-open disclosure (Kane 2026-08-17, twice: "a
+                                simple calendar where we can select the week", then "a
+                                very small modal, opened and retracted when clicked").
+                                One Sun–Sat row per PAYABLE week; clicking the row picks
+                                it. `listTechBonusWeekOptions` still decides which weeks
+                                exist, each row walks its own `weekStart`, and the stored
+                                key stays the owning Monday. NOTE the salary date is
+                                Monday+8 — the Tuesday AFTER the week — so it can never be
+                                highlighted inside the row; each row says "pays <date>"
+                                instead. */}
+                            {techCalendarOpen && (
+                            <div className="w-fit rounded-xl border border-zinc-200 bg-white p-1.5 shadow-lg animate-in fade-in slide-in-from-top-1 duration-150 ease-out motion-reduce:animate-none dark:border-zinc-800 dark:bg-zinc-950">
                               <div className="grid grid-cols-[repeat(7,2.25rem)_minmax(4.5rem,auto)] items-center pb-1 text-center text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
                                 {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) => (
                                   <span key={d}>{d}</span>
@@ -12682,6 +12704,8 @@ export default function PayrollWizard({
                                 })
                               )}
                             </div>
+                            )}
+                            {techCalendarOpen && (
                             <div className="mt-2 flex flex-wrap items-center gap-2">
                               <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
                                 Click a week to pay the Tech Bonus with it — &ldquo;Pays&rdquo; is the salary date that lands the bonus.
@@ -12699,6 +12723,7 @@ export default function PayrollWizard({
                                 </button>
                               )}
                             </div>
+                            )}
                           </>
                         );
                       })()}
