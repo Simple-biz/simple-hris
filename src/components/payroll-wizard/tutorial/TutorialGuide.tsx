@@ -28,13 +28,18 @@ import {
 import { cn } from '@/lib/utils';
 import {
   TUTORIAL_STEPS,
+  activeHslColumnLabel,
   deriveStepStatus,
   parseTutorialState,
+  resolveStepTargets,
   serializeTutorialState,
   type TutorialPersistedState,
   type TutorialSignals,
   type TutorialStepDef,
 } from '@/lib/payroll-wizard/tutorial/guide';
+
+/** How long each HSL column keeps the spotlight before the ring moves on. */
+const HSL_ROTATION_MS = 2600;
 
 type SpotRect = { top: number; left: number; width: number; height: number };
 
@@ -121,6 +126,24 @@ export default function TutorialGuide({
     (d) => d.stepId === currentStep,
   );
   const activeStatus = activeDef ? statuses.get(activeDef.stepId) : undefined;
+
+  // ── HSL column rotation (step 4 only) ──────────────────────────────────────
+  // The ring takes turns across PAB / Tech Bonus / MESA / Adjustment /
+  // Orphanage. Only step 4 rotates, so the timer exists only while it's open.
+  const [rotationTick, setRotationTick] = useState(0);
+  const rotates = currentStep === 4 && !persisted.dismissed && !persisted.collapsed;
+  useEffect(() => {
+    if (!rotates) return;
+    const id = window.setInterval(() => setRotationTick((t) => t + 1), HSL_ROTATION_MS);
+    return () => window.clearInterval(id);
+  }, [rotates]);
+  // Restart the rotation from the first column whenever step 4 is re-entered.
+  useEffect(() => {
+    if (currentStep === 4) setRotationTick(0);
+  }, [currentStep]);
+
+  const rotatingLabel =
+    currentStep === 4 ? activeHslColumnLabel(mergedSignals, rotationTick) : null;
   // `collapsed` = balloon closed, head only. The head is always reachable.
   const balloonOpen = !persisted.collapsed;
 
@@ -133,7 +156,10 @@ export default function TutorialGuide({
       return;
     }
     const next: SpotRect[] = [];
-    for (const key of activeDef.targets) {
+    // Targets are resolved per render, not read off the static def: step 2 rings
+    // only the FX legs still unset, step 4 rotates columns, step 5 moves inside
+    // the System Bonus modal once it opens.
+    for (const key of resolveStepTargets(activeDef.stepId, mergedSignals, rotationTick)) {
       const el = document.querySelector<HTMLElement>(`[data-tutorial-target="${key}"]`);
       if (!el) continue;
       const r = el.getBoundingClientRect();
@@ -141,7 +167,7 @@ export default function TutorialGuide({
       next.push({ top: r.top - 6, left: r.left - 6, width: r.width + 12, height: r.height + 12 });
     }
     setSpots(next);
-  }, [activeDef, persisted.dismissed]);
+  }, [activeDef, persisted.dismissed, mergedSignals, rotationTick]);
 
   useEffect(() => {
     measure();
@@ -201,6 +227,13 @@ export default function TutorialGuide({
           <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
             {activeDef.hint}
           </p>
+          {/* Names the column the ring is currently sitting on (step 4). */}
+          {rotatingLabel && (
+            <p className="mt-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-indigo-700 dark:text-indigo-300">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-500 motion-reduce:animate-none dark:bg-indigo-400" />
+              Now showing: {rotatingLabel}
+            </p>
+          )}
           {activeStatus?.note && (
             <p
               className={cn(

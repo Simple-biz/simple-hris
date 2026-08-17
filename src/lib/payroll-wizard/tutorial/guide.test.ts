@@ -2,8 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   TUTORIAL_STEPS,
+  activeHslColumnLabel,
   deriveStepStatus,
   parseTutorialState,
+  resolveStepTargets,
   serializeTutorialState,
   tutorialStorageKey,
   type TutorialSignals,
@@ -18,10 +20,17 @@ const BASE: TutorialSignals = {
   sourceFile: 'Aug 10 - Aug 16.csv',
   periodStart: '2026-08-10',
   periodEnd: '2026-08-16',
-  fxRate: 57.2,
+  fxPhp: 57.2,
+  fxCop: 4150,
+  previousCycleFx: null,
   orphanageReadyCount: 0,
   pabRangeLabel: 'August 2026',
   isTechBonusWeek: false,
+  hslPabColumnShown: true,
+  hslTechColumnShown: true,
+  systemBonusModalOpen: false,
+  pabSetForActiveMonth: false,
+  pabActiveMonthLabel: 'August 2026',
   pendingContractorCount: 0,
   validationRedFlagCount: 0,
   excludedCount: 0,
@@ -48,16 +57,125 @@ test('step 1: missing report is pending, fresh report is done, old report is att
   assert.match(stale.note ?? '', /stale/i);
 });
 
-test('step 2: zero/absent FX is attention regardless of visits', () => {
-  assert.equal(deriveStepStatus(2, { ...BASE, fxRate: 0, visitedSteps: [2] }).status, 'attention');
-  assert.equal(deriveStepStatus(2, { ...BASE, fxRate: null }).status, 'attention');
+test('step 2: either zero/absent FX leg is attention regardless of visits', () => {
+  assert.equal(deriveStepStatus(2, { ...BASE, fxPhp: 0, visitedSteps: [2] }).status, 'attention');
+  assert.equal(deriveStepStatus(2, { ...BASE, fxCop: 0, visitedSteps: [2] }).status, 'attention');
+  assert.equal(deriveStepStatus(2, { ...BASE, fxPhp: null }).status, 'attention');
   assert.equal(deriveStepStatus(2, { ...BASE, visitedSteps: [2] }).status, 'done');
+});
+
+test('step 2 rings only the UNSET legs, each with its own CTA', () => {
+  // Both unset → both boxes and both CTAs.
+  assert.deepEqual(resolveStepTargets(2, { ...BASE, fxPhp: 0, fxCop: 0 }), [
+    'step2-fx-php',
+    'step2-fx-php-cta',
+    'step2-fx-cop',
+    'step2-fx-cop-cta',
+  ]);
+  // PHP entered → stop nagging about PHP, keep ringing COP.
+  assert.deepEqual(resolveStepTargets(2, { ...BASE, fxCop: 0 }), [
+    'step2-fx-cop',
+    'step2-fx-cop-cta',
+  ]);
+  assert.deepEqual(resolveStepTargets(2, { ...BASE, fxPhp: 0 }), [
+    'step2-fx-php',
+    'step2-fx-php-cta',
+  ]);
+  // Both set → nothing to fix, fall back to reviewing the calc.
+  assert.deepEqual(resolveStepTargets(2, BASE), ['step2-review']);
+});
+
+test('step 2 names WHEN the rates were last set, and refuses to carry them over', () => {
+  const savedAt = '2026-08-10T02:14:00Z';
+  // The readout is in the OPERATOR's local timezone (same convention as the
+  // narrative lib), so derive the expected label rather than pinning a UTC day.
+  const expectedDay = new Date(savedAt).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  });
+  const note = deriveStepStatus(2, {
+    ...BASE,
+    fxPhp: 0,
+    fxCop: 0,
+    previousCycleFx: {
+      sourceFile: 'Aug 03 - Aug 09.csv',
+      php: 57.1,
+      cop: 4100,
+      at: savedAt,
+      by: 'carla@simple.biz',
+    },
+  }).note ?? '';
+  assert.match(note, /Neither conversion rate is set for this cycle/);
+  assert.ok(
+    note.includes(`Last set ${expectedDay}`),
+    `expected the note to name ${expectedDay}; got: ${note}`,
+  );
+  assert.match(note, /by carla/, 'names the operator without the domain');
+  assert.match(note, /Aug 03 - Aug 09\.csv/);
+  assert.match(note, /₱57\.1/);
+  assert.match(note, /never carried over/i, 'the old rate is shown, never offered as a value to keep');
+});
+
+test('step 2 falls back to the zero-placeholder explanation with no prior cycle', () => {
+  const note = deriveStepStatus(2, { ...BASE, fxPhp: 0, fxCop: 0 }).note ?? '';
+  assert.match(note, /starts at zero/);
+  assert.doesNotMatch(note, /Last set/);
 });
 
 test('step 3: pasted rows mark done without requiring a visit', () => {
   assert.equal(deriveStepStatus(3, { ...BASE, orphanageReadyCount: 4 }).status, 'done');
   assert.equal(deriveStepStatus(3, BASE).status, 'pending');
   assert.equal(deriveStepStatus(3, { ...BASE, visitedSteps: [3] }).status, 'done');
+});
+
+test('step 4 rings the HSL table and takes turns across its money columns', () => {
+  const order = [0, 1, 2, 3, 4].map((tick) => resolveStepTargets(4, BASE, tick));
+  // The table stays ringed the whole time; the second target rotates.
+  assert.ok(order.every((t) => t[0] === 'step4-hsl-table'));
+  assert.deepEqual(
+    order.map((t) => t[1]),
+    [
+      'step4-col-pab',
+      'step4-col-tech',
+      'step4-col-mesa',
+      'step4-col-adjustment',
+      'step4-col-orphanage',
+    ],
+  );
+  // And it wraps rather than running off the end.
+  assert.deepEqual(resolveStepTargets(4, BASE, 5)[1], 'step4-col-pab');
+  assert.deepEqual(activeHslColumnLabel(BASE, 1), 'Tech Bonus');
+});
+
+test('step 4 rotation skips columns the cycle does not render', () => {
+  const noBonusCols = { ...BASE, hslPabColumnShown: false, hslTechColumnShown: false };
+  const seen = [0, 1, 2].map((t) => resolveStepTargets(4, noBonusCols, t)[1]);
+  assert.deepEqual(seen, ['step4-col-mesa', 'step4-col-adjustment', 'step4-col-orphanage']);
+  assert.equal(activeHslColumnLabel(noBonusCols, 0), 'MESA');
+});
+
+test('step 5 follows the operator into the System Bonus modal', () => {
+  // Closed → ring the trigger.
+  assert.deepEqual(resolveStepTargets(5, BASE), ['step5-system-bonus']);
+  // Open, month unset → ring the month pill AND the tech-week picker.
+  assert.deepEqual(resolveStepTargets(5, { ...BASE, systemBonusModalOpen: true }), [
+    'step5-pab-month',
+    'step5-tech-week',
+  ]);
+});
+
+test('step 5 leaves an already-set PAB month alone', () => {
+  const s = { ...BASE, systemBonusModalOpen: true, pabSetForActiveMonth: true };
+  // "if PAB is set already for that period this shouldnt bother at all" — the
+  // month pill loses its ring entirely; only the tech week keeps one.
+  assert.deepEqual(resolveStepTargets(5, s), ['step5-tech-week']);
+  const st = deriveStepStatus(5, s);
+  assert.equal(st.status, 'done');
+  assert.match(st.note ?? '', /already set/);
+
+  const unset = deriveStepStatus(5, { ...BASE, systemBonusModalOpen: true });
+  assert.equal(unset.status, 'attention');
+  assert.match(unset.note ?? '', /August 2026 has no PAB period saved/);
 });
 
 test('step 5: note always names the PAB range and tech-bonus verdict', () => {

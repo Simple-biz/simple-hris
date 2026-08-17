@@ -20,13 +20,39 @@ export type TutorialTargetKey =
   | 'step1-upload-weekly'
   | 'step1-config-tab'
   | 'step2-review'
+  | 'step2-fx-php'
+  | 'step2-fx-php-cta'
+  | 'step2-fx-cop'
+  | 'step2-fx-cop-cta'
   | 'step3-paste-data'
   | 'step4-hsl-review'
+  | 'step4-hsl-table'
+  | 'step4-col-pab'
+  | 'step4-col-tech'
+  | 'step4-col-mesa'
+  | 'step4-col-adjustment'
+  | 'step4-col-orphanage'
   | 'step5-system-bonus'
+  | 'step5-pab-month'
+  | 'step5-tech-week'
   | 'step6-pending-invoices'
   | 'step7-validation-table'
   | 'step8-lock-in'
   | 'step9-audit-trail';
+
+/**
+ * Step 4's spotlight takes turns across the HSL table's money columns rather
+ * than ringing the whole table forever (Kane, 2026-08-17). Order is the table's
+ * own left-to-right order; PAB and Tech are conditional columns, so the visible
+ * set is filtered from signals before rotating.
+ */
+export const HSL_COLUMN_ROTATION: { target: TutorialTargetKey; label: string }[] = [
+  { target: 'step4-col-pab', label: 'PAB' },
+  { target: 'step4-col-tech', label: 'Tech Bonus' },
+  { target: 'step4-col-mesa', label: 'MESA' },
+  { target: 'step4-col-adjustment', label: 'Adjustment' },
+  { target: 'step4-col-orphanage', label: 'Orphanage' },
+];
 
 export type TutorialStepDef = {
   /** Wizard step id (1–9), matching the `steps` array in PayrollWizard.tsx. */
@@ -49,10 +75,10 @@ export const TUTORIAL_STEPS: TutorialStepDef[] = [
   },
   {
     stepId: 2,
-    title: 'Initial calculation',
+    title: 'Conversion rates & initial calculation',
     hint:
-      'Review the calculated hours × rates. Make sure the FX rate is set for this cycle and no one is missing a pay rate before moving on.',
-    kind: 'review',
+      'Set this cycle’s conversion rates — the ringed box is the one still waiting. Each box holds its own rate and its own Edit/Apply control. Then review the calculated hours × rates below.',
+    kind: 'action',
     targets: ['step2-review'],
   },
   {
@@ -67,15 +93,15 @@ export const TUTORIAL_STEPS: TutorialStepDef[] = [
     stepId: 4,
     title: 'HSL review',
     hint:
-      'Review Hogan Smith Law pay: initial pay, KPI bonuses, and accounting overrides. Confirm the values look right — nothing to submit here.',
+      'Review the Hogan Smith Law table column by column — the ring moves through PAB, Tech Bonus, MESA, Adjustment and Orphanage in turn. Confirm each column’s values look right; nothing is submitted here.',
     kind: 'review',
-    targets: ['step4-hsl-review'],
+    targets: ['step4-hsl-table'],
   },
   {
     stepId: 5,
     title: 'Additions & System Bonus',
     hint:
-      'Review bonuses and adjustments. Open System Bonus settings and confirm the PAB range and the Technology Bonus payout week for this month.',
+      'Review bonuses and adjustments, then open System Bonus settings. The guide follows you inside: it rings the month that still needs a PAB period, and stays quiet about any month already set.',
     kind: 'review',
     targets: ['step5-system-bonus'],
   },
@@ -117,17 +143,52 @@ export const TUTORIAL_STEPS: TutorialStepDef[] = [
  * Everything the guide needs to know, as plain serializable values the wizard
  * already holds. `todayIso` is injected (YYYY-MM-DD) so derivation stays pure.
  */
+/**
+ * The previous cycle's saved FX record, read for ADVISORY COPY ONLY.
+ *
+ * This exists so the guide can say "last set two weeks ago" instead of the
+ * bare "not set". It must NEVER prefill, seed, or default this cycle's rate:
+ * `per-cycle-fx-zero-placeholder` makes typing the rate the weekly
+ * confirmation, and carrying a stale number into the input would silently
+ * un-confirm the week. Display it; never adopt it.
+ */
+export type PreviousCycleFx = {
+  sourceFile: string;
+  php: number | null;
+  cop: number | null;
+  /** ISO instant the previous cycle's rates were saved. */
+  at: string | null;
+  /** Operator who saved them. */
+  by: string | null;
+};
+
 export type TutorialSignals = {
   todayIso: string;
   sourceFile: string | null;
   /** Cycle period parsed from the active Hubstaff filename (may be null). */
   periodStart: string | null;
   periodEnd: string | null;
-  /** Per-cycle FX; 0 or null = not set for this cycle (Step 8 is hard-gated on it elsewhere). */
-  fxRate: number | null;
+  /**
+   * Per-cycle FX legs, RAW: 0/null = not set for THIS cycle. Read straight off
+   * the wizard's hydrated state — never through `effectiveUsdTo*RateFromStored`,
+   * which would replace the meaningful zero with an official placeholder.
+   */
+  fxPhp: number | null;
+  fxCop: number | null;
+  /** Last cycle that had rates saved — advisory only, never a prefill source. */
+  previousCycleFx: PreviousCycleFx | null;
   orphanageReadyCount: number;
   pabRangeLabel: string | null;
   isTechBonusWeek: boolean;
+  /** Which conditional HSL columns are actually rendered this cycle. */
+  hslPabColumnShown: boolean;
+  hslTechColumnShown: boolean;
+  /** System Bonus modal state — step 5 teaches inside it once it's open. */
+  systemBonusModalOpen: boolean;
+  /** True when the PAB period for the month being edited is already set. */
+  pabSetForActiveMonth: boolean;
+  /** The month the System Bonus modal is editing, e.g. "August 2026". */
+  pabActiveMonthLabel: string | null;
   pendingContractorCount: number;
   validationRedFlagCount: number;
   excludedCount: number;
@@ -146,6 +207,83 @@ export type TutorialStepStatus = {
 
 /** How old (in days) the active batch's week-end may be before we call it stale. */
 const REPORT_STALE_AFTER_DAYS = 8;
+
+const isSet = (v: number | null | undefined): boolean => v != null && v > 0;
+
+/** "Aug 10" / "Aug 10, 2025" for advisory copy. Never used for math. */
+function shortDate(iso: string | null, todayIso: string): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const sameYear = iso.slice(0, 4) === todayIso.slice(0, 4);
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  });
+}
+
+/**
+ * Which anchors this step spotlights right now. Dynamic on purpose:
+ *
+ * - Step 2 rings only the FX legs still UNSET, plus that box's CTA, so a rate
+ *   already entered stops being nagged about (Kane 2026-08-17: highlight the
+ *   box and the CTA per box, not the step header).
+ * - Step 4 rings the HSL table and takes turns across its visible money
+ *   columns — `tick` advances the rotation.
+ * - Step 5 moves inside the System Bonus modal once it's open, and goes quiet
+ *   about the PAB month when that month's period is already set.
+ *
+ * Pure: `tick` is supplied by the caller so the rotation stays testable.
+ */
+export function resolveStepTargets(
+  stepId: number,
+  s: TutorialSignals,
+  tick = 0,
+): TutorialTargetKey[] {
+  switch (stepId) {
+    case 2: {
+      const targets: TutorialTargetKey[] = [];
+      if (!isSet(s.fxPhp)) targets.push('step2-fx-php', 'step2-fx-php-cta');
+      if (!isSet(s.fxCop)) targets.push('step2-fx-cop', 'step2-fx-cop-cta');
+      // Both legs set — nothing to fix, so fall back to reviewing the calc.
+      return targets.length > 0 ? targets : ['step2-review'];
+    }
+    case 4: {
+      const visible = HSL_COLUMN_ROTATION.filter((c) => {
+        if (c.target === 'step4-col-pab') return s.hslPabColumnShown;
+        if (c.target === 'step4-col-tech') return s.hslTechColumnShown;
+        return true;
+      });
+      if (visible.length === 0) return ['step4-hsl-table'];
+      const current = visible[((tick % visible.length) + visible.length) % visible.length];
+      return ['step4-hsl-table', current.target];
+    }
+    case 5: {
+      if (!s.systemBonusModalOpen) return ['step5-system-bonus'];
+      // Inside the modal: the month pill only earns a ring while its PAB
+      // period is unset. A set period "shouldn't bother at all" (Kane).
+      return s.pabSetForActiveMonth
+        ? ['step5-tech-week']
+        : ['step5-pab-month', 'step5-tech-week'];
+    }
+    default: {
+      const def = TUTORIAL_STEPS.find((d) => d.stepId === stepId);
+      return def ? def.targets : [];
+    }
+  }
+}
+
+/** The rotating column's human label, for the balloon's copy. */
+export function activeHslColumnLabel(s: TutorialSignals, tick = 0): string | null {
+  const visible = HSL_COLUMN_ROTATION.filter((c) => {
+    if (c.target === 'step4-col-pab') return s.hslPabColumnShown;
+    if (c.target === 'step4-col-tech') return s.hslTechColumnShown;
+    return true;
+  });
+  if (visible.length === 0) return null;
+  return visible[((tick % visible.length) + visible.length) % visible.length].label;
+}
 
 function daysBetweenIso(fromIso: string, toIso: string): number | null {
   const from = Date.parse(`${fromIso}T00:00:00Z`);
@@ -181,11 +319,32 @@ export function deriveStepStatus(
       return { status: 'done', note: `Active batch: ${s.sourceFile}` };
     }
     case 2: {
-      if (s.fxRate == null || s.fxRate === 0) {
-        return { status: 'attention', note: 'FX rate is not set for this cycle.' };
+      const phpSet = isSet(s.fxPhp);
+      const copSet = isSet(s.fxCop);
+      if (!phpSet || !copSet) {
+        const missing = !phpSet && !copSet ? 'Neither conversion rate is' : !phpSet ? 'USD→PHP is' : 'USD→COP is';
+        // Staleness: name when the rates were last set and what they were, so
+        // "not set" reads as "not set THIS week" — but never offer the old
+        // number as a value to keep (see PreviousCycleFx).
+        const prev = s.previousCycleFx;
+        const when = shortDate(prev?.at ?? null, s.todayIso);
+        const parts = [`${missing} set for this cycle.`];
+        if (prev && when) {
+          const rates = [
+            isSet(prev.php) ? `₱${prev.php}` : null,
+            isSet(prev.cop) ? `$COP${prev.cop}` : null,
+          ].filter(Boolean).join(' / ');
+          parts.push(
+            `Last set ${when}${prev.by ? ` by ${prev.by.split('@')[0]}` : ''} for ${prev.sourceFile}${rates ? ` — ${rates}` : ''}.`,
+            'Those are last cycle’s numbers and are never carried over — type this week’s.',
+          );
+        } else {
+          parts.push('Every new upload starts at zero — typing the rate is this week’s confirmation.');
+        }
+        return { status: 'attention', note: parts.join(' ') };
       }
       return visited
-        ? { status: 'done', note: null }
+        ? { status: 'done', note: 'Both conversion rates are set for this cycle.' }
         : { status: 'pending', note: 'Review hours × rates and the header cards.' };
     }
     case 3: {
@@ -201,6 +360,20 @@ export function deriveStepStatus(
         ? { status: 'done', note: null }
         : { status: 'pending', note: null };
     case 5: {
+      // Inside the modal the guide talks about what still needs setting.
+      if (s.systemBonusModalOpen) {
+        const month = s.pabActiveMonthLabel ?? 'this month';
+        if (!s.pabSetForActiveMonth) {
+          return {
+            status: 'attention',
+            note: `${month} has no PAB period saved yet — set its start/end (or auto-calculate the Mon–Fri window), then pick the Technology Bonus payout week.`,
+          };
+        }
+        return {
+          status: 'done',
+          note: `${month}'s PAB period is already set — leave it alone. Only the Technology Bonus payout week still needs a look.`,
+        };
+      }
       const parts: string[] = [];
       if (s.pabRangeLabel) parts.push(`PAB range: ${s.pabRangeLabel}`);
       parts.push(

@@ -201,6 +201,7 @@ import TutorialGuide from '@/components/payroll-wizard/tutorial/TutorialGuide';
 import ProcessingNarrative from '@/components/payroll-wizard/tutorial/ProcessingNarrative';
 import {
   tutorialStorageKey,
+  type PreviousCycleFx,
   type TutorialSignals,
 } from '@/lib/payroll-wizard/tutorial/guide';
 import TimeAdjustmentReviewPanel from '@/components/payroll/TimeAdjustmentReviewPanel';
@@ -3526,6 +3527,56 @@ export default function PayrollWizard({
       cancelled = true;
     };
   }, [calcSourceFile, isReplay, globalPhpRate, globalCopRate, usdToPhpEditing, usdToCopEditing]);
+
+  /**
+   * [WIZARD-TUTORIAL] The PREVIOUS cycle's saved FX record, read so the guide
+   * can say "last set Aug 10 by carla" instead of a bare "not set".
+   *
+   * Strictly advisory and strictly read-only. It never feeds `usdToPhpRate` /
+   * `usdToCopRate`, never touches `cycleFxRef`, and must never prefill either
+   * input: `per-cycle-fx-zero-placeholder` makes typing the rate the weekly
+   * confirmation, so carrying last week's number forward would silently
+   * un-confirm the week. Display it; never adopt it.
+   */
+  const [previousCycleFx, setPreviousCycleFx] = useState<PreviousCycleFx | null>(null);
+  useEffect(() => {
+    // Files arrive newest-first, so the previous cycle is the next one along.
+    const idx = calcSourceFile ? uploadedSourceFiles.indexOf(calcSourceFile) : -1;
+    const prevFile = idx >= 0 ? uploadedSourceFiles[idx + 1] ?? null : null;
+    if (!prevFile) {
+      setPreviousCycleFx(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const key = cycleFxSettingKey(prevFile);
+        const res = await fetch(`/api/app-settings?keys=${encodeURIComponent(key)}`, {
+          cache: 'no-store',
+        });
+        const json = (await res.json()) as { values?: Record<string, string | null> };
+        if (cancelled) return;
+        const raw = json.values?.[key];
+        if (!raw) {
+          setPreviousCycleFx(null);
+          return;
+        }
+        const rec = JSON.parse(raw) as { php?: number; cop?: number; at?: string; by?: string };
+        setPreviousCycleFx({
+          sourceFile: prevFile,
+          php: typeof rec.php === 'number' ? rec.php : null,
+          cop: typeof rec.cop === 'number' ? rec.cop : null,
+          at: typeof rec.at === 'string' ? rec.at : null,
+          by: typeof rec.by === 'string' ? rec.by : null,
+        });
+      } catch {
+        if (!cancelled) setPreviousCycleFx(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [calcSourceFile, uploadedSourceFiles]);
 
   // ── Audit: derive the current cycle context attached to every wizard event.
   // Includes the active Hubstaff source file (cycle key), the period parsed
@@ -8291,10 +8342,22 @@ export default function PayrollWizard({
       sourceFile: auditCycle.source_file ?? null,
       periodStart: auditCycle.period_start ?? null,
       periodEnd: auditCycle.period_end ?? null,
-      fxRate: auditCycle.fx_rate ?? null,
+      // RAW per-cycle legs — 0 is the meaningful "not set this cycle" state.
+      fxPhp: usdToPhpRate,
+      fxCop: usdToCopRate,
+      previousCycleFx: previousCycleFx,
       orphanageReadyCount: orphanagePasteParse.ok.length,
       pabRangeLabel: pabMonthRange ? `${pabMonthRange.monthName} ${pabMonthRange.year}` : null,
       isTechBonusWeek: techBonusWeekInfo.isTechBonusWeek,
+      hslPabColumnShown: isDeptEligible(sysBonusCfg.pab, 'hogan_smith_law'),
+      hslTechColumnShown: isDeptEligible(sysBonusCfg.tech, 'hogan_smith_law'),
+      systemBonusModalOpen: pabSettingsOpen,
+      pabSetForActiveMonth: pabPeriodSettings.overrides.has(editMonthKey),
+      // Self-contained label — the modal's MONTH_NAMES is local to its render.
+      pabActiveMonthLabel: new Date(editMonth.year, editMonth.month, 1).toLocaleDateString(
+        'en-US',
+        { month: 'long', year: 'numeric' },
+      ),
       pendingContractorCount: contractorInvoicesInPeriod.filter((i) => i.status === 'pending').length,
       validationRedFlagCount,
       excludedCount: dispatchData.excludedRows.length,
@@ -8304,9 +8367,19 @@ export default function PayrollWizard({
     };
   }, [
     auditCycle,
+    usdToPhpRate,
+    usdToCopRate,
+    previousCycleFx,
     orphanagePasteParse.ok.length,
     pabMonthRange,
     techBonusWeekInfo.isTechBonusWeek,
+    sysBonusCfg.pab,
+    sysBonusCfg.tech,
+    pabSettingsOpen,
+    pabPeriodSettings.overrides,
+    editMonthKey,
+    editMonth.month,
+    editMonth.year,
     contractorInvoicesInPeriod,
     validationRedFlagCount,
     dispatchData.excludedRows.length,
@@ -11077,7 +11150,10 @@ export default function PayrollWizard({
                 editable legs are USD→PHP and USD→COP, and PHP↔COP is derived. */}
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {/* USD → PHP exchange rate */}
-            <section className="flex flex-col gap-3 rounded-xl border border-blue-200/80 bg-blue-50/40 p-4 dark:border-blue-900/40 dark:bg-blue-950/20">
+            <section
+              data-tutorial-target="step2-fx-php"
+              className="flex flex-col gap-3 rounded-xl border border-blue-200/80 bg-blue-50/40 p-4 dark:border-blue-900/40 dark:bg-blue-950/20"
+            >
               <div className="flex items-start gap-3">
                 <div className="flex h-10 shrink-0 items-center rounded-lg border border-blue-200/90 bg-white px-2 dark:border-blue-800/60 dark:bg-zinc-900">
                   <CurrencyFlagPair from="US" to="PH" />
@@ -11112,7 +11188,7 @@ export default function PayrollWizard({
                 </p>
               )}
 
-              <div className="mt-auto flex items-center gap-2 pt-1">
+              <div data-tutorial-target="step2-fx-php-cta" className="mt-auto flex items-center gap-2 pt-1">
                 <div className="relative flex-1">
                   <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm font-medium text-blue-600 dark:text-blue-400">
                     ₱
@@ -11240,7 +11316,10 @@ export default function PayrollWizard({
             {/* USD → COP exchange rate (the second USD-anchored leg). Teal, not
                 amber: amber is this step's warning colour (missing rates, unset
                 rate), so a normal control must not wear it. */}
-            <section className="flex flex-col gap-3 rounded-xl border border-teal-200/80 bg-teal-50/40 p-4 dark:border-teal-900/40 dark:bg-teal-950/20">
+            <section
+              data-tutorial-target="step2-fx-cop"
+              className="flex flex-col gap-3 rounded-xl border border-teal-200/80 bg-teal-50/40 p-4 dark:border-teal-900/40 dark:bg-teal-950/20"
+            >
               <div className="flex items-start gap-3">
                 <div className="flex h-10 shrink-0 items-center rounded-lg border border-teal-200/90 bg-white px-2 dark:border-teal-800/60 dark:bg-zinc-900">
                   <CurrencyFlagPair from="US" to="CO" />
@@ -11275,7 +11354,7 @@ export default function PayrollWizard({
                 </p>
               )}
 
-              <div className="mt-auto flex items-center gap-2 pt-1">
+              <div data-tutorial-target="step2-fx-cop-cta" className="mt-auto flex items-center gap-2 pt-1">
                 <div className="relative flex-1">
                   <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-teal-600 dark:text-teal-400">
                     $COP
@@ -12323,6 +12402,10 @@ export default function PayrollWizard({
                           <button
                             key={key}
                             type="button"
+                            /* [WIZARD-TUTORIAL] Only the month being edited carries
+                               the anchor, so the guide rings one pill (and only
+                               while that month's PAB period is still unset). */
+                            data-tutorial-target={isActive ? 'step5-pab-month' : undefined}
                             disabled={!selectable || pabSaveState === 'saving'}
                             onClick={() => { if (selectable) void selectPabMonth(pabPickerYear, m); }}
                             title={
@@ -12465,7 +12548,10 @@ export default function PayrollWizard({
                         app_settings `tech_bonus_week_overrides` and read by every pay
                         engine through resolveIsTechBonusWeek — no more guessing the
                         "3rd week". No pick = the automatic 3rd-week rule. */}
-                    <div className="mt-3 border-t border-sky-200/60 pt-3 dark:border-sky-900/40">
+                    <div
+                      data-tutorial-target="step5-tech-week"
+                      className="mt-3 border-t border-sky-200/60 pt-3 dark:border-sky-900/40"
+                    >
                       {(() => {
                         const techOptions = listTechBonusWeekOptions(editMonth.year, editMonth.month);
                         const savedIso = techWeekOverrides.get(editMonthKey) ?? null;
@@ -15073,7 +15159,7 @@ export default function PayrollWizard({
                         No employees match &ldquo;{hslSearch}&rdquo;.
                       </p>
                     ) : (
-                      <table className="w-full min-w-[1180px] text-xs">
+                      <table data-tutorial-target="step4-hsl-table" className="w-full min-w-[1180px] text-xs">
                         <thead className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 shadow-[0_1px_0_0_rgb(228_228_231)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:shadow-[0_1px_0_0_rgb(39_39_42)]">
                           <tr>
                             <th className="px-4 py-2.5 text-left">Employee</th>
@@ -15081,11 +15167,11 @@ export default function PayrollWizard({
                             <th className="px-3 py-2.5 text-right" title="+15 PHP/h for Saturday and Sunday hours (included in Initial Pay)">Wknd +</th>
                             <th className="px-3 py-2.5 text-right">Initial Pay</th>
                             {hslKpiColShown && <th className="px-3 py-2.5 text-right">KPI Bonus</th>}
-                            {pabColShownHsl && <th className="px-3 py-2.5 text-center">PAB</th>}
-                            {techColShownHsl && <th className="px-3 py-2.5 text-center">Tech Bonus</th>}
-                            <th className="px-3 py-2.5 text-right" title="MESA — ₱100/paycheck deduction for enrolled members, plus any accounting-approved disbursement (paid out this run). Both fold into Total Pay.">MESA</th>
-                            <th className="px-3 py-2.5 text-right">Adjustment</th>
-                            <th className="px-3 py-2.5 text-right" title="Orphanage pay — a manual amount added on top of total pay; appears as its own paystub line.">Orphanage</th>
+                            {pabColShownHsl && <th data-tutorial-target="step4-col-pab" className="px-3 py-2.5 text-center">PAB</th>}
+                            {techColShownHsl && <th data-tutorial-target="step4-col-tech" className="px-3 py-2.5 text-center">Tech Bonus</th>}
+                            <th data-tutorial-target="step4-col-mesa" className="px-3 py-2.5 text-right" title="MESA — ₱100/paycheck deduction for enrolled members, plus any accounting-approved disbursement (paid out this run). Both fold into Total Pay.">MESA</th>
+                            <th data-tutorial-target="step4-col-adjustment" className="px-3 py-2.5 text-right">Adjustment</th>
+                            <th data-tutorial-target="step4-col-orphanage" className="px-3 py-2.5 text-right" title="Orphanage pay — a manual amount added on top of total pay; appears as its own paystub line.">Orphanage</th>
                             <th className="px-3 py-2.5 text-right">Total Pay</th>
                           </tr>
                         </thead>

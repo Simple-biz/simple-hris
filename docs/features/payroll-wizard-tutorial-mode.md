@@ -82,6 +82,44 @@ the rest — a head at `bottom-5` lands directly on top of the readiness ring (t
 on 2026-08-17). Search `FAB_STACK` in `TutorialGuide.tsx`. The head stays at `z-[45]`, below
 the FAB's own dialogs, so an open Notes pane correctly covers it.
 
+## Targets are resolved per render, not read off the step definition
+
+`resolveStepTargets(stepId, signals, tick)` decides what gets ringed, so the spotlight tracks
+live state instead of a fixed list (`TutorialStepDef.targets` is only the default for the
+static steps). Three steps are dynamic:
+
+- **Step 2** rings only the FX legs still **unset** — the box *and* that box's own CTA
+  (`step2-fx-php` + `step2-fx-php-cta`, same for `cop`). Entering one rate stops the ring on
+  that box while the other keeps it. Both set → falls back to `step2-review`. Kane 2026-08-17:
+  ringing the step header was wrong; it is the box and the CTA per box.
+- **Step 4** rings the HSL table permanently and **takes turns** across its money columns —
+  PAB → Tech Bonus → MESA → Adjustment → Orphanage, one every 2.6s, wrapping. `PAB` and
+  `Tech Bonus` are conditional columns, so the rotation filters to what this cycle actually
+  renders (`hslPabColumnShown` / `hslTechColumnShown`); rotating onto a column that isn't in
+  the DOM would silently show no ring.
+- **Step 5** follows the operator **into** the System Bonus modal: closed → the trigger; open →
+  the month pill plus the Tech-week picker; **and a month whose PAB period is already set gets
+  no ring at all** (Kane: "if PAB is set already for that period this shouldn't bother"). Only
+  the month being edited carries `step5-pab-month`, so exactly one pill is ever ringed.
+
+## FX staleness is displayed, never adopted
+
+Step 2's note answers *"not set — since when?"* by reading the **previous** cycle's
+`payroll.wizard.fx.<sourceFile>` record (one read-only fetch, keyed off `uploadedSourceFiles`
+which arrives newest-first) and naming the date, the operator, the file and the old rates.
+
+**That value must never prefill, seed, or default this cycle's input.** `per-cycle-fx-zero-placeholder`
+makes typing the rate the week's confirmation — carrying last week's number forward would
+silently un-confirm the week and hand a stale rate to a real pay run. The reader is deliberately
+isolated: it feeds advisory copy only, never `usdToPhpRate`/`usdToCopRate`, never `cycleFxRef`,
+and never the hydration or save paths (whose documented races stay untouched). A test pins that
+the note shows the old rate *and* says it is never carried over.
+
+The globals cannot substitute for this: `effectiveUsdToCopRateFromStored` falls back to
+`OFFICIAL_USD_TO_COP_RATE = 4000`, which is indistinguishable from a real COP rate, and the PHP
+official default is literally `1`. Existence-checking a global proves nothing about staleness —
+only a prior cycle's own record does.
+
 ## Anchors degrade, never crash
 
 Spotlight targets are `data-tutorial-target` attributes on stable wizard containers. The wizard
