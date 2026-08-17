@@ -11,6 +11,7 @@ import {
   techSalaryMonthKey,
   TECH_BONUS_WEEK_OVERRIDES_KEY,
 } from "./dispatch-bonuses";
+import { payWeekFromUploadStart } from "../hubstaff/calendar-column-dedupe";
 
 test("the overrides settings key is pinned (pab-period-settings mirrors it privately)", () => {
   // pab-period-settings.ts re-declares this string to avoid a module cycle;
@@ -171,6 +172,88 @@ test("HARDENING GUARD: no surface calls the raw tech-week heuristic — everythi
     [],
     `raw tech-week heuristic call outside dispatch-bonuses.ts — route through resolveIsTechBonusWeek(weekMonday, overrides): ${offenders.join(", ")}`,
   );
+});
+
+test("HARDENING: a picked week fires on THAT week — never the week after, never the week before", () => {
+  // Kane 2026-08-17: selecting a week in the System Bonus calendar must make
+  // the wizard, paystubs (via the wizard's dispatch gate) and the employee
+  // dashboards pay Tech on the SELECTED week — "not the next week after".
+  // The off-by-one lives in Monday derivation, so pin the gate end-to-end for
+  // EVERY pickable option, via BOTH real derivation paths:
+  //   - owningMondayOf(weekStart)             (EmployeeDashboard, from the Sun–Sat week)
+  //   - payWeekFromUploadStart(weekStart, true) (wizard / current-pay / hsl-week-snapshot,
+  //     from the Hubstaff file's Sunday start; default model)
+  // March 2026 is included because its first option's Monday falls in FEBRUARY —
+  // the cross-month case where a backward normalization would misfire hardest.
+  for (const [y, m] of [
+    [2026, 8], // the live month of the ask
+    [2026, 3], // 1st = Sunday; first option's Monday in the previous month
+    [2026, 6], // 1st = Monday
+  ] as const) {
+    const monthKey = `${y}-${String(m).padStart(2, "0")}`;
+    const options = listTechBonusWeekOptions(y, m - 1);
+    for (const picked of options) {
+      const ov = parseTechBonusWeekOverrides(
+        JSON.stringify({ [monthKey]: picked.mondayIso }),
+      );
+      // Both derivation paths land on the picked week.
+      assert.equal(
+        resolveIsTechBonusWeek(owningMondayOf(picked.weekStart), ov),
+        true,
+        `${monthKey} pick ${picked.mondayIso}: owningMondayOf path missed its own week`,
+      );
+      assert.equal(
+        resolveIsTechBonusWeek(payWeekFromUploadStart(picked.weekStart, true).start, ov),
+        true,
+        `${monthKey} pick ${picked.mondayIso}: payWeekFromUploadStart path missed its own week`,
+      );
+      // THE ask: the very next week must NOT fire. Nor the one before.
+      const nextMonday = new Date(
+        picked.monday.getFullYear(), picked.monday.getMonth(), picked.monday.getDate() + 7,
+      );
+      const prevMonday = new Date(
+        picked.monday.getFullYear(), picked.monday.getMonth(), picked.monday.getDate() - 7,
+      );
+      assert.equal(
+        resolveIsTechBonusWeek(nextMonday, ov),
+        false,
+        `${monthKey} pick ${picked.mondayIso}: fired one week LATE`,
+      );
+      assert.equal(
+        resolveIsTechBonusWeek(prevMonday, ov),
+        false,
+        `${monthKey} pick ${picked.mondayIso}: fired one week EARLY`,
+      );
+      // And no sibling option of the month fires alongside it.
+      for (const other of options) {
+        if (other.mondayIso === picked.mondayIso) continue;
+        assert.equal(
+          resolveIsTechBonusWeek(other.monday, ov),
+          false,
+          `${monthKey} pick ${picked.mondayIso}: sibling ${other.mondayIso} also fired`,
+        );
+      }
+    }
+  }
+});
+
+test("HARDENING GUARD: payWeekFromUploadStart's default week model stays mon_sun (a Monday)", () => {
+  // hsl-week-snapshot passes 'mon_sun' explicitly now, but any OTHER caller
+  // that omits the argument must keep getting the owning MONDAY — flipping the
+  // default to 'sun_sat' would hand every override match a Sunday and shift
+  // Tech payouts a week late (or kill them). Sweep all seven weekday starts.
+  for (let day = 1; day <= 7; day++) {
+    const start = d(2026, 8, day + 1); // Aug 2 2026 = Sunday … Aug 8 = Saturday
+    const byDefault = payWeekFromUploadStart(start, true).start;
+    const explicit = payWeekFromUploadStart(start, true, "mon_sun").start;
+    assert.equal(byDefault.toDateString(), explicit.toDateString());
+    assert.equal(byDefault.getDay(), 1, `${start.toDateString()} → not a Monday`);
+    // And it agrees with the gate's own normalizer for the week-start days
+    // consumers actually hold (Sunday file starts and Monday HSL starts).
+    if (start.getDay() === 0 || start.getDay() === 1) {
+      assert.equal(byDefault.toDateString(), owningMondayOf(start).toDateString());
+    }
+  }
 });
 
 test("the auto option matches the documented examples from the wizard comment", () => {

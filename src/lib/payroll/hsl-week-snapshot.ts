@@ -182,7 +182,12 @@ export async function snapshotSourceFile(
   // Per-file PAB context, derived exactly as current-pay.ts does.
   const periodStart = parseLocalIso(pay.period.start);
   const periodEnd = parseLocalIso(pay.period.end);
-  const payWeekHsl = periodStart ? payWeekFromUploadStart(periodStart, true) : null;
+  // 'mon_sun' EXPLICITLY: weekMonday feeds resolveIsTechBonusWeek below, whose
+  // override keys are owning MONDAYS — relying on the parameter default would
+  // silently hand the gate a Sunday if that default ever flips to 'sun_sat'
+  // (the pick would then fire a week late or never). Pinned by
+  // tech-bonus-week.test.ts ("default week model stays mon_sun").
+  const payWeekHsl = periodStart ? payWeekFromUploadStart(periodStart, true, 'mon_sun') : null;
   const weekMonday = payWeekHsl?.start ?? null;
 
   let pabMonthKey: string | null = null;
