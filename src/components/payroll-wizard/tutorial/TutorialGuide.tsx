@@ -175,7 +175,10 @@ export default function TutorialGuide({
       {/* Speech balloon — compact, anchored above the head. */}
       {balloonOpen && activeDef && (
         <div
-          className="fixed bottom-[5.25rem] right-5 z-[45] w-[290px] max-w-[calc(100vw-2.5rem)] rounded-2xl rounded-br-md border border-indigo-200/80 bg-white/95 p-3.5 shadow-xl backdrop-blur dark:border-indigo-900/50 dark:bg-zinc-950/95"
+          // FAB_STACK: sits above the chat head (which itself clears the
+          // Payroll Notes readiness FAB) — head occupies bottom 96–144px, so
+          // this starts at 168px. Keep in sync with the head's `bottom-24`.
+          className="fixed bottom-[10.5rem] right-5 z-[45] w-[290px] max-w-[calc(100vw-2.5rem)] rounded-2xl rounded-br-md border border-indigo-200/80 bg-white/95 p-3.5 shadow-xl backdrop-blur dark:border-indigo-900/50 dark:bg-zinc-950/95"
           role="status"
           aria-label="Processing guide"
         >
@@ -262,10 +265,11 @@ export default function TutorialGuide({
             Hide for this cycle
           </button>
 
-          {/* Balloon tail pointing at the head. */}
+          {/* Balloon tail — centered on the head's column (right-11 + half the
+              tail ≈ the head's 52px-from-right center). */}
           <div
             aria-hidden
-            className="absolute -bottom-[7px] right-6 h-3.5 w-3.5 rotate-45 border-b border-r border-indigo-200/80 bg-white/95 dark:border-indigo-900/50 dark:bg-zinc-950/95"
+            className="absolute -bottom-[7px] right-11 h-3.5 w-3.5 rotate-45 border-b border-r border-indigo-200/80 bg-white/95 dark:border-indigo-900/50 dark:bg-zinc-950/95"
           />
         </div>
       )}
@@ -275,7 +279,13 @@ export default function TutorialGuide({
         type="button"
         onClick={() => persist({ ...persisted, collapsed: !persisted.collapsed })}
         className={cn(
-          'fixed bottom-5 right-5 z-[45] flex h-12 w-12 items-center justify-center rounded-full border shadow-lg backdrop-blur transition hover:scale-105 active:scale-95',
+          // Stacked ABOVE the Payroll Notes readiness FAB, which owns
+          // right-5/bottom-5 at 64px (App.tsx mounts it for the whole wizard
+          // tab, processing or not). bottom-24 clears its 84px top edge;
+          // right-7 centers this 48px head on the FAB's center column so the
+          // two read as one vertical stack. Moving either one means
+          // re-checking the other — see FAB_STACK note below.
+          'fixed bottom-24 right-7 z-[45] flex h-12 w-12 items-center justify-center rounded-full border shadow-lg backdrop-blur transition hover:scale-105 active:scale-95',
           // Solid indigo-600 — the wizard's own accent (step-1 upload button,
           // the spotlight rings, the balloon chrome), not a gradient.
           'border-indigo-300/70 bg-indigo-600 text-white hover:bg-indigo-700 dark:border-indigo-700/60',

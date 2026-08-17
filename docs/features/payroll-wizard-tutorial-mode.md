@@ -68,6 +68,20 @@ Sentences are deterministic templates in `narrative.ts` (Kane rejected AI-writte
 Chatty categories (wizard/bonus/addition edits) aggregate into counts; money-moving events get
 one line each.
 
+## The chat head shares the bottom-right corner with the Payroll Notes FAB
+
+`App.tsx` mounts `PayrollWizardNotesFab` (the 64px readiness-ring FAB) at `right-5 bottom-5`
+for the **entire** Payroll Wizard tab — processing or not — so the corner was already occupied.
+The chat head therefore sits at `bottom-24 right-7`: `bottom-24` (96px) clears the FAB's 84px
+top edge, and `right-7` centers the 48px head on the FAB's center column so the two read as one
+vertical stack. The balloon starts at `bottom-[10.5rem]` above the head, with its tail at
+`right-11` to point down the same column.
+
+**Those four values are one measurement.** Resizing or moving either bubble means re-deriving
+the rest — a head at `bottom-5` lands directly on top of the readiness ring (the bug Kane hit
+on 2026-08-17). Search `FAB_STACK` in `TutorialGuide.tsx`. The head stays at `z-[45]`, below
+the FAB's own dialogs, so an open Notes pane correctly covers it.
+
 ## Anchors degrade, never crash
 
 Spotlight targets are `data-tutorial-target` attributes on stable wizard containers. The wizard
