@@ -193,6 +193,16 @@ import {
 } from '@/lib/payroll/signed-amount-input';
 import type { PayrollWizardNoteRow } from '@/lib/supabase/payroll-wizard-notes';
 import AuditTrailPanel from '@/components/payroll-clerk/AuditTrailPanel';
+// [WIZARD-TUTORIAL] Processing Tutorial Mode + Processing Narrative. One-shot
+// removable: delete both tutorial folders + the audit-week route, then strip
+// every [WIZARD-TUTORIAL] block and data-tutorial-target attribute from this
+// file. See docs/features/payroll-wizard-tutorial-mode.md → Removal.
+import TutorialGuide from '@/components/payroll-wizard/tutorial/TutorialGuide';
+import ProcessingNarrative from '@/components/payroll-wizard/tutorial/ProcessingNarrative';
+import {
+  tutorialStorageKey,
+  type TutorialSignals,
+} from '@/lib/payroll-wizard/tutorial/guide';
 import TimeAdjustmentReviewPanel from '@/components/payroll/TimeAdjustmentReviewPanel';
 import {
   auditEventsToAoa,
@@ -8269,6 +8279,41 @@ export default function PayrollWizard({
     [validationBreakdowns],
   );
 
+  /** [WIZARD-TUTORIAL] Advisory signals for the Processing Tutorial guide —
+   *  plain values the wizard already computes, no new derivation here. The
+   *  guide badges these; it gates NOTHING (the FX-zero gate on Step 8 etc.
+   *  stay the only real gates). `visitedSteps` is merged in by the guide. */
+  const tutorialSignals = useMemo<TutorialSignals>(() => {
+    const now = new Date();
+    const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    return {
+      todayIso,
+      sourceFile: auditCycle.source_file ?? null,
+      periodStart: auditCycle.period_start ?? null,
+      periodEnd: auditCycle.period_end ?? null,
+      fxRate: auditCycle.fx_rate ?? null,
+      orphanageReadyCount: orphanagePasteParse.ok.length,
+      pabRangeLabel: pabMonthRange ? `${pabMonthRange.monthName} ${pabMonthRange.year}` : null,
+      isTechBonusWeek: techBonusWeekInfo.isTechBonusWeek,
+      pendingContractorCount: contractorInvoicesInPeriod.filter((i) => i.status === 'pending').length,
+      validationRedFlagCount,
+      excludedCount: dispatchData.excludedRows.length,
+      payableCount: dispatchData.rows.length,
+      dispatched: reportSnapshot != null,
+      visitedSteps: [],
+    };
+  }, [
+    auditCycle,
+    orphanagePasteParse.ok.length,
+    pabMonthRange,
+    techBonusWeekInfo.isTechBonusWeek,
+    contractorInvoicesInPeriod,
+    validationRedFlagCount,
+    dispatchData.excludedRows.length,
+    dispatchData.rows.length,
+    reportSnapshot,
+  ]);
+
   /**
    * Publish the wizard's per-employee final pay so the Employee Dashboard's
    * "Estimated Take-Home" matches exactly what payroll computed (incl. KPI/dept
@@ -9693,6 +9738,7 @@ export default function PayrollWizard({
                     : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
                 )}
                 onClick={() => setHubstaffActiveTab('config')}
+                data-tutorial-target="step1-config-tab"
               >
                 <Settings2 className="h-3.5 w-3.5" />
                 Configuration
@@ -10131,7 +10177,10 @@ export default function PayrollWizard({
 
                   {/* 4. Hubstaff weekly timesheet — CSV upload only (the live API sync was
                       removed: Hubstaff's 1000 req/hour cap made on-demand pulls unreliable). */}
-                  <section className="flex flex-col gap-3 rounded-xl border border-indigo-200/70 bg-indigo-50/40 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/20">
+                  <section
+                    data-tutorial-target="step1-upload-weekly"
+                    className="flex flex-col gap-3 rounded-xl border border-indigo-200/70 bg-indigo-50/40 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/20"
+                  >
                     <div className="flex items-start gap-3">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-indigo-200/90 bg-white dark:border-indigo-800/60 dark:bg-indigo-950/50">
                         <Clock className="h-5 w-5 text-indigo-700 dark:text-indigo-400" aria-hidden />
@@ -10871,7 +10920,10 @@ export default function PayrollWizard({
         );
         return (
           <div className="space-y-6">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div
+              data-tutorial-target="step2-review"
+              className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"
+            >
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
                   <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Initial Calculation</h3>
@@ -12018,7 +12070,10 @@ export default function PayrollWizard({
               {(() => {
                 const activeHasOverride = pabPeriodSettings.overrides.has(effectiveMonthKey);
                 return (
-                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-white/60 px-3 py-2 dark:border-indigo-900/50 dark:bg-zinc-900/40">
+                  <div
+                    data-tutorial-target="step5-system-bonus"
+                    className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-white/60 px-3 py-2 dark:border-indigo-900/50 dark:bg-zinc-900/40"
+                  >
                     <button
                       type="button"
                       onClick={() => setPabSettingsOpen(true)}
@@ -14452,7 +14507,7 @@ export default function PayrollWizard({
 
             <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
               {/* Paste input */}
-              <Card className="border-zinc-200 dark:border-zinc-800">
+              <Card data-tutorial-target="step3-paste-data" className="border-zinc-200 dark:border-zinc-800">
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-2 text-base">
                     <FileText className="h-4 w-4 text-rose-600 dark:text-rose-400" /> Paste data
@@ -14754,7 +14809,10 @@ export default function PayrollWizard({
           <div className="flex min-w-0 flex-col gap-5">
 
             {/* Header banner */}
-            <div className="flex flex-col gap-1 rounded-2xl border border-violet-200/70 bg-gradient-to-br from-violet-50 via-white to-indigo-50/40 p-5 shadow-sm dark:border-violet-900/40 dark:from-violet-950/30 dark:via-zinc-950 dark:to-indigo-950/15">
+            <div
+              data-tutorial-target="step4-hsl-review"
+              className="flex flex-col gap-1 rounded-2xl border border-violet-200/70 bg-gradient-to-br from-violet-50 via-white to-indigo-50/40 p-5 shadow-sm dark:border-violet-900/40 dark:from-violet-950/30 dark:via-zinc-950 dark:to-indigo-950/15"
+            >
               <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-700 dark:text-violet-300">
                 <Building2 className="h-3.5 w-3.5" /> Hogan Smith Law &middot; {monthLabelHsl}
               </div>
@@ -15483,7 +15541,10 @@ export default function PayrollWizard({
         return (
           <div className="flex min-w-0 flex-col gap-5">
             {/* Header banner */}
-            <div className="flex flex-col gap-1 rounded-2xl border border-emerald-200/70 bg-gradient-to-br from-emerald-50 via-white to-teal-50/40 p-5 shadow-sm dark:border-emerald-900/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-emerald-950/15">
+            <div
+              data-tutorial-target="step6-pending-invoices"
+              className="flex flex-col gap-1 rounded-2xl border border-emerald-200/70 bg-gradient-to-br from-emerald-50 via-white to-teal-50/40 p-5 shadow-sm dark:border-emerald-900/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-emerald-950/15"
+            >
               <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">
                 <HardHat className="h-3.5 w-3.5" /> Contractors · {monthLabelContractors}
               </div>
@@ -15663,7 +15724,10 @@ export default function PayrollWizard({
         return (
           <div className="flex min-w-0 flex-col gap-5">
             {/* Header */}
-            <div className="rounded-xl border border-zinc-200/90 bg-gradient-to-br from-white via-zinc-50/80 to-emerald-50/25 p-4 shadow-sm sm:p-5 dark:border-zinc-800 dark:from-zinc-950/50 dark:via-zinc-900/40 dark:to-emerald-950/15">
+            <div
+              data-tutorial-target="step7-validation-table"
+              className="rounded-xl border border-zinc-200/90 bg-gradient-to-br from-white via-zinc-50/80 to-emerald-50/25 p-4 shadow-sm sm:p-5 dark:border-zinc-800 dark:from-zinc-950/50 dark:via-zinc-900/40 dark:to-emerald-950/15"
+            >
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
                 <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Pre-Flight Validation</h3>
@@ -16133,6 +16197,7 @@ export default function PayrollWizard({
       case 8:
         return (
           <div
+            data-tutorial-target="step8-lock-in"
             className={cn(
               'relative flex flex-col items-center justify-center py-12 space-y-6 text-center rounded-2xl',
               isDispatching && 'dispatch-running-light',
@@ -16838,6 +16903,15 @@ export default function PayrollWizard({
               </div>
             )}
 
+            {/* [WIZARD-TUTORIAL] Processing Narrative — the calendar week's
+                story: every Start/Stop Processing toggle and what happened
+                around them, running until the next week begins even when
+                processing is off. Render-only over audit_log; the cycle
+                close-out stays the only per-cycle record. */}
+            <div data-tutorial-target="step9-audit-trail">
+              <ProcessingNarrative />
+            </div>
+
             {/* Audit Trail — everything recorded against this cycle: who started
                 the wizard, every edit (additions / bonuses / orphanage / tenure /
                 gifts), contractor approvals/rejections, lock toggles, FX rate
@@ -16875,6 +16949,19 @@ export default function PayrollWizard({
         isDriver={isLockDriver}
         isSpectator={isSpectator}
       />
+
+      {/* [WIZARD-TUTORIAL] Guided tutorial while processing is on — DRIVER
+          only (spectators are already in read-only follow mode), advisory
+          only: it highlights and suggests, it never gates a step. Dismiss
+          state is per (driver, cycle) so next week's run gets the guide. */}
+      {isLockDriver && lockState.locked && (
+        <TutorialGuide
+          signals={tutorialSignals}
+          currentStep={currentStep}
+          onGoToStep={setCurrentStep}
+          storageKey={tutorialStorageKey(sessionEmail, calcSourceFile)}
+        />
+      )}
 
       {/* ── Oversee / follow mode ──────────────────────────────────────────
           When another operator is driving the locked processing session, this
