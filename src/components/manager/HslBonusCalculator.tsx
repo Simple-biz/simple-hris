@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
   Download, Eye, Filter, Loader2, Lock, Minus, Plus, RefreshCw, RotateCcw,
-  Save, Search, Trash2, UserPlus, Users, X,
+  Search, Trash2, UserPlus, Users, X,
 } from 'lucide-react';
 
 const COLLAPSE_EASE = [0.22, 1, 0.36, 1] as const;
@@ -38,6 +38,12 @@ import {
   type OffboardedCandidate,
 } from './OffboardedSuggestions';
 import { offboardedRelevantToWeek } from '@/lib/roster/offboarded-week-relevance';
+import {
+  KPI_AUTOSAVE_DEBOUNCE_MS,
+  kpiAutosaveGate,
+  shouldRearmAutosave,
+  subTeamInputsBlank,
+} from '@/lib/manager/kpi-autosave';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -205,6 +211,13 @@ export function recomputeSsdEntries(
     const st = String(e.kpi_data.sub_team ?? '') as SubTeamName | '';
     if (!st) return e.calculated_bonus === 0 ? e : { ...e, calculated_bonus: 0 };
     const sub = subTeams[st];
+    // The team-level inputs are NOT persisted, so after a reload they are blank
+    // while the saved shares are not. Recomputing then would zero every member
+    // of the team on the strength of inputs nobody re-entered — under the Save
+    // button that needed a click, under autosave it would land by itself. Hold
+    // the existing share until the manager re-enters the team's numbers (a typed
+    // 0 counts as entered, so a genuine zero score still writes).
+    if (subTeamInputsBlank(sub) && e.calculated_bonus !== 0) return e;
     const memberCount = memberCounts[st] ?? 0;
     const pct = parseFloat(sub.pct) || 0;
     const records = parseInt(sub.records, 10) || 0;
@@ -445,6 +458,28 @@ export default function HslBonusCalculator({
     return init;
   });
 
+  // Autosave bookkeeping. Scoring persists as the manager types (no Save
+  // button), so three things have to be tracked outside render state:
+  //  - `deptStateRef` because a debounced write fires from a timer and must send
+  //    what is on screen NOW, not what was in the closure when the timer was set;
+  //  - `autosaveTimers` so each dept debounces independently;
+  //  - `autosaveFailedRef` so a failed write is not re-sent until the manager
+  //    changes something (a failure leaves the dept dirty, which would otherwise
+  //    re-arm the debounce forever). Identity of the entries/subTeams objects is
+  //    the token — every mutation replaces them, so `!==` means "edited since".
+  const deptStateRef = useRef<AllDeptState>(deptState);
+  deptStateRef.current = deptState;
+  const autosaveTimers = useRef<Partial<Record<HslDeptKey, ReturnType<typeof setTimeout>>>>({});
+  /** The dept state each pending timer was armed for, so the debounce resets only
+   *  when THAT dept changed — not whenever any other dept does. */
+  const autosaveArmedRef = useRef<Partial<Record<HslDeptKey, DeptState>>>({});
+  const autosaveFailedRef = useRef<Partial<Record<HslDeptKey, { entries: EntryRow[]; subTeams: Record<SubTeamName, SubTeamState> }>>>({});
+  /** Last successful autosave per dept, for the inline "Saved HH:MM" status. */
+  const [savedAt, setSavedAt] = useState<Partial<Record<HslDeptKey, number>>>({});
+  /** Depts whose last autosave failed — the footer says so instead of a toast
+   *  per keystroke, and Mark Ready stays blocked because `dirty` is still set. */
+  const [autosaveError, setAutosaveError] = useState<Partial<Record<HslDeptKey, string>>>({});
+
   const [loadingDepts, setLoadingDepts] = useState<Set<HslDeptKey>>(new Set());
   /** Which dept's preview modal is open (null = closed). Mounted at the parent so
    *  it overlays the page rather than nesting inside a single dept block. */
@@ -554,8 +589,8 @@ export default function HslBonusCalculator({
   // ── External members ───────────────────────────────────────────────────────
   // "Add external member" appends an off-roster person to a dept's calculator.
   // No employee/roster record is created — the saved hsl_bonus_entries row is the
-  // single source of truth, so they flow to payroll through the normal Save →
-  // Mark Ready path exactly like a roster member.
+  // single source of truth, so they flow to payroll through the normal
+  // autosave → Mark Ready path exactly like a roster member.
 
   /** Add an off-roster person to `key`. Returns an error to surface, or null. */
   function addMember(key: HslDeptKey, name: string, emailRaw: string): string | null {
@@ -812,8 +847,15 @@ export default function HslBonusCalculator({
 
   // ── Save entries to DB ─────────────────────────────────────────────────────
 
-  async function saveDept(key: HslDeptKey) {
-    const d = deptState[key]!;
+  /**
+   * Persist a dept's entries. Called by the autosave debounce (`silent`) and by
+   * the flush on unmount / page-hide; there is no Save button any more.
+   *
+   * Reads from `deptStateRef` rather than the render closure because a debounced
+   * call must send what is on screen when it fires. Returns whether it wrote.
+   */
+  async function saveDept(key: HslDeptKey, opts?: { silent?: boolean }): Promise<boolean> {
+    const d = deptStateRef.current[key]!;
     const dept = HSL_DEPTS[key];
     // Refuse rather than strand the work: an unresolved week would write this
     // dept-week under a key no reader asks for (invisible scores, and a duplicate
@@ -822,12 +864,17 @@ export default function HslBonusCalculator({
       toast.error('Payroll week not confirmed', {
         description: 'Reload the page before saving — scores saved now would not be visible to anyone else.',
       });
-      return;
+      return false;
     }
+    // The route rejects an empty array (400). Nothing to write is not an error.
+    if (d.entries.length === 0) return false;
     const start = periodStart(dept);
     const end = periodEnd(dept, start);
+    // Token for the retry hold: whatever we are about to send.
+    const attempted = { entries: d.entries, subTeams: d.subTeams };
 
     setDept(key, { saving: true });
+    let wrote = false;
     try {
       const entries = d.entries.map((e) => ({
         department: key,
@@ -850,14 +897,125 @@ export default function HslBonusCalculator({
       const json = (await res.json()) as { error?: string; saved?: number };
       if (!res.ok) throw new Error(json.error ?? 'Save failed');
 
-      setDept(key, { dirty: false });
-      toast.success(`${dept.name} saved`, { description: `${json.saved ?? 0} entries updated` });
+      // Only clear `dirty` when nothing was edited while the write was in
+      // flight — otherwise the newer keystrokes would look persisted and both
+      // the Mark Ready gate and the next autosave would skip them.
+      const latest = deptStateRef.current[key]!;
+      const superseded = latest.entries !== attempted.entries || latest.subTeams !== attempted.subTeams;
+      if (!superseded) setDept(key, { dirty: false });
+      delete autosaveFailedRef.current[key];
+      setAutosaveError((prev) => {
+        if (!prev[key]) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      setSavedAt((prev) => ({ ...prev, [key]: Date.now() }));
+      wrote = true;
+      if (!opts?.silent) {
+        toast.success(`${dept.name} saved`, { description: `${json.saved ?? 0} entries updated` });
+      }
     } catch (e) {
-      toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      // Hold this exact state back from the debounce so a failure can't turn
+      // into a retry storm; any further edit replaces the token and re-arms it.
+      autosaveFailedRef.current[key] = attempted;
+      setAutosaveError((prev) => ({ ...prev, [key]: msg }));
+      // One toast per failed attempt — not per keystroke, since the hold above
+      // means the next attempt only happens after the manager edits again.
+      toast.error(`${dept.name} — not saved`, { description: msg });
     } finally {
       setDept(key, { saving: false });
     }
+    return wrote;
   }
+
+  // ── Autosave ───────────────────────────────────────────────────────────────
+  // Every field a manager enters persists on its own, ~1s after they stop
+  // typing. `kpiAutosaveGate` carries every refusal the old Save button had
+  // (draft-only, week-resolved, not mid-payroll-run, no double-write, no retry
+  // storm) — see src/lib/manager/kpi-autosave.ts. Submission is untouched:
+  // Mark Ready is still a deliberate act, because the period-status row is what
+  // actually tells Accounting the week is done.
+  useEffect(() => {
+    const timers = autosaveTimers.current;
+    for (const key of visibleDepts) {
+      const d = deptState[key];
+      if (!d) continue;
+      const failed = autosaveFailedRef.current[key];
+      const gate = kpiAutosaveGate({
+        loaded: booted && !loadingDepts.has(key),
+        weekResolved,
+        editable: d.status === 'draft',
+        payrollLocked,
+        saving: d.saving,
+        dirty: d.dirty,
+        // HSL never seeds `dirty` on load — `loadDept` always writes
+        // `dirty: false`, so anything dirty here was entered by a person.
+        seededOnly: false,
+        failedUnchanged:
+          !!failed && failed.entries === d.entries && failed.subTeams === d.subTeams,
+      });
+      if (!gate.save) {
+        const existing = timers[key];
+        if (existing) clearTimeout(existing);
+        delete timers[key];
+        delete autosaveArmedRef.current[key];
+        continue;
+      }
+      // The debounce is PER DEPT. `deptState` is one object, so editing dept A
+      // re-runs this loop for dept B too — blindly re-arming here would let a
+      // manager working in A starve B's pending write for as long as they keep
+      // typing. Only re-arm when THIS dept's own state changed.
+      if (!shouldRearmAutosave(autosaveArmedRef.current[key], d, !!timers[key])) continue;
+      const existing = timers[key];
+      if (existing) clearTimeout(existing);
+      autosaveArmedRef.current[key] = d;
+      timers[key] = setTimeout(() => {
+        delete timers[key];
+        void saveDept(key, { silent: true });
+      }, KPI_AUTOSAVE_DEBOUNCE_MS);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deptState, visibleDepts, booted, loadingDepts, weekResolved, payrollLocked]);
+
+  /** Write out anything still pending. Held in a ref so the unmount cleanup runs
+   *  the LATEST closure — an empty-dep effect would capture `weekResolved` from
+   *  the first render, when it is still false, and refuse to save. */
+  const flushRef = useRef<() => void>(() => {});
+  flushRef.current = () => {
+    const timers = autosaveTimers.current;
+    for (const k of Object.keys(timers) as HslDeptKey[]) {
+      const t = timers[k];
+      if (t) clearTimeout(t);
+      delete timers[k];
+      delete autosaveArmedRef.current[k];
+    }
+    const st = deptStateRef.current;
+    for (const key of Object.keys(st) as HslDeptKey[]) {
+      const d = st[key];
+      if (!d || !d.dirty || d.saving || d.status !== 'draft') continue;
+      if (payrollLocked || !weekResolved || d.entries.length === 0) continue;
+      void saveDept(key, { silent: true });
+    }
+  };
+
+  // Losing the last keystroke would be worse than no autosave at all: ManagerApp
+  // UNMOUNTS this calculator when the manager leaves the tab, taking the pending
+  // debounce with it. Flush when the tab is hidden and on unmount.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushRef.current();
+    };
+    const onPageHide = () => flushRef.current();
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onPageHide);
+      flushRef.current();
+    };
+  }, []);
 
   async function setStatus(key: HslDeptKey, next: BonusStatus): Promise<boolean> {
     const dept = HSL_DEPTS[key];
@@ -897,12 +1055,18 @@ export default function HslBonusCalculator({
   }
 
   async function markReady(key: HslDeptKey) {
-    const d = deptState[key]!;
-    if (d.dirty) {
-      toast.error('Save your changes first', {
-        description: 'Click Save before marking the period Ready.',
-      });
-      return;
+    // The guard stays — a period must never go Ready carrying unwritten numbers.
+    // With autosave there is no button to point at, so flush instead of scolding:
+    // this only ever runs when Mark Ready is hit inside the debounce window or
+    // after a failed write.
+    if (deptStateRef.current[key]!.dirty) {
+      const saved = await saveDept(key, { silent: true });
+      if (!saved || deptStateRef.current[key]!.dirty) {
+        toast.error('Changes not saved yet', {
+          description: 'Your latest edits could not be written, so the period was left in draft. Check your connection and try again.',
+        });
+        return;
+      }
     }
     const ok = await setStatus(key, 'ready');
     if (ok) {
@@ -1277,7 +1441,8 @@ export default function HslBonusCalculator({
               return addMember(key, c.name, email);
             }}
             onRemoveMember={(email) => void removeMember(key, email)}
-            onSave={() => void saveDept(key)}
+            savedAtMs={savedAt[key]}
+            autosaveError={autosaveError[key]}
             onMarkReady={() => void markReady(key)}
             onMarkUnready={() => void reopenToDraft(key)}
             onView={() => setViewingDept(key)}
@@ -1392,7 +1557,11 @@ interface DeptBlockProps {
   periodStartStr: string;
   onKpiChange: (email: string, key: string, val: number | boolean) => void;
   onToggleManager: (email: string) => void;
-  onSave: () => void;
+  /** Epoch ms of the last successful autosave for this dept, for the inline
+   *  "Saved HH:MM" status. Absent until the first write of the session. */
+  savedAtMs?: number;
+  /** Message from the last failed autosave, if it has not since succeeded. */
+  autosaveError?: string;
   onMarkReady: () => void;
   onMarkUnready: () => void;
   onView: () => void;
@@ -1419,7 +1588,7 @@ const DEPT_PAGE_SIZE = 10;
 function DeptBlock({
   deptKey, state, loading, collapsible, open, searchSeed, sectionClassName, onToggleOpen, periodStartStr,
   onKpiChange, onToggleManager,
-  onSave, onMarkReady, onMarkUnready, onView, onSubTeamChange, ssdShareForTeam,
+  savedAtMs, autosaveError, onMarkReady, onMarkUnready, onView, onSubTeamChange, ssdShareForTeam,
   payrollLocked, markUnreadySubmitting,
   rosterEmails, offboardedEmails, onAddMember, offboardedSuggestions, onQuickAddOffboarded, onRemoveMember,
 }: DeptBlockProps) {
@@ -1770,11 +1939,29 @@ function DeptBlock({
           />
         )}
 
-        {/* Action bar — Save / Mark Ready (draft) → Mark as Unready + View (ready/locked). */}
+        {/* Action bar — autosave status + Mark Ready (draft) → Mark as Unready +
+            View (ready/locked). There is no Save button: entries persist on their
+            own ~1s after the last keystroke (see the autosave effect). */}
         <div className="flex items-center gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
           <span className="font-mono text-[10px] text-zinc-500">
-            {state.status === 'draft' && state.dirty && !payrollLocked && 'Unsaved changes'}
-            {state.status === 'draft' && !state.dirty && state.entries.length > 0 && !payrollLocked && 'Saved · ready to mark'}
+            {state.status === 'draft' && !payrollLocked && autosaveError && (
+              <span className="inline-flex items-center gap-1 text-red-600 dark:text-red-400">
+                <AlertTriangle className="h-3 w-3" /> Not saved — retries on your next edit
+              </span>
+            )}
+            {state.status === 'draft' && !payrollLocked && !autosaveError && (state.dirty || state.saving) && (
+              <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                <Loader2 className="h-3 w-3 animate-spin" /> Saving…
+              </span>
+            )}
+            {state.status === 'draft' && !payrollLocked && !autosaveError && !state.dirty && !state.saving && state.entries.length > 0 && (
+              <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
+                <Check className="h-3 w-3" />
+                {savedAtMs
+                  ? `Saved ${new Date(savedAtMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                  : 'Saved · ready to mark'}
+              </span>
+            )}
             {(state.status === 'draft' || state.status === 'ready') && payrollLocked && (
               <span className="inline-flex items-center gap-1 text-red-600 dark:text-red-400">
                 <Lock className="h-3 w-3" /> Payroll processing — locked
@@ -1792,31 +1979,21 @@ function DeptBlock({
             )}
           </span>
           <div className="ml-auto flex gap-2">
-            {state.status === 'draft' && state.dirty && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 gap-1.5 text-xs"
-                disabled={state.saving || payrollLocked}
-                onClick={onSave}
-              >
-                <Save className="h-3 w-3" />
-                {state.saving ? 'Saving…' : 'Save'}
-              </Button>
-            )}
             {state.status === 'draft' && (
               <Button
                 size="sm"
                 className="h-7 gap-1.5 bg-amber-600 text-xs text-white hover:bg-amber-500 disabled:opacity-50"
-                disabled={state.dirty || state.saving || state.entries.length === 0 || payrollLocked}
+                // `dirty` no longer disables this: the numbers save themselves, so
+                // blocking during the debounce window would just look broken. The
+                // guard did not go away — `markReady` writes any pending edit
+                // FIRST and refuses to change status if that write fails.
+                disabled={state.saving || state.entries.length === 0 || payrollLocked}
                 title={
                   payrollLocked
                     ? 'KPI Calculator is locked while payroll is processing'
-                    : state.dirty
-                      ? 'Save your changes before marking ready'
-                      : state.entries.length === 0
-                        ? 'No employees to mark ready'
-                        : 'Send these scores to Accounting · PayrollWizard'
+                    : state.entries.length === 0
+                      ? 'No employees to mark ready'
+                      : 'Send these scores to Accounting · PayrollWizard'
                 }
                 onClick={onMarkReady}
               >
@@ -2756,7 +2933,7 @@ function candidateEmail(c: ExternalCandidate): string {
 /** "Add external member": search the Global Master List (the same endpoint the
  *  transfer picker uses, so a plain manager needs no extra permission), pick
  *  someone, then confirm. On confirm the person is appended to the dept's
- *  calculator and flows to payroll via the normal Save → Mark Ready path. */
+ *  calculator and flows to payroll via the normal autosave → Mark Ready path. */
 function HslAddMemberModal({
   deptName,
   color,

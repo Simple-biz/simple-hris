@@ -77,6 +77,7 @@ import { slugifyDeptKey } from '@/lib/departments/registry';
 import { DEPARTMENTS, DEPT_DESCRIPTION, MANAGER_BONUS_DEPT_KEYS, isKpiCalculatorDeptKey } from '@/lib/payroll/department-bonus';
 import { catalogDeptColor as deptColor, humanizeDeptKey } from '@/lib/departments/dept-identity';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
+import { KPI_AUTOSAVE_DEBOUNCE_MS, kpiAutosaveGate, shouldRearmAutosave } from '@/lib/manager/kpi-autosave';
 import { QC_DEPT_KEYS, isQcDeptKey } from '@/lib/qc/constants';
 import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
 import {
@@ -152,6 +153,17 @@ interface DeptState {
   shared: Record<string, AppliedState>;
   status: BonusStatus;
   dirty: boolean;
+  /**
+   * `dirty` came ONLY from the load seeding values, not from a person entering
+   * anything: a fresh draft week arrives with dept-common bonuses pre-ticked and
+   * (for QC departments) the officers' first-pass copied in, and `loadDept`
+   * marks that dirty on purpose so a manual Save would persist it.
+   *
+   * Autosave must not, or merely opening the calculator would write applied rows
+   * attributed to whoever opened it. Every mutator clears this in the same state
+   * update that sets `dirty`, so the two can never disagree.
+   */
+  seeded: boolean;
   saving: boolean;
   loaded: boolean;
 }
@@ -1140,6 +1152,25 @@ export default function DeptBonusCalculator({
     });
   }
 
+  // ── Autosave bookkeeping ───────────────────────────────────────────────────
+  // Scoring persists as the manager works; there is no Save button in manager
+  // mode. See src/lib/manager/kpi-autosave.ts for the guards this has to keep.
+  //
+  /** Latest state, for writes fired from a debounce timer rather than a click. */
+  const stateRef = useRef<AllState>(state);
+  stateRef.current = state;
+  const autosaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  /** The dept state each pending timer was armed for, so the debounce resets only
+   *  when THAT dept changed — not whenever any other dept does. */
+  const autosaveArmedRef = useRef<Record<string, DeptState>>({});
+  /** Per-dept token of the last FAILED write (identity of the members/shared
+   *  objects). Blocks a retry storm — a failure leaves the dept dirty, which
+   *  would otherwise re-arm the debounce forever. Any edit replaces the objects,
+   *  so `!==` means "changed since the failure" and the write is retried. */
+  const autosaveFailedRef = useRef<Record<string, { members: MemberState[]; shared: Record<string, AppliedState> }>>({});
+  const [savedAt, setSavedAt] = useState<Record<string, number>>({});
+  const [autosaveError, setAutosaveError] = useState<Record<string, string>>({});
+
   /** Bonuses applicable to one member: dept-common + that person's individual ones. */
   const applicableBonuses = useCallback(
     (deptKey: string, email: string): BonusDef[] => {
@@ -1307,10 +1338,20 @@ export default function DeptBonusCalculator({
           if (cur?.dirty || cur?.saving) return prev;
           return {
             // Pre-applied defaults — and QC-seeded values — are unsaved, so mark
-            // dirty: manager Save (then Submit) persists into bonus_catalog_applied;
-            // QC Save persists into the staging table.
+            // dirty: in QC mode the officer's Save (then Lock) persists them into
+            // the staging table; in manager mode the manager's first edit brings
+            // them along. `seeded` records that nobody typed this, so autosave
+            // leaves it alone (see DeptState.seeded).
             ...prev,
-            [key]: { members, shared, status, dirty: preApplied || seededFromQc, saving: false, loaded: true },
+            [key]: {
+              members,
+              shared,
+              status,
+              dirty: preApplied || seededFromQc,
+              seeded: preApplied || seededFromQc,
+              saving: false,
+              loaded: true,
+            },
           };
         });
       } catch {
@@ -1324,6 +1365,7 @@ export default function DeptBonusCalculator({
               shared: {},
               status: 'draft',
               dirty: false,
+              seeded: false,
               saving: false,
               loaded: true,
             },
@@ -1631,6 +1673,7 @@ export default function DeptBonusCalculator({
         [deptKey]: {
           ...d,
           dirty: true,
+          seeded: false,
           members: d.members.map((m) =>
             m.email === email
               ? { ...m, applied: { ...m.applied, [bonusId]: { on, vars: m.applied[bonusId]?.vars ?? {} } } }
@@ -1650,6 +1693,7 @@ export default function DeptBonusCalculator({
         [deptKey]: {
           ...d,
           dirty: true,
+          seeded: false,
           members: d.members.map((m) => {
             if (m.email !== email) return m;
             const cur = m.applied[bonusId] ?? { on: true, vars: {} };
@@ -1671,7 +1715,7 @@ export default function DeptBonusCalculator({
       const cur = d.shared[bonusId] ?? { on: false, vars: {} };
       return {
         ...prev,
-        [deptKey]: { ...d, dirty: true, shared: { ...d.shared, [bonusId]: { ...cur, on } } },
+        [deptKey]: { ...d, dirty: true, seeded: false, shared: { ...d.shared, [bonusId]: { ...cur, on } } },
       };
     });
   }
@@ -1687,6 +1731,7 @@ export default function DeptBonusCalculator({
         [deptKey]: {
           ...d,
           dirty: true,
+          seeded: false,
           shared: { ...d.shared, [bonusId]: { on: true, vars: { ...cur.vars, [varName]: value } } },
         },
       };
@@ -1738,6 +1783,7 @@ export default function DeptBonusCalculator({
         [deptKey]: {
           ...cur,
           dirty: true,
+          seeded: false,
           members: [...cur.members, member].sort((a, b) => a.name.localeCompare(b.name)),
         },
       };
@@ -1756,6 +1802,7 @@ export default function DeptBonusCalculator({
         [deptKey]: {
           ...d,
           dirty: true,
+          seeded: false,
           members: d.members.filter((m) => !(m.external && m.email === email)),
         },
       };
@@ -1772,6 +1819,7 @@ export default function DeptBonusCalculator({
         [deptKey]: {
           ...d,
           dirty: true,
+          seeded: false,
           members: d.members.map((m) => ({
             ...m,
             applied: { ...m.applied, [bonusId]: { on, vars: m.applied[bonusId]?.vars ?? {} } },
@@ -1783,8 +1831,16 @@ export default function DeptBonusCalculator({
 
   // -- Persistence ---------------------------------------------------------------
 
-  async function saveDept(key: string): Promise<boolean> {
-    const d = state[key];
+  /**
+   * Persist a department's applied bonuses.
+   *
+   * Called by the autosave debounce and the flush on unmount / page-hide in
+   * manager mode (`silent`), and by the QC officer's Save button. Reads from
+   * `stateRef` rather than the render closure because a debounced call must send
+   * what is on screen when it fires, not what was there when the timer was set.
+   */
+  async function saveDept(key: string, opts?: { silent?: boolean }): Promise<boolean> {
+    const d = stateRef.current[key];
     if (!d) return false;
     // Refuse rather than write an unreadable dept-week (see `weekResolved`):
     // applied rows saved under the local-clock week are invisible to every other
@@ -1795,6 +1851,8 @@ export default function DeptBonusCalculator({
       });
       return false;
     }
+    // Token for the retry hold: whatever we are about to send.
+    const attempted = { members: d.members, shared: d.shared };
     patchDept(key, { saving: true });
     let ok = false;
     try {
@@ -1839,24 +1897,146 @@ export default function DeptBonusCalculator({
       });
       const json = (await res.json()) as { error?: string | null; saved?: number };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
-      patchDept(key, { dirty: false });
+      // Only clear `dirty` when nothing was edited while the write was in flight
+      // — otherwise those newer keystrokes would look persisted, and both the
+      // Lock gate and the next autosave would skip them. `seeded` clears either
+      // way: whatever the load seeded is now in the database.
+      const latest = stateRef.current[key];
+      const superseded =
+        !!latest && (latest.members !== attempted.members || latest.shared !== attempted.shared);
+      patchDept(key, { seeded: false, ...(superseded ? {} : { dirty: false }) });
+      delete autosaveFailedRef.current[key];
+      setAutosaveError((prev) => {
+        if (!prev[key]) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      setSavedAt((prev) => ({ ...prev, [key]: Date.now() }));
       const stillDraft = d.status !== 'ready' && d.status !== 'locked';
       const applied = `${rows.length} bonus${rows.length === 1 ? '' : 'es'} applied`;
-      toast.success(`${DEPARTMENTS.find((x) => x.key === key)?.name ?? humanizeDeptKey(key)} saved`, {
-        description: isQc
-          ? `${applied} · lock & send to manager when done`
-          : stillDraft
-            ? `${applied} · lock & submit before payroll`
-            : applied,
-      });
+      if (!opts?.silent) {
+        toast.success(`${DEPARTMENTS.find((x) => x.key === key)?.name ?? humanizeDeptKey(key)} saved`, {
+          description: isQc
+            ? `${applied} · lock & send to manager when done`
+            : stillDraft
+              ? `${applied} · lock & submit before payroll`
+              : applied,
+        });
+      }
       ok = true;
     } catch (e) {
-      toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      // Hold this exact state back from the debounce so a failure can't become a
+      // retry storm; any further edit replaces the token and re-arms it.
+      autosaveFailedRef.current[key] = attempted;
+      setAutosaveError((prev) => ({ ...prev, [key]: msg }));
+      toast.error(
+        `${DEPARTMENTS.find((x) => x.key === key)?.name ?? humanizeDeptKey(key)} — not saved`,
+        { description: msg },
+      );
     } finally {
       patchDept(key, { saving: false });
     }
     return ok;
   }
+
+  // ── Autosave (manager mode only) ───────────────────────────────────────────
+  // Applied bonuses persist on their own ~1s after the manager stops working.
+  // `kpiAutosaveGate` carries every refusal the Save button had — draft-only,
+  // week-resolved, not mid-payroll-run, never a load-seeded value, no
+  // double-write, no retry storm (src/lib/manager/kpi-autosave.ts).
+  //
+  // QC mode is deliberately excluded: a QC officer's Save writes a different
+  // table through a different route, and their week ends with an explicit
+  // "Lock & send to manager". That surface keeps its button.
+  useEffect(() => {
+    if (isQc) return;
+    const timers = autosaveTimers.current;
+    for (const key of visibleDeptKeys) {
+      const d = state[key];
+      if (!d) continue;
+      const failed = autosaveFailedRef.current[key];
+      const gate = kpiAutosaveGate({
+        loaded: !!d.loaded,
+        weekResolved,
+        // Draft only, and never while the values are locked for submission —
+        // `lockedDepts` freezes the inputs the same way `ready` does.
+        editable: d.status !== 'ready' && d.status !== 'locked' && !lockedDepts[key],
+        // This component holds no dispatch-lock state, deliberately. ManagerApp
+        // swaps the whole tab for PayrollProcessingLock while payroll is
+        // processing, so a non-admin can't be here at all — and an ADMIN is
+        // meant to keep editing mid-run (processing-guard.ts grants them the
+        // same bypass). Reading a global lock here would silently stop an
+        // admin's corrections from ever persisting, which is worse than the
+        // 423 they'd never see.
+        payrollLocked: false,
+        saving: d.saving,
+        dirty: d.dirty,
+        seededOnly: d.seeded,
+        failedUnchanged:
+          !!failed && failed.members === d.members && failed.shared === d.shared,
+      });
+      if (!gate.save) {
+        const existing = timers[key];
+        if (existing) clearTimeout(existing);
+        delete timers[key];
+        delete autosaveArmedRef.current[key];
+        continue;
+      }
+      // The debounce is PER DEPT. `state` is one object, so editing dept A
+      // re-runs this loop for dept B too — blindly re-arming here would let a
+      // manager working in A starve B's pending write for as long as they keep
+      // typing. Only re-arm when THIS dept's own state changed.
+      if (!shouldRearmAutosave(autosaveArmedRef.current[key], d, !!timers[key])) continue;
+      const existing = timers[key];
+      if (existing) clearTimeout(existing);
+      autosaveArmedRef.current[key] = d;
+      timers[key] = setTimeout(() => {
+        delete timers[key];
+        void saveDept(key, { silent: true });
+      }, KPI_AUTOSAVE_DEBOUNCE_MS);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, visibleDeptKeys, weekResolved, lockedDepts, isQc]);
+
+  /** Write out anything still pending. Held in a ref so the unmount cleanup runs
+   *  the LATEST closure — an empty-dep effect would capture `weekResolved` from
+   *  the first render, when it is still false, and refuse to save. */
+  const flushRef = useRef<() => void>(() => {});
+  flushRef.current = () => {
+    const timers = autosaveTimers.current;
+    for (const k of Object.keys(timers)) {
+      clearTimeout(timers[k]!);
+      delete timers[k];
+      delete autosaveArmedRef.current[k];
+    }
+    if (isQc || !weekResolved) return;
+    const st = stateRef.current;
+    for (const key of Object.keys(st)) {
+      const d = st[key];
+      if (!d || !d.dirty || d.seeded || d.saving || !d.loaded) continue;
+      if (d.status === 'ready' || d.status === 'locked' || lockedDepts[key]) continue;
+      void saveDept(key, { silent: true });
+    }
+  };
+
+  // Losing the last edit would be worse than no autosave at all: ManagerApp
+  // UNMOUNTS this calculator when the manager leaves the tab, taking the pending
+  // debounce with it. Flush when the tab is hidden and on unmount.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushRef.current();
+    };
+    const onPageHide = () => flushRef.current();
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onPageHide);
+      flushRef.current();
+    };
+  }, []);
 
   async function setStatus(key: string, next: BonusStatus, opts?: { silent?: boolean }): Promise<boolean> {
     // Same reason as saveDept: a status row on an unreadable week never reaches
@@ -1904,8 +2084,11 @@ export default function DeptBonusCalculator({
     if (!d) return;
     setSubmit({ kind: 'lock', key, phase: 'sending' });
     const t0 = Date.now();
+    // The pre-lock write stays, autosave or not: this is the path that runs when
+    // Lock is hit inside the debounce window, or after a failed autosave. Silent
+    // because the centered modal is already reporting.
     if (d.dirty) {
-      const ok = await saveDept(key);
+      const ok = await saveDept(key, { silent: true });
       if (!ok) {
         // Save failed -- stay editable so nothing is lost.
         setSubmit({ kind: 'lock', key, phase: 'error', msg: 'Could not save before locking. Check your connection and try again.' });
@@ -2772,9 +2955,11 @@ export default function DeptBonusCalculator({
                 'mt-0.5 flex items-center gap-1 font-mono text-[10px] uppercase tracking-wide',
                 statusReadOnly || editLocked
                   ? 'text-emerald-600 dark:text-emerald-400'
-                  : d?.dirty
-                    ? 'text-amber-600 dark:text-amber-400'
-                    : 'text-zinc-400',
+                  : !isQc && autosaveError[key]
+                    ? 'text-red-600 dark:text-red-400'
+                    : d?.dirty
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : 'text-zinc-400',
               )}
             >
               {isQc ? (
@@ -2793,8 +2978,19 @@ export default function DeptBonusCalculator({
                 <>
                   <Lock className="h-2.5 w-2.5" /> Locked · ready to submit
                 </>
-              ) : d?.dirty ? (
-                'Unsaved changes'
+              ) : autosaveError[key] ? (
+                <>
+                  <AlertTriangle className="h-2.5 w-2.5" /> Not saved — retries on your next edit
+                </>
+              ) : d?.dirty || d?.saving ? (
+                <>
+                  <Loader2 className="h-2.5 w-2.5 animate-spin" /> Saving…
+                </>
+              ) : savedAt[key] ? (
+                <>
+                  <Check className="h-2.5 w-2.5" />
+                  {`Saved ${new Date(savedAt[key]!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · lock to submit`}
+                </>
               ) : (
                 'Saved · lock to submit'
               )}
@@ -2859,9 +3055,10 @@ export default function DeptBonusCalculator({
               </>
             ) : (
               <>
-                <Button size="sm" variant="outline" className="h-9 gap-1.5 text-xs" disabled={d?.saving} onClick={() => void saveDept(key)}>
-                  <Save className="h-3.5 w-3.5" /> {d?.saving ? 'Saving…' : 'Save draft'}
-                </Button>
+                {/* No Save button in manager mode — applied bonuses persist on
+                    their own (see the autosave effect). "Lock values" still
+                    writes any pending edit first and refuses to lock if that
+                    write fails, so the pre-submit guard is unchanged. */}
                 <motion.div whileTap={reduceMotion ? undefined : { scale: 0.96 }}>
                   <Button
                     size="sm"
@@ -3497,7 +3694,7 @@ function DeptSummaryCard({
           {dirty && (
             <span
               className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400"
-              title="Unsaved changes"
+              title="Saving…"
               aria-hidden
             />
           )}

@@ -2892,8 +2892,10 @@ function ExemptBankDialog({
 
 /**
  * KPI Calculator modal for a clicked Readiness department — the SAME calculator
- * the manager uses, mounted elevated so accounting can score, save, and Mark
- * Ready without leaving the wizard. General depts get DeptBonusCalculator with
+ * the manager uses, mounted elevated so accounting can score and Mark Ready
+ * without leaving the wizard. Being the same component, it autosaves the same
+ * way, and closing this dialog unmounts it, which flushes any pending write.
+ * General depts get DeptBonusCalculator with
  * the clicked dept's panel auto-opened; HSL sub-depts get HslBonusCalculator
  * scoped to ONLY the clicked sub-dept (a single `hsl:<key>` grant — no
  * "All Departments" view).
@@ -2952,8 +2954,8 @@ function KpiCalculatorDialog({
             KPI Calculator — {dept.name}
           </DialogTitle>
           <DialogDescription>
-            The same calculator the manager uses. Score, save, and Mark Ready from here;
-            Readiness refreshes when you close this.
+            The same calculator the manager uses — entries save themselves as you score.
+            Mark Ready from here; Readiness refreshes when you close this.
           </DialogDescription>
         </DialogHeader>
         <div className="h-[72vh] overflow-y-auto overscroll-contain rounded-lg border border-orange-100 bg-white dark:border-blue-950/60 dark:bg-[#0d1117]">

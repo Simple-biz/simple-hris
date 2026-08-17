@@ -74,7 +74,7 @@ dept). It opens `HslAddMemberModal`, which searches the Global Master List via
 so a plain manager needs no extra permission), then a confirm step.
 
 - Purely client-side add: an off-roster `EntryRow` is appended to the dept's
-  entries and flows to payroll through the normal Save → Mark Ready path. No
+  entries and flows to payroll through the normal autosave → Mark Ready path. No
   employee / roster / permission record is created — the saved `hsl_bonus_entries`
   row is the single source of truth (the POST route does no roster validation).
 - External members are tagged with an **"ext"** badge (email not in the dept's
@@ -104,6 +104,93 @@ product register (calm, familiar, motion conveys state):
 - **Draft-only editing:** inputs are editable only while the period is `draft`.
   Once `ready`/`locked` the dept is read-only (with a "Mark as Unready to edit"
   hint), so an edit or an added member can't silently fail to reach Accounting.
+
+## Autosave *(2026-08-17 — replaces the Save button)*
+
+Kane: "Instead of Saving Manually every field entered should just be
+automatically saved." **There is no Save button on either calculator any more**
+(`HslBonusCalculator` and `DeptBonusCalculator` in manager mode); entries persist
+~1s after the manager stops typing. The footer reports `Saving…` → `Saved HH:MM`,
+or `Not saved — retries on your next edit`.
+
+**Submission is untouched and stays manual.** Autosave replaced the Save click
+only — Mark Ready (HSL) and Lock → Submit to Payroll (departments) are still
+deliberate acts, because the `hsl_bonus_period_status` row is what actually tells
+Accounting a week is done. Scored entries with no `ready`/`locked` row have gone
+unnoticed before, to the tune of ₱846,475 (memory
+`hsl-bonus-weeks-never-submitted`).
+
+Every refusal the Save button carried now lives in ONE pure, tested place —
+`kpiAutosaveGate` in `src/lib/manager/kpi-autosave.ts`
+(`src/lib/manager/kpi-autosave.test.ts`). Autosave never fires:
+
+| Refusal | Why it exists |
+|---|---|
+| before the dept has loaded | nothing trustworthy to write yet |
+| before the Hubstaff payroll week resolves | `(department, period_start)` is the row's only address and the seed week is a local-clock guess — writing early strands rows no reader asks for |
+| into a `ready`/`locked` week, or a dept whose values are locked for submit | draft-only editing, above |
+| while payroll is processing | the server answers 423 (`processing-guard.ts`) |
+| while a write is in flight | no double-write |
+| **on load-seeded state** | a fresh draft week arrives with dept-common bonuses pre-ticked and QC first-pass values copied in, flagged dirty on purpose. Persisting that automatically would mean merely OPENING the calculator writes `bonus_catalog_applied` rows attributed to whoever opened it. `DeptState.seeded` records "nobody typed this"; every mutator clears it in the same state update that sets `dirty`, so the two cannot disagree. |
+| re-sending a state that just failed | a failure leaves the dept dirty, so a naive debounce would retry forever. The hold lifts on the manager's next edit. |
+
+Three things follow from autosave and must not be undone:
+
+1. **A failed write leaves `dirty` set**, which is what keeps the Mark Ready /
+   Lock gates honest. Those gates did not move into the button's `disabled`
+   attribute — `markReady` and `lockValues` write any pending edit FIRST and
+   refuse to change status if that write fails. `dirty` no longer disables the
+   button (blocking during the 1s debounce just looks broken).
+2. **`dirty` clearing after each write is a net WIN for concurrent scorers.**
+   Every load path and `refreshAll` skip a dept while `dirty || saving`, so under
+   the old Save button a manager's local view stopped refreshing for their whole
+   editing session. Autosave shrinks that stale window to seconds.
+3. **A pending write is flushed on tab-hide, `pagehide`, and unmount.**
+   `ManagerApp` unmounts the calculator when the manager leaves the tab, so the
+   debounce would otherwise die with the last keystroke. The flush closure is
+   held in a ref, because an empty-dep effect would capture `weekResolved` from
+   the first render — when it is still `false` — and refuse to save.
+   *Residual bound:* closing the browser tab within ~1s of the last keystroke can
+   still lose that keystroke.
+
+**The two write contracts are NOT symmetrical**, which is why the seeded guard
+matters most on the department side:
+
+- `POST /api/hsl-bonus/entries` is an **upsert** on
+  `(department, period_start, employee_email)` and rejects an empty array;
+  removing a member is a separate keyed `DELETE`. Autosave can only ever add or
+  update here.
+- `bonus_catalog_applied` (`saveDeptPeriodApplied`) is a **replace-set**: it
+  upserts the payload then deletes every row for that dept-week that is not in
+  the keep-set — **unfiltered when the keep-set is empty**. So a manager who
+  unticks the last bonus in a department autosaves an empty set and clears the
+  dept-week. That is the same thing the Save button did with nothing ticked, and
+  the 1s debounce means an untick→retick never fires the empty write in between.
+  Worth knowing before "optimising" the debounce away.
+
+**Out of scope, deliberately:** the **QC officer** variant (`variant="qc"`) keeps
+its explicit Save + "Lock & send to manager" — different role, different table
+(`qc_kpi_submissions`), different route, and its delete is officer-scoped.
+
+**Also affected, by being the same component:** the KPI Calculator modal
+Accounting opens from Payroll Readiness (`PayrollWizardNotesFab.tsx`) autosaves
+identically, and closing that dialog now flushes pending edits instead of
+dropping them.
+
+### SSD sub-team inputs are still NOT saved
+
+`ssd_medical_records` scores from team-level accuracy %, record count and RFC
+count that live in component state and are deliberately not persisted (only the
+per-employee share they derive is). Kane confirmed 2026-08-17 that this stands —
+autosave covers every field that HAS a persistence home, and these three keep
+their in-memory behaviour plus the amber re-enter warning.
+
+That made an existing latent bug reachable without a click, so it is now closed:
+after a reload those fields are blank while the saved shares are not, and any
+recompute would have written **₱0 to every member of the team**.
+`recomputeSsdEntries` now refuses to overwrite a non-zero share when the
+sub-team it belongs to has no inputs on screen (`subTeamInputsBlank`). A typed
+`0` counts as entered, so a genuine zero score still saves.
 
 ## Deploy / migration
 

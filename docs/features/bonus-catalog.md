@@ -136,6 +136,12 @@ Example: `IF(tickets >= 10, 500, 250) * tickets` -> variables `[tickets]`; with
   > have; **payouts are unaffected** because the Wizard reads the stored PHP
   > snapshot. To make a saved non-live week reconcile exactly, snapshot the rate
   > on the applied row.
+  >
+  > **2026-08-17:** "when the manager saves" now means the autosave that fires
+  > ~1s after they stop typing — there is no Save button in manager mode (see
+  > `hsl-kpi-calculator-2026-07.md` → Autosave). The FX snapshot rule is
+  > unchanged: the last write of the week is the rate that sticks, exactly as
+  > the last Save click was before.
 - **Currency-forced departments.** Some departments are paid in a fixed non-PHP
   currency regardless of each bonus's own catalog currency (e.g. US-based teams
   paid in dollars). `DeptBonusCalculator.tsx` keys this off `FORCED_DEPT_CURRENCY`
