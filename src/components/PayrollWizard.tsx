@@ -12595,24 +12595,24 @@ export default function PayrollWizard({
                                 · paid once per month to everyone past 30 days of service
                               </span>
                             </div>
-                            {/* Week calendar — pick the week the Tech Bonus is released
-                                by clicking its row (Kane 2026-08-17: "like a calendar
-                                where we can select the week"). One row per PAYABLE week:
-                                `listTechBonusWeekOptions` still decides which weeks exist
-                                (salary Tuesday inside the month) and the row's seven days
-                                are laid out from the option's own Sun–Sat `weekStart`, so
-                                no week math is re-derived here and the stored key stays
-                                the owning Monday. */}
-                            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-                              {/* Weekday header — Sun–Sat, matching how pay weeks are presented. */}
-                              <div className="grid grid-cols-[auto_repeat(7,minmax(0,1fr))] items-center gap-px border-b border-zinc-200 bg-zinc-50 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                                <span className="w-16 pr-2" />
-                                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
-                                  <span key={d} className="text-center">{d}</span>
+                            {/* Tech-week calendar — a small, plain calendar (Kane
+                                2026-08-17: "a simple calendar where we can select the
+                                week where we pay it out"). One Sun–Sat row per PAYABLE
+                                week; clicking the row picks it. `listTechBonusWeekOptions`
+                                still decides which weeks exist, each row walks its own
+                                `weekStart`, and the stored key stays the owning Monday.
+                                NOTE the salary date is Monday+8 — the Tuesday AFTER the
+                                week — so it can never be highlighted inside the row; each
+                                row says "pays <date>" instead. */}
+                            <div className="w-fit rounded-xl border border-zinc-200 bg-white p-1.5 dark:border-zinc-800 dark:bg-zinc-950">
+                              <div className="grid grid-cols-[repeat(7,2.25rem)_minmax(4.5rem,auto)] items-center pb-1 text-center text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                                {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) => (
+                                  <span key={d}>{d}</span>
                                 ))}
+                                <span className="pr-1 text-right">Pays</span>
                               </div>
                               {techOptions.length === 0 ? (
-                                <p className="px-3 py-4 text-center text-xs italic text-zinc-500 dark:text-zinc-400">
+                                <p className="px-3 py-3 text-center text-xs italic text-zinc-500 dark:text-zinc-400">
                                   No payable week lands in this month.
                                 </p>
                               ) : (
@@ -12627,11 +12627,6 @@ export default function PayrollWizard({
                                       o.weekStart.getDate() + i,
                                     ),
                                   );
-                                  const salaryMs = new Date(
-                                    o.salaryDate.getFullYear(),
-                                    o.salaryDate.getMonth(),
-                                    o.salaryDate.getDate(),
-                                  ).getTime();
                                   return (
                                     <button
                                       key={o.mondayIso}
@@ -12645,56 +12640,51 @@ export default function PayrollWizard({
                                       }}
                                       title={`Pay week ${fmtShort(o.weekStart)} – ${fmtShort(o.weekEnd)} (Sun–Sat) · salary date ${fmtShort(o.salaryDate)}${o.isAuto ? ' · the automatic 3rd-week pick' : ''}`}
                                       className={cn(
-                                        'grid w-full grid-cols-[auto_repeat(7,minmax(0,1fr))] items-center gap-px border-b border-zinc-100 px-2 py-1.5 text-left transition last:border-b-0 disabled:cursor-not-allowed dark:border-zinc-800/70',
+                                        'grid w-full grid-cols-[repeat(7,2.25rem)_minmax(4.5rem,auto)] items-center rounded-lg py-0.5 transition disabled:cursor-not-allowed',
                                         isSelected
-                                          ? 'bg-sky-50 ring-1 ring-inset ring-sky-500/40 dark:bg-sky-950/50 dark:ring-sky-400/40'
-                                          : 'hover:bg-sky-50/50 dark:hover:bg-sky-950/20',
+                                          ? 'bg-sky-100 ring-1 ring-inset ring-sky-500/50 dark:bg-sky-950/60 dark:ring-sky-400/50'
+                                          : 'hover:bg-sky-50 dark:hover:bg-sky-950/25',
                                       )}
                                     >
-                                      {/* Row label: which week + the selected tick. */}
-                                      <span className="flex w-16 shrink-0 items-center gap-1 pr-2 text-[10px] font-semibold uppercase tracking-wide">
-                                        {isSelected ? (
-                                          <Check className="h-3 w-3 shrink-0 text-sky-500" />
-                                        ) : (
-                                          <span className="h-3 w-3 shrink-0" />
-                                        )}
-                                        <span className={isSelected ? 'text-sky-700 dark:text-sky-300' : 'text-zinc-400 dark:text-zinc-500'}>
-                                          {o.isAuto ? 'Auto' : 'Week'}
+                                      {days.map((d) => (
+                                        <span
+                                          key={d.toISOString()}
+                                          className={cn(
+                                            'mx-auto flex h-8 w-8 items-center justify-center rounded-full font-mono text-[11px] tabular-nums',
+                                            isSelected
+                                              ? 'font-semibold text-sky-900 dark:text-sky-100'
+                                              : d.getMonth() !== editMonth.month
+                                                ? 'text-zinc-300 dark:text-zinc-600'
+                                                : 'text-zinc-600 dark:text-zinc-300',
+                                          )}
+                                        >
+                                          {d.getDate()}
                                         </span>
-                                      </span>
-                                      {days.map((d) => {
-                                        const isSalary =
-                                          new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() === salaryMs;
-                                        const isOtherMonth = d.getMonth() !== editMonth.month;
-                                        return (
-                                          <span
-                                            key={d.toISOString()}
-                                            className={cn(
-                                              'mx-auto flex h-7 w-7 items-center justify-center rounded-md font-mono text-[11px] tabular-nums',
-                                              isSelected
-                                                ? 'text-sky-900 dark:text-sky-100'
-                                                : isOtherMonth
-                                                  ? 'text-zinc-300 dark:text-zinc-600'
-                                                  : 'text-zinc-600 dark:text-zinc-300',
-                                              // The salary date is the day the money lands —
-                                              // the one date in the row worth calling out.
-                                              isSalary &&
-                                                'bg-sky-600 font-bold text-white shadow-sm dark:bg-sky-500 dark:text-white',
-                                            )}
-                                          >
-                                            {d.getDate()}
+                                      ))}
+                                      <span
+                                        className={cn(
+                                          'flex items-center justify-end gap-1 pr-1 text-right text-[10px] font-medium',
+                                          isSelected
+                                            ? 'text-sky-700 dark:text-sky-300'
+                                            : 'text-zinc-400 dark:text-zinc-500',
+                                        )}
+                                      >
+                                        {isSelected && <Check className="h-3 w-3 shrink-0" />}
+                                        {fmtShort(o.salaryDate)}
+                                        {o.isAuto && (
+                                          <span className="rounded bg-zinc-100 px-1 py-px text-[8px] font-bold uppercase leading-none text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                                            Auto
                                           </span>
-                                        );
-                                      })}
+                                        )}
+                                      </span>
                                     </button>
                                   );
                                 })
                               )}
                             </div>
                             <div className="mt-2 flex flex-wrap items-center gap-2">
-                              <span className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                                <span className="h-3.5 w-3.5 rounded bg-sky-600 dark:bg-sky-500" aria-hidden />
-                                Highlighted day = salary date, when the bonus is released
+                              <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                Click a week to pay the Tech Bonus with it — &ldquo;Pays&rdquo; is the salary date that lands the bonus.
                               </span>
                               {savedIso && (
                                 <button
