@@ -5,7 +5,7 @@ accounting-editable adjustments layered on top. Covers the **Initial Calculation
 the **Additions** table (step 3), and the **HSL** table (step 5).
 
 Source: [`src/components/PayrollWizard.tsx`](../../src/components/PayrollWizard.tsx).
-Last substantive update: **2026-07-29**.
+Last substantive update: **2026-08-17**.
 
 > **Replaying a past week is a different contract.** Everything below describes
 > the live cycle. What the header's pay-period selector is allowed to show for a
@@ -15,6 +15,35 @@ Last substantive update: **2026-07-29**.
 > [payroll-wizard-week-replay.md](./payroll-wizard-week-replay.md).
 
 ---
+
+## 2026-08-17 — step-2 header layout
+
+Presentation only. No handler, guard, hydration path, or stored value changed.
+The per-cycle FX contract (memory `per-cycle-fx-zero-placeholder`, spec
+[`2026-08-03-per-cycle-fx-zero-placeholder-design.md`](../superpowers/specs/2026-08-03-per-cycle-fx-zero-placeholder-design.md))
+still governs the numbers: cards hydrate **raw** from
+`payroll.wizard.fx.<sourceFile>`, zero is a real state, all four save paths
+(PHP/COP × Enter/Apply) write through, and replay stays read-only.
+
+- **The two FX rate strips are now cards**, matching the Initialize Payroll Data
+  sync-card anatomy on step 1 (icon tile, eyebrow, title, body, footer control).
+  A third **read-only** card shows the derived `PHP ↔ COP` cross-rate that used to
+  be buried in the COP strip's footnote. USD stays the anchor: that pair is
+  computed, never set.
+- **USD → COP moved from amber to teal.** Amber is this step's *warning* colour
+  (missing rates, and the "Not set for this cycle" state that renders **inside**
+  these cards). A normal control must not wear it, or the warning disappears into
+  its own container. Do not move it back.
+- **Three things collapsed into icon affordances** beside the step title, each a
+  hover/click/keyboard popover (`StepInfoButton`, built on Base UI Popover via
+  [`components/ui/popover.tsx`](../../components/ui/popover.tsx)):
+  the **calculation formula** (plus the departments-shown note and the official
+  PHP default), the **active Hubstaff upload**, and the **missing-rate list**
+  (amber, badged with the count, only rendered when the count is non-zero).
+- **The missing-rate list is unchanged in substance** — same
+  `regularRate == null` filter, same three columns, same copy. It is behind an
+  icon rather than a full-width `<details>`. The count is visible on the trigger,
+  so the blocker is never silent.
 
 ## 2026-07-29 updates
 

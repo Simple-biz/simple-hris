@@ -53,6 +53,8 @@ import {
   Wallet,
   Columns3,
   Cpu,
+  HelpCircle,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
@@ -76,6 +78,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { toast } from 'sonner';
 import { MOCK_USERS, MOCK_TIME_RECORDS, MOCK_PAYMENTS } from '@/constants';
 import { User, TimeRecord, PaymentLineItem, HubstaffRow, ReconciliationIssue } from '@/types';
@@ -900,6 +903,87 @@ function SnapshotRow({ label, value, mono }: { label: string; value: string | nu
         {shown}
       </span>
     </div>
+  );
+}
+
+/** Tone presets for {@link StepInfoButton}. Written out in full so Tailwind's
+ *  scanner can see every class — never build these by interpolation. */
+const STEP_INFO_TONES = {
+  zinc: {
+    idle: 'border-zinc-200 text-zinc-500 hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-700 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200',
+    open: 'data-popup-open:border-zinc-300 data-popup-open:bg-zinc-100 data-popup-open:text-zinc-700 dark:data-popup-open:border-zinc-700 dark:data-popup-open:bg-zinc-800 dark:data-popup-open:text-zinc-200',
+    ring: 'focus-visible:ring-zinc-400/40',
+  },
+  indigo: {
+    idle: 'border-indigo-200 text-indigo-500 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 dark:border-indigo-900/60 dark:text-indigo-400 dark:hover:border-indigo-700 dark:hover:bg-indigo-950/50 dark:hover:text-indigo-300',
+    open: 'data-popup-open:border-indigo-300 data-popup-open:bg-indigo-50 data-popup-open:text-indigo-700 dark:data-popup-open:border-indigo-700 dark:data-popup-open:bg-indigo-950/50 dark:data-popup-open:text-indigo-300',
+    ring: 'focus-visible:ring-indigo-400/40',
+  },
+  amber: {
+    idle: 'border-amber-300 bg-amber-50 text-amber-700 hover:border-amber-400 hover:bg-amber-100 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-400 dark:hover:border-amber-700 dark:hover:bg-amber-950/60',
+    open: 'data-popup-open:border-amber-400 data-popup-open:bg-amber-100 dark:data-popup-open:border-amber-700 dark:data-popup-open:bg-amber-950/60',
+    ring: 'focus-visible:ring-amber-400/50',
+  },
+} as const;
+
+/**
+ * Step-header affordance: a compact icon button that reveals reference detail on
+ * hover, click, or keyboard focus. Introduced on Initial Calculation (step 2) so
+ * the formula, the active-upload note, and the missing-rate list stay out of the
+ * layout until someone asks for them. Hover is a convenience, not the only route
+ * in — the trigger is a real button, so touch and keyboard reach it too.
+ */
+function StepInfoButton({
+  icon,
+  label,
+  tone = 'zinc',
+  count,
+  busy,
+  className,
+  contentClassName,
+  children,
+}: {
+  icon: React.ReactNode;
+  /** Accessible name, and the popup's own heading. */
+  label: string;
+  tone?: keyof typeof STEP_INFO_TONES;
+  /** Optional numeric badge rendered on the trigger (e.g. missing-rate count). */
+  count?: number;
+  busy?: boolean;
+  className?: string;
+  contentClassName?: string;
+  children: React.ReactNode;
+}) {
+  const t = STEP_INFO_TONES[tone];
+  return (
+    <Popover>
+      <PopoverTrigger
+        openOnHover
+        delay={120}
+        closeDelay={80}
+        aria-label={label}
+        className={cn(
+          'relative inline-flex h-7 items-center justify-center gap-1.5 rounded-md border bg-transparent px-1.5 outline-none transition-colors',
+          'focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-950',
+          count == null ? 'w-7 px-0' : 'min-w-7',
+          t.idle,
+          t.open,
+          t.ring,
+          className,
+        )}
+      >
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : icon}
+        {count != null && (
+          <span className="pr-0.5 text-[11px] font-semibold tabular-nums leading-none">{count}</span>
+        )}
+      </PopoverTrigger>
+      <PopoverContent className={cn('w-80', contentClassName)}>
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+          {label}
+        </p>
+        {children}
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -10788,29 +10872,136 @@ export default function PayrollWizard({
         return (
           <div className="space-y-6">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Initial Calculation</h3>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                  <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Initial Calculation</h3>
+                  {/* Reference detail lives behind these three: the formula, the
+                      active upload, and the missing-rate list. All were full-width
+                      blocks before; the numbers are what the step is actually for. */}
+                  <StepInfoButton
+                    label="How Initial Pay is calculated"
+                    icon={<HelpCircle className="h-4 w-4" aria-hidden />}
+                    contentClassName="w-96"
+                  >
+                    <dl className="space-y-2 text-xs text-zinc-600 dark:text-zinc-400">
+                      <div>
+                        <dt className="font-medium text-zinc-800 dark:text-zinc-200">Hours</dt>
+                        <dd className="mt-0.5">
+                          <span className="font-mono">Reg Hrs</span> = min(Total Hrs, 40) ·{' '}
+                          <span className="font-mono">OT Hrs</span> = max(0, Total Hrs − 40).
+                          Sourced from <span className="font-mono text-zinc-500">hubstaff_hours</span>.
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="font-medium text-zinc-800 dark:text-zinc-200">Rate match</dt>
+                        <dd className="mt-0.5">
+                          Hubstaff <span className="font-mono">Email</span> to{' '}
+                          <span className="font-mono">Work Email</span> in{' '}
+                          <span className="font-mono text-zinc-500">employee_hourly_rates</span>.
+                          Personal Email is used too when present.
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="font-medium text-zinc-800 dark:text-zinc-200">Pay</dt>
+                        <dd className="mt-0.5">
+                          <span className="font-mono">Reg Pay</span> = Reg Rate × Reg Hrs ·{' '}
+                          <span className="font-mono">OT Pay</span> = OT Rate × OT Hrs ·{' '}
+                          <span className="font-mono">Initial Pay</span> = Reg Pay + OT Pay.
+                        </dd>
+                      </div>
+                      <div className="border-t border-zinc-200 pt-2 dark:border-zinc-800">
+                        <dt className="font-medium text-zinc-800 dark:text-zinc-200">Currency</dt>
+                        <dd className="mt-0.5">
+                          USD is the anchor. The official PHP default is{' '}
+                          <span className="font-mono">
+                            &#8369;{OFFICIAL_USD_TO_PHP_RATE.toFixed(USD_TO_PHP_DECIMAL_SHIFT)}
+                          </span>{' '}
+                          per $1 (&#8369;{PHILIPPINE_PESO_OFFICIAL.toLocaleString('en-PH')} &divide; 10^
+                          {USD_TO_PHP_DECIMAL_SHIFT}), used only when no cycle rate is set.
+                        </dd>
+                      </div>
+                      <div className="border-t border-zinc-200 pt-2 dark:border-zinc-800">
+                        <dt className="flex items-center gap-1.5 font-medium text-violet-700 dark:text-violet-300">
+                          <Building2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                          Departments shown
+                        </dt>
+                        <dd className="mt-0.5">
+                          Every department paying this week, Hogan Smith Law included. HSL KPI
+                          bonuses are still added on the <span className="font-medium">HSL</span> tab
+                          (step 4). Use the department filter to narrow the table.
+                        </dd>
+                      </div>
+                    </dl>
+                  </StepInfoButton>
+                  {uploadedSourceFiles.length > 0 && (
+                    <StepInfoButton
+                      label="Active Hubstaff upload"
+                      tone="indigo"
+                      busy={calcSourceFileLoading}
+                      icon={<FileText className="h-4 w-4" aria-hidden />}
+                    >
+                      <p className="break-all font-mono text-xs text-indigo-700 dark:text-indigo-300">
+                        {uploadedSourceFiles[0]}
+                      </p>
+                      <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+                        The newest file in Supabase is the source of truth. Older uploads are kept
+                        for reference on Step 1.
+                      </p>
+                    </StepInfoButton>
+                  )}
+                  {(() => {
+                    if (initialCalcDataLoading) return null;
+                    const missingRows = effectiveCalcResults.filter(r => r.regularRate == null);
+                    if (missingRows.length === 0 || effectiveCalcResults.length === 0) return null;
+                    return (
+                      <StepInfoButton
+                        label={`${missingRows.length} missing rate${missingRows.length !== 1 ? 's' : ''}`}
+                        tone="amber"
+                        count={missingRows.length}
+                        icon={<AlertCircle className="h-4 w-4" aria-hidden />}
+                        contentClassName="w-96 p-0"
+                      >
+                        <div className="px-3.5 pb-3.5">
+                          <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                            Pay cannot be calculated for these people. No matching row in{' '}
+                            <span className="font-mono">employee_hourly_rates</span> for their
+                            Hubstaff email &mdash; add their rates in Supabase to fix.
+                          </p>
+                        </div>
+                        <div className="max-h-64 overflow-y-auto border-t border-zinc-200 dark:border-zinc-800">
+                          <table className="w-full text-xs">
+                            <thead className="sticky top-0 z-10 bg-amber-50 dark:bg-amber-950/40">
+                              <tr className="border-b border-amber-300/50 dark:border-amber-800/40">
+                                <th className="px-3 py-1.5 text-left font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">Name</th>
+                                <th className="px-3 py-1.5 text-left font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">Hubstaff Email</th>
+                                <th className="px-3 py-1.5 text-right font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">Hrs</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                              {missingRows.map(r => (
+                                <tr key={r.email}>
+                                  <td className="px-3 py-1.5 font-medium text-zinc-800 dark:text-zinc-200">
+                                    {r.name || <span className="italic text-zinc-400">Unknown</span>}
+                                  </td>
+                                  <td className="px-3 py-1.5 font-mono text-zinc-600 dark:text-zinc-400">{r.email}</td>
+                                  <td className="px-3 py-1.5 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400">
+                                    {r.totalHours.toFixed(2)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </StepInfoButton>
+                    );
+                  })()}
+                </div>
                 {calcSourceFile && (
-                  <div className="mt-1 flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400">
-                    <FileText className="h-3 w-3 shrink-0" />
+                  <div className="mt-1.5 flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400">
+                    <FileText className="h-3 w-3 shrink-0" aria-hidden />
                     <span className="font-mono">{calcSourceFile}</span>
                   </div>
                 )}
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  <span className="font-mono">Reg Hrs</span> = min(Total Hrs, 40),{' '}
-                  <span className="font-mono">OT Hrs</span> = max(0, Total Hrs − 40). Hours from{' '}
-                  <span className="font-mono text-zinc-500">hubstaff_hours</span>. Match Hubstaff{' '}
-                  <span className="font-mono">Email</span> to <span className="font-mono">Work Email</span> in{' '}
-                  <span className="font-mono text-zinc-500">employee_hourly_rates</span> (Personal Email also used if present).
-                  <span className="font-mono"> Reg Pay</span> = Reg Rate × Reg Hrs, <span className="font-mono">OT Pay</span> = OT Rate × OT Hrs,{' '}
-                  <span className="font-mono">Initial Pay</span> = Reg Pay + OT Pay.
-                </p>
-                <div className="mt-2 flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1.5 dark:border-violet-800/50 dark:bg-violet-950/20">
-                  <Building2 className="h-3 w-3 shrink-0 text-violet-500 dark:text-violet-400" />
-                  <p className="text-[11px] text-violet-700 dark:text-violet-300">
-                    Every department paying this week is listed here, <span className="font-semibold">Hogan Smith Law included</span> &mdash; HSL KPI bonuses are still added on the <span className="font-semibold">HSL</span> tab (step 4). Use the department filter to narrow the table.
-                  </p>
-                </div>
               </div>
               <Button
                 type="button"
@@ -10829,30 +11020,48 @@ export default function PayrollWizard({
               </Button>
             </div>
 
-            {/* Source file selector */}
-            {uploadedSourceFiles.length > 0 && (
-              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3 dark:border-indigo-800/50 dark:bg-indigo-950/30">
-                <FileText className="h-4 w-4 shrink-0 text-indigo-500" />
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-2">
-                  <span className="text-sm font-medium text-indigo-900 dark:text-indigo-200">Active Hubstaff upload</span>
-                  <span className="font-mono text-xs text-indigo-800 dark:text-indigo-300">{uploadedSourceFiles[0]}</span>
-                  <span className="text-xs text-indigo-700/80 dark:text-indigo-400/80">
-                    Newest file in Supabase is the source of truth; older uploads are kept for reference in Step 1.
-                  </span>
-                </div>
-                {calcSourceFileLoading && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-indigo-500" />}
-              </div>
-            )}
-
+            {/* Conversion rates — one card per leg, mirroring the Initialize
+                Payroll Data sync cards on step 1. USD is the anchor: the two
+                editable legs are USD→PHP and USD→COP, and PHP↔COP is derived. */}
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {/* USD → PHP exchange rate */}
-            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50/60 px-4 py-3 dark:border-blue-800/50 dark:bg-blue-950/30">
-              <DollarSign className="h-4 w-4 shrink-0 text-blue-500" />
-              <div className="flex flex-1 flex-wrap items-center gap-2">
-                <span className="text-sm font-medium text-blue-900 dark:text-blue-200">USD → PHP Rate</span>
-                <span className="text-xs text-blue-700/70 dark:text-blue-400/70">(1 USD =)</span>
+            <section className="flex flex-col gap-3 rounded-xl border border-blue-200/80 bg-blue-50/40 p-4 dark:border-blue-900/40 dark:bg-blue-950/20">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-blue-200/90 bg-white dark:border-blue-800/60 dark:bg-blue-950/50">
+                  <DollarSign className="h-5 w-5 text-blue-700 dark:text-blue-400" aria-hidden />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-800/90 dark:text-blue-400/90">
+                    Philippine peso
+                  </p>
+                  <h3 className="text-base font-semibold leading-tight text-zinc-900 dark:text-white">
+                    USD &rarr; PHP
+                  </h3>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="relative">
+
+              <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                Divides PHP Initial Pay by this rate to fill the{' '}
+                <span className="font-medium text-zinc-700 dark:text-zinc-300">&asymp; USD</span>{' '}
+                column on the table below. Set per cycle, so it starts at zero on every new upload.
+              </p>
+
+              {usdToPhpRate <= 0 ? (
+                <p className="flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-300">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  Not set for this cycle &mdash; enter this week&apos;s rate.
+                </p>
+              ) : (
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
+                  <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                    &#8369;{usdToPhpRate.toFixed(5)}
+                  </span>{' '}
+                  = $1 USD this cycle &middot; global &#8369;{globalPhpRate.toFixed(2)}
+                </p>
+              )}
+
+              <div className="mt-auto flex items-center gap-2 pt-1">
+                <div className="relative flex-1">
                   <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm font-medium text-blue-600 dark:text-blue-400">
                     ₱
                   </span>
@@ -10902,7 +11111,7 @@ export default function PayrollWizard({
                         }
                       }
                     }}
-                    className={`h-8 min-w-[7rem] border-blue-300 pl-6 pr-2 font-mono text-sm tabular-nums dark:border-blue-700 ${usdToPhpEditing ? 'bg-white dark:bg-zinc-950' : 'cursor-default bg-blue-50 dark:bg-blue-950/40'}`}
+                    className={`h-8 w-full border-blue-300 pl-6 pr-2 font-mono text-sm tabular-nums dark:border-blue-700 ${usdToPhpEditing ? 'bg-white dark:bg-zinc-950' : 'cursor-default bg-blue-50 dark:bg-blue-950/40'}`}
                   />
                 </div>
                 {!usdToPhpEditing ? (
@@ -10965,40 +11174,58 @@ export default function PayrollWizard({
                   </Button>
                 )}
               </div>
-              <p className="w-full text-xs text-blue-700/60 dark:text-blue-400/60">
-                {usdToPhpRate <= 0 ? (
-                  <span className="font-semibold text-amber-700 dark:text-amber-400">
-                    Not set for this cycle — enter this week&apos;s rate.{' '}
-                  </span>
-                ) : null}
-                <span className="text-zinc-500 dark:text-zinc-500">Global: ₱{globalPhpRate.toFixed(2)} / $1.</span>{' '}
-                Divides PHP Initial Pay by this rate for the USD column. Default official rate: ₱
-                {OFFICIAL_USD_TO_PHP_RATE.toFixed(USD_TO_PHP_DECIMAL_SHIFT)} per $1 (₱
-                {PHILIPPINE_PESO_OFFICIAL.toLocaleString('en-PH')} ÷ 10^{USD_TO_PHP_DECIMAL_SHIFT}). Current:{' '}
-                <span className="font-mono font-semibold">₱{usdToPhpRate.toFixed(5)}</span> = $1 USD.
-                {usdToPhpEditing && (
-                  <>
-                    {' '}
-                    Press{' '}
-                    <kbd className="rounded border border-blue-300 bg-blue-100 px-1 py-0.5 font-mono text-[10px] dark:border-blue-700 dark:bg-blue-900">
-                      Enter
-                    </kbd>{' '}
-                    or Apply &amp; Save to confirm.
-                  </>
-                )}
-              </p>
-            </div>
+              {usdToPhpEditing && (
+                <p className="text-[11px] leading-none text-blue-700/70 dark:text-blue-400/70">
+                  Press{' '}
+                  <kbd className="rounded border border-blue-300 bg-blue-100 px-1 py-0.5 font-mono text-[10px] dark:border-blue-700 dark:bg-blue-900">
+                    Enter
+                  </kbd>{' '}
+                  or Apply &amp; Save to confirm.
+                </p>
+              )}
+            </section>
 
-            {/* USD → COP exchange rate (the second USD-anchored leg) */}
-            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 dark:border-amber-800/50 dark:bg-amber-950/30">
-              <DollarSign className="h-4 w-4 shrink-0 text-amber-500" />
-              <div className="flex flex-1 flex-wrap items-center gap-2">
-                <span className="text-sm font-medium text-amber-900 dark:text-amber-200">USD → COP Rate</span>
-                <span className="text-xs text-amber-700/70 dark:text-amber-400/70">(1 USD =)</span>
+            {/* USD → COP exchange rate (the second USD-anchored leg). Teal, not
+                amber: amber is this step's warning colour (missing rates, unset
+                rate), so a normal control must not wear it. */}
+            <section className="flex flex-col gap-3 rounded-xl border border-teal-200/80 bg-teal-50/40 p-4 dark:border-teal-900/40 dark:bg-teal-950/20">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-teal-200/90 bg-white dark:border-teal-800/60 dark:bg-teal-950/50">
+                  <DollarSign className="h-5 w-5 text-teal-700 dark:text-teal-400" aria-hidden />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-teal-800/90 dark:text-teal-400/90">
+                    Colombian peso
+                  </p>
+                  <h3 className="text-base font-semibold leading-tight text-zinc-900 dark:text-white">
+                    USD &rarr; COP
+                  </h3>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+
+              <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                Converts Colombian-paid people from USD for the{' '}
+                <span className="font-medium text-zinc-700 dark:text-zinc-300">COP</span> dispatch
+                tab. Set per cycle, so it starts at zero on every new upload.
+              </p>
+
+              {usdToCopRate <= 0 ? (
+                <p className="flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-300">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  Not set for this cycle &mdash; enter this week&apos;s rate.
+                </p>
+              ) : (
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
+                  <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                    $COP{usdToCopRate.toLocaleString('es-CO')}
+                  </span>{' '}
+                  = $1 USD this cycle &middot; global $COP{globalCopRate.toLocaleString('es-CO')}
+                </p>
+              )}
+
+              <div className="mt-auto flex items-center gap-2 pt-1">
+                <div className="relative flex-1">
+                  <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-teal-600 dark:text-teal-400">
                     $COP
                   </span>
                   <Input
@@ -11047,7 +11274,7 @@ export default function PayrollWizard({
                         }
                       }
                     }}
-                    className={`h-8 min-w-[8rem] border-amber-300 pl-11 pr-2 font-mono text-sm tabular-nums dark:border-amber-700 ${usdToCopEditing ? 'bg-white dark:bg-zinc-950' : 'cursor-default bg-amber-50 dark:bg-amber-950/40'}`}
+                    className={`h-8 w-full border-teal-300 pl-11 pr-2 font-mono text-sm tabular-nums dark:border-teal-700 ${usdToCopEditing ? 'bg-white dark:bg-zinc-950' : 'cursor-default bg-teal-50 dark:bg-teal-950/40'}`}
                   />
                 </div>
                 {!usdToCopEditing ? (
@@ -11055,7 +11282,7 @@ export default function PayrollWizard({
                     <Button
                       type="button"
                       size="sm"
-                      className="h-8 bg-amber-600 px-3 text-xs font-semibold text-white hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-400 dark:text-white"
+                      className="h-8 bg-teal-700 px-3 text-xs font-semibold text-white hover:bg-teal-800 dark:bg-teal-700 dark:text-white dark:hover:bg-teal-600"
                       onClick={() => setUsdToCopEditing(true)}
                     >
                       Edit rate
@@ -11110,25 +11337,54 @@ export default function PayrollWizard({
                   </Button>
                 )}
               </div>
-              <p className="w-full text-xs text-amber-700/60 dark:text-amber-400/60">
-                {usdToCopRate <= 0 ? (
-                  <span className="font-semibold text-amber-700 dark:text-amber-400">
-                    Not set for this cycle — enter this week&apos;s rate.{' '}
-                  </span>
-                ) : null}
-                <span className="text-zinc-500 dark:text-zinc-500">Global: $COP{globalCopRate.toLocaleString('es-CO')} / $1.</span>{' '}
-                Colombian-paid people are converted from USD at this rate for the COP dispatch tab.
-                Current: <span className="font-mono font-semibold">$COP{usdToCopRate.toLocaleString('es-CO')}</span> = $1 USD.{' '}
-                Derived PHP ↔ COP:{' '}
-                <span className="font-mono font-semibold">
-                  ₱1 = $COP{copPerPhp(fxRates).toLocaleString('es-CO', { maximumFractionDigits: 2 })}
-                </span>{' '}
-                ·{' '}
-                <span className="font-mono font-semibold">
-                  $COP1 = ₱{phpPerCop(fxRates).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
-                </span>
-                {' '}(USD is the anchor — PHP↔COP is computed, not set directly).
+              {usdToCopEditing && (
+                <p className="text-[11px] leading-none text-teal-700/70 dark:text-teal-400/70">
+                  Press{' '}
+                  <kbd className="rounded border border-teal-300 bg-teal-100 px-1 py-0.5 font-mono text-[10px] dark:border-teal-700 dark:bg-teal-900">
+                    Enter
+                  </kbd>{' '}
+                  or Apply &amp; Save to confirm.
+                </p>
+              )}
+            </section>
+
+            {/* PHP ↔ COP — read-only, derived from the two legs above. No control
+                in the footer, which is what tells it apart from its neighbours. */}
+            <section className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+                  <ArrowLeftRight className="h-5 w-5 text-zinc-500 dark:text-zinc-400" aria-hidden />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    Derived cross-rate
+                  </p>
+                  <h3 className="text-base font-semibold leading-tight text-zinc-900 dark:text-white">
+                    PHP &harr; COP
+                  </h3>
+                </div>
+              </div>
+
+              <dl className="divide-y divide-zinc-200 overflow-hidden rounded-lg border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-950/40">
+                <div className="flex items-baseline justify-between gap-3 px-3 py-2">
+                  <dt className="text-xs text-zinc-500 dark:text-zinc-400">&#8369;1 =</dt>
+                  <dd className="font-mono text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                    $COP{copPerPhp(fxRates).toLocaleString('es-CO', { maximumFractionDigits: 2 })}
+                  </dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3 px-3 py-2">
+                  <dt className="text-xs text-zinc-500 dark:text-zinc-400">$COP1 =</dt>
+                  <dd className="font-mono text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                    &#8369;{phpPerCop(fxRates).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
+                  </dd>
+                </div>
+              </dl>
+
+              <p className="mt-auto text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+                USD is the anchor. This pair is computed from the two rates beside it, never set
+                directly.
               </p>
+            </section>
             </div>
 
             {hourlyRatesError && (
@@ -11156,54 +11412,8 @@ export default function PayrollWizard({
               </div>
             )}
 
-            {/* Warning banner for employees missing rates — expandable list */}
-            {(() => {
-              if (initialCalcDataLoading) return null;
-              const missingRows = effectiveCalcResults.filter(r => r.regularRate == null);
-              if (missingRows.length === 0 || effectiveCalcResults.length === 0) return null;
-              return (
-                <details className="group rounded-lg border border-amber-400/40 bg-amber-50/70 dark:border-amber-600/30 dark:bg-amber-950/20">
-                  <summary className="flex cursor-pointer select-none list-none items-center gap-2.5 px-4 py-3 [&::-webkit-details-marker]:hidden">
-                    <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
-                    <span className="flex-1 text-sm text-amber-900 dark:text-amber-200">
-                      <span className="font-semibold">{missingRows.length} employee{missingRows.length !== 1 ? 's' : ''}</span>
-                      {' '}missing rates &mdash; pay cannot be calculated
-                    </span>
-                    <ChevronRight className="h-4 w-4 shrink-0 text-amber-500 transition-transform group-open:rotate-90" />
-                  </summary>
-                  <div className="border-t border-amber-400/30 px-4 py-3 dark:border-amber-600/20">
-                    <p className="mb-2.5 text-xs text-amber-800/80 dark:text-amber-300/70">
-                      No matching row found in <span className="font-mono">employee_hourly_rates</span> for these Hubstaff emails.
-                      Add their rates in Supabase to fix.
-                    </p>
-                    <div className="overflow-hidden rounded-lg border border-amber-300/50 dark:border-amber-700/30">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="border-b border-amber-300/40 bg-amber-100/60 dark:border-amber-700/20 dark:bg-amber-900/20">
-                            <th className="px-3 py-2 text-left font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">Name</th>
-                            <th className="px-3 py-2 text-left font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">Hubstaff Email</th>
-                            <th className="px-3 py-2 text-right font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">Hours</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-amber-200/50 dark:divide-amber-800/20">
-                          {missingRows.map(r => (
-                            <tr key={r.email} className="bg-white/60 dark:bg-zinc-950/30">
-                              <td className="px-3 py-2 font-medium text-zinc-800 dark:text-zinc-200">
-                                {r.name || <span className="italic text-zinc-400">Unknown</span>}
-                              </td>
-                              <td className="px-3 py-2 font-mono text-zinc-600 dark:text-zinc-400">{r.email}</td>
-                              <td className="px-3 py-2 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400">
-                                {r.totalHours.toFixed(2)}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </details>
-              );
-            })()}
+            {/* The missing-rate list now lives behind the amber icon in the step
+                header — see the StepInfoButton beside the title. */}
 
             {initialCalcDataLoading ? (
               <div

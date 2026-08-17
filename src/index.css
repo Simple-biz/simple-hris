@@ -817,6 +817,12 @@
   *::after {
     transition: none !important;
   }
+
+  /* Base UI popovers animate via tw-animate keyframes, not transitions, so the
+     rule above does not reach them. Popups appear and leave instantly instead. */
+  [data-slot="popover-content"] {
+    animation: none !important;
+  }
 }
 
 /* ==========================================================================
