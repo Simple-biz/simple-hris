@@ -59,6 +59,17 @@ import {
   indexHourlyRatesByEmail,
 } from '@/lib/supabase/employee-hourly-rates';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+import { selectAllPaged } from '@/lib/supabase/select-all-paged';
+import {
+  ACTIVITY_ACTIONS,
+  ACTIVITY_WINDOW_MS,
+  KPI_SUBMISSION_ACTIONS,
+  buildActivityLines,
+  latestKpiSubmissionByDept,
+  type ActivityAuditRow,
+  type KpiSubmissionAttribution,
+  type ReadinessActivityLine,
+} from '@/lib/payroll/readiness-activity';
 import { loadPeopleRateContext, resolvePeopleRate } from '@/lib/people/people-roster';
 import {
   fetchHubstaffRowsOrdered,
@@ -155,6 +166,17 @@ export interface ReadinessKpiDept {
   updatedAt: string | null;
   /** Who marked it (locked_by), when known. */
   lockedBy: string | null;
+  /** Who last submitted (Mark Ready / Lock / reopen) this dept-week to
+   *  Accounting — the `payroll.kpi.*` audit trail's VERIFIED session actor.
+   *  Weeks predating the ~2026-07-25 trail fall back to the status row's
+   *  `locked_by`, with NO timestamp claimed (submittedAt stays null rather
+   *  than guessing off updated_at, which any later entry write moves). */
+  submittedBy?: string | null;
+  /** ISO instant of that submission event (the audit row's created_at). */
+  submittedAt?: string | null;
+  /** The write's source label ("Manager KPI tab" / "Payroll Wizard
+   *  (Readiness)"), when the audit row recorded one. */
+  submittedVia?: string | null;
 }
 
 export interface ReadinessMissingRate {
@@ -282,6 +304,12 @@ export interface PayrollReadiness {
   wizardSetup: WizardSetup;
   /** The blocker-weighted readiness score (0–100) + its breakdown. */
   score: ReadinessScore;
+  /** "Recent changes" feed for the pane's bottom strip: allowlisted audited
+   *  writes (rates / bank / KPI / People tab) from the last 15 minutes, newest
+   *  first, capped — see readiness-activity.ts. Informational only: never a
+   *  score input, and a failed audit read yields [] silently (a missing feed
+   *  doesn't flatter the dashboard, so it stays out of `degraded`). */
+  activity: ReadinessActivityLine[];
 }
 
 // ── Week resolution ─────────────────────────────────────────────────────────
@@ -1729,6 +1757,66 @@ async function buildWizardSetup(
   return { setup, degraded };
 }
 
+// ── Activity feed + KPI submission attribution (audit reads) ─────────────────
+
+const AUDIT_ROW_SELECT = 'action, user_name, created_at, details';
+
+/**
+ * Best-effort audit reads powering the pane's bottom activity feed and the
+ * KPI rows' "Submitted by … ·  …" attribution. Render-only over rows the write
+ * paths ALREADY produce — no new tables, no new audit actions (the Processing
+ * Narrative's invariant). A failure returns nulls: the feed goes empty and
+ * attribution falls back to `locked_by`, deliberately WITHOUT joining
+ * `degraded[]` — that list exists for failures that flatter the score, and
+ * neither of these touches the score at all.
+ */
+async function loadReadinessAuditRows(weekStart: string): Promise<{
+  feed: ActivityAuditRow[] | null;
+  kpiEvents: ActivityAuditRow[] | null;
+}> {
+  try {
+    const supabase = createSupabaseServiceRoleClient();
+    if (!supabase) return { feed: null, kpiEvents: null };
+    const nowMs = Date.now();
+    const feedSince = new Date(nowMs - ACTIVITY_WINDOW_MS).toISOString();
+    // The KPI query's created_at bound exists only to keep the read small —
+    // the REAL period match happens in latestKpiSubmissionByDept against
+    // details.period_start (jsonb; filtering it server-side would abandon the
+    // created_at index). Two days of slack because weekStart is a Manila-local
+    // date key while created_at is UTC (Manila is ahead of UTC, so the local
+    // period opens before `<weekStart>T00:00:00Z`).
+    const kpiSince = new Date(Date.parse(`${weekStart}T00:00:00.000Z`) - 2 * 24 * 3600 * 1000);
+    const [feedRes, kpiRes] = await Promise.all([
+      selectAllPaged<ActivityAuditRow>((from, to) =>
+        supabase
+          .from('audit_log')
+          .select(AUDIT_ROW_SELECT)
+          .in('action', ACTIVITY_ACTIONS)
+          .gte('created_at', feedSince)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, to),
+      ),
+      selectAllPaged<ActivityAuditRow>((from, to) =>
+        supabase
+          .from('audit_log')
+          .select(AUDIT_ROW_SELECT)
+          .in('action', [...KPI_SUBMISSION_ACTIONS])
+          .gte('created_at', kpiSince.toISOString())
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to),
+      ),
+    ]);
+    return {
+      feed: feedRes.error ? null : feedRes.rows,
+      kpiEvents: kpiRes.error ? null : kpiRes.rows,
+    };
+  } catch {
+    return { feed: null, kpiEvents: null };
+  }
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 
 /**
@@ -1768,6 +1856,7 @@ export async function getPayrollReadiness(
     offboardDateByEmail,
     contractorEmails,
     bankExemptByIdentity,
+    auditRows,
   ] = await Promise.all([
     resolvedFile
       ? getAppSetting(deptPayPausedSettingKey(resolvedFile)).catch(() => undefined)
@@ -1781,6 +1870,7 @@ export async function getPayrollReadiness(
     loadOffboardDatesByEmail(),
     loadContractorEmails(),
     loadBankExemptions(weekStart),
+    loadReadinessAuditRows(weekStart),
   ]);
 
   const degraded: string[] = [...weekDegraded, ...exceptionsRes.degraded];
@@ -1839,6 +1929,29 @@ export async function getPayrollReadiness(
       contractorEmails,
     ),
   ]);
+  // KPI submission attribution: who last marked each dept-week ready/locked,
+  // from the audit trail's verified actor. A dept with no audit row (the trail
+  // started ~2026-07-25) falls back to the status row's locked_by and claims
+  // NO timestamp. The bottom-of-pane activity feed maps off the same audit
+  // load; a failed read produced nulls above, which reads here as "no
+  // attribution, empty feed" — never an error.
+  const kpiAttribution: Map<string, KpiSubmissionAttribution> = auditRows.kpiEvents
+    ? latestKpiSubmissionByDept(auditRows.kpiEvents, weekStart)
+    : new Map();
+  for (const d of kpi) {
+    const a = kpiAttribution.get(d.key);
+    if (a) {
+      d.submittedBy = a.by;
+      d.submittedAt = a.at;
+      d.submittedVia = a.via;
+    } else if (d.lockedBy) {
+      d.submittedBy = d.lockedBy;
+    }
+  }
+  const activity: ReadinessActivityLine[] = auditRows.feed
+    ? buildActivityLines(auditRows.feed, Date.now(), new Map(kpi.map((d) => [d.key, d.name])))
+    : [];
+
   // The bank check runs AFTER the rate check on purpose: it needs the week's
   // Hubstaff identity set (`payrollEmails`) both to split hard blockers from
   // roster hygiene and to keep an off-boarded person listed while their final
@@ -1938,5 +2051,6 @@ export async function getPayrollReadiness(
     degraded,
     wizardSetup: wizardSetupRes.setup,
     score,
+    activity,
   };
 }

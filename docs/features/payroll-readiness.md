@@ -602,6 +602,47 @@ send `READINESS_SOURCE` (`payroll_wizard_readiness`, label "Payroll Wizard
   as `payroll.kpi.marked_ready` / `.locked` / `.reopened` with
   `source_label`; score-saves are deliberately not audited (volume).
 
+## Activity feed + KPI submission attribution (2026-08-18)
+
+Two readers over the audit trail the section above already produces — built to
+Kane's asks "a text … just for us to know if someone is fixing data" and "who
+submitted the KPI Scores to Accounting date and timestamp". Blueprint answers
+locked: **audited saves only** (Q1a — no presence, no unattributed scoring
+pulse), **15-minute window / 8 lines** (Q2), **People-tab profile edits
+included** (Q3).
+
+- **Render-only over `audit_log`** — the Processing Narrative's invariant
+  holds here too: no new tables, **no new audit actions**. The pure mapping
+  lives in `src/lib/payroll/readiness-activity.ts` (unit-tested); the two
+  best-effort reads ride `getPayrollReadiness`'s existing parallel fetch
+  (`loadReadinessAuditRows`).
+- **The feed** (`activity` on the payload → `ReadinessActivityFeed`, pinned
+  under the pane's scroll region): allowlisted actions only — `payroll.rate.set`,
+  `employee.rates.revoke`, `bank_update.saved`, `people.banking.updated`,
+  `people.bank_info.requested`, `people.profile.updated`,
+  `department_transfer.requested`, `payroll.kpi.*`. Lines are **fixed
+  templates** — `details` is never printed, so rate amounts and bank fields
+  can't leak into a pane that everyone with the view grant can read. It shows
+  SAVES, not keystrokes: KPI score-saves are deliberately unaudited (see Audit
+  trail above), so a manager mid-scoring surfaces only at Mark Ready / Lock.
+  The empty state renders instead of vanishing — "nothing is happening" is
+  also an answer.
+- **KPI attribution** (`submittedBy/submittedAt/submittedVia` on
+  `ReadinessKpiDept`): the latest `payroll.kpi.*` event per dept for the
+  period in view, actor = the **verified session** (never the client-supplied
+  `locked_by`). The period match runs client-side against
+  `details.period_start` — filtering the jsonb server-side would abandon the
+  `created_at` index; the query's `created_at` bound is period-start **minus
+  two days** because the audit stamp is UTC while the period key is
+  Manila-local (ahead of UTC). Weeks predating the ~2026-07-25 trail fall back
+  to the status row's `locked_by` and claim **no timestamp** (never guessed
+  off `updated_at`, which any later entry write moves). The row renders "via
+  …" only for a non-default origin (a Readiness-tab fix).
+- **Failures are silent by design**: a broken audit read yields an empty feed
+  and no attribution, and is deliberately **not** in `degraded[]` — that list
+  exists for failures that flatter the score, and neither reader touches the
+  score at all.
+
 ## Verification harness
 
 `scripts/verify-readiness.mts` runs the **real** `getPayrollReadiness()` — the

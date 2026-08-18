@@ -99,7 +99,8 @@ import {
   payWeekStartFromSourceFile,
   type WizardCycleDetail,
 } from "@/lib/payroll/adjustment-bridge";
-import { READINESS_SOURCE } from "@/lib/payroll/readiness-audit";
+import { MANAGER_KPI_SOURCE, READINESS_SOURCE, sourceLabel } from "@/lib/payroll/readiness-audit";
+import type { ReadinessActivityLine } from "@/lib/payroll/readiness-activity";
 import { readinessRingColor } from "@/lib/payroll/readiness-ring-color";
 import {
   getTabCache,
@@ -2103,6 +2104,24 @@ function KpiDeptRow({
             transition={{ duration: reduceMotion ? 0 : 0.5, ease: EASE }}
           />
         </div>
+        {/* Who sent this week to Accounting (Kane, 2026-08-18) — the audit
+            trail's verified actor. A pre-trail week (~before Jul 25) may know
+            the who (locked_by fallback) but not the when — no timestamp is
+            invented for it. "via" renders only for a non-default origin (a
+            Readiness-tab fix), since "via Manager KPI tab" is the norm. */}
+        {(dept.status === "ready" || dept.status === "locked") && dept.submittedBy && (
+          <div
+            className="mt-0.5 truncate text-[9.5px] text-zinc-400 dark:text-zinc-500"
+            title={dept.submittedAt ? new Date(dept.submittedAt).toLocaleString() : undefined}
+          >
+            Submitted by{" "}
+            <span className="font-medium text-zinc-500 dark:text-zinc-400">{dept.submittedBy}</span>
+            {dept.submittedAt ? ` · ${formatSubmittedAt(dept.submittedAt)}` : ""}
+            {dept.submittedVia && dept.submittedVia !== sourceLabel(MANAGER_KPI_SOURCE)
+              ? ` · via ${dept.submittedVia}`
+              : ""}
+          </div>
+        )}
       </div>
       <div className="flex shrink-0 flex-col items-end gap-0.5">
         <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] ${pill.cls}`}>
@@ -2138,6 +2157,69 @@ function KpiDeptRow({
     );
   }
   return <div className={rowCls}>{inner}</div>;
+}
+
+/** "Aug 18, 2:31 PM" for the KPI rows' submitted stamp. Falls back to the raw
+ *  ISO string rather than rendering an Invalid Date. */
+function formatSubmittedAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/**
+ * Bottom-of-pane "recent changes" strip (Kane, 2026-08-18): audited saves from
+ * the last 15 minutes — rates (Payment Catalog), bank/payout, People-tab
+ * edits, KPI submissions — so Accounting can tell someone is mid-fix while
+ * staring at the numbers. Lines arrive fully composed from the server
+ * (readiness-activity.ts) and are informational only: audited SAVES, not
+ * presence — a manager mid-scoring shows up when they Mark Ready, because KPI
+ * score-saves are deliberately not audited. Renders its empty state rather
+ * than vanishing, so "nothing is happening" is also an answer.
+ */
+function ReadinessActivityFeed({ lines }: { lines: ReadinessActivityLine[] }) {
+  const toneCls: Record<ReadinessActivityLine["surface"], string> = {
+    kpi: "bg-sky-400",
+    rates: "bg-amber-400",
+    bank: "bg-emerald-400",
+    people: "bg-violet-400",
+  };
+  return (
+    <div className="mt-2 shrink-0 rounded-lg border border-orange-100 bg-orange-50/40 px-2.5 py-1.5 dark:border-blue-950/60 dark:bg-blue-950/20">
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <Zap aria-hidden className="h-3 w-3 text-orange-400" />
+        Recent changes · last 15 min
+      </div>
+      {lines.length === 0 ? (
+        <p className="mt-0.5 text-[10.5px] text-zinc-400 dark:text-zinc-500">
+          No payroll data changes in the last 15 minutes.
+        </p>
+      ) : (
+        <ul className="mt-1 max-h-24 space-y-0.5 overflow-y-auto">
+          {lines.map((l, i) => (
+            <li
+              key={`${l.at}-${i}`}
+              className="flex items-center gap-1.5 text-[10.5px] text-zinc-500 dark:text-zinc-400"
+            >
+              <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${toneCls[l.surface]}`} />
+              <span className="shrink-0 tabular-nums text-zinc-400 dark:text-zinc-500">
+                {new Date(l.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+              </span>
+              <span className="min-w-0 truncate">
+                <span className="font-medium text-zinc-600 dark:text-zinc-300">{l.actor ?? "Someone"}</span>{" "}
+                {l.label}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 /** A compact person row for the missing-rate / missing-bank / exceptions lists. */
@@ -3989,6 +4071,13 @@ function PayrollReadinessGlance({
         managers submit and details are fixed.
       </p>
       </div>
+
+      {/* Recent-changes strip — pinned under the scroller so "is someone fixing
+          data right now?" is answerable without scrolling. Server-composed off
+          the audit trail; refreshes with the pane's normal load cycle
+          (Realtime + 30s poll + focus). `?? []` guards a cached snapshot from
+          before the field shipped. */}
+      <ReadinessActivityFeed lines={data.activity ?? []} />
 
       {/* Inline fixers — the realtime subscription refreshes the lists on save
           too, but reload explicitly so the row clears the moment it's fixed. */}
