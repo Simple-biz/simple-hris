@@ -258,6 +258,20 @@ prorate through dated history when it is catalog-consistent (terminal history ra
 and keep the flat week on any disagreement. See
 `docs/features/paystub-dispatch.md#mid-week-proration--2026-07-30`.
 
+**Ruling 2026-08-18 — the rate-history row must carry the TRANSFER date.** For a transfer to
+actually prorate, Accounting's Payment Catalog save must be dated the transfer's effective date —
+and since 2026-08-18 that date is persisted **verbatim** (`insertRateHistoryRow` used to snap every
+effective date back to the pay week's Sunday, which rewrote the correctly-typed 08-13/08-14
+transfer dates of 23 Lead Gen → HSL moves to 2026-08-09 and flattened all 23 weeks to one rate; the
+snap and its module `pay-week-effective-date.ts` are deleted). The engines also need the person's
+PRE-transfer rate as a dated row at/before the week start — with only the new-rate row in history,
+earlier days resolve through the fallback to the SAME new rate and the split silently collapses
+(the Uriel Matias failure mode). The 2026-08-09 week was repaired by
+`scripts/fix-midweek-transfer-effective-dates.mts` (re-dated 23 rows, backfilled ₱175 baselines,
+deleted cheskac@'s same-date duplicates). **Still OPEN:** applying a transfer writes NO rate-history
+row — Accounting must save the new rate in the Payment Catalog by hand, dated the transfer date;
+wiring the transfer-apply route to write the dated row itself would close the class.
+
 **Transfers INTO HSL also day-scope the Weekend Hours treatment** (2026-07-30): the +₱15/h Sat/Sun
 premium + weekend itemization start on the transfer's effective date — inside the transfer week the
 treatment covers only weekend days on/after that date, and a label that moved early (effective date

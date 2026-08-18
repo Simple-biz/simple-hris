@@ -168,25 +168,11 @@ test('orphan pay is additive and does not affect hours or overtime', () => {
   );
 });
 
-test('an explicit mid-week transition adds hours at the pre-transition rate', () => {
-  // The sheet models a rate change as its own AK x AL line rather than re-resolving
-  // rates per day — which is what stranded a Sunday on a stale rate in the old engine.
-  const p = computeHoganWeekPay({
-    mfHours: 20,
-    weHours: 0,
-    regularRatePhp: 355,
-    midweek: { hours: 14.28, ratePhp: 175 },
-  });
-  assert.equal(p.midweekPayPhp, 2499);
-  assert.equal(p.totalHourlyPayPhp, Math.round((20 * 355 + 2499) * 100) / 100);
-});
-
-test('a null or absent mid-week term contributes nothing', () => {
-  const a = computeHoganWeekPay({ mfHours: 10, weHours: 0, regularRatePhp: 200 });
-  const b = computeHoganWeekPay({ mfHours: 10, weHours: 0, regularRatePhp: 200, midweek: null });
-  assert.equal(a.midweekPayPhp, 0);
-  assert.equal(b.totalHourlyPayPhp, a.totalHourlyPayPhp);
-});
+// The sheet's AK/AL mid-week transition columns are deliberately NOT modeled here
+// (ruling 2026-08-18): they exclude the pre-transition hours from the sheet's OT
+// threshold, underpaying transition weeks against the documented HRIS rule that
+// OT counts ALL hours worked. Mid-week rate changes price through
+// priceChangedWeek2dp (prorate-mid-period.ts) — see its tests.
 
 test('hours are rounded to 2dp before pricing, matching the sheet', () => {
   // The sheet stores 2dp hours and multiplies those; the old engine multiplied whole

@@ -119,6 +119,126 @@ export interface MidPeriodProrationResult {
   };
 }
 
+/** One distinct regular rate's raw seconds within a changed week. `weekendSec`
+ *  is the premium-bearing (in-scope HSL Sat+Sun) share of the same seconds;
+ *  out-of-scope weekend time (before an `hslFrom` transfer date) belongs in
+ *  `weekdaySec` — it pays plain rate. */
+export interface ChangedWeekRateLeg {
+  ratePhp: number;
+  weekdaySec: number;
+  weekendSec: number;
+}
+
+/** Non-HSL only: a chronological past-cap bucket at the stored OT rate. */
+export interface ChangedWeekOtLeg {
+  ratePhp: number;
+  sec: number;
+}
+
+/**
+ * Price a week whose rate genuinely CHANGED mid-period, at the statement's own
+ * granularity: every leg is 2dp HOURS × rate (Kane, 2026-08-18 — "when
+ * multiplying, only do 2 decimals"), so the per-rate basis line a paystub
+ * prints multiplies out to the money to the centavo. Line totals are the sum
+ * of the displayed legs — never a raw-seconds figure the reader can't rebuild.
+ *
+ * HSL overtime on a changed week (ruling 2026-08-18, "doc stands"): the 40h
+ * threshold counts ALL hours worked that pay week — the pre-transfer days
+ * included. (The Hogan sheet's AK/AL transition columns exclude the old-rate
+ * hours from its OT threshold; that reading was REJECTED — HRIS deliberately
+ * pays more than the sheet on transition weeks.) OT hours are derived from the
+ * rounded totals exactly like `computeHoganWeekPay` (`r2(total) − 40`) and are
+ * attributed to rates newest-first — past-cap hours are chronologically the
+ * last hours of the week, which on a transfer/raise sit at the newest rate.
+ *
+ * Shared by BOTH engines (the wizard's `proratePayForMidPeriodChange` and
+ * Dispatch's `computeProratedRowPay`) so their changed-week centavos can never
+ * drift.
+ */
+export function priceChangedWeek2dp(params: {
+  isHsl: boolean;
+  /** Per-rate legs in first-use (pay) order. */
+  legs: ChangedWeekRateLeg[];
+  /** Non-HSL stored-rate OT buckets. Ignored for HSL (differential derived). */
+  otLegs: ChangedWeekOtLeg[];
+  weekendPremiumPhp?: number;
+}): {
+  regularPay: number;
+  otPay: number;
+  regularSegments: ProrationSegment[];
+  otSegments: ProrationSegment[];
+  weekendRegularSegments: ProrationSegment[];
+  weekendRegularHours: number;
+  weekendRegularPay: number;
+} {
+  const premium = params.weekendPremiumPhp ?? HSL_WEEKEND_PREMIUM_PHP;
+  const legs = params.legs
+    .map((l) => {
+      const wd = round2(l.weekdaySec / 3600);
+      const we = round2(l.weekendSec / 3600);
+      const wdPay = round2(wd * l.ratePhp);
+      const wePay = round2(we * round2(l.ratePhp + premium));
+      return {
+        rate: l.ratePhp,
+        we,
+        wePay,
+        hours: round2(wd + we),
+        pay: round2(wdPay + wePay),
+      };
+    })
+    .filter((l) => l.hours > 0);
+
+  const regularPay = round2(legs.reduce((s, l) => s + l.pay, 0));
+  const regularSegments: ProrationSegment[] = legs.map((l) => ({
+    ratePhp: l.rate,
+    hours: l.hours,
+    payPhp: l.pay,
+  }));
+  const weekendRegularSegments: ProrationSegment[] = legs
+    .filter((l) => l.we > 0)
+    .map((l) => ({ ratePhp: l.rate, hours: l.we, payPhp: l.wePay }));
+  const weekendRegularHours = round2(legs.reduce((s, l) => s + l.we, 0));
+  const weekendRegularPay = round2(legs.reduce((s, l) => s + l.wePay, 0));
+
+  let otSegments: ProrationSegment[];
+  if (params.isHsl) {
+    // Sheet-form OT derivation on the ROUNDED totals (all rates, all 7 days),
+    // attributed newest-rate-first. Walking legs in reverse first-use order
+    // matches chronology for the monotone changes transfers/raises produce; a
+    // pathological A→B→A week attributes OT to the most recently introduced
+    // rate first, which is still the newest money in the week.
+    const totalHours = round2(legs.reduce((s, l) => s + l.hours, 0));
+    let otLeft = round2(Math.max(0, totalHours - REG_WEEK_CAP_SEC / 3600));
+    const reversed: ProrationSegment[] = [];
+    for (let i = legs.length - 1; i >= 0 && otLeft > 0; i--) {
+      const take = round2(Math.min(otLeft, legs[i].hours));
+      if (take <= 0) continue;
+      const otRate = round2(legs[i].rate * OT_DIFFERENTIAL_MULTIPLIER);
+      reversed.push({ ratePhp: otRate, hours: take, payPhp: round2(take * otRate) });
+      otLeft = round2(otLeft - take);
+    }
+    otSegments = reversed.reverse();
+  } else {
+    otSegments = params.otLegs
+      .map((l) => {
+        const h = round2(l.sec / 3600);
+        return { ratePhp: l.ratePhp, hours: h, payPhp: round2(h * l.ratePhp) };
+      })
+      .filter((s) => s.hours > 0);
+  }
+  const otPay = round2(otSegments.reduce((s, x) => s + x.payPhp, 0));
+
+  return {
+    regularPay,
+    otPay,
+    regularSegments,
+    otSegments,
+    weekendRegularSegments,
+    weekendRegularHours,
+    weekendRegularPay,
+  };
+}
+
 /**
  * Per-day prorated pay across a MID-PERIOD rate change. Returns null when the
  * resolved per-day (reg,ot) rate is CONSTANT across the period AND equals the
@@ -324,6 +444,48 @@ export function proratePayForMidPeriodChange(params: {
     };
   }
 
+  // A GENUINE mid-period change prices at the statement's granularity: 2dp
+  // hours × rate per leg, HSL OT from the rounded totals (all hours count —
+  // ruling 2026-08-18). The displayed basis line then multiplies out to the
+  // money exactly, instead of drifting centavos from a raw-seconds sum.
+  if (change !== null) {
+    const wkndSecByRate = new Map(wkndRegSegs.map((s) => [s.rate, s.sec]));
+    const priced = priceChangedWeek2dp({
+      isHsl,
+      legs: regSegs.map((s) => {
+        const weekendSec = wkndSecByRate.get(s.rate) ?? 0;
+        return { ratePhp: s.rate, weekdaySec: s.sec - weekendSec, weekendSec };
+      }),
+      otLegs: otSegs.map((s) => ({ ratePhp: s.rate, sec: s.sec })),
+    });
+    return {
+      regularPay: anyReg ? priced.regularPay : null,
+      otPay: anyOt ? priced.otPay : null,
+      change,
+      regularRatesUsed,
+      // HSL OT is attributed from the rounded totals above, so report the
+      // differential rates that attribution actually paid at.
+      otRatesUsed: isHsl
+        ? priced.otSegments.map((s) => s.ratePhp).filter((v, i, a) => a.indexOf(v) === i)
+        : otRatesUsed,
+      weekend: {
+        regularHours: priced.weekendRegularHours,
+        otHours: 0,
+        regularPay: priced.weekendRegularPay,
+        otPay: 0,
+      },
+      segments: {
+        regular: priced.regularSegments,
+        ot: priced.otSegments,
+        weekendRegular: priced.weekendRegularSegments,
+        weekendOt: [],
+      },
+    };
+  }
+
+  // Constant history rate overriding a stale cache (non-HSL — the HSL twin
+  // returned the sheet computation above): keep the original raw-seconds
+  // accumulation, byte-identical to what this path always staged.
   return {
     regularPay: anyReg ? Math.round(regularPayPHP * 100) / 100 : null,
     otPay: anyOt ? Math.round(otPayPHP * 100) / 100 : null,

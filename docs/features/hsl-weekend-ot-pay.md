@@ -18,6 +18,19 @@ Rounding is the sheet's: each leg = 2dp **hours** × rate, rounded per leg, legs
 summed. Whole-seconds math produces different centavos (₱16,116.02 on the case
 above) and is wrong by definition — the sheet is the payment authority.
 
+**Transition weeks (ruling 2026-08-18, Kane — "doc stands / moving away from the
+sheet"):** a week whose rate changed mid-period (a transfer, a dated raise)
+keeps the three-leg form **per rate** — every leg 2dp hours × that leg's rate
+(`priceChangedWeek2dp`, prorate-mid-period.ts) — and the OT Differential's 40h
+threshold counts **ALL hours worked that week, pre-change days included**,
+derived from the rounded totals and attributed newest-rate-first. The sheet
+itself prices transitions through its AK/AL columns, which EXCLUDE the old-rate
+hours from `AF = max(0, AB + AD − 40)` — that reading was **rejected**: HRIS
+deliberately pays more than the sheet on transition weeks (₱1,534.60 across the
+23-person 2026-08-09 week), so a sheet-vs-HRIS reconciliation diff on a
+transition week's OT is the ruling working, not a bug. AK/AL are deliberately
+NOT implemented in `hogan-week-pay.ts`.
+
 ## History — do not resurrect either predecessor
 
 - **Pre-2026-08-07:** weekend hours past the cap paid `otRate + 15` on a

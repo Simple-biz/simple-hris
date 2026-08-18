@@ -79,11 +79,17 @@ async function syncRateHistory(
   // currencies.
   if (s.currency !== 'USD') {
     if (supabase) {
+      // Supersede rather than stack: clear any still-pending future-dated rows
+      // AND any existing row on the SAME effective date. The same-date clause
+      // matters for back-dated saves — `gte(today)` never matches a past
+      // effective date, which is how cheskac@ accumulated three rows all dated
+      // 2026-08-09 (whichever the resolver's unstable same-date ordering
+      // returned first won). One row per (email, effective_from).
       await supabase
         .from('employee_rate_history')
         .delete()
         .eq('employee_email', email)
-        .gte('effective_from', todayIso);
+        .or(`effective_from.gte.${todayIso},effective_from.eq.${effectiveIso}`);
     }
 
     await insertRateHistoryRow({

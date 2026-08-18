@@ -14,11 +14,11 @@ export {
   type CatalogNativeRate,
 } from "./rate-history-resolve";
 import { buildRateHistoryByEmail, type RateHistoryByEmail } from "./rate-history-resolve";
-import {
-  snapEffectiveFromToPayWeekStart,
-  toLocalIsoDate,
-  type PayWeekModel,
-} from "./pay-week-effective-date";
+
+/** `YYYY-MM-DD` for a local date — never `toISOString()`, which shifts across timezones. */
+function toLocalIsoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 /**
  * Fetch the entire rate-history table once and index it by email. Caller is
@@ -55,20 +55,19 @@ export async function fetchAllRateHistory(): Promise<RateHistoryByEmail> {
 /**
  * Insert a new history row. Email is lowercased server-side via trigger.
  *
- * `effectiveFrom` is SNAPPED BACK to the start of the pay week that contains it
- * (Sunday, per {@link snapEffectiveFromToPayWeekStart}). Rates are resolved PER DAY by
- * `resolveRateAsOfDate`, so an effective date landing mid-week leaves the earlier days of
- * that same pay week resolving to the OLD rate — a silent partial-week underpayment. The
- * common way in is callers defaulting `effectiveFrom` to "today", which is whatever
- * weekday the raise happened to be entered on.
+ * `effectiveFrom` is persisted VERBATIM (ruling 2026-08-18 — "doc stands").
+ * A mid-week effective date is a real, meaningful event: a department transfer
+ * or dated raise landing inside the pay week makes both engines prorate the
+ * week per day and the paystub disclose the split (amber "Prorated" chip +
+ * per-rate basis line — see prorate-mid-period.ts / paystub-dispatch.md).
  *
- * A 2026 sweep found 64 stranded changes worth ₱44,125.52 this way — including a raise
- * entered eff Mon 2026-07-27 that left Sun 2026-07-26 paying the old rate, compounded for
- * HSL because the stranded day was a weekend day carrying the +₱15/h premium on the old
- * base. See scripts/audit-midweek-effective-date-underpay.mts.
- *
- * The Google Sheet Accounting pays from prices the whole week at the new rate, so this
- * snap is also what makes the engine agree with the sheet.
+ * This function used to SNAP the date back to the pay week's Sunday
+ * (pay-week-effective-date.ts, now deleted) on the theory that rate changes
+ * are week-grained. That snap silently rewrote the 2026-08-13/14 transfer
+ * dates Accounting had typed for 23 Lead Gen → HSL moves to 2026-08-09,
+ * flattening every one of those weeks to a single rate and erasing the
+ * proration the paystubs were built to explain. A whole-week rate change is
+ * still expressible — enter it effective on the pay week's start date.
  */
 export async function insertRateHistoryRow(args: {
   email: string;
@@ -77,34 +76,23 @@ export async function insertRateHistoryRow(args: {
   effectiveFrom: Date;
   createdBy?: string;
   note?: string;
-  /** Pay-week shape. Defaults to Sun→Sat, which is every department post-cutover. */
-  weekModel?: PayWeekModel;
-}): Promise<{ error: string | null; effectiveFrom: string; snappedFromMidWeek: boolean }> {
-  const snap = snapEffectiveFromToPayWeekStart(args.effectiveFrom, args.weekModel ?? 'sun_sat');
-  if (snap.moved) {
-    console.warn(
-      `[rate-history] effective_from snapped to pay-week start for ${args.email}: ` +
-        `${toLocalIsoDate(args.effectiveFrom)} -> ${snap.iso} (back ${snap.daysMoved} day(s)); ` +
-        'a mid-week effective date would strand the earlier days of that week on the old rate.',
-    );
-  }
-
+}): Promise<{ error: string | null; effectiveFrom: string }> {
+  const iso = toLocalIsoDate(args.effectiveFrom);
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) {
-    return { error: 'supabase client unavailable', effectiveFrom: snap.iso, snappedFromMidWeek: snap.moved };
+    return { error: 'supabase client unavailable', effectiveFrom: iso };
   }
 
   const { error } = await supabase.from('employee_rate_history').insert({
     employee_email: args.email,
     regular_rate: args.regularRate == null ? null : String(args.regularRate),
     ot_rate: args.otRate == null ? null : String(args.otRate),
-    effective_from: snap.iso,
+    effective_from: iso,
     note: args.note ?? null,
     created_by: args.createdBy ?? null,
   });
   return {
     error: error?.message ?? null,
-    effectiveFrom: snap.iso,
-    snappedFromMidWeek: snap.moved,
+    effectiveFrom: iso,
   };
 }

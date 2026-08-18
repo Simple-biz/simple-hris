@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { proratePayForMidPeriodChange } from './prorate-mid-period';
+import { priceChangedWeek2dp, proratePayForMidPeriodChange } from './prorate-mid-period';
 import {
   historyMatchesCatalogAsOf,
   type RateHistoryByEmail,
@@ -59,7 +59,7 @@ function transferResult() {
 
 // ── Pins: behavior that already shipped and must not move ───────────────────
 
-test('mid-week transfer pays old-rate days then new-rate days, rounded once', () => {
+test('mid-week transfer pays old-rate days then new-rate days, priced per 2dp leg', () => {
   const r = transferResult();
   assert.equal(r.regularPay, 8187.5);
   assert.equal(r.otPay, 703.13);
@@ -190,14 +190,17 @@ test('a catalog-consistent individual rate prorates through its own history', ()
     catalogRate: { currency: 'PHP', regular: 225, ot: 337.5 },
   });
   assert.ok(r, 'consistent catalog must not block the split');
-  assert.equal(r.regularPay, 8440.45);
-  assert.equal(r.otPay, 3176.34);
+  // 2dp-leg pricing (ruling 2026-08-18): each displayed hours × rate leg
+  // multiplies out to its money exactly — 7.94×175=1389.50, 10.85×210=2278.50,
+  // 21.21×225=4772.25 — and the line totals are the sums of the legs.
+  assert.equal(r.regularPay, 8440.25);
+  assert.equal(r.otPay, 3175.88);
   assert.deepEqual(r.segments.regular, [
-    { ratePhp: 175, hours: 7.94, payPhp: 1388.67 },
-    { ratePhp: 210, hours: 10.85, payPhp: 2278.97 },
-    { ratePhp: 225, hours: 21.21, payPhp: 4772.81 },
+    { ratePhp: 175, hours: 7.94, payPhp: 1389.5 },
+    { ratePhp: 210, hours: 10.85, payPhp: 2278.5 },
+    { ratePhp: 225, hours: 21.21, payPhp: 4772.25 },
   ]);
-  assert.deepEqual(r.segments.ot, [{ ratePhp: 337.5, hours: 9.41, payPhp: 3176.34 }]);
+  assert.deepEqual(r.segments.ot, [{ ratePhp: 337.5, hours: 9.41, payPhp: 3175.88 }]);
   assert.equal(r.change?.effectiveDate, '2026-07-21');
 });
 
@@ -439,4 +442,100 @@ test('HSL: a stored OT rate never moves money — only the regular rate does', (
     fallbackOt: 337.5, // cache says 1.5× — history's stored OT disagrees, but neither pays
   });
   assert.equal(constant, null);
+});
+
+// ── Ruling 2026-08-18 ("doc stands" — Kane): changed-week 2dp-leg pricing ────
+// A week whose rate genuinely changed mid-period prices every leg at 2dp
+// HOURS × rate, so the statement's per-rate basis line multiplies out to the
+// money exactly. HSL OT on a changed week counts ALL hours worked toward the
+// 40h threshold — pre-transfer days included. (The Hogan sheet's AK/AL
+// transition columns exclude the old-rate hours from its OT threshold; that
+// reading was REJECTED — HRIS deliberately pays more than the sheet here.)
+// Pinned on the real case that surfaced it: cheskac@simple.biz, pay week
+// Sun 2026-08-09 → Sat 2026-08-15, Lead Gen ₱175 → HSL Executive Guest
+// Services ₱355 effective Fri 2026-08-14.
+
+const hms = (h: number, m: number, s: number) => h * 3600 + m * 60 + s;
+
+const CHESKA_DAYS = [
+  { date: new Date(2026, 7, 10), seconds: hms(10, 6, 15) }, // Mon — Lead Gen
+  { date: new Date(2026, 7, 11), seconds: hms(9, 0, 42) }, // Tue — Lead Gen
+  { date: new Date(2026, 7, 12), seconds: hms(9, 0, 10) }, // Wed — Lead Gen
+  { date: new Date(2026, 7, 13), seconds: hms(9, 1, 2) }, // Thu — Lead Gen
+  { date: new Date(2026, 7, 14), seconds: hms(8, 8, 19) }, // Fri — HSL EGS
+];
+
+const CHESKA_HISTORY = historyMap([
+  { email: EMAIL, regularRate: 175, otRate: 262.5, effectiveFrom: new Date(2026, 7, 9) },
+  { email: EMAIL, regularRate: 355, otRate: 532.5, effectiveFrom: new Date(2026, 7, 14) },
+]);
+
+function cheskaResult() {
+  const r = proratePayForMidPeriodChange({
+    days: CHESKA_DAYS,
+    isHsl: true,
+    hslFrom: new Date(2026, 7, 14),
+    history: CHESKA_HISTORY,
+    histEmail: EMAIL,
+    fallbackReg: 355,
+    fallbackOt: 532.5,
+    catalogRate: { currency: 'PHP', regular: 355, ot: 532.5 },
+  });
+  assert.ok(r, 'a mid-week transfer with catalog-consistent history must prorate');
+  return r;
+}
+
+test('cheskac 2026-08-09 week: 4 Lead Gen days at ₱175, 1 HSL day at ₱355, legs at 2dp', () => {
+  const r = cheskaResult();
+  // 37.14h × 175 = 6,499.50 · 8.14h × 355 = 2,889.70 — exactly as displayed.
+  assert.deepEqual(r.segments.regular, [
+    { ratePhp: 175, hours: 37.14, payPhp: 6499.5 },
+    { ratePhp: 355, hours: 8.14, payPhp: 2889.7 },
+  ]);
+  assert.equal(r.regularPay, 9389.2);
+  assert.equal(r.change?.effectiveDate, '2026-08-14');
+});
+
+test('cheskac OT: the 40h threshold counts ALL hours — the Lead Gen days included', () => {
+  const r = cheskaResult();
+  // Rounded totals: 37.14 + 8.14 = 45.28h → 5.28h OT, all attributed to the
+  // newest rate (the past-cap hours are chronologically the Friday hours):
+  // 5.28 × (0.5 × 355 = 177.50) = ₱937.20.
+  assert.deepEqual(r.segments.ot, [{ ratePhp: 177.5, hours: 5.28, payPhp: 937.2 }]);
+  assert.equal(r.otPay, 937.2);
+  assert.deepEqual(r.otRatesUsed, [177.5]);
+  // No weekend hours were worked — nothing to carve.
+  assert.deepEqual(r.weekend, { regularHours: 0, otHours: 0, regularPay: 0, otPay: 0 });
+  assert.deepEqual(r.segments.weekendRegular, []);
+});
+
+test('changed-week legs multiply out to their money exactly (the 2dp invariant)', () => {
+  const r = cheskaResult();
+  const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+  for (const s of [...r.segments.regular, ...r.segments.ot]) {
+    assert.equal(s.payPhp, r2(s.hours * s.ratePhp), `${s.hours}h × ₱${s.ratePhp}`);
+  }
+  const sum = (xs: Array<{ payPhp: number }>) => r2(xs.reduce((a, x) => a + x.payPhp, 0));
+  assert.equal(sum(r.segments.regular), r.regularPay);
+  assert.equal(sum(r.segments.ot), r.otPay);
+});
+
+test('priceChangedWeek2dp: HSL OT spills into the older rate when the newest leg is smaller', () => {
+  // 39h at ₱175 then 3h at ₱355 → total 42h, OT 2h. The newest leg (3h) can
+  // absorb all 2h — but push it to 1h and the remaining 1h attributes to the
+  // ₱175 leg: OT must never be priced at a rate that has no hours left.
+  const spill = priceChangedWeek2dp({
+    isHsl: true,
+    legs: [
+      { ratePhp: 175, weekdaySec: 41 * 3600, weekendSec: 0 },
+      { ratePhp: 355, weekdaySec: 1 * 3600, weekendSec: 0 },
+    ],
+    otLegs: [],
+  });
+  // total 42h → OT 2h: 1h @ 177.5 (newest, capped by its leg) + 1h @ 87.5.
+  assert.deepEqual(spill.otSegments, [
+    { ratePhp: 87.5, hours: 1, payPhp: 87.5 },
+    { ratePhp: 177.5, hours: 1, payPhp: 177.5 },
+  ]);
+  assert.equal(spill.otPay, 265);
 });

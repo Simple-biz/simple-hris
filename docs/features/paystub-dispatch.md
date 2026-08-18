@@ -460,6 +460,33 @@ flat-at-catalog week, so a superseded rate can never resurrect. Audit who splits
 for a given week with `scripts/audit-catalog-history-conflicts.mjs`; conflicts need Accounting to
 align the structure (or delete the bogus history row), after which the week prorates on re-lock.
 
+**Ruling 2026-08-18 (Kane — "doc stands"): mid-week effective dates are real, and changed weeks
+price at 2dp.** Three consequences, shipped together after 23 Lead Gen → HSL transfers
+(eff 08-13/08-14) silently flattened to one rate:
+
+1. **`insertRateHistoryRow` persists `effective_from` verbatim.** It used to snap every date back
+   to the pay week's Sunday (`pay-week-effective-date.ts`, now **deleted**) on the theory that rate
+   changes are week-grained — which rewrote the transfer dates Accounting had correctly typed to
+   the week start and erased the proration this whole section exists to explain. A whole-week
+   change is still expressible: enter it effective on the week's start date.
+2. **A genuinely changed week prices every leg at 2dp HOURS × rate** (`priceChangedWeek2dp` in
+   `prorate-mid-period.ts`, shared verbatim by the wizard's `proratePayForMidPeriodChange` and
+   Dispatch's `computeProratedRowPay`): the per-rate basis line the statement prints multiplies out
+   to the money exactly, and line totals are the sums of the displayed legs. Constant-rate weeks
+   are untouched (HSL single-rate weeks already priced through `computeHoganWeekPay`). Expect the
+   2dp segment HOURS to sum up to 0.01h off the raw headline total — the money is leg-exact.
+3. **HSL overtime on a changed week counts ALL hours toward the 40h threshold** — pre-transfer
+   days included — derived from the rounded totals like `computeHoganWeekPay` and attributed
+   newest-rate-first (past-cap hours are chronologically the last hours of the week). The Hogan
+   sheet's AK/AL transition columns exclude old-rate hours from its OT threshold; that reading was
+   **rejected** — HRIS deliberately pays more than the sheet on transition weeks.
+
+Same commit closed the same-date duplicate hole: both rate-history writers
+(`pay-structures/route.ts`, `update-employee-rates/route.ts`) used to supersede only rows with
+`effective_from >= today`, so a BACK-DATED re-save stacked same-date duplicates the resolver
+ordered arbitrarily (cheskac@ held ₱355/₱175/₱355 all eff 2026-08-09). Both now also delete the
+row on the SAME effective date — one row per (email, effective_from).
+
 Where it shows (all via `PayStubView.proration`): the shared **`PayStubStatement`** (chip + detail
 components exported for reuse), the **wizard Paystubs preview** (same components, same derivation),
 and the **employee route's snapshot fast path** (`buildView`). Freshness plumbing mirrors the

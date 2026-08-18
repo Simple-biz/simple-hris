@@ -2,6 +2,14 @@
  * READ-ONLY: how many people are underpaid because a rate change's effective_from
  * landed MID-PAY-WEEK instead of on the pay week's start (Sunday)?
  *
+ * ⚠️ PREMISE SUPERSEDED (ruling 2026-08-18, Kane — "doc stands"): a mid-week
+ * effective date is now a LEGITIMATE event — transfers/dated raises prorate the
+ * week per day and the paystub discloses the split (amber chip + per-rate
+ * basis). The pay-week snapping this script argued for was removed from
+ * `insertRateHistoryRow` the same day. A hit from this audit is only a defect
+ * when the change was MEANT to cover the whole week (enter those effective on
+ * the week's start date); a transfer-dated hit is the system working.
+ *
  * THE BUG (found via erjiee@simple.biz, week 2026-07-26 -> 08-01)
  * Pay weeks run Sunday -> Saturday. A raise entered effective on a MONDAY leaves the
  * preceding SUNDAY of the same pay week resolving to the OLD rate, because

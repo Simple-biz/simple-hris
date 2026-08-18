@@ -17,8 +17,14 @@
  *   AH "Hours Until OT"                   == max(0, 40 - AB - AD)   (display only)
  *   AI "Orphan Total Hours"               (hours; not money)
  *   AJ "Orphan Hours Total Pay"           flat additive pesos
- *   AK "Mid-week New Rate Total Hours"    hours at the pre-transition rate
- *   AL "Mid-week Transition Hourly Rate"  the pre-transition rate
+ *   AK "Mid-week New Rate Total Hours"    hours at the pre-transition rate — NOT implemented
+ *   AL "Mid-week Transition Hourly Rate"  the pre-transition rate — NOT implemented
+ *
+ * AK/AL (the sheet's mid-week transition term) are deliberately ABSENT from this
+ * module (ruling 2026-08-18): the sheet excludes the AK hours from its OT
+ * threshold, underpaying transition weeks relative to the documented HRIS rule
+ * ("OT = max(0, total − 40)" counting ALL hours). Mid-week rate changes price
+ * through `priceChangedWeek2dp` in prorate-mid-period.ts instead.
  *
  * Verified against all 6,791 populated rows of the live sheet export — see
  * scripts/verify-hogan-formula.mts. Empirically confirmed on that data:
@@ -72,13 +78,6 @@ export const REGULAR_WEEK_CAP_HOURS = 40;
 /** The sheet's "OT Differential" is half the regular rate — the second stage of 1.5x. */
 export const OT_DIFFERENTIAL_MULTIPLIER = 0.5;
 
-export type HoganMidweekTransition = {
-  /** "Mid-week New Rate Total Hours" — hours still owed at the pre-transition rate. */
-  hours: number;
-  /** "Mid-week Transition Hourly Rate" — the pre-transition rate. */
-  ratePhp: number;
-};
-
 export type HoganWeekInput = {
   /** Mon–Fri hours worked, INCLUDING any hours that end up classed as overtime. */
   mfHours: number;
@@ -88,8 +87,6 @@ export type HoganWeekInput = {
   regularRatePhp: number;
   /** "Orphan Hours Total Pay" — flat additive pesos. Default 0. */
   orphanPayPhp?: number;
-  /** Explicit mid-week rate transition, or null when the week ran at one rate. */
-  midweek?: HoganMidweekTransition | null;
   /** Override the weekend premium. Defaults to the ₱15 HSL rule. */
   weekendPremiumPhp?: number;
 };
@@ -105,12 +102,11 @@ export type HoganWeekPay = {
   regularRatePhp: number;
   weekendRatePhp: number;
   otDifferentialPhp: number;
-  /** The five money terms, in the sheet's own order. */
+  /** The money terms, in the sheet's own order. */
   basePayPhp: number;
   weekendPayPhp: number;
   otDifferentialPayPhp: number;
   orphanPayPhp: number;
-  midweekPayPhp: number;
   /** Column AN, "Total Hourly Pay" — the subtotal BEFORE MESA and bonuses. */
   totalHourlyPayPhp: number;
 };
@@ -128,14 +124,17 @@ function hours(n: number | null | undefined): number {
 }
 
 /**
- * Compute one HSL pay week the way the Hogan sheet does.
+ * Compute one HSL pay week the way the Hogan sheet does — for a week that ran
+ * at ONE regular rate.
  *
- * Deliberately PURE and free of rate resolution: callers decide which regular rate
- * applies for the week (and supply an explicit `midweek` term when it changed
- * mid-week, mirroring the sheet's own AK/AL columns) rather than this module
- * re-deriving rates per day. Per-day rate resolution is what stranded a Sunday on a
- * stale rate when a raise's effective date landed mid-week — see
- * src/lib/payroll/pay-week-effective-date.ts.
+ * Deliberately PURE and free of rate resolution: callers decide which regular
+ * rate applies for the week. A week whose rate genuinely changed mid-period is
+ * NOT this module's job — it prices through `priceChangedWeek2dp`
+ * (prorate-mid-period.ts): 2dp hours × rate per leg, with the 40h OT threshold
+ * counting ALL hours worked, pre-change days included (ruling 2026-08-18,
+ * "doc stands"). The sheet's own AK/AL transition columns — which exclude the
+ * old-rate hours from the OT threshold — were REJECTED and are deliberately
+ * not implemented here.
  */
 export function computeHoganWeekPay(input: HoganWeekInput): HoganWeekPay {
   const mfHours = hours(input.mfHours);
@@ -159,9 +158,6 @@ export function computeHoganWeekPay(input: HoganWeekInput): HoganWeekPay {
   const weekendPayPhp = r2(weHours * weekendRatePhp);
   const otDifferentialPayPhp = r2(otHours * otDifferentialPhp);
   const orphanPayPhp = r2(input.orphanPayPhp ?? 0);
-  const midweekPayPhp = input.midweek
-    ? r2(hours(input.midweek.hours) * (Number.isFinite(input.midweek.ratePhp) ? input.midweek.ratePhp : 0))
-    : 0;
 
   return {
     mfHours,
@@ -176,10 +172,7 @@ export function computeHoganWeekPay(input: HoganWeekInput): HoganWeekPay {
     weekendPayPhp,
     otDifferentialPayPhp,
     orphanPayPhp,
-    midweekPayPhp,
-    totalHourlyPayPhp: r2(
-      basePayPhp + weekendPayPhp + otDifferentialPayPhp + orphanPayPhp + midweekPayPhp,
-    ),
+    totalHourlyPayPhp: r2(basePayPhp + weekendPayPhp + otDifferentialPayPhp + orphanPayPhp),
   };
 }
 

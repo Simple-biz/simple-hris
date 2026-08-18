@@ -91,19 +91,21 @@ export async function POST(req: Request) {
     const recipient = workEmail || personalEmail;
 
     // Supersede any existing rate-history row whose effective_from is today or
-    // later for this email. Rationale: there should only be ONE active or
-    // pending rate change per person at any moment — accountants who mis-set
-    // a rate and re-save should overwrite the bad row, not stack a new one
-    // on top. Historical rows (effective_from < today) are preserved so past
-    // payroll cycles keep their correct per-day rates.
+    // later for this email, PLUS any row on the SAME effective date (a
+    // back-dated re-save must overwrite its earlier back-dated row, not stack
+    // a same-date duplicate the resolver orders arbitrarily). Rationale: there
+    // should only be ONE row per (email, effective_from) — accountants who
+    // mis-set a rate and re-save should overwrite the bad row. Historical rows
+    // on OTHER past dates are preserved so past cycles keep their per-day rates.
     if (supabase) {
       const todayIso = fmtIsoDate(today);
+      const effectiveIso = fmtIsoDate(effective);
       const recipientNorm = String(recipient).trim().toLowerCase();
       const { error: supersedeErr } = await supabase
         .from('employee_rate_history')
         .delete()
         .eq('employee_email', recipientNorm)
-        .gte('effective_from', todayIso);
+        .or(`effective_from.gte.${todayIso},effective_from.eq.${effectiveIso}`);
       if (supersedeErr) {
         // eslint-disable-next-line no-console
         console.warn('[update-employee-rates] supersede failed:', supersedeErr.message);

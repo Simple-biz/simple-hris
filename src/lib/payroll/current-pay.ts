@@ -36,6 +36,7 @@ import {
   HSL_WEEKEND_PREMIUM_PHP,
   OT_DIFFERENTIAL_MULTIPLIER,
 } from "@/lib/payroll/hogan-week-pay";
+import { priceChangedWeek2dp } from "@/lib/payroll/prorate-mid-period";
 import { buildFxRates, USD_TO_COP_SETTINGS_KEY, type FxRates } from "@/lib/fx/currency-fx";
 import { normEmail } from "@/lib/email/norm-email";
 import { applyDeptOverrideToRawRow } from "@/lib/departments/dept-email-overrides";
@@ -523,6 +524,15 @@ export function computeProratedRowPay(
   let mfSec = 0;
   let weSec = 0;
   let hslUniformReg: number | null | undefined;
+  // Changed-week bookkeeping: per-rate legs + whether the resolved (reg, ot)
+  // pair moved WITHIN the period. A genuine change prices via the shared
+  // priceChangedWeek2dp (2dp hours × rate per leg — ruling 2026-08-18),
+  // byte-identical to the wizard's proratePayForMidPeriodChange.
+  const regLegAcc: Array<{ rate: number; sec: number; weekendSec: number }> = [];
+  const otLegAcc: Array<{ rate: number; sec: number }> = [];
+  let firstDayReg: number | null | undefined;
+  let firstDayOt: number | null | undefined;
+  let rateChanged = false;
 
   for (const d of days) {
     let reg: number | null;
@@ -582,6 +592,51 @@ export function computeProratedRowPay(
     const dayBaseSec = isHsl ? d.seconds : dayRegSec;
     if (reg != null) regularPayPHP += (dayBaseSec / 3600) * (reg + weekendBonus);
     if (ot != null) otPayPHP += (dayOtSec / 3600) * ot;
+
+    // Changed-week bookkeeping (mirrors proratePayForMidPeriodChange exactly).
+    if (firstDayReg === undefined) {
+      firstDayReg = reg;
+      firstDayOt = ot;
+    } else if (!rateChanged && (reg !== firstDayReg || ot !== firstDayOt)) {
+      rateChanged = true;
+    }
+    if (reg != null && dayBaseSec > 0) {
+      const leg = regLegAcc.find((l) => l.rate === reg);
+      if (leg) {
+        leg.sec += dayBaseSec;
+        if (isWeekendDay) leg.weekendSec += dayBaseSec;
+      } else {
+        regLegAcc.push({ rate: reg, sec: dayBaseSec, weekendSec: isWeekendDay ? dayBaseSec : 0 });
+      }
+    }
+    if (ot != null && dayOtSec > 0) {
+      const leg = otLegAcc.find((l) => l.rate === ot);
+      if (leg) leg.sec += dayOtSec;
+      else otLegAcc.push({ rate: ot, sec: dayOtSec });
+    }
+  }
+
+  // A GENUINE mid-period rate change → the shared 2dp-leg pricing (ruling
+  // 2026-08-18): every displayed hours × rate leg multiplies out to the money
+  // exactly, and HSL OT counts ALL hours worked toward the 40h threshold —
+  // the pre-transfer days included. Identical math to the wizard's engine.
+  if (rateChanged && !overrideActive) {
+    const priced = priceChangedWeek2dp({
+      isHsl: Boolean(isHsl),
+      legs: regLegAcc.map((l) => ({
+        ratePhp: l.rate,
+        weekdaySec: l.sec - l.weekendSec,
+        weekendSec: l.weekendSec,
+      })),
+      otLegs: otLegAcc.map((l) => ({ ratePhp: l.rate, sec: l.sec })),
+    });
+    return {
+      regularPayPHP: anyRegRate ? priced.regularPay : null,
+      otPayPHP: anyOtRate ? priced.otPay : null,
+      totalSec,
+      regularSec,
+      otSec,
+    };
   }
 
   // Single-rate HSL week → the exact Hogan sheet computation (2dp HOURS × rate,
