@@ -90,3 +90,10 @@ explains, and the catalog staleness gate knows a sheet-form snapshot's
 - HSL rows whose upload has **no daily columns** (weekend unknowable) keep the
   legacy two-bucket formula and stage no block — the statement renders the
   classic two lines.
+- **The differential prices weekly pay ONLY.** The Payroll Wizard's Orphanage
+  step (add-on pay: pasted hours stacked against the 40h cap) prices its
+  OT-crossing hours at the **full 1.5× rate** — orphanage hours have no base
+  leg in the weekly pay, so the 0.5× differential would half-pay them. On
+  sheet-form rows (`row.hogan != null`) the wizard derives regular × 1.5 (2dp);
+  every other row's stored OT rate is already the full rate (Kane 2026-08-18,
+  `orphanagePasteParse` in PayrollWizard.tsx).

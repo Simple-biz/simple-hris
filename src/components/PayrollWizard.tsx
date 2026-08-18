@@ -645,7 +645,9 @@ type OrphanagePasteOk = {
   hours: number;
   /** Regular hourly rate (PHP). */
   rate: number;
-  /** OT hourly rate (PHP), or null when none on file. */
+  /** OT hourly rate (PHP) actually paid for the OT-crossing hours, or null when none
+   *  on file. Always the FULL rate: on HSL sheet-form rows this is regular × 1.5,
+   *  never the weekly 0.5× differential (orphanage hours have no base leg). */
   otRate: number | null;
   /** Split of the pasted hours after stacking on worked hours against the 40h/week cap. */
   regH: number;
@@ -7121,7 +7123,13 @@ export default function PayrollWizard({
       const deptOtOn = otGlobalSuspended
         ? false
         : (deptKey ? (otDeptEnabled[`ot_dept_${deptKey}`] ?? true) : true);
-      const otRate = row.otRate;
+      // Orphanage OT always prices at the FULL OT rate (Kane 2026-08-18). On HSL
+      // sheet-form rows `row.otRate` is the 0.5× differential — correct for weekly
+      // pay, where every hour's base leg is already paid, but orphanage hours have
+      // no base leg, so the differential would half-pay them. Derive regular × 1.5
+      // for those rows (2dp, sheet rounding); every other row's stored OT rate is
+      // already the full rate.
+      const otRate = row.hogan != null ? Math.round(rate * 1.5 * 100) / 100 : row.otRate;
       let regH = hours;
       let otH = 0;
       if (deptOtOn) {
