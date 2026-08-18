@@ -32,7 +32,6 @@ import {
   StickyNote,
   Trash2,
   Upload,
-  User,
   UserPlus,
   Wallet,
   X,
@@ -59,10 +58,6 @@ import type {
   PayrollWorkerOption,
 } from "@/lib/supabase/payroll-wizard-notes";
 import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
-import {
-  deptPayPausedSettingKey,
-  parsePausedDeptKeys,
-} from "@/lib/payroll/dept-pay-config";
 import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
 import { HSL_DEPTS, HSL_DEPT_KEYS, hslAccessKey, type HslDeptKey } from "@/lib/hsl-bonus/schema";
 import type { EmployeeRow } from "@/lib/supabase/employees";
@@ -210,14 +205,16 @@ function mergeRowPreservingDrafts(
 /** localStorage key base for the per-user "show everyone's notes" preference. */
 const SHOW_OTHERS_KEY = "payroll-wizard-notes:show-others";
 
-/** The four modal panes. `readiness` is the payroll-ready dashboard — leads
+/** The three modal panes. `readiness` is the payroll-ready dashboard — leads
  *  the strip so it's the first thing an accountant sees; `checklist` is the
  *  original carry-over adjustments board (label reads "Adjustments and
- *  Notes"); `rates` is the Payment-Catalog glance; `offboarded` is recently
- *  offboarded people who may still need their final pay's rate/bank set.
- *  Kept left→right in this order so the directional slide reads naturally. */
-type ModalTab = "readiness" | "checklist" | "rates" | "offboarded";
-const TAB_ORDER: ModalTab[] = ["readiness", "checklist", "rates", "offboarded"];
+ *  Notes"); `offboarded` is recently offboarded people who may still need
+ *  their final pay's rate/bank set. (The read-only "Rates" Payment-Catalog
+ *  glance was removed 2026-08-18 at Kane's ask — rates live in the Payment
+ *  Catalog tab.) Kept left→right in this order so the directional slide reads
+ *  naturally. */
+type ModalTab = "readiness" | "checklist" | "offboarded";
+const TAB_ORDER: ModalTab[] = ["readiness", "checklist", "offboarded"];
 
 /** Shared easing — matches the app's tab transition (App.tsx / BonusCatalog). */
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -234,10 +231,10 @@ const PANE_VARIANTS = {
 /**
  * ── Why this board caches ──────────────────────────────────────────────────
  * The FAB is mounted by App.tsx only while the Payroll Wizard tab is active, so
- * every trip to another tab unmounts it; the modal's three panes also unmount on
+ * every trip to another tab unmounts it; the modal's panes also unmount on
  * each inner tab switch (AnimatePresence mode="wait"). Every dataset was
  * therefore re-pulled from scratch on the way back — the notes board, the worker
- * list, the Payment Catalog rates, the upload list, and the (expensive)
+ * list, the offboarded final-pay list, the upload list, and the (expensive)
  * readiness snapshot, which was fetched TWICE over: once for the FAB's ring and
  * once for the pane.
  *
@@ -286,6 +283,80 @@ function writeCachedReadiness(sourceFile: string | null, readiness: PayrollReadi
   while (cachedReadinessKeys.length > READINESS_CACHE_MAX_WEEKS) {
     clearTabCache(cachedReadinessKeys.shift()!);
   }
+}
+
+/** The Offboarded pane's cached pull — same stamped shape/idea as
+ *  {@link StampedReadiness}, so a tab switch and back repaints instantly
+ *  instead of re-running the whole final-pay assembly with a spinner. */
+type StampedOffboarded = {
+  people: OffboardedPayrollCandidate[];
+  weekLabel: string | null;
+  degraded: string[];
+  at: number;
+};
+
+function readCachedOffboarded(sourceFile: string | null): StampedOffboarded | null {
+  const hit = getTabCache<StampedOffboarded>(TAB_CACHE_KEYS.payrollNotesOffboarded(sourceFile));
+  if (!hit?.people || typeof hit.at !== "number") return null;
+  return Date.now() - hit.at > READINESS_MAX_AGE_MS ? null : hit;
+}
+
+/** Offboarded week keys cached this session, oldest first — trimmed like the
+ *  readiness cache so replaying old weeks can't grow sessionStorage unbounded. */
+const cachedOffboardedKeys: string[] = [];
+
+function writeCachedOffboarded(
+  sourceFile: string | null,
+  value: Omit<StampedOffboarded, "at">,
+): number {
+  const at = Date.now();
+  const key = TAB_CACHE_KEYS.payrollNotesOffboarded(sourceFile);
+  setTabCache<StampedOffboarded>(key, { ...value, at });
+  const seen = cachedOffboardedKeys.indexOf(key);
+  if (seen >= 0) cachedOffboardedKeys.splice(seen, 1);
+  cachedOffboardedKeys.push(key);
+  while (cachedOffboardedKeys.length > READINESS_CACHE_MAX_WEEKS) {
+    clearTabCache(cachedOffboardedKeys.shift()!);
+  }
+  return at;
+}
+
+/** Wall-clock of the notes board's last successful pull. Module-scoped (the
+ *  rows cache stores no stamp) so it survives the FAB unmounting when the
+ *  wizard tab is left, and honestly resets on a full page reload — the mount
+ *  load re-earns it immediately. */
+let checklistLastPullAt: number | null = null;
+
+/** "Last data pull HH:MM:SS · Xs ago" line at the top of each pane — when the
+ *  visible data last left the server. Stamped only by SUCCESSFUL loads (a
+ *  failed background poll keeps the old, honest time), and ticking every 10s
+ *  so the relative part can't quietly read stale. Renders nothing until the
+ *  pane's first successful pull is known. */
+function PaneFreshness({ at, className = "" }: { at: number | null; className?: string }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((t) => t + 1), 10_000);
+    return () => window.clearInterval(id);
+  }, []);
+  if (at === null) return null;
+  const ago = Math.max(0, Date.now() - at);
+  const rel =
+    ago < 15_000
+      ? "just now"
+      : ago < 60_000
+        ? `${Math.round(ago / 1000)}s ago`
+        : ago < 60 * 60_000
+          ? `${Math.round(ago / 60_000)}m ago`
+          : `${Math.round(ago / (60 * 60_000))}h ago`;
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1 text-[11px] text-zinc-400 dark:text-zinc-500 ${className}`}
+      title={`Last successful data pull: ${new Date(at).toLocaleString()}`}
+    >
+      <Clock aria-hidden className="h-3 w-3" />
+      Last data pull {new Date(at).toLocaleTimeString()} · {rel}
+    </span>
+  );
 }
 
 const RING_R = 30;
@@ -455,6 +526,10 @@ export default function PayrollWizardNotesFab({
   );
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // When the board's rows last came back from the server — feeds the pane's
+  // "Last data pull" line. Seeded from the module-level stamp so an inner tab
+  // switch (or leaving the wizard tab) doesn't reset it to "unknown".
+  const [notesPulledAt, setNotesPulledAt] = useState<number | null>(checklistLastPullAt);
   // Last-saved snapshot per row, so a blur only PATCHes cells that changed.
   // Seeded from the same cached rows, so editing a cell right after a remount
   // still compares against the real saved value rather than an empty baseline.
@@ -521,6 +596,8 @@ export default function PayrollWizardNotesFab({
       if (!res.ok) throw new Error(json.error || `Load failed (${res.status})`);
       applyRows(json.rows ?? []);
       markFetchedThisSession(TAB_CACHE_KEYS.payrollNotesRows);
+      checklistLastPullAt = Date.now();
+      setNotesPulledAt(checklistLastPullAt);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load notes");
@@ -1055,16 +1132,11 @@ export default function PayrollWizardNotesFab({
                   and who&apos;s a known exception. Green all the way down means you&apos;re{" "}
                   <span className="font-medium">Payroll Ready</span>.
                 </>
-              ) : modalTab === "offboarded" ? (
+              ) : (
                 <>
                   Recently offboarded people who may still need their final paycheck&apos;s pay
                   rate or bank details set. They drop off this list automatically once their final
                   pay has gone out.
-                </>
-              ) : (
-                <>
-                  The rates set in the Payment Catalog, at a glance. Hover a department card to
-                  see its individual overrides — editing stays in the Payment Catalog tab.
                 </>
               )}
             </DialogDescription>
@@ -1075,7 +1147,6 @@ export default function PayrollWizardNotesFab({
               [
                 { id: "readiness", label: "Readiness", icon: ShieldCheck },
                 { id: "checklist", label: "Adjustments and Notes", icon: ListChecks },
-                { id: "rates", label: "Rates", icon: Wallet },
                 { id: "offboarded", label: "Offboarded", icon: PowerOff },
               ] as const
             ).map((t) => (
@@ -1104,25 +1175,13 @@ export default function PayrollWizardNotesFab({
             ))}
           </div>
 
-          {/* Directional cross-fade between the three panes: the slide follows
+          {/* Directional cross-fade between the panes: the slide follows
               which tab you moved toward (tabDir), and every pane keeps the same
               h-[70vh] body height so the dialog never jumps mid-swap. Gated on
               reduced motion. */}
           <div className="overflow-x-clip">
           <AnimatePresence mode="wait" initial={false} custom={tabDir}>
-          {modalTab === "rates" ? (
-            <motion.div
-              key="rates"
-              custom={tabDir}
-              variants={PANE_VARIANTS}
-              initial="enter"
-              animate="center"
-              exit="exit"
-              transition={{ duration: reduceMotion ? 0 : 0.24, ease: EASE }}
-            >
-              <RatesGlance wizardSourceFile={wizardSourceFile} />
-            </motion.div>
-          ) : modalTab === "readiness" ? (
+          {modalTab === "readiness" ? (
             <motion.div
               key="readiness"
               custom={tabDir}
@@ -1175,14 +1234,17 @@ export default function PayrollWizardNotesFab({
               options={weekOptions}
               onChange={setWeekStart}
             />
-            <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-300">
-              Show everyone&apos;s notes
-              <Switch
-                size="sm"
-                checked={showOthers}
-                onCheckedChange={(checked) => toggleShowOthers(checked === true)}
-              />
-            </label>
+            <div className="flex flex-wrap items-center gap-3">
+              <PaneFreshness at={notesPulledAt} />
+              <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                Show everyone&apos;s notes
+                <Switch
+                  size="sm"
+                  checked={showOthers}
+                  onCheckedChange={(checked) => toggleShowOthers(checked === true)}
+                />
+              </label>
+            </div>
           </div>
 
           <div className="h-[70vh] overflow-auto rounded-lg border border-orange-100 dark:border-blue-950/60">
@@ -1365,164 +1427,6 @@ export default function PayrollWizardNotesFab({
         </DialogContent>
       </Dialog>
     </>
-  );
-}
-
-/**
- * "Rates" tab — a read-only glance at the Pay Structure rates set in the
- * Payment Catalog. One compact card per department (Regular + OT); hovering a
- * card slides open the list of individual overrides. Deliberately light on
- * detail — currency editing, history, and everything else stays in the
- * Payment Catalog tab.
- */
-function RatesGlance({ wizardSourceFile }: { wizardSourceFile: string | null }) {
-  // Cached: this pane unmounts every time you switch to another modal tab, and
-  // re-flashing "Loading rates…" on the way back is pure noise. Seeded from the
-  // last pull, then quietly revalidated below so a Payment Catalog edit still
-  // shows up.
-  const [structures, setStructures] = useState<PayStructure[] | null>(
-    () => getTabCache<PayStructure[]>(TAB_CACHE_KEYS.payrollNotesRates) ?? null,
-  );
-  const [error, setError] = useState<string | null>(null);
-  /** Whether this mount started with cards already on screen — a background
-   *  revalidate must not replace them with an error card if it fails. */
-  const structuresCacheWasWarm = useRef(structures !== null);
-  /** Departments excluded from the wizard's CURRENT pay week (step 1 →
-   *  Configuration; the setting is per-week, keyed on the wizard's source
-   *  file). Their rate cards are discounted from this glance. Best-effort: no
-   *  known week or a failed settings read simply shows every card. */
-  const [pausedDepts, setPausedDepts] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    let alive = true;
-    // Revalidating over a warm cache is invisible: the cards stay up, and a
-    // failure keeps them up too (no error card over data we already have).
-    const warm = structuresCacheWasWarm.current;
-    fetch("/api/payment-catalog/pay-structures", { cache: "no-store" })
-      .then(async (res) => {
-        const json = (await res.json()) as { structures?: PayStructure[]; error?: string };
-        if (!res.ok) throw new Error(json.error || `Load failed (${res.status})`);
-        if (!alive) return;
-        setStructures(json.structures ?? []);
-        setTabCache(TAB_CACHE_KEYS.payrollNotesRates, json.structures ?? []);
-      })
-      .catch((e) => {
-        if (alive && !warm) setError(e instanceof Error ? e.message : "Could not load rates");
-      });
-    return () => {
-      alive = false;
-    };
-    // Once per mount. `structures` is read through a ref above precisely so it
-    // isn't a dependency — this effect is what sets it.
-  }, []);
-
-  useEffect(() => {
-    if (!wizardSourceFile) {
-      setPausedDepts(new Set());
-      return;
-    }
-    let alive = true;
-    fetch(
-      `/api/app-settings?key=${encodeURIComponent(deptPayPausedSettingKey(wizardSourceFile))}`,
-      { cache: "no-store" },
-    )
-      .then(async (res) => (await res.json()) as { value?: string | null })
-      .then((j) => {
-        if (alive) setPausedDepts(parsePausedDeptKeys(j.value ?? null));
-      })
-      .catch(() => {
-        /* unfiltered glance is fine */
-      });
-    return () => {
-      alive = false;
-    };
-  }, [wizardSourceFile]);
-
-  if (error) {
-    return (
-      <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
-        {error}
-      </p>
-    );
-  }
-  if (structures === null) {
-    return (
-      <div className="flex h-[70vh] items-center justify-center text-sm text-zinc-400">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        Loading rates…
-      </div>
-    );
-  }
-
-  const cards = DEPARTMENTS.filter((d) => !pausedDepts.has(d.key)).map((d) => ({
-    key: d.key,
-    name: d.name,
-    dept: structures.find((s) => s.scope === "department" && s.departmentKey === d.key) ?? null,
-    people: structures
-      .filter((s) => s.scope === "employee" && s.departmentKey === d.key)
-      .sort((a, b) => (a.employeeName ?? a.employeeEmail ?? "").localeCompare(b.employeeName ?? b.employeeEmail ?? "")),
-  })).filter((c) => c.dept || c.people.length > 0);
-  const hiddenCount = DEPARTMENTS.filter((d) => pausedDepts.has(d.key)).length;
-
-  if (cards.length === 0) {
-    return (
-      <div className="flex h-[70vh] items-center justify-center text-sm text-zinc-400">
-        No rates set yet — add them in the Payment Catalog.
-      </div>
-    );
-  }
-
-  return (
-    <div className="h-[70vh] overflow-y-auto pr-1">
-      {hiddenCount > 0 && (
-        <p className="mb-2 text-[11px] text-zinc-400 dark:text-zinc-500">
-          {hiddenCount} department{hiddenCount === 1 ? "" : "s"} hidden — excluded from this week&apos;s
-          pay in the wizard&apos;s Configuration tab.
-        </p>
-      )}
-      {/* auto-fill fills the modal's width; rows keep their natural compact
-          height so cards never stretch tall. */}
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] content-start gap-3">
-        {cards.map((c) => (
-          <div
-            key={c.key}
-            className="rounded-lg border border-orange-100 bg-white px-3.5 py-2.5 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-orange-300 hover:shadow-lg hover:shadow-orange-500/10 dark:border-blue-950/60 dark:bg-blue-950/20 dark:hover:border-blue-800 dark:hover:shadow-blue-500/10"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span className="min-w-0 truncate text-sm font-semibold text-zinc-800 dark:text-zinc-100">
-                {c.name}
-              </span>
-              {c.people.length > 0 && (
-                <span
-                  className="inline-flex shrink-0 items-center gap-1 rounded-full bg-orange-100/80 px-1.5 py-0.5 text-[10px] font-semibold text-orange-700 dark:bg-blue-900/50 dark:text-blue-200"
-                  title={`${c.people.length} individual override${c.people.length === 1 ? "" : "s"} — see Payment Catalog`}
-                >
-                  <User className="h-2.5 w-2.5" />
-                  {c.people.length}
-                </span>
-              )}
-            </div>
-
-            <div className="mt-1.5 flex items-baseline gap-4 text-xs text-zinc-500 dark:text-zinc-400">
-              <span>
-                Reg{" "}
-                <span className="font-semibold text-zinc-800 dark:text-zinc-100">
-                  {c.dept ? formatRate(c.dept.regularRate, c.dept.currency) : "—"}
-                </span>
-              </span>
-              <span>
-                OT{" "}
-                <span className="font-semibold text-zinc-800 dark:text-zinc-100">
-                  {c.dept
-                    ? formatRate(c.dept.otRate ?? defaultOtRate(c.dept.regularRate), c.dept.currency)
-                    : "—"}
-                </span>
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -3036,6 +2940,12 @@ function PayrollReadinessGlance({
   );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(() => readCachedReadiness(wizardSourceFile) === null);
+  // When the snapshot on screen was actually pulled from the server — a cached
+  // paint keeps the cache's own stamp (that IS when the data left the server),
+  // a live load stamps "now". Feeds the pane's "Last data pull" line.
+  const [pulledAt, setPulledAt] = useState<number | null>(
+    () => readCachedReadiness(wizardSourceFile)?.at ?? null,
+  );
   // Mirrors `data` for the fetch path, which needs to know whether there's a
   // snapshot on screen without taking `data` as a dependency.
   const dataRef = useRef<PayrollReadiness | null>(data);
@@ -3206,6 +3116,7 @@ function PayrollReadinessGlance({
         if (!res.ok || !json.readiness) throw new Error(json.error || `Load failed (${res.status})`);
         setData(json.readiness);
         dataRef.current = json.readiness;
+        setPulledAt(Date.now());
         // Warm the shared cache: a modal-tab switch, a trip out of the wizard,
         // or the FAB's own ring read all reuse this instead of re-querying.
         writeCachedReadiness(effectiveSourceFile, json.readiness);
@@ -3235,6 +3146,7 @@ function PayrollReadinessGlance({
     if (cached) {
       setData(cached.readiness);
       dataRef.current = cached.readiness;
+      setPulledAt(cached.at);
       setError(null);
       setLoading(false);
       if (Date.now() - cached.at < READINESS_FRESH_MS) return;
@@ -3406,13 +3318,20 @@ function PayrollReadinessGlance({
   // content) so switching weeks never yanks the control out from under the
   // cursor. The upload list drives it; if uploads couldn't load it hides itself.
   const selectorHeader = (
-    <ReadinessWeekSelector
-      uploads={uploads}
-      value={effectiveSourceFile ?? currentSourceFile}
-      currentSourceFile={currentSourceFile}
-      following={!hasPicked}
-      onChange={pickWeek}
-    />
+    <div className="shrink-0">
+      <ReadinessWeekSelector
+        uploads={uploads}
+        value={effectiveSourceFile ?? currentSourceFile}
+        currentSourceFile={currentSourceFile}
+        following={!hasPicked}
+        onChange={pickWeek}
+      />
+      {/* When the snapshot on screen was last pulled — stays up (with its old,
+          honest time) while a background refresh or a week-switch load runs. */}
+      <div className="-mt-2 mb-2 flex justify-end px-0.5">
+        <PaneFreshness at={pulledAt} />
+      </div>
+    </div>
   );
 
   // Loading takes precedence over a lingering error: when a fresh load is in
@@ -4083,10 +4002,10 @@ function PayrollReadinessGlance({
  * final paycheck's rate/bank set. Built on `listOffboardedPayrollCandidates`,
  * which is itself built on the same `listRecentlyOffboardedPeople` union the
  * KPI bonus calculators use, scoped to the wizard's current pay week so a
- * leaver drops off once their final pay has actually gone out. Deliberately
- * light on machinery (no cache, no celebration, no pagination) — this list
- * is expected to be short; RatesGlance is the closer model for this pane's
- * complexity, not PayrollReadinessGlance.
+ * leaver drops off once their final pay has actually gone out. Cached per
+ * week + kept live like its siblings (see the cache preamble above), with a
+ * search box and department filter mirroring the Bank Info pane's; still no
+ * celebration and no pagination — the list is expected to be short.
  */
 function OffboardedGlance({
   wizardSourceFile,
@@ -4095,46 +4014,148 @@ function OffboardedGlance({
   wizardSourceFile: string | null;
   canEdit: boolean;
 }) {
-  const [people, setPeople] = useState<OffboardedPayrollCandidate[] | null>(null);
+  // Seeded from the cached pull for the week the wizard is on (same shape as
+  // the Readiness pane's cache): switching modal tabs and coming back used to
+  // re-run the whole final-pay assembly behind a spinner every time.
+  const [people, setPeople] = useState<OffboardedPayrollCandidate[] | null>(
+    () => readCachedOffboarded(wizardSourceFile)?.people ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   // Sources the server couldn't read this load (e.g. employee_ids or the
   // legacy rates sheet) — bank status below is judged against whatever DID
   // come back, so this must be said out loud rather than read as a genuine
   // "no bank on file". Mirrors PayrollReadinessGlance's own degraded banner.
-  const [degraded, setDegraded] = useState<string[]>([]);
+  const [degraded, setDegraded] = useState<string[]>(
+    () => readCachedOffboarded(wizardSourceFile)?.degraded ?? [],
+  );
   // The pay week this list is scoped to. Shown in-pane like every sibling here:
   // when the wizard replays an older period the week-relevance filter can quietly
   // widen to an unfiltered 90-day list, and nothing else on screen would say so.
-  const [weekLabel, setWeekLabel] = useState<string | null>(null);
+  const [weekLabel, setWeekLabel] = useState<string | null>(
+    () => readCachedOffboarded(wizardSourceFile)?.weekLabel ?? null,
+  );
+  // When the list on screen was pulled — cached paints keep the cache's own
+  // stamp, live loads stamp "now". Feeds the pane's "Last data pull" line.
+  const [pulledAt, setPulledAt] = useState<number | null>(
+    () => readCachedOffboarded(wizardSourceFile)?.at ?? null,
+  );
   const [ratePerson, setRatePerson] = useState<ReadinessMissingRate | null>(null);
   const [bankPerson, setBankPerson] = useState<ReadinessMissingBank | null>(null);
   const [bankPrefill, setBankPrefill] = useState<OffboardedPayrollCandidate["bankPrefill"]>(null);
+  // Search + department filter over the list ("" = all departments).
+  const [offQuery, setOffQuery] = useState("");
+  const [offDept, setOffDept] = useState("");
+  // On-screen data for the fetch path (no `people` dependency), plus a
+  // monotonic request token: a background refresh must never blank a visible
+  // list over a blip, and a slow fetch for a week we've since left must never
+  // clobber the week now in view — same shape as the Readiness pane's load().
+  const peopleRef = useRef<OffboardedPayrollCandidate[] | null>(people);
+  peopleRef.current = people;
+  const loadSeqRef = useRef(0);
 
-  const load = useCallback(() => {
-    const qs = wizardSourceFile ? `?source_file=${encodeURIComponent(wizardSourceFile)}` : "";
-    return fetch(`/api/payroll-wizard/offboarded${qs}`, { cache: "no-store" })
-      .then(async (res) => {
-        const json = (await res.json()) as {
-          people?: OffboardedPayrollCandidate[];
-          weekLabel?: string;
-          degraded?: string[];
-          error?: string | null;
-        };
-        if (!res.ok || json.error) throw new Error(json.error || `Load failed (${res.status})`);
-        setPeople(json.people ?? []);
-        setWeekLabel(json.weekLabel ?? null);
-        setDegraded(json.degraded ?? []);
-        setError(null);
-      })
-      .catch((e) => {
-        setError(e instanceof Error ? e.message : "Could not load recently offboarded people");
-      });
-  }, [wizardSourceFile]);
+  /** `background` = a refresh nobody asked for (the cache revalidate, Realtime,
+   *  the poll, a tab refocus) — those keep the last good list on a failure;
+   *  a foreground load (cold pull, week switch, post-fix refresh) still
+   *  reports its failure. */
+  const load = useCallback(
+    (opts?: { background?: boolean }) => {
+      const seq = ++loadSeqRef.current;
+      const qs = wizardSourceFile ? `?source_file=${encodeURIComponent(wizardSourceFile)}` : "";
+      return fetch(`/api/payroll-wizard/offboarded${qs}`, { cache: "no-store" })
+        .then(async (res) => {
+          const json = (await res.json()) as {
+            people?: OffboardedPayrollCandidate[];
+            weekLabel?: string;
+            degraded?: string[];
+            error?: string | null;
+          };
+          if (seq !== loadSeqRef.current) return; // superseded — a newer load is in charge
+          if (!res.ok || json.error) throw new Error(json.error || `Load failed (${res.status})`);
+          const fresh = {
+            people: json.people ?? [],
+            weekLabel: json.weekLabel ?? null,
+            degraded: json.degraded ?? [],
+          };
+          setPeople(fresh.people);
+          setWeekLabel(fresh.weekLabel);
+          setDegraded(fresh.degraded);
+          setError(null);
+          setPulledAt(writeCachedOffboarded(wizardSourceFile, fresh));
+        })
+        .catch((e) => {
+          if (seq !== loadSeqRef.current) return; // superseded — don't surface a stale error
+          if (opts?.background && peopleRef.current) return;
+          setError(e instanceof Error ? e.message : "Could not load recently offboarded people");
+        });
+    },
+    [wizardSourceFile],
+  );
 
+  // Paint the cached list for the (possibly new) week instantly, then
+  // revalidate behind it — unless the cache is younger than the pane's own
+  // 30s poll, in which case a tab switch and back costs no query at all.
+  // A week with nothing cached does the one visible (spinner) load.
   useEffect(() => {
+    const cached = readCachedOffboarded(wizardSourceFile);
+    if (cached) {
+      setPeople(cached.people);
+      setWeekLabel(cached.weekLabel);
+      setDegraded(cached.degraded);
+      setPulledAt(cached.at);
+      setError(null);
+      if (Date.now() - cached.at < READINESS_FRESH_MS) return;
+      void load({ background: true });
+      return;
+    }
     setPeople(null);
+    setPulledAt(null);
     void load();
-  }, [load]);
+  }, [load, wizardSourceFile]);
+
+  // Live: a Set rate / Set bank fix (from here or the Readiness tab) lands
+  // without a manual reload; the 30s poll carries the offboard sources
+  // themselves (master-list stamps, queue completions), which have no
+  // Realtime channel. Mounted only while this pane is open — no always-on
+  // channel at the FAB level.
+  useLiveRefresh({
+    tables: ["employee_ids", "payment_catalog_pay_structures", "employee_hourly_rates"],
+    channel: "payroll-notes-offboarded",
+    onRefresh: () => void load({ background: true }),
+  });
+
+  // Unique departments present in the list (with row counts) for the dropdown;
+  // BANK_NO_DEPT stands in for rows without a department so they stay reachable
+  // through the filter too. Mirrors the Bank Info pane's department filter.
+  const offDeptOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    let none = 0;
+    for (const r of people ?? []) {
+      const dept = r.department?.trim();
+      if (dept) counts.set(dept, (counts.get(dept) ?? 0) + 1);
+      else none += 1;
+    }
+    const opts = [...counts.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([dept, n]) => ({ value: dept, label: `${dept} (${n})` }));
+    if (none > 0) opts.push({ value: BANK_NO_DEPT, label: `No department (${none})` });
+    return [{ value: "", label: "All departments" }, ...opts];
+  }, [people]);
+  // If a refresh (or a week switch) drops the selected department's last row,
+  // fall back to "all" so the filter never strands an empty view behind a
+  // selection the dropdown no longer offers.
+  useEffect(() => {
+    if (offDept !== "" && !offDeptOptions.some((o) => o.value === offDept)) {
+      setOffDept("");
+    }
+  }, [offDept, offDeptOptions]);
+  const peopleShown = (people ?? []).filter(
+    (r) =>
+      matchesQuery(offQuery, r.name, r.workEmail, r.personalEmail, r.department, r.offBoardedReasonLabel) &&
+      (offDept === "" ||
+        (offDept === BANK_NO_DEPT
+          ? !r.department?.trim()
+          : (r.department ?? "").trim() === offDept)),
+  );
 
   if (error) {
     return (
@@ -4153,8 +4174,13 @@ function OffboardedGlance({
   }
   if (people.length === 0) {
     return (
-      <div className="flex h-[70vh] items-center justify-center text-sm text-zinc-400">
-        No one&apos;s recently left — nothing needs final-pay setup.
+      <div className="flex h-[70vh] flex-col">
+        <div className="flex shrink-0 justify-end">
+          <PaneFreshness at={pulledAt} />
+        </div>
+        <div className="flex flex-1 items-center justify-center text-sm text-zinc-400">
+          No one&apos;s recently left — nothing needs final-pay setup.
+        </div>
       </div>
     );
   }
@@ -4165,7 +4191,41 @@ function OffboardedGlance({
       : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300";
 
   return (
-    <div className="h-[70vh] overflow-y-auto rounded-lg border border-orange-100 p-1 dark:border-blue-950/60">
+    <div className="flex h-[70vh] flex-col">
+      {/* Frozen header: week line + freshness stamp, then the search box and
+          department filter — pinned so only the people list below scrolls. */}
+      <div className="shrink-0">
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-2 px-1">
+          {/* Slim week line — which pay week these leavers are scoped to. Same
+              treatment as the Wizard Setup pane's own week line; the tab strip
+              already owns the "Offboarded" label, so this isn't a second title. */}
+          <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+            {weekLabel ? <>Final pay for payroll week {weekLabel}</> : null}
+          </span>
+          <PaneFreshness at={pulledAt} />
+        </div>
+        <div className="mb-2 flex items-center gap-2">
+          <ReadinessSearch
+            value={offQuery}
+            onChange={setOffQuery}
+            placeholder="Search name, email, department…"
+            shown={peopleShown.length}
+            total={people.length}
+            className="min-w-0 flex-1"
+          />
+          <SmoothSelect
+            value={offDept}
+            onChange={setOffDept}
+            options={offDeptOptions}
+            aria-label="Filter by department"
+            searchable
+            searchPlaceholder="Search departments…"
+            className="w-40 shrink-0 sm:w-48"
+            triggerClassName="h-7 rounded-md"
+          />
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto rounded-lg border border-orange-100 p-1 dark:border-blue-950/60">
       {/* Partial-data warning — same treatment as PayrollReadinessGlance's:
           a read that failed reshapes bank status quietly (toward "missing"),
           so it must be said out loud rather than read as a real gap. */}
@@ -4185,16 +4245,19 @@ function OffboardedGlance({
           </ul>
         </div>
       )}
-      {/* Slim header line — which pay week these leavers are scoped to. Same
-          treatment as the Wizard Setup pane's own week line; the tab strip
-          already owns the "Offboarded" label, so this isn't a second title. */}
-      {weekLabel && (
-        <div className="mb-1.5 px-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-          Final pay for payroll week {weekLabel}
-        </div>
-      )}
+      {peopleShown.length === 0 ? (
+        offQuery.trim() !== "" ? (
+          <NoMatches query={offQuery} />
+        ) : (
+          // Only the department filter can empty an unsearched list, so name
+          // the culprit rather than showing a blank page.
+          <div className="px-3 py-4 text-center text-xs text-zinc-400">
+            No recently offboarded people in this department.
+          </div>
+        )
+      ) : (
       <div className="space-y-0.5">
-        {people.map((r) => (
+        {peopleShown.map((r) => (
           <PersonLine
             key={r.workEmail ?? r.personalEmail ?? r.name}
             name={r.name}
@@ -4260,6 +4323,8 @@ function OffboardedGlance({
             }
           />
         ))}
+      </div>
+      )}
       </div>
       {ratePerson && (
         <SetRateDialog person={ratePerson} onClose={() => setRatePerson(null)} onSaved={() => void load()} />

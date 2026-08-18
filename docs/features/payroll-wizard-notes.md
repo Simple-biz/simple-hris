@@ -8,11 +8,13 @@ spreadsheet and lives behind a floating FAB on the Accounting → Payroll Wizard
 Built Jul 15–17, 2026. Sessions: notes board + FAB (Jul 15), Adjustment column
 and weekly period selector (Jul 17, `f1f930d2`).
 
-> **The FAB is now "Adjustments and Notes" and hosts a second pane:** the
+> **The FAB is now "Adjustments and Notes" and hosts sibling panes:** the
 > **Readiness** pre-flight dashboard (KPI submissions / pay rates / bank info /
 > exceptions, with a scored dial and inline fixers), built Jul 23–25 2026 — see
-> [payroll-readiness.md](./payroll-readiness.md). This doc covers the Notes
-> checklist pane only.
+> [payroll-readiness.md](./payroll-readiness.md) — and the **Offboarded**
+> final-pay tab (2026-08-04). The read-only **Rates** glance was REMOVED
+> 2026-08-18 (Kane: "useless") — rates live in the Payment Catalog tab. This
+> doc covers the Notes checklist pane only.
 
 ## Surfaces
 
@@ -93,10 +95,10 @@ and weekly period selector (Jul 17, `f1f930d2`).
   degraded case).
 - `updated_at` is maintained by the `payroll_wizard_notes_touch()` trigger.
 
-## No reload on the way back (caching, 2026-08-03)
+## No reload on the way back (caching, 2026-08-03; Offboarded joined 2026-08-18)
 
 The FAB is mounted only while the Payroll Wizard tab is active, and the modal's
-three panes unmount on every inner tab switch — so each visit used to re-pull
+panes unmount on every inner tab switch — so each visit used to re-pull
 everything from scratch, skeletons and all. All of it now goes through the shared
 Accounting tab cache (`src/lib/accounting/tab-cache.ts`: in-memory + `sessionStorage`,
 so it also survives a reload of the same browser tab):
@@ -106,7 +108,37 @@ so it also survives a reload of the same browser tab):
 | Notes rows (`/notes`) | Painted from cache; refreshed in the background on mount + on open. `Loading notes…` only ever shows on the session's first pull. |
 | Readiness snapshot (`/readiness`) | Painted from the cached snapshot **for that week**. Younger than 30s (the pane's own poll) → no refetch at all; older → silent revalidate behind the visible numbers; older than 6h → treated as a cold load. |
 | Worker suggestions, Hubstaff upload list | Fetched once per page session. |
-| Rates glance (pay structures) | Painted from cache, then silently revalidated. |
+| Offboarded final-pay list (`/offboarded`) | Same per-week stamped cache as the readiness snapshot (30s fresh window / 6h max age / 4-week trim), added 2026-08-18 — the tab shipped a day after the caching pass and had been the one pane that re-pulled on every visit. |
+
+(The Rates glance had its own cached row here until the tab was removed
+2026-08-18.)
+
+### Every pane says when its data was pulled (2026-08-18)
+
+Each pane renders a **"Last data pull HH:MM:SS · Xs ago"** line at the top
+(`PaneFreshness`), stamped **only by successful loads** — a failed background
+poll keeps the previous, honest time — and ticking every 10s. Cached paints
+show the cache's own stamp (that IS when the data left the server), not the
+paint time.
+
+### Live refresh coverage (2026-08-18)
+
+Readiness (12 tables) and the notes board (`payroll_wizard_notes`) were already
+live via `useLiveRefresh` (Realtime + 30s poll + focus refresh). The
+**Offboarded** pane now runs the same hook on `employee_ids`,
+`payment_catalog_pay_structures`, and `employee_hourly_rates` (the Set rate /
+Set bank write targets — an inline fix from either tab lands live), with the
+30s poll carrying the offboard sources themselves (master-list stamps, queue
+completions have no Realtime channel). Its loads carry a monotonic request
+token and a background-mode guard, mirroring the Readiness pane's. The closed
+FAB's score ring deliberately keeps NO always-on channel of its own — the
+subscriptions live inside the open modal panes only.
+
+The Offboarded pane also gained a **search box and a department filter**
+(2026-08-18), mirroring the Bank Info pane's: `matchesQuery` over
+name/emails/department/off-board reason, a per-department dropdown with counts
+(plus a "No department" bucket), and a stranded-filter release when a refresh
+drops the selected department's last row.
 
 Notes:
 

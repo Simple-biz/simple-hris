@@ -2,8 +2,9 @@
 
 One answer to one question for Accounting: *are we Payroll Ready for the week
 we're about to run?* The Readiness tab lives in the Payroll Wizard's floating
-Notes FAB (the "Payroll Notes" modal, whose panes are **Adjustments and Notes /
-Readiness / Rates** — see [payroll-wizard-notes.md](../features/payroll-wizard-notes.md)).
+Notes FAB (the "Payroll Notes" modal, whose panes are **Readiness / Adjustments
+and Notes / Offboarded** — the read-only Rates glance was removed 2026-08-18;
+see [payroll-wizard-notes.md](../features/payroll-wizard-notes.md)).
 It unions four independent signal families for the payroll week in view, grades
 them into a blocker-weighted 0–100 score, and lets the accountant fix rate/bank
 gaps and submit KPIs inline without leaving the wizard.
