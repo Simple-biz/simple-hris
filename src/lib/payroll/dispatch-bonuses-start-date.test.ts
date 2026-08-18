@@ -35,6 +35,20 @@ test("parseMasterStartDate rejects garbage instead of guessing", () => {
   assert.equal(parseMasterStartDate("Nov 10 2025"), null);
 });
 
+test("30-day gate anchors on the CYCLE'S week start, not today — the sophiac@ boundary", () => {
+  // Kane, 2026-08-18: the Overview table's Tech Eligible badge must answer the
+  // same question as the wizard's pay gate. Sophia started 07/13/26 →
+  // eligible from 2026-08-12. August's tech week was the cycle starting
+  // Sun 2026-08-09: 3 days short → NOT eligible for that cycle, even though
+  // by Aug 18 (today) she has >30 days of service. The next cycle
+  // (Sun 2026-08-16) is past 08-12 → eligible.
+  const start = parseMasterStartDate("07/13/26");
+  assert.ok(start);
+  assert.equal(hasThirtyDaysFromStart(new Date(2026, 7, 9), start), false); // Aug 9 cycle
+  assert.equal(hasThirtyDaysFromStart(new Date(2026, 7, 12), start), true); // exact boundary day
+  assert.equal(hasThirtyDaysFromStart(new Date(2026, 7, 16), start), true); // Aug 16 cycle
+});
+
 test("parsed start date drives the 30-day Tech gate the same way the wizard's does", () => {
   const start = parseMasterStartDate("11/10/25");
   assert.ok(start);

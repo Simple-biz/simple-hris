@@ -83,7 +83,12 @@ import {
   parseDateRangeFromFilename,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import { formatPeriodRange } from '@/lib/hubstaff/period-label';
-import { applyPabAdjustments, getHslAdjustedEnd } from '@/lib/payroll/dispatch-bonuses';
+import {
+  applyPabAdjustments,
+  getHslAdjustedEnd,
+  hasThirtyDaysFromStart,
+  parseMasterStartDate,
+} from '@/lib/payroll/dispatch-bonuses';
 import {
   HSL_WEEK_MODEL_CUTOVER_KEY,
   resolveHslWeekModelWithDefault,
@@ -2921,18 +2926,28 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
   // are defined) so it can send the FULL hero snapshot the CEO board replicates.
 
   /**
-   * Tech Bonus eligibility: employees who have completed 30 days of service
-   * by the **selected period's end date** (or today, if no period is loaded).
-   * Picking April's CSV shows tech eligibility as of end-of-April.
+   * Tech Bonus eligibility — MUST answer exactly what the Payroll Wizard's pay
+   * gate answers (Kane, 2026-08-18: "they have to be the same from Payroll
+   * Wizard"). Same shared predicate the wizard and the dispatch engine use:
+   * eligibleFrom = start_date + 30d (`parseMasterStartDate` — the master sheet
+   * stores US short dates, and the lenient `new Date()` parse this memo used
+   * before is the exact bug class dispatch-bonuses.ts documents), checked
+   * against the SELECTED CYCLE's week start (`hasThirtyDaysFromStart`, the
+   * wizard's `hasThirtyDaysByWeek` anchor). Only with no cycle selected
+   * ("All Time") does it fall back to today — "completed 30 days as of now".
    */
   const { techBonusEligibility, techEligibilityByEmail } = useMemo(() => {
-    // Tech Bonus eligibility is anchored to TODAY, not the selected PAB period
-    // end. An employee is eligible iff their start_date is already at least
-    // 30 calendar days in the past as of right now. Future eligibility on a
-    // forward-looking period is intentionally NOT counted — we only show
-    // people who have actually completed 30 days of service.
-    const now = new Date();
-    const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const period = parsePeriodRange(activeSourceFile);
+    const anchor = period
+      ? new Date(
+          Number(period.startISO.slice(0, 4)),
+          Number(period.startISO.slice(5, 7)) - 1,
+          Number(period.startISO.slice(8, 10)),
+        )
+      : (() => {
+          const now = new Date();
+          return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        })();
     let eligible = 0;
     let pending = 0;
     let unknown = 0;
@@ -2945,19 +2960,13 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       if (!isDeptEligible(sysBonusCfg.tech, deptKeyOf(e.department ?? null))) continue;
       considered += 1;
       const emailKey = normEmail(e.work_email ?? e.personal_email ?? '') ?? '';
-      if (!e.start_date) {
+      const sd = parseMasterStartDate(e.start_date);
+      if (!sd) {
         unknown += 1;
         if (emailKey) byEmail.set(emailKey, null);
         continue;
       }
-      const sd = new Date(e.start_date);
-      if (isNaN(sd.getTime())) {
-        unknown += 1;
-        if (emailKey) byEmail.set(emailKey, null);
-        continue;
-      }
-      const eligibleFrom = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate() + 30).getTime();
-      const isElig = todayMid >= eligibleFrom;
+      const isElig = hasThirtyDaysFromStart(anchor, sd);
       if (isElig) eligible += 1;
       else pending += 1;
       if (emailKey) byEmail.set(emailKey, isElig);
@@ -2966,7 +2975,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       techBonusEligibility: { eligible, pending, unknown, total: considered },
       techEligibilityByEmail: byEmail,
     };
-  }, [employees, sysBonusCfg, deptKeyOf]);
+  }, [employees, sysBonusCfg, deptKeyOf, activeSourceFile]);
 
   const fetchEmployees = React.useCallback(async (signal?: AbortSignal) => {
     const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
