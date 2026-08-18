@@ -90,6 +90,36 @@ Ten confirmed findings were fixed before this shipped. Each is now a rule worth 
 
 ---
 
+## 2.5 · Per-person itemization for the table CSV export (2026-08-18)
+
+`computePayoutExtras` also returns **`byEmail`** — the exact per-person figures the
+aggregate summed, keyed by lowercased **work email only**, each entry carrying the
+seven components, the carrier's `finalPhp`, and its `source`
+(`wizard` / `staged` / `excluded_settled`). The route strips it unless called with
+`?per_person=1` (it is ~1,000 entries and the hero polls every 30s).
+
+The Overview employees-table **Export CSV** fetches it at click time and adds the
+columns `PAB / Tech / Other Bonuses / Adjustment / Orphanage / MESA Deduction /
+MESA Disbursement / Final Pay (PHP) / Pay Figures From` beside the existing
+salary-only `Initial Pay (PHP)`. Rules baked in:
+
+- The figures come from the same carriers as the hero — **never recomputed**
+  client-side, so the CSV cannot disagree with the wizard.
+- **Work-email match only** — a personal-email-only row exports blank pay figures,
+  never someone else's (shared personal addresses).
+- **A failed extras fetch aborts the export** with an error toast. A silently
+  salary-only file is the exact drift this export exists to catch (Kane validates
+  HRIS against the Google Sheet with it).
+- `Initial Pay (PHP)` stays the sheet-rate salary sum (§3's known gap), so catalog
+  drift is *visible* in the file — `Final Pay` is the authoritative paid amount.
+
+The Payroll Wizard's own Reports exports (XLSX + PDF) were itemized the same day via
+`src/lib/payroll-wizard/report-rows.ts` — one shared row builder whose test pins the
+identity `initial + bonuses_total + orphanage + mesaDisb − mesaDed = net` and keeps
+the signed Adjustment out of the "Bonuses" column.
+
+---
+
 ## 3 · Known gap (still open)
 
 The **salary base is still sheet-only rates.** `totalPayout` sums hours × the rates

@@ -66,6 +66,8 @@ import {
 } from '@/lib/supabase/employee-hourly-rates';
 import type { PayrollHubstaffRow } from '@/lib/supabase/hubstaff-hours';
 import { normEmail } from '@/lib/email/norm-email';
+import { toast } from 'sonner';
+import type { PayoutExtrasPerson } from '@/lib/payroll/payout-extras';
 import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { phpHourlyPayFromSeconds, splitRegularOvertimeSeconds } from '@/lib/payroll/money-php';
 import {
@@ -4207,15 +4209,48 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
 
   const totalPendingActions = (pendingDisputes ?? 0) + (pendingLeaves ?? 0);
 
-  const exportToCsv = () => {
+  const exportToCsv = async () => {
+    // Per-person bonus/adjustment itemization comes from the SAME carriers the
+    // hero's Total Payout uses (payout-extras: qualifying wizard snapshot, else
+    // the staged lock) — never recomputed here, so the CSV agrees with the
+    // wizard by construction. Keyed by WORK email only (personal addresses are
+    // shared across people). A fetch failure ABORTS the export: a silently
+    // salary-only file is exactly the drift this export exists to catch.
+    let extrasByEmail: Record<string, PayoutExtrasPerson> = {};
+    if (activeSourceFile) {
+      try {
+        const res = await fetch(
+          `/api/accounting/payout-extras?source_file=${encodeURIComponent(activeSourceFile)}&per_person=1`,
+          { cache: 'no-store' },
+        );
+        const json = (await res.json()) as { byEmail?: Record<string, PayoutExtrasPerson>; error?: string };
+        if (!res.ok || json.error) throw new Error(json.error ?? `HTTP ${res.status}`);
+        extrasByEmail = json.byEmail ?? {};
+      } catch (err) {
+        toast.error('Export cancelled — could not load bonus/adjustment figures', {
+          description: err instanceof Error ? err.message : 'payout-extras fetch failed',
+        });
+        return;
+      }
+    }
     const headers = [
       'Name', 'Personal Email', 'Work Email', 'Department', 'Source', 'Employee ID',
-      'Start Date', 'Hours', 'Initial Pay (PHP)', 'PAB Eligibility', 'Tech Bonus Eligibility',
+      'Start Date', 'Hours', 'Initial Pay (PHP)',
+      'PAB Bonus (PHP)', 'Tech Bonus (PHP)', 'Other Bonuses (PHP)', 'Adjustment (PHP)',
+      'Orphanage (PHP)', 'MESA Deduction (PHP)', 'MESA Disbursement (PHP)',
+      'Final Pay (PHP)', 'Pay Figures From',
+      'PAB Eligibility', 'Tech Bonus Eligibility',
     ];
+    const n2 = (v: number | null | undefined) =>
+      v != null && Number.isFinite(v) ? v.toFixed(2) : '';
     const rows = filteredEmployees.map((row) => {
       const email = row.work_email ?? row.personal_email ?? '';
       const emailKey = normEmail(email) ?? '';
       const pay = emailKey ? employeePayByEmail[emailKey] : undefined;
+      // Work-email match ONLY — a personal-email-only row gets blank pay
+      // figures rather than someone else's (shared personal addresses).
+      const workKey = normEmail(row.work_email ?? '') ?? '';
+      const extras = workKey ? extrasByEmail[workKey] : undefined;
       const elig = emailKey ? pabEligibilityByEmail.get(emailKey) : undefined;
       const pabStatus = elig === true ? 'Eligible' : elig === false ? 'Ineligible' : 'N/A';
       const techElig = emailKey ? techEligibilityByEmail.get(emailKey) : undefined;
@@ -4230,6 +4265,19 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         row.start_date ?? '',
         pay ? pay.hours.toFixed(2) : '',
         pay?.pay != null ? pay.pay.toFixed(2) : '',
+        n2(extras?.components.pabPhp),
+        n2(extras?.components.techPhp),
+        n2(extras?.components.otherBonusesPhp),
+        n2(extras?.components.adjustmentPhp),
+        n2(extras?.components.orphanagePhp),
+        n2(extras?.components.mesaDeductionPhp),
+        n2(extras?.components.mesaDisbursementPhp),
+        n2(extras?.finalPhp),
+        extras
+          ? (extras.source === 'wizard' ? 'Wizard (live snapshot)'
+            : extras.source === 'staged' ? 'Dispatch lock'
+            : 'Excluded — settled')
+          : '',
         pabStatus,
         techStatus,
       ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',');

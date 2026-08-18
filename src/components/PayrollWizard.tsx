@@ -210,6 +210,11 @@ import {
   type ClientAuditEvent,
 } from '@/lib/audit/client-format';
 import { downloadPayrollReportPdf, type PayrollReportRow } from '@/lib/payroll-wizard/report-pdf';
+import {
+  PAYROLL_EXPORT_HEADERS,
+  buildPayrollExportRows,
+  payrollExportRowToAoa,
+} from '@/lib/payroll-wizard/report-rows';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import type { OffboardedRosterRow } from '@/lib/roster/offboarded-roster-row';
@@ -16883,20 +16888,13 @@ export default function PayrollWizard({
                 size="sm"
                 className="h-8 gap-2 border-emerald-300/70 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
                 onClick={async () => {
+                  // Fully itemized via the shared report-rows builder so every
+                  // row reconciles: Initial + Bonuses Total + Orphanage + MESA
+                  // Disb − MESA Ded = Net Pay, with the signed Accounting Adj.
+                  // in its own column instead of hiding inside "Bonuses".
                   const salariesAoa: (string | number | null)[][] = [
-                    ['Employee', 'Email', 'Department', 'Hours', 'Regular', 'OT', 'Bonuses', 'MESA', 'Net Pay', 'Net Pay (USD)'],
-                    ...snap.employees.map((e) => [
-                      e.name ?? '',
-                      e.email,
-                      e.department_name ?? '',
-                      e.hours.total,
-                      e.pay_php.regular ?? null,
-                      e.pay_php.ot ?? null,
-                      e.pay_php.bonuses_total,
-                      (e.pay_php.mesa_disbursement ?? 0) - e.pay_php.mesa_deduction,
-                      e.pay_php.final,
-                      snap.usdToPhpRate > 0 ? Math.round((e.pay_php.final / snap.usdToPhpRate) * 100) / 100 : null,
-                    ]),
+                    [...PAYROLL_EXPORT_HEADERS],
+                    ...buildPayrollExportRows(snap.employees, snap.usdToPhpRate).map(payrollExportRowToAoa),
                   ];
                   // Fetch the audit trail for this cycle so it can be embedded
                   // as an "Audit Log" sheet alongside the other three. Best-effort:
@@ -16945,20 +16943,12 @@ export default function PayrollWizard({
                 size="sm"
                 className="h-8 gap-2 border-rose-300/70 text-rose-700 hover:bg-rose-50 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
                 onClick={async () => {
-                  const rows: PayrollReportRow[] = snap.employees.map((e) => ({
-                    name: e.name ?? '',
-                    email: e.email,
-                    department: e.department_name ?? '',
-                    hours: e.hours.total,
-                    regular: e.pay_php.regular ?? null,
-                    ot: e.pay_php.ot ?? null,
-                    bonuses: e.pay_php.bonuses_total,
-                    mesa: (e.pay_php.mesa_disbursement ?? 0) - e.pay_php.mesa_deduction,
-                    netPhp: e.pay_php.final ?? 0,
-                    netUsd: snap.usdToPhpRate > 0
-                      ? Math.round(((e.pay_php.final ?? 0) / snap.usdToPhpRate) * 100) / 100
-                      : null,
-                  }));
+                  // Same shared row builder as the XLSX export — one split,
+                  // two formats, so the PDF can never disagree with the CSV.
+                  const rows: PayrollReportRow[] = buildPayrollExportRows(
+                    snap.employees,
+                    snap.usdToPhpRate,
+                  );
 
                   // Timestamp like "2026-05-14 09-32-18" — filesystem-safe (no colons).
                   const d = snap.startedAt;
@@ -17023,7 +17013,14 @@ export default function PayrollWizard({
                           <td className="px-3 py-2 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">{e.hours.total.toFixed(2)}</td>
                           <td className="px-3 py-2 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">{e.pay_php.regular != null ? formatPHP(e.pay_php.regular) : '—'}</td>
                           <td className="px-3 py-2 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">{e.pay_php.ot != null ? formatPHP(e.pay_php.ot) : '—'}</td>
-                          <td className="px-3 py-2 font-mono tabular-nums text-emerald-700 dark:text-emerald-400">{e.pay_php.bonuses_total > 0 ? `+${formatPHP(e.pay_php.bonuses_total)}` : '—'}</td>
+                          {/* bonuses_total is SIGNED (the Accounting Adj. is a delta) —
+                              never gate its display on > 0 or a net-negative week vanishes. */}
+                          <td className={cn(
+                            "px-3 py-2 font-mono tabular-nums",
+                            e.pay_php.bonuses_total > 0 && "text-emerald-700 dark:text-emerald-400",
+                            e.pay_php.bonuses_total < 0 && "text-rose-600 dark:text-rose-400",
+                            e.pay_php.bonuses_total === 0 && "text-zinc-400",
+                          )}>{e.pay_php.bonuses_total !== 0 ? `${e.pay_php.bonuses_total > 0 ? '+' : '-'}${formatPHP(Math.abs(e.pay_php.bonuses_total))}` : '—'}</td>
                           {(() => {
                             const disb = e.pay_php.mesa_disbursement ?? 0;
                             const ded = e.pay_php.mesa_deduction;

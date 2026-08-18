@@ -69,6 +69,22 @@ export interface PayoutExtras {
   /** tech + otherBonuses + adjustment + mesaDisbursement + orphanage
    *  − mesaDeduction + urgentPaid. PAB excluded (see module doc). */
   extrasTotalPhp: number;
+  /** Per-person itemization keyed by lowercased WORK email — the exact figures
+   *  the aggregate `components` summed, per the same precedence (qualifying
+   *  snapshot entry, else staged row; excluded rows only once settled). Fed to
+   *  the Overview table CSV export so its per-row bonus/adjustment columns can
+   *  never disagree with the hero. The route strips this unless asked
+   *  (`?per_person=1`) — it is ~1,000 entries and the hero polls every 30s. */
+  byEmail: Record<string, PayoutExtrasPerson>;
+}
+
+export interface PayoutExtrasPerson {
+  components: PayoutExtrasComponents;
+  /** The carrier's final pay for the row (staged `pay_php.final` or snapshot
+   *  `final`), or null when the carrier doesn't state one. */
+  finalPhp: number | null;
+  /** Which carrier priced this person (mirrors the aggregate's precedence). */
+  source: 'wizard' | 'staged' | 'excluded_settled';
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -185,13 +201,17 @@ export async function computePayoutExtras(sourceFile: string): Promise<PayoutExt
 
   const supabase = createSupabaseServiceRoleClient();
   const total: PayoutExtrasComponents = { ...ZERO };
+  // Per-person mirror of `total` — every accumulate() below also records the
+  // same figures under the person's work email, so the export column set and
+  // the hero aggregate are the same numbers by construction.
+  const byEmail: Record<string, PayoutExtrasPerson> = {};
   let provenance: PayoutExtras['provenance'] = 'none';
   let asOf: string | null = null;
   const urgentWeek = urgentBucketForCycle(sourceFile);
   let urgentPaidPhp = 0;
 
   if (!supabase) {
-    return { sourceFile, provenance, asOf, components: total, urgentWeek, urgentPaidPhp, extrasTotalPhp: 0 };
+    return { sourceFile, provenance, asOf, components: total, urgentWeek, urgentPaidPhp, extrasTotalPhp: 0, byEmail };
   }
 
   const stagedRes = await selectAllPaged<StagedRow>(
@@ -239,7 +259,17 @@ export async function computePayoutExtras(sourceFile: string): Promise<PayoutExt
         snapshotEntryItemized(entry) &&
         Number.isFinite(snapUpdatedMs) &&
         (!Number.isFinite(lockedMs) || snapUpdatedMs > lockedMs);
-      accumulate(total, snapshotWins ? fromSnapshotEntry(entry) : fromPayPhp(row.pay_php));
+      const c = snapshotWins ? fromSnapshotEntry(entry) : fromPayPhp(row.pay_php);
+      accumulate(total, c);
+      if (workKey) {
+        byEmail[workKey] = {
+          components: { ...c },
+          finalPhp: snapshotWins
+            ? finiteOrNull(entry['final'])
+            : finiteOrNull(row.pay_php?.['final']),
+          source: snapshotWins ? 'wizard' : 'staged',
+        };
+      }
       if (snapshotWins) usedSnapshot = true;
     }
     // Excluded (do-not-pay) rows: their money counts only once Accounting
@@ -251,7 +281,15 @@ export async function computePayoutExtras(sourceFile: string): Promise<PayoutExt
       const paidEmails = await paidEmployeeDispatchEmails(supabase, sourceFile);
       for (const row of stagedExcluded) {
         const em = row.recipient_email?.trim().toLowerCase() ?? '';
-        if (em && paidEmails.has(em)) accumulate(total, fromPayPhp(row.pay_php));
+        if (em && paidEmails.has(em)) {
+          const c = fromPayPhp(row.pay_php);
+          accumulate(total, c);
+          byEmail[em] = {
+            components: { ...c },
+            finalPhp: finiteOrNull(row.pay_php?.['final']),
+            source: 'excluded_settled',
+          };
+        }
       }
     }
     if (usedSnapshot) {
@@ -283,7 +321,16 @@ export async function computePayoutExtras(sourceFile: string): Promise<PayoutExt
       seen.add(sig);
       if (!snapshotEntryItemized(entry)) continue;
       usedItemized = true;
-      accumulate(total, fromSnapshotEntry(entry));
+      const c = fromSnapshotEntry(entry);
+      accumulate(total, c);
+      const workEmail = typeof we === 'string' ? we.trim().toLowerCase() : '';
+      if (workEmail) {
+        byEmail[workEmail] = {
+          components: { ...c },
+          finalPhp: finiteOrNull(entry['final']),
+          source: 'wizard',
+        };
+      }
     }
     if (usedItemized) {
       provenance = 'wizard';
@@ -318,9 +365,15 @@ export async function computePayoutExtras(sourceFile: string): Promise<PayoutExt
       urgentPaidPhp,
   );
 
-  const extras: PayoutExtras = { sourceFile, provenance, asOf, components: total, urgentWeek, urgentPaidPhp, extrasTotalPhp };
+  const extras: PayoutExtras = { sourceFile, provenance, asOf, components: total, urgentWeek, urgentPaidPhp, extrasTotalPhp, byEmail };
   extrasCache.set(sourceFile, { at: Date.now(), extras });
   return extras;
+}
+
+/** A number when the carrier states one, null otherwise — the export must show
+ *  "unknown" rather than a ₱0 nobody computed. */
+function finiteOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
 /** Lowercased recipient emails with a PAID employee dispatch for the cycle.

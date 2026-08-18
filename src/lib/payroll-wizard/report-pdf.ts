@@ -12,24 +12,16 @@
 // report carries a DRAFT watermark + banner and an "(Draft)" filename.
 
 import { PDFDocument, StandardFonts, rgb, degrees, type PDFFont, type PDFImage } from 'pdf-lib';
+import type { PayrollExportRow } from './report-rows';
 
 // ---------------------------------------------------------------------------
 // Model
 // ---------------------------------------------------------------------------
 
-export interface PayrollReportRow {
-  name: string;
-  email: string;
-  department: string;
-  hours: number;
-  regular: number | null;
-  ot: number | null;
-  bonuses: number;
-  /** Net MESA (disbursement minus deduction); signed. */
-  mesa: number;
-  netPhp: number;
-  netUsd: number | null;
-}
+/** Row model shared with the XLSX export — built by report-rows.ts from the
+ *  staged dispatch payload, so the PDF can never show a different split than
+ *  the money that was actually staged. */
+export type PayrollReportRow = PayrollExportRow;
 
 export interface PayrollReportModel {
   isDraft: boolean;
@@ -330,16 +322,21 @@ export async function generatePayrollReportPdf(
     state.page.drawText('SALARIES / WAGES', { x: MARGIN + 10, y: state.y - 8, size: 9.5, font: bold, color: NAVY });
     state.y -= 17;
 
+    // Fully reconcilable: Initial + Bonuses + Adj. + Orphanage + MESA = Net.
+    // (The XLSX carries the finer PAB/Tech/Other split of the Bonuses column.)
     const cols: Col[] = [
-      { header: 'Employee', width: 176 },
-      { header: 'Department', width: 96 },
-      { header: 'Hours', width: 48, align: 'right' },
-      { header: 'Regular', width: 70, align: 'right' },
-      { header: 'OT', width: 60, align: 'right' },
-      { header: 'Bonuses', width: 66, align: 'right' },
-      { header: 'MESA', width: 62, align: 'right' },
-      { header: 'Net Pay (PHP)', width: 78, align: 'right' },
-      { header: 'Net (USD)', width: 48, align: 'right' },
+      { header: 'Employee', width: 150 },
+      { header: 'Department', width: 66 },
+      { header: 'Hours', width: 36, align: 'right' },
+      { header: 'Regular', width: 52, align: 'right' },
+      { header: 'OT', width: 46, align: 'right' },
+      { header: 'Initial', width: 54, align: 'right' },
+      { header: 'Bonuses', width: 52, align: 'right' },
+      { header: 'Adj.', width: 48, align: 'right' },
+      { header: 'Orphanage', width: 48, align: 'right' },
+      { header: 'MESA', width: 48, align: 'right' },
+      { header: 'Net (PHP)', width: 58, align: 'right' },
+      { header: 'Net (USD)', width: 46, align: 'right' },
     ];
 
     const rows = model.employees.map((e) => [
@@ -348,14 +345,19 @@ export async function generatePayrollReportPdf(
       Number.isFinite(e.hours) ? e.hours.toFixed(2) : '-',
       n2(e.regular),
       n2(e.ot),
-      e.bonuses > 0 ? `+${n2(e.bonuses)}` : '-',
-      n2Signed(e.mesa),
+      n2(e.initial),
+      // Earned bonuses (PAB + Tech + Other) are never negative; the signed
+      // Accounting Adj. has its own column — never gate a signed value on > 0.
+      e.bonusesEarned > 0 ? `+${n2(e.bonusesEarned)}` : '-',
+      n2Signed(e.adjustment),
+      e.orphanage > 0 ? `+${n2(e.orphanage)}` : '-',
+      n2Signed(e.mesaNet),
       n2(e.netPhp),
       e.netUsd != null ? n2(e.netUsd) : '-',
     ]);
 
     const footer = [
-      `Total (${model.employees.length})`, '', '', '', '', '', '',
+      `Total (${model.employees.length})`, '', '', '', '', '', '', '', '', '',
       n2(model.totalPhp),
       model.totalUsd != null ? n2(model.totalUsd) : '-',
     ];

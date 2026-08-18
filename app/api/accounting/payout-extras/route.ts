@@ -23,7 +23,13 @@ export async function GET(req: NextRequest) {
 
   try {
     const extras = await computePayoutExtras(sourceFile);
-    return NextResponse.json(extras);
+    // The per-person map is ~1,000 entries and the Overview polls this route
+    // every 30s — only the table CSV export (per_person=1) needs it.
+    if (req.nextUrl.searchParams.get('per_person') === '1') {
+      return NextResponse.json(extras);
+    }
+    const { byEmail: _omit, ...aggregate } = extras;
+    return NextResponse.json(aggregate);
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : 'Failed to compute payout extras' },
