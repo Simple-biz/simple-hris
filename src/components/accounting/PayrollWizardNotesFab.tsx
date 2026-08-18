@@ -331,8 +331,22 @@ let checklistLastPullAt: number | null = null;
  *  visible data last left the server. Stamped only by SUCCESSFUL loads (a
  *  failed background poll keeps the old, honest time), and ticking every 10s
  *  so the relative part can't quietly read stale. Renders nothing until the
- *  pane's first successful pull is known. */
-function PaneFreshness({ at, className = "" }: { at: number | null; className?: string }) {
+ *  pane's first successful pull is known.
+ *
+ *  `live` is the pane's Realtime channel state (useLiveRefresh's
+ *  onStatusChange): emerald dot = websocket subscribed, changes land in ~1s;
+ *  amber dot = polling only (~30s worst case). `null` (channel not up yet)
+ *  honestly reads Polling — until SUBSCRIBED fires, the poll IS the coverage.
+ *  Either way the 30s poll keeps running, so the tooltips both say so. */
+function PaneFreshness({
+  at,
+  live,
+  className = "",
+}: {
+  at: number | null;
+  live?: boolean | null;
+  className?: string;
+}) {
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = window.setInterval(() => setTick((t) => t + 1), 10_000);
@@ -353,6 +367,29 @@ function PaneFreshness({ at, className = "" }: { at: number | null; className?: 
       className={`inline-flex shrink-0 items-center gap-1 text-[11px] text-zinc-400 dark:text-zinc-500 ${className}`}
       title={`Last successful data pull: ${new Date(at).toLocaleString()}`}
     >
+      {live !== undefined && (
+        <span
+          title={
+            live
+              ? "Live — Realtime connected: changes land in about a second (30s poll still runs as backup)"
+              : "Polling — Realtime not connected: changes land within ~30s via the poll"
+          }
+          className="relative mr-0.5 flex h-2 w-2"
+        >
+          {live && (
+            <span
+              aria-hidden
+              className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60 motion-reduce:hidden"
+            />
+          )}
+          <span
+            className={`relative inline-flex h-2 w-2 rounded-full ${
+              live ? "bg-emerald-500" : "bg-amber-400"
+            }`}
+          />
+          <span className="sr-only">{live ? "Live updates" : "Polling updates"}</span>
+        </span>
+      )}
       <Clock aria-hidden className="h-3 w-3" />
       Last data pull {new Date(at).toLocaleTimeString()} · {rel}
     </span>
@@ -530,6 +567,9 @@ export default function PayrollWizardNotesFab({
   // "Last data pull" line. Seeded from the module-level stamp so an inner tab
   // switch (or leaving the wizard tab) doesn't reset it to "unknown".
   const [notesPulledAt, setNotesPulledAt] = useState<number | null>(checklistLastPullAt);
+  // Realtime channel state for the signal dot (null until SUBSCRIBED fires —
+  // reads Polling, which is what's actually covering the board until then).
+  const [notesRtLive, setNotesRtLive] = useState<boolean | null>(null);
   // Last-saved snapshot per row, so a blur only PATCHes cells that changed.
   // Seeded from the same cached rows, so editing a cell right after a remount
   // still compares against the real saved value rather than an empty baseline.
@@ -653,6 +693,7 @@ export default function PayrollWizardNotesFab({
     onRefresh: () => {
       if (!editingRef.current) void load();
     },
+    onStatusChange: (s) => setNotesRtLive(s === "live"),
   });
 
   /** PATCH one row's changed fields; reconcile with the server's copy. */
@@ -1235,7 +1276,7 @@ export default function PayrollWizardNotesFab({
               onChange={setWeekStart}
             />
             <div className="flex flex-wrap items-center gap-3">
-              <PaneFreshness at={notesPulledAt} />
+              <PaneFreshness at={notesPulledAt} live={notesRtLive} />
               <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-300">
                 Show everyone&apos;s notes
                 <Switch
@@ -2946,6 +2987,9 @@ function PayrollReadinessGlance({
   const [pulledAt, setPulledAt] = useState<number | null>(
     () => readCachedReadiness(wizardSourceFile)?.at ?? null,
   );
+  // Realtime channel state for the signal dot (null until SUBSCRIBED fires —
+  // reads Polling, which is what's actually covering the pane until then).
+  const [rtLive, setRtLive] = useState<boolean | null>(null);
   // Mirrors `data` for the fetch path, which needs to know whether there's a
   // snapshot on screen without taking `data` as a dependency.
   const dataRef = useRef<PayrollReadiness | null>(data);
@@ -3232,6 +3276,7 @@ function PayrollReadinessGlance({
     // Background: a dropped request on the poll must not blank the pane the
     // accountant is reading (it also keeps the cache warm for the next mount).
     onRefresh: () => void load({ background: true }),
+    onStatusChange: (s) => setRtLive(s === "live"),
   });
 
   // Filter the three people lists live (name / email / dept / status). Computed
@@ -3329,7 +3374,7 @@ function PayrollReadinessGlance({
       {/* When the snapshot on screen was last pulled — stays up (with its old,
           honest time) while a background refresh or a week-switch load runs. */}
       <div className="-mt-2 mb-2 flex justify-end px-0.5">
-        <PaneFreshness at={pulledAt} />
+        <PaneFreshness at={pulledAt} live={rtLive} />
       </div>
     </div>
   );
@@ -4039,6 +4084,9 @@ function OffboardedGlance({
   const [pulledAt, setPulledAt] = useState<number | null>(
     () => readCachedOffboarded(wizardSourceFile)?.at ?? null,
   );
+  // Realtime channel state for the signal dot (null until SUBSCRIBED fires —
+  // reads Polling, which is what's actually covering the pane until then).
+  const [rtLive, setRtLive] = useState<boolean | null>(null);
   const [ratePerson, setRatePerson] = useState<ReadinessMissingRate | null>(null);
   const [bankPerson, setBankPerson] = useState<ReadinessMissingBank | null>(null);
   const [bankPrefill, setBankPrefill] = useState<OffboardedPayrollCandidate["bankPrefill"]>(null);
@@ -4121,6 +4169,7 @@ function OffboardedGlance({
     tables: ["employee_ids", "payment_catalog_pay_structures", "employee_hourly_rates"],
     channel: "payroll-notes-offboarded",
     onRefresh: () => void load({ background: true }),
+    onStatusChange: (s) => setRtLive(s === "live"),
   });
 
   // Unique departments present in the list (with row counts) for the dropdown;
@@ -4176,7 +4225,7 @@ function OffboardedGlance({
     return (
       <div className="flex h-[70vh] flex-col">
         <div className="flex shrink-0 justify-end">
-          <PaneFreshness at={pulledAt} />
+          <PaneFreshness at={pulledAt} live={rtLive} />
         </div>
         <div className="flex flex-1 items-center justify-center text-sm text-zinc-400">
           No one&apos;s recently left — nothing needs final-pay setup.
@@ -4202,7 +4251,7 @@ function OffboardedGlance({
           <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
             {weekLabel ? <>Final pay for payroll week {weekLabel}</> : null}
           </span>
-          <PaneFreshness at={pulledAt} />
+          <PaneFreshness at={pulledAt} live={rtLive} />
         </div>
         <div className="mb-2 flex items-center gap-2">
           <ReadinessSearch

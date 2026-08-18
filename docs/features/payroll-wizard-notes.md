@@ -121,6 +121,15 @@ poll keeps the previous, honest time — and ticking every 10s. Cached paints
 show the cache's own stamp (that IS when the data left the server), not the
 paint time.
 
+The line carries a **signal dot** (added same day, Kane's ask) fed by
+`useLiveRefresh`'s `onStatusChange`: **emerald (pinging)** = the Realtime
+websocket is SUBSCRIBED, changes land in ~1s; **amber** = polling only,
+changes land within ~30s. Until the channel's SUBSCRIBED fires the dot reads
+amber, because the poll genuinely is the coverage at that moment. Either
+color, the 30s poll keeps running — the tooltips say so, since a SUBSCRIBED
+channel still can't deliver events for a table missing from the
+`supabase_realtime` publication.
+
 ### Live refresh coverage (2026-08-18)
 
 Readiness (12 tables) and the notes board (`payroll_wizard_notes`) were already
