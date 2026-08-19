@@ -38,6 +38,13 @@ import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
 import { humanizeTabId } from '@/lib/presence/page-label';
 import { useTabDocumentTitle } from '@/hooks/useTabDocumentTitle';
 import { isPayoutComplete } from '@/components/employee/employee-payout-fields';
+import {
+  GREETING_AUTOHIDE_MS,
+  GREETING_DELAY_MS,
+  GREETING_TEXT,
+  allFaqQuestions,
+  greetingFaqs,
+} from '@/lib/penny/employee-faq';
 import { hasAnySkillSetContent, type SkillSetCompletionFields } from '@/lib/skill-set-titles';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
@@ -47,15 +54,13 @@ const SESSION_KEY = 'employee_session_email';
 type EmployeeProfileFocusTab = 'overview' | 'payment' | 'skillsets';
 
 /**
- * Penny's starter chips on the employee Overview. Each one is a question Penny
- * can actually answer from a self-scoped tool — a chip that leads to "I can't see
- * that" wastes one of the ten prompts.
+ * Penny's starter chips on the employee Overview — the same pool the greeting
+ * balloon draws from. ONE list on purpose: a chip Penny volunteers unprompted and
+ * a chip it shows in an empty panel must both be a question it can actually
+ * answer. `src/lib/penny/employee-faq.ts` owns them, and a test pins every entry
+ * to a real tool so an unanswerable one cannot be added.
  */
-const PENNY_EMPLOYEE_SUGGESTIONS = [
-  'When is the PAB and how do I get it?',
-  'When do I get paid?',
-  'What was my last pay?',
-];
+const PENNY_EMPLOYEE_SUGGESTIONS = allFaqQuestions();
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -578,6 +583,15 @@ export default function EmployeeApp() {
           subtitle="Your pay, bonuses & policies"
           suggestions={PENNY_EMPLOYEE_SUGGESTIONS}
           markSrc="/Chatbubblev2.png"
+          greeting={{
+            text: GREETING_TEXT,
+            chips: greetingFaqs(),
+            delayMs: GREETING_DELAY_MS,
+            autoHideMs: GREETING_AUTOHIDE_MS,
+            // Per signed-in identity, so an elevated viewer switching between
+            // employees is not re-greeted for each one.
+            storageKey: `penny_greeted:${employeeEmail}`,
+          }}
         />
       )}
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />

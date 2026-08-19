@@ -36,6 +36,7 @@ export default function CeoChatBubble({
   quotaEndpoint,
   extraBody,
   markSrc = '/chatbubble.png',
+  greeting,
 }: {
   hidden?: boolean;
   /** When provided, shows an "expand" button that opens the full Penny AI tab. */
@@ -64,6 +65,22 @@ export default function CeoChatBubble({
    * employee rather than the reports assistant it is for the CEO.
    */
   markSrc?: string;
+  /**
+   * Opt into the proactive greeting balloon (employee dashboard only). Omit and
+   * the bubble never speaks first — CEO and Admin are unchanged.
+   *
+   * `chips` must be questions the assistant can actually answer: the balloon is
+   * Penny raising a subject on its own initiative, so an offer it cannot fulfil
+   * costs the employee one of their ten prompts to hear "I can't".
+   */
+  greeting?: {
+    text: string;
+    chips: { question: string; short: string }[];
+    delayMs: number;
+    autoHideMs: number;
+    /** Distinguishes the once-per-session dismissal between mounts. */
+    storageKey: string;
+  };
 }) {
   const [open, setOpen] = useState(false);
   const [quota, setQuota] = useState<EmployeePennyQuota | null>(null);
@@ -119,6 +136,70 @@ export default function CeoChatBubble({
   const metered = !!quotaEndpoint && !!quota && !quota.exempt;
   const locked = metered && quota!.exhausted;
   const warning = metered ? quotaMessage(quota!) : null;
+
+  /* ── The proactive greeting ─────────────────────────────────────────────── */
+
+  const [greetOpen, setGreetOpen] = useState(false);
+  // Dismissal is remembered for the browser session, so navigating back to the
+  // Overview doesn't re-ask someone who already said no.
+  const [greetDismissed, setGreetDismissed] = useState(() => {
+    if (typeof window === 'undefined' || !greeting) return false;
+    try {
+      return sessionStorage.getItem(greeting.storageKey) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const dismissGreeting = () => {
+    setGreetOpen(false);
+    setGreetDismissed(true);
+    try {
+      if (greeting) sessionStorage.setItem(greeting.storageKey, '1');
+    } catch {
+      /* private mode — the in-memory flag still holds for this mount */
+    }
+  };
+
+  // Arm the timer once, on mount. The timer is deliberately NOT re-armed and its
+  // effect deliberately does NOT depend on `open` / `messages` — a five-second
+  // fuse outlives any of those changing, so gating it here would be a stale
+  // closure either way. **The render-time guard below is the authority**: it is
+  // re-evaluated every render, so it cannot go stale.
+  useEffect(() => {
+    if (!greeting || greetDismissed) return;
+    const t = setTimeout(() => setGreetOpen(true), greeting.delayMs);
+    return () => clearTimeout(t);
+  }, [greeting, greetDismissed]);
+
+  // Retreat on its own; a balloon that never leaves is furniture, not an offer.
+  useEffect(() => {
+    if (!greetOpen || !greeting) return;
+    const t = setTimeout(() => setGreetOpen(false), greeting.autoHideMs);
+    return () => clearTimeout(t);
+  }, [greetOpen, greeting]);
+
+  // Opening Penny at all means the nudge did its job — don't offer again this
+  // session, so closing the panel can't bring the balloon back.
+  useEffect(() => {
+    if (open && greeting && !greetDismissed) dismissGreeting();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // The single source of truth for whether the balloon is on screen. Every reason
+  // not to speak is listed here rather than spread across the effects above:
+  // the panel is open, the allowance is spent (inviting a question they have no
+  // prompt left for is worse than silence), a conversation already exists, or the
+  // whole widget is hidden by the shell.
+  const showGreeting =
+    !!greeting && greetOpen && !open && !locked && !hidden && messages.length === 0;
+
+  /** Tapping a chip opens the panel and asks that question straight away. */
+  function askFromGreeting(question: string) {
+    dismissGreeting();
+    setOpen(true);
+    void send(question);
+  }
 
   // Collapse the panel whenever the bubble is hidden (e.g. switched to Penny AI).
   useEffect(() => {
@@ -370,6 +451,61 @@ export default function CeoChatBubble({
                 Penny AI can make mistakes. Verify important details.
               </p>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Proactive greeting balloon — a speech bubble off the chat head, the same
+          shape the Payroll Wizard's guide uses. It never gates: it sits above the
+          button, is dismissible, retreats on its own, and vanishes the moment the
+          panel opens, a conversation starts, or the allowance runs out. */}
+      <AnimatePresence>
+        {showGreeting && greeting && (
+          <motion.div
+            key="penny-greeting"
+            role="dialog"
+            aria-label="Penny AI has a suggestion"
+            initial={{ opacity: 0, y: 8, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.96 }}
+            transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+            className="fixed bottom-[5.25rem] right-4 z-50 w-[min(19rem,calc(100vw-2rem))] origin-bottom-right rounded-2xl rounded-br-md border border-orange-200/80 bg-white p-3 shadow-xl shadow-orange-900/15 dark:border-orange-900/40 dark:bg-[#0d1117] sm:right-6"
+          >
+            <button
+              type="button"
+              onClick={dismissGreeting}
+              aria-label="Dismiss"
+              className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden />
+            </button>
+            <p className="pr-6 text-[13px] font-medium leading-snug text-zinc-800 dark:text-zinc-100">
+              {greeting.text}
+            </p>
+            <div className="mt-2 flex flex-col gap-1.5">
+              {greeting.chips.map((c) => (
+                <button
+                  key={c.question}
+                  type="button"
+                  onClick={() => askFromGreeting(c.question)}
+                  className="rounded-lg border border-orange-200/70 bg-orange-50/60 px-2.5 py-1.5 text-left text-[12.5px] font-medium text-orange-900 transition hover:border-orange-300 hover:bg-orange-100/70 dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-200 dark:hover:bg-orange-950/50"
+                >
+                  {c.short}
+                </button>
+              ))}
+            </div>
+            {/* Opening the panel with nothing typed is the low-commitment exit —
+                the chips are shortcuts, not the only way in. */}
+            <button
+              type="button"
+              onClick={() => {
+                dismissGreeting();
+                setOpen(true);
+              }}
+              className="mt-2 w-full rounded-lg px-2.5 py-1 text-[12px] text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+            >
+              Ask something else
+            </button>
           </motion.div>
         )}
       </AnimatePresence>

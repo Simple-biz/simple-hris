@@ -100,6 +100,45 @@ test pins the tool description's pointer to the calendar.
   the real guard, and widening that guard's allowlist to fit a redundant copy would
   weaken the only check that matters.
 
+## Penny speaks first — five seconds in, once, and never into a dead end
+
+Kane, 2026-08-19: five seconds after the employee dashboard loads, the bubble asks
+whether it can help, offering *"at least 5 unique messages that Penny can achieve"*.
+A speech balloon off the chat head — the same shape the Payroll Wizard's guide uses
+(`payroll-wizard-tutorial-mode.md`) — with three FAQ chips, an "Ask something else"
+escape, and a dismiss.
+
+> **A proactive offer is a promise, so the bar is higher than for a typed question.**
+> Penny raised the subject on its own initiative; an offer it cannot fulfil spends one
+> of the employee's ten prompts on an apology. So `src/lib/penny/employee-faq.ts` names
+> the tool that answers each entry, and **a test asserts that tool exists in
+> `EMPLOYEE_TOOLS`** — a question with nothing behind it cannot be added. Another test
+> forbids the specific temptations: leave balances (not tracked), peer pay (unreachable
+> by construction), and "did I earn the PAB?" (the tool deliberately does not judge
+> eligibility).
+
+The FAQ pool is also the panel's empty-state chips. **One list, on purpose:** a chip
+Penny volunteers and a chip it shows in an empty panel must both be answerable, and two
+lists would drift.
+
+### It stays quiet when speaking would be wrong
+
+Every reason not to speak lives in one render-time expression, `showGreeting`, rather
+than spread across effects — the balloon is suppressed while the panel is open, once a
+conversation exists, when the shell hides the widget, and **when the daily allowance is
+spent**. Inviting someone to ask a question they have no prompt left for is worse than
+saying nothing.
+
+The five-second fuse is armed once on mount and is deliberately *not* re-armed or
+gated on `open`/`messages`: a timer that long outlives any of those changing, so gating
+it in the effect would be a stale closure either way. The render guard is re-evaluated
+every render and cannot go stale — **if you add a new reason to stay quiet, add it
+there, not to the timer.** Opening Penny at all counts as the nudge having worked and
+dismisses it for the session, so closing the panel cannot bring the balloon back;
+dismissal persists in `sessionStorage` per signed-in identity, so an elevated viewer
+moving between employees is not re-greeted for each one. It also retreats on its own
+after ~22s.
+
 ## Accounting's payment status never reaches an employee
 
 Kane, 2026-08-19: *"All weeks should not be pending already."* Penny was passing
