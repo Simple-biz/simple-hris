@@ -4834,7 +4834,7 @@ export default function PayrollWizard({
   // manager_approved rows; pending rows are shown read-only.
   const fetchTimeAdjustmentReview = useCallback(() => {
     fetch(
-      `/api/time-adjustments?status=pending&status=manager_approved&status=manager_denied&status=approved&status=denied&limit=500`,
+      `/api/time-adjustments?status=pending&status=awaiting_second_approval&status=manager_approved&status=manager_denied&status=approved&status=denied&limit=500`,
       { cache: 'no-store' },
     )
       .then(r => r.json())
@@ -12039,15 +12039,23 @@ export default function PayrollWizard({
                 a.adjust_date <= activeBatchDateRange.endKey,
             )
           : timeAdjustmentRows;
+        // "Still owed a decision by someone upstream of Accounting" — under dual
+        // approval that is either reviewer, so awaiting_second_approval counts too.
+        const adjustmentAwaitsReviewers = (s: string) =>
+          s === 'pending' || s === 'awaiting_second_approval';
         const pendingAdjustmentCountByDept = new Map<string, number>();
         for (const a of weekScopedAdjustmentRows) {
-          if (a.status !== 'pending') continue;
+          if (!adjustmentAwaitsReviewers(a.status)) continue;
           const d = adjustmentDeptKey(a.work_email);
           if (d) pendingAdjustmentCountByDept.set(d, (pendingAdjustmentCountByDept.get(d) ?? 0) + 1);
         }
         const deptAdjustments = weekScopedAdjustmentRows
           .filter(a => adjustmentDeptKey(a.work_email) === activeDeptTab)
-          .sort((a, b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
+          .sort(
+            (a, b) =>
+              (adjustmentAwaitsReviewers(a.status) ? 0 : 1) -
+              (adjustmentAwaitsReviewers(b.status) ? 0 : 1),
+          );
         const unassignedEmployees = effectiveCalcResults.filter(r => !employeeDepts[r.email]);
         const assignedEmployees = effectiveCalcResults.filter(r => employeeDepts[r.email]);
         const totalBonusesAdded = assignedEmployees.reduce((sum, r) => sum + getEffectiveBonus(r.email), 0);

@@ -2,11 +2,13 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
 import {
+  assignSecondApprover,
   decideTimeAdjustment,
   deleteTimeAdjustment,
   getTimeAdjustmentById,
   managerDecideTimeAdjustment,
   recallTimeAdjustment,
+  secondDecideTimeAdjustment,
 } from '@/lib/supabase/time-adjustments';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
@@ -14,6 +16,45 @@ import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+
+/**
+ * Tells the employee their request was blocked. Under dual approval EITHER reviewer
+ * can end it, so `blockedBy` names which one — the old copy always said "your manager",
+ * which would be wrong half the time.
+ *
+ * Reuses the existing `time_adjustment.denied` type deliberately: it is already in the
+ * employee_notifications CHECK allowlist and already mapped to the employee view in
+ * notification-views.ts, so this needs no constraint migration.
+ */
+async function notifyAdjustmentBlocked(
+  id: string,
+  blockedBy: 'your manager' | 'the second approver',
+  decisionNote: string | null,
+): Promise<void> {
+  const { row } = await getTimeAdjustmentById(id);
+  if (!row) return;
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return;
+  const { error } = await supabase.from('employee_notifications').insert({
+    recipient_email: row.work_email,
+    type: 'time_adjustment.denied',
+    tone: 'neutral',
+    title: 'Time Adjustment Not Approved',
+    message: `Your time adjustment for ${row.adjust_date} was not approved by ${blockedBy}${
+      decisionNote ? `: "${decisionNote}"` : '.'
+    }`,
+    details: {
+      adjust_date: row.adjust_date,
+      decision_note: decisionNote,
+      blocked_by: blockedBy === 'your manager' ? 'manager' : 'second_approver',
+    },
+  });
+  // Surfaced, not swallowed: a silent failure here is an employee who is never told
+  // their request died. (The accounting path already logged; the manager path did not.)
+  if (error) {
+    console.error('[time-adjustments] blocked-notification insert failed:', error.message);
+  }
+}
 
 export async function PATCH(
   request: Request,
@@ -27,22 +68,38 @@ export async function PATCH(
       action?: string;
       approved_hours?: number | null;
       decision_note?: string | null;
+      second_approver_email?: string | null;
     };
 
-    const validActions = ['approve', 'deny', 'manager_approve', 'manager_deny', 'recall'];
+    const validActions = [
+      'approve',
+      'deny',
+      'manager_approve',
+      'manager_deny',
+      'recall',
+      'assign_second_approver',
+      'second_approve',
+      'second_deny',
+    ];
     if (!body.action || !validActions.includes(body.action)) {
       return NextResponse.json(
-        { error: 'action must be approve, deny, manager_approve, manager_deny, or recall' },
+        { error: `action must be one of: ${validActions.join(', ')}` },
         { status: 400 },
       );
     }
 
-    // Per-tab edit gate: manager-stage actions need manager:time_adjustments;
-    // accounting-stage actions (approve/deny) need accounting:payroll_wizard.
+    // Per-tab edit gate: every manager-stage action (including the second approver's,
+    // who is eligible precisely BECAUSE they hold this grant) needs
+    // manager:time_adjustments; accounting-stage actions need accounting:payroll_wizard.
+    // Row-level authorization is enforced separately below — the department check for
+    // the manager, the on-row assignment for the second approver.
     const isManagerStage =
       body.action === 'manager_approve' ||
       body.action === 'manager_deny' ||
-      body.action === 'recall';
+      body.action === 'recall' ||
+      body.action === 'assign_second_approver' ||
+      body.action === 'second_approve' ||
+      body.action === 'second_deny';
     const authz = isManagerStage
       ? await requireFeatureEdit('manager', 'time_adjustments')
       : await requireFeatureEdit('accounting', 'payroll_wizard');
@@ -71,38 +128,74 @@ export async function PATCH(
       return NextResponse.json({ success: true, error: null });
     }
 
-    // Manager approval path (stage 1)
+    // Naming the second approver, without deciding yet.
+    if (body.action === 'assign_second_approver') {
+      const target = (body.second_approver_email ?? '').trim();
+      if (!target) {
+        return NextResponse.json({ error: 'second_approver_email is required' }, { status: 400 });
+      }
+      const { error } = await assignSecondApprover(id, {
+        second_approver_email: target,
+        assigned_by: sessionEmail,
+      });
+      if (error) {
+        const code = error === 'Request not found' ? 404
+          : error.includes('Not authorized') || error.includes('not in your managed') ? 403
+          : error.includes('no longer open')
+            || error.includes('already decided')
+            || error.includes('cannot approve')
+            || error.includes('Pick someone')
+            || error.includes('cannot approve it') ? 400
+          : 500;
+        return NextResponse.json({ error }, { status: code });
+      }
+      return NextResponse.json({ success: true, error: null });
+    }
+
+    // Manager approval path (stage 1 of 2)
     if (body.action === 'manager_approve' || body.action === 'manager_deny') {
       const { error } = await managerDecideTimeAdjustment(id, {
+        action: body.action,
+        decided_by: sessionEmail,
+        decision_note: body.decision_note,
+        second_approver_email: body.second_approver_email,
+      });
+      if (error) {
+        const code = error === 'Request not found' ? 404
+          : error.includes('Not authorized') || error.includes('not in your managed') ? 403
+          : error.includes('no longer pending')
+            || error.includes('already decided')
+            || error.includes('Select a second approver')
+            || error.includes('no longer open')
+            || error.includes('cannot approve')
+            || error.includes('Pick someone') ? 400
+          : 500;
+        return NextResponse.json({ error }, { status: code });
+      }
+      // Notify the employee when the manager's denial ends the request.
+      if (body.action === 'manager_deny') {
+        await notifyAdjustmentBlocked(id, 'your manager', body.decision_note ?? null);
+      }
+      return NextResponse.json({ success: true, error: null });
+    }
+
+    // Second-approver path (the other half of stage 1). Authorized by the on-row
+    // assignment, which is what lets an approver outside the employee's department act.
+    if (body.action === 'second_approve' || body.action === 'second_deny') {
+      const { error } = await secondDecideTimeAdjustment(id, {
         action: body.action,
         decided_by: sessionEmail,
         decision_note: body.decision_note,
       });
       if (error) {
         const code = error === 'Request not found' ? 404
-          : error.includes('Not authorized') || error.includes('not in your managed') ? 403
-          : error.includes('no longer pending') ? 400
+          : error.includes('Not authorized') ? 403
+          : error.includes('already decided') || error.includes('no longer open') ? 400
           : 500;
         return NextResponse.json({ error }, { status: code });
       }
-      // Notify employee when manager denies
-      if (body.action === 'manager_deny') {
-        const { row: notifRow } = await getTimeAdjustmentById(id);
-        if (notifRow) {
-          const supabase = createSupabaseServiceRoleClient();
-          if (supabase) {
-            await supabase.from('employee_notifications').insert({
-              recipient_email: notifRow.work_email,
-              type: 'time_adjustment.denied',
-              tone: 'neutral',
-              title: 'Time Adjustment Not Approved',
-              message: `Your time adjustment for ${notifRow.adjust_date} was not approved by your manager${
-                body.decision_note ? `: "${body.decision_note}"` : '.'
-              }`,
-              details: { adjust_date: notifRow.adjust_date, decision_note: body.decision_note ?? null },
-            });
-          }
-        }
+      if (body.action === 'second_deny') {
+        await notifyAdjustmentBlocked(id, 'the second approver', body.decision_note ?? null);
       }
       return NextResponse.json({ success: true, error: null });
     }

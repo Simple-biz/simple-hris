@@ -1528,6 +1528,7 @@ const TA_REASON_LABEL = (code: string) =>
 
 const TA_STATUS_LABEL: Record<string, string> = {
   pending: 'Awaiting your approval',
+  awaiting_second_approval: 'Awaiting second approver',
   manager_approved: 'Forwarded to Accounting',
   manager_denied: 'Declined by you',
   approved: 'Approved by Accounting',
@@ -1535,6 +1536,8 @@ const TA_STATUS_LABEL: Record<string, string> = {
 };
 
 const TA_STATUS_DOT: Record<string, string> = {
+  // Amber = still owed a decision, matching the "warning, never a control" convention.
+  awaiting_second_approval: 'bg-amber-400',
   manager_approved: 'bg-emerald-400',
   manager_denied: 'bg-rose-400',
   approved: 'bg-emerald-500',
@@ -1543,19 +1546,48 @@ const TA_STATUS_DOT: Record<string, string> = {
 
 /** Compact status pill colors for the decided-history rows. */
 const TA_STATUS_PILL: Record<string, string> = {
+  awaiting_second_approval: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300',
   manager_approved: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300',
   approved: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300',
   manager_denied: 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300',
   denied: 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300',
 };
 
-/** Best available decision timestamp — accounting decision, else manager decision, else creation. */
+/** A person the manager may name as second approver (GET /api/manager/approver-candidates). */
+type ApproverCandidate = { email: string; name: string; department: string };
+
+/**
+ * Rows this viewer still owes a MANAGER decision on. `managedIds` comes from the server
+ * (department scope) — a row reaching the viewer only because it names them as second
+ * approver must never show the manager's controls.
+ */
+const taNeedsMyManagerDecision = (r: TimeAdjustmentRow, managedIds?: Set<string>): boolean =>
+  r.status === 'pending' &&
+  r.manager_decision == null &&
+  (managedIds ? managedIds.has(r.id) : true);
+
+/**
+ * Rows this viewer still owes a SECOND-APPROVER decision on. Keyed on the assignment,
+ * not the status: the second approver may act while the row is still `pending` because
+ * the manager has not yet decided.
+ */
+const taNeedsMySecondDecision = (r: TimeAdjustmentRow, me: string): boolean =>
+  !!me &&
+  (r.second_approver_email ?? '').trim().toLowerCase() === me &&
+  r.second_decision == null &&
+  (r.status === 'pending' || r.status === 'awaiting_second_approval');
+
+/** Best available decision timestamp — accounting, else second approver, else manager, else creation. */
 const taDecidedAt = (r: TimeAdjustmentRow): string =>
-  r.decided_at ?? r.manager_decided_at ?? r.updated_at ?? r.created_at ?? '';
+  r.decided_at ?? r.second_decided_at ?? r.manager_decided_at ?? r.updated_at ?? r.created_at ?? '';
 
 function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) => void }) {
   const [rows, setRows] = useState<TimeAdjustmentRow[]>([]);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
+  const [viewerEmail, setViewerEmail] = useState<string>('');
+  const [managedIds, setManagedIds] = useState<Set<string>>(new Set());
+  const [candidates, setCandidates] = useState<ApproverCandidate[]>([]);
+  const [approverDraft, setApproverDraft] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [recallingId, setRecallingId] = useState<string | null>(null);
@@ -1567,15 +1599,43 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
     setLoading(true);
     fetch('/api/manager/time-adjustments', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((json: { rows?: TimeAdjustmentRow[]; signedUrls?: Record<string, string> }) => {
+      .then((json: {
+        rows?: TimeAdjustmentRow[];
+        signedUrls?: Record<string, string>;
+        viewerEmail?: string;
+        managedIds?: string[];
+      }) => {
         const r = json.rows ?? [];
+        const me = (json.viewerEmail ?? '').trim().toLowerCase();
+        const managed = new Set(json.managedIds ?? []);
         setRows(r);
         setSignedUrls(json.signedUrls ?? {});
-        onCountChange(r.filter((x) => x.status === 'pending').length);
+        setViewerEmail(me);
+        setManagedIds(managed);
+        // The sidebar badge is "things waiting on ME" — both hats. A request naming
+        // this person as second approver is as much their queue as one from their team.
+        onCountChange(
+          r.filter(
+            (x) => taNeedsMyManagerDecision(x, managed) || taNeedsMySecondDecision(x, me),
+          ).length,
+        );
       })
-      .catch(() => { setRows([]); onCountChange(0); })
+      .catch(() => { setRows([]); setManagedIds(new Set()); onCountChange(0); })
       .finally(() => setLoading(false));
   }, [onCountChange]);
+
+  // The pool a manager may name as second approver. Fetched once — the list changes
+  // only when an admin grants/revokes Manager access, not while this tab is open.
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/manager/approver-candidates', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((json: { candidates?: ApproverCandidate[] }) => {
+        if (!cancelled) setCandidates(json.candidates ?? []);
+      })
+      .catch(() => { if (!cancelled) setCandidates([]); });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => { fetchRows(); }, [fetchRows]);
 
@@ -1591,17 +1651,42 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
     return () => window.removeEventListener('keydown', handler);
   }, [lightbox]);
 
-  const decide = async (id: string, action: 'manager_approve' | 'manager_deny') => {
+  const decide = async (
+    id: string,
+    action: 'manager_approve' | 'manager_deny' | 'second_approve' | 'second_deny',
+  ) => {
+    // Approving as the manager carries the chosen second approver in the same call,
+    // so the row can never land approved-but-uncountersigned.
+    const secondApprover = action === 'manager_approve' ? approverDraft[id] ?? '' : '';
+    if (action === 'manager_approve' && !secondApprover) {
+      toast.error('Select a second approver first');
+      return;
+    }
     setDecidingId(id);
     try {
       const res = await fetch(`/api/time-adjustments/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, decision_note: notesDraft[id]?.trim() || null }),
+        body: JSON.stringify({
+          action,
+          decision_note: notesDraft[id]?.trim() || null,
+          ...(secondApprover ? { second_approver_email: secondApprover } : {}),
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? 'Failed');
-      toast.success(action === 'manager_approve' ? 'Forwarded to Accounting' : 'Request declined');
+      // A second approval only reaches Accounting if the manager has already signed
+      // off; otherwise it is still waiting on them. Say which actually happened.
+      const managerAlreadyApproved =
+        rows.find((r) => r.id === id)?.manager_decision === 'approved';
+      toast.success(
+        action === 'manager_approve' ? 'Approved — sent to the second approver'
+          : action === 'second_approve'
+            ? managerAlreadyApproved
+              ? 'Approved — forwarded to Accounting'
+              : 'Approved — still awaiting the manager'
+            : 'Request declined',
+      );
       fetchRows();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to update request');
@@ -1630,10 +1715,19 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
     }
   };
 
-  const pending = rows.filter((r) => r.status === 'pending');
-  // Full decided history (approved/declined at either stage), newest decision first.
+  // Three buckets, because a viewer can wear two hats at once. `pending` is what they
+  // owe as the DEPARTMENT MANAGER; `awaitingMe` is what they owe as a NAMED SECOND
+  // APPROVER on someone else's team. A row can never be in both — the manager cannot
+  // name themselves.
+  const pending = rows.filter((r) => taNeedsMyManagerDecision(r, managedIds));
+  const awaitingMe = rows.filter((r) => taNeedsMySecondDecision(r, viewerEmail));
+  const openIds = new Set([...pending, ...awaitingMe].map((r) => r.id));
+  // Everything else: decided, or in flight waiting on somebody who is not this viewer.
+  // Note `awaiting_second_approval` lands here when the viewer is the manager who
+  // already approved — it is genuinely not their move any more, but it is NOT finished,
+  // so the status pill says so and Retrieve stays available.
   const decided = rows
-    .filter((r) => r.status !== 'pending')
+    .filter((r) => !openIds.has(r.id))
     .sort((a, b) => taDecidedAt(b).localeCompare(taDecidedAt(a)));
 
   return (
@@ -1714,7 +1808,7 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading requests...
           </div>
-        ) : pending.length === 0 && decided.length === 0 ? (
+        ) : pending.length === 0 && awaitingMe.length === 0 && decided.length === 0 ? (
           /* Empty state */
           <div className="max-w-2xl rounded-2xl border border-zinc-200 bg-white px-8 py-14 text-center dark:border-zinc-800 dark:bg-zinc-950">
             <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
@@ -1736,10 +1830,42 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
                   <ManagerAdjustmentCard
                     key={row.id}
                     row={row}
+                    mode="manager"
                     signedUrls={signedUrls}
                     decidingId={decidingId}
                     note={notesDraft[row.id] ?? ''}
                     onNoteChange={(v) => setNotesDraft((p) => ({ ...p, [row.id]: v }))}
+                    candidates={candidates}
+                    selectedApprover={approverDraft[row.id] ?? row.second_approver_email ?? ''}
+                    onApproverChange={(v) => setApproverDraft((p) => ({ ...p, [row.id]: v }))}
+                    onDecide={decide}
+                    onImageClick={(urls, idx) => setLightbox({ urls, idx })}
+                  />
+                ))}
+              </section>
+            )}
+
+            {awaitingMe.length > 0 && (
+              <section className="space-y-3">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+                  Awaiting your second approval &nbsp;&middot;&nbsp; {awaitingMe.length}
+                </p>
+                <p className="-mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  A manager named you as the second approver on these. They need both
+                  signatures before Accounting can act.
+                </p>
+                {awaitingMe.map((row) => (
+                  <ManagerAdjustmentCard
+                    key={row.id}
+                    row={row}
+                    mode="second"
+                    signedUrls={signedUrls}
+                    decidingId={decidingId}
+                    note={notesDraft[row.id] ?? ''}
+                    onNoteChange={(v) => setNotesDraft((p) => ({ ...p, [row.id]: v }))}
+                    candidates={candidates}
+                    selectedApprover=""
+                    onApproverChange={() => {}}
                     onDecide={decide}
                     onImageClick={(urls, idx) => setLightbox({ urls, idx })}
                   />
@@ -1756,7 +1882,14 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
                   {decided.map((row, i) => {
                     const decidedOn = taDecidedAt(row).slice(0, 10);
                     const isExpanded = expandedId === row.id;
-                    const canRecall = row.status === 'manager_approved';
+                    // Recall is the department manager's lever, and it now also rescues a
+                    // request parked on a second approver who never acts. The server
+                    // enforces the same department scope; hiding it here just avoids
+                    // offering a button that would 403.
+                    const canRecall =
+                      (row.status === 'manager_approved' ||
+                        row.status === 'awaiting_second_approval') &&
+                      managedIds.has(row.id);
                     const isRecalling = recallingId === row.id;
                     return (
                       <div
@@ -1890,6 +2023,10 @@ function ManagerAdjustmentCard({
   decidingId,
   note,
   onNoteChange,
+  mode,
+  candidates,
+  selectedApprover,
+  onApproverChange,
   onDecide,
   onImageClick,
 }: {
@@ -1898,10 +2035,24 @@ function ManagerAdjustmentCard({
   decidingId: string | null;
   note: string;
   onNoteChange: (v: string) => void;
-  onDecide: (id: string, action: 'manager_approve' | 'manager_deny') => void;
+  /**
+   * Which hat the viewer is wearing on this card. `manager` owns the second-approver
+   * picker and forwards the request; `second` countersigns one already routed to them.
+   */
+  mode: 'manager' | 'second';
+  candidates: ApproverCandidate[];
+  selectedApprover: string;
+  onApproverChange: (v: string) => void;
+  onDecide: (
+    id: string,
+    action: 'manager_approve' | 'manager_deny' | 'second_approve' | 'second_deny',
+  ) => void;
   onImageClick: (urls: string[], idx: number) => void;
 }) {
   const isDeciding = decidingId === row.id;
+  const isManagerMode = mode === 'manager';
+  // Dual approval: the manager cannot forward without naming who countersigns.
+  const approveDisabled = isDeciding || (isManagerMode && !selectedApprover);
   const [active, setActive] = useState(0);
   const urls = row.image_paths.map((p) => signedUrls[p]).filter(Boolean) as string[];
   const featured = urls[active] ?? urls[0] ?? null;
@@ -2033,6 +2184,54 @@ function ManagerAdjustmentCard({
             </p>
           )}
 
+          {/* Second approver — the manager picks who countersigns. */}
+          {isManagerMode ? (
+            <div className="space-y-1.5">
+              <label
+                htmlFor={`second-approver-${row.id}`}
+                className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500"
+              >
+                Second approver <span className="normal-case font-normal">(required to approve)</span>
+              </label>
+              <select
+                id={`second-approver-${row.id}`}
+                value={selectedApprover}
+                onChange={(e) => onApproverChange(e.target.value)}
+                className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-900 transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              >
+                <option value="">Select who else must approve…</option>
+                {candidates.map((c) => (
+                  <option key={c.email} value={c.email}>
+                    {c.name}
+                    {c.department ? ` — ${c.department}` : ''}
+                  </option>
+                ))}
+              </select>
+              {candidates.length === 0 ? (
+                // Naming someone grants them nothing — an admin provisions Manager
+                // access. Say so, rather than showing an empty dropdown with no reason.
+                <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                  Nobody is eligible yet. An admin must grant Manager access with the Time
+                  Adjustments tab before they can be picked.
+                </p>
+              ) : (
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                  They can be from any team. Both of you must approve before Accounting
+                  sees this.
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-2.5 text-[11px] text-blue-800 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200">
+              {row.second_approver_assigned_by
+                ? `${row.second_approver_assigned_by} asked you to countersign this.`
+                : 'You were named as the second approver on this request.'}
+              {row.manager_decision === 'approved'
+                ? ' The manager has approved — yours is the last signature before Accounting.'
+                : ' The manager has not decided yet; it still needs their approval too.'}
+            </p>
+          )}
+
           {/* Note input */}
           <div className="space-y-1.5">
             <label className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
@@ -2051,19 +2250,28 @@ function ManagerAdjustmentCard({
           <div className="mt-auto flex gap-2 pt-1">
             <button
               type="button"
-              disabled={isDeciding}
-              onClick={() => onDecide(row.id, 'manager_approve')}
+              disabled={approveDisabled}
+              title={
+                isManagerMode && !selectedApprover
+                  ? 'Select a second approver first'
+                  : undefined
+              }
+              onClick={() =>
+                onDecide(row.id, isManagerMode ? 'manager_approve' : 'second_approve')
+              }
               className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-40"
             >
               {isDeciding
                 ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 : <CheckCircle2 className="h-3.5 w-3.5" />}
-              Approve &amp; forward to Accounting
+              {isManagerMode ? 'Approve & send to second approver' : 'Approve'}
             </button>
             <button
               type="button"
               disabled={isDeciding}
-              onClick={() => onDecide(row.id, 'manager_deny')}
+              onClick={() =>
+                onDecide(row.id, isManagerMode ? 'manager_deny' : 'second_deny')
+              }
               className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-100 disabled:opacity-40 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-400 dark:hover:bg-rose-500/20"
             >
               Decline
@@ -2223,6 +2431,29 @@ function ManagerHistoryDetail({
                 <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500"> &middot; {row.manager_decided_at.slice(0, 10)}</span>
               )}
               {row.manager_decision_note && <span className="block italic text-zinc-500 dark:text-zinc-400">&ldquo;{row.manager_decision_note}&rdquo;</span>}
+            </p>
+          </div>
+        )}
+
+        {/* Second approver — shown once someone is named, even before they decide, so
+            a request parked in awaiting_second_approval says WHO it is parked on. */}
+        {row.second_approver_email && (
+          <div className="space-y-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+              Second approver
+            </p>
+            <p className="leading-relaxed text-zinc-600 dark:text-zinc-400">
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">{row.second_approver_email}</span>
+              {row.second_decided_at && (
+                <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500"> &middot; {row.second_decided_at.slice(0, 10)}</span>
+              )}
+              <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">
+                {row.second_decision === 'approved' ? 'Approved'
+                  : row.second_decision === 'denied' ? 'Declined'
+                  : 'Has not decided yet'}
+                {row.second_approver_assigned_by ? ` · named by ${row.second_approver_assigned_by}` : ''}
+              </span>
+              {row.second_decision_note && <span className="block italic text-zinc-500 dark:text-zinc-400">&ldquo;{row.second_decision_note}&rdquo;</span>}
             </p>
           </div>
         )}

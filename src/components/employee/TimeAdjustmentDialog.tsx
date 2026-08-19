@@ -57,6 +57,7 @@ type Preview = { file: File; url: string };
 
 const STATUS_STYLES: Record<string, string> = {
   pending: 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-600 dark:bg-amber-950/40 dark:text-amber-400',
+  awaiting_second_approval: 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-600 dark:bg-amber-950/40 dark:text-amber-400',
   manager_approved: 'border-blue-400 bg-blue-50 text-blue-700 dark:border-blue-600 dark:bg-blue-950/40 dark:text-blue-400',
   manager_denied: 'border-rose-400 bg-rose-50 text-rose-700 dark:border-rose-600 dark:bg-rose-950/40 dark:text-rose-400',
   approved: 'border-emerald-400 bg-emerald-50 text-emerald-700 dark:border-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400',
@@ -65,6 +66,9 @@ const STATUS_STYLES: Record<string, string> = {
 
 const STATUS_LABEL: Record<string, string> = {
   pending: 'Awaiting manager approval',
+  // Two people must approve. The employee is told it moved, without being handed the
+  // reviewer's name — who countersigns is the manager's call, not the employee's business.
+  awaiting_second_approval: 'Awaiting second approver',
   manager_approved: 'Manager approved — with Accounting',
   manager_denied: 'Declined by manager',
   approved: 'Approved',
@@ -341,6 +345,14 @@ export default function TimeAdjustmentDialog({
     const reasonLabel =
       TIME_ADJUSTMENT_REASONS.find((r) => r.code === existingRequest.reason)?.label ??
       existingRequest.reason;
+    // Mirrors the server rule in `createTimeAdjustment`: editing is locked at the FIRST
+    // signature, not when the status leaves `pending`. Under dual approval a row is still
+    // `pending` after the second approver signs, so keying on status alone would offer an
+    // Edit button that the server rejects with a 409.
+    const stillEditable =
+      existingRequest.status === 'pending' &&
+      existingRequest.manager_decision == null &&
+      existingRequest.second_decision == null;
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-md">
@@ -409,19 +421,19 @@ export default function TimeAdjustmentDialog({
                 )}
               </div>
             )}
-            {existingRequest.status === 'pending' && (
+            {stillEditable && (
               <p className="flex gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] leading-relaxed text-blue-700 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-400">
                 <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
                   Spotted a mistake, or missed another stretch of time this day? You can still edit
-                  this request until your manager reviews it.
+                  this request until a reviewer signs off on it.
                 </span>
               </p>
             )}
           </div>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>Close</Button>
-            {existingRequest.status === 'pending' && (
+            {stillEditable && (
               <Button size="sm" onClick={startEdit}>
                 <Pencil className="mr-1.5 h-3.5 w-3.5" />
                 Edit request

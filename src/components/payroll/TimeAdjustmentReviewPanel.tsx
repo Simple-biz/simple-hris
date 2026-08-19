@@ -98,10 +98,15 @@ export default function TimeAdjustmentReviewPanel({
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [lightboxUrl]);
-  // Accounting can act ONLY on manager_approved rows.
+  // Accounting can act ONLY on manager_approved rows — which under dual approval
+  // means BOTH the manager and the named second approver have signed off.
   const actionable = adjustments.filter((a) => a.status === 'manager_approved');
-  // Pending = waiting for manager, shown read-only so Accounting knows they exist.
-  const awaitingManager = adjustments.filter((a) => a.status === 'pending');
+  // Still upstream of Accounting: waiting on the manager, or on the second approver
+  // the manager named. Shown read-only so Accounting knows they exist. Leaving
+  // awaiting_second_approval out would hide a live request from this panel entirely.
+  const awaitingManager = adjustments.filter(
+    (a) => a.status === 'pending' || a.status === 'awaiting_second_approval',
+  );
   const decided = adjustments.filter(
     (a) => a.status === 'approved' || a.status === 'denied' || a.status === 'manager_denied',
   );
