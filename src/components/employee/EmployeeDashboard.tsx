@@ -3657,11 +3657,14 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                       <span className="flex items-center gap-1">
                         <span className="inline-block h-1.5 w-1.5 rounded-full bg-sky-400 sm:h-2 sm:w-2" /> Holiday
                       </span>
-                      <span className="ml-auto font-medium">
-                        {isPAEligible
-                          ? <span className="text-emerald-600 dark:text-emerald-400">PAB Eligible</span>
-                          : <span className="text-red-500 dark:text-red-400">PAB Not Met</span>}
-                      </span>
+                      {/* The "PAB Eligible / PAB Not Met" verdict used to sit here on an
+                          `ml-auto`, i.e. the bottom-right corner the floating Penny bubble
+                          covers. Removed 2026-08-19 (Kane) — and it should not come back
+                          in this form: it had only two states, so a period still RUNNING
+                          rendered a red "PAB Not Met", the mid-period false verdict
+                          `pab-payout-week-gate-and-pill` rules out. The PAB status chip on
+                          the bonus card above is the real display and gets it right,
+                          resolving an in-progress period to "In Progress". */}
                     </div>
                   </div>
                 ) : (

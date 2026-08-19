@@ -269,7 +269,12 @@ export default function CeoChatBubble({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 16 }}
             transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-            className="fixed bottom-24 right-4 z-50 flex h-[min(560px,calc(100dvh-7rem))] w-[min(380px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-fuchsia-200/80 bg-white shadow-2xl shadow-fuchsia-900/15 dark:border-fuchsia-900/40 dark:bg-[#0d1117] sm:right-6"
+            /* Anchors are tied to the button's size (h-16 at bottom-5 → its top edge
+               is 84px): bottom-[6.5rem] = 104px keeps the 20px gap the h-14 button
+               had at bottom-24, and the height subtracts 7.5rem so a short viewport
+               still leaves ~16px of clearance above the panel. Resize the button and
+               these two move with it — the greeting balloon shares the anchor. */
+            className="fixed bottom-[6.5rem] right-4 z-50 flex h-[min(560px,calc(100dvh-7.5rem))] w-[min(380px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-fuchsia-200/80 bg-white shadow-2xl shadow-fuchsia-900/15 dark:border-fuchsia-900/40 dark:bg-[#0d1117] sm:right-6"
           >
             {/* Header */}
             <div className="flex shrink-0 items-center justify-between gap-3 bg-gradient-to-br from-violet-600 via-fuchsia-600 to-fuchsia-700 px-4 py-3 text-white dark:from-violet-700 dark:via-fuchsia-800 dark:to-fuchsia-900">
@@ -486,7 +491,7 @@ export default function CeoChatBubble({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.96 }}
             transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
-            className="fixed bottom-[5.25rem] right-4 z-50 w-[min(19rem,calc(100vw-2rem))] origin-bottom-right rounded-2xl rounded-br-md border border-orange-200/80 bg-white p-3 shadow-xl shadow-orange-900/15 dark:border-orange-900/40 dark:bg-[#0d1117] sm:right-6"
+            className="fixed bottom-[6.5rem] right-4 z-50 w-[min(19rem,calc(100vw-2rem))] origin-bottom-right rounded-2xl rounded-br-md border border-orange-200/80 bg-white p-3 shadow-xl shadow-orange-900/15 dark:border-orange-900/40 dark:bg-[#0d1117] sm:right-6"
           >
             <button
               type="button"
@@ -542,7 +547,7 @@ export default function CeoChatBubble({
                 : 'Open Penny AI'
         }
         aria-expanded={open}
-        className="group fixed bottom-5 right-4 z-50 flex h-14 w-14 items-center justify-center transition-transform active:scale-90 sm:right-6"
+        className="group fixed bottom-5 right-4 z-50 flex h-16 w-16 items-center justify-center transition-transform active:scale-90 sm:right-6"
       >
         <style>{`
           @keyframes pennyHeartbeat {
@@ -567,9 +572,9 @@ export default function CeoChatBubble({
               animate={{ opacity: 1, rotate: 0 }}
               exit={{ opacity: 0, rotate: 90 }}
               transition={{ duration: 0.15 }}
-              className="flex h-14 w-14 items-center justify-center rounded-full border border-orange-200/70 bg-white shadow-lg shadow-orange-900/25 dark:border-orange-900/40 dark:bg-zinc-900"
+              className="flex h-16 w-16 items-center justify-center rounded-full border border-orange-200/70 bg-white shadow-lg shadow-orange-900/25 dark:border-orange-900/40 dark:bg-zinc-900"
             >
-              <X className="h-6 w-6 text-orange-600 dark:text-orange-400" aria-hidden />
+              <X className="h-7 w-7 text-orange-600 dark:text-orange-400" aria-hidden />
             </motion.span>
           ) : (
             <motion.span
@@ -578,7 +583,7 @@ export default function CeoChatBubble({
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.6 }}
               transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-              className="relative flex h-14 w-14 items-center justify-center"
+              className="relative flex h-16 w-16 items-center justify-center"
             >
               {/* Out of questions: the heart REMAINS — Kane 2026-08-19, it greys
                   out rather than vanishing, so nobody is left wondering where
@@ -589,12 +594,12 @@ export default function CeoChatBubble({
                   {/* pulsing orange halo (two staggered rings → ripple) */}
                   <span
                     aria-hidden
-                    className="penny-halo absolute h-11 w-11 rounded-full bg-orange-500/45 blur-md"
+                    className="penny-halo absolute h-[3.25rem] w-[3.25rem] rounded-full bg-orange-500/45 blur-md"
                     style={{ animation: 'pennyHeartHalo 1.5s ease-out infinite' }}
                   />
                   <span
                     aria-hidden
-                    className="penny-halo absolute h-11 w-11 rounded-full bg-orange-400/40"
+                    className="penny-halo absolute h-[3.25rem] w-[3.25rem] rounded-full bg-orange-400/40"
                     style={{ animation: 'pennyHeartHalo 1.5s ease-out infinite 0.35s' }}
                   />
                 </>
@@ -605,7 +610,7 @@ export default function CeoChatBubble({
                 src={markSrc}
                 alt=""
                 draggable={false}
-                className={`penny-heart relative h-9 w-9 object-contain drop-shadow-md ${
+                className={`penny-heart relative h-11 w-11 object-contain drop-shadow-md ${
                   locked ? 'opacity-45 grayscale' : ''
                 }`}
                 style={

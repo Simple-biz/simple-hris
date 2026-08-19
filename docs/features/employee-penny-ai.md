@@ -398,6 +398,31 @@ headset (Kane, 2026-08-19), passed via `markSrc`. CEO and Admin keep `/chatbubbl
 default. The headset reads as a support desk, which is what Penny is to an employee —
 where for the CEO it is a reports assistant. `SidebarBrandMark` is unaffected.
 
+### The button's size drives three anchors
+
+The button is `h-16 w-16` at `bottom-5` (Kane asked for bigger, 2026-08-19; it was `h-14`),
+so its top edge sits at 84px. Three values are derived from that and must move together if
+it is ever resized: the panel's `bottom-[6.5rem]`, the greeting balloon's `bottom-[6.5rem]`
+(both keeping the original 20px gap), and the panel's `h-[min(560px,calc(100dvh-7.5rem))]`,
+whose subtrahend preserves ~16px of clearance above the panel on a short viewport. A comment
+at the panel says so, because the relationship is invisible from any one of the four numbers.
+
+### What was removed from behind it
+
+The Overview PAB calendar's legend carried an `ml-auto` "PAB Eligible / PAB Not Met" verdict
+— i.e. in the exact bottom-right corner the floating bubble covers. Removed 2026-08-19, and
+**it must not come back in that form**: it had only two states, so a period still *running*
+rendered a red "PAB Not Met" — the mid-period false verdict
+`memory/pab-payout-week-gate-and-pill` rules out ("running period → neutral In Progress …
+don't flip the pill back"). Nothing was lost: the PAB status chip on the bonus card above it
+is the real display and resolves a running period to "In Progress" via
+`isPabPeriodInProgressByCalendar`. `isPAEligible` still drives five other sites, so no
+computation changed.
+
+> `EmployeePabCalendar.tsx` has the same two-state badge and was **deliberately left
+> alone** — it lives on a different tab, where the bubble is not mounted, so it was out of
+> scope. It carries the same mid-period flaw and is worth revisiting on its own.
+
 ## Elevated viewers: subject and meter are different people
 
 `/employee?email=someone.else` is an existing elevated path (the shell already shows the
