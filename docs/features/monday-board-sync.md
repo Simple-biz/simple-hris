@@ -350,16 +350,55 @@ above), so it needs the corrector either way.
 - Labels and groups are **structure-locked**: `create_labels_if_missing: true` returns 403 even when
   nothing is missing. New Status/Sprint/Type labels are added on the board by hand, then mirrored into
   `hris-plan.ts`.
-- **PENDING (Kane, by 2026-08-15):** there is no **Sprint 27** label or group, and the API cannot
-  create one. Add both on the board, then add the key to `TASK_GROUPS`, `TASK_SPRINT_INDEX` and
-  `TASK_SPRINT_LABELS`. Until then the skill hard-stops rather than dumping new work into Backlog.
+- **Sprint 27 exists — DONE 2026-08-19.** Someone added `group_mm66ce8q` ("Sprint 27 · Aug 18-Aug 29",
+  label index **103**) on the board, and it is now mirrored into all four tables. Mirroring the
+  **window** is the load-bearing half: it re-bounds Sprint 26's attribution to Aug 4-**17**, which is
+  what finally gives Aug 16-17 a sprint instead of nothing.
+- **Sprints 17-23 are mirrored too** (2026-08-19), which is what the Backlog backfill was blocked on.
+  The label indices are the board's own and are **NOT sequential** — S22 is `3` and S23 is `4` while
+  S19-S21 run `10`-`12`. Read them off `settings_str`; never guess one. **S18 carries no HRIS row but
+  must still exist**: `taskSprintAttribution()` ends a sprint the day before the next one *starts*, so
+  omitting S18 would let S17 absorb Apr 12-27 and silently accept a date belonging to a sprint the plan
+  cannot name.
 - **Known drift:** HRIS-22 is `Cancelled` on the board but `Shipped` in `hris-plan.ts`. The reconciler
   writes epic Status at create only, so the board wins and this drifts until one side is corrected by
   hand. It currently withholds 12 SP from SP Completed.
-- **Known gap:** 74 pre-existing Done rows have no Completed Date — HRIS never wrote the column before
-  this skill. If backfilling, refuse to write a date inside the live sprint so a historical backfill
-  can never read as a fresh claim.
+- **Completed Date backfill — 43 of 73 written 2026-08-19, 30 still pending.** HRIS never wrote the
+  column before this skill. **The old rule here ("refuse to write a date inside the live sprint") is
+  SUPERSEDED and was wrong** — it would have blocked rows that genuinely finished inside the live
+  sprint. What replaced it is stronger, not looser: `selfcheck()` runs `git log` and refuses any
+  Completed Date that is not the commit date of the row's last sha, *and* refuses one outside its
+  sprint's `taskSprintAttribution()` range. A stale backfill cannot read as fresh and a flattering
+  guess cannot pass either. `dateBasis: 'external'` is the one exemption and must name a confirmation.
 - Nine epics carry 220 SP with zero task rows (HRIS-01, 16, 17, 22, 23, 25, 29, 31, 32).
+
+## `groupPinned` — protecting a human triage lane
+
+A row's GROUP and its Sprint label are normally the same fact stated twice, so `sync.ts` reconciles the
+group to the label. That is **wrong** for a row someone has deliberately parked in a triage group that
+has no Sprint label at all.
+
+On 2026-08-19 a group that had not existed before — **"For Re-scoping"** (`group_mm65rmf9`) — held three
+of our rows, while their Sprint labels still read Sprint 25 / Backlog / Backlog. The next full reconcile
+would have dragged all three back out and erased the triage silently.
+
+- `PlanTask.groupPinned?: boolean` means **the board owns this row's group**; the reconciler never moves
+  it. The **label stays reconciler-owned** — only the move is suppressed.
+- A suppressed move is **reported**, not hidden: `SyncReport.tasksGroupPinned`. Suppressing silently
+  would be the same class of invisible act the move-reporting exists to prevent.
+- It worked on its first run: `tasksGroupPinned: 3`.
+
+## Rate limits: 429 is a WINDOW, not a pause
+
+`sync.ts` has its own `gql` (separate from the skill's `monday.mts`). It used to back off
+`1200ms * attempt` over 4 attempts — about 12s total — but **Monday's rate-limit window is a full
+minute**, so all four attempts fell inside one window and it threw. A ~200-call reconcile died
+mid-structure this way on 2026-08-19, leaving the board half-patched.
+
+Fixed: a **429** now honours `retry-after` when present and otherwise waits the minute out, over 6
+attempts; **5xx and network faults keep the short backoff** because those are genuinely transient. A
+partial reconcile is *incomplete, never wrong* — the reconciler writes desired state and is idempotent,
+so re-running completes it.
 
 ## Cross-links
 

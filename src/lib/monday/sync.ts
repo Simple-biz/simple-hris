@@ -49,6 +49,11 @@ export interface SyncReport {
   tasksUpdated: number;
   /** Rows whose GROUP disagreed with the plan's sprint, as `plan name → sprint key`. */
   tasksMoved: string[];
+  /**
+   * Rows whose group disagreed with the plan but were left alone because `groupPinned` is set —
+   * a human parked them in a triage lane. Surfaced so a suppressed move is still visible.
+   */
+  tasksGroupPinned: string[];
   projectTotalSp: number;
   projectCompletedSp: number;
   warnings: string[];
@@ -73,7 +78,7 @@ async function gql<T = Record<string, unknown>>(
   variables?: Record<string, unknown>,
 ): Promise<T> {
   let lastError: unknown = null;
-  for (let attempt = 1; attempt <= 4; attempt++) {
+  for (let attempt = 1; attempt <= 6; attempt++) {
     try {
       const res = await fetch(API, {
         method: 'POST',
@@ -85,7 +90,18 @@ async function gql<T = Record<string, unknown>>(
         body: JSON.stringify({ query, variables }),
         cache: 'no-store',
       });
-      if (res.status === 429 || res.status >= 500) {
+      // A 429 needs the RATE WINDOW waited out, not a polite pause. Monday's window is a full minute,
+      // so the old 1200ms * attempt schedule spent all four tries inside the same window and then threw
+      // — which is exactly how a ~200-call reconcile died mid-structure on 2026-08-19, leaving the
+      // board half-patched. Honour `retry-after` when Monday sends it, else wait the minute out.
+      // 5xx and network faults are transient and keep the short backoff.
+      if (res.status === 429) {
+        lastError = new Error(`Monday API HTTP 429`);
+        const after = Number(res.headers.get('retry-after'));
+        await new Promise((r) => setTimeout(r, Number.isFinite(after) && after > 0 ? after * 1000 : 65_000));
+        continue;
+      }
+      if (res.status >= 500) {
         lastError = new Error(`Monday API HTTP ${res.status}`);
         await new Promise((r) => setTimeout(r, 1200 * attempt));
         continue;
@@ -175,6 +191,7 @@ export async function syncHrisBoard(opts: { dryRun?: boolean; ownerId?: number }
     tasksCreated: [],
     tasksUpdated: 0,
     tasksMoved: [],
+    tasksGroupPinned: [],
     projectTotalSp: 0,
     projectCompletedSp: 0,
     warnings: [],
@@ -274,9 +291,18 @@ export async function syncHrisBoard(opts: { dryRun?: boolean; ownerId?: number }
       // The group is only moved when it disagrees with the plan's sprint, so the common case adds
       // no calls. Reported by name because a silent re-grouping is indistinguishable from a
       // hand-drag by whoever reads the board next.
+      //
+      // `groupPinned` opts a row OUT of the move entirely: some board groups are human triage lanes
+      // with no Sprint label ("For Re-scoping"), so reconciling group-to-label would drag the row
+      // back out and erase the triage. Pinned rows are reported separately — suppressing a move
+      // silently would be the same class of invisible act this reconcile is trying to avoid.
       const targetGroup: string = TASK_GROUPS[task.sprint];
-      const needsMove = live.groupId !== '' && live.groupId !== targetGroup;
+      const groupDiffers = live.groupId !== '' && live.groupId !== targetGroup;
+      const needsMove = groupDiffers && !task.groupPinned;
       if (needsMove) report.tasksMoved.push(`${task.name} → ${task.sprint}`);
+      if (groupDiffers && task.groupPinned) {
+        report.tasksGroupPinned.push(`${task.name} stays in ${live.groupId}`);
+      }
       taskUpdateJobs.push(async () => {
         await gql(M_UPDATE, { board: MONDAY_BOARDS.tasks, item: live.id, cols });
         if (needsMove) await gql(M_MOVE_GROUP, { item: live.id, group: targetGroup });

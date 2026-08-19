@@ -33,14 +33,28 @@ const SCRIPTS = '.claude/skills/monday-board-sync/scripts';
  * 2026-08-13: the 57-row Sprint 26 → Sprint 25 re-attribution ("Approve all").
  * 2026-08-14: that same set PLUS 3 rows re-filed Backlog → Sprint 26, after a review of all 47
  * Backlog rows. 42 further Backlog rows were dated but deliberately scoped OUT — see pass.mts.
+ * 2026-08-19: the Backlog clean-up + Completed-Date backfill — 43 dates, 20 rows filed Backlog →
+ * S19-S23, and the 39 S26 → S25 moves the 08-14 pass never wrote. Kane approved proposal
+ * `3578fe5c294f` after three scope rulings the same day: protect the "For Re-scoping" group, file
+ * HIGH-confidence Backlog rows ONLY, and include the 32 already-filed S24/S25 rows in the backfill.
+ *
+ * The 08-14 numbers below were REPLACED, not relaxed: leaving them would have failed closed on a
+ * 43-correction proposal, which is the gate doing its job. A new approval earns new constants; a
+ * mismatch against an UNCHANGED approval still means the board moved under you.
  */
 const APPROVED = {
-  passDate: '2026-08-14',
-  corrections: 60,
+  passDate: '2026-08-19',
+  // PASS 2, same day: Kane widened the scope to every remaining Done row — "Credit it to the
+  // respective Sprints that it was actually completed that means to fill the completed dates as well."
+  corrections: 30,
   epicsToCreate: 0,
   tasksToCreate: 0,
   orphans: 0,
-  /** Every row is already Done and stays Done — this pass re-files dates, it does not judge shipping. */
+  /**
+   * TRUE: all 30 rows are already Done and stay Done. The phantom Actual SP clear on "Google Sheet
+   * sync crons" was HELD OUT of this pass — it is a re-score, which trips the Actual-SP gate below and
+   * needs its own approval rather than a widened gate. See pass.mts.
+   */
   everyRowDone: true,
 } as const;
 

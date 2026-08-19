@@ -39,9 +39,21 @@ export const EPIC_COLS = {
 
 /** Sprint Tasks groups + columns */
 export const TASK_GROUPS = {
+  // Sprints 17-23 mirrored from the live board 2026-08-19 so pre-sprint Backlog history can be filed
+  // at all. S18 carries no HRIS row but MUST exist anyway: taskSprintAttribution() ends a sprint the
+  // day before the next one STARTS, so omitting S18 would let S17 absorb Apr 12-27 and silently
+  // accept a date that belongs to a sprint the plan cannot name.
+  S17: 'group_mm5epday',
+  S18: 'group_mm5es7e4',
+  S19: 'group_mm5exy0s',
+  S20: 'group_mm5ey2ey',
+  S21: 'group_mm5e6tt3',
+  S22: 'group_mm57v6x0',
+  S23: 'group_mm57wbb7',
   S24: 'group_mm4my9wx',
   S25: 'group_mm4m16sq',
   S26: 'group_mm5s2dw1',
+  S27: 'group_mm66ce8q',
   BL: 'group_mm4m1eqp', // Backlog
 } as const;
 export const TASK_COLS = {
@@ -109,16 +121,28 @@ export const TASK_TYPE_INDEX: Record<TaskType, number> = {
   Spike: 6,
   'PR Review': 7,
 };
-export const TASK_SPRINT_INDEX: Record<TaskSprint, number> = { S24: 0, S25: 1, S26: 13, BL: 2 };
+export const TASK_SPRINT_INDEX: Record<TaskSprint, number> = {
+  // Indices are the board's own and are NOT sequential — S22 is 3 and S23 is 4, while S19-S21 run
+  // 10-12. Read off the board settings_str 2026-08-19; never guess one.
+  S17: 8, S18: 9, S19: 10, S20: 11, S21: 12, S22: 3, S23: 4, S24: 0, S25: 1, S26: 13, S27: 103, BL: 2,
+};
 /**
  * The live label TEXT for each sprint key. The board is structure-locked — the API cannot create a
  * Sprint label — so a pass must assert these still match `settings_str` before writing. There is no
  * Sprint 27 label yet: when Sprint 26 ends, someone adds it on the board by hand first.
  */
 export const TASK_SPRINT_LABELS: Record<TaskSprint, string> = {
+  S17: 'Sprint 17',
+  S18: 'Sprint 18',
+  S19: 'Sprint 19',
+  S20: 'Sprint 20',
+  S21: 'Sprint 21',
+  S22: 'Sprint 22',
+  S23: 'Sprint 23',
   S24: 'Sprint 24',
   S25: 'Sprint 25',
   S26: 'Sprint 26',
+  S27: 'Sprint 27',
   BL: 'Backlog',
 };
 /**
@@ -138,9 +162,19 @@ export const TASK_SPRINT_LABELS: Record<TaskSprint, string> = {
  * wrong for it.
  */
 export const TASK_SPRINT_WINDOWS: Record<Exclude<TaskSprint, 'BL'>, { start: string; end: string }> = {
+  S17: { start: '2026-03-31', end: '2026-04-11' },
+  S18: { start: '2026-04-14', end: '2026-04-25' },
+  S19: { start: '2026-04-28', end: '2026-05-09' },
+  S20: { start: '2026-05-12', end: '2026-05-23' },
+  S21: { start: '2026-05-26', end: '2026-06-06' },
+  S22: { start: '2026-06-09', end: '2026-06-20' },
+  S23: { start: '2026-06-23', end: '2026-07-04' },
   S24: { start: '2026-07-07', end: '2026-07-18' },
   S25: { start: '2026-07-21', end: '2026-08-01' },
   S26: { start: '2026-08-04', end: '2026-08-15' },
+  // Added 2026-08-19 from the live group title "Sprint 27 · Aug 18-Aug 29". Adding it re-bounds
+  // S26's ATTRIBUTION to Aug 4-17, which is what finally gives Aug 16-17 a sprint to belong to.
+  S27: { start: '2026-08-18', end: '2026-08-29' },
 };
 
 /**
@@ -210,6 +244,17 @@ export interface PlanTask {
   done: boolean;
   sprint: TaskSprint;
   priority?: TaskPriority;
+  /**
+   * The BOARD owns this row's group; the reconciler must never move it.
+   *
+   * A row's group and its Sprint label are normally the same fact stated twice, so `sync.ts`
+   * reconciles the group to the label. That is wrong for a row a human has deliberately parked in a
+   * triage group that has no Sprint label at all — "For Re-scoping" (`group_mm65rmf9`) is one, and
+   * on 2026-08-19 three rows sat there while their labels still read Sprint 25 / Backlog / Backlog.
+   * Without this flag the next reconcile would have silently dragged all three back out and erased
+   * the triage. The LABEL stays reconciler-owned; only the move is suppressed. Kane's call 2026-08-19.
+   */
+  groupPinned?: boolean;
 }
 
 /** Board item name for an epic (code TAB title — matches the board convention). */
@@ -277,82 +322,82 @@ export const PLAN_EPICS: PlanEpic[] = [
 
 export const PLAN_TASKS: PlanTask[] = [
   // Legacy backlog items (spec-derived, recreated 2026-07-24 as Done).
-  { epic: 'HRIS-24', name: 'New Hire Checklist', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-01a', name: 'Onboarding Gmail Surname', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-01a', name: 'Onboarding Ip Assignment', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-01a', name: 'Onboarding Pay Plans', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-01a', name: 'Workspace Account Verify', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
-  { epic: 'HRIS-08', name: 'Bonus Calculator', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-02a', name: 'Payroll Wizard Final Pay', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-03a', name: 'Urgent Payments', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-04', name: 'Time Adjustment Requests', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-03c', name: 'Orphanage Dispute Flow', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
-  { epic: 'HRIS-05', name: 'Delete Authorization', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
-  { epic: 'HRIS-05', name: 'Rbac Feature Permissions', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-05', name: 'Route Authorization', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
-  { epic: 'HRIS-07', name: 'Mesa', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
+  { epic: 'HRIS-24', name: 'New Hire Checklist', type: 'Feature', sp: 5, done: true, sprint: 'S24' },
+  { epic: 'HRIS-01a', name: 'Onboarding Gmail Surname', type: 'Feature', sp: 5, done: true, sprint: 'S22' },
+  { epic: 'HRIS-01a', name: 'Onboarding Ip Assignment', type: 'Feature', sp: 5, done: true, sprint: 'S22' },
+  { epic: 'HRIS-01a', name: 'Onboarding Pay Plans', type: 'Feature', sp: 5, done: true, sprint: 'S22' },
+  { epic: 'HRIS-01a', name: 'Workspace Account Verify', type: 'Feature', sp: 3, done: true, sprint: 'S22' },
+  { epic: 'HRIS-08', name: 'Bonus Calculator', type: 'Feature', sp: 5, done: true, sprint: 'S19' },
+  { epic: 'HRIS-02a', name: 'Payroll Wizard Final Pay', type: 'Feature', sp: 5, done: true, sprint: 'S22' },
+  { epic: 'HRIS-03a', name: 'Urgent Payments', type: 'Feature', sp: 5, done: true, sprint: 'S21' },
+  { epic: 'HRIS-04', name: 'Time Adjustment Requests', type: 'Feature', sp: 5, done: true, sprint: 'S21' },
+  { epic: 'HRIS-03c', name: 'Orphanage Dispute Flow', type: 'Feature', sp: 3, done: true, sprint: 'S19' },
+  { epic: 'HRIS-05', name: 'Delete Authorization', type: 'Feature', sp: 3, done: true, sprint: 'S19' },
+  { epic: 'HRIS-05', name: 'Rbac Feature Permissions', type: 'Feature', sp: 5, done: true, sprint: 'S20' },
+  { epic: 'HRIS-05', name: 'Route Authorization', type: 'Feature', sp: 3, done: true, sprint: 'S23' },
+  { epic: 'HRIS-07', name: 'Mesa', type: 'Feature', sp: 5, done: true, sprint: 'S21' },
   // Commit-derived tasks (2026-07-24 audit).
   { epic: 'HRIS-01a', name: 'CallTools username capture + orientation webhook', type: 'Feature', sp: 5, done: true, sprint: 'S24' },
-  { epic: 'HRIS-01a', name: 'Offboarding queue processor + notifications', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-01a', name: 'Resignation requests flow', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
+  { epic: 'HRIS-01a', name: 'Offboarding queue processor + notifications', type: 'Feature', sp: 5, done: true, sprint: 'S23' },
+  { epic: 'HRIS-01a', name: 'Resignation requests flow', type: 'Feature', sp: 3, done: true, sprint: 'S23' },
   { epic: 'HRIS-01a', name: '“Temporary Pause” offboard reason (suspend-only)', type: 'Feature', sp: 2, done: true, sprint: 'S24' },
   { epic: 'HRIS-01a', name: "Offboarding weekly pulse card (Teal's request)", type: 'Feature', sp: 2, done: true, sprint: 'S24' },
-  { epic: 'HRIS-01a', name: 'Onboarding name split → structured first/last/extension columns', type: 'Feature', sp: 3, done: true, sprint: 'S25' },
+  { epic: 'HRIS-01a', name: 'Onboarding name split → structured first/last/extension columns', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
   { epic: 'HRIS-01a', name: 'Re-hires landing invisible (offboard-row reuse) — fixes', type: 'Bug', sp: 3, done: true, sprint: 'S24' },
   { epic: 'HRIS-01a', name: 'clearOffboarded re-activation collision guard', type: 'Bug', sp: 2, done: true, sprint: 'S25' },
   { epic: 'HRIS-02a', name: 'Paystub freshness: staged ⊕ final-pay snapshot merge + mark-paid reconcile', type: 'Bug', sp: 5, done: true, sprint: 'S25' },
   { epic: 'HRIS-02a', name: 'MESA deduction integrity (no ₱100 for opt-outs + ledger-gap suppression at 7 sites)', type: 'Bug', sp: 3, done: true, sprint: 'S25' },
-  { epic: 'HRIS-02a', name: 'Payroll performance indexes + anti-lag pass', type: 'Chore', sp: 3, done: true, sprint: 'BL' },
-  { epic: 'HRIS-02a', name: 'USD⇄PHP conversion with cycle value-lock', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
+  { epic: 'HRIS-02a', name: 'Payroll performance indexes + anti-lag pass', type: 'Chore', sp: 3, done: true, sprint: 'S20' },
+  { epic: 'HRIS-02a', name: 'USD⇄PHP conversion with cycle value-lock', type: 'Feature', sp: 3, done: true, sprint: 'S17' },
   { epic: 'HRIS-02b', name: 'PAB payout-week gate + neutral mid-period Additions pill', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
-  { epic: 'HRIS-02b', name: 'US holidays PAB forgiveness seed', type: 'Feature', sp: 2, done: true, sprint: 'BL' },
-  { epic: 'HRIS-02b', name: 'Remove employee-facing PAB disputes (keep manager calendar + API)', type: 'Feature', sp: 2, done: true, sprint: 'S25' },
+  { epic: 'HRIS-02b', name: 'US holidays PAB forgiveness seed', type: 'Feature', sp: 2, done: true, sprint: 'S20' },
+  { epic: 'HRIS-02b', name: 'Remove employee-facing PAB disputes (keep manager calendar + API)', type: 'Feature', sp: 2, done: true, sprint: 'S24' },
   { epic: 'HRIS-02b', name: 'HSL rate-history stale underpay — arrears remediation (≈₱1.06M, 121 under / 10 over)', type: 'Spike', sp: 5, done: false, sprint: 'S25', priority: 'High' },
-  { epic: 'HRIS-02b', name: 'Rate change history + manager rate views', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
+  { epic: 'HRIS-02b', name: 'Rate change history + manager rate views', type: 'Feature', sp: 3, done: true, sprint: 'S20' },
   { epic: 'HRIS-03a', name: 'Mark Paid bank-details override (pencil mode + endpoint + notification)', type: 'Feature', sp: 5, done: true, sprint: 'S25' },
   { epic: 'HRIS-03a', name: 'Processor filter cards redesign + real logos; focus-mode removed', type: 'Feature', sp: 3, done: true, sprint: 'S25' },
   { epic: 'HRIS-03a', name: 'One-off Urgent payments (People → Pay → Urgent queue)', type: 'Feature', sp: 5, done: true, sprint: 'S25' },
-  { epic: 'HRIS-03a', name: 'Dispatch undo + Done queue', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
+  { epic: 'HRIS-03a', name: 'Dispatch undo + Done queue', type: 'Feature', sp: 3, done: true, sprint: 'S21' },
   { epic: 'HRIS-03b', name: 'Employee paystub modal + Pay Stubs profile tab + PDF/XLSX export', type: 'Feature', sp: 5, done: true, sprint: 'S24' },
   { epic: 'HRIS-03b', name: 'Salary “Ready to View” + “Paid” notifications', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
   { epic: 'HRIS-03c', name: 'Orphanage vendors + vendor invoices', type: 'Feature', sp: 5, done: true, sprint: 'S24' },
-  { epic: 'HRIS-03c', name: 'Orphanage worker payments', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
-  { epic: 'HRIS-03c', name: 'Orphanage budget requests + accounting approval', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
+  { epic: 'HRIS-03c', name: 'Orphanage worker payments', type: 'Feature', sp: 3, done: true, sprint: 'S23' },
+  { epic: 'HRIS-03c', name: 'Orphanage budget requests + accounting approval', type: 'Feature', sp: 5, done: true, sprint: 'S19' },
   { epic: 'HRIS-04', name: 'Time-adjustment segments: require missed time-in/out (additive)', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
-  { epic: 'HRIS-05', name: 'Per-tab edit permission enforced on all write APIs (block view-only writes)', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-05', name: 'Dashboard-only roles + per-tab ABAC + auto-provision on assign', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-05', name: 'Session invalidation watcher + force logout + live reset', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
+  { epic: 'HRIS-05', name: 'Per-tab edit permission enforced on all write APIs (block view-only writes)', type: 'Feature', sp: 5, done: true, sprint: 'S22' },
+  { epic: 'HRIS-05', name: 'Dashboard-only roles + per-tab ABAC + auto-provision on assign', type: 'Feature', sp: 5, done: true, sprint: 'S19' },
+  { epic: 'HRIS-05', name: 'Session invalidation watcher + force logout + live reset', type: 'Feature', sp: 3, done: true, sprint: 'S22' },
   { epic: 'HRIS-05', name: 'Tickets gated by dedicated role (+ cleanup migration)', type: 'Feature', sp: 2, done: true, sprint: 'S24' },
-  { epic: 'HRIS-06', name: 'Payment-catalog pay structures + PDF/CSV reports', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-06', name: 'Employee KPI results view', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
+  { epic: 'HRIS-06', name: 'Payment-catalog pay structures + PDF/CSV reports', type: 'Feature', sp: 5, done: true, sprint: 'S22' },
+  { epic: 'HRIS-06', name: 'Employee KPI results view', type: 'Feature', sp: 3, done: true, sprint: 'S22' },
   { epic: 'HRIS-06', name: 'Medical Records: RFC as manual ₱ amount (not ×250)', type: 'Feature', sp: 2, done: true, sprint: 'S24' },
-  { epic: 'HRIS-06', name: 'Bonus Catalog CRUD + formula engine — split of legacy 8-pt item', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-06', name: 'Applied-bonus tracking + cadence + manager history — split', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
+  { epic: 'HRIS-06', name: 'Bonus Catalog CRUD + formula engine — split of legacy 8-pt item', type: 'Feature', sp: 5, done: true, sprint: 'S22' },
+  { epic: 'HRIS-06', name: 'Applied-bonus tracking + cadence + manager history — split', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
   { epic: 'HRIS-07', name: 'MESA ledger DDL + backfill + membership preload', type: 'Feature', sp: 5, done: true, sprint: 'S24' },
   { epic: 'HRIS-07', name: 'MESA per-stint accounts (YY-MM-##### numbering)', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
   { epic: 'HRIS-07', name: 'MESA notes + Non Members Opt In/Out bridge', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
-  { epic: 'HRIS-07', name: 'Weekly 100+300 ledger deposits on upload + opt-in date derivation', type: 'Feature', sp: 3, done: true, sprint: 'S25' },
-  { epic: 'HRIS-09', name: 'Skill sets + Employee Team roster', type: 'Feature', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-09', name: 'FPU enrollment flow', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
-  { epic: 'HRIS-09', name: 'Medals & commendations', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
-  { epic: 'HRIS-09', name: 'Profile name-parts editor (First/Middle/Last/Ext/Nickname)', type: 'Feature', sp: 3, done: true, sprint: 'S25' },
-  { epic: 'HRIS-09', name: 'Profile completion card + payout fields', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
+  { epic: 'HRIS-07', name: 'Weekly 100+300 ledger deposits on upload + opt-in date derivation', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
+  { epic: 'HRIS-09', name: 'Skill sets + Employee Team roster', type: 'Feature', sp: 5, done: true, sprint: 'S21' },
+  { epic: 'HRIS-09', name: 'FPU enrollment flow', type: 'Feature', sp: 3, done: true, sprint: 'S20' },
+  { epic: 'HRIS-09', name: 'Medals & commendations', type: 'Feature', sp: 3, done: true, sprint: 'S20' },
+  { epic: 'HRIS-09', name: 'Profile name-parts editor (First/Middle/Last/Ext/Nickname)', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
+  { epic: 'HRIS-09', name: 'Profile completion card + payout fields', type: 'Feature', sp: 3, done: true, sprint: 'S20' },
   { epic: 'HRIS-12', name: 'HR + Admin Global Master List editors (incl. People-tab GML edit)', type: 'Feature', sp: 5, done: true, sprint: 'S24' },
   { epic: 'HRIS-13', name: 'Cobrowse chat window + providers', type: 'Feature', sp: 5, done: true, sprint: 'S24' },
   { epic: 'HRIS-13', name: 'Observe-mode mirror: driver-opened modals invisible — rrweb style-rules fix', type: 'Bug', sp: 3, done: true, sprint: 'S25' },
-  { epic: 'HRIS-13', name: 'Presence heartbeat + last-seen', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
-  { epic: 'HRIS-13', name: 'HR collab layer (shared cursors on checklist)', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
-  { epic: 'HRIS-14', name: 'Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports', type: 'Integration', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-14', name: 'CSV imports admin tab — split of legacy Csv Imports', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
+  { epic: 'HRIS-13', name: 'Presence heartbeat + last-seen', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
+  { epic: 'HRIS-13', name: 'HR collab layer (shared cursors on checklist)', type: 'Feature', sp: 3, done: true, sprint: 'S23' },
+  { epic: 'HRIS-14', name: 'Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports', type: 'Integration', sp: 5, done: false, sprint: 'BL' },
+  { epic: 'HRIS-14', name: 'CSV imports admin tab — split of legacy Csv Imports', type: 'Feature', sp: 3, done: true, sprint: 'S19' },
   { epic: 'HRIS-14', name: 'Master-list sync race + orphaned-upload guard', type: 'Bug', sp: 3, done: true, sprint: 'S24' },
   { epic: 'HRIS-14', name: 'Webhooks admin + bank-info-missing red-alarm notify email', type: 'Integration', sp: 2, done: true, sprint: 'S25' },
   { epic: 'HRIS-15', name: 'Dashboard-switch performance Tier 0 + PAB ?all_files=1 batch', type: 'Chore', sp: 5, done: true, sprint: 'S25' },
-  { epic: 'HRIS-15', name: 'Collapsible sidebar shell redesign', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
-  { epic: 'HRIS-15', name: 'System diagnostics + API-500 hardening', type: 'Chore', sp: 3, done: true, sprint: 'BL' },
-  { epic: 'HRIS-15', name: 'Mobile responsiveness pass (all dashboards)', type: 'Chore', sp: 5, done: true, sprint: 'BL' },
-  { epic: 'HRIS-15', name: 'Admin search bar + pages registry', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
-  { epic: 'HRIS-15', name: 'Impersonation (view-as) banner + auth', type: 'Feature', sp: 3, done: true, sprint: 'BL' },
-  { epic: 'HRIS-15', name: 'Run outstanding Supabase migrations + re-import n8n workflows (12+ pending SQL files)', type: 'Chore', sp: 3, done: false, sprint: 'S25', priority: 'Critical' },
+  { epic: 'HRIS-15', name: 'Collapsible sidebar shell redesign', type: 'Feature', sp: 3, done: true, sprint: 'S23' },
+  { epic: 'HRIS-15', name: 'System diagnostics + API-500 hardening', type: 'Chore', sp: 3, done: true, sprint: 'S19' },
+  { epic: 'HRIS-15', name: 'Mobile responsiveness pass (all dashboards)', type: 'Chore', sp: 5, done: true, sprint: 'S19' },
+  { epic: 'HRIS-15', name: 'Admin search bar + pages registry', type: 'Feature', sp: 3, done: true, sprint: 'S22' },
+  { epic: 'HRIS-15', name: 'Impersonation (view-as) banner + auth', type: 'Feature', sp: 3, done: true, sprint: 'S23' },
+  { epic: 'HRIS-15', name: 'Run outstanding Supabase migrations + re-import n8n workflows (12+ pending SQL files)', type: 'Chore', sp: 3, done: false, sprint: 'S25', priority: 'Critical', groupPinned: true },
   { epic: 'HRIS-19', name: 'Legacy rates-sheet cell can route null-preferred → hurupay: decision + guard', type: 'Spike', sp: 2, done: false, sprint: 'S25', priority: 'High' },
   { epic: 'HRIS-24', name: 'Referred-by column + Referrals week section (email-tier matching)', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
   // ── Sprint 26 reconciliation — shipped Jul 29 – Aug 5 2026 ─────────────────
@@ -442,8 +487,8 @@ export const PLAN_TASKS: PlanTask[] = [
   // Done. The HSL row's recorded blocker (zero `hsl:*` rate rows) may have cleared when 210b9ad seeded
   // the placement-only base rates at 225 / 337.50 — that is a status judgement for Kane, and a row is
   // never promoted just because its blocker LOOKS stale.
-  { epic: 'HRIS-01a', name: 'Offboarding is delete-only: suspend is its own path, suspended-person offboards escalate to delete, and leavers get a correct final check', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
-  { epic: 'HRIS-06', name: 'One HSL department + required sub-department that sets the base rate, wired through the Payment Catalog', type: 'Feature', sp: 8, done: false, sprint: 'BL' },
+  { epic: 'HRIS-01a', name: 'Offboarding is delete-only: suspend is its own path, suspended-person offboards escalate to delete, and leavers get a correct final check', type: 'Feature', sp: 8, done: false, sprint: 'BL', groupPinned: true },
+  { epic: 'HRIS-06', name: 'One HSL department + required sub-department that sets the base rate, wired through the Payment Catalog', type: 'Feature', sp: 8, done: false, sprint: 'BL', groupPinned: true },
   // ── Sprint 26 third pass — committed 0cda107..3d74e09 (Aug 12 2026) ──────────────────────────
   // done:true 2026-08-12, and this row is the clearest case yet for why the honesty gate exists: it
   // sat at In Progress (unpushed), then Pending Deploy (pushed, migration un-run) before earning

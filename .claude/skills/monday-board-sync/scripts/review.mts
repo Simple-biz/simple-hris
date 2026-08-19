@@ -165,7 +165,18 @@ const dateSpan = doneDates.length
     : `${doneDates[0]} … ${doneDates[doneDates.length - 1]}`
   : 'none';
 console.log(`         ${doneRows.length} Done (Completed Dates ${dateSpan}) · ${ROWS.length - doneRows.length} held short of Done (${heldText})`);
-console.log(`         SP going Done this pass: ${doneRows.reduce((a, r) => a + (PLAN_TASKS.find((t) => t.name === r.name)?.sp ?? 0), 0)}`);
+// "SP going Done" counted every Done row in the pass, including rows ALREADY Done on the board that
+// this pass only backfills a date onto — on 2026-08-19 that read "156 SP going Done" when not one row
+// changed status. Same class of falsehood as the PASS_DATE bug: wrong in the approval-critical summary,
+// which is the one place it must not be. Count only rows whose Status actually TRANSITIONS.
+const transitions = corrections.filter((c) => c.from.status !== c.to.status);
+const spTransitioning = transitions
+  .filter((c) => c.to.status === 'Done')
+  .reduce((a, c) => a + (PLAN_TASKS.find((t) => taskItemName(t) === c.itemName)?.sp ?? 0), 0);
+console.log(
+  `         status transitions: ${transitions.length}` +
+    (transitions.length ? ` · SP newly reaching Done: ${spTransitioning}` : ' — no row changes status; this pass only backfills Completed Dates'),
+);
 console.log(`\nproposal: ${PROPOSAL_PATH}`);
 console.log(`APPROVAL HASH: ${hash}`);
 console.log('\nNothing has been written. To apply, Kane must approve, then:');
