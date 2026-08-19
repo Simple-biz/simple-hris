@@ -1,0 +1,252 @@
+# Employee Penny AI — a metered, self-only chat bubble on the employee Overview
+
+Penny answers an employee's questions about **their own** pay, bonuses, policies and
+who to contact, from a floating bubble on the employee **Overview** tab only. It runs
+on **Claude Haiku 4.5** and gives each employee **10 questions per Asia/Manila day**,
+counted server-side; the panel warns as the count falls and greys its composer when it
+runs out. It reads; it never writes, and it cannot see another employee.
+
+Shipped 2026-08-19 — the third mount of the existing Penny (after CEO and Admin), not a
+fork. Commit: see `git log --oneline -- docs/features/employee-penny-ai.md`.
+
+## Key files
+
+| Piece | File |
+| --- | --- |
+| Mount | `src/components/employee/EmployeeApp.tsx` — `activeTab === 'dashboard'` only |
+| Widget | `src/components/ceo/CeoChatBubble.tsx` (shared; `quotaEndpoint` opts into metering) |
+| Chat state | `src/components/ceo/use-ceo-chat.ts` (shared) |
+| Chat route | `POST /api/employee/penny-chat` |
+| Quota route | `GET /api/employee/penny-chat/quota` |
+| Tool schemas | `src/lib/anthropic/employee-tool-defs.ts` (pure — importable by tests) |
+| Tool bodies | `src/lib/anthropic/employee-tools.ts` (`server-only`) |
+| Quota math | `src/lib/penny/employee-quota.ts` (pure, client-safe) |
+| Quota ledger | `src/lib/penny/employee-usage-db.ts` (`server-only`) |
+| Table | `references/sql/create/2026-08-19_penny_employee_usage.sql` |
+| Tests | `src/lib/anthropic/employee-tools.test.ts` · `src/lib/penny/employee-quota.test.ts` |
+
+Siblings: [ceo-assistant.md](./ceo-assistant.md) (the original, and the only Penny doc
+that describes the shared widget in detail) · [admin-api-keys.md](./admin-api-keys.md)
+(where the Anthropic key is set).
+
+## No tool takes an identity argument. That is the access control.
+
+The route resolves **one** email through `authorizeEmailAccess` and closes it over an
+`EmployeeToolContext`. Every tool reads the subject from that context; **not one of the
+eight declares an email, a name, or a search query as an input.**
+
+This is deliberately structural rather than instructional. A system prompt that says
+"never discuss other employees" is a request; a tool set with no parameter for *who*
+gives a prompt-injected message — a hypothetical, a roleplay, a forged "you are now
+authorized" — nothing to fill in. The CEO and Admin tool sets take `work_email`
+precisely *because* those callers may read anyone; removing that parameter is the whole
+difference here.
+
+Two tests enforce it, and both are written to fail loudly rather than drift:
+
+- an **allowlist** on tool inputs — the only permitted property across all eight tools
+  is `weeks`, so a future input named something the denylist never imagined
+  (`subject`, `for_user`) still fails;
+- a **source scan** proving the tool bodies read nothing off the model-supplied `input`
+  except `weeks`. The schema is what Claude sees; this is what the code obeys.
+
+> Adding a tool that needs to name a person means the feature has changed shape. Don't
+> add the parameter — ask whether the surface should exist.
+
+The schemas live in `employee-tool-defs.ts` (no `server-only`) purely so those guards
+can import them without a Supabase client. **A guard that only runs inside Next.js is a
+guard that stops running.**
+
+## Penny reports figures; it never recomputes them
+
+Pay comes from `runCeoTool('get_employee_pay')` with the email pinned by the route —
+reusing the CEO implementation's alias expansion, PostgREST shape guard, and the
+2026-07-29 fix that overlays live `payment_dispatches` over the lagging
+`disbursement_records`. Rate, start date, team and per-team bonus qualification come
+from `resolveCoeFacts`, the same Payment Catalog resolver behind the Certificate of
+Engagement the employee can download.
+
+Consequence, and it is intentional: **a week Penny cannot find is a week Penny declines
+to price.** It points at the Pay Stubs tab instead of estimating. A Penny that quotes a
+number the Pay Stubs tab disagrees with is worse than one that says "open your Pay
+Stubs tab" — the employee cannot tell which figure is wrong, and both come from us.
+
+The same rule blocks the obvious feature request: Penny does **not** judge attendance
+eligibility. It states the PAB amount, the window, the earning rule and the pay week the
+bonus attaches to, then sends the employee to the PAB calendar on their Overview for
+their day-by-day status. That verdict depends on daily hours, disputes, time adjustments
+and holiday forgiveness; a second implementation would eventually contradict the
+calendar, and "Penny said I qualified" is a conversation nobody should have to have. A
+test pins the tool description's pointer to the calendar.
+
+## The two configured windows must be asked for, never derived
+
+- **PAB window**: `parsePabPeriodOverrides` → `resolvePabMonthForDate` →
+  `resolvePabRangeForMonth`, the same pair the employee's own Overview PAB card uses, so
+  Penny and the calendar always name the same dates. The pay week is derived through
+  **`isFinalPabWeek`** (containment: `weekStart ≤ periodEnd ≤ weekEnd`) — see
+  [[pab-payout-week-gate-and-pill]] for why `weekEnd >= periodEnd` is wrong.
+- **Tech bonus week**: `resolveIsTechBonusWeek(monday, overrides)` against
+  `listTechBonusWeekOptions`, never the raw heuristic. A direct `isTechBonusWeek(` call
+  anywhere in `src/` fails the repo-wide scan in `tech-bonus-week.test.ts`, and would
+  make Penny announce the heuristic's week while payroll paid the wizard's configured
+  one. This file's own test asserts the **positive** (the gate and the overrides parser
+  are both used); the negative belongs to that repo-wide scan and is deliberately not
+  duplicated here — a regex literal of the banned pattern makes the copy an offender in
+  the real guard, and widening that guard's allowlist to fit a redundant copy would
+  weaken the only check that matters.
+
+## Policies: the two absent rules are absent on purpose
+
+`get_company_policies` returns `policiesForDeptKey(deptKey)` verbatim plus a
+`has_team_page` flag. When a team has no published page, the company-wide fallback
+**omits the workday window and the time-off notice period** — the two policies that
+genuinely differ per team ([employee-team-directory.md](./employee-team-directory.md)).
+
+An LLM asked "how much notice do I need for time off?" will supply a plausible default
+unless told not to. So the tool returns those two as an explicit
+`unpublished_for_this_team` list, the `field_notes` say why they are missing, and the
+system prompt names this as one of two traps in the data. A test pins the instruction in
+the tool description: **if that sentence falls out, Penny starts inventing shifts.**
+
+Nothing in `team-policies.ts` drives logic, here or anywhere. Penny reads it aloud.
+
+Same principle for contacts: `get_my_contacts` returns only managers recorded against
+the employee's own department. There is no canonical HR-contact record in this system, so
+Penny names no one when the list is empty — it says so and points at HR generally.
+
+## The daily allowance is a row count, and it fails closed
+
+Ten questions per **Asia/Manila calendar day** (Kane, 2026-08-19). Manila is a fixed
+`+08:00` with no DST, so the day boundary is built from the offset literal — a prompt at
+23:59 and one at 00:01 Manila land in different windows, pinned by test.
+
+**The count of non-refunded `penny_employee_usage` rows since Manila midnight *is* the
+meter.** There is no counter column: a read-modify-write counter loses an update when
+two tabs send at once, and that lost update is a free prompt. Row counting cannot drift
+from what happened.
+
+It is **not** kept in `audit_log`, even though Penny also audits there. The audit log is
+truncatable by admins, and a truncation would silently refund the whole company's daily
+allowance. Penny writes `employee_assistant.query` for the trail (who asked, which tools
+ran — never the figures) and `penny_employee_usage` for the meter. Two records, two jobs.
+
+**Reserve, then settle.** The row is INSERTed *before* the Anthropic call, so a
+double-send cannot both slip past the pre-check; if the turn produces no answer text
+(upstream error, aborted stream, a tool loop that wrote nothing) it is stamped
+`refunded_at` and stops counting — soft-deleted, with a reason, like
+`payroll_bank_exemptions.revoked_at`. A route error must never cost an employee one of
+their ten, and "it errored but still counted" must be answerable from the ledger.
+
+Every failure path **fails closed**: `countUsedToday` returns the limit on a missing
+client, a query error, or a null count, and `quotaFromUsed` treats a non-finite count as
+spent out. A DB outage makes Penny decline politely; the alternative is unmetered
+Anthropic spend on a shared org key. This mirrors the OTP send-cap
+(`src/lib/bank-update/otp.ts`), where failing open would have handed out the very thing
+the cap rations.
+
+> **The client never counts.** It renders the number the server returns — seeded by
+> `GET /quota` on open, refreshed from the `X-Penny-Quota` header on every reply,
+> including the 429. Clearing browser storage buys nothing. A refunded turn leaves the
+> header one low until the next open re-seeds it: the error direction is always **fewer**
+> questions shown, never more.
+
+### Warn, then grey out — never vanish
+
+Kane, 2026-08-19: *"there should be sufficient warning before it greys out or locks
+out."* One escalation ladder, in `quotaFromUsed`/`quotaMessage` so the header pill and
+the composer line can never disagree:
+
+| Left | `warnLevel` | What the employee sees |
+| --- | --- | --- |
+| 4–10 | `none` | Neutral `7/10` pill. No nagging. |
+| 2–3 | `low` | Pill brightens + "3 questions left today." |
+| 1 | `last` | Amber pill + "This is your last question today. Penny resets at …" |
+| 0 | `exhausted` | Composer greyed and disabled, starter chips disabled, Enter inert, the reset time and an escalation path shown. |
+
+At zero the **bubble stays on the page** — greyed, and the heart stops beating. A
+disappearing bubble reads as a broken feature and generates the HR ticket the assistant
+exists to prevent. The panel still opens and the transcript is still readable.
+
+## Elevated viewers: subject and meter are different people
+
+`/employee?email=someone.else` is an existing elevated path (the shell already shows the
+viewed person's notifications and badges). Kane's ruling (Q3a, 2026-08-19) splits the two
+identities, and the table stores both columns for exactly this reason:
+
+- **`subject_email`** — whose data the answer is about: `effectiveEmail`, the viewed person.
+- **`session_email`** — whose allowance is charged: the signed-in human.
+- Elevated viewers are **exempt** from the cap (`elevated: true` on the row), so a staff
+  member reading a dashboard never spends that employee's ten. The row is recorded
+  anyway — it is a record of a question asked, not of an allowance consumed.
+
+**Any "how many has X used" query keys on `session_email`.** Counting by subject would
+charge an employee for questions staff asked about them.
+
+A plain employee cannot reach this path at all: `authorizeEmailAccess` 403s a non-elevated
+session requesting another address, on the quota route as well as the chat route, so the
+indicator can't be used to probe whether an address exists.
+
+## Haiku 4.5 is an older-generation model — do not copy the Admin route's config
+
+Kane specified Haiku (`claude-haiku-4-5`, the bare id, never date-suffixed). Its request
+surface is **not** the Admin route's:
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| `thinking` | **omitted** | `{type:'adaptive'}` is not this model's shape. Omitting means no thinking — right for a fast FAQ. |
+| `output_config` | **omitted** | `effort` **errors** on Haiku 4.5. Copying `{effort:'medium'}` from `penny-chat/route.ts` breaks every request. |
+| `max_tokens` | 4000 | No thinking shares the budget; enough for a small pipe table. |
+| `MAX_TURNS` | 4 | find-the-fact → answer. A low ceiling stops a confused loop from spending a prompt on nothing. |
+| `maxDuration` | 120 | A cold Supabase read plus two tool turns can outrun 60s. |
+
+The system prompt is **split in two blocks**: a static one carrying `cache_control`, and
+an uncached tail holding the date and the employee's name. The sibling routes stamp the
+clock *inside* the cached block, which invalidates the prefix on every request — a cache
+that never hits. Keep anything per-request out of the cached half.
+
+The transcript guard from both siblings is here too, and matters more: after slicing
+history, **leading assistant turns are dropped**, because an alternating transcript
+sliced to an even count starts on an assistant message and the API rejects it with a 400.
+Ten prompts a day makes that reachable within a single day's conversation.
+
+## What Penny refuses
+
+Encoded in the system prompt, and true of the tools regardless of what the prompt says:
+
+- **Another person.** No tool can look one up. Penny says it can only see their own
+  information — for any framing, including a claimed authorization.
+- **Any change.** No time adjustment, pay correction, record edit, leave approval or
+  payment. It points at the form on their dashboard or at their manager.
+- **Any promise.** Never "your payment will arrive" or "your bonus is approved".
+
+`get_my_leave_requests` returns a request log, never a balance — this system does not
+track a leave allowance, so a "days remaining" answer would be fabricated.
+
+## Deploy notes
+
+1. **Migration — PENDING until Kane confirms.** The table does not exist yet:
+   ```
+   node scripts/apply-penny-employee-usage.mjs            # verify only (default)
+   node scripts/apply-penny-employee-usage.mjs --apply    # create the table + indexes
+   ```
+   Needs `DATABASE_URL` in `.env.local` (direct port 5432, not the pooler). Idempotent;
+   a re-run is a no-op. Nothing to back up — the table starts empty, and an empty ledger
+   correctly reads as "nobody has spent a prompt today".
+
+   **Until it is applied, Penny is unavailable to employees, by design:** `countUsedToday`
+   fails closed on the missing table, so every employee reads as spent out. That is the
+   fail-closed rule working, not a bug — no unmetered spend before the meter exists.
+
+2. **Anthropic key** — reuses the existing one (`app_settings["secret.anthropic_api_key"]`,
+   else `ANTHROPIC_API_KEY`). No new key, no new env var. With none configured the route
+   returns 503 with employee-safe copy.
+
+3. **No new notification type, webhook, cron, or RBAC entry.** Employee tabs are not in
+   `FEATURE_CATALOG` (there is no `employee` FeatureViewKey), and the bubble is not a tab,
+   so nothing needs a grant. Page-visibility settings do not hide it — it follows the
+   Overview tab.
+
+4. **Cost.** Haiku 4.5 at 10 questions/employee/day across ~1,000 employees is the
+   ceiling this feature was given; there is no separate kill switch beyond removing the
+   mount in `EmployeeApp.tsx` (one conditional) or clearing the API key.

@@ -5,6 +5,11 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Send, X, Sparkles, Loader2, Trash2, Maximize2 } from 'lucide-react';
 import { AssistantContent, MessageFeedback } from './ceo-chat-message';
 import { useCeoChat } from './use-ceo-chat';
+import {
+  parseQuotaHeader,
+  quotaMessage,
+  type EmployeePennyQuota,
+} from '@/lib/penny/employee-quota';
 
 const SUGGESTIONS = [
   'Pull the latest payroll report',
@@ -16,8 +21,10 @@ const SUGGESTIONS = [
  * Floating Penny AI assistant — the always-available chat bubble. Shares its
  * backend and logic with the full-page Penny AI tab via {@link useCeoChat}.
  * Defaults to the CEO assistant; the Admin dashboard remounts it with its own
- * `endpoint`/`subtitle`/`suggestions`. When the full Penny AI tab is open, the
- * shell passes `hidden` so only one chat shows at once.
+ * `endpoint`/`subtitle`/`suggestions`, and the employee Overview mounts it with
+ * `quotaEndpoint` + `feedbackEndpoint={null}` for the metered employee
+ * assistant. When the full Penny AI tab is open, the shell passes `hidden` so
+ * only one chat shows at once.
  */
 export default function CeoChatBubble({
   hidden = false,
@@ -25,6 +32,9 @@ export default function CeoChatBubble({
   endpoint,
   subtitle = 'Payroll & reports assistant',
   suggestions = SUGGESTIONS,
+  feedbackEndpoint,
+  quotaEndpoint,
+  extraBody,
 }: {
   hidden?: boolean;
   /** When provided, shows an "expand" button that opens the full Penny AI tab. */
@@ -35,8 +45,20 @@ export default function CeoChatBubble({
   subtitle?: string;
   /** Empty-state starter prompts. */
   suggestions?: string[];
+  /** Thumbs-rating route. `null` hides the rating controls (employee surface). */
+  feedbackEndpoint?: string | null;
+  /**
+   * When set, this surface has a metered daily allowance: the endpoint is polled
+   * on open to seed the counter, and every reply refreshes it from the response
+   * header. Omit on the unmetered CEO/Admin surfaces — with no endpoint there is
+   * no counter, no warning line and nothing to grey out.
+   */
+  quotaEndpoint?: string;
+  /** Extra fields merged into every chat POST body (e.g. the viewed `email`). */
+  extraBody?: Record<string, unknown>;
 }) {
   const [open, setOpen] = useState(false);
+  const [quota, setQuota] = useState<EmployeePennyQuota | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -51,7 +73,44 @@ export default function CeoChatBubble({
     rateMessage,
     lastMsg,
     awaitingFirstToken,
-  } = useCeoChat({ inputRef, endpoint });
+    feedbackEnabled,
+  } = useCeoChat({
+    inputRef,
+    endpoint,
+    feedbackEndpoint,
+    extraBody,
+    onQuotaHeader: quotaEndpoint
+      ? (raw) => {
+          const q = parseQuotaHeader(raw);
+          if (q) setQuota(q);
+        }
+      : undefined,
+  });
+
+  // Seed / re-seed the counter from the server whenever the panel opens. The
+  // client never counts for itself: a refunded turn (an error that cost nothing)
+  // leaves the header's number one low, and this read corrects it.
+  useEffect(() => {
+    if (!open || !quotaEndpoint) return;
+    let cancelled = false;
+    fetch(quotaEndpoint, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.text() : null))
+      .then((body) => {
+        if (cancelled) return;
+        const q = parseQuotaHeader(body);
+        if (q) setQuota(q);
+      })
+      .catch(() => {
+        /* leave the last known figure — never invent headroom */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, quotaEndpoint]);
+
+  const metered = !!quotaEndpoint && !!quota && !quota.exempt;
+  const locked = metered && quota!.exhausted;
+  const warning = metered ? quotaMessage(quota!) : null;
 
   // Collapse the panel whenever the bubble is hidden (e.g. switched to Penny AI).
   useEffect(() => {
@@ -81,6 +140,9 @@ export default function CeoChatBubble({
   function onComposerKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      // Enter must respect the lock too — the disabled send button alone would
+      // still let a keyboard send through to a guaranteed 429.
+      if (locked) return;
       void send(input);
     }
   }
@@ -115,6 +177,25 @@ export default function CeoChatBubble({
                     {subtitle}
                   </p>
                 </div>
+                {/* Questions left today. Always visible on a metered surface —
+                    Kane 2026-08-19: the warning has to arrive before the lock,
+                    so the count is never hidden until it runs out. */}
+                {metered && (
+                  <span
+                    aria-label={`${quota!.remaining} of ${quota!.limit} questions left today`}
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ring-1 ${
+                      quota!.warnLevel === 'exhausted'
+                        ? 'bg-white text-fuchsia-800 ring-white/70'
+                        : quota!.warnLevel === 'last'
+                          ? 'bg-amber-300 text-amber-950 ring-amber-200/80'
+                          : quota!.warnLevel === 'low'
+                            ? 'bg-white/25 text-white ring-white/50'
+                            : 'bg-white/15 text-white ring-white/30'
+                    }`}
+                  >
+                    {quota!.remaining}/{quota!.limit}
+                  </span>
+                )}
               </div>
               <div className="flex shrink-0 items-center gap-1">
                 {onOpenFullView && (
@@ -161,7 +242,7 @@ export default function CeoChatBubble({
               {messages.length === 0 ? (
                 <div className="flex flex-col gap-3 px-1 pt-2">
                   <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
-                    Hi 👋 What can I help you with?
+                    {locked ? "That's all my questions for today" : 'Hi 👋 What can I help you with?'}
                   </p>
                   <div className="flex flex-col gap-2">
                     {suggestions.map((s) => (
@@ -169,7 +250,10 @@ export default function CeoChatBubble({
                         key={s}
                         type="button"
                         onClick={() => void send(s)}
-                        className="rounded-xl border border-fuchsia-200/70 bg-white px-3 py-2 text-left text-[13px] text-zinc-700 shadow-sm transition hover:border-fuchsia-300 hover:bg-fuchsia-50 dark:border-fuchsia-900/40 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                        // A starter chip on a locked panel would fire a send the
+                        // server is certain to refuse.
+                        disabled={locked}
+                        className="rounded-xl border border-fuchsia-200/70 bg-white px-3 py-2 text-left text-[13px] text-zinc-700 shadow-sm transition hover:border-fuchsia-300 hover:bg-fuchsia-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-fuchsia-200/70 disabled:hover:bg-white dark:border-fuchsia-900/40 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:disabled:hover:bg-zinc-900"
                       >
                         {s}
                       </button>
@@ -179,7 +263,8 @@ export default function CeoChatBubble({
               ) : (
                 messages.map((m) => {
                   const isStreaming = busy && m.id === lastMsg?.id && m.role === 'assistant';
-                  const showRating = m.role === 'assistant' && !!m.content && !isStreaming;
+                  const showRating =
+                    feedbackEnabled && m.role === 'assistant' && !!m.content && !isStreaming;
                   return (
                     <motion.div
                       key={m.id}
@@ -225,20 +310,44 @@ export default function CeoChatBubble({
 
             {/* Composer */}
             <div className="shrink-0 border-t border-zinc-200/70 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-[#0d1117]">
-              <div className="flex items-end gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 focus-within:border-fuchsia-400 focus-within:ring-2 focus-within:ring-fuchsia-400/30 dark:border-zinc-700 dark:bg-zinc-900">
+              {/* The escalating warning: quiet above 3 left, amber at 2–3, firm at
+                  the last one, and an explanation once the composer is locked.
+                  `role="status"` so a screen reader hears the countdown too. */}
+              {warning && (
+                <p
+                  role="status"
+                  className={`mb-1.5 rounded-lg px-2 py-1.5 text-[11.5px] leading-snug ${
+                    locked
+                      ? 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800/70 dark:text-zinc-300'
+                      : quota!.warnLevel === 'last'
+                        ? 'bg-amber-50 text-amber-800 ring-1 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-900/60'
+                        : 'bg-fuchsia-50 text-fuchsia-800 dark:bg-fuchsia-950/30 dark:text-fuchsia-200'
+                  }`}
+                >
+                  {warning}
+                </p>
+              )}
+              <div
+                className={`flex items-end gap-2 rounded-xl border px-2.5 py-1.5 ${
+                  locked
+                    ? 'border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900/60'
+                    : 'border-zinc-200 bg-zinc-50 focus-within:border-fuchsia-400 focus-within:ring-2 focus-within:ring-fuchsia-400/30 dark:border-zinc-700 dark:bg-zinc-900'
+                }`}
+              >
                 <textarea
                   ref={inputRef}
-                  value={input}
+                  value={locked ? '' : input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={onComposerKey}
                   rows={1}
-                  placeholder="Type a message…"
-                  className="max-h-28 min-h-[24px] flex-1 resize-none bg-transparent py-1 text-[13.5px] leading-relaxed text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100"
+                  disabled={locked}
+                  placeholder={locked ? 'Back tomorrow — see you then' : 'Type a message…'}
+                  className="max-h-28 min-h-[24px] flex-1 resize-none bg-transparent py-1 text-[13.5px] leading-relaxed text-zinc-900 outline-none placeholder:text-zinc-400 disabled:cursor-not-allowed dark:text-zinc-100"
                 />
                 <button
                   type="button"
                   onClick={() => void send(input)}
-                  disabled={busy || !input.trim()}
+                  disabled={busy || locked || !input.trim()}
                   aria-label="Send message"
                   className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-fuchsia-600 text-white transition hover:from-violet-700 hover:to-fuchsia-700 disabled:cursor-not-allowed disabled:opacity-40"
                 >
@@ -262,7 +371,15 @@ export default function CeoChatBubble({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-label={open ? 'Close Penny AI' : 'Open Penny AI'}
+        aria-label={
+          open
+            ? 'Close Penny AI'
+            : locked
+              ? "Open Penny AI — no questions left today"
+              : metered
+                ? `Open Penny AI — ${quota!.remaining} of ${quota!.limit} questions left today`
+                : 'Open Penny AI'
+        }
         aria-expanded={open}
         className="group fixed bottom-5 right-4 z-50 flex h-14 w-14 items-center justify-center transition-transform active:scale-90 sm:right-6"
       >
@@ -302,25 +419,42 @@ export default function CeoChatBubble({
               transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
               className="relative flex h-14 w-14 items-center justify-center"
             >
-              {/* pulsing orange halo (two staggered rings → ripple) */}
-              <span
-                aria-hidden
-                className="penny-halo absolute h-11 w-11 rounded-full bg-orange-500/45 blur-md"
-                style={{ animation: 'pennyHeartHalo 1.5s ease-out infinite' }}
-              />
-              <span
-                aria-hidden
-                className="penny-halo absolute h-11 w-11 rounded-full bg-orange-400/40"
-                style={{ animation: 'pennyHeartHalo 1.5s ease-out infinite 0.35s' }}
-              />
+              {/* Out of questions: the heart REMAINS — Kane 2026-08-19, it greys
+                  out rather than vanishing, so nobody is left wondering where
+                  Penny went — but it stops beating and drops its halo, which is
+                  the "come back tomorrow" signal at a glance. */}
+              {!locked && (
+                <>
+                  {/* pulsing orange halo (two staggered rings → ripple) */}
+                  <span
+                    aria-hidden
+                    className="penny-halo absolute h-11 w-11 rounded-full bg-orange-500/45 blur-md"
+                    style={{ animation: 'pennyHeartHalo 1.5s ease-out infinite' }}
+                  />
+                  <span
+                    aria-hidden
+                    className="penny-halo absolute h-11 w-11 rounded-full bg-orange-400/40"
+                    style={{ animation: 'pennyHeartHalo 1.5s ease-out infinite 0.35s' }}
+                  />
+                </>
+              )}
               {/* the beating heart — the Penny AI heart mark */}
               <img
                 aria-hidden
                 src="/chatbubble.png"
                 alt=""
                 draggable={false}
-                className="penny-heart relative h-9 w-9 object-contain drop-shadow-md"
-                style={{ animation: 'pennyHeartbeat 1.3s ease-in-out infinite', transformOrigin: 'center' }}
+                className={`penny-heart relative h-9 w-9 object-contain drop-shadow-md ${
+                  locked ? 'opacity-45 grayscale' : ''
+                }`}
+                style={
+                  locked
+                    ? undefined
+                    : {
+                        animation: 'pennyHeartbeat 1.3s ease-in-out infinite',
+                        transformOrigin: 'center',
+                      }
+                }
               />
             </motion.span>
           )}

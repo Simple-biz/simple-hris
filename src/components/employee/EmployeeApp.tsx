@@ -16,6 +16,7 @@ import EmployeeMesa from './EmployeeMesa';
 import EmployeeMyHours from './EmployeeMyHours';
 import EmployeeKpiResults from './EmployeeKpiResults';
 import SWall from '@/components/swall/SWall';
+import CeoChatBubble from '@/components/ceo/CeoChatBubble';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 // import MyDisputes from './MyDisputes'; // hidden — disputes now go through Orphanage Manager → Accounting flow
 import PayrollLockBanner from './PayrollLockBanner';
@@ -44,6 +45,17 @@ import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 
 const SESSION_KEY = 'employee_session_email';
 type EmployeeProfileFocusTab = 'overview' | 'payment' | 'skillsets';
+
+/**
+ * Penny's starter chips on the employee Overview. Each one is a question Penny
+ * can actually answer from a self-scoped tool — a chip that leads to "I can't see
+ * that" wastes one of the ten prompts.
+ */
+const PENNY_EMPLOYEE_SUGGESTIONS = [
+  'When is the PAB and how do I get it?',
+  'When do I get paid?',
+  'What was my last pay?',
+];
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -548,6 +560,25 @@ export default function EmployeeApp() {
         </div>
         <AppFooter />
       </main>
+      {/* Penny AI — Overview tab ONLY (Kane 2026-08-19: "Overview - Chat Bubble
+          only"), so it never floats over My Hours, MESA or the Profile forms.
+          The route is the access control, not this mount: /api/employee/penny-chat
+          re-resolves the subject through authorizeEmailAccess and its tools take
+          no identity argument. `email` rides along so an elevated ?email= viewer
+          gets Penny answering about the person whose dashboard they are reading,
+          matching the notifications panel and the unread badge. No thumbs rating
+          — /api/ceo/chat/feedback admits ceo/admin only, so the control would be
+          decorative here. See docs/features/employee-penny-ai.md. */}
+      {activeTab === 'dashboard' && employeeEmail && (
+        <CeoChatBubble
+          endpoint="/api/employee/penny-chat"
+          quotaEndpoint={`/api/employee/penny-chat/quota?email=${encodeURIComponent(employeeEmail)}`}
+          extraBody={{ email: employeeEmail }}
+          feedbackEndpoint={null}
+          subtitle="Your pay, bonuses & policies"
+          suggestions={PENNY_EMPLOYEE_SUGGESTIONS}
+        />
+      )}
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </motion.div>
 

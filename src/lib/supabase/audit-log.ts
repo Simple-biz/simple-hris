@@ -90,7 +90,12 @@ export type AuditAction =
   | 'ticket.updated'
   | 'ticket.moved'
   | 'ticket.deleted'
-  | 'ticket.commented';
+  | 'ticket.commented'
+  // Penny AI. One event per tool-using turn, naming which tools ran — never the
+  // figures they returned. `ceo_assistant.query` / `admin_assistant.query`
+  // predate this union and are still emitted as free-form strings by their
+  // routes; only the employee assistant is declared here so far.
+  | 'employee_assistant.query';
 
 /**
  * Cycle context attached to every payroll-wizard audit event so the Reports
