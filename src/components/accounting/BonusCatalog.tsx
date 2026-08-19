@@ -2617,12 +2617,19 @@ function LibraryTab({
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<'name' | 'newest' | 'oldest' | 'amount'>('name');
   const [page, setPage] = useState(0);
-  const [viewingId, setViewingId] = useState<string | null>(null);
+  /**
+   * The open detail modal: which bonus, and whether it opened straight into edit
+   * mode (the card's Edit button) or view mode (View). The modal's View<->Edit
+   * toggle is controlled from here, so there is still exactly ONE editor and one
+   * save path — the button changes which side of the toggle you land on, nothing
+   * else.
+   */
+  const [viewing, setViewing] = useState<{ id: string; edit: boolean } | null>(null);
 
   // Keep the open modal in sync with the latest bonus row (so edits show live).
   const viewingBonus = useMemo(
-    () => (viewingId ? bonuses.find((b) => b.id === viewingId) ?? null : null),
-    [viewingId, bonuses],
+    () => (viewing ? bonuses.find((b) => b.id === viewing.id) ?? null : null),
+    [viewing, bonuses],
   );
 
   // 3 per row x 3 rows.
@@ -2800,7 +2807,8 @@ function LibraryTab({
                 <BonusCard
                   bonus={b}
                   assignments={assignmentCount(b.id)}
-                  onView={() => setViewingId(b.id)}
+                  onView={() => setViewing({ id: b.id, edit: false })}
+                  onEdit={() => setViewing({ id: b.id, edit: true })}
                   onDelete={() => remove(b.id)}
                   onToggleStar={() => onUpsert({ ...b, starred: !b.starred })}
                 />
@@ -2840,11 +2848,13 @@ function LibraryTab({
       <BonusDetailModal
         bonus={viewingBonus}
         assignments={viewingBonus ? assignmentCount(viewingBonus.id) : 0}
-        onClose={() => setViewingId(null)}
+        editMode={!!viewing?.edit}
+        onEditModeChange={(edit) => setViewing((v) => (v ? { ...v, edit } : v))}
+        onClose={() => setViewing(null)}
         onSave={(b) => onUpsert(b)}
         onDelete={(id) => {
           remove(id);
-          setViewingId(null);
+          setViewing(null);
         }}
       />
     </div>
@@ -2855,12 +2865,15 @@ function BonusCard({
   bonus,
   assignments,
   onView,
+  onEdit,
   onDelete,
   onToggleStar,
 }: {
   bonus: BonusDef;
   assignments: number;
   onView: () => void;
+  /** Opens the same detail modal already flipped to Edit (no second editor). */
+  onEdit: () => void;
   onDelete: () => void;
   onToggleStar: () => void;
 }) {
@@ -2902,6 +2915,11 @@ function BonusCard({
           </button>
           <IconButton title="View" onClick={onView}>
             <Eye className="h-3.5 w-3.5" />
+          </IconButton>
+          {/* Mutating control — deliberately NO data-readonly-allow, so a
+              view-only accountant's click is swallowed by ReadOnlyTab. */}
+          <IconButton title="Edit" onClick={onEdit}>
+            <Pencil className="h-3.5 w-3.5" />
           </IconButton>
           <IconButton title="Delete" onClick={onDelete} danger>
             <Trash2 className="h-3.5 w-3.5" />
@@ -2998,24 +3016,32 @@ function EditToggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => v
 function BonusDetailModal({
   bonus,
   assignments,
+  editMode,
+  onEditModeChange,
   onClose,
   onSave,
   onDelete,
 }: {
   bonus: BonusDef | null;
   assignments: number;
+  /**
+   * Controlled by the opener, so a card can open this straight into Edit. Kept as
+   * a prop rather than local state on purpose: the bonus object identity changes
+   * on every Realtime refetch, so any effect that re-derived edit mode from the
+   * row would drop a teammate's refetch on top of an in-progress edit.
+   */
+  editMode: boolean;
+  onEditModeChange: (v: boolean) => void;
   onClose: () => void;
   onSave: (b: BonusDef) => void;
   onDelete: (id: string) => void;
 }) {
   const open = !!bonus;
-  const [editMode, setEditMode] = useState(false);
   // Cache the last bonus so the panel keeps its content during the exit animation.
   const [cache, setCache] = useState<BonusDef | null>(bonus);
 
   useEffect(() => {
     if (bonus) setCache(bonus);
-    else setEditMode(false);
   }, [bonus]);
 
   // Close on Escape; lock body scroll while open.
@@ -3073,7 +3099,7 @@ function BonusDetailModal({
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-3">
-                <EditToggle on={editMode} onChange={setEditMode} />
+                <EditToggle on={editMode} onChange={onEditModeChange} />
                 <IconButton title="Close" onClick={onClose}>
                   <X className="h-4 w-4" />
                 </IconButton>
@@ -3092,12 +3118,19 @@ function BonusDetailModal({
                     transition={{ duration: 0.22, ease: EASE }}
                   >
                     <BonusEditor
+                      // Keyed by bonus id: the panel can be reopened on a DIFFERENT
+                      // bonus while the previous one is still exit-animating, and the
+                      // editor seeds its fields from `initial` once at mount — without
+                      // this, that reopen would save bonus A's typed values onto B.
+                      // Identity-only changes (a Realtime refetch) keep the same id, so
+                      // an in-progress edit is never clobbered.
+                      key={b.id}
                       embedded
                       initial={b}
-                      onCancel={() => setEditMode(false)}
+                      onCancel={() => onEditModeChange(false)}
                       onSave={(next) => {
                         onSave(next);
-                        setEditMode(false);
+                        onEditModeChange(false);
                       }}
                     />
                   </motion.div>

@@ -111,6 +111,21 @@ Example: `IF(tickets >= 10, 500, 250) * tickets` -> variables `[tickets]`; with
   bonuses and an amber `CadenceBadge` flags **monthly** bonuses
   in the cards, detail modal, and assignment rows. Flat shows an amount input; Formula shows a monospace editor
   with live validation and a generated-TypeScript preview.
+- **Reaching edit mode.** There is exactly **one** bonus editor (`BonusEditor`) and
+  one save path (`upsertBonus` → `POST /api/bonus-catalog`). A Library card offers
+  **View** (eye) and **Edit** (pencil): both open the same `BonusDetailModal`, and
+  the card only decides which side of the modal's View↔Edit toggle it lands on —
+  same pairing as the Search tab's person card (see [Search tab](#search-tab-added-2026-07-29)).
+  That toggle's state is **owned by `LibraryTab`** (`viewing = { id, edit }`), not by
+  the modal: the bonus row's object identity changes on every Realtime refetch, so
+  an effect re-deriving edit mode from the row would knock a teammate's refetch on
+  top of an in-progress edit. Edit is a **mutating** control, so it deliberately
+  carries **no** `data-readonly-allow` — a view-only accountant's click is swallowed
+  by `ReadOnlyTab` (only search + the pager are carved out). Editing a definition
+  never rewrites a paid week: `bonus_catalog_applied` snapshots name/kind/cadence
+  and the FX-converted PHP amount at apply time (§7). It *does* move the KPI
+  Calculator's live projection for the current unsaved week — the known limitation
+  below, unchanged by the button.
 - **Inline tester:** for formula bonuses with variables, an `InlineTester` lets
   you type sample variable values and see the computed result (in the bonus's
   currency) in real time.
