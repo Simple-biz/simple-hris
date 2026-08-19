@@ -1,10 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   CalendarDays,
   ChevronDown,
+  Download,
+  FileSpreadsheet,
+  FileText,
   Gift,
   Loader2,
   Package,
@@ -12,6 +15,7 @@ import {
   Save,
   Search,
   Sparkles,
+  Table2,
   Users,
 } from 'lucide-react';
 import GiftCatalog from '@/components/orphanage/GiftCatalog';
@@ -33,6 +37,151 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import {
+  buildGiftRosterExport,
+  downloadGiftRosterCsv,
+  downloadGiftRosterPdf,
+  downloadGiftRosterXlsx,
+} from '@/lib/gift-tracker/shipping-export';
+
+/* ── Export menu (PDF · XLSX · CSV) ─────────────────────────────────────────
+ * Lifted from HrGlobalMasterList's inline ExportMenu — the repo has no dropdown
+ * primitive. Themed emerald for the Gift Tracker.
+ *
+ * The export's grain is the MASTER LIST: it takes the roster rows currently in
+ * view and joins submissions onto them, so people who never submitted are still
+ * in the file. That is the point — it is reconciled against the tenure-gift
+ * Google Sheet, where a missing person is the finding.
+ */
+
+type ExportFormat = 'pdf' | 'xlsx' | 'csv';
+
+function GiftExportMenu({
+  rows,
+  submissions,
+  totalRoster,
+  scopeLabel,
+}: {
+  /** Roster rows currently in view (search applied). */
+  rows: Row[];
+  /** Submissions scoped to those rows, plus genuinely off-roster submitters. */
+  submissions: EmployeeGiftShippingRow[];
+  totalRoster: number;
+  scopeLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<ExportFormat | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const reduce = useReducedMotion();
+
+  // Close on outside click / Escape.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const runExport = useCallback(
+    async (format: ExportFormat) => {
+      if (rows.length === 0) {
+        toast.error('Nothing to export in this view.');
+        return;
+      }
+      setBusy(format);
+      setOpen(false);
+      try {
+        const model = buildGiftRosterExport({
+          employees: rows.map((r) => r.source),
+          submissions,
+          totalRoster,
+          scopeLabel,
+        });
+        if (format === 'csv') downloadGiftRosterCsv(model);
+        else if (format === 'xlsx') downloadGiftRosterXlsx(model);
+        else await downloadGiftRosterPdf(model);
+        toast.success(
+          `Exported ${model.rows.length.toLocaleString()} ${model.rows.length === 1 ? 'person' : 'people'} as ${format.toUpperCase()}.`,
+        );
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : `Failed to export ${format.toUpperCase()}`);
+      } finally {
+        setBusy(null);
+      }
+    },
+    [rows, submissions, totalRoster, scopeLabel],
+  );
+
+  const items: { format: ExportFormat; label: string; hint: string; Icon: typeof FileText }[] = [
+    { format: 'pdf', label: 'PDF', hint: 'Branded document', Icon: FileText },
+    { format: 'xlsx', label: 'Excel', hint: 'XLSX - 2 sheets', Icon: FileSpreadsheet },
+    { format: 'csv', label: 'CSV', hint: 'Plain data', Icon: Table2 },
+  ];
+
+  return (
+    <div ref={wrapRef} className="relative shrink-0">
+      <Button
+        type="button"
+        variant="outline"
+        onClick={() => setOpen((o) => !o)}
+        disabled={busy !== null}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="h-9 gap-1.5 border-emerald-200 bg-white text-zinc-700 hover:bg-emerald-50 hover:text-emerald-800 dark:border-emerald-900/60 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-200"
+      >
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+        {busy ? `Exporting ${busy.toUpperCase()}…` : 'Export'}
+        <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')} aria-hidden />
+      </Button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            role="menu"
+            initial={reduce ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={reduce ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+            className="absolute right-0 z-30 mt-2 w-60 overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 shadow-xl shadow-zinc-900/10 dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            <p className="px-2.5 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">
+              Export {rows.length.toLocaleString()} {rows.length === 1 ? 'person' : 'people'}
+            </p>
+            <p className="px-2.5 pb-1.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+              Complete list — includes people who have not submitted.
+            </p>
+            {items.map(({ format, label, hint, Icon }) => (
+              <button
+                key={format}
+                type="button"
+                role="menuitem"
+                onClick={() => void runExport(format)}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-sm">
+                  <Icon className="h-4 w-4" aria-hidden />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">{label}</span>
+                  <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">{hint}</span>
+                </span>
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
 
 /** Apparel sizes the employee can pick for wearable milestone gifts. */
 const APPAREL_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL'] as const;
@@ -144,6 +293,9 @@ type Row = {
   next: Milestone | null;
   daysUntil: number | null;
   status: GiftStatus;
+  /** The master-list row this was derived from. The export needs the address
+   *  columns, which the derived Row deliberately doesn't carry. */
+  source: EmployeeRow;
 };
 
 export default function GiftTracker({ viewerEmail }: { viewerEmail: string | null }) {
@@ -250,6 +402,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         next,
         daysUntil,
         status,
+        source: e,
       });
     }
     return out.sort((a, b) => {
@@ -270,6 +423,35 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         .includes(q),
     );
   }, [rows, search]);
+
+  /**
+   * Submissions handed to the export, scoped to match the rows in view.
+   *
+   * A submission whose personal_email matches NO roster row is genuinely
+   * off-roster (offboarded, or they changed their personal email) — the export
+   * appends those flagged rather than dropping them, so they must survive the
+   * scoping. But a submission belonging to someone the SEARCH filtered out is
+   * not off-roster; passing it through would mislabel a perfectly normal
+   * colleague as a ghost. So: keep in-view keys, plus off-roster keys that
+   * themselves match the search.
+   */
+  const exportSubmissions = useMemo(() => {
+    const allRosterKeys = new Set(rows.map((r) => r.key));
+    const inViewKeys = new Set(filteredRows.map((r) => r.key));
+    const needle = search.trim().toLowerCase();
+    const out: EmployeeGiftShippingRow[] = [];
+    for (const [key, subs] of shippingByEmail) {
+      const onRoster = allRosterKeys.has(key);
+      const keep = onRoster ? inViewKeys.has(key) : !needle || key.includes(needle);
+      if (keep) out.push(...subs);
+    }
+    return out;
+  }, [rows, filteredRows, shippingByEmail, search]);
+
+  const scopeLabel = useMemo(() => {
+    const q = search.trim();
+    return q ? `All employees matching "${q}"` : 'All employees';
+  }, [search]);
 
   const stats = useMemo(() => {
     let red = 0;
@@ -680,7 +862,9 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
           />
         </section>
 
-        <Card className="border-emerald-100/80 bg-gradient-to-br from-white via-emerald-50/30 to-white shadow-md ring-1 ring-emerald-500/8 dark:border-emerald-950/55 dark:from-zinc-950 dark:via-emerald-950/12 dark:to-zinc-950 dark:ring-emerald-400/10">
+        {/* overflow-visible so the Export dropdown isn't clipped by the Card
+            (ui/card is overflow-hidden by default) when the roster is short. */}
+        <Card className="overflow-visible border-emerald-100/80 bg-gradient-to-br from-white via-emerald-50/30 to-white shadow-md ring-1 ring-emerald-500/8 dark:border-emerald-950/55 dark:from-zinc-950 dark:via-emerald-950/12 dark:to-zinc-950 dark:ring-emerald-400/10">
           <CardHeader className="flex flex-col gap-1 border-b border-emerald-100/60 pb-4 dark:border-emerald-900/40">
             <div className="flex items-center gap-2.5">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25">
@@ -693,13 +877,21 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             </p>
           </CardHeader>
           <CardContent className="flex flex-col gap-4 pt-4">
-            <div className="relative max-w-md">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-              <Input
-                value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(0); }}
-                placeholder="Search by name, email, or department..."
-                className="border-emerald-100/70 bg-white/90 pl-9 dark:border-emerald-900/50 dark:bg-zinc-900/70"
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="relative w-full max-w-md">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                <Input
+                  value={search}
+                  onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+                  placeholder="Search by name, email, or department..."
+                  className="border-emerald-100/70 bg-white/90 pl-9 dark:border-emerald-900/50 dark:bg-zinc-900/70"
+                />
+              </div>
+              <GiftExportMenu
+                rows={filteredRows}
+                submissions={exportSubmissions}
+                totalRoster={rows.length}
+                scopeLabel={scopeLabel}
               />
             </div>
 

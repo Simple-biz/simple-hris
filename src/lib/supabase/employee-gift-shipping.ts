@@ -1,4 +1,5 @@
 import { createSupabaseServiceRoleClient } from './server';
+import { selectAllPaged } from './select-all-paged';
 
 export type EmployeeGiftShippingStatus = 'pending' | 'approved' | 'rejected';
 
@@ -50,15 +51,27 @@ export async function listShippingDetails(opts: {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { rows: [], error: 'Supabase client unavailable' };
 
-  let q = supabase.from('employee_gift_shipping_details').select(SELECT_COLS);
-  if (opts.personalEmail) {
-    q = q.eq('personal_email', opts.personalEmail.trim().toLowerCase());
-  }
-  if (opts.status) q = q.eq('status', opts.status);
-
-  const { data, error } = await q;
-  if (error) return { rows: [], error: error.message };
-  return { rows: (data ?? []) as EmployeeGiftShippingRow[], error: null };
+  // PAGED, not a bare .select(): PostgREST caps a response at 1000 rows even with
+  // an explicit .range(). The Gift Tracker export joins these submissions onto the
+  // FULL roster, so a truncated read wouldn't shorten the export — it would blank
+  // the shipping address on real people and read as "never submitted". Ordered by
+  // the unique key so pages can't shear under a concurrent submit.
+  const { rows, error } = await selectAllPaged<EmployeeGiftShippingRow>((from, to) => {
+    let q = supabase.from('employee_gift_shipping_details').select(SELECT_COLS);
+    if (opts.personalEmail) {
+      q = q.eq('personal_email', opts.personalEmail.trim().toLowerCase());
+    }
+    if (opts.status) q = q.eq('status', opts.status);
+    return q
+      .order('personal_email', { ascending: true })
+      .order('milestone_index', { ascending: true })
+      .range(from, to) as unknown as PromiseLike<{
+        data: EmployeeGiftShippingRow[] | null;
+        error: { message: string } | null;
+      }>;
+  });
+  if (error) return { rows: [], error };
+  return { rows, error: null };
 }
 
 /**
