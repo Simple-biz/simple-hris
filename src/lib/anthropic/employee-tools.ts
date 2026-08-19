@@ -42,6 +42,7 @@ import {
 } from '@/lib/us-holidays';
 import { resolveEmployeeProcessor, scheduledPayDateIso } from '@/lib/payroll/pay-schedule';
 import { manilaDayIso } from '@/lib/penny/employee-quota';
+import { employeePaymentStatus } from '@/lib/penny/pay-status';
 
 /**
  * Read-only tools for the EMPLOYEE Penny AI (`/api/employee/penny-chat`).
@@ -252,11 +253,49 @@ async function getMyPay(ctx: EmployeeToolContext, weeksRaw: unknown): Promise<To
     work_email: ctx.email,
     weeks,
   });
+
+  const rawWeeks = Array.isArray(result.weeks)
+    ? (result.weeks as Record<string, unknown>[])
+    : [];
+
+  // Accounting's `status` NEVER reaches an employee. Its vocabulary says
+  // "pending = owed but not yet sent", which for a week nobody marked is a claim
+  // the data cannot support — and ~2,900 records across 2026-06-21…07-12 are
+  // exactly that (see pay-status.ts, and the still-open question in
+  // memory/never-paid-and-misdelivered-paystubs item 3). Translating here rather
+  // than trusting the prompt to hedge, because a status word in the payload is a
+  // word the model will repeat.
+  const processor = await resolveEmployeeProcessor(ctx.aliases);
+  const todayIso = manilaDayIso(new Date());
+
+  const weeksOut = rawWeeks.map((w) => {
+    const periodEnd = (w.period_end as string | null) ?? null;
+    const scheduled = scheduledPayDateIso(periodEnd, processor);
+    const { status, note } = employeePaymentStatus({
+      rawStatus: w.status as string | null,
+      paidAt: w.paid_at as string | null,
+      scheduledPayDate: scheduled,
+      todayIso,
+    });
+    // `status` is dropped, not renamed alongside — leaving it in would hand the
+    // model both vocabularies and let it pick the wrong one.
+    const { status: _dropped, ...rest } = w;
+    return {
+      ...rest,
+      payment_status: status,
+      payment_status_note: note,
+      scheduled_pay_date: scheduled,
+    };
+  });
+
   return {
     ...result,
+    weeks: weeksOut,
     field_notes: [
       (result.field_notes as string | undefined) ?? '',
-      'This is the signed-in employee\'s own pay history. If a week they ask about is not listed, say it is not in the payment records yet and point them at the Pay Stubs tab on their dashboard — never estimate a week\'s pay yourself.',
+      'IGNORE any mention of a `status` field above — this employee-facing result replaces it with `payment_status`, one of: paid (a payment is recorded) · scheduled (the pay date has not arrived; nothing is late) · processing (the pay date just passed; a run may still be landing) · not_recorded (NO confirmed payment record) · on_hold (Accounting flagged it).',
+      '**`not_recorded` does NOT mean they were not paid.** The paid mark was not reliably recorded for some earlier weeks, so absence of a record proves nothing either way. Say what `payment_status_note` says, do not translate it into "unpaid", "owed", "outstanding" or "still waiting", and never tell someone they are owed money on the strength of a missing flag. If they think a week is genuinely unpaid, that goes to Accounting.',
+      'This is the signed-in employee\'s own pay history. If a week they ask about is not listed at all, say it is not in the payment records and point them at the Pay Stubs tab — never estimate a week\'s pay yourself.',
     ]
       .filter(Boolean)
       .join(' '),

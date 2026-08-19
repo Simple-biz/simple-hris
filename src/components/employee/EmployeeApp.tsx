@@ -577,6 +577,7 @@ export default function EmployeeApp() {
           feedbackEndpoint={null}
           subtitle="Your pay, bonuses & policies"
           suggestions={PENNY_EMPLOYEE_SUGGESTIONS}
+          markSrc="/Chatbubblev2.png"
         />
       )}
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />

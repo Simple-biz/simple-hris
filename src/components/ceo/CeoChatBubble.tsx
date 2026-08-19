@@ -35,6 +35,7 @@ export default function CeoChatBubble({
   feedbackEndpoint,
   quotaEndpoint,
   extraBody,
+  markSrc = '/chatbubble.png',
 }: {
   hidden?: boolean;
   /** When provided, shows an "expand" button that opens the full Penny AI tab. */
@@ -56,6 +57,13 @@ export default function CeoChatBubble({
   quotaEndpoint?: string;
   /** Extra fields merged into every chat POST body (e.g. the viewed `email`). */
   extraBody?: Record<string, unknown>;
+  /**
+   * The heart mark on the closed button. Defaults to the original Penny heart so
+   * CEO and Admin are untouched; the employee dashboard passes the headset heart
+   * (`/Chatbubblev2.png`) — a support-desk read, which is what Penny is for an
+   * employee rather than the reports assistant it is for the CEO.
+   */
+  markSrc?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [quota, setQuota] = useState<EmployeePennyQuota | null>(null);
@@ -441,7 +449,7 @@ export default function CeoChatBubble({
               {/* the beating heart — the Penny AI heart mark */}
               <img
                 aria-hidden
-                src="/chatbubble.png"
+                src={markSrc}
                 alt=""
                 draggable={false}
                 className={`penny-heart relative h-9 w-9 object-contain drop-shadow-md ${

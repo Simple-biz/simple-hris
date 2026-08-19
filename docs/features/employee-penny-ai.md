@@ -14,7 +14,8 @@ fork. Commit: see `git log --oneline -- docs/features/employee-penny-ai.md`.
 | Piece | File |
 | --- | --- |
 | Mount | `src/components/employee/EmployeeApp.tsx` — `activeTab === 'dashboard'` only |
-| Widget | `src/components/ceo/CeoChatBubble.tsx` (shared; `quotaEndpoint` opts into metering) |
+| Widget | `src/components/ceo/CeoChatBubble.tsx` (shared; `quotaEndpoint` meters, `markSrc` picks the heart) |
+| Pay status | `src/lib/penny/pay-status.ts` (pure) · `scripts/audit-employee-pay-status.mts` (read-only probe) |
 | Chat state | `src/components/ceo/use-ceo-chat.ts` (shared) |
 | Reply rendering | `src/components/ceo/ceo-chat-message.tsx` (shared) |
 | Markdown subset | `src/lib/penny/chat-markdown.ts` (pure) |
@@ -98,6 +99,61 @@ test pins the tool description's pointer to the calendar.
   duplicated here — a regex literal of the banned pattern makes the copy an offender in
   the real guard, and widening that guard's allowlist to fit a redundant copy would
   weaken the only check that matters.
+
+## Accounting's payment status never reaches an employee
+
+Kane, 2026-08-19: *"All weeks should not be pending already."* Penny was passing
+`disbursement_records.status` straight through, whose vocabulary `ceo-tools.ts` defines
+for Accounting as **"pending = owed but not yet sent"**. On his own account that labelled
+2026-06-21, 06-28 and 07-05 "pending" — weeks seven to nine weeks past.
+
+Measured read-only and paged the same day (`scripts/audit-employee-pay-status.mts`):
+
+| Cycle | records paid | records pending | paid dispatches |
+| --- | ---: | ---: | ---: |
+| 2026-08-09 | 543 | 503 | 555 |
+| 2026-08-02 | 0 | 0 | 1,056 |
+| 2026-07-12 | 330 | 732 | 330 |
+| 2026-07-05 | 0 | 1,009 | **0** |
+| 2026-06-28 | 0 | 972 | **0** |
+| 2026-06-21 | 0 | 935 | **0** |
+
+~2,900 records across those three cycles carry **no paid dispatch at all** — the gap
+already recorded in `memory/never-paid-and-misdelivered-paystubs` item 3, whose question
+*"were those weeks paid outside HRIS, or were the records never written?"* has been
+**open since 2026-08-07**.
+
+> **Both obvious fixes are lies about the same missing flag.** Mapping pending → paid
+> invents a payment nothing evidences. Leaving it as "owed but not yet sent" asserts a
+> non-payment nothing evidences either — and tells a thousand people they are owed money
+> they were very likely paid months ago.
+
+So `src/lib/penny/pay-status.ts` translates into five employee-facing states, and the raw
+`status` key is **deleted** from the payload rather than renamed alongside — leaving both
+in would hand the model two vocabularies and let it pick the wrong one:
+
+| `payment_status` | When | What it says |
+| --- | --- | --- |
+| `paid` | paid status, or any real `paid_at` | "Paid." |
+| `scheduled` | pay date still ahead | "Not due yet — scheduled for `<date>`." |
+| `processing` | pay date passed ≤ 4 days | "Due `<date>`; runs take a day or two to record." |
+| `not_recorded` | pay date passed > 4 days, no mark | no confirmed record — **explicitly not a claim of non-payment** |
+| `on_hold` | `threshold` / `problem` | "Accounting has it flagged — ask them." |
+
+A `paid_at` timestamp **outranks the status column**, because the column is the
+unreliable half. An underivable pay date falls to `not_recorded`, never to `scheduled` —
+claiming a week is upcoming when its schedule cannot be computed is a guess dressed as
+reassurance. The grace window exists so that Tuesday's payroll is not called "unrecorded"
+on Wednesday.
+
+This keeps faith with the surface next door: `app/api/employee/paystub/route.ts:47-59`
+deliberately does *not* gate stubs on a paid dispatch, because doing so "would hide most
+(or all) of an employee's weeks". **An unmarked week is not presented as unpaid anywhere
+in the employee suite.**
+
+**The CEO and Admin assistants keep the raw status** — Accounting needs the ground truth
+including its holes. Only the employee wording changes, and `disbursement_records` is not
+touched: closing the underlying gap needs an answer to that open question, not code.
 
 ## Self-service guides: procedure is data, and it is tested against the UI
 
@@ -282,6 +338,11 @@ the composer line can never disagree:
 At zero the **bubble stays on the page** — greyed, and the heart stops beating. A
 disappearing bubble reads as a broken feature and generates the HR ticket the assistant
 exists to prevent. The panel still opens and the transcript is still readable.
+
+The employee mount uses a different heart: `/Chatbubblev2.png`, the orange heart wearing a
+headset (Kane, 2026-08-19), passed via `markSrc`. CEO and Admin keep `/chatbubble.png` by
+default. The headset reads as a support desk, which is what Penny is to an employee —
+where for the CEO it is a reports assistant. `SidebarBrandMark` is unaffected.
 
 ## Elevated viewers: subject and meter are different people
 
