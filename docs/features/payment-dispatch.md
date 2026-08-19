@@ -987,6 +987,10 @@ The lock toggle should also be permission-gated server-side (currently any authe
 
 ## 10. Open follow-ups
 
+- **The stale-empty queue can still report 100%** (found 2026-08-18, see §12.7.1) — the
+  `hydrated` guard never resets on the silent/realtime reload path, and `isCycleFullyPaid`
+  has no cross-check against `cycleStartedCount`. Highest-value item on this list: it mails
+  the whole Accounting team a false completion **and** burns the week's one celebration slot.
 - **Cycle-specific lock** — currently the lock is global. If you ever want cycle A locked while cycle B is open, this needs revisiting (probably move the flag onto `hubstaff_uploads` or a sibling table).
 - **Department-specific bonuses** — Collections tiers, lead-gen, and other per-dept formula bonuses depend on per-employee toggle state that lives only in the wizard's React session and are not mirrored in `current-pay.ts`. The dispatch view will undercount those until the wizard persists a snapshot to the DB.
 - **Wepay tab** — empty in the source CSV (no Wepay employees yet). Tab still exists for when adoption ramps.
@@ -1244,6 +1248,74 @@ guarantees (it runs after the stop, fire-and-forget, and can never abort it), an
   (the 100% effect and `handleLockToggle`'s close path),
   `payment_cycle_complete` entry in `AdminWebhooks.tsx` `KNOWN_SLUGS`.
   No DDL — the marker rides the existing `app_settings` table.
+
+#### 12.7.1 The 2026-08-18 FALSE 100% — trigger 1 fired on a stale-empty queue (**OPEN**)
+
+**Trigger 1's guard list above (`hydrated && !loading && …`) does not do what it
+reads like it does.** On 2026-08-18 the Aug 9–15 week emailed all 10 accounting
+holders *"100% PAID · 1 PAYMENT SENT · $240.44"* while **1026 people were staged
+payable** and the clerk was one payment into the run. Nobody clicked anything; the
+money was fine. **The denominator was wrong.**
+
+Timeline (UTC): `20:13:16` the wizard's `payroll.dispatch_lock` flips **false** —
+the queue blanks, because `rows`, `excluded` and `paid` are all gated on
+`wizardReady` · `20:13:44` payment #1 is marked paid · `20:16:31` the lock flips
+back **true** · `20:16:53` a *third* person's open Payment Dispatch tab POSTs
+`{trigger:'fully_paid', paid_count:1, total_count:1, unpaid_count:0}`.
+
+Two independent defects, **both still open**:
+
+1. **The `hydrated` guard is inert on every realtime path.** `pending` is local
+   state copied from `fetched` by a `useLayoutEffect`
+   ([`PayrollDispatch.tsx:345`](../../src/components/payroll-clerk/PayrollDispatch.tsx#L345))
+   that resets `hydrated` **only when `loading` flips true**. But every live path —
+   lock flip, broadcast, the 15s poll, refocus — goes through
+   `load(undefined, { silent: true })`, and **silent never sets `loading`**
+   ([`useDispatchQueue.ts:1059`](../../src/components/payroll-clerk/useDispatchQueue.ts#L1059)).
+   So across a ~20s silent reload `loading` stays false, `hydrated` stays true, and
+   `pending` still holds the **empty** array from the unlocked window. The commit
+   that delivers `paid` = [1 row] + `wizardReady` = true renders while `pending` is
+   still `[]`, and passive effects for that commit run **before** the layout
+   effect's `setPending` re-render lands — so the celebration effect reads
+   `{pending:0, blocked:0, held:0, paid:1}`, every guard passes, and it POSTs.
+   Deterministic once the window opens, not an unlucky interleaving.
+2. **`isCycleFullyPaid` cannot tell "everyone got paid" from "the queue fell out
+   from under me."** It is `payableUnpaidCount === 0 && paidCount > 0`
+   ([`cycle-complete-trigger.ts:61`](../../src/lib/payroll/cycle-complete-trigger.ts#L61))
+   — no floor, and no cross-check against the headcount the wizard already knows
+   (`cycleStartedCount`). Anything that empties the queue while ≥1 dispatch exists
+   reads as a finished payroll; the unlock/re-lock window is merely the easiest way
+   to produce it. The server's `isReportableCycleComplete` then correctly validated
+   `1 === 1 > 0`: the body was **internally consistent**, so `unpaid_count` — the
+   entire honesty mechanism — had nothing to report.
+
+Two smaller holes found alongside, same load path: **`payJson.error` from
+`/api/payroll-current-pay` is never inspected** (only `ratesJson.error` aborts,
+[`useDispatchQueue.ts:286`](../../src/components/payroll-clerk/useDispatchQueue.ts#L286)),
+and an **empty-without-error `rates.rows`** sends everyone to `excluded` (`no_pay`),
+which is not payable and so never enters the denominator either.
+
+**Consequence — the week's ONE shot is burned.**
+`dispatch.cycle_complete_notified.<Aug 9–15>.csv` now exists with `notified: 10`,
+so the *real* completion hits 23505 and stays silent on **both** arms. Freeing it is
+deliberate and manual:
+
+```
+node --import tsx scripts/clear-cycle-complete-suppression.mts --source-file "<file>.csv" --apply --force-sent
+```
+
+(it refuses a `notified > 0` marker without `--force-sent`).
+
+**Corrects §12.7's last bullet:** a marker's presence proves a **2xx delivery for
+whatever the client claimed** — it is *not* proof the week actually finished. There
+are now two markers in production and one of them is a false positive.
+
+**Do not close this by loosening the gate.** `isCycleFullyPaid` staying strict is
+the whole reason two arms exist (§12.7, [cycle-closeout.md](./cycle-closeout.md)
+§ Celebration email). The fix belongs in the queue: make `hydrated` reset on the
+silent path too (or derive `pending` rather than copying it), and give the strip's
+arm a cross-check against `cycleStartedCount` so a collapsed denominator can never
+pass for a finished one.
 
 ### 12.8 COP-country payees show/copy native COP (2026-07-30)
 

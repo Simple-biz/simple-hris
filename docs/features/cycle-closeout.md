@@ -252,6 +252,39 @@ week was not clean, which is why `unpaid_count` and `trigger` are in the payload
 paid-count massaged up to match the total. The n8n workflow owns the wording and should read those
 two fields before congratulating anyone.
 
+### 2026-08-18 — the strip's arm fired on a STALE-EMPTY queue (false 100%)
+
+**A celebration marker is not proof the week finished.** The paragraph above counted
+"one marker exists in production, for the week of 2026-07-26" as evidence the strip
+trigger almost never fires. There are now **two**, and the second one is a lie: on
+2026-08-18 the Aug 9–15 week mailed all 10 accounting holders *"100% PAID · 1 PAYMENT
+SENT"* at 20:16:53Z while **1026 people were staged payable** and the clerk was one
+payment in. The money was correct — the **denominator** had collapsed.
+
+The cause is entirely client-side and is written up in
+[payment-dispatch.md § 12.7.1](./payment-dispatch.md#1271-the-2026-08-18-false-100--trigger-1-fired-on-a-stale-empty-queue-open):
+a wizard unlock/re-lock blanked the queue, the `hydrated` guard does not reset on the
+silent reload path, and `isCycleFullyPaid` has no cross-check against the cycle's known
+headcount — so `{paid:1, total:1, unpaid:0}` was **internally consistent** and
+`isReportableCycleComplete` correctly let it through. **Nothing in this file is wrong,
+and nothing here should be relaxed to compensate.** The strip's arm demanding
+`paid === total` is exactly why the two arms exist; the repair belongs in the queue's
+hydration, not in the gate.
+
+What it costs the close-out: the week's **one shot is burned**. The claim key
+`dispatch.cycle_complete_notified.<source_file>` now exists with `notified: 10`, so the
+genuine completion — including the `cycle_closed` arm when Accounting closes the week —
+hits 23505 and stays silent, and the in-app confetti with it. This is the same
+once-ever mechanism that makes a reopen permanently silent (§ Reopening), working
+exactly as designed on a false input. Freeing a week is deliberate and manual:
+
+```
+node --import tsx scripts/clear-cycle-complete-suppression.mts --source-file "<file>.csv" --apply --force-sent
+```
+
+It refuses a marker with `notified > 0` unless `--force-sent` says so out loud, because
+re-arming a week that really did mail is how you double-congratulate the department.
+
 ## Nothing is truncated silently
 
 `MAX_STORED_UNPAID` (1000) bounds the stored rows; whatever it drops is counted in

@@ -13,6 +13,24 @@ Built Jul 23–25, 2026. The 2026-07-25 score recalibration made
 missing-bank-on-this-week's-payroll a **hard blocker** (the "192 missing bank
 but 94/100" fix).
 
+## What has been added, and when
+
+Every row below has its own section further down — this is the index, so a
+"does Readiness do X yet?" question is one glance instead of a grep.
+
+| Date | Addition |
+|---|---|
+| Jul 23–25 2026 | **Built.** Four signal families (KPI submissions · pay rates · bank info · exceptions), blocker-weighted 0–100 score, inline rate/bank fixers, inline KPI submit. |
+| 2026-07-25 | Score recalibration — missing bank **on this week's payroll** becomes a hard blocker (the "192 missing bank but 94/100" fix). |
+| 2026-07-26 | Pay-this-week scoping · Score details modal. |
+| 2026-07-27 | Contractors excluded by role · off-boarded people age off once final pay is out · **100% confetti** celebration. |
+| 2026-08-03 | **Wizard Setup checklist** (7 per-week prerequisites, beside the dimensions, never inside them) · week-scoped roster (future hires never age on) · per-cycle **USD rate zero-placeholder** record. |
+| 2026-08-04 | Bank Info **"Temporary Exemption"** (auto-returns the following week). |
+| 2026-08-10 | Week resolution follows the **selector**, not the newest upload. |
+| 2026-08-11 | **Post-enrichment rate retry** — the rate is resolved twice. |
+| 2026-08-18 | **Activity feed** at the pane bottom (audited saves only, fixed templates) + **KPI submission attribution** (who submitted, when, via what) — see the section at the end of this doc. |
+| 2026-08-18 | Pane infrastructure, shared with its sibling panes: **cached-then-revalidated** paints, a per-pane **"Last data pull"** stamp, and a Realtime **signal dot** (emerald = live, amber = polling). The read-only **Rates** glance was removed the same day. Owned by [payroll-wizard-notes.md](../features/payroll-wizard-notes.md). |
+
 The **Wizard Setup checklist** (2026-08-03) is a separate, later addition: a
 per-week checklist of wizard-step prerequisites that sits *beside* the four
 dimensions and the score below, never inside them — see "Wizard setup

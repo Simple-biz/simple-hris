@@ -602,6 +602,22 @@ Doing the placement write alone leaves them correctly priced and still
 Unassigned. The seed script does both, and reports loudly when a person has no
 roster row at all.
 
+> **There is an UNMERGED attempt to close this gap. Read it before rebuilding it.**
+> The worktree `.claude/worktrees/hsl-kpi-gml-roster` (branch
+> `worktree-hsl-kpi-gml-roster`, head `01c97f6`) carries **11 commits that are not on
+> `main`** — as of 2026-08-19 it has never been merged and `main` has moved on since.
+> It merges the Global Master List *into* the `team-members` roster API so a placement
+> alone stops producing an Unassigned row: `mergeHslRoster` (pure), a
+> `matchHslSubDeptKey` department-string normalizer, `normalizeDeptToKey` precedence
+> fixes, post-merge roster filtering + single-flight GML cache, a rule rejecting labels
+> already claimed by a top-level department, and a read-only live verifier
+> (`verify-hsl-gml-roster`, paginated for the 1000-row cap). It touches
+> `app/api/hsl-bonus/team-members/route.ts` and `src/lib/hsl-bonus/` — roughly 600
+> lines, and **nothing outside HSL**. Whether it lands is an open decision; the point of
+> this note is that the next person to hit the trap should evaluate that branch rather
+> than write a third mechanism. Beware: it predates the parent-department cutover (§11)
+> and the bulk assignment (§9), so it needs re-reading against both before merging.
+
 ### Why §7a-roster-only rather than §7b
 
 A §7b placement-only key is **deliberately absent** from `HSL_DEPT_KEYS`, so it

@@ -5,7 +5,7 @@ accounting-editable adjustments layered on top. Covers the **Initial Calculation
 the **Additions** table (step 3), and the **HSL** table (step 5).
 
 Source: [`src/components/PayrollWizard.tsx`](../../src/components/PayrollWizard.tsx).
-Last substantive update: **2026-08-17**.
+Last substantive update: **2026-08-18**.
 
 > **Replaying a past week is a different contract.** Everything below describes
 > the live cycle. What the header's pay-period selector is allowed to show for a
@@ -15,6 +15,55 @@ Last substantive update: **2026-08-17**.
 > [payroll-wizard-week-replay.md](./payroll-wizard-week-replay.md).
 
 ---
+
+## 2026-08-18 — the per-cycle FX rate has no source of truth (**OPEN**)
+
+Found reconciling three paystubs against NPD's sheet. **Nobody's pay math was wrong —
+the pesos agreed to the centavo on all three. The USD divisor didn't.**
+
+| | HRIS ₱ (verified) | ÷ 61.52 (HRIS FX) | ÷ ≈60.93 (NPD's implied FX) |
+|---|---|---|---|
+| `arvsn@` | 12,652.73 | **$205.67** ✓ HRIS | $207.66 (NPD showed 207.73) |
+| `lorar@` | 17,009.68 | **$276.49** ✓ HRIS | **$279.17** ✓ NPD |
+| `ellainnec@` | 5,102.13 | **$82.93** ✓ HRIS | **$83.74** ✓ NPD |
+
+Same peso total, two divisors — that is the entire discrepancy. HRIS's Aug 9–15 leg was
+**61.52** (`payroll.wizard.fx.…2026-08-09_to_2026-08-15.csv`, set 2026-08-17 14:55 UTC);
+the prior three weeks — 61.68 / 61.00 / 60.91 — matched NPD to four decimals. **Which of
+61.52 / 60.93 is the correct market rate is an Accounting call, not something either
+system can be shown wrong about**, and it is not evidence of a defect on either side.
+
+**What the wizard actually guarantees about that number: only that it isn't zero.**
+
+- It is a **free-typed value**. The save path
+  ([`PayrollWizard.tsx:2950`](../../src/components/PayrollWizard.tsx#L2950)) writes the
+  typed number straight into `payroll.wizard.fx.<sourceFile>` **and** the global
+  `usd_to_php_rate`. There is no range check, no plausibility band, no comparison against
+  the previous cycle, the NPD sheet's `AW` cell, or any market feed — and **no alarm on a
+  week-over-week move** (this one was +1.00%). Every earlier week matched because a human
+  copied the sheet, not because anything enforced it.
+- The only gate is the **Step-8 zero gate** (memory `per-cycle-fx-zero-placeholder`):
+  zero is a real state that hard-blocks publish. A *wrong but non-zero* rate is
+  indistinguishable from a right one and publishes normally.
+- **The no-rate fallback is ₱1.00 = $1.** `OFFICIAL_USD_TO_PHP_RATE` is
+  `100_000 / 10⁵` = **1** ([`usd-php.ts:8`](../../src/lib/fx/usd-php.ts#L8)), and
+  `effectiveUsdToPhpRateFromStored` returns it whenever the stored value is missing,
+  blank, unparseable or ≤ 0. So a lost or corrupted FX key does not fail loudly — every
+  USD figure downstream comes out **≈61× too large**. The Step-8 gate catches a typed
+  zero, not this path.
+- The tutorial guide reads the *previous* cycle's record for advisory copy only and must
+  never prefill this cycle's input — see
+  [payroll-wizard-tutorial-mode.md](./payroll-wizard-tutorial-mode.md). That stays true:
+  the answer to "no source of truth" is a **cross-check**, never a carried-forward value.
+
+Closing this class means one of: validating the typed rate against the sheet cell HRIS is
+replacing, or a stored band + confirm-on-outlier, plus making the missing-key case an
+error rather than `1`. None of it is built.
+
+*One residual from the same reconciliation, unrelated to FX:* at 60.93 two of the three
+land exactly and `arvsn@` is $0.07 short (₱4.25 ≈ 0.016 h at ₱265) — NPD's `M-F Total
+Hours` reading ≈40.52 h where HRIS has 40.51 h, i.e. a sub-minute Hubstaff re-sync
+difference between the two pulls, not a calculation gap on either side.
 
 ## 2026-08-17 — step-2 header layout
 

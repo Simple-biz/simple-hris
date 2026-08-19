@@ -272,6 +272,23 @@ deleted cheskac@'s same-date duplicates). **Still OPEN:** applying a transfer wr
 row — Accounting must save the new rate in the Payment Catalog by hand, dated the transfer date;
 wiring the transfer-apply route to write the dated row itself would close the class.
 
+**ROUND-TRIP weeks are a separate open question, and it is Accounting's to answer**
+(2026-08-18). `raymandc@` and `janrielr@` moved **into** HSL and back **out** inside the
+same 2026-08-09 week (raymandc: Lead Gen → HSL eff Tue 08-11, HSL → Lead Gen eff Thu
+08-13, a 9.78 h stint; janrielr: HSL 08-10 → 08-13, 15.18 h). Both were deliberately left
+out of the 23-person repair and both are **correct as the data stands**: a transfer is a
+relabel, only a *rate change* prorates, and neither has a single `employee_rate_history`
+row or employee catalog structure — nobody ever saved them an HSL rate. They were also
+moved to the **bare `HSL` parent**, whose base rate row was deleted in the cutover
+([hsl-subdepartments.md](./hsl-subdepartments.md) §11), so the department fallback
+resolves nothing either. One rate all week ⇒ a classic single-rate stub, no chip, no
+proration — right answer, possibly to the wrong question. **If Accounting says the stint
+should have paid an HSL rate**, the repair is small and the machinery is proven: two dated
+history rows (the stint rate eff the in-date, ₱175 eff the out-date) plus a re-seed, which
+is the same three-rate shape the engine already has a pinned test for. If they say it was
+a mis-transfer that got reversed, both are already correct and nothing needs doing. Do not
+"fix" either one before that answer exists.
+
 **Transfers INTO HSL also day-scope the Weekend Hours treatment** (2026-07-30): the +₱15/h Sat/Sun
 premium + weekend itemization start on the transfer's effective date — inside the transfer week the
 treatment covers only weekend days on/after that date, and a label that moved early (effective date
