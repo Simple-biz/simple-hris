@@ -105,8 +105,46 @@ test pins the tool description's pointer to the calendar.
 Kane, 2026-08-19: five seconds after the employee dashboard loads, the bubble asks
 whether it can help, offering *"at least 5 unique messages that Penny can achieve"*.
 A speech balloon off the chat head — the same shape the Payroll Wizard's guide uses
-(`payroll-wizard-tutorial-mode.md`) — with three FAQ chips, an "Ask something else"
+(`payroll-wizard-tutorial-mode.md`) — with **five** FAQ chips, an "Ask something else"
 escape, and a dismiss.
+
+### Five fresh chips per page load, guaranteed
+
+Kane, 2026-08-19: *"Only show 5 FAQs please each time refresh should be different."*
+`pickFaqs` shuffles the pool while **excluding the previous load's five**, remembered in
+`sessionStorage` under `penny_faq_last_shown`. Excluding rather than merely shuffling makes
+"different" a **guarantee, not a probability** — random selection repeats, and a repeat is
+exactly what reads as broken.
+
+That guarantee has one precondition, and a test enforces it: **the pool must hold at least
+`2 × GREETING_FAQ_COUNT`.** It currently holds 12 across 9 tools. Deleting FAQs, or raising
+the count to 6, silently degrades "different every refresh" into "mostly different" — the
+test fails first.
+
+Degradation is deliberate in both directions: if the exclusion list ever swallows the pool,
+`pickFaqs` **tops up from the excluded entries rather than returning a short list** (a
+three-chip balloon is a worse bug than a repeated chip), and an unavailable or corrupt
+store falls back to plain random instead of throwing on a render path. The RNG is
+injectable so a bad-looking set is reproducible.
+
+The pick happens in a `useState` initialiser, **not during render**: `EmployeeApp`
+re-renders on its notification, dispatch-lock and MESA polls, and re-picking per render
+would visibly reshuffle the chips while the balloon is open. Hydration is safe because the
+balloon is not in the first paint at all — it appears five seconds after mount — so the
+randomised list is never in the server HTML.
+
+### Engaging is not a "no"
+
+Two dismissals, and the distinction is the reason a refresh greets you at all:
+
+| Action | Effect |
+| --- | --- |
+| The ✕ | persisted for the browser session — an explicit no is respected |
+| Tapping a chip, or opening the panel | **this page load only**, not persisted |
+
+Originally *opening* Penny also persisted, which meant that once someone had ever opened
+the panel, refreshing showed no greeting for the rest of the session — directly defeating a
+fresh set of questions per load. Corrected 2026-08-19.
 
 > **A proactive offer is a promise, so the bar is higher than for a typed question.**
 > Penny raised the subject on its own initiative; an offer it cannot fulfil spends one

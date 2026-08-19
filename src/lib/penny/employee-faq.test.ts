@@ -8,7 +8,10 @@ import {
   GREETING_TEXT,
   allFaqQuestions,
   greetingFaqs,
+  pickFaqs,
+  readLastShown,
   shouldShowGreeting,
+  writeLastShown,
 } from "./employee-faq";
 import { EMPLOYEE_TOOLS } from "@/lib/anthropic/employee-tool-defs";
 
@@ -84,14 +87,126 @@ test("questions are phrased as an employee would type them", () => {
   }
 });
 
-test("the greeting offers a few, and the panel offers all of them", () => {
+test("the greeting offers five, and the panel offers all of them", () => {
+  assert.equal(GREETING_FAQ_COUNT, 5, "Kane asked for five");
   assert.equal(greetingFaqs().length, GREETING_FAQ_COUNT);
-  assert.ok(GREETING_FAQ_COUNT >= 3 && GREETING_FAQ_COUNT <= 4, "balloon holds 3–4 chips");
   assert.equal(allFaqQuestions().length, EMPLOYEE_FAQS.length);
   // Nothing offered in the balloon is missing from the full list.
   for (const f of greetingFaqs()) {
     assert.ok(allFaqQuestions().includes(f.question));
   }
+});
+
+/* ── "each time refresh should be different" ─────────────────────────────── */
+
+test("the pool is big enough to show five FRESH chips every load", () => {
+  // The rotation guarantee below only holds while pool ≥ 2 × count. Adding a
+  // sixth chip or deleting FAQs without checking this is how "different every
+  // refresh" quietly degrades to "mostly different".
+  assert.ok(
+    EMPLOYEE_FAQS.length >= GREETING_FAQ_COUNT * 2,
+    `pool of ${EMPLOYEE_FAQS.length} cannot guarantee ${GREETING_FAQ_COUNT} fresh chips`,
+  );
+});
+
+test("GUARANTEE: a pick shares nothing with the previous pick", () => {
+  // Not "usually different" — different. A repeat is what would read as broken.
+  let previous = pickFaqs(GREETING_FAQ_COUNT, []);
+  for (let load = 0; load < 40; load++) {
+    const next = pickFaqs(GREETING_FAQ_COUNT, previous.map((f) => f.question));
+    assert.equal(next.length, GREETING_FAQ_COUNT, `load ${load} returned a short list`);
+    const overlap = next.filter((n) => previous.some((p) => p.question === n.question));
+    assert.deepEqual(overlap, [], `load ${load} repeated a chip from the previous load`);
+    previous = next;
+  }
+});
+
+test("a pick never contains a duplicate of itself", () => {
+  for (let i = 0; i < 25; i++) {
+    const picked = pickFaqs(GREETING_FAQ_COUNT, []);
+    const qs = picked.map((f) => f.question);
+    assert.equal(new Set(qs).size, qs.length, "same chip twice in one balloon");
+  }
+});
+
+test("the order actually varies between loads (it is shuffled, not sliced)", () => {
+  // A deterministic slice would satisfy the no-overlap test above by alternating
+  // two fixed halves forever. Inject a real RNG and check the arrangement moves.
+  const seen = new Set<string>();
+  for (let i = 0; i < 30; i++) {
+    seen.add(pickFaqs(GREETING_FAQ_COUNT, []).map((f) => f.question).join("|"));
+  }
+  assert.ok(seen.size > 1, "every pick produced the identical list — not shuffled");
+});
+
+test("pickFaqs tops up rather than returning a short list", () => {
+  // If the exclusion list ever swallows the pool, five chips still beat three.
+  const everything = EMPLOYEE_FAQS.map((f) => f.question);
+  const picked = pickFaqs(GREETING_FAQ_COUNT, everything);
+  assert.equal(picked.length, GREETING_FAQ_COUNT);
+  assert.equal(new Set(picked.map((f) => f.question)).size, GREETING_FAQ_COUNT);
+});
+
+test("pickFaqs is defensive about its count", () => {
+  assert.deepEqual(pickFaqs(0, []), []);
+  assert.deepEqual(pickFaqs(-2, []), []);
+  assert.equal(pickFaqs(999, []).length, EMPLOYEE_FAQS.length);
+});
+
+test("pickFaqs is deterministic under an injected RNG", () => {
+  // Makes the shuffle reproducible for anyone debugging a bad-looking set.
+  const seeded = () => {
+    let n = 0;
+    return () => ((n = (n * 9301 + 49297) % 233280), n / 233280);
+  };
+  const a = pickFaqs(GREETING_FAQ_COUNT, [], seeded());
+  const b = pickFaqs(GREETING_FAQ_COUNT, [], seeded());
+  assert.deepEqual(
+    a.map((f) => f.question),
+    b.map((f) => f.question),
+  );
+});
+
+/* ── Remembering the previous load ───────────────────────────────────────── */
+
+function fakeStorage(initial: Record<string, string> = {}) {
+  const map = new Map(Object.entries(initial));
+  return {
+    getItem: (k: string) => map.get(k) ?? null,
+    setItem: (k: string, v: string) => void map.set(k, v),
+    read: () => map,
+  };
+}
+
+test("last-shown round-trips through storage", () => {
+  const s = fakeStorage();
+  const picked = pickFaqs(GREETING_FAQ_COUNT, []);
+  writeLastShown(s, picked);
+  assert.deepEqual(readLastShown(s), picked.map((f) => f.question));
+});
+
+test("a missing, unavailable or corrupt store degrades to no exclusion", () => {
+  // Private mode, cleared storage, a hand-edited value — rotation falls back to
+  // plain random rather than throwing on the render path.
+  assert.deepEqual(readLastShown(null), []);
+  assert.deepEqual(readLastShown(fakeStorage()), []);
+  assert.deepEqual(readLastShown(fakeStorage({ penny_faq_last_shown: "not json" })), []);
+  assert.deepEqual(readLastShown(fakeStorage({ penny_faq_last_shown: '{"a":1}' })), []);
+  // A mixed array keeps only the strings.
+  assert.deepEqual(
+    readLastShown(fakeStorage({ penny_faq_last_shown: '["ok",5,null]' })),
+    ["ok"],
+  );
+});
+
+test("writeLastShown survives a throwing storage", () => {
+  const throwing = {
+    setItem: () => {
+      throw new Error("QuotaExceeded");
+    },
+  };
+  assert.doesNotThrow(() => writeLastShown(throwing, EMPLOYEE_FAQS.slice(0, 2)));
+  assert.doesNotThrow(() => writeLastShown(null, EMPLOYEE_FAQS.slice(0, 2)));
 });
 
 test("greetingFaqs is defensive about its count", () => {

@@ -43,7 +43,11 @@ import {
   GREETING_DELAY_MS,
   GREETING_TEXT,
   allFaqQuestions,
+  GREETING_FAQ_COUNT,
   greetingFaqs,
+  pickFaqs,
+  readLastShown,
+  writeLastShown,
 } from '@/lib/penny/employee-faq';
 import { hasAnySkillSetContent, type SkillSetCompletionFields } from '@/lib/skill-set-titles';
 import type { EmployeeRow } from '@/lib/supabase/employees';
@@ -62,6 +66,37 @@ type EmployeeProfileFocusTab = 'overview' | 'payment' | 'skillsets';
  */
 const PENNY_EMPLOYEE_SUGGESTIONS = allFaqQuestions();
 
+/**
+ * The five chips this page load offers, chosen once at mount.
+ *
+ * Kane, 2026-08-19: *"each time refresh should be different"*. So the pick excludes
+ * the previous load's chips (remembered in sessionStorage), which makes "different"
+ * a guarantee rather than a probability — random alone can repeat, and a repeat is
+ * what would read as broken.
+ *
+ * Computed in a `useState` initialiser, NOT during render: `EmployeeApp` re-renders
+ * on its notification, dispatch-lock and MESA polls, and a fresh pick per render
+ * would visibly reshuffle the chips while the balloon is on screen. Hydration is
+ * safe because the balloon does not exist in the first paint — it appears five
+ * seconds after mount — so the randomised list is never part of the server HTML.
+ */
+function usePennyGreetingChips() {
+  const [chips] = useState(() => {
+    if (typeof window === 'undefined') return greetingFaqs();
+    const storage = (() => {
+      try {
+        return window.sessionStorage;
+      } catch {
+        return null;
+      }
+    })();
+    const picked = pickFaqs(GREETING_FAQ_COUNT, readLastShown(storage));
+    writeLastShown(storage, picked);
+    return picked;
+  });
+  return chips;
+}
+
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 }
@@ -77,6 +112,9 @@ export default function EmployeeApp() {
   const [activeTab, setActiveTab] = useState('dashboard');
   usePublishPresenceTab(humanizeTabId(activeTab));
   useTabDocumentTitle(humanizeTabId(activeTab));
+  // Penny's greeting chips for this page load — stable for the mount, different
+  // from the previous load's five.
+  const pennyGreetingChips = usePennyGreetingChips();
   const [profileFocusTab, setProfileFocusTab] = useState<EmployeeProfileFocusTab>('overview');
   // Disputes prefill — kept for future use if the flow is re-enabled
   // const [disputesPrefill, setDisputesPrefill] = useState<{ date: string; seconds?: number } | null>(null);
@@ -585,7 +623,7 @@ export default function EmployeeApp() {
           markSrc="/Chatbubblev2.png"
           greeting={{
             text: GREETING_TEXT,
-            chips: greetingFaqs(),
+            chips: pennyGreetingChips,
             delayMs: GREETING_DELAY_MS,
             autoHideMs: GREETING_AUTOHIDE_MS,
             // Per signed-in identity, so an elevated viewer switching between

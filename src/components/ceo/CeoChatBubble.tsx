@@ -141,8 +141,8 @@ export default function CeoChatBubble({
   /* ── The proactive greeting ─────────────────────────────────────────────── */
 
   const [greetOpen, setGreetOpen] = useState(false);
-  // Dismissal is remembered for the browser session, so navigating back to the
-  // Overview doesn't re-ask someone who already said no.
+  // Persisted dismissal (the ✕ only) is remembered for the browser session, so
+  // someone who explicitly said no is not re-asked on the next page.
   const [greetDismissed, setGreetDismissed] = useState(() => {
     if (typeof window === 'undefined' || !greeting) return false;
     try {
@@ -164,9 +164,24 @@ export default function CeoChatBubble({
   const greetingAutoHideMs = greeting?.autoHideMs;
   const greetingStorageKey = greeting?.storageKey;
 
-  const dismissGreeting = () => {
+  /**
+   * Stop offering for THIS page load only. Used when the employee engages —
+   * taps a chip, or opens the panel — because the nudge has done its job and
+   * repeating it during the same visit is noise.
+   */
+  const hideGreetingForNow = () => {
     setGreetOpen(false);
     setGreetDismissed(true);
+  };
+
+  /**
+   * Stop offering for the whole browser session, persisted. **Only the explicit
+   * ✕ does this.** Engaging with Penny is not a "no", and treating it as one meant
+   * a refresh showed no greeting at all once the panel had ever been opened —
+   * which defeats offering a fresh set of questions per load.
+   */
+  const dismissGreetingForSession = () => {
+    hideGreetingForNow();
     try {
       if (greetingStorageKey) sessionStorage.setItem(greetingStorageKey, '1');
     } catch {
@@ -192,9 +207,10 @@ export default function CeoChatBubble({
   }, [greetOpen, greetingAutoHideMs]);
 
   // Opening Penny at all means the nudge did its job — don't offer again this
-  // session, so closing the panel can't bring the balloon back.
+  // page load, so closing the panel does not bring the balloon back. NOT persisted:
+  // engaging is not a "no", so the next page load greets again with a fresh five.
   useEffect(() => {
-    if (open && greetingStorageKey && !greetDismissed) dismissGreeting();
+    if (open && greetingStorageKey && !greetDismissed) hideGreetingForNow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -213,7 +229,7 @@ export default function CeoChatBubble({
 
   /** Tapping a chip opens the panel and asks that question straight away. */
   function askFromGreeting(question: string) {
-    dismissGreeting();
+    hideGreetingForNow();
     setOpen(true);
     void send(question);
   }
@@ -495,7 +511,7 @@ export default function CeoChatBubble({
           >
             <button
               type="button"
-              onClick={dismissGreeting}
+              onClick={dismissGreetingForSession}
               aria-label="Dismiss"
               className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800"
             >
@@ -521,7 +537,7 @@ export default function CeoChatBubble({
             <button
               type="button"
               onClick={() => {
-                dismissGreeting();
+                hideGreetingForNow();
                 setOpen(true);
               }}
               className="mt-2 w-full rounded-lg px-2.5 py-1 text-[12px] text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
