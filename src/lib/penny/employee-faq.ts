@@ -195,7 +195,15 @@ export function writeLastShown(
   }
 }
 
-/** Every question, for the panel's empty state. */
+/**
+ * Every question in the pool.
+ *
+ * NOT what any surface renders. The panel's empty state used to list all of them
+ * and at twelve entries that was a scrolling wall of buttons (Kane, 2026-08-19:
+ * *"There is a lot in here"*) — both the balloon and the panel now show the same
+ * five from {@link pickFaqs}. Kept for the pool-integrity tests, and because
+ * "what could Penny be asked?" is a question worth being able to answer in one call.
+ */
 export function allFaqQuestions(): string[] {
   return EMPLOYEE_FAQS.map((f) => f.question);
 }

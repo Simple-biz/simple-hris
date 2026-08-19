@@ -155,9 +155,16 @@ fresh set of questions per load. Corrected 2026-08-19.
 > by construction), and "did I earn the PAB?" (the tool deliberately does not judge
 > eligibility).
 
-The FAQ pool is also the panel's empty-state chips. **One list, on purpose:** a chip
-Penny volunteers and a chip it shows in an empty panel must both be answerable, and two
-lists would drift.
+**Five is the number on both surfaces.** The panel's empty state originally rendered the
+whole pool; at twelve entries that was a scrolling wall of buttons (Kane, with a
+screenshot, 2026-08-19: *"There is a lot in here"*). Balloon and panel now show the same
+five for a given page load — shorter, and more coherent: tapping "Ask something else"
+shows the questions Penny just offered rather than a different, longer list. A test pins
+the count, so raising it is a decision made in `employee-faq.ts` rather than a side effect
+of a caller passing a bigger array.
+
+One pool feeds both, on purpose: a chip Penny volunteers and a chip it shows in an empty
+panel must both be answerable, and two lists would drift.
 
 ### It stays quiet when speaking would be wrong
 

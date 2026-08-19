@@ -42,7 +42,6 @@ import {
   GREETING_AUTOHIDE_MS,
   GREETING_DELAY_MS,
   GREETING_TEXT,
-  allFaqQuestions,
   GREETING_FAQ_COUNT,
   greetingFaqs,
   pickFaqs,
@@ -58,15 +57,6 @@ const SESSION_KEY = 'employee_session_email';
 type EmployeeProfileFocusTab = 'overview' | 'payment' | 'skillsets';
 
 /**
- * Penny's starter chips on the employee Overview — the same pool the greeting
- * balloon draws from. ONE list on purpose: a chip Penny volunteers unprompted and
- * a chip it shows in an empty panel must both be a question it can actually
- * answer. `src/lib/penny/employee-faq.ts` owns them, and a test pins every entry
- * to a real tool so an unanswerable one cannot be added.
- */
-const PENNY_EMPLOYEE_SUGGESTIONS = allFaqQuestions();
-
-/**
  * The five chips this page load offers, chosen once at mount.
  *
  * Kane, 2026-08-19: *"each time refresh should be different"*. So the pick excludes
@@ -79,6 +69,12 @@ const PENNY_EMPLOYEE_SUGGESTIONS = allFaqQuestions();
  * would visibly reshuffle the chips while the balloon is on screen. Hydration is
  * safe because the balloon does not exist in the first paint — it appears five
  * seconds after mount — so the randomised list is never part of the server HTML.
+ *
+ * These same five are ALSO the panel's empty-state chips. The panel used to list
+ * the whole pool, which at twelve was a scrolling wall of buttons (Kane, screenshot
+ * 2026-08-19: *"There is a lot in here"*). One set of five per load, shown in both
+ * places, is both shorter and more coherent — tapping "Ask something else" now
+ * shows the questions Penny just offered, not a different, longer list.
  */
 function usePennyGreetingChips() {
   const [chips] = useState(() => {
@@ -619,7 +615,7 @@ export default function EmployeeApp() {
           extraBody={{ email: employeeEmail }}
           feedbackEndpoint={null}
           subtitle="Your pay, bonuses & policies"
-          suggestions={PENNY_EMPLOYEE_SUGGESTIONS}
+          suggestions={pennyGreetingChips.map((c) => c.question)}
           markSrc="/Chatbubblev2.png"
           greeting={{
             text: GREETING_TEXT,

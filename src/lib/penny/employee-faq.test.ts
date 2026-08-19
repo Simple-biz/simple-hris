@@ -87,14 +87,29 @@ test("questions are phrased as an employee would type them", () => {
   }
 });
 
-test("the greeting offers five, and the panel offers all of them", () => {
+test("FIVE is the number both surfaces show", () => {
+  // Changed 2026-08-19: the panel's empty state used to render the WHOLE pool,
+  // which at twelve entries was a scrolling wall of buttons ("There is a lot in
+  // here" — Kane, with a screenshot). Balloon and panel now show the same five.
   assert.equal(GREETING_FAQ_COUNT, 5, "Kane asked for five");
   assert.equal(greetingFaqs().length, GREETING_FAQ_COUNT);
-  assert.equal(allFaqQuestions().length, EMPLOYEE_FAQS.length);
-  // Nothing offered in the balloon is missing from the full list.
-  for (const f of greetingFaqs()) {
-    assert.ok(allFaqQuestions().includes(f.question));
+  assert.equal(pickFaqs().length, GREETING_FAQ_COUNT, "the default pick is five");
+  // Nothing offered anywhere is missing from the pool.
+  for (const f of [...greetingFaqs(), ...pickFaqs()]) {
+    assert.ok(allFaqQuestions().includes(f.question), `${f.question} is not in the pool`);
   }
+  assert.equal(allFaqQuestions().length, EMPLOYEE_FAQS.length);
+});
+
+test("no surface renders more chips than the panel can show without scrolling", () => {
+  // The regression that prompted the change: a caller passing the full pool as
+  // `suggestions`. Five ~30px chips plus the greeting line fit the 380px panel;
+  // twelve do not. This asserts the shipped number, so raising it is a decision
+  // someone has to make here rather than a side effect elsewhere.
+  assert.ok(
+    GREETING_FAQ_COUNT <= 5,
+    `${GREETING_FAQ_COUNT} chips will scroll in the panel and crowd the balloon`,
+  );
 });
 
 /* ── "each time refresh should be different" ─────────────────────────────── */
