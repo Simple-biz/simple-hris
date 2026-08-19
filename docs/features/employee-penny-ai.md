@@ -129,11 +129,26 @@ conversation exists, when the shell hides the widget, and **when the daily allow
 spent**. Inviting someone to ask a question they have no prompt left for is worse than
 saying nothing.
 
+The suppression list is a **pure, tested predicate** — `shouldShowGreeting` in
+`employee-faq.ts`, not a condition assembled in the component — so the case nobody would
+click through by hand (greeting someone whose composer is greyed out) is covered by a
+test rather than by hope.
+
 The five-second fuse is armed once on mount and is deliberately *not* re-armed or
 gated on `open`/`messages`: a timer that long outlives any of those changing, so gating
 it in the effect would be a stale closure either way. The render guard is re-evaluated
 every render and cannot go stale — **if you add a new reason to stay quiet, add it
-there, not to the timer.** Opening Penny at all counts as the nudge having worked and
+there, not to the timer.**
+
+> **The timer effects depend on `greeting.delayMs` / `.autoHideMs` as extracted
+> primitives — never on the `greeting` object.** Callers pass it as an inline object
+> literal, so its identity changes every parent render, and the employee shell re-renders
+> on its notification, dispatch-lock and MESA polls — i.e. well inside five seconds. An
+> effect keyed on the object cleared and re-armed the fuse on every render, so **the
+> greeting would in practice never have fired at all** (found 2026-08-19 from a
+> `useEffect`-dep-size console warning that was itself only a Fast Refresh artifact).
+> Extracting the numbers puts that guarantee in the component instead of relying on every
+> caller to `useMemo`. Opening Penny at all counts as the nudge having worked and
 dismisses it for the session, so closing the panel cannot bring the balloon back;
 dismissal persists in `sessionStorage` per signed-in identity, so an elevated viewer
 moving between employees is not re-greeted for each one. It also retreats on its own

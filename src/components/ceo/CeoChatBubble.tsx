@@ -10,6 +10,7 @@ import {
   quotaMessage,
   type EmployeePennyQuota,
 } from '@/lib/penny/employee-quota';
+import { shouldShowGreeting } from '@/lib/penny/employee-faq';
 
 const SUGGESTIONS = [
   'Pull the latest payroll report',
@@ -151,48 +152,64 @@ export default function CeoChatBubble({
     }
   });
 
+  // ⚠ Timer effects below depend on these PRIMITIVES, never on `greeting` itself.
+  // Callers pass `greeting={{ … }}` as an inline object literal, so its identity
+  // changes on every parent render — and the employee shell re-renders on its
+  // notification, dispatch-lock and MESA polls, i.e. well inside five seconds.
+  // An effect keyed on the object would clear and re-arm the fuse every render
+  // and the greeting would, in practice, never fire at all. Extracting the
+  // numbers puts that guarantee in the component rather than in every caller's
+  // discipline about `useMemo`.
+  const greetingDelayMs = greeting?.delayMs;
+  const greetingAutoHideMs = greeting?.autoHideMs;
+  const greetingStorageKey = greeting?.storageKey;
+
   const dismissGreeting = () => {
     setGreetOpen(false);
     setGreetDismissed(true);
     try {
-      if (greeting) sessionStorage.setItem(greeting.storageKey, '1');
+      if (greetingStorageKey) sessionStorage.setItem(greetingStorageKey, '1');
     } catch {
       /* private mode — the in-memory flag still holds for this mount */
     }
   };
 
-  // Arm the timer once, on mount. The timer is deliberately NOT re-armed and its
-  // effect deliberately does NOT depend on `open` / `messages` — a five-second
-  // fuse outlives any of those changing, so gating it here would be a stale
-  // closure either way. **The render-time guard below is the authority**: it is
-  // re-evaluated every render, so it cannot go stale.
+  // Arm the fuse once. Deliberately NOT gated on `open` / `messages`: a five-second
+  // timer outlives any of those changing, so gating it here would be a stale
+  // closure either way. **`showGreeting` below is the authority** — it is
+  // re-evaluated every render and so cannot go stale.
   useEffect(() => {
-    if (!greeting || greetDismissed) return;
-    const t = setTimeout(() => setGreetOpen(true), greeting.delayMs);
+    if (greetingDelayMs == null || greetDismissed) return;
+    const t = setTimeout(() => setGreetOpen(true), greetingDelayMs);
     return () => clearTimeout(t);
-  }, [greeting, greetDismissed]);
+  }, [greetingDelayMs, greetDismissed]);
 
   // Retreat on its own; a balloon that never leaves is furniture, not an offer.
   useEffect(() => {
-    if (!greetOpen || !greeting) return;
-    const t = setTimeout(() => setGreetOpen(false), greeting.autoHideMs);
+    if (!greetOpen || greetingAutoHideMs == null) return;
+    const t = setTimeout(() => setGreetOpen(false), greetingAutoHideMs);
     return () => clearTimeout(t);
-  }, [greetOpen, greeting]);
+  }, [greetOpen, greetingAutoHideMs]);
 
   // Opening Penny at all means the nudge did its job — don't offer again this
   // session, so closing the panel can't bring the balloon back.
   useEffect(() => {
-    if (open && greeting && !greetDismissed) dismissGreeting();
+    if (open && greetingStorageKey && !greetDismissed) dismissGreeting();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // The single source of truth for whether the balloon is on screen. Every reason
-  // not to speak is listed here rather than spread across the effects above:
-  // the panel is open, the allowance is spent (inviting a question they have no
-  // prompt left for is worse than silence), a conversation already exists, or the
-  // whole widget is hidden by the shell.
+  // The single source of truth for whether the balloon is on screen — a pure,
+  // tested predicate rather than a condition spread across the effects above.
+  // If you add a new reason to stay quiet, add it THERE, not to a timer.
   const showGreeting =
-    !!greeting && greetOpen && !open && !locked && !hidden && messages.length === 0;
+    !!greeting &&
+    shouldShowGreeting({
+      armed: greetOpen,
+      panelOpen: open,
+      quotaExhausted: locked,
+      widgetHidden: hidden,
+      messageCount: messages.length,
+    });
 
   /** Tapping a chip opens the panel and asks that question straight away. */
   function askFromGreeting(question: string) {

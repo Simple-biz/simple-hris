@@ -8,6 +8,7 @@ import {
   GREETING_TEXT,
   allFaqQuestions,
   greetingFaqs,
+  shouldShowGreeting,
 } from "./employee-faq";
 import { EMPLOYEE_TOOLS } from "@/lib/anthropic/employee-tool-defs";
 
@@ -114,4 +115,54 @@ test("the timings match the spec and leave on their own", () => {
 test("the greeting text is an offer, not an announcement", () => {
   assert.match(GREETING_TEXT, /\?$/);
   assert.match(GREETING_TEXT, /help/i);
+});
+
+/* ── When the balloon may show ───────────────────────────────────────────── */
+
+const READY = {
+  armed: true,
+  panelOpen: false,
+  quotaExhausted: false,
+  widgetHidden: false,
+  messageCount: 0,
+};
+
+test("the balloon shows only once the fuse has elapsed", () => {
+  assert.equal(shouldShowGreeting(READY), true);
+  assert.equal(shouldShowGreeting({ ...READY, armed: false }), false);
+});
+
+test("SUPPRESSED: out of prompts — never invite a question they cannot ask", () => {
+  // The case nobody would click through by hand, and the one that matters most:
+  // being greeted with "anything I can help with?" when the composer is greyed
+  // out is the assistant mocking them.
+  assert.equal(shouldShowGreeting({ ...READY, quotaExhausted: true }), false);
+});
+
+test("SUPPRESSED: the panel is already open, or a conversation exists", () => {
+  assert.equal(shouldShowGreeting({ ...READY, panelOpen: true }), false);
+  assert.equal(shouldShowGreeting({ ...READY, messageCount: 1 }), false);
+  // Both at once, and after the panel is closed again mid-conversation.
+  assert.equal(shouldShowGreeting({ ...READY, panelOpen: false, messageCount: 4 }), false);
+});
+
+test("SUPPRESSED: the shell hid the widget", () => {
+  assert.equal(shouldShowGreeting({ ...READY, widgetHidden: true }), false);
+});
+
+test("every single suppression flag is sufficient on its own", () => {
+  // Guards against a future edit turning an early return into a combined &&.
+  const flags: (keyof typeof READY)[] = [
+    "panelOpen",
+    "quotaExhausted",
+    "widgetHidden",
+  ];
+  for (const flag of flags) {
+    assert.equal(
+      shouldShowGreeting({ ...READY, [flag]: true }),
+      false,
+      `${flag} alone must suppress the balloon`,
+    );
+  }
+  assert.equal(shouldShowGreeting({ ...READY, messageCount: 1 }), false);
 });

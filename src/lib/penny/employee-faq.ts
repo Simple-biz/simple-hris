@@ -96,3 +96,41 @@ export function greetingFaqs(count = GREETING_FAQ_COUNT): PennyFaq[] {
 export function allFaqQuestions(): string[] {
   return EMPLOYEE_FAQS.map((f) => f.question);
 }
+
+/* ── When the balloon may be on screen ────────────────────────────────────── */
+
+export interface GreetingVisibilityInput {
+  /** The delay has elapsed and nothing has cancelled it yet. */
+  armed: boolean;
+  /** The chat panel is open. */
+  panelOpen: boolean;
+  /** The daily allowance is spent. */
+  quotaExhausted: boolean;
+  /** The shell has hidden the whole widget (e.g. the full Penny tab is open). */
+  widgetHidden: boolean;
+  /** Messages already in the transcript. */
+  messageCount: number;
+}
+
+/**
+ * Every reason NOT to speak, in one pure predicate.
+ *
+ * This lives here, away from the component, because it is the part that must not
+ * rot: the timer effects in `CeoChatBubble` cannot be gated reliably (a five-second
+ * fuse outlives any state they could close over), so this render-time check is the
+ * only real gate. Keeping it pure means it is also the only part that can be
+ * tested — and the exhausted-allowance case in particular is one nobody would
+ * think to click through by hand.
+ *
+ * **Add new suppression reasons here, not to a timer.**
+ */
+export function shouldShowGreeting(input: GreetingVisibilityInput): boolean {
+  if (!input.armed) return false;
+  // Already talking to Penny — an offer to help is noise on top of a conversation.
+  if (input.panelOpen) return false;
+  if (input.messageCount > 0) return false;
+  // Out of prompts: inviting a question they cannot ask is worse than silence.
+  if (input.quotaExhausted) return false;
+  if (input.widgetHidden) return false;
+  return true;
+}
