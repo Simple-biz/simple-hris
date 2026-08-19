@@ -90,6 +90,27 @@ its gross now equals the engine to the centavo. The freshness merge
 explains, and the catalog staleness gate knows a sheet-form snapshot's
 `otRate` is the differential.
 
+## Not every HSL row takes this rule — the legacy two-bucket fallback
+
+**The sheet-form rule needs DAILY columns.** `PayrollWizard.tsx:6632` gates the whole
+three-leg computation on `hslSecs && regularRate != null`, where `hslSecs` comes from
+`hslWeekSecsByEmail` — the per-day Mon–Sun split. When the week's Hubstaff CSV carries no
+daily columns for that person, the weekend is **unknowable**, so the row keeps the legacy
+two-bucket formula (whole-seconds regular + stored OT rate) instead. Same when no regular
+rate resolves.
+
+**How to spot one:** its staged payload has **`hoganSheet: null`** — no `hogan_sheet`
+block, so no per-leg basis line on the paystub and no weekend itemization. Nine HSL rows
+were on this path in the 2026-08-09 → 08-15 cycle (measured 2026-08-18).
+
+**Why it matters when reconciling:** a sheet-vs-HRIS difference on such a row is *this*,
+not a math error and not a rate change — the two systems are running different formulas
+for that person. Check `hoganSheet` before checking anything else, in this order:
+`hoganSheet: null` → legacy path (this section) · `hoganSheet` present but the weekend rate
+isn't `reg + 15` → a **dated rate change**, check `proration.effective_date` · both fine →
+compare the USD divisor, not the pesos (see
+[payroll-wizard-final-pay.md](./payroll-wizard-final-pay.md) § 2026-08-18).
+
 ## Operational notes
 
 - **Already-staged rows reprice only on wizard re-lock/restage** (unchanged,

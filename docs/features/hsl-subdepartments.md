@@ -579,6 +579,19 @@ Wizard - Managers will get this please."*
 `amiea@` ("Rick's Assistant") — the three §9 could not map. **Plain `HSL` now
 holds ZERO people: 579 of 579 are sub-labeled.**
 
+> **That "zero" was true on 2026-08-14 and has DRIFTED since.** Measured read-only
+> 2026-08-19: **39 active master rows sit on plain `HSL`** again, alongside 1,833
+> actives total. Nothing regressed — new hires and re-adds land on the family label
+> because the sub-team is only *required* at the surfaces §4 lists, and nothing
+> sweeps afterwards. Consequences, all of them the documented degrade rather than a
+> break: they price with **no department base** (§2, parent row deleted), they are
+> still HSL-family for the week model and the +₱15/h weekend premium
+> (`normalizeDeptToKey`), `isPlaceableDeptLabel` refuses to *re-place* them on that
+> cell, and they resolve no sub-team so they bucket **Unassigned** on the Wizard rail.
+> Treat the 579/579 figure below as a **run record, not a current invariant** — re-measure
+> before quoting it, and re-run §9's assignment (or place them at the §4 surfaces) to
+> clear the backlog.
+
 ### The trap: placement and roster are two different writes
 
 This is the part that is easy to get wrong, and it is what "make sure the

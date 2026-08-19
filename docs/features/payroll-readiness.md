@@ -579,6 +579,18 @@ celebration.
   notifies the employee). Department defaults from the row's label; any HSL
   sub-department label files under the one Hogan Smith Law dept (the dialog
   says so).
+  **The write is keyed to THAT ROW's email, and that is not always the email
+  the person's hours ride** (found 2026-08-18, the `chrisl@` / `lawangc@` case —
+  memory `lawang-rate-shadow-duplicate-identity`). When someone exists twice on
+  the master list, an individual catalog rate saved against the wrong alias sits
+  at the **top** of the rate chain for an identity nobody prices from, while a
+  stale individual rate on the *hours-carrying* alias keeps winning — so the
+  accountant can save the correct rate repeatedly, see it persist, and watch the
+  wizard keep paying the old number. Three saves landed that way before anyone
+  noticed. The dialog does not warn when the person's other alias rows already
+  hold a conflicting individual rate; until it does, **a rate fix for a
+  duplicate-identity person must target the email carrying the Hubstaff hours**,
+  and merging the two master rows is the actual cure.
 - **Bank Info → "Set bank"** — writes payout details to the person's
   `employee_ids` row via `POST /api/update-employee-ids` (the same route the
   employee portal saves through, so history/audit/notifications all fire).

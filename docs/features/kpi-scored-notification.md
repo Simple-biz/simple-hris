@@ -72,6 +72,30 @@ toasts **every** employee-view type (Salary Ready, Paid, KPI scored…), per Kan
 Q1 = (a). It keys on the VIEWED identity (matching the unread badge), not the
 session, so elevated `?email=` viewing hears that panel's slice.
 
+## Why the employee's KPI Bonus card is missing (it is not unshipped code)
+
+Asked and answered 2026-08-17 — the card was suspected of living in an uncommitted
+branch. It does not: it is on `main` at
+[`EmployeeDashboard.tsx:3097`](../../src/components/employee/EmployeeDashboard.tsx#L3097)
+and **hides at runtime**, gated on `kpiBonusAmount > 0`. That value
+([`:1935`](../../src/components/employee/EmployeeDashboard.tsx#L1935)) is zero unless one
+of these holds:
+
+1. a **published wizard snapshot** for the week carries `otherBonuses` (that arm wins
+   outright, and on that path the KPI is already inside `final` — never added twice), or
+2. the employee has rates, a week is selected (**"All Time" is always ₱0** — there is no
+   week to key on), and a `kpiPeriods` entry matches that week's `period_start`.
+
+`kpiPeriods` only ever contains **ready/locked** weeks — the same visibility gate this
+notification rides (§ Drafts are structurally silent). So a week that was **scored but
+never submitted** produces a correct ₱0 and a correctly absent card. That is a workflow
+gap, not a code gap: memory `hsl-bonus-weeks-never-submitted` records ≈₱846k scored with
+no status row. The fix is a manager pressing Mark Ready / Lock, not a deploy.
+
+Diagnostic order, so nobody goes git-hunting again: check the selected week isn't
+All Time → check `hsl_bonus_period_status` for that dept-week is `ready`/`locked` →
+check the person has rates. Only then look at code.
+
 ## Deploy notes
 
 - **PENDING** — run `node scripts/apply-kpi-scored-notification-type.mjs` (needs
