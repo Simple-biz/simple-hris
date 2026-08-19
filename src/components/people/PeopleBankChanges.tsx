@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { Search, Clock, RefreshCw, Landmark, Inbox, ShieldCheck, Eye, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Clock, RefreshCw, Landmark, Inbox, ShieldCheck, Eye, ChevronLeft, ChevronRight, Building2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { TeamAvatar } from '@/components/team/team-ui';
@@ -12,8 +12,9 @@ import type { Accent } from './PeopleTab';
 import {
   BankChangeDetailDialog, fieldLabel, timeAgo, absoluteTime, type BankChangeEntry as BankChange,
 } from './bank-change-detail';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { BankMixBand } from './bank-mix-band';
-import type { BankMix } from '@/lib/people/bank-mix';
+import { NO_DEPARTMENT, type BankMix } from '@/lib/people/bank-mix';
 
 // Kept literal to avoid pulling the server-only app-settings module into the
 // client bundle — must match BANK_CHANGES_PULSE_KEY in src/lib/supabase/app-settings.ts.
@@ -46,6 +47,9 @@ const PAGE_SIZE = 20;
 export default function PeopleBankChanges({
   accent,
   bankMix,
+  bankMixByDept,
+  departments,
+  deptByEmail,
   onOpenProfile,
 }: {
   accent: Accent;
@@ -53,6 +57,16 @@ export default function PeopleBankChanges({
    *  People roster summary (Payment Dispatch's routing precedence), NOT from the
    *  feed below — see bank-mix-band.tsx. Null until the roster has loaded. */
   bankMix: BankMix | null;
+  /** The same fold per department, so the department filter re-scopes the band
+   *  and not just the feed. Keyed by the roster's own department label. */
+  bankMixByDept: Record<string, BankMix> | null;
+  /** Departments offered in the filter — the roster's list, so a department with
+   *  no recent changes is still reachable for its bank mix. */
+  departments: string[];
+  /** Lowercased work / personal / alternate email → department, from the roster.
+   *  A change row whose payee is off the active roster resolves to nothing and
+   *  lives under "No department"; it is never dropped. */
+  deptByEmail: Record<string, string>;
   /** Jump to this person's roster profile (switches to the roster + opens their dialog). */
   onOpenProfile?: (email: string | null) => void;
 }) {
@@ -63,6 +77,7 @@ export default function PeopleBankChanges({
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
+  const [deptFilter, setDeptFilter] = useState<string>('all');
   const [lastSync, setLastSync] = useState<number | null>(null);
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(1);
@@ -182,21 +197,70 @@ export default function PeopleBankChanges({
     [],
   );
 
+  /** A change row's department, or '' when the payee is not on the active roster
+   *  (an offboarded leaver can still have changed their bank last week). */
+  const deptOf = useCallback(
+    (email: string | null) => (email ? deptByEmail[email.trim().toLowerCase()] ?? '' : ''),
+    [deptByEmail],
+  );
+
+  /** Departments to offer: the roster's list (so a quiet department is still
+   *  reachable for its bank mix) plus "No department" whenever some change row
+   *  can't be resolved. A filter never hides a row — unresolvable payees get a
+   *  bucket rather than disappearing. */
+  const deptOptions = useMemo(() => {
+    const opts = [
+      { value: 'all', label: 'All departments' },
+      ...departments.map((d) => ({ value: d, label: d })),
+    ];
+    const hasUnresolved = rows.some((r) => !deptOf(r.email));
+    if (hasUnresolved) opts.push({ value: NO_DEPARTMENT, label: 'No department' });
+    return opts;
+  }, [departments, rows, deptOf]);
+
+  // If the chosen department leaves the option set (roster reload, dept retired),
+  // fall back to All rather than showing a silently empty list.
+  useEffect(() => {
+    if (deptFilter !== 'all' && !deptOptions.some((o) => o.value === deptFilter)) {
+      setDeptFilter('all');
+    }
+  }, [deptFilter, deptOptions]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
-      (r) =>
+    return rows.filter((r) => {
+      if (deptFilter !== 'all') {
+        const d = deptOf(r.email);
+        if (deptFilter === NO_DEPARTMENT ? d !== '' : d !== deptFilter) return false;
+      }
+      if (!q) return true;
+      return (
         (r.name ?? '').toLowerCase().includes(q) ||
         (r.email ?? '').toLowerCase().includes(q) ||
         (r.processor ?? '').toLowerCase().includes(q) ||
-        r.fields.some((f) => fieldLabel(f).toLowerCase().includes(q)),
-    );
-  }, [rows, query]);
+        deptOf(r.email).toLowerCase().includes(q) ||
+        r.fields.some((f) => fieldLabel(f).toLowerCase().includes(q))
+      );
+    });
+  }, [rows, query, deptFilter, deptOf]);
 
-  // Reset to page 1 whenever the search changes so results never land on an
+  /** What the current department selection is called, for the band's scope note. */
+  const deptLabel = useMemo(
+    () => deptOptions.find((o) => o.value === deptFilter)?.label ?? deptFilter,
+    [deptOptions, deptFilter],
+  );
+
+  /** The band follows the filter: one department's roster mix, or org-wide. A
+   *  department with no roster rows yields no mix, which the band renders as its
+   *  own empty state rather than as zeros borrowed from the whole company. */
+  const bandMix = useMemo(() => {
+    if (deptFilter === 'all') return bankMix;
+    return bankMixByDept?.[deptFilter] ?? null;
+  }, [deptFilter, bankMix, bankMixByDept]);
+
+  // Reset to page 1 whenever the filters change so results never land on an
   // out-of-range page.
-  useEffect(() => setPage(1), [query]);
+  useEffect(() => setPage(1), [query, deptFilter]);
 
   // Paginate — 20 per page. safePage clamps after the result set shrinks (e.g.
   // a search narrows the list while you're on a later page).
@@ -206,10 +270,10 @@ export default function PeopleBankChanges({
   const pageRows = filtered.slice(pageStart, pageStart + PAGE_SIZE);
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="mx-auto w-full max-w-[1600px]">
       {/* Roster-wide bank mix — send-from rails beside receiving banks. Scoped to
           the whole roster, not this feed; each card states its own denominator. */}
-      <BankMixBand mix={bankMix} />
+      <BankMixBand mix={bandMix} scope={deptFilter === 'all' ? null : deptLabel} />
 
       {/* Header: live status + count + manual refresh */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -247,16 +311,26 @@ export default function PeopleBankChanges({
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative mb-3">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-        <Input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search by person, email, processor, or field…"
-          className={cn('pl-9', accent.ring)}
-          aria-label="Search bank changes"
+      {/* Search + department filter */}
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="relative w-full sm:max-w-md">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+          <Input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by person, email, department, processor, or field…"
+            className={cn('pl-9', accent.ring)}
+            aria-label="Search bank changes"
+          />
+        </div>
+        <SmoothSelect
+          value={deptFilter}
+          onChange={setDeptFilter}
+          searchable={deptOptions.length > 12}
+          aria-label="Filter bank changes by department"
+          className="w-full shrink-0 sm:w-56"
+          options={deptOptions}
         />
       </div>
 
@@ -269,7 +343,10 @@ export default function PeopleBankChanges({
       {loading && rows.length === 0 ? (
         <FeedSkeleton />
       ) : filtered.length === 0 ? (
-        <EmptyState searching={query.trim().length > 0} />
+        <EmptyState
+          searching={query.trim().length > 0}
+          department={deptFilter === 'all' ? null : deptLabel}
+        />
       ) : (
         // Cross-fade the page as a unit on page change (key=safePage). Within a
         // page, live arrivals just slot in and flash via ChangeCard — the list
@@ -287,6 +364,7 @@ export default function PeopleBankChanges({
               <ChangeCard
                 key={row.id}
                 row={row}
+                department={deptOf(row.email)}
                 fresh={freshIds.has(row.id)}
                 reduce={!!reduce}
                 onView={() => setDetail(row)}
@@ -350,11 +428,14 @@ export default function PeopleBankChanges({
 
 function ChangeCard({
   row,
+  department,
   fresh,
   reduce,
   onView,
 }: {
   row: BankChange;
+  /** Resolved from the roster; '' when the payee is off it (renders as a dash). */
+  department: string;
   fresh: boolean;
   reduce: boolean;
   onView: () => void;
@@ -391,38 +472,43 @@ function ChangeCard({
         )}
         <div className="relative flex items-center gap-3">
           <TeamAvatar name={row.name ?? ''} email={row.email} />
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <span className="truncate text-[13px] font-medium text-zinc-900 dark:text-zinc-100">
-                {row.name || '—'}
-              </span>
-              {row.createdNew ? (
-                <span className="inline-flex items-center rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
-                  First-time setup
+          {/* Stacked under ~1024px; two columns above it, so a wide row spends its
+              space on the change summary instead of trailing whitespace. */}
+          <div className="min-w-0 flex-1 lg:flex lg:items-center lg:gap-6">
+            <div className="min-w-0 lg:w-[19rem] lg:shrink-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span className="truncate text-[13px] font-medium text-zinc-900 dark:text-zinc-100">
+                  {row.name || '—'}
                 </span>
-              ) : (
-                <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                  Updated
-                </span>
-              )}
-              <AnimatePresence>
-                {fresh && (
-                  <motion.span
-                    initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="inline-flex items-center rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-semibold text-white"
-                  >
-                    New
-                  </motion.span>
+                {row.createdNew ? (
+                  <span className="inline-flex items-center rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
+                    First-time setup
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                    Updated
+                  </span>
                 )}
-              </AnimatePresence>
+                <AnimatePresence>
+                  {fresh && (
+                    <motion.span
+                      initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="inline-flex items-center rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-semibold text-white"
+                    >
+                      New
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </div>
+              <div className="truncate text-[11px] text-zinc-400">{row.email ?? ''}</div>
             </div>
-            <div className="truncate text-[11px] text-zinc-400">{row.email ?? ''}</div>
 
-            {/* One-line summary — processor + how many fields, NOT the full list. */}
-            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            {/* Processor + how many fields, NOT the full list. Its own column on
+                wide screens; stacked under the name below lg. */}
+            <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5 lg:mt-0 lg:flex-1">
               {row.processor && (
                 <span className="inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10.5px] font-medium capitalize text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
                   {row.processor}
@@ -432,6 +518,13 @@ function ChangeCard({
                 {changedCount > 0
                   ? `${changedCount} field${changedCount === 1 ? '' : 's'} updated`
                   : 'Payment method updated'}
+              </span>
+              <span
+                className="inline-flex min-w-0 items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400"
+                title={department || 'Not on the active roster'}
+              >
+                <Building2 className="h-3 w-3 shrink-0 text-zinc-400" />
+                <span className="truncate">{department || '—'}</span>
               </span>
             </div>
           </div>
@@ -502,13 +595,22 @@ function FeedSkeleton() {
   );
 }
 
-function EmptyState({ searching }: { searching: boolean }) {
+function EmptyState({ searching, department }: { searching: boolean; department: string | null }) {
   return (
     <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-white/50 py-16 text-center dark:border-zinc-700 dark:bg-zinc-950/40">
-      {searching ? (
+      {searching || department ? (
         <>
           <Search className="mb-2 h-6 w-6 text-zinc-300 dark:text-zinc-600" />
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">No bank changes match your search.</p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            {department && !searching
+              ? `No bank changes from ${department}.`
+              : 'No bank changes match your search.'}
+          </p>
+          {department && (
+            <p className="mt-1 text-[12px] text-zinc-400 dark:text-zinc-500">
+              The cards above still show that department&apos;s bank mix.
+            </p>
+          )}
         </>
       ) : (
         <>

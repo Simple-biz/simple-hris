@@ -8,9 +8,8 @@ import {
   resolveEffectivePayoutProcessor,
   resolveReceivingDestination,
   type PayoutLegacyExtras,
-  type ReceivingDestination,
 } from '@/lib/employee/payout-completeness';
-import { buildBankMix, type BankMix } from './bank-mix';
+import { buildBankMix, buildBankMixByDepartment, type BankMix, type DeptDestination } from './bank-mix';
 import {
   getEmployeeHourlyRatesRows,
   type EmployeeHourlyRateRow,
@@ -99,6 +98,10 @@ export interface PeopleSummary {
    *  powers the Bank changes KPI band. Folded from Payment Dispatch's own
    *  routing resolution, so the band can never disagree with the roster chips. */
   bankMix: BankMix;
+  /** The same fold per department, keyed by the roster's own department label
+   *  (people with none under `NO_DEPARTMENT`), so the Bank changes department
+   *  filter re-scopes the band instead of leaving it on org-wide figures. */
+  bankMixByDept: Record<string, BankMix>;
 }
 
 function parseRate(v: string | number | null | undefined): number | null {
@@ -359,6 +362,7 @@ const EMPTY_SUMMARY: PeopleSummary = {
   // An empty roster genuinely has no bank mix — buildBankMix([]) is all zeros
   // rather than a hand-written blank, so the two can never drift apart.
   bankMix: buildBankMix([]),
+  bankMixByDept: {},
 };
 
 export interface PeopleRosterScope {
@@ -431,8 +435,9 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
     return true;
   });
 
-  // One per roster row, pushed inside the map below — the KPI band's input.
-  const destinations: ReceivingDestination[] = [];
+  // One per roster row, pushed inside the map below — the KPI band's input,
+  // tagged with the department so the band can follow the department filter.
+  const destinations: DeptDestination[] = [];
 
   const rows: PeopleRosterRow[] = uniqueEmployees.map((e) => {
     const aliases = [e.work_email, e.personal_email, e.alternate_work_email, e.alternate_work_email_2]
@@ -502,7 +507,10 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
     // Both halves of the Bank changes KPI band come from THIS resolution, so the
     // send-from mix and the receiving-bank mix are folded from the same routing
     // decision the chip above is showing. See bank-mix.ts.
-    destinations.push(resolveReceivingDestination(idsRecord, extras));
+    destinations.push({
+      department: e.department ?? null,
+      destination: resolveReceivingDestination(idsRecord, extras),
+    });
 
     // Extra work-email aliases (deduped, non-empty) minus the primary — for the
     // profile "cabinet" view. All of these come from the employee record already
@@ -563,7 +571,8 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
     otHours: Math.round(otHours * 10) / 10,
     otPayoutPhp: Math.round(otPayoutPhp * 100) / 100,
     otPayoutUsd: fxRate > 0 ? Math.round((otPayoutPhp / fxRate) * 100) / 100 : null,
-    bankMix: buildBankMix(destinations),
+    bankMix: buildBankMix(destinations.map((d) => d.destination)),
+    bankMixByDept: buildBankMixByDepartment(destinations),
   };
 
   const range: PeopleRangeCoverage | null = rangeMode

@@ -1,4 +1,8 @@
-import { PROCESSOR_OPTIONS, type ProcessorId } from '@/lib/employee-payment-processors';
+import {
+  PROCESSOR_OPTIONS,
+  SELECTABLE_PROCESSOR_OPTIONS,
+  type ProcessorId,
+} from '@/lib/employee-payment-processors';
 import type { ReceivingDestination } from '@/lib/employee/payout-completeness';
 
 /**
@@ -25,13 +29,25 @@ export interface BankMixSlice {
   count: number;
 }
 
+/**
+ * A receiving bank plus which send-from rails it receives FROM. One bank sits
+ * under several rails at once — GoTyme is `wise 132 · wires 45` on the live roster
+ * — which is the whole reason the two cards are shown side by side. Only bank
+ * rails can appear here; a wallet payee has no receiving bank to attribute.
+ */
+export interface BankNameSlice extends BankMixSlice {
+  /** Rails feeding this bank, biggest first. `Σ byRail.count === count`. */
+  byRail: BankMixSlice[];
+}
+
 export interface BankMix {
   /** Everyone counted. `total === Σ sending.count + unrouted`. */
   total: number;
   /** Send-from rails, biggest first. `Σ sending.count === bankRail + wallet`. */
   sending: BankMixSlice[];
-  /** Receiving banks, biggest first. `Σ receiving.count === bankRail - missingBank`. */
-  receiving: BankMixSlice[];
+  /** Receiving banks, biggest first, each with its rail split.
+   *  `Σ receiving.count === bankRail - missingBank`. */
+  receiving: BankNameSlice[];
   /** Payees on a bank rail (wise/jeeves/wires) — the receiving denominator. */
   bankRail: number;
   /** Wallet payees (hurupay/higlobe/wepay): a wallet deposit HAS no receiving bank. */
@@ -45,6 +61,31 @@ export interface BankMix {
 }
 
 const RAIL_LABEL = new Map<ProcessorId, string>(PROCESSOR_OPTIONS.map((p) => [p.id, p.label]));
+
+/**
+ * Every rail that deserves a row on the KPI card, biggest first:
+ *
+ *   - **any rail somebody is actually on**, retired or not — Wise and Jeeves are
+ *     retired from the pickers but still carry live payees, and a rail with people
+ *     on it must never be hidden from Accounting;
+ *   - plus every **still-offered** rail at zero, because "Hurupay: 0" is a real
+ *     answer and a missing row is indistinguishable from a forgotten one.
+ *
+ * A rail that is BOTH retired and empty (Wepay, as of 2026-08-19) is dropped: it
+ * is neither a live routing option nor a fact about anyone. The rule reads off
+ * `SELECTABLE_PROCESSOR_OPTIONS`, so retiring or reviving a processor moves the
+ * card by itself, and the row returns the moment one payee lands on it.
+ */
+export function railDistribution(sending: readonly BankMixSlice[]): BankMixSlice[] {
+  const seen = new Map(sending.map((s) => [s.key, s]));
+  const offered = new Set<string>(SELECTABLE_PROCESSOR_OPTIONS.map((p) => p.id));
+  const rows = PROCESSOR_OPTIONS.flatMap((p) => {
+    const observed = seen.get(p.id);
+    if (observed) return [observed];
+    return offered.has(p.id) ? [{ key: p.id, label: p.label, count: 0 }] : [];
+  });
+  return rows.sort(bySizeThenName);
+}
 
 /**
  * Grouping key for a free-text `employee_ids.bank_name`. Case-insensitive with
@@ -74,6 +115,8 @@ export function buildBankMix(destinations: readonly ReceivingDestination[]): Ban
   const railCounts = new Map<ProcessorId, number>();
   /** key → every raw spelling seen under it, so the label is the popular one. */
   const bankSpellings = new Map<string, Map<string, number>>();
+  /** key → which rails pay into that bank, so a bank row can show its split. */
+  const bankRails = new Map<string, Map<ProcessorId, number>>();
   let wallet = 0;
   let missingBank = 0;
   let unrouted = 0;
@@ -105,13 +148,17 @@ export function buildBankMix(destinations: readonly ReceivingDestination[]): Ban
     const raw = d.bankName.trim().replace(/\s+/g, ' ');
     spellings.set(raw, (spellings.get(raw) ?? 0) + 1);
     bankSpellings.set(key, spellings);
+
+    const rails = bankRails.get(key) ?? new Map<ProcessorId, number>();
+    rails.set(d.processor, (rails.get(d.processor) ?? 0) + 1);
+    bankRails.set(key, rails);
   }
 
   const sending: BankMixSlice[] = [...railCounts.entries()]
     .map(([id, count]) => ({ key: id, label: RAIL_LABEL.get(id) ?? id, count }))
     .sort(bySizeThenName);
 
-  const receiving: BankMixSlice[] = [...bankSpellings.entries()]
+  const receiving: BankNameSlice[] = [...bankSpellings.entries()]
     .map(([key, spellings]) => {
       let label = key;
       let best = -1;
@@ -124,7 +171,10 @@ export function buildBankMix(destinations: readonly ReceivingDestination[]): Ban
       }
       let count = 0;
       for (const n of spellings.values()) count += n;
-      return { key, label, count };
+      const byRail: BankMixSlice[] = [...(bankRails.get(key) ?? new Map<ProcessorId, number>())]
+        .map(([id, n]) => ({ key: id, label: RAIL_LABEL.get(id) ?? id, count: n }))
+        .sort(bySizeThenName);
+      return { key, label, count, byRail };
     })
     .sort(bySizeThenName);
 
@@ -141,4 +191,35 @@ export function buildBankMix(destinations: readonly ReceivingDestination[]): Ban
     unrouted,
     distinctBanks: receiving.length,
   };
+}
+
+/** A department label to bucket a person's destination under. Blank / null
+ *  becomes the shared NO_DEPARTMENT key so nobody is dropped. */
+export const NO_DEPARTMENT = '__none__';
+
+export interface DeptDestination {
+  department: string | null;
+  destination: ReceivingDestination;
+}
+
+/**
+ * The same fold, once per department, so a department filter can re-scope the
+ * KPI band instead of leaving it stuck on org-wide figures beside a filtered
+ * list. People with no department land under {@link NO_DEPARTMENT} rather than
+ * being dropped: a filter never hides a row.
+ *
+ * Keys are the department labels exactly as the roster reports them, so the
+ * caller can look up the selected filter value directly.
+ */
+export function buildBankMixByDepartment(entries: readonly DeptDestination[]): Record<string, BankMix> {
+  const grouped = new Map<string, ReceivingDestination[]>();
+  for (const e of entries) {
+    const key = (e.department ?? '').trim() || NO_DEPARTMENT;
+    const bucket = grouped.get(key);
+    if (bucket) bucket.push(e.destination);
+    else grouped.set(key, [e.destination]);
+  }
+  const out: Record<string, BankMix> = {};
+  for (const [dept, dests] of grouped) out[dept] = buildBankMix(dests);
+  return out;
 }

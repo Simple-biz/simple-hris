@@ -145,6 +145,9 @@ interface Summary {
   otPayoutUsd: number | null;
   /** Roster-wide send-from / receiving-bank split — feeds the Bank changes band. */
   bankMix: BankMix;
+  /** The same split per department, so the Bank changes department filter
+   *  re-scopes the band. Keyed by the roster's own department label. */
+  bankMixByDept: Record<string, BankMix>;
 }
 interface StatsLeader {
   name: string | null;
@@ -714,6 +717,22 @@ export default function PeopleTab({
     [rows],
   );
 
+  /** Lowercased email → department, over EVERY email a person is known by, so a
+   *  bank change recorded against a personal or alternate address still resolves.
+   *  First write wins, matching the dispatch log's deptByEmail. */
+  const deptByEmail = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const r of rows) {
+      const dept = (r.department ?? '').trim();
+      if (!dept) continue;
+      for (const e of [r.work_email, r.personal_email, ...(r.alternate_work_emails ?? [])]) {
+        const key = (e ?? '').trim().toLowerCase();
+        if (key && !map[key]) map[key] = dept;
+      }
+    }
+    return map;
+  }, [rows]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return rows
@@ -955,6 +974,9 @@ export default function PeopleTab({
           <PeopleBankChanges
             accent={accent}
             bankMix={summary?.bankMix ?? null}
+            bankMixByDept={summary?.bankMixByDept ?? null}
+            departments={departments}
+            deptByEmail={deptByEmail}
             onOpenProfile={openProfileByEmail}
           />
         ) : (

@@ -2,7 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { resolveReceivingDestination } from '@/lib/employee/payout-completeness';
-import { buildBankMix, normalizeBankNameKey } from './bank-mix';
+import {
+  buildBankMix,
+  buildBankMixByDepartment,
+  normalizeBankNameKey,
+  railDistribution,
+  NO_DEPARTMENT,
+} from './bank-mix';
 
 /**
  * These pin the People → Bank changes KPI band against the rule
@@ -163,4 +169,134 @@ test('an empty roster produces zeros, not NaN or an undefined leader', () => {
     unrouted: 0,
     distinctBanks: 0,
   });
+});
+
+// ── Rail attribution: one bank receives from several rails ─────────────────
+
+test('a receiving bank carries its send-from rail split, biggest first', () => {
+  const mix = buildBankMix([
+    { kind: 'bank', processor: 'wise', bankName: 'GoTyme Bank' },
+    { kind: 'bank', processor: 'wise', bankName: 'GoTyme Bank' },
+    { kind: 'bank', processor: 'wires', bankName: 'GoTyme Bank' },
+    { kind: 'bank', processor: 'jeeves', bankName: 'BPI' },
+  ]);
+  const goTyme = mix.receiving.find((r) => r.label === 'GoTyme Bank');
+  assert.ok(goTyme);
+  assert.deepEqual(
+    goTyme.byRail.map((r) => [r.label, r.count]),
+    [
+      ['Wise', 2],
+      ['Wires', 1],
+    ],
+  );
+  // The split always accounts for the whole bank, or the row would lie.
+  assert.equal(goTyme.byRail.reduce((s, r) => s + r.count, 0), goTyme.count);
+});
+
+test('rail attribution counts spelling variants of one bank together', () => {
+  const mix = buildBankMix([
+    { kind: 'bank', processor: 'wires', bankName: 'GoTyme Bank' },
+    { kind: 'bank', processor: 'wise', bankName: 'gotyme bank' },
+  ]);
+  assert.equal(mix.receiving.length, 1);
+  assert.equal(mix.receiving[0].count, 2);
+  assert.equal(mix.receiving[0].byRail.length, 2);
+});
+
+test('a wallet payee never contributes a rail to any bank', () => {
+  const mix = buildBankMix([
+    { kind: 'wallet', processor: 'higlobe' },
+    { kind: 'bank', processor: 'wires', bankName: 'BPI' },
+  ]);
+  assert.deepEqual(
+    mix.receiving[0].byRail.map((r) => r.label),
+    ['Wires'],
+  );
+});
+
+// ── railDistribution: which rails get a row ───────────────────────────────
+
+test('railDistribution keeps a retired rail that still has payees on it', () => {
+  const rows = railDistribution([
+    { key: 'wise', label: 'Wise', count: 379 },
+    { key: 'jeeves', label: 'Jeeves', count: 3 },
+  ]);
+  const keys = rows.map((r) => r.key);
+  assert.ok(keys.includes('wise'), 'Wise is retired but 379 people are on it');
+  assert.ok(keys.includes('jeeves'), 'Jeeves is retired but 3 people are on it');
+});
+
+test('railDistribution drops a rail that is BOTH retired and empty (Wepay)', () => {
+  const rows = railDistribution([{ key: 'wires', label: 'Wires', count: 5 }]);
+  assert.equal(
+    rows.some((r) => r.key === 'wepay'),
+    false,
+  );
+});
+
+test('railDistribution zero-fills the still-offered rails', () => {
+  const rows = railDistribution([{ key: 'wires', label: 'Wires', count: 5 }]);
+  const byKey = new Map(rows.map((r) => [r.key, r.count]));
+  assert.equal(byKey.get('hurupay'), 0);
+  assert.equal(byKey.get('higlobe'), 0);
+  assert.equal(byKey.get('wires'), 5);
+});
+
+test('railDistribution shows Wepay again the moment one payee lands on it', () => {
+  const rows = railDistribution([{ key: 'wepay', label: 'Wepay', count: 1 }]);
+  assert.equal(
+    rows.some((r) => r.key === 'wepay'),
+    true,
+  );
+});
+
+test('railDistribution never invents or drops people', () => {
+  const observed = [
+    { key: 'wires', label: 'Wires', count: 419 },
+    { key: 'wise', label: 'Wise', count: 379 },
+  ];
+  const before = observed.reduce((s, r) => s + r.count, 0);
+  const after = railDistribution(observed).reduce((s, r) => s + r.count, 0);
+  assert.equal(after, before);
+});
+
+// ── Per-department folds ──────────────────────────────────────────────────
+
+test('buildBankMixByDepartment folds each department separately', () => {
+  const byDept = buildBankMixByDepartment([
+    { department: 'Sales', destination: { kind: 'bank', processor: 'wires', bankName: 'BDO' } },
+    { department: 'Sales', destination: { kind: 'wallet', processor: 'hurupay' } },
+    { department: 'HSL', destination: { kind: 'bank', processor: 'wise', bankName: 'GoTyme Bank' } },
+  ]);
+  assert.equal(byDept.Sales.total, 2);
+  assert.equal(byDept.Sales.wallet, 1);
+  assert.equal(byDept.HSL.total, 1);
+  assert.equal(byDept.HSL.receiving[0].label, 'GoTyme Bank');
+});
+
+test('a blank or null department buckets under NO_DEPARTMENT, never dropped', () => {
+  const byDept = buildBankMixByDepartment([
+    { department: null, destination: { kind: 'unrouted' } },
+    { department: '   ', destination: { kind: 'wallet', processor: 'hurupay' } },
+    { department: 'Sales', destination: { kind: 'bank', processor: 'wires', bankName: 'BDO' } },
+  ]);
+  assert.equal(byDept[NO_DEPARTMENT].total, 2);
+  const grandTotal = Object.values(byDept).reduce((s, m) => s + m.total, 0);
+  assert.equal(grandTotal, 3, 'every person lands in exactly one department bucket');
+});
+
+test('department folds sum back to the org-wide fold', () => {
+  const entries = [
+    { department: 'Sales', destination: { kind: 'bank', processor: 'wires', bankName: 'BDO' } },
+    { department: 'HSL', destination: { kind: 'bank', processor: 'wise', bankName: 'BDO' } },
+    { department: 'HSL', destination: { kind: 'wallet', processor: 'higlobe' } },
+    { department: null, destination: { kind: 'missing', processor: 'wires' } },
+  ] as const;
+  const whole = buildBankMix(entries.map((e) => e.destination));
+  const byDept = buildBankMixByDepartment(entries);
+  const parts = Object.values(byDept);
+  assert.equal(parts.reduce((s, m) => s + m.total, 0), whole.total);
+  assert.equal(parts.reduce((s, m) => s + m.wallet, 0), whole.wallet);
+  assert.equal(parts.reduce((s, m) => s + m.bankRail, 0), whole.bankRail);
+  assert.equal(parts.reduce((s, m) => s + m.missingBank, 0), whole.missingBank);
 });

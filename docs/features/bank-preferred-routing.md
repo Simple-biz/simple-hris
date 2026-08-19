@@ -3,7 +3,8 @@
 *Shipped 2026-07-22; Wise updates + the No-Bank clobber discovery added
 2026-07-25 (§7); People-tab parity + Accounting direct-edit added 2026-08-10
 (§8). Migration status re-verified against production 2026-08-11 — see
-[Migrations](#migrations). Bank changes KPI band added 2026-08-19 (§10).*
+[Migrations](#migrations). Bank changes KPI band added 2026-08-19 (§10), widened with per-rail
+distributions, rail attribution and a department filter the same day (§10.5-10.8).*
 
 "Bank Preferred" is the processor **Accounting sends a salary OUT on** — the
 *send-from rail*. It is a first-class, employee-owned field that wins Payment
@@ -371,6 +372,83 @@ gate + SELECT backup), not a display trick — and it would then be recorded her
 bands import them — the same extraction `hero-stat-row.tsx` got for the CEO
 System Overview. Payment Catalog renders byte-identically to before. **Never fork
 a copy back into a dashboard.**
+
+### 10.5 Which rails get a row
+
+`railDistribution` (bank-mix.ts) decides, and the rule is not "the enum":
+
+- **any rail somebody is actually on**, retired or not. Wise and Jeeves are retired
+  from the pickers yet still carry 379 and 3 live payees; a rail with people on it
+  must never be missing from Accounting's view.
+- plus every **still-offered** rail at zero, because "Hurupay: 0" is a real answer
+  and an absent row is indistinguishable from a forgotten one.
+- a rail that is **both retired and empty** is dropped. That is Wepay today
+  (Kane, 2026-08-19: *let's remove We Pay*), and it is dropped **by rule, not by
+  name**: the row returns by itself the moment one payee lands on it, and no
+  hand-maintained exclusion list can go stale. Pinned by four tests.
+
+Live 2026-08-19: Hurupay 697 · Wires 419 · Wise 379 · HiGlobe 216 · Jeeves 3,
+against 1,714 routed and 146 unrouted.
+
+### 10.6 Every receiving bank shows which rails feed it
+
+`BankNameSlice.byRail` carries the send-from split for each bank, so the two cards
+are legibly connected instead of sitting side by side unexplained. **One bank
+receives from several rails at once** (Kane, 2026-08-19: *GoTyme bank is under
+wires or wise*), and the live roster agrees exactly:
+
+```
+GoTyme Bank                          134   wise 92 · wires 42
+Bank of the Philippine Islands (BPI)  85   wires 74 · wise 10 · jeeves 1
+MariBank                              65   wise 45 · wires 19 · jeeves 1
+```
+
+The split is folded in the same pass as the bank name, from the same
+`ReceivingDestination`, so `Σ byRail.count === count` always — asserted by test.
+Spelling variants of one bank pool their rails together (a `gotyme bank` row and a
+`GoTyme Bank` row are one bank with two rails, not two banks).
+
+**A wallet payee contributes no rail to any bank**, because they have no receiving
+bank to attribute (§10.2). This is why HiGlobe never appears in a bank's split
+even though HiGlobe money does eventually reach a bank: the HRIS holds an email +
+account holder for those payees, not an account, and only 29 of 216 HiGlobe-routed
+people have a bank name on file at all. Inventing a receiving bank for the other
+187 is exactly the conflation this doc opens by forbidding.
+
+### 10.7 Department filter
+
+Beside the search: a department picker that scopes **both** the feed and the band
+(Kane, 2026-08-19). Three properties, all load-bearing:
+
+- **It re-scopes the band, not just the list.** `PeopleSummary.bankMixByDept`
+  folds the same destinations once per department server-side, so a filtered band
+  shows that department's real mix rather than org-wide figures beside a filtered
+  list. Both card labels print the department name when scoped, because a scoped
+  figure that looks org-wide is the one way this band could mislead. Department
+  folds sum back to the org-wide fold — asserted by test.
+- **A filter never hides a row** (the rule [[dispatch-log-department-filter]]
+  set): a change row whose payee is off the active roster resolves to no
+  department, renders a dash, and lives under a **"No department"** option that
+  appears whenever any row needs it. The selection falls back to *All departments*
+  if the chosen one leaves the option set.
+- **Options come from the ROSTER, not the feed**, so a department with no recent
+  bank changes is still reachable for its bank mix; the empty feed then says so
+  and points at the cards.
+
+The email→department map is built over **work, personal and every alternate work
+email** (first write wins), because a bank change can be recorded against any
+address a person is known by — same reason the dispatch log's `deptByEmail` indexes
+both.
+
+### 10.8 Width
+
+The whole Bank changes view sits in `max-w-[1600px]`, the app's wide-content
+container (`Overview.tsx`, `AdminCsvImports.tsx`), not the 3xl column it shipped
+with on 2026-08-19 (Kane: *make this wider... utilize the space properly*). The
+band is two cards at `lg:grid-cols-2`; each distribution row is name / share bar /
+count / percentage on one line, so the bar absorbs the extra width instead of
+whitespace doing it. Above `lg` a feed row splits identity and change-summary into
+two columns for the same reason.
 
 ## Migrations
 
