@@ -492,10 +492,10 @@ export default function GiftShippingCard({
       <Dialog open={open} onOpenChange={(v) => !saving && !celebrating && setOpen(v)}>
         <DialogContent
           showCloseButton={false}
-          className="max-w-[760px] sm:max-w-[680px] md:max-w-[760px] lg:max-w-[820px] overflow-hidden border-pink-200/70 bg-gradient-to-br from-pink-50/60 via-white to-fuchsia-50/40 p-0 shadow-2xl shadow-pink-500/15 dark:border-pink-900/40 dark:from-pink-950/40 dark:via-zinc-950 dark:to-fuchsia-950/30 dark:shadow-pink-900/30"
+          className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-[min(820px,calc(100%-1.5rem))] flex-col gap-0 overflow-hidden border-pink-200/70 bg-gradient-to-br from-pink-50/60 via-white to-fuchsia-50/40 p-0 shadow-2xl shadow-pink-500/15 sm:max-h-[92dvh] sm:max-w-[min(820px,calc(100%-4rem))] dark:border-pink-900/40 dark:from-pink-950/40 dark:via-zinc-950 dark:to-fuchsia-950/30 dark:shadow-pink-900/30"
         >
           {celebrating && (
-            <div className="relative flex min-h-[420px] flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-pink-500 via-rose-500 to-fuchsia-600 px-8 py-10 text-white">
+            <div className="relative flex min-h-[300px] flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-pink-500 via-rose-500 to-fuchsia-600 px-6 py-8 text-white sm:min-h-[420px] sm:px-8 sm:py-10">
               <style>{`
                 @keyframes celebHeart {
                   0%   { transform: translateY(20px)  scale(0.7) rotate(var(--ch-rot)); opacity: 0; }
@@ -627,7 +627,7 @@ export default function GiftShippingCard({
 
               {/* Success copy */}
               <div
-                className="relative z-10 mt-8 max-w-md text-center"
+                className="relative z-10 mt-6 max-w-md text-center sm:mt-8"
                 style={{ animation: 'textRise 0.5s 1.2s ease-out backwards' }}
               >
                 <h2 className="text-balance text-2xl font-bold tracking-tight text-white drop-shadow-md">
@@ -643,7 +643,7 @@ export default function GiftShippingCard({
 
           {!celebrating && <>
           {/* Pink hero ribbon with sticker + floating hearts */}
-          <div className="relative overflow-hidden bg-gradient-to-br from-pink-500 via-rose-500 to-fuchsia-600 px-6 pb-6 pt-7 text-white">
+          <div className="relative shrink-0 overflow-hidden bg-gradient-to-br from-pink-500 via-rose-500 to-fuchsia-600 px-4 pb-5 pt-6 text-white [@media(max-height:640px)]:pb-3 [@media(max-height:640px)]:pt-4 sm:px-6 sm:pb-6 sm:pt-7">
             <style>{`
               @keyframes modalHeartFloat {
                 0%   { transform: translateY(8px)   scale(0.85) rotate(var(--mh-rot)); opacity: 0; }
@@ -699,20 +699,20 @@ export default function GiftShippingCard({
               <X className="h-3.5 w-3.5" />
             </button>
 
-            <div className="relative flex items-center gap-4">
+            <div className="relative flex items-center gap-3 sm:gap-4">
               {/* Sticker gift logo (same recipe as the card) */}
               <div className="relative shrink-0">
                 <span aria-hidden className="absolute -inset-2 rounded-full bg-white/30 blur-md" />
                 <span
                   aria-hidden
-                  className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-white via-pink-50 to-fuchsia-100 text-pink-600 ring-4 ring-white/80 shadow-lg shadow-pink-900/30"
+                  className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-white via-pink-50 to-fuchsia-100 text-pink-600 ring-4 ring-white/80 shadow-lg shadow-pink-900/30 sm:h-14 sm:w-14"
                   style={{
                     transform: 'rotate(-8deg)',
                     animation: 'modalGiftWiggle 3.6s ease-in-out infinite',
                     position: 'relative',
                   }}
                 >
-                  <Gift className="h-7 w-7 drop-shadow-sm" strokeWidth={2.5} />
+                  <Gift className="h-6 w-6 drop-shadow-sm sm:h-7 sm:w-7" strokeWidth={2.5} />
                   <span
                     aria-hidden
                     className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-white shadow-sm ring-2 ring-white"
@@ -724,7 +724,7 @@ export default function GiftShippingCard({
               </div>
 
               <div className="min-w-0">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="rounded-full bg-white/25 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-white backdrop-blur-sm">
                     Tenure gift
                   </span>
@@ -744,7 +744,7 @@ export default function GiftShippingCard({
           </div>
 
           {/* Tab switcher */}
-          <div className="flex gap-1 border-b border-pink-100/80 bg-white/60 px-5 py-2 dark:border-pink-900/30 dark:bg-zinc-950/50">
+          <div className="flex shrink-0 gap-1 border-b border-pink-100/80 bg-white/60 px-3 py-2 dark:border-pink-900/30 dark:bg-zinc-950/50 sm:px-5">
             {(['form', 'history'] as const).map((tab) => (
               <button
                 key={tab}
@@ -765,7 +765,7 @@ export default function GiftShippingCard({
           {/* Form tab */}
           {activeTab === 'form' && (
           <>
-          <div className="flex flex-col gap-5 px-6 py-5">
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-4 py-4 sm:gap-5 sm:px-6 sm:py-5">
             {/* Section: Your details (prefilled) */}
             <section>
               <div className="mb-2 flex items-center gap-1.5">
@@ -847,7 +847,7 @@ export default function GiftShippingCard({
                           onClick={() => setSize(active ? '' : s)}
                           aria-pressed={active}
                           className={cn(
-                            'min-w-[46px] rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                            'min-w-[46px] rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors [@media(pointer:coarse)]:min-h-[40px] disabled:cursor-not-allowed disabled:opacity-60',
                             active
                               ? 'border-pink-500 bg-pink-600 text-white shadow-sm shadow-pink-600/25'
                               : 'border-pink-200/80 bg-white text-zinc-600 hover:border-pink-300 hover:bg-pink-50 dark:border-pink-900/50 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-pink-950/30',
@@ -899,7 +899,7 @@ export default function GiftShippingCard({
             )}
           </div>
 
-          <div className="flex items-center justify-end gap-2 border-t border-pink-100/80 bg-pink-50/50 px-6 py-3.5 dark:border-pink-900/30 dark:bg-pink-950/20">
+          <div className="flex shrink-0 items-center justify-end gap-2 border-t border-pink-100/80 bg-pink-50/50 px-4 py-3 dark:border-pink-900/30 dark:bg-pink-950/20 sm:px-6 sm:py-3.5">
             <Button
               variant="outline"
               onClick={() => setOpen(false)}
@@ -932,7 +932,7 @@ export default function GiftShippingCard({
           {/* History tab — milestone map */}
           {activeTab === 'history' && (
           <>
-          <div className="overflow-y-auto px-6 py-5" style={{ maxHeight: '440px' }}>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5">
             <p className="mb-5 text-[11px] text-zinc-500 dark:text-zinc-400">
               One gift every 6 months from your start date. Approved gifts show the item selected by the Orphanage team.
             </p>
@@ -1057,7 +1057,7 @@ export default function GiftShippingCard({
               })}
             </div>
           </div>
-          <div className="flex items-center justify-between border-t border-pink-100/80 bg-pink-50/50 px-6 py-3 dark:border-pink-900/30 dark:bg-pink-950/20">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-pink-100/80 bg-pink-50/50 px-4 py-3 dark:border-pink-900/30 dark:bg-pink-950/20 sm:px-6">
             <p className="text-[11px] text-zinc-400 dark:text-zinc-600">
               {allRows.filter((r) => r.status === 'approved').length} of{' '}
               {milestoneMap.filter((m) => diffDays(m.date, today) <= 0).length} milestone

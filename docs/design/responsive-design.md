@@ -84,6 +84,35 @@ and felt broken); it was fixed on Employee Overview and is the standard now.
   purpose (e.g. the sticky table headers in § 5.4 of `ui-standards.md`); a
   page's hero is not that case.
 
+### Dialogs and modals
+
+The whole-page scroll rule above is about **pages and tabs**. A dialog is already a
+bounded card with its own footer, and the shipped standard (`MesaReceiptDialog`,
+`AuditLogPanel`, `HrTransfers`, both bonus calculators) pins the header and footer
+and scrolls only the body between them, so the primary action stays reachable at
+every viewport height.
+
+Any dialog that overrides `DialogContent`'s padding with `p-0` **must** also:
+
+- **Cap its height** — `max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh]`. The shared
+  `DialogContent` in `components/ui/dialog.tsx` declares **no** `max-height`, and it
+  is centred with `-translate-y-1/2`: content taller than the viewport is therefore
+  clipped at **both** ends at once, and the footer buttons become unreachable
+  (there is no page scroll to recover them).
+- **Set `gap-0`** — the base is `grid gap-4`. A `p-0` dialog stacking flush sections
+  silently inherits three 16px gutters (48px of extra height) that also show the
+  popup's own gradient as seams between sections.
+- **Re-declare its width at `sm:`** — the base sets `sm:max-w-sm` (384px), which beats
+  a base-only `max-w-*` override from 640px upward. Keep a side gutter in the value
+  (`max-w-[min(820px,calc(100%-1.5rem))]`) or the card goes edge-to-edge on phones.
+- **Use `flex flex-col`** with `shrink-0` on the header/tabs/footer and
+  `min-h-0 flex-1 overflow-y-auto overscroll-contain` on the body. Never a hard-coded
+  pixel `maxHeight` on the scroll region — it is simultaneously too tall for a short
+  laptop window and too short for a desktop.
+
+Worked reference: `src/components/employee/GiftShippingCard.tsx` (hero + tabs +
+scrolling form + pinned footer, all four rules applied).
+
 ## Tables and wide content
 
 - Shared **`components/ui/table.tsx`** wraps every `<table>` in a container with **`overflow-x-auto`**, so wide grids scroll horizontally on small screens.
