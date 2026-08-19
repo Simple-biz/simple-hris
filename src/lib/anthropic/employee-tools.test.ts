@@ -125,6 +125,29 @@ test("no CEO/Admin tool name leaks into the employee set", () => {
   }
 });
 
+test("every declared tool has a matching dispatch case", () => {
+  // Schema and runner live in two files, so a rename in one is invisible until a
+  // real employee asks the question and burns one of their ten prompts on
+  // "Unknown tool: …". Caught exactly that way while renaming
+  // get_how_to_guides → get_company_how_to_guides.
+  const runner = readFileSync(
+    join(process.cwd(), "src/lib/anthropic/employee-tools.ts"),
+    "utf8",
+  );
+  for (const tool of EMPLOYEE_TOOLS) {
+    assert.ok(
+      runner.includes(`case '${tool.name}':`),
+      `${tool.name} is declared to Claude but runEmployeeTool has no case for it`,
+    );
+  }
+  // And nothing is dispatched that was never declared.
+  const cases = [...runner.matchAll(/case '([a-z_]+)':/g)].map((m) => m[1]!);
+  const declared = new Set(EMPLOYEE_TOOLS.map((t) => t.name));
+  for (const c of cases) {
+    assert.ok(declared.has(c), `runEmployeeTool dispatches '${c}', which no tool declares`);
+  }
+});
+
 test("the bonus tool never claims to judge attendance eligibility", () => {
   // The PAB verdict depends on daily hours, disputes, adjustments and holiday
   // forgiveness — recomputing it here would contradict the employee's own PAB

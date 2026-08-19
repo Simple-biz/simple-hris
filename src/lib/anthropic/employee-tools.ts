@@ -34,6 +34,7 @@ import {
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { collapseHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { policiesForDeptKey, groupPolicies } from '@/lib/policies/team-policies';
+import { buildEmployeeGuides, noticePolicyBodyFrom } from '@/lib/penny/employee-guides';
 import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
@@ -180,6 +181,8 @@ export async function runEmployeeTool(
         return await getCompanyBenefits(ctx);
       case 'get_my_leave_requests':
         return await getMyLeaveRequests(ctx);
+      case 'get_company_how_to_guides':
+        return getHowToGuides(ctx);
       case 'get_my_contacts':
         return await getMyContacts(ctx);
       default:
@@ -458,6 +461,33 @@ async function getMyLeaveRequests(ctx: EmployeeToolContext): Promise<ToolResult>
     })),
     field_notes:
       'Their own leave requests, newest first. This is a request log, NOT a balance — the HRIS does not track a leave allowance, so never quote days remaining. A `pending` row is awaiting their manager; suggest they follow up with the manager, not with Penny.',
+  };
+}
+
+function getHowToGuides(ctx: EmployeeToolContext): ToolResult {
+  // The notice period comes from the team's OWN published policy set — the same
+  // single source `get_company_policies` reads — and stays null for the teams
+  // whose page omits it. Folding it in here rather than making the model chain
+  // two tools is deliberate: Haiku answering "how do I file a leave" should not
+  // have to remember to also fetch the policy, and a forgotten second call is
+  // exactly how an invented notice period would reach an employee.
+  const set = policiesForDeptKey(ctx.deptKey);
+  const guides = buildEmployeeGuides({
+    noticePolicyBody: noticePolicyBodyFrom(set.policies),
+    hasTeamPage: set.deptKey !== null,
+    teamLabel: set.teamLabel,
+  });
+
+  return {
+    guides: guides.map((g) => ({
+      topic: g.key,
+      title: g.title,
+      where: g.where,
+      steps: g.steps,
+      notes: g.notes,
+    })),
+    field_notes:
+      'Procedures for THIS HRIS — follow them as written; the tab and button names are real. Answer with the steps for the ONE thing they asked about, not all three. Keep every note that says something can be refused, is only an estimate, or is not enforced by the system: those are the parts that stop a second HR ticket. You cannot perform any of these actions for them — you are describing where they do it themselves. The leave guide already carries this employee\'s own team notice expectation, or says it is unpublished; never substitute a number of your own.',
   };
 }
 

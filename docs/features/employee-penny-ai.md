@@ -22,6 +22,7 @@ fork. Commit: see `git log --oneline -- docs/features/employee-penny-ai.md`.
 | Quota route | `GET /api/employee/penny-chat/quota` |
 | Tool schemas | `src/lib/anthropic/employee-tool-defs.ts` (pure — importable by tests) |
 | Tool bodies | `src/lib/anthropic/employee-tools.ts` (`server-only`) |
+| How-to guides | `src/lib/penny/employee-guides.ts` (pure) |
 | Quota math | `src/lib/penny/employee-quota.ts` (pure, client-safe) |
 | Quota ledger | `src/lib/penny/employee-usage-db.ts` (`server-only`) |
 | Table | `references/sql/create/2026-08-19_penny_employee_usage.sql` |
@@ -97,6 +98,63 @@ test pins the tool description's pointer to the calendar.
   duplicated here — a regex literal of the banned pattern makes the copy an offender in
   the real guard, and widening that guard's allowlist to fit a redundant copy would
   weaken the only check that matters.
+
+## Self-service guides: procedure is data, and it is tested against the UI
+
+`get_company_how_to_guides` returns three procedures — request a **COE**, get
+**pay stubs**, file a **leave request** — each naming the real tab, the real button
+and the real options (added 2026-08-19 at Kane's request).
+
+They live in `src/lib/penny/employee-guides.ts` as data rather than prose in the
+system prompt, because **a guide that names a button which no longer exists is worse
+than no guide**: the employee loses five minutes, then asks HR anyway, having learned
+that Penny makes things up. Tests assert every label still appears in the component
+that owns it — the Profile tab labels in `EmployeeProfile.tsx`, the sub-tab labels and
+all five leave types in `EmployeeLeaves.tsx`, the document-type strings in
+`documents/types.ts`, and `Request certificate` / `Submit request` /
+`Signed document` / the period options in `RequestDocumentsTab.tsx`. Rename any of
+those and the suite tells you Penny is now lying.
+
+The guides carry the counter-intuitive facts, and the tool's `field_notes` tell the
+model to keep them:
+
+- **A COE has nothing to attach.** Every other document type is a file the worker
+  already has; the COE is issued by Simple, so the HRIS writes it — which is why that
+  button says *Request certificate*, not *Submit request*. Employees look for a file
+  input and get stuck.
+- **A COE can be refused.** A missing start date, department or rate returns 422 rather
+  than printing blanks (`documents-tab.md` § Refusals), so Penny warns instead of
+  promising a certificate.
+- **"Pay stubs" means two different things.** The Profile → Pay Stubs tab is instant and
+  needs nobody's approval; the signed copy for a bank/loan/visa goes through Profile →
+  Request Documents and waits on Accounting. Confusing them is why someone waits three
+  days for a file they could have downloaded in one click.
+- **Reconstructed weeks are estimates.** Weeks rebuilt from logged hours exclude
+  performance bonuses and manual adjustments, so the total can differ from what was paid.
+
+### The notice period is per-team, and Penny may not invent one
+
+Measured 2026-08-19: **10 teams publish an advance-notice period — one week for nine of
+them, two weeks for AI/Automation — and the company-wide fallback carries no attendance
+policy at all.** There is no company-wide value to fall back on.
+
+So the leave guide takes the notice sentence from `policiesForDeptKey(deptKey)` **verbatim**
+(never parsed into a number — the sentence also carries the attendance-bonus condition), and
+for a team that publishes none it says so and points at the manager. This is
+`employee-team-directory.md:176` holding: *"a default would tell someone the wrong shift."*
+Folding the value into this tool rather than making the model chain `get_company_policies`
+is deliberate — a forgotten second call is exactly how an invented notice period reaches
+an employee.
+
+> **Kane, 2026-08-19, asked for "the notice period" and this is the answer he got: the
+> team's, or none.** If a company-wide default is ever wanted, it is a change to
+> `COMPANY_WIDE_POLICIES` plus this doc, the memory entry, and the test that pins the
+> omission — not a line added to a guide.
+
+**The form enforces no notice period.** `EmployeeLeaves.tsx` validates only that the start
+date is today or later and that the end date is not before it; a request for tomorrow
+submits fine. A test pins the guide saying so, because implying the system blocks a
+short-notice request is a plain untruth about how the software behaves.
 
 ## Policies: the two absent rules are absent on purpose
 

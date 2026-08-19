@@ -84,6 +84,12 @@ export const EMPLOYEE_TOOLS: Anthropic.Tool[] = [
     input_schema: { type: 'object', properties: {}, required: [] },
   },
   {
+    name: 'get_company_how_to_guides',
+    description:
+      "Step-by-step instructions for the things employees do in this HRIS themselves: requesting a Certificate of Engagement (COE), getting pay stubs / payslips (both the copy they download instantly and the officially signed copy for a bank or visa), and filing a leave request — including their own team's advance-notice expectation. Call this for ANY \"how do I…\", \"where do I…\", \"can I get a…\" question about paperwork or time off. Follow the steps as returned: they name the real tabs and buttons. If a guide's `notes` say something can be refused or is not enforced, say so — do not smooth it over. Returns all three guides at once, so one call covers a follow-up question too.",
+    input_schema: { type: 'object', properties: {}, required: [] },
+  },
+  {
     name: 'get_my_contacts',
     description:
       "Who the signed-in employee should contact: the manager(s) assigned to their own department, and how to escalate. Use for \"who is my manager\", \"who do I ask about X\", \"who handles payroll questions\". Only ever names people recorded as managers of THEIR department — if the list is empty, say so and tell them to raise it with HR rather than guessing a name.",
