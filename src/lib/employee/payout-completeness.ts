@@ -174,60 +174,36 @@ export function isPayoutComplete(
 }
 
 /**
- * Where a payee's money actually LANDS — the third of the three concepts
- * bank-preferred-routing.md forbids conflating (§"Do not conflate three separate
- * things"): the receiving account, never the send-from rail and never the
- * Disbursement election. Resolved the way Payment Dispatch pays:
+ * What `isPayoutComplete` actually demands of each rail, in words — the caption on
+ * the Bank changes "Receiving details on file" card, so a row that reads 391 of 419
+ * also says what the other 28 are missing.
  *
- *   - the rail is `resolveEffectivePayoutProcessor` (bank_preferred →
- *     preferred_processor → legacy sheet cell), never `preferred_processor` alone;
- *   - hurupay / higlobe / wepay deposit into a WALLET, so those payees have no
- *     receiving bank at all — a distinct outcome from "bank rail, no bank on
- *     file", because calling a wallet payee bank-less would be a lie;
- *   - wise / jeeves / wires land in the payee's own bank account (Wise included
- *     — §7 "Wise = wire fields"), read slot-aware: `preferred_bank_slot` picks
- *     which account PD displays first, with PD's pickFirst fallback to the other
- *     slot (payout details count from EITHER slot).
- *
- * The rail rides along on every variant so a caller can never derive the
- * send-from mix and the receiving mix from two different resolutions.
+ * **Keep this switch in the same shape as `isPayoutComplete` above.** They are two
+ * views of one rule, and a caption that disagrees with the check is worse than no
+ * caption: it tells Accounting to collect the wrong field.
  */
-export type WalletProcessorId = Extract<ProcessorId, 'hurupay' | 'higlobe' | 'wepay'>;
-export type BankRailProcessorId = Extract<ProcessorId, 'wise' | 'jeeves' | 'wires'>;
+export type PayoutRequirement = 'wallet email' | 'email + account name' | 'bank + account';
 
-export type ReceivingDestination =
-  /** A bank rail with a bank name on file — this is the receiving bank. */
-  | { kind: 'bank'; processor: BankRailProcessorId; bankName: string }
-  /** A wallet rail: the deposit has no receiving bank by construction. */
-  | { kind: 'wallet'; processor: WalletProcessorId }
-  /** A bank rail with no bank name in either slot. */
-  | { kind: 'missing'; processor: BankRailProcessorId }
-  /** No rail resolves at all — PD would exclude this person as `no_bank`. */
-  | { kind: 'unrouted' };
-
-export function resolveReceivingDestination(
-  row: Record<string, unknown> | null | undefined,
-  extras?: PayoutLegacyExtras,
-): ReceivingDestination {
-  const processor = resolveEffectivePayoutProcessor(row, extras);
-  if (!processor) return { kind: 'unrouted' };
-
+export function payoutRequirementFor(processor: ProcessorId): PayoutRequirement {
   switch (processor) {
     case 'hurupay':
-    case 'higlobe':
     case 'wepay':
-      return { kind: 'wallet', processor };
+      return 'wallet email';
+    case 'higlobe':
+      return 'email + account name';
     case 'wise':
     case 'jeeves':
-    case 'wires': {
-      const payout = row ? payoutDraftFromIdsRow(row).payout : emptyPayout;
-      // preferred_bank_slot decides which account is shown FIRST, not whether
-      // the person has one — fall back across slots exactly like PD's pickFirst.
-      const bankName =
-        payout.preferredBankSlot === 'alternative'
-          ? payout.altBankName || payout.bankName
-          : payout.bankName || payout.altBankName;
-      return bankName ? { kind: 'bank', processor, bankName } : { kind: 'missing', processor };
-    }
+    case 'wires':
+      // Wise included: payouts land in the payee's bank account, never on a
+      // Wise handle (see bank-preferred-routing.md §7).
+      return 'bank + account';
   }
+}
+
+/**
+ * Whether a rail deposits into a WALLET rather than the payee's own bank account.
+ * Derived from the requirement above, so the two can never disagree.
+ */
+export function isWalletRail(processor: ProcessorId): boolean {
+  return payoutRequirementFor(processor) !== 'bank + account';
 }

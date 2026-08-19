@@ -6,10 +6,9 @@ import { getEmployeeIds, type EmployeeIdRow } from '@/lib/supabase/employee-ids'
 import {
   isPayoutComplete,
   resolveEffectivePayoutProcessor,
-  resolveReceivingDestination,
   type PayoutLegacyExtras,
 } from '@/lib/employee/payout-completeness';
-import { buildBankMix, buildBankMixByDepartment, type BankMix, type DeptDestination } from './bank-mix';
+import { buildRailMix, buildRailMixByDepartment, type RailMix, type DeptRailAssignment } from './rail-mix';
 import {
   getEmployeeHourlyRatesRows,
   type EmployeeHourlyRateRow,
@@ -94,14 +93,15 @@ export interface PeopleSummary {
   otPayoutPhp: number;
   /** Same payout converted to USD at the current FX rate (null if FX missing). */
   otPayoutUsd: number | null;
-  /** How the SAME roster splits across send-from rails and receiving banks —
-   *  powers the Bank changes KPI band. Folded from Payment Dispatch's own
-   *  routing resolution, so the band can never disagree with the roster chips. */
-  bankMix: BankMix;
+  /** How the SAME roster splits across send-from rails, and how many on each are
+   *  payable there — powers the Bank changes KPI band. Folded from the very
+   *  `processor` / `hasBanking` pair each row above carries, so the band can never
+   *  disagree with the roster chips or the Missing-bank-info list. */
+  railMix: RailMix;
   /** The same fold per department, keyed by the roster's own department label
    *  (people with none under `NO_DEPARTMENT`), so the Bank changes department
    *  filter re-scopes the band instead of leaving it on org-wide figures. */
-  bankMixByDept: Record<string, BankMix>;
+  railMixByDept: Record<string, RailMix>;
 }
 
 function parseRate(v: string | number | null | undefined): number | null {
@@ -359,10 +359,10 @@ const EMPTY_SUMMARY: PeopleSummary = {
   otHours: 0,
   otPayoutPhp: 0,
   otPayoutUsd: 0,
-  // An empty roster genuinely has no bank mix — buildBankMix([]) is all zeros
+  // An empty roster genuinely has no rail mix — buildRailMix([]) is all zeros
   // rather than a hand-written blank, so the two can never drift apart.
-  bankMix: buildBankMix([]),
-  bankMixByDept: {},
+  railMix: buildRailMix([]),
+  railMixByDept: {},
 };
 
 export interface PeopleRosterScope {
@@ -437,7 +437,7 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
 
   // One per roster row, pushed inside the map below — the KPI band's input,
   // tagged with the department so the band can follow the department filter.
-  const destinations: DeptDestination[] = [];
+  const railAssignments: DeptRailAssignment[] = [];
 
   const rows: PeopleRosterRow[] = uniqueEmployees.map((e) => {
     const aliases = [e.work_email, e.personal_email, e.alternate_work_email, e.alternate_work_email_2]
@@ -504,12 +504,13 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
     const idsRecord = idsRow as unknown as Record<string, unknown> | null;
     const effectiveProcessor = resolveEffectivePayoutProcessor(idsRecord, extras);
     const hasBanking = isPayoutComplete(idsRecord, extras);
-    // Both halves of the Bank changes KPI band come from THIS resolution, so the
-    // send-from mix and the receiving-bank mix are folded from the same routing
-    // decision the chip above is showing. See bank-mix.ts.
-    destinations.push({
+    // Both halves of the Bank changes KPI band are folded from the values this
+    // row already carries, so "which rail" and "can we pay them on it" can never
+    // drift from the chip or the Missing-bank-info list. See rail-mix.ts.
+    railAssignments.push({
       department: e.department ?? null,
-      destination: resolveReceivingDestination(idsRecord, extras),
+      rail: effectiveProcessor,
+      payable: hasBanking,
     });
 
     // Extra work-email aliases (deduped, non-empty) minus the primary — for the
@@ -571,8 +572,8 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
     otHours: Math.round(otHours * 10) / 10,
     otPayoutPhp: Math.round(otPayoutPhp * 100) / 100,
     otPayoutUsd: fxRate > 0 ? Math.round((otPayoutPhp / fxRate) * 100) / 100 : null,
-    bankMix: buildBankMix(destinations.map((d) => d.destination)),
-    bankMixByDept: buildBankMixByDepartment(destinations),
+    railMix: buildRailMix(railAssignments),
+    railMixByDept: buildRailMixByDepartment(railAssignments),
   };
 
   const range: PeopleRangeCoverage | null = rangeMode

@@ -21,7 +21,7 @@ import EmployeePabCalendar from '@/components/employee/EmployeePabCalendar';
 import PabCalendarLoader from '@/components/employee/PabCalendarLoader';
 import { DatePicker, DateRangePicker, type DateRange } from '@/components/ui/date-picker';
 import PeopleBankChanges from './PeopleBankChanges';
-import type { BankMix } from '@/lib/people/bank-mix';
+import type { RailMix } from '@/lib/people/rail-mix';
 import { BankChangeDetailDialog, timeAgo, type BankChangeEntry } from './bank-change-detail';
 import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import { parseNameParts, composeMasterListName, type NameParts } from '@/lib/name/name-parts';
@@ -143,11 +143,12 @@ interface Summary {
   otHours: number;
   otPayoutPhp: number;
   otPayoutUsd: number | null;
-  /** Roster-wide send-from / receiving-bank split — feeds the Bank changes band. */
-  bankMix: BankMix;
+  /** Roster-wide send-from rail split, with payable counts — feeds the Bank
+   *  changes band. */
+  railMix: RailMix;
   /** The same split per department, so the Bank changes department filter
    *  re-scopes the band. Keyed by the roster's own department label. */
-  bankMixByDept: Record<string, BankMix>;
+  railMixByDept: Record<string, RailMix>;
 }
 interface StatsLeader {
   name: string | null;
@@ -973,8 +974,8 @@ export default function PeopleTab({
         ) : mode === 'changes' ? (
           <PeopleBankChanges
             accent={accent}
-            bankMix={summary?.bankMix ?? null}
-            bankMixByDept={summary?.bankMixByDept ?? null}
+            railMix={summary?.railMix ?? null}
+            railMixByDept={summary?.railMixByDept ?? null}
             departments={departments}
             deptByEmail={deptByEmail}
             onOpenProfile={openProfileByEmail}

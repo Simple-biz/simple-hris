@@ -13,8 +13,8 @@ import {
   BankChangeDetailDialog, fieldLabel, timeAgo, absoluteTime, type BankChangeEntry as BankChange,
 } from './bank-change-detail';
 import { SmoothSelect } from '@/components/ui/smooth-select';
-import { BankMixBand } from './bank-mix-band';
-import { NO_DEPARTMENT, type BankMix } from '@/lib/people/bank-mix';
+import { RailMixBand } from './rail-mix-band';
+import { NO_DEPARTMENT, type RailMix } from '@/lib/people/rail-mix';
 
 // Kept literal to avoid pulling the server-only app-settings module into the
 // client bundle — must match BANK_CHANGES_PULSE_KEY in src/lib/supabase/app-settings.ts.
@@ -46,20 +46,20 @@ const PAGE_SIZE = 20;
  */
 export default function PeopleBankChanges({
   accent,
-  bankMix,
-  bankMixByDept,
+  railMix,
+  railMixByDept,
   departments,
   deptByEmail,
   onOpenProfile,
 }: {
   accent: Accent;
-  /** Roster-wide send-from / receiving-bank mix for the KPI band. Comes from the
-   *  People roster summary (Payment Dispatch's routing precedence), NOT from the
-   *  feed below — see bank-mix-band.tsx. Null until the roster has loaded. */
-  bankMix: BankMix | null;
+  /** Roster-wide send-from rail mix (with payable counts) for the KPI band. Comes
+   *  from the People roster summary, NOT from the feed below — see
+   *  rail-mix-band.tsx. Null until the roster has loaded. */
+  railMix: RailMix | null;
   /** The same fold per department, so the department filter re-scopes the band
    *  and not just the feed. Keyed by the roster's own department label. */
-  bankMixByDept: Record<string, BankMix> | null;
+  railMixByDept: Record<string, RailMix> | null;
   /** Departments offered in the filter — the roster's list, so a department with
    *  no recent changes is still reachable for its bank mix. */
   departments: string[];
@@ -254,9 +254,9 @@ export default function PeopleBankChanges({
    *  department with no roster rows yields no mix, which the band renders as its
    *  own empty state rather than as zeros borrowed from the whole company. */
   const bandMix = useMemo(() => {
-    if (deptFilter === 'all') return bankMix;
-    return bankMixByDept?.[deptFilter] ?? null;
-  }, [deptFilter, bankMix, bankMixByDept]);
+    if (deptFilter === 'all') return railMix;
+    return railMixByDept?.[deptFilter] ?? null;
+  }, [deptFilter, railMix, railMixByDept]);
 
   // Reset to page 1 whenever the filters change so results never land on an
   // out-of-range page.
@@ -273,7 +273,7 @@ export default function PeopleBankChanges({
     <div className="mx-auto w-full max-w-[1600px]">
       {/* Roster-wide bank mix — send-from rails beside receiving banks. Scoped to
           the whole roster, not this feed; each card states its own denominator. */}
-      <BankMixBand mix={bandMix} scope={deptFilter === 'all' ? null : deptLabel} />
+      <RailMixBand mix={bandMix} scope={deptFilter === 'all' ? null : deptLabel} />
 
       {/* Header: live status + count + manual refresh */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
