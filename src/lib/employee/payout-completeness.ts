@@ -172,3 +172,62 @@ export function isPayoutComplete(
       return false;
   }
 }
+
+/**
+ * Where a payee's money actually LANDS — the third of the three concepts
+ * bank-preferred-routing.md forbids conflating (§"Do not conflate three separate
+ * things"): the receiving account, never the send-from rail and never the
+ * Disbursement election. Resolved the way Payment Dispatch pays:
+ *
+ *   - the rail is `resolveEffectivePayoutProcessor` (bank_preferred →
+ *     preferred_processor → legacy sheet cell), never `preferred_processor` alone;
+ *   - hurupay / higlobe / wepay deposit into a WALLET, so those payees have no
+ *     receiving bank at all — a distinct outcome from "bank rail, no bank on
+ *     file", because calling a wallet payee bank-less would be a lie;
+ *   - wise / jeeves / wires land in the payee's own bank account (Wise included
+ *     — §7 "Wise = wire fields"), read slot-aware: `preferred_bank_slot` picks
+ *     which account PD displays first, with PD's pickFirst fallback to the other
+ *     slot (payout details count from EITHER slot).
+ *
+ * The rail rides along on every variant so a caller can never derive the
+ * send-from mix and the receiving mix from two different resolutions.
+ */
+export type WalletProcessorId = Extract<ProcessorId, 'hurupay' | 'higlobe' | 'wepay'>;
+export type BankRailProcessorId = Extract<ProcessorId, 'wise' | 'jeeves' | 'wires'>;
+
+export type ReceivingDestination =
+  /** A bank rail with a bank name on file — this is the receiving bank. */
+  | { kind: 'bank'; processor: BankRailProcessorId; bankName: string }
+  /** A wallet rail: the deposit has no receiving bank by construction. */
+  | { kind: 'wallet'; processor: WalletProcessorId }
+  /** A bank rail with no bank name in either slot. */
+  | { kind: 'missing'; processor: BankRailProcessorId }
+  /** No rail resolves at all — PD would exclude this person as `no_bank`. */
+  | { kind: 'unrouted' };
+
+export function resolveReceivingDestination(
+  row: Record<string, unknown> | null | undefined,
+  extras?: PayoutLegacyExtras,
+): ReceivingDestination {
+  const processor = resolveEffectivePayoutProcessor(row, extras);
+  if (!processor) return { kind: 'unrouted' };
+
+  switch (processor) {
+    case 'hurupay':
+    case 'higlobe':
+    case 'wepay':
+      return { kind: 'wallet', processor };
+    case 'wise':
+    case 'jeeves':
+    case 'wires': {
+      const payout = row ? payoutDraftFromIdsRow(row).payout : emptyPayout;
+      // preferred_bank_slot decides which account is shown FIRST, not whether
+      // the person has one — fall back across slots exactly like PD's pickFirst.
+      const bankName =
+        payout.preferredBankSlot === 'alternative'
+          ? payout.altBankName || payout.bankName
+          : payout.bankName || payout.altBankName;
+      return bankName ? { kind: 'bank', processor, bankName } : { kind: 'missing', processor };
+    }
+  }
+}

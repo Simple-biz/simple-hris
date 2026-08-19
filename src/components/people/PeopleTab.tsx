@@ -21,6 +21,7 @@ import EmployeePabCalendar from '@/components/employee/EmployeePabCalendar';
 import PabCalendarLoader from '@/components/employee/PabCalendarLoader';
 import { DatePicker, DateRangePicker, type DateRange } from '@/components/ui/date-picker';
 import PeopleBankChanges from './PeopleBankChanges';
+import type { BankMix } from '@/lib/people/bank-mix';
 import { BankChangeDetailDialog, timeAgo, type BankChangeEntry } from './bank-change-detail';
 import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import { parseNameParts, composeMasterListName, type NameParts } from '@/lib/name/name-parts';
@@ -142,6 +143,8 @@ interface Summary {
   otHours: number;
   otPayoutPhp: number;
   otPayoutUsd: number | null;
+  /** Roster-wide send-from / receiving-bank split — feeds the Bank changes band. */
+  bankMix: BankMix;
 }
 interface StatsLeader {
   name: string | null;
@@ -949,7 +952,11 @@ export default function PeopleTab({
         {mode === 'stats' ? (
           <PeopleStatsChart series={statsSeries} leaders={statsLeaders} depts={statsDepts} periods={periods} loading={statsLoading} error={statsError} accent={accent} />
         ) : mode === 'changes' ? (
-          <PeopleBankChanges accent={accent} onOpenProfile={openProfileByEmail} />
+          <PeopleBankChanges
+            accent={accent}
+            bankMix={summary?.bankMix ?? null}
+            onOpenProfile={openProfileByEmail}
+          />
         ) : (
         <>
         {error && (

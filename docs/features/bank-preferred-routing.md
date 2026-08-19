@@ -3,7 +3,7 @@
 *Shipped 2026-07-22; Wise updates + the No-Bank clobber discovery added
 2026-07-25 (§7); People-tab parity + Accounting direct-edit added 2026-08-10
 (§8). Migration status re-verified against production 2026-08-11 — see
-[Migrations](#migrations).*
+[Migrations](#migrations). Bank changes KPI band added 2026-08-19 (§10).*
 
 "Bank Preferred" is the processor **Accounting sends a salary OUT on** — the
 *send-from rail*. It is a first-class, employee-owned field that wins Payment
@@ -287,6 +287,91 @@ locks not covering everything they imply. All fixed in one pass:
 > Making it also freeze bank edits would match the stated intent but could hold
 > employees out for days at a time; deliberately not changed here.
 
+## 10. Bank changes KPI band (2026-08-19)
+
+**People → Bank changes** now opens with two KPI cards above the feed, in the
+Payment Catalog Summary band's card idiom: **Preferred bank · send-from** beside
+**Receiving bank**. Two of the three concepts this doc opens by separating, shown
+side by side — so the three rulings that make that safe are recorded here.
+
+Component: [`bank-mix-band.tsx`](../../src/components/people/bank-mix-band.tsx).
+Aggregate: [`bank-mix.ts`](../../src/lib/people/bank-mix.ts) (`buildBankMix`,
+pure, 14 `node:test` cases in `bank-mix.test.ts`). Resolver:
+`resolveReceivingDestination` in
+[`payout-completeness.ts`](../../src/lib/employee/payout-completeness.ts).
+
+### 10.1 The band is roster-scoped, never feed-scoped
+
+Both cards fold from the **People roster summary** (`PeopleSummary.bankMix`),
+computed inside `buildPeopleRoster` from the same `resolveEffectivePayoutProcessor`
+call that paints the roster chip — so the band can never disagree with the chips
+beside it.
+
+It is **not** computed from the change feed, for two independent reasons:
+
+1. `bank_update_history.processor` stores **`preferred_processor`**
+   ([`save/route.ts`](../../app/api/bank-update/save/route.ts) — `processor:
+   update.preferred_processor`), i.e. the employee's *receive election*. That is
+   NOT the send-from rail, so it may never feed a card labelled "sending".
+2. The feed is a capped, newest-first slice (`?limit=80`). Counting it would be a
+   sample wearing a KPI's clothes.
+
+The band therefore describes the whole roster while the feed below it describes
+recent edits. **Every card prints its own denominator** so the two are never read
+as one number.
+
+### 10.2 A wallet payee has no receiving bank — and is not "missing" one
+
+`resolveReceivingDestination` returns a four-way discriminated union, so the
+distinction is unrepresentable-as-a-mistake rather than a convention:
+
+| `kind` | Meaning |
+|---|---|
+| `bank` | wise / jeeves / wires **with** a bank name — this is the receiving bank |
+| `wallet` | hurupay / higlobe / wepay — the deposit lands in a **wallet**; there is no receiving bank |
+| `missing` | a bank rail with no bank name in **either** slot |
+| `unrouted` | no rail resolves — PD excludes the person as `no_bank` |
+
+Wallet payees are counted in their own bucket and **never** as missing a bank
+(≈913 of 1,860 `employee_ids` rows as of 2026-08-19 — folding them into "missing"
+would invent a payroll blocker for half the roster). Wise stays on the **bank**
+side, per §7 ("Wise = wire fields"). Slot handling follows §4/§8:
+`preferred_bank_slot` decides which account is shown **first**, with PD's
+pickFirst fallback to the other slot — it never decides whether a person has one.
+
+The card's arithmetic is pinned by test: `total = Σ sending + unrouted`,
+`Σ sending = bankRail + wallet`, `Σ receiving = bankRail − missingBank`.
+
+### 10.3 Bank names are counted as typed — no alias table
+
+`employee_ids.bank_name` is free text. `normalizeBankNameKey` groups on
+**casefold + whitespace collapse + trailing punctuation only**, and nothing else.
+
+That deliberately leaves real duplicates apart. Live figures, 2026-08-19:
+
+```
+GoTyme Bank 134 | GoTyme 27
+Bank of the Philippine Islands (BPI) 85 | Bank of the Philippine Islands 41 | BPI 25
+-> 100 distinct spellings across 742 named accounts
+```
+
+An alias table would merge those, and merging means asserting an equivalence
+**nobody recorded**. A KPI that quietly folds two names together is worse than one
+that visibly splits them, so the card states "counted as typed — spellings are
+never merged" and prints the distinct-name count. **Do not add fuzzy matching to
+make the leader look bigger.** If Accounting wants one bank per name, that is a
+data-normalization pass on `employee_ids.bank_name` (a script with an `--apply`
+gate + SELECT backup), not a display trick — and it would then be recorded here.
+
+### 10.4 The card shell is shared, not forked
+
+`TONES` / `KpiLabel` / `StatCard` / `StatValue` / `StatSub` moved out of
+`PaymentCatalogOverview.tsx` into
+[`kpi-stat-card.tsx`](../../src/components/accounting/kpi-stat-card.tsx) and both
+bands import them — the same extraction `hero-stat-row.tsx` got for the CEO
+System Overview. Payment Catalog renders byte-identically to before. **Never fork
+a copy back into a dashboard.**
+
 ## Migrations
 
 DDL has **no path from the dev environment** — run these in the **Supabase SQL
@@ -319,6 +404,9 @@ breaks other notification inserts).
 | `src/lib/employee/payout-completeness.ts` | shared effective-processor + payable resolution (+ tests) |
 | `src/lib/people/{people-roster,people-banking}.ts` + `src/components/people/PeopleTab.tsx` | People-tab parity surfaces (§8) |
 | `scripts/audit-people-vs-dispatch-banks.mjs` | read-only People↔PD parity guard |
+| `src/lib/people/bank-mix.ts` (+ test) | send-from / receiving-bank aggregate behind the KPI band (§10) |
+| `src/components/people/bank-mix-band.tsx` | the two KPI cards above the Bank changes feed (§10) |
+| `src/components/accounting/kpi-stat-card.tsx` | shared gradient KPI card — Payment Catalog + Bank changes (§10.4) |
 
 See also: [payment-dispatch.md](./payment-dispatch.md) (the queue this routing
 feeds), and the session log

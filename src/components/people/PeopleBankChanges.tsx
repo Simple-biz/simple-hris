@@ -12,6 +12,8 @@ import type { Accent } from './PeopleTab';
 import {
   BankChangeDetailDialog, fieldLabel, timeAgo, absoluteTime, type BankChangeEntry as BankChange,
 } from './bank-change-detail';
+import { BankMixBand } from './bank-mix-band';
+import type { BankMix } from '@/lib/people/bank-mix';
 
 // Kept literal to avoid pulling the server-only app-settings module into the
 // client bundle — must match BANK_CHANGES_PULSE_KEY in src/lib/supabase/app-settings.ts.
@@ -43,9 +45,14 @@ const PAGE_SIZE = 20;
  */
 export default function PeopleBankChanges({
   accent,
+  bankMix,
   onOpenProfile,
 }: {
   accent: Accent;
+  /** Roster-wide send-from / receiving-bank mix for the KPI band. Comes from the
+   *  People roster summary (Payment Dispatch's routing precedence), NOT from the
+   *  feed below — see bank-mix-band.tsx. Null until the roster has loaded. */
+  bankMix: BankMix | null;
   /** Jump to this person's roster profile (switches to the roster + opens their dialog). */
   onOpenProfile?: (email: string | null) => void;
 }) {
@@ -200,6 +207,10 @@ export default function PeopleBankChanges({
 
   return (
     <div className="mx-auto max-w-3xl">
+      {/* Roster-wide bank mix — send-from rails beside receiving banks. Scoped to
+          the whole roster, not this feed; each card states its own denominator. */}
+      <BankMixBand mix={bankMix} />
+
       {/* Header: live status + count + manual refresh */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
