@@ -615,21 +615,62 @@ Doing the placement write alone leaves them correctly priced and still
 Unassigned. The seed script does both, and reports loudly when a person has no
 roster row at all.
 
-> **There is an UNMERGED attempt to close this gap. Read it before rebuilding it.**
-> The worktree `.claude/worktrees/hsl-kpi-gml-roster` (branch
-> `worktree-hsl-kpi-gml-roster`, head `01c97f6`) carries **11 commits that are not on
-> `main`** — as of 2026-08-19 it has never been merged and `main` has moved on since.
-> It merges the Global Master List *into* the `team-members` roster API so a placement
-> alone stops producing an Unassigned row: `mergeHslRoster` (pure), a
-> `matchHslSubDeptKey` department-string normalizer, `normalizeDeptToKey` precedence
-> fixes, post-merge roster filtering + single-flight GML cache, a rule rejecting labels
-> already claimed by a top-level department, and a read-only live verifier
-> (`verify-hsl-gml-roster`, paginated for the 1000-row cap). It touches
-> `app/api/hsl-bonus/team-members/route.ts` and `src/lib/hsl-bonus/` — roughly 600
-> lines, and **nothing outside HSL**. Whether it lands is an open decision; the point of
-> this note is that the next person to hit the trap should evaluate that branch rather
-> than write a third mechanism. Beware: it predates the parent-department cutover (§11)
-> and the bulk assignment (§9), so it needs re-reading against both before merging.
+### The GML roster merge — half the trap is closed (2026-08-19)
+
+`GET /api/hsl-bonus/team-members` no longer returns `hsl_team_members` alone. It merges
+**two** sources by lower-cased email (`mergeHslRoster`, pure + unit-tested):
+
+1. **`hsl_team_members`** — the Hogan-sheet-synced roster. Wins on conflict for
+   `is_manager` / `sub_team` / `dept_key`, **except** when its `dept_key` is `null`: an
+   unclassified sheet row keeps the GML-resolved branch rather than regressing to
+   unclassified.
+2. **`global_master_list`** — active people whose `Department` resolves an HSL branch.
+
+So **a placement alone now surfaces on the Wizard rail and the manager KPI card** — the
+trap above no longer needs a second write for the common case. It does not *close*
+the trap: `hsl_team_members.dept_key` is still the only thing the rail reads, and a
+person whose master cell resolves no branch (bare `HSL`, a placement-only key) still
+buckets Unassigned. Merged 2026-08-19 from the `hsl-kpi-gml-roster` branch (11 commits,
+authored 2026-08-03, re-read against §9 and §11 before landing).
+
+**Only the canonical `hsl:<key>` form is admitted, and that is a ruling, not an
+accident.** The branch as written also taught `normalizeDeptToKey` to recognize plain
+sub-team display names ("Case Managers"). **That arm was dropped before merging** (Kane,
+2026-08-19): `normalizeDeptToKey` *is* the family key — §11 — so it drives the Mon–Sun
+week model, the +₱15/h weekend premium and dept-scoped bonus matching, and HSL membership
+must never be **inferred** from a bare label. Measured live the same day, that fallback
+would have moved three non-HSL people onto HSL pay and onto the `executive_assistants`
+roster beside the three real ones:
+
+| Live master cell | Count | Who | Verdict |
+|---|---|---|---|
+| `Executive Assistants` | 3 | `cjm@` · `jamec@` · `ellyt@` | **not HSL** — only the dropped fallback would have claimed them |
+| `Callback Team` | 14 | the real Callback department | not HSL — caught twice (curated map **and** the guard) |
+
+`mergeHslRoster` carries the ruling: a GML candidate is admitted only if
+`matchHslSubDeptKey` resolves a branch **and** `normalizeDeptToKey` independently agrees
+the person is `hogan_smith_law` — which, with no plain-name arm, means the namespaced
+form only. Two tests pin it (`roster-merge.test.ts`, `normalize-dept-key.test.ts`), both
+naming the three people so nobody re-adds the fallback to "make it agree".
+
+Other things worth knowing about the merged route:
+
+- **`hsl_team_members` is read in FULL every time**, paginated via `selectAllPaged` — never
+  narrowed by `.eq('dept_key', dept)`. A `dept_key: null` row that GML *can* classify has
+  to reach the merge, and the `?dept=` filter is applied to the **merged** result, after
+  the null-fallback rule. Pre-filtering the SQL silently dropped such a person **and** her
+  sheet metadata. 566 rows today; it will cross the 1000-row cap eventually.
+- **A 30s in-memory TTL cache** fronts the GML read, caching the in-flight *promise* rather
+  than just the value: an elevated session boots by fetching all 14 branches concurrently
+  and repeats it every live-refresh poll, so without it each cold cycle fired ~14
+  simultaneous full roster scans.
+- **Placement-only sub-teams get no GML-merged row** — `matchHslSubDeptKey` validates
+  against `HSL_DEPT_KEYS` only, so `hsl:simple_texting` (13 people) and
+  `hsl:hearing_prep_mail_sorting` (6) resolve `null` here. Correct per §1.1 (they own no
+  calculator) and inert today (their sheet rows already carry the host team's `dept_key`),
+  but they do not surface under their `scoredUnder` host either.
+- `scripts/verify-hsl-gml-roster.mts` is a **read-only** live verifier that exercises the
+  real production read path and prints a per-branch breakdown.
 
 ### Why §7a-roster-only rather than §7b
 

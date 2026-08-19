@@ -9,6 +9,17 @@ export function normalizeDeptToKey(raw: string | null | undefined): string | nul
   // (e.g. "hsl:intake_specialist") into the master list's Department column.
   // Whatever the sub-team, those people belong to Hogan Smith Law.
   if (s.startsWith('hsl:')) return 'hogan_smith_law';
+  // A PLAIN sub-team display name ("Case Managers", "Executive Assistants") is
+  // deliberately NOT recognized here, and `matchHslSubDeptKey` deliberately is
+  // NOT wired in as a fallback below (Kane, 2026-08-19, merging the
+  // hsl-kpi-gml-roster branch): this function IS the HSL family key — it drives
+  // the Mon-Sun week model, the +P15/h weekend premium and dept-scoped bonus
+  // matching (hsl-subdepartments.md §11) — and inferring membership from a bare
+  // label would capture people who are not HSL. Measured live on 2026-08-19:
+  // "Executive Assistants" x3 (cjm@, jamec@, ellyt@) are not HSL, and only the
+  // hand-curated map below keeps "Callback Team" x14 out of it. Placement is
+  // `hsl:<key>`, per §1; a bare label is not a placement
+  // (`isPlaceableDeptLabel`), and it must not become one here either.
   const map: Record<string, string> = {
     accounting: 'accounting',
     'accounting team': 'accounting',

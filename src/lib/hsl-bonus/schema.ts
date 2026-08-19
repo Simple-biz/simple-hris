@@ -379,6 +379,45 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
   },
 };
 
+// ── HSL sub-department normalization ─────────────────────────────────────────
+
+/**
+ * Recognizes a raw `Department` string (from `global_master_list`) as one of
+ * the 14 `HSL_DEPT_KEYS` branches, two ways:
+ *   - The namespaced access-key form Department Transfers already write into
+ *     the master list (`hsl:case_managers`) — validated against
+ *     `HSL_DEPT_KEYS`, not just prefix-stripped.
+ *   - The branch's plain display name (`HSL_DEPTS[key].name`), trimmed and
+ *     matched case-insensitively (`"Case Managers"`, `"SSD Medical Records"`).
+ *
+ * Returns null for anything else — including the generic `"HSL"` / `"Hogan
+ * Smith Law"` / `"Hogan"` tags, which identify someone as Hogan Smith Law at
+ * the payroll-department level but don't say which specific branch.
+ *
+ * NOTE: the plain-display-name arm is NOT sufficient on its own to treat
+ * someone as HSL. `mergeHslRoster` additionally requires `normalizeDeptToKey`
+ * to agree, which by Kane's 2026-08-19 ruling admits only the namespaced
+ * `hsl:<key>` form — a bare label is not a placement
+ * (`hsl-subdepartments.md` §1). Keep this function's display-name matching
+ * (it is what makes the namespaced/renamed cases legible), but never wire it
+ * into a pay path as a membership test.
+ */
+export function matchHslSubDeptKey(raw: string | null | undefined): HslDeptKey | null {
+  if (!raw) return null;
+  const s = raw.trim().toLowerCase();
+  if (!s) return null;
+  if (s.startsWith('hsl:')) {
+    const candidate = s.slice(4);
+    return (HSL_DEPT_KEYS as readonly string[]).includes(candidate)
+      ? (candidate as HslDeptKey)
+      : null;
+  }
+  for (const key of HSL_DEPT_KEYS) {
+    if (HSL_DEPTS[key].name.trim().toLowerCase() === s) return key;
+  }
+  return null;
+}
+
 // ── Calculation engine ───────────────────────────────────────────────────────
 
 export type KpiData = Record<string, number | boolean>;

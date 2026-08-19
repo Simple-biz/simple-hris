@@ -28,6 +28,35 @@ test('long-standing folds still hold', () => {
   assert.equal(normalizeDeptToKey('Unknown Dept'), null);
 });
 
+test('a plain HSL sub-team display name is NOT HSL membership', () => {
+  // Kane's ruling, 2026-08-19 (merging hsl-kpi-gml-roster): normalizeDeptToKey IS
+  // the HSL family key — week model, +P15/h weekend premium, dept-scoped bonus
+  // matching (hsl-subdepartments.md §11) — so membership is never INFERRED from a
+  // bare label. Placement is `hsl:<key>` (§1); a bare label is not a placement.
+  // Wiring matchHslSubDeptKey in as a fallback here would have moved three live
+  // NON-HSL people onto HSL pay: cjm@ / jamec@ / ellyt@, master cell
+  // "Executive Assistants" (measured 2026-08-19). Do not "complete" this map.
+  assert.equal(normalizeDeptToKey('Case Managers'), null);
+  assert.equal(normalizeDeptToKey('case managers'), null);
+  assert.equal(normalizeDeptToKey('SSD Medical Records'), null);
+  assert.equal(normalizeDeptToKey('Executive Assistants'), null);
+  // Regression: the namespaced form and the generic tag must still resolve.
+  assert.equal(normalizeDeptToKey('hsl:intake_specialist'), 'hogan_smith_law');
+  assert.equal(normalizeDeptToKey('HSL'), 'hogan_smith_law');
+});
+
+test('an HSL branch name that collides with an existing top-level department label keeps its ORIGINAL mapping', () => {
+  // "Callback Team" is both HSL_DEPTS.callback_team.name AND a pre-existing
+  // top-level department in the generic map — the map must keep winning. 14 live
+  // active people sat on this exact label on 2026-08-19, none of them HSL.
+  assert.equal(normalizeDeptToKey('Callback Team'), 'callback');
+  assert.equal(normalizeDeptToKey('callback team'), 'callback');
+});
+
+test('a stale/unrecognized hsl:<key> tag still buckets as hogan_smith_law', () => {
+  assert.equal(normalizeDeptToKey('hsl:not_a_real_key'), 'hogan_smith_law');
+});
+
 // ── the PH email override list ───────────────────────────────────────────────
 
 test('override rewrites the ambiguous "Sales" label for PH cohort emails', () => {
