@@ -16,6 +16,8 @@ fork. Commit: see `git log --oneline -- docs/features/employee-penny-ai.md`.
 | Mount | `src/components/employee/EmployeeApp.tsx` — `activeTab === 'dashboard'` only |
 | Widget | `src/components/ceo/CeoChatBubble.tsx` (shared; `quotaEndpoint` opts into metering) |
 | Chat state | `src/components/ceo/use-ceo-chat.ts` (shared) |
+| Reply rendering | `src/components/ceo/ceo-chat-message.tsx` (shared) |
+| Markdown subset | `src/lib/penny/chat-markdown.ts` (pure) |
 | Chat route | `POST /api/employee/penny-chat` |
 | Quota route | `GET /api/employee/penny-chat/quota` |
 | Tool schemas | `src/lib/anthropic/employee-tool-defs.ts` (pure — importable by tests) |
@@ -114,6 +116,61 @@ Nothing in `team-policies.ts` drives logic, here or anywhere. Penny reads it alo
 Same principle for contacts: `get_my_contacts` returns only managers recorded against
 the employee's own department. There is no canonical HR-contact record in this system, so
 Penny names no one when the list is empty — it says so and points at HR generally.
+
+## Replies are rendered, not printed — the renderer owns formatting, not the prompt
+
+Until 2026-08-19 the design instructed the model to emit plain text and printed
+whatever arrived, with pipe tables as the single exception. That bet holds for Sonnet
+and loses for Haiku: employees saw raw `**bold**` and rows of `***` (Kane: *"remove
+the *** it's a lot and looks ugly AF"*).
+
+> **The fix was the renderer, not a firmer prompt.** "Do not use Markdown" is a
+> request to a text generator whose strongest habit is Markdown — the loosest
+> guarantee available. `src/lib/penny/chat-markdown.ts` now parses the subset models
+> actually emit (bold, italic, bold-italic, strike, inline code, `-`/`*`/`•` bullets,
+> numbered lists, `#` headings, and `***`/`---` thematic breaks) and
+> `ceo-chat-message.tsx` maps it to React elements.
+
+Three layers, outermost first, and **the order is the safety property**:
+
+1. ```` ```biz-report ```` fences → a download card (CEO reports)
+2. GitHub pipe tables → real `<table>`s
+3. everything else → the Markdown subset
+
+Fences and tables are consumed **before** the Markdown pass ever sees the text, so
+JSON inside a report block is never reformatted. A test pins that structurally: the
+block parser has **exactly one call site** (the text branch), and table cells get the
+**inline** pass only — run the block parser on a cell holding `-` (Penny's
+empty-value marker) and it becomes a bullet list.
+
+No HTML is produced or accepted on this path. The parser returns data and the
+renderer emits React elements; a guard test scans both files for React's raw-HTML
+escape hatch by name, which is why neither mentions it even in a comment.
+
+### The parser rules that exist because of a specific failure
+
+| Rule | The failure it prevents |
+| --- | --- |
+| A delimiter followed by whitespace cannot **open** emphasis | `Rate * hours = pay. 2 ** 3` italicised the ten words between two unrelated strays. **Found by server-rendering a real reply, not by the tests** — each earlier test held only one stray delimiter, so nothing had a partner to close against. |
+| A delimiter preceded by whitespace cannot **close** emphasis | The mirror case; together these are CommonMark's flanking rules. |
+| `_` emphasis only at word boundaries | `work_email`, `source_file`, `some_file_name.csv` would render as `some`*file*`name`. |
+| Unmatched delimiters render literally | A mid-stream reply ending in `…**` must not swallow the words after it. A test walks **every prefix** of a formatted reply and asserts no characters are lost. |
+| Backtick spans are opaque | No emphasis inside `` `a*b` ``. |
+| Longest delimiter first (`***` → `**` → `*`) | `***urgent***` otherwise parses as an empty italic inside a bold. |
+| A rule never opens a reply, never stacks, never dangles | A hairline flush against the bubble's edge reads as a broken render. |
+
+The employee prompt's formatting section was rewritten to match: it now shows a worked
+pipe-table example, requires a table whenever the answer holds **more than one record
+of the same shape** (pay weeks, holidays, leave requests), caps tables at 4 columns for
+the 380px panel, and **forbids `***` and `---` as section dividers** — the renderer
+handles them, but a three-sentence answer does not need them.
+
+> **The CEO and Admin prompts were deliberately NOT changed.** The shared renderer
+> gaining capability is strictly additive for them; rewriting their prompts to *use*
+> bold would change how the CEO's and Admin's Penny look, which nobody asked for. They
+> under-use a supported feature — not a bug. Their prompts still claim asterisks show
+> literally; that parenthetical is now stale as an explanation but harmless as an
+> instruction, and correcting it means accepting the style change.
 
 ## The daily allowance is a row count, and it fails closed
 

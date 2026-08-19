@@ -1,18 +1,35 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Loader2, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { BIZ_REPORT_FENCE, parseBizReport, type BizReport } from '@/lib/ceo/biz-report';
 import BizReportCard from './BizReportCard';
+import {
+  parseBlocks,
+  parseInline,
+  type BlockNode,
+  type InlineNode,
+} from '@/lib/penny/chat-markdown';
 
 /**
- * Shared rendering for the CEO assistant chat — used by BOTH the floating
- * bubble (`CeoChatBubble`) and the full-page Penny AI tab (`BizAiTab`). Keep the
- * parsing/rendering here so the two surfaces never drift apart.
+ * Shared rendering for every Penny chat surface — the floating bubble
+ * (`CeoChatBubble`, mounted on CEO / Admin / Employee) and the full-page Penny AI
+ * tab (`BizAiTab`). Keep the parsing here so the surfaces never drift apart.
  *
- * The assistant streams PLAIN TEXT with one exception: GitHub-style pipe tables
- * are turned into real <table>s (the system prompt instructs Claude to use them
- * for tabular answers like multi-week pay). Everything else renders verbatim.
+ * Three layers, outermost first:
+ *   1. ```biz-report fences  → a download card (CEO reports).
+ *   2. GitHub pipe tables    → real <table>s.
+ *   3. everything else       → the small Markdown subset in `chat-markdown.ts`
+ *                              (bold, italic, strike, code, bullets, numbered
+ *                              lists, headings, `***` rules).
+ *
+ * Layer 3 replaced verbatim rendering on 2026-08-19. The original design told the
+ * model to emit no Markdown and printed whatever arrived; Haiku ignored that and
+ * employees saw raw `**` and `***` (Kane: *"remove the *** it's a lot and looks
+ * ugly AF"*). Instructing a text generator not to write Markdown is a request,
+ * not a guarantee — so the renderer handles the subset instead. Order matters:
+ * fences and tables are consumed BEFORE the Markdown pass ever sees the text, so
+ * JSON inside a report block is never reformatted.
  */
 
 type Align = 'left' | 'right' | 'center';
@@ -157,6 +174,112 @@ const ALIGN_CLASS: Record<Align, string> = {
   center: 'text-center',
 };
 
+/* ── Markdown subset → React ──────────────────────────────────────────────── */
+
+/** Inline nodes as elements. Data in, elements out — no HTML string anywhere. */
+function renderInline(nodes: InlineNode[], keyPrefix = ''): ReactNode[] {
+  return nodes.map((n, i) => {
+    const key = `${keyPrefix}${i}`;
+    switch (n.type) {
+      case 'text':
+        return <span key={key}>{n.text}</span>;
+      case 'strong':
+        return (
+          <strong key={key} className="font-semibold text-zinc-900 dark:text-white">
+            {renderInline(n.children, `${key}.`)}
+          </strong>
+        );
+      case 'em':
+        return <em key={key}>{renderInline(n.children, `${key}.`)}</em>;
+      case 'strongEm':
+        return (
+          <strong key={key} className="font-semibold italic text-zinc-900 dark:text-white">
+            {renderInline(n.children, `${key}.`)}
+          </strong>
+        );
+      case 'strike':
+        return (
+          <span key={key} className="line-through opacity-70">
+            {renderInline(n.children, `${key}.`)}
+          </span>
+        );
+      case 'code':
+        return (
+          <code
+            key={key}
+            className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[0.92em] text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100"
+          >
+            {n.text}
+          </code>
+        );
+    }
+  });
+}
+
+/** One text segment's blocks. Spacing is tight — this lives in a chat bubble. */
+function renderBlocks(blocks: BlockNode[], keyPrefix: string): ReactNode {
+  return blocks.map((b, i) => {
+    const key = `${keyPrefix}b${i}`;
+    switch (b.type) {
+      case 'paragraph':
+        return (
+          <p key={key} className="break-words">
+            {b.lines.map((line, li) => (
+              // Soft line breaks inside a paragraph are preserved, matching the
+              // old whitespace-pre-wrap behaviour for multi-line answers.
+              <span key={li}>
+                {li > 0 && <br />}
+                {renderInline(line, `${key}.${li}.`)}
+              </span>
+            ))}
+          </p>
+        );
+      case 'heading':
+        // Rendered as a compact label, not an <h_>: these are section markers
+        // inside a message, and a real heading's scale would fight the bubble.
+        return (
+          <p
+            key={key}
+            className="text-[12px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
+          >
+            {renderInline(b.children, `${key}.`)}
+          </p>
+        );
+      case 'bullets':
+        return (
+          <ul key={key} className="list-outside list-disc space-y-0.5 pl-4">
+            {b.items.map((item, ii) => (
+              <li key={ii} className="break-words">
+                {renderInline(item, `${key}.${ii}.`)}
+              </li>
+            ))}
+          </ul>
+        );
+      case 'ordered':
+        return (
+          <ol
+            key={key}
+            start={b.start}
+            className="list-outside list-decimal space-y-0.5 pl-4 tabular-nums"
+          >
+            {b.items.map((item, ii) => (
+              <li key={ii} className="break-words">
+                {renderInline(item, `${key}.${ii}.`)}
+              </li>
+            ))}
+          </ol>
+        );
+      case 'rule':
+        return (
+          <hr
+            key={key}
+            className="my-1 border-0 border-t border-zinc-200/80 dark:border-zinc-700/60"
+          />
+        );
+    }
+  });
+}
+
 /**
  * Renders an assistant message: plain text, with pipe tables shown as real
  * tables and ```biz-report blocks as a download card. `streaming` must reflect
@@ -169,8 +292,8 @@ export function AssistantContent({ text, streaming = false }: { text: string; st
     <div className="space-y-2">
       {segments.map((seg, idx) =>
         seg.type === 'text' ? (
-          <div key={idx} className="whitespace-pre-wrap break-words">
-            {seg.text}
+          <div key={idx} className="space-y-1.5 break-words">
+            {renderBlocks(parseBlocks(seg.text), `${idx}.`)}
           </div>
         ) : seg.type === 'report' ? (
           seg.pending ? (
@@ -199,7 +322,10 @@ export function AssistantContent({ text, streaming = false }: { text: string; st
                       key={k}
                       className={`whitespace-nowrap border-b border-fuchsia-200/80 px-2.5 py-1.5 font-semibold text-zinc-600 dark:border-fuchsia-900/50 dark:text-zinc-300 ${ALIGN_CLASS[seg.aligns[k] ?? 'left']}`}
                     >
-                      {h}
+                      {/* Cells get the INLINE pass only — a cell is never a
+                          block, and running the block parser here would let a
+                          `-` cell parse as a bullet. */}
+                      {renderInline(parseInline(h), `${idx}.h${k}.`)}
                     </th>
                   ))}
                 </tr>
@@ -212,7 +338,7 @@ export function AssistantContent({ text, streaming = false }: { text: string; st
                         key={ci}
                         className={`whitespace-nowrap border-b border-zinc-100 px-2.5 py-1.5 text-zinc-700 dark:border-zinc-800 dark:text-zinc-200 ${ALIGN_CLASS[seg.aligns[ci] ?? 'left']}`}
                       >
-                        {row[ci] ?? ''}
+                        {renderInline(parseInline(row[ci] ?? ''), `${idx}.${ri}.${ci}.`)}
                       </td>
                     ))}
                   </tr>
