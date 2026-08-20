@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   EMPLOYEE_FAQS,
   GREETING_AUTOHIDE_MS,
@@ -254,6 +256,7 @@ const READY = {
   panelOpen: false,
   quotaExhausted: false,
   widgetHidden: false,
+  hostQuiet: false,
   messageCount: 0,
 };
 
@@ -280,12 +283,23 @@ test("SUPPRESSED: the shell hid the widget", () => {
   assert.equal(shouldShowGreeting({ ...READY, widgetHidden: true }), false);
 });
 
+test("SUPPRESSED: the bubble is on screen but this is not the tab that greets", () => {
+  // Since 2026-08-20 the bubble floats over all nine employee tabs while only
+  // Overview greets. `widgetHidden` cannot express this: the widget IS visible,
+  // it just must not speak first over a leave form or a bank-details field.
+  assert.equal(shouldShowGreeting({ ...READY, hostQuiet: true }), false);
+  // And the balloon must come back when they return to the tab that greets —
+  // this is a render-time gate, not a one-way latch.
+  assert.equal(shouldShowGreeting({ ...READY, hostQuiet: false }), true);
+});
+
 test("every single suppression flag is sufficient on its own", () => {
   // Guards against a future edit turning an early return into a combined &&.
   const flags: (keyof typeof READY)[] = [
     "panelOpen",
     "quotaExhausted",
     "widgetHidden",
+    "hostQuiet",
   ];
   for (const flag of flags) {
     assert.equal(
@@ -295,4 +309,42 @@ test("every single suppression flag is sufficient on its own", () => {
     );
   }
   assert.equal(shouldShowGreeting({ ...READY, messageCount: 1 }), false);
+});
+
+/* ── The mount: bubble everywhere, greeting on Overview only ──────────────── */
+
+/**
+ * Kane, 2026-08-20: the bubble is on every employee tab. These pin the two
+ * halves of that change that a refactor would silently undo — the mount
+ * escaping the tab loop, and the greeting NOT escaping the Overview tab.
+ */
+const EMPLOYEE_APP = readFileSync(
+  join(process.cwd(), "src/components/employee/EmployeeApp.tsx"),
+  "utf8",
+);
+
+test("the bubble is mounted for every tab, not gated on Overview", () => {
+  const mount = EMPLOYEE_APP.slice(EMPLOYEE_APP.indexOf("<CeoChatBubble"));
+  assert.ok(mount.length > 0, "the employee shell must still mount CeoChatBubble");
+  // The condition guarding the mount, i.e. the text just before the element.
+  const before = EMPLOYEE_APP.slice(0, EMPLOYEE_APP.indexOf("<CeoChatBubble")).slice(-200);
+  assert.doesNotMatch(
+    before,
+    /activeTab === 'dashboard'/,
+    "the bubble must not be gated on the Overview tab — it follows the shell now",
+  );
+  // It still follows the Overview PAGE: hiding that page in the Pages overlay
+  // must take Penny with it, or a pay-reading surface outlives the off switch.
+  assert.match(
+    before,
+    /visibilityOf\('employee', 'dashboard'\) !== 'hidden'/,
+    "hiding the Overview page must still hide the bubble",
+  );
+});
+
+test("the greeting balloon is still Overview-only", () => {
+  // A balloon volunteering questions over a half-filled leave form or a
+  // bank-details field is an interruption. The suppression is a render-time
+  // `quiet` flag, never a gate on the 5s timer (that would be a stale closure).
+  assert.match(EMPLOYEE_APP, /quiet: activeTab !== 'dashboard'/);
 });

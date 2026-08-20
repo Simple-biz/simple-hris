@@ -219,6 +219,16 @@ export interface GreetingVisibilityInput {
   quotaExhausted: boolean;
   /** The shell has hidden the whole widget (e.g. the full Penny tab is open). */
   widgetHidden: boolean;
+  /**
+   * The widget is on screen but the host asks it to stay silent right now.
+   *
+   * Since 2026-08-20 the employee bubble floats over **every** tab, while only
+   * the Overview greets: a balloon opening over a half-typed leave request or a
+   * bank-details field is an interruption, not an offer. Required rather than
+   * optional so each mount states its answer — CEO/Admin pass no `greeting` at
+   * all and never reach here.
+   */
+  hostQuiet: boolean;
   /** Messages already in the transcript. */
   messageCount: number;
 }
@@ -243,5 +253,9 @@ export function shouldShowGreeting(input: GreetingVisibilityInput): boolean {
   // Out of prompts: inviting a question they cannot ask is worse than silence.
   if (input.quotaExhausted) return false;
   if (input.widgetHidden) return false;
+  // On screen, but not on the tab that greets. The fuse is armed once on mount
+  // and cannot be gated (see above), so a tab switch is only ever answerable
+  // here, at render time.
+  if (input.hostQuiet) return false;
   return true;
 }

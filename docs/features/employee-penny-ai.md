@@ -1,7 +1,8 @@
-# Employee Penny AI — a metered, self-only chat bubble on the employee Overview
+# Employee Penny AI — a metered, self-only chat bubble on every employee tab
 
 Penny answers an employee's questions about **their own** pay, bonuses, policies and
-who to contact, from a floating bubble on the employee **Overview** tab only. It runs
+who to contact, from a floating bubble present on **every** employee tab (Kane,
+2026-08-20 — it shipped Overview-only on 2026-08-19). It runs
 on **Claude Haiku 4.5** and gives each employee **10 questions per Asia/Manila day**,
 counted server-side; the panel warns as the count falls and greys its composer when it
 runs out. It reads; it never writes, and it cannot see another employee.
@@ -13,7 +14,7 @@ fork. Commit: see `git log --oneline -- docs/features/employee-penny-ai.md`.
 
 | Piece | File |
 | --- | --- |
-| Mount | `src/components/employee/EmployeeApp.tsx` — `activeTab === 'dashboard'` only |
+| Mount | `src/components/employee/EmployeeApp.tsx` — outside the tab loop; every tab, one instance |
 | Widget | `src/components/ceo/CeoChatBubble.tsx` (shared; `quotaEndpoint` meters, `markSrc` picks the heart) |
 | Pay status | `src/lib/penny/pay-status.ts` (pure) · `scripts/audit-employee-pay-status.mts` (read-only probe) |
 | Chat state | `src/components/ceo/use-ceo-chat.ts` (shared) |
@@ -27,7 +28,7 @@ fork. Commit: see `git log --oneline -- docs/features/employee-penny-ai.md`.
 | Quota math | `src/lib/penny/employee-quota.ts` (pure, client-safe) |
 | Quota ledger | `src/lib/penny/employee-usage-db.ts` (`server-only`) |
 | Table | `references/sql/create/2026-08-19_penny_employee_usage.sql` |
-| Tests | `src/lib/anthropic/employee-tools.test.ts` · `src/lib/penny/employee-quota.test.ts` |
+| Tests | `src/lib/anthropic/employee-tools.test.ts` · `src/lib/penny/employee-quota.test.ts` · `src/lib/penny/employee-faq.test.ts` (greeting + mount guards) |
 
 Siblings: [ceo-assistant.md](./ceo-assistant.md) (the original, and the only Penny doc
 that describes the shared widget in detail) · [admin-api-keys.md](./admin-api-keys.md)
@@ -100,6 +101,36 @@ test pins the tool description's pointer to the calendar.
   the real guard, and widening that guard's allowlist to fit a redundant copy would
   weaken the only check that matters.
 
+## The bubble rides the shell; the greeting stays on Overview
+
+Kane, 2026-08-20: *"Employee - Penny AI Chatbubble should be seen across all tabs"* —
+superseding his 2026-08-19 *"Overview - Chat Bubble only"*. The mount now sits **outside
+`EmployeeApp`'s tab loop**, which is the whole change and also the reason it is cheap:
+
+- **One persistent instance.** Employee tabs are hidden, not unmounted
+  (`mountedTabs` keep-alive), so lifting the bubble out of the conditional means the
+  transcript, the quota pill and the greeting's dismissal survive a tab hop. Mounting it
+  *per tab* instead would have reset the conversation every time someone checked their
+  hours mid-question.
+- **It still follows the Overview *page*.** When an admin sets Overview to `hidden` in
+  the Pages overlay, the bubble goes with it — Penny reads that page's pay figures aloud,
+  so a read surface must not outlive the switch that turned the page off. This is
+  `visibilityOf('employee','dashboard') !== 'hidden'`, fail-open until the config loads,
+  the same convention `renderContent()` already uses for tab bodies.
+- **The greeting balloon does not follow.** See below.
+- Nothing about access changed: the route re-resolves the subject through
+  `authorizeEmailAccess` and no tool takes an identity argument, so which tab the bubble
+  is painted on was never the boundary.
+
+Two source-scan guards in `employee-faq.test.ts` pin both halves — the mount must not be
+gated on `activeTab === 'dashboard'`, and it must still be gated on the Overview page's
+visibility.
+
+> The measured reason this was safe: `grep 'fixed bottom|fixed right'` over
+> `src/components/employee/` returns **nothing**. No employee tab has its own fixed
+> bottom-right control for the bubble to cover, and the only `sticky` elements are
+> `top-0` table headers.
+
 ## Penny speaks first — five seconds in, once, and never into a dead end
 
 Kane, 2026-08-19: five seconds after the employee dashboard loads, the bubble asks
@@ -170,9 +201,20 @@ panel must both be answerable, and two lists would drift.
 
 Every reason not to speak lives in one render-time expression, `showGreeting`, rather
 than spread across effects — the balloon is suppressed while the panel is open, once a
-conversation exists, when the shell hides the widget, and **when the daily allowance is
-spent**. Inviting someone to ask a question they have no prompt left for is worse than
-saying nothing.
+conversation exists, when the shell hides the widget, **when the daily allowance is
+spent**, and **on any tab but Overview**. Inviting someone to ask a question they have no
+prompt left for is worse than saying nothing.
+
+The tab rule (`hostQuiet`, 2026-08-20) is the new one and is a different state from
+`widgetHidden`: the widget *is* on screen, it just must not speak first. A balloon
+volunteering "anything I can help with?" over a half-typed leave request or a
+bank-details field is an interruption, not an offer — so the bubble spread to nine tabs
+and the greeting did not. `hostQuiet` is a **required** field on
+`GreetingVisibilityInput`, not an optional one, so every mount states its answer rather
+than inheriting a default; CEO and Admin pass no `greeting` at all and never reach it.
+
+Because it is a render-time gate rather than a latch, returning to Overview inside the
+~22s auto-hide window shows the balloon that was suppressed on the way out.
 
 The suppression list is a **pure, tested predicate** — `shouldShowGreeting` in
 `employee-faq.ts`, not a condition assembled in the component — so the case nobody would
@@ -464,9 +506,14 @@ is the real display and resolves a running period to "In Progress" via
 `isPabPeriodInProgressByCalendar`. `isPAEligible` still drives five other sites, so no
 computation changed.
 
-> `EmployeePabCalendar.tsx` has the same two-state badge and was **deliberately left
-> alone** — it lives on a different tab, where the bubble is not mounted, so it was out of
-> scope. It carries the same mid-period flaw and is worth revisiting on its own.
+> `EmployeePabCalendar.tsx` was **deliberately left alone** in 2026-08-19, on the reasoning
+> that the bubble was not mounted on its tab. **That reasoning expired on 2026-08-20** when
+> the bubble spread to every tab — but re-measured then, the concern is gone twice over:
+> that badge is now **three-state** (`verdict === 'in_progress'` →
+> "⏳ In Progress", `EmployeePabCalendar.tsx:803` and `:1240`), so the mid-period false
+> verdict is closed, and it renders only inside `MyDisputes` (whose tab is commented out of
+> `EmployeeApp`) and the admin-side `Overview.tsx` — neither of which is an employee tab the
+> bubble floats over. Nothing to do.
 
 ## Elevated viewers: subject and meter are different people
 
@@ -525,18 +572,26 @@ track a leave allowance, so a "days remaining" answer would be fabricated.
 
 ## Deploy notes
 
-1. **Migration — PENDING until Kane confirms.** The table does not exist yet:
+1. **Migration — APPLIED 2026-08-20** (commit `a2ae19b0`), verified two independent ways
+   (the script's own `information_schema` read-back, plus a PostgREST probe proving the
+   schema cache reloaded). It sat dead for a day: the blocker was an unencoded `@` in
+   `DATABASE_URL`'s password, not the migration — see
+   [[migration-apply-needs-database-url]]. The commands, for a re-run:
    ```
    node scripts/apply-penny-employee-usage.mjs            # verify only (default)
    node scripts/apply-penny-employee-usage.mjs --apply    # create the table + indexes
    ```
-   Needs `DATABASE_URL` in `.env.local` (direct port 5432, not the pooler). Idempotent;
-   a re-run is a no-op. Nothing to back up — the table starts empty, and an empty ledger
-   correctly reads as "nobody has spent a prompt today".
+   Needs `DATABASE_URL` in `.env.local` — the **session pooler**
+   (`aws-1-us-east-2.pooler.supabase.com:5432`, user `postgres.<ref>`, `@` in the password
+   written `%40`). The script's own "direct 5432, not the pooler" comment is **wrong for
+   this project**: the direct `db.<ref>` host is IPv6-only and answers with no address at
+   all. Idempotent; a re-run is a no-op. Nothing to back up — the table starts empty, and
+   an empty ledger correctly reads as "nobody has spent a prompt today".
 
-   **Until it is applied, Penny is unavailable to employees, by design:** `countUsedToday`
-   fails closed on the missing table, so every employee reads as spent out. That is the
-   fail-closed rule working, not a bug — no unmetered spend before the meter exists.
+   **While the table was missing, Penny was unavailable to every employee, by design:**
+   `countUsedToday` fails closed on a missing table, so everyone read as spent out. That
+   was the fail-closed rule working, not a bug — no unmetered spend before the meter
+   exists. It is also why the feature looked shipped and was dead for a day.
 
 2. **Anthropic key** — reuses the existing one (`app_settings["secret.anthropic_api_key"]`,
    else `ANTHROPIC_API_KEY`). No new key, no new env var. With none configured the route
@@ -544,9 +599,12 @@ track a leave allowance, so a "days remaining" answer would be fabricated.
 
 3. **No new notification type, webhook, cron, or RBAC entry.** Employee tabs are not in
    `FEATURE_CATALOG` (there is no `employee` FeatureViewKey), and the bubble is not a tab,
-   so nothing needs a grant. Page-visibility settings do not hide it — it follows the
-   Overview tab.
+   so nothing needs a grant. **Page visibility is the one lever that does reach it**
+   (corrected 2026-08-20): setting the employee **Overview** page to `hidden` hides the
+   bubble on every tab. Hiding any other page does nothing to it.
 
 4. **Cost.** Haiku 4.5 at 10 questions/employee/day across ~1,000 employees is the
    ceiling this feature was given; there is no separate kill switch beyond removing the
-   mount in `EmployeeApp.tsx` (one conditional) or clearing the API key.
+   mount in `EmployeeApp.tsx` (one conditional), hiding the employee Overview page in the
+   Pages overlay, or clearing the API key. The cost ceiling is unchanged by the 2026-08-20
+   all-tabs mount — the meter is per employee per day, not per tab.

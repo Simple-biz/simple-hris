@@ -81,6 +81,15 @@ export default function CeoChatBubble({
     autoHideMs: number;
     /** Distinguishes the once-per-session dismissal between mounts. */
     storageKey: string;
+    /**
+     * Keep the balloon silent for now without unmounting the bubble. The
+     * employee shell floats Penny over every tab (2026-08-20) but greets only
+     * on Overview — a balloon over a half-filled leave form is an interruption.
+     *
+     * Read at render time only: the five-second fuse is armed once and gating a
+     * timer on this would be the stale closure the comment below warns about.
+     */
+    quiet?: boolean;
   };
 }) {
   const [open, setOpen] = useState(false);
@@ -224,6 +233,7 @@ export default function CeoChatBubble({
       panelOpen: open,
       quotaExhausted: locked,
       widgetHidden: hidden,
+      hostQuiet: !!greeting.quiet,
       messageCount: messages.length,
     });
 

@@ -599,8 +599,17 @@ export default function EmployeeApp() {
         </div>
         <AppFooter />
       </main>
-      {/* Penny AI — Overview tab ONLY (Kane 2026-08-19: "Overview - Chat Bubble
-          only"), so it never floats over My Hours, MESA or the Profile forms.
+      {/* Penny AI — EVERY employee tab (Kane 2026-08-20: "should be seen across
+          all tabs", superseding the 2026-08-19 "Overview - Chat Bubble only").
+          Mounted OUTSIDE the tab loop, so it is one persistent instance: the
+          transcript, the quota pill and the greeting's dismissal survive tab
+          switches instead of resetting on every hop.
+          It still follows the Overview PAGE though — if an admin hides Overview
+          in the Pages overlay, the bubble goes with it, because Penny reads that
+          page's pay figures aloud and must not outlive the switch that turned it
+          off. Same fail-open-until-loaded convention as renderContent() above.
+          The greeting balloon stays Overview-only via `quiet` — a proactive
+          balloon over a half-filled leave form is an interruption, not an offer.
           The route is the access control, not this mount: /api/employee/penny-chat
           re-resolves the subject through authorizeEmailAccess and its tools take
           no identity argument. `email` rides along so an elevated ?email= viewer
@@ -608,7 +617,7 @@ export default function EmployeeApp() {
           matching the notifications panel and the unread badge. No thumbs rating
           — /api/ceo/chat/feedback admits ceo/admin only, so the control would be
           decorative here. See docs/features/employee-penny-ai.md. */}
-      {activeTab === 'dashboard' && employeeEmail && (
+      {employeeEmail && visibilityOf('employee', 'dashboard') !== 'hidden' && (
         <CeoChatBubble
           endpoint="/api/employee/penny-chat"
           quotaEndpoint={`/api/employee/penny-chat/quota?email=${encodeURIComponent(employeeEmail)}`}
@@ -625,6 +634,11 @@ export default function EmployeeApp() {
             // Per signed-in identity, so an elevated viewer switching between
             // employees is not re-greeted for each one.
             storageKey: `penny_greeted:${employeeEmail}`,
+            // Overview greets; the other eight tabs carry the bubble in silence.
+            // Read at render time inside `shouldShowGreeting`, never by a timer —
+            // the 5s fuse outlives a tab switch, so gating it there would be a
+            // stale closure (see the warning in CeoChatBubble).
+            quiet: activeTab !== 'dashboard',
           }}
         />
       )}
