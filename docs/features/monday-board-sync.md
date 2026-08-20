@@ -462,6 +462,36 @@ attempts; **5xx and network faults keep the short backoff** because those are ge
 partial reconcile is *incomplete, never wrong* — the reconciler writes desired state and is idempotent,
 so re-running completes it.
 
+## Pass 4, 2026-08-20 — what closing one row uncovered
+
+`--only-new`, 6 calls, hash `98579ab77d67`, every row verified with `verify-one.mts`.
+
+The Sprint 27 row *"Run outstanding Supabase migrations + re-import n8n workflows (12+ pending SQL
+files)"* closed **Done**. The parenthetical was folklore: measured, it was **one**. But the three rows
+`audit-pending-migrations.mts` could not settle read-only were hiding the real finding — two shipped,
+board-**Done** features had never delivered a single notification. `pab.excluded` / `pab.restored` were
+dead 17 days and `kpi.scored` 3, at **0 rows each** against 3,694 for `payroll.available`, because the
+type CHECK rejected every insert and all four call sites swallow a failed notify into `console.warn`.
+
+Three consequences worth carrying forward:
+
+- **A wrong row title stays wrong.** Item names are set at CREATE only, so renaming orphans the row and
+  mints a duplicate. Put the correction in the evidence update, never in the name.
+- **`ROWS` is rewritten per pass, not appended to.** Keeping the previous pass's 30 applied rows would
+  have stamped "board sync pass 2026-08-20" onto work that finished in April for zero board change — a
+  false audit trail is worse than a short one.
+- **`--only-new` writes no epic relation, and that is now confirmed live**, not just documented: all
+  three created rows read `epic rel: (unset)`. Correctly grouped, typed, scored and statused; unlinked
+  until a full reconcile adopts them by name.
+
+The `inputsHash` gate added earlier the same day fired on its first real use —
+`approval accepted: 98579ab77d67 (source verified: 7eb9bf9db186)`.
+
+One soft spot is recorded rather than glossed: the independent `pg_constraint` re-read after the final
+DDL was never obtained, so that write rests on Kane's report that it succeeded. Admissible under the
+honesty gate — his confirmation counts and is **named** as the basis — but weaker than the three-way
+proof the view fix got, and the row says so.
+
 ## Cross-links
 
 `docs/features/INDEX.md` · memory `monday-hris-board-sync` · pass evidence
