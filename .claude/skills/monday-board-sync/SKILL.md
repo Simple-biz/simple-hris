@@ -79,6 +79,22 @@ shipped 2026-08-10 — HSL sub-departments was complete, and paid nobody differe
 **Never invent an Actual SP.** Estimated SP is a forecast and belongs on open rows; Actual SP is a
 record and belongs only on shipped ones.
 
+**A migration audit is only as good as its probe.** `scripts/audit-pending-migrations.mts` is the
+tool that replaces a PENDING claim with an observation, and for TABLES it returned the wrong answer:
+`probeTable()` uses `select('*', { head: true })` and treats a falsy error as APPLIED, but under
+`head: true` PostgREST returns **no error at all** for a table that does not exist — just
+`count: null`. Proven 2026-08-20 on `penny_employee_usage` and on a control table named
+`definitely_not_a_table_xyz`; the positive control returns `count=181799`, which is why it went
+unnoticed. `probeColumn()` is wrong differently — a missing column errors with `code: undefined` and
+an empty message, so it lands INCONCLUSIVE rather than NOT APPLIED. **Probe existence WITHOUT
+`head: true`** (a plain `.limit(1)` errors correctly with `42703` / `PGRST205`), and never close a
+migrations row on an audit whose probe shape you have not checked — pass 4 did, and pass 5 had to
+reopen it.
+
+And the corollary that runs the other way: **do not assume a PENDING claim is stale either.** Measured
+2026-08-20, two of three were TRUE (Penny AI and the time-adjustment second approver were both
+genuinely un-run). Measure; do not assume in either direction.
+
 A doc or memory line saying PENDING is **evidence, not proof** — five such claims in this repo are
 contradicted by later evidence. A wrongly-blocked row is also a wrong board. When it cannot be
 settled, show it as `UNVERIFIED` and ask; never silently downgrade.
@@ -97,7 +113,19 @@ Then **cluster by file overlap, never by commit message.** This is not optional 
 78-commit range: `488cf44` "HSL Weekend Hours Fix" contained no code at all, `02dc5aa` "Massiv
 Update" carried two unrelated features, `a7ecd4c` "Callback" carried three and named the wrong
 department, `0b66a8e` "HSL - ANNOYANCE" was an offboarding workflow, and `5eb398a`'s pricing was
-reversed by a later commit — so one row must describe the current rule, not both.
+reversed by a later commit — so one row must describe the current rule, not both. And again in an
+83-commit range on 2026-08-20: `4e8309af` "Push" carried an entire shipped feature (view-scoped
+notification chimes, plus a 100-line doc), `4447e404` "ss" carried an unapplied payroll fix script,
+and `6d3be952` "Push" / `0e402a0d` "s" carried nothing but settings and backup JSON — pure noise. A
+message-clustered pass would have invented two rows for the noise and missed the feature.
+
+**AUTHOR DATE IS NOT LANDING DATE, and `selfcheck()` cannot catch the difference.** `sprint-evidence`
+prints `--date=short`, which is the AUTHOR date. A branch merged this week therefore reads as work
+from whenever it was written: `4a15db2c` merged the HSL GML roster on 2026-08-19 with eleven commits
+authored *and committed* 2026-08-03. Ending that row's sha list on the branch tip gives a Completed
+Date of Aug 3 — a real commit date, so selfcheck ACCEPTS it — and files a fortnight of unmerged work
+into the wrong sprint. **For work that landed via a merge, the row's last sha is the MERGE commit;**
+branch shas stay in the list as evidence but never last.
 
 ### 2b. Rolling into a new sprint
 
@@ -172,7 +200,18 @@ One Gridline pass left verification dead for 5.5 hours.
 - **A whole day's budget can vanish before you start.** On 2026-08-13 it was already spent by 12:00 UTC
   with no pass having run that UTC day, and the cause was never identified. Assume nothing about how
   much is left: probe with one cheap call (`boardGroups`) before planning a 300-call pass.
-- **Budget the verify, not just the write.** A write you cannot verify is not done.
+- **Budget the verify, not just the write.** A write you cannot verify is not done. **Measured
+  2026-08-20: a 28-row pass exhausted the day.** `apply.mts` finished clean, then `verify.mts` died
+  immediately on `DAILY_LIMIT_EXCEEDED` (`retry_in_seconds: 39234` at 13:06:06Z → 00:00Z, the clean
+  UTC bucket a third time). A big pass costs a full day once the reconciler's 142-row patch is
+  counted. So on any pass creating more than a handful of rows: **spot-check with `verify-one.mts`
+  (1 call each) between phase 2 and the full `verify.mts`**, or split it across two UTC days. The
+  cheapest moment to verify is before the budget is gone.
+- **Phase 2 is partial verification, and may be credited as exactly that.** It re-reads the board
+  after phase 1 to resolve ids, so every correction target resolving by byte-exact name proves the
+  rows EXIST, that the reconciler adopted them rather than minting duplicates (the `hit.count > 1`
+  guard), and that the corrections addressed real ids. It proves nothing about the VALUES written —
+  those are acknowledged mutations, not re-reads. Report the two halves separately.
 - Ask only for the columns you read — `column_values(ids: [...])`. Pulling all ~21 columns across
   2,172 items is the most expensive thing these scripts can do.
 - A full `apply.mts` is ~200 calls: the reconciler patches all 135 tasks and 37 epics every run.
@@ -236,6 +275,11 @@ One Gridline pass left verification dead for 5.5 hours.
   `3578fe5c294f` was applied at 13:19, and a concurrent session had minted `e9280075d85c` over it by
   13:30. Before proposing, `ls` the mtimes of `proposal.json` / `pass.mts` / `hris-plan.ts`; if they
   moved in the last few minutes, another session is mid-pass — **fold into it or wait**, never race it.
+  **Recent mtimes alone are not the test — they false-positived on 2026-08-20.** All three had moved
+  6 minutes earlier, but that was the PREVIOUS pass's own residue: `git status` was clean and
+  `f51b4cd5` already contained it. Check the tree, not just the clock — mtime moved **and** the tree
+  dirty (or no commit containing those paths) means a live session; mtime moved with a clean tree
+  means a pass that already landed.
   Two full applies also cost ~400 calls against a daily budget that one pass nearly fills.
 - **The board label is not what re-files a row — the GROUP is.** `sync.ts` writes the Sprint label on
   update but wrote the group only at create until 2026-08-13, so a plan relabel alone left rows filed

@@ -583,4 +583,150 @@ export const PLAN_TASKS: PlanTask[] = [
   // summary node carries two traps that were both live bugs (.isExecuted guards, skipped items
   // counting into failed), so this is a verify job, not a file upload.
   { epic: 'HRIS-03b', name: 'Import paystub-dispatch.workflow.json into live n8n so emailed statements match the app', type: 'n8n Workflow', sp: 2, done: true, sprint: 'S26', priority: 'High' },
+  // ══ Sprint 26 / Sprint 27 backfill — pass 5, 2026-08-20 (range 9fe6504c..HEAD, 83 commits) ══════
+  // Kane 2026-08-20: "for the past week or so we have undocumented features". This block is that
+  // week, clustered by FILE OVERLAP rather than message — four commit messages in this range are
+  // actively misleading ("Push" carried the whole notification-chime feature, "ss" carried an
+  // unapplied payroll fix script, "s"/"Push" carried only settings + backups).
+  //
+  // ATTRIBUTION: S26 accepts Aug 4–17 (it absorbs the Aug 16–17 gap days), S27 accepts Aug 18–29.
+  // Every date below is the commit date of the row's LAST sha, which selfcheck() re-derives from git.
+  //
+  // done:true on all but three rows rests on ONE stated basis: Kane confirmed 2026-08-20, asked
+  // explicitly, that he has used all of them in production. The three exceptions are not a matter of
+  // opinion — each was measured dead against the live database this morning and carries done:false so
+  // the reconciler cannot mint an Actual SP for work that has never once run.
+  //
+  // 8 SP is Kane's ruling for a big ticket ("considered an Epic") and stays a TASK score linked to an
+  // existing epic — no new Roadmap rows. That agrees with the board's own rule: on Fibonacci the next
+  // step is 13, so "over 8 is an epic" and 8-as-a-task are the same convention.
+
+  // ── Sprint 26 · Aug 13 ───────────────────────────────────────────────────────────────────────
+  // 1 SP: two commits, three files, a keyframe sweep moved off Framer Motion onto CSS. The floor of
+  // the S26 band and rightly so — no data path, no endpoint, one visual bug.
+  { epic: 'HRIS-09', name: 'Employee payroll-processing bar sweeps one direction, driven by CSS', type: 'Bug', sp: 1, done: true, sprint: 'S26' },
+  // 2 SP: retiring a sub-team is code-first-then-rate-row (the ordering rule in
+  // hsl-placement-only-subteams), so this is a schema edit, a seed-script change and a separately
+  // approved delete of the orphaned rate row. Peer of the 2-SP "Collections TL + Simple Texting
+  // removed" row, which is literally the same job on a different team.
+  { epic: 'HRIS-30', name: 'HSL Lead Nurture sub-team retired — Simple Texting is the only placement-only team', type: 'Chore', sp: 2, done: true, sprint: 'S26' },
+
+  // ── Sprint 26 · Aug 14 ───────────────────────────────────────────────────────────────────────
+  // 5 SP: 482 people re-keyed from the KPI Role column, plus three new sub-team rosters seeded and
+  // two Guard-8 reports closed. A bulk data migration with a SELECT backup per step (four backup
+  // JSONs in the diff) — not 8, because the sub-department MODEL it writes into is its own 8-SP row.
+  { epic: 'HRIS-30', name: 'HSL sub-departments bulk-assigned from the KPI Role column (482 people) plus the EGS, Mail Sorting and Executive Assistants rosters', type: 'Chore', sp: 5, done: true, sprint: 'S26' },
+  // 5 SP: new API route, a rankings reader, a policies module, both with tests, and a new sidebar
+  // section. Sits with the other 5-SP "new tab + new fetch" rows in this sprint.
+  { epic: 'HRIS-09', name: 'Employee department directory with SP rankings and per-team policies', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  // 5 SP: reopen is not the inverse of close — it burns the claim, archives under a prefix that the
+  // close-out scan deliberately does not see, and suppresses the re-fire. Two API routes, a store, a
+  // trigger module and its tests. Peer of the 5-SP "Close Pay Cycle from the Stop dialog" row it
+  // extends.
+  { epic: 'HRIS-03a', name: 'Reopen a closed pay cycle, and fire the completion confetti on a clean close', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+
+  // ── Sprint 26 · Aug 17 (gap day — S26 absorbs Aug 16–17) ─────────────────────────────────────
+  // 8 SP, Kane's big-ticket score: five commits, a new tutorial subsystem (guide + narrative modules,
+  // both tested), a new API route, two new components and a chat-head shell reworked twice. It is the
+  // largest single addition to the wizard since the Validation step. The guide NEVER gates a control
+  // and the narrative is render-only, which is what keeps an 8 out of epic territory.
+  { epic: 'HRIS-02a', name: 'Payroll Wizard Processing Tutorial Mode — chat-head guide, Sun–Sat processing narrative and rings on the real controls', type: 'Feature', sp: 8, done: true, sprint: 'S26' },
+  // 5 SP: deleting a Save button is the small half. The real work is kpiAutosaveGate — never persist a
+  // load-seeded value and never persist a just-failed one — across two calculators, with submission
+  // still manual. New tested module, 8 files.
+  { epic: 'HRIS-06', name: 'KPI Calculator scoring autosaves — the Save button is gone', type: 'Feature', sp: 5, done: true, sprint: 'S26' },
+  // 3 SP: a calendar replaces a dropdown, retracts behind a toggle, and the picked week is then pinned
+  // through every gate that reads it (resolveIsTechBonusWeek, never the raw flag). Four commits but
+  // one screen; the end-to-end pinning is what lifts it off 2.
+  { epic: 'HRIS-08', name: 'Tech Bonus week picker becomes a calendar behind a Change week toggle, and the picked week fires that week everywhere', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  // 3 SP: step-2 rates become cards with flag pairs and the reference detail moves behind info icons;
+  // needed a Base UI popover added to components/ui and an index.css rule. Presentation only — no
+  // rate, gate or total changed — so it sits below the 5-SP rows that each added a fetch.
+  { epic: 'HRIS-02a', name: 'Wizard step-2 conversion rates become cards with flag pairs; Additions declutter behind info icons', type: 'Feature', sp: 3, done: true, sprint: 'S26' },
+  // 3 SP: the chime had one global mount, so HR heard payroll money land. Now every mount passes a
+  // view and the pairing is tested. Shipped inside a commit whose whole message was "Push".
+  { epic: 'HRIS-15', name: 'Notification chimes are view-scoped so HR no longer hears money', type: 'Bug', sp: 3, done: true, sprint: 'S26' },
+  // 1 SP: seventeen lines of copy on one card, so an employee reading "Ready to View" is not shown a
+  // number that excludes their bonuses. Real, and worth exactly 1.
+  { epic: 'HRIS-03b', name: 'Salary “Ready to View” card discloses that bonuses are not in yet', type: 'Feature', sp: 1, done: true, sprint: 'S26' },
+  // 5 SP, and done:FALSE — the honesty gate, not a judgement call. 15 files, an employee toast, a live
+  // update and its own DDL. Measured against production 2026-08-20: employee_notifications holds ZERO
+  // kpi.scored rows against 3,694 payroll.available. The CHECK now permits the type (applied 08-20)
+  // but nothing has ever been delivered, so the corrector writes Pending Deploy and no Actual SP.
+  { epic: 'HRIS-06', name: 'kpi.scored employee notification — toast plus live update the moment a dept-week is scored', type: 'Feature', sp: 5, done: false, sprint: 'S26', priority: 'High' },
+
+  // ── Sprint 27 · Aug 18 ───────────────────────────────────────────────────────────────────────
+  // 8 SP, Kane's big-ticket score: this is a payroll RULING, not a UI change. Snap-to-Sunday was the
+  // root cause and is deleted, changed weeks now price two 2dp legs, and HSL transition OT counts
+  // every hour. 16 files, an audit script and a fix script, both run. It REVERSES the Done S26 row
+  // "Rate-history effective_from snapped to the pay-week start" (c39fad3b) — see that row's update.
+  { epic: 'HRIS-02b', name: 'Mid-week rate-change effective dates are real — snap-to-Sunday removed, changed weeks price 2dp legs, HSL transition OT counts every hour', type: 'Bug', sp: 8, done: true, sprint: 'S27', priority: 'High' },
+  // 3 SP: an activity feed at each pane's bottom plus submitted-by/when on KPI rows. Audited SAVES
+  // only, never presence, and templates never print details — a deliberately narrow read.
+  { epic: 'HRIS-20', name: 'Payroll Readiness recent-changes activity feed, and KPI rows show who submitted and when', type: 'Feature', sp: 3, done: true, sprint: 'S27' },
+  // 3 SP: the Offboarded pane goes cached+live with search and a dept filter, every pane stamps its
+  // last data pull, a Realtime signal dot reports emerald/amber honestly, and the Rates tab is
+  // removed. Four panes touched, one removed — 3, not 5, because no new data source appeared.
+  { epic: 'HRIS-21', name: 'Payroll Notes Offboarded pane cached and live with filters, a per-pane data-pull stamp and a Realtime signal dot', type: 'Feature', sp: 3, done: true, sprint: 'S27' },
+  // 3 SP: bonuses and adjustments itemized through the shared report-rows builder so the wizard
+  // Reports, the PDF and the Overview CSV agree line for line, with a fetch failure ABORTING the
+  // export rather than quietly shipping a short one. 9 files, one new route.
+  { epic: 'HRIS-02a', name: 'Wizard Reports and Overview CSV itemize bonuses and adjustments end-to-end', type: 'Feature', sp: 3, done: true, sprint: 'S27' },
+  // 2 SP: the badge was its own predicate and disagreed with the wizard. Now both read the same
+  // 30-day pay gate, anchored on the cycle week start. Two files plus an INDEX row.
+  { epic: 'HRIS-08', name: 'Overview Tech Eligible badge uses the wizard’s own 30-day pay gate', type: 'Bug', sp: 2, done: true, sprint: 'S27' },
+  // 2 SP: seventeen lines, but it is money — orphanage OT was pricing at the 0.5× weekly differential
+  // instead of the full 1.5×. Small diff, real underpay, hence 2 rather than 1.
+  { epic: 'HRIS-03c', name: 'Orphanage OT prices at the full 1.5× rate, never the 0.5× differential', type: 'Bug', sp: 2, done: true, sprint: 'S27', priority: 'High' },
+
+  // ── Sprint 27 · Aug 19 ───────────────────────────────────────────────────────────────────────
+  // 8 SP, Kane's big-ticket score, and done:FALSE. Ten commits, a new API route pair, a Haiku client,
+  // self-only tools, guides, a Markdown renderer and greeting chips. Measured 2026-08-20: the table
+  // penny_employee_usage DOES NOT EXIST in production (PGRST205, the same signature a control
+  // nonexistent table returns). The row count IS the quota and the check fails closed, so the feature
+  // cannot serve a prompt. Pending Deploy until the migration runs.
+  { epic: 'HRIS-09', name: 'Employee Penny AI on the Overview — Haiku, self-only tools, 10 prompts per Manila day, with guides and rendered Markdown', type: 'Feature', sp: 8, done: false, sprint: 'S27', priority: 'High' },
+  // 5 SP, and done:FALSE. Dual sign-off that can land in either order, a manager-named second approver
+  // per request, 13 files. Measured 2026-08-20: ALL FOUR of second_approver_email, second_decision,
+  // manager_decision and second_approver_assigned_by are absent from time_adjustment_requests. The
+  // migration has not run, so the feature is code-complete and functionally dead.
+  { epic: 'HRIS-04', name: 'Time adjustments need two sign-offs — the manager names a second approver per request', type: 'Feature', sp: 5, done: false, sprint: 'S27', priority: 'High' },
+  // 5 SP: three commits, 12 files, two new band components and a tested bank-mix module. Two
+  // RAIL-shaped cards (send-from and payable-per-rail), roster-scoped rather than feed-scoped, dept
+  // filter, and never a bank name. Peer of the 5-SP "Bank rail parity" row from S26.
+  { epic: 'HRIS-19', name: 'People → Bank changes band: send-from and payable-per-rail cards, per-rail counts, dept filter, no bank names', type: 'Feature', sp: 5, done: true, sprint: 'S27' },
+  // 5 SP: a three-format export at MASTER-LIST grain, so never-submitted people are the point rather
+  // than an omission, with off-roster submitters appended and flagged. New tested module, new reader,
+  // 1,714 lines. Never a price — the gift feature is info-only.
+  { epic: 'HRIS-32', name: 'Gift Tracker tenure-gift roster export (CSV/XLSX/PDF) at master-list grain', type: 'Feature', sp: 5, done: true, sprint: 'S27' },
+  // 5 SP: merges the Global Master List into the team-members roster so a placement alone reaches the
+  // Wizard rail, with the plain-name fallback deliberately DROPPED. Authored on a branch on Aug 3 and
+  // merged Aug 19 — the row's last sha is therefore the MERGE commit, because the branch commits carry
+  // Aug 3 dates and would attribute this to a sprint it did not land in.
+  { epic: 'HRIS-30', name: 'HSL KPI roster merged with the Global Master List — a placement alone reaches the Wizard rail', type: 'Feature', sp: 5, done: true, sprint: 'S27' },
+  // 2 SP: DialogContent has no height cap, so a p-0 dialog pushed its footer off-screen. The fix is a
+  // dvh cap plus gap-0, and the finding generalises to every p-0 dialog — which is why it is 2, not 1.
+  { epic: 'HRIS-15', name: 'p-0 dialogs get a dvh height cap so a modal footer can never go unreachable', type: 'Bug', sp: 2, done: true, sprint: 'S27' },
+  // 1 SP: an Edit button on the Bonus Library cards. Two files, 59 lines.
+  { epic: 'HRIS-06', name: 'Payment Catalog Bonus Library cards get an Edit button', type: 'Feature', sp: 1, done: true, sprint: 'S27' },
+
+  // ── Backlog · Unscheduled — opened by measurement 2026-08-20, none of it started ──────────────
+  // 3 SP, CRITICAL: probeTable() does select('*', {head:true,count:'exact'}) and treats "no error" as
+  // APPLIED — but PostgREST returns NO ERROR for a table that does not exist, just count:null. Proven
+  // twice today, on penny_employee_usage and on a control table named definitely_not_a_table_xyz;
+  // the positive control returns count=181799, which is why it was never noticed. probeColumn() is
+  // wrong differently: a missing column errors with code:undefined and an empty message, matching no
+  // branch, so it lands INCONCLUSIVE instead of NOT APPLIED. Consequence: every table-creating
+  // migration that never ran was counted APPLIED, and the S27 migrations row was closed Done on it.
+  { epic: 'HRIS-15', name: 'audit-pending-migrations reports a MISSING table as APPLIED — head:true returns no error', type: 'Bug', sp: 3, done: false, sprint: 'BL', priority: 'Critical' },
+  // 3 SP: hours ride lawangc@ against a stale 175 employee-scope override while the person's real
+  // identity sits on another row. The fix script exists (committed inside a commit messaged "ss") and
+  // has never been run — it needs Kane's --apply and a SELECT backup first.
+  { epic: 'HRIS-02b', name: 'Lawang rate shadow: hours ride lawangc@ on a stale 175 employee-scope override', type: 'Bug', sp: 3, done: false, sprint: 'BL', priority: 'High' },
+  // 2 SP: measured today — glendac@, domv@, beao@, joee@ and jesr@ each hold a scope:'employee' row in
+  // payment_catalog_pay_structures keyed to department_key 'hsl', seeded by "rate-divergence fix
+  // 2026-07-29". No DEPT-scope bare-hsl row exists, so the parent-cutover claim holds; but an
+  // employee-scope override on a key that is no longer placeable is the exact shape of the Lawang
+  // underpay, and nothing re-derives these.
+  { epic: 'HRIS-02b', name: 'Five employees still hold a rate override keyed to the retired bare hsl department', type: 'Bug', sp: 2, done: false, sprint: 'BL', priority: 'High' },
 ];

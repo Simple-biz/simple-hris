@@ -492,6 +492,111 @@ DDL was never obtained, so that write rests on Kane's report that it succeeded. 
 honesty gate — his confirmation counts and is **named** as the basis — but weaker than the three-way
 proof the view fix got, and the row says so.
 
+## Pass 5, 2026-08-20 — the undocumented week, and what measuring it cost
+
+Kane: *"for the past week or so we have undocumented features and commits might be chores."* Range
+`9fe6504c..HEAD`, 83 commits, Aug 13–20. Hash `ddfcf89d9558`, source-bound to `245f6bff9e15`.
+**28 rows created, 142 patched, 0 re-filed, 29 corrections written. 23 Done, 80 SP newly credited.**
+
+Sprint 26 went 23→35 rows and 100→146 SP; Sprint 27 went 9→22 and 38→90; the Backlog went from
+empty to 3. Nothing already on the board changed sprint, so no existing row was silently
+re-attributed.
+
+### Four more commit messages that lied
+
+The rule "cluster by file overlap, never by message" earned its keep again. In this range:
+
+| sha | message | contents |
+|---|---|---|
+| `4e8309af` | `Push` | the entire view-scoped notification-chime feature, plus a 100-line doc |
+| `4447e404` | `ss` | `scripts/fix-lawang-rate-shadow.mts` — an unapplied payroll fix |
+| `6d3be952` | `Push` | settings + a backup JSON — **noise, no row** |
+| `0e402a0d` | `s` | settings + one `cycle_complete_claim` backup — **noise, no row** |
+
+A message-clustered pass would have created two rows for noise and missed a shipped feature. The
+chime row exists today only because the file list was read.
+
+### Author date is not landing date
+
+`4a15db2c` merged the HSL GML roster branch on **Aug 19**. Every commit on that branch is authored
+*and committed* **Aug 3**, so `sprint-evidence.mts` — which prints `--date=short`, the author date —
+showed eleven commits two weeks older than the work.
+
+This is worse than cosmetic, because **`selfcheck()` would have accepted the lie.** It checks that the
+Completed Date equals the commit date of the row's last sha; ending the sha list on the branch tip
+`01c97f6d` gives Aug 3, which is a real commit date, so the row would have passed selfcheck and filed
+a fortnight of unmerged work into Sprint 25.
+
+The rule: **for work that landed via a merge, the row's last sha is the MERGE commit.** The branch
+shas stay in the list as evidence, but never last.
+
+### Three "PENDING" claims, and this time two were true
+
+The standing warning is that PENDING claims in docs and memory go stale — five have. This pass is the
+counterweight: measured read-only against production, two of three were **accurate**.
+
+| Feature | Claim | Measured 2026-08-20 |
+|---|---|---|
+| Employee Penny AI | migration PENDING | **TRUE** — `penny_employee_usage` absent (PGRST205) |
+| Time adjustments 2nd approver | migration PENDING | **TRUE** — all four columns absent |
+| `kpi.scored` notification | DDL applied 08-20 | applied, but **0 rows ever delivered** |
+
+So the rule is not "PENDING claims are stale". It is **measure, and do not assume in either
+direction.** All three rows are Pending Deploy with the measurement as the basis — the Penny AI one
+matters most, because nine commits of polish sit on top of a feature that cannot serve one prompt.
+
+### The auditor that made the previous pass's evidence unsafe
+
+`scripts/audit-pending-migrations.mts` is how this project replaces PENDING folklore with an
+observation, and **for tables it returns the wrong answer.**
+
+`probeTable()` does `select('*', { head: true, count: 'exact' })` and treats a falsy error as APPLIED.
+Under `head: true` PostgREST returns **no error at all** for a table that does not exist — just
+`count: null`. Proven twice: `penny_employee_usage` (genuinely absent) and a control table named
+`definitely_not_a_table_xyz` both come back clean, while the positive control
+`employee_notifications` returns `count=181799`. That positive result is exactly why it was never
+noticed.
+
+`probeColumn()` fails differently. A missing column errors with `code: undefined` and an **empty
+message**, matching neither the `42703` branch, nor the regex, nor `PGRST205` — so it lands
+INCONCLUSIVE instead of NOT APPLIED. A plain `.limit(1)` without `head` errors correctly with `42703`.
+
+**Consequence, stated rather than glossed:** any table-creating migration that never ran was counted
+APPLIED, and pass 4 closed the Sprint 27 migrations row **Done** on that audit's
+`APPLIED 21 / NOT APPLIED 1 / INCONCLUSIVE 3`. That row was left Done here and the re-adjudication put
+into the new Critical Backlog row's blockers — fixing the auditor is a non-trivial correctness edit to
+existing code and belongs behind the `hardening` skill, not inside a board pass.
+
+### The pass exhausted the day's budget and stranded its own verification
+
+`apply.mts` finished clean (exit 0, 28 created / 142 patched / 29 corrected). `verify.mts`, run
+immediately after, died on `DAILY_LIMIT_EXCEEDED` — `retry_in_seconds: 39234` observed at
+`13:06:06Z`, which lands on **2026-08-21T00:00:00Z** and confirms the clean UTC-day bucket a third
+time.
+
+So this pass is **applied and partially verified**, and the doc says so rather than rounding up:
+
+- **Independently confirmed.** Phase 2 re-reads the board after phase 1 creates rows, resolving every
+  correction target by byte-exact name. All 29 resolved, none landed in `skipped`, none tripped the
+  `hit.count > 1` duplicate guard. So all 28 rows exist, the reconciler adopted them by name rather
+  than minting duplicates, and the corrections addressed real ids.
+- **Acknowledged but not re-read.** The status / Actual SP / Completed Date values. Each mutation
+  returned success — `gql` throws otherwise — but no independent read confirms what the board holds.
+
+What this changes for the next big pass: a 28-row pass costs roughly a full day's budget once the
+reconciler's 142-row patch is included. **Verify a sample with `verify-one.mts` (1 call each) between
+phase 2 and the full `verify.mts`**, or split a pass of this size across two UTC days. A write you
+cannot verify is not done — and the cheapest moment to verify is before the budget is gone.
+
+### The concurrency heuristic false-positived on its own residue
+
+SKILL.md says: if `proposal.json` / `pass.mts` / `hris-plan.ts` moved in the last few minutes, another
+session is mid-pass. At the start of this pass all three had moved **6 minutes** earlier — but that was
+pass 4's own residue: the working tree was clean and `f51b4cd5` already contained it.
+
+Recent mtimes alone cannot tell "a session is writing right now" from "a session just finished and
+committed". The tree state is what separates them, and it is free to check.
+
 ## Cross-links
 
 `docs/features/INDEX.md` · memory `monday-hris-board-sync` · pass evidence
