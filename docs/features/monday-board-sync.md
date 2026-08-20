@@ -388,6 +388,68 @@ would have dragged all three back out and erased the triage silently.
   would be the same class of invisible act the move-reporting exists to prevent.
 - It worked on its first run: `tasksGroupPinned: 3`.
 
+**All three pins were released the next day**, 2026-08-20, when the Sprint 27 pull scheduled those rows
+— a scheduled row belongs in its sprint group, not in triage. **No row sets `groupPinned` today.** The
+capability is kept rather than deleted: "For Re-scoping" still exists on the board, so the next row a
+human drags there needs the same protection, and deleting the flag would re-open the hole within a week.
+
+## Sprint 27 pull — the rollover rules (2026-08-20)
+
+Kane: *"any backlog or any future task that we may be possible to achieve … or any task from Sprint 26
+that were not achieved there just move it to this period."* Applied as **6 open rows / 31 SP** into
+Sprint 27 (Aug 18–29), folded into the same apply as the Completed-Date backfill so one reconcile served
+both (~200 calls instead of ~400). Result: **0 created · 139 patched · 26 re-filed · 36 corrected · 0
+status transitions**, rollup unchanged at 1569 / 874, and the Backlog and For Re-scoping groups now hold
+**zero** of our rows.
+
+Three rules generalised out of it, now in `SKILL.md`:
+
+- **Only OPEN rows roll forward.** The Backlog group was 22 rows of which **21 were Done** — Apr–Jul
+  history worth 85 SP. Pulling those into the live sprint would credit four months of work to a
+  two-week window. Done rows get re-filed to the sprint they *finished* in; open rows roll forward.
+- **Scheduling a row is not a claim about how far along it is.** "Mark them Ready to Start" applied to
+  the four rows that had not started. The two offboarding/HSL rows stayed at **Pending Deploy** — their
+  code is on `origin/main` and only the prod click-through is missing, so Ready to Start would have
+  moved them *backwards* and discarded a true status to satisfy the letter of an instruction.
+- **An empty rollover is a finding.** Sprint 26 closed **23/23, 100 SP** with nothing to carry. Recorded
+  so nobody hunts for a backlog that never existed.
+
+Velocity context for planning: S24 / S25 / S26 ran **84 / 167 / 100 SP**, so a 31 SP pull is a thin
+sprint that needs scope from somewhere other than the backlog.
+
+## Two holes in the approval gate, both closed 2026-08-20
+
+1. **Sprint moves were invisible, and unbound.** `review.mts` printed `tasks to patch: 139`, which
+   cannot distinguish re-asserting 139 correct values from re-filing 59 rows into different sprints —
+   and `sprint` was absent from the **hashed** proposal entirely, so an approval hash did not bind the
+   re-filings it authorised. Two passes were approved through that hole. There is now a **SPRINT MOVES**
+   section listing every row whose sprint changes, it is part of the hashed payload, and a Done row
+   moving *into* the live sprint is flagged inline. A sprint label asserts a date range, so a wrong one
+   is the same class of falsehood as a wrong Completed Date.
+2. **The hash bound the file, not the working tree.** `apply.mts` compared the approved hash against
+   `proposal.json` and then wrote whatever `hris-plan.ts` said at run time. Observed live: a proposal
+   minted 13:30 was still on disk after a concurrent session re-filed six rows into Sprint 27, and the
+   stored hash described none of it. `review.mts` now also stores an **`inputsHash`** over
+   `{passDate, PLAN_TASKS, ROWS}`; `apply.mts` recomputes it offline and refuses on mismatch. A proposal
+   predating the check has no `inputsHash` and is treated as stale — fail closed.
+
+Also fixed: a **claimed write that never happened**. A pass header stated the phantom Actual SP 5 on
+"Google Sheet sync crons" had been cleared, but the row was never added to `ROWS`, and `sync.ts` cannot
+clear it because Actual SP is corrector-owned. Adding the row for its Sprint 27 evidence update is what
+actually closed it — `verify.mts` now reports `unshipped rows carrying an Actual SP: 0`. **A pass header
+is a claim like any other; read the write path.**
+
+## Concurrent sessions share `proposal.json`
+
+`proposal.json` and its approval hash are **one file**, and this checkout is shared. A second session
+running `review.mts` overwrites the proposal the first one showed Kane, so an approved hash can be
+silently replaced by a different pass's. Observed 2026-08-19: hash `3578fe5c294f` was applied at 13:19
+and a concurrent session had minted `e9280075d85c` over it by 13:30.
+
+Before proposing, `ls` the mtimes of `proposal.json` / `pass.mts` / `hris-plan.ts`. If they moved in the
+last few minutes another session is mid-pass — **fold into it or wait, never race it.** Two full applies
+also cost ~400 calls against a daily budget one pass nearly fills.
+
 ## Rate limits: 429 is a WINDOW, not a pause
 
 `sync.ts` has its own `gql` (separate from the skill's `monday.mts`). It used to back off
