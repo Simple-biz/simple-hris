@@ -4,6 +4,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import { formatWeekHuman } from '@/lib/payroll/paystub-view';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { HSL_DEPTS, formatPeso, type HslDeptKey } from '@/lib/hsl-bonus/schema';
+import { payrollNotesWeekStart } from '@/lib/payroll/manila-week';
 
 // "KPI scored" employee notification (`kpi.scored`).
 //
@@ -126,6 +127,41 @@ export function planKpiScoredInserts(
 }
 
 /**
+ * Is this dept-week recent enough to notify about?
+ *
+ * Kane's ruling 2026-08-20: **the current pay cycle only.** Without this gate the
+ * notifier had no lower bound at all — `hsl_bonus_period_status` holds 181
+ * ready/locked dept-weeks reaching back to 2026-03-01, and because the amount-diff
+ * de-dupe has no prior `kpi.scored` row to compare against for any of them, every
+ * person in all 181 read as owed a notification. A routine bonus edit or a
+ * re-Mark-Ready on a March week would have announced a five-month-old result.
+ *
+ * This is a SEPARATE GATE and deliberately not a change to the de-dupe rule: the
+ * amount diff is Kane's 2026-08-17 re-notify ruling (a corrected bonus must
+ * re-announce) and must survive untouched.
+ *
+ * Keyed on **period_end**, not period_start. Measured 2026-08-20, the live table
+ * holds three grains — 173 seven-day Sun→Sat periods, 10 Mon→Sun, and 4 monthly
+ * (30–31 day, pre-cutover HSL). A period_start floor would silence a CURRENT
+ * monthly period whose start predates the pay week; period_end is correct for
+ * every grain. period_start is the fallback only because it is the query key and
+ * therefore always present.
+ *
+ * `floorWeekStart` is `payrollNotesWeekStart()` — the just-completed Sun–Sat week,
+ * the arrears convention already used across payroll. A week still in progress
+ * sorts after it and so still notifies.
+ */
+export function isWithinCurrentPayCycle(
+  periodStart: string,
+  periodEnd: string | null,
+  floorWeekStart: string,
+): boolean {
+  const key = (periodEnd ?? '').trim() || periodStart.trim();
+  if (!key) return false;
+  return key >= floorWeekStart;
+}
+
+/**
  * Recompute the dept-week's visible totals and notify everyone whose amount
  * changed. Throws on DB errors — call sites wrap in try/catch so a notify
  * failure never fails the save that triggered it. Returns zeros without
@@ -154,6 +190,11 @@ export async function notifyKpiScored(opts: {
   const status = statusRes.data?.status as string | undefined;
   if (status !== 'ready' && status !== 'locked') return zero;
   const periodEnd = (statusRes.data?.period_end as string | null) ?? null;
+
+  // ── 1b. Period floor: the CURRENT pay cycle only (Kane 2026-08-20) ─────────
+  // Sits AFTER the visibility gate and BEFORE any bonus read, so an old week
+  // costs one status query and nothing else. Not part of the amount-diff rule.
+  if (!isWithinCurrentPayCycle(periodStart, periodEnd, payrollNotesWeekStart())) return zero;
 
   // ── 2. This dept-week's bonus rows (paged — busy weeks pass 1,000 rows) ────
   const [appliedRows, hslRows] = await Promise.all([

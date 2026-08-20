@@ -10,6 +10,8 @@ import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
 import { notifyKpiScored } from '@/lib/notifications/kpi-scored';
+import { recordNotifyFailure } from '@/lib/notifications/notify-failure-audit';
+import { getSessionActor } from '@/lib/auth/session-actor';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -99,7 +101,17 @@ export async function POST(request: Request) {
   try {
     await notifyKpiScored({ department: body.department, periodStart: body.period_start });
   } catch (e) {
-    console.warn('[kpi.scored] notify on applied-bonus save failed:', e);
+    // Still best-effort — the save has already succeeded and must not be undone.
+    // But the failure is recorded to audit_log instead of a console line: this
+    // exact swallow hid a dead kpi.scored for three days (see
+    // notify-failure-audit.ts).
+    await recordNotifyFailure({
+      notificationType: 'kpi.scored',
+      origin: 'bonus-catalog-applied',
+      error: e,
+      actor: await getSessionActor(),
+      details: { department: body.department, period_start: body.period_start },
+    });
   }
 
   return NextResponse.json({ saved, error: null });

@@ -10,6 +10,9 @@ import { normEmail } from '@/lib/email/norm-email';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { applyPabExclusionPatch, buildPabExclusionNotification } from '@/lib/notifications/pab-exclusion';
 import { escapeLikePattern } from '@/lib/db/like-escape';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { getSessionActor } from '@/lib/auth/session-actor';
+import { recordNotifyFailure } from '@/lib/notifications/notify-failure-audit';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -50,6 +53,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'excluded must be a boolean' }, { status: 400 });
     }
     const excluded = body.excluded;
+
+    // Resolved once and shared by the audit row and any notify-failure row.
+    const actor = await getSessionActor();
 
     const currentRaw = await getAppSettingStrict(PAB_PERIOD_EXCLUSIONS_KEY);
     const currentExclusions = parsePabPeriodExclusions(currentRaw);
@@ -102,7 +108,17 @@ export async function POST(request: Request) {
                 details: { month: monthKey },
               });
               if (notifErr) {
-                console.error('[pab-exclusions] notification insert failed:', notifErr.message);
+                // pab.excluded / pab.restored were dead for 17 days behind this
+                // exact console.error — 0 rows inserted, no signal anywhere.
+                // Still non-fatal (the exclusion itself is already written), but
+                // now recorded where someone will find it.
+                await recordNotifyFailure({
+                  notificationType: content.type,
+                  origin: 'pab-exclusions',
+                  error: notifErr.message,
+                  actor,
+                  details: { employee: norm, recipient, month: monthKey, excluded },
+                });
               } else {
                 notified = true;
               }
@@ -112,6 +128,26 @@ export async function POST(request: Request) {
           }
         }
       }
+    }
+
+    // ── Audit the exclusion change itself ─────────────────────────────────────
+    // An exclusion zeroes a person's Perfect Attendance Bonus for a whole month,
+    // and until now it recorded NOTHING: audit_log held 41k rows including
+    // pab_dispute.* in detail, yet zero rows for any exclusion change, while
+    // app_settings.pab_period_exclusions carried 107 person-month entries whose
+    // author is unknowable. Merely APPROVING a dispute was fully logged; zeroing
+    // the bonus was not. Mirrors the pab_dispute.* shape so the existing audit
+    // readers and the Admin Penny action-family search pick it up unchanged.
+    //
+    // Written only when `changed` — a no-op toggle is not an event.
+    if (changed) {
+      await insertAuditLog({
+        user_name: actor.user_name,
+        user_role: actor.user_role,
+        action: excluded ? 'pab_exclusion.added' : 'pab_exclusion.removed',
+        resource: PAB_PERIOD_EXCLUSIONS_KEY,
+        details: { employee: norm, month: monthKey, excluded, was_excluded: wasExcluded, notified },
+      });
     }
 
     return NextResponse.json({ success: true, wasExcluded, notified, error: null });

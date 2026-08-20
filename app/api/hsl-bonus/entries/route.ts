@@ -4,6 +4,8 @@ import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
 import { notifyKpiScored } from '@/lib/notifications/kpi-scored';
+import { recordNotifyFailure } from '@/lib/notifications/notify-failure-audit';
+import { getSessionActor } from '@/lib/auth/session-actor';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -78,7 +80,13 @@ export async function POST(req: NextRequest) {
       try {
         await notifyKpiScored(dw);
       } catch (e) {
-        console.warn('[kpi.scored] notify on hsl-entry save failed:', e);
+        await recordNotifyFailure({
+          notificationType: 'kpi.scored',
+          origin: 'hsl-bonus/entries',
+          error: e,
+          actor: await getSessionActor(),
+          details: { department: dw.department, period_start: dw.periodStart },
+        });
       }
     }
   }

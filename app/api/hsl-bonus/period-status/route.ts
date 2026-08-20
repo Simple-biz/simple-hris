@@ -7,6 +7,7 @@ import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { normalizeSource, sourceLabel, MANAGER_KPI_SOURCE } from '@/lib/payroll/readiness-audit';
 import { notifyKpiScored } from '@/lib/notifications/kpi-scored';
+import { recordNotifyFailure } from '@/lib/notifications/notify-failure-audit';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -78,7 +79,13 @@ export async function POST(req: NextRequest) {
     try {
       await notifyKpiScored({ department: body.department, periodStart: body.period_start });
     } catch (e) {
-      console.warn('[kpi.scored] notify on status change failed:', e);
+      await recordNotifyFailure({
+        notificationType: 'kpi.scored',
+        origin: 'hsl-bonus/period-status',
+        error: e,
+        actor: await getSessionActor(),
+        details: { department: body.department, period_start: body.period_start, status: body.status },
+      });
     }
   }
 

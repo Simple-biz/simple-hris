@@ -37,6 +37,32 @@ not remove the drop-to-zero notification: a silent drop is exactly the surprise 
 feature exists to prevent. The policy lives in two pure functions
 (`sumKpiTotalsByEmail`, `planKpiScoredInserts`) whose tests pin every branch.
 
+### The period floor is a SEPARATE gate (Kane 2026-08-20)
+
+The amount diff has no lower bound on its own, and that became a live hazard the
+moment the CHECK was fixed: `hsl_bonus_period_status` holds **181 ready/locked
+dept-weeks reaching back to 2026-03-01**, and with zero prior `kpi.scored` rows to
+diff against, every person in all 181 read as owed a notification. A routine bonus
+edit on a March week would have announced a five-month-old result.
+
+So `notifyKpiScored` now floors on the **current pay cycle only**, via
+`isWithinCurrentPayCycle(periodStart, periodEnd, payrollNotesWeekStart())`, placed
+after the ready/locked gate and before any bonus read.
+
+- It is **not** a change to the de-dupe rule. Kane's re-notify ruling survives
+  untouched; flooring by weakening the amount diff is explicitly forbidden.
+- It keys on **`period_end`**, not `period_start`. Measured 2026-08-20 the live
+  table holds three grains — 173 seven-day Sun→Sat, 10 Mon→Sun, and **4 monthly**
+  (30–31 day, pre-cutover HSL). A `period_start` floor would wrongly silence a
+  *current* monthly period whose start predates the pay week.
+- The floor is `payrollNotesWeekStart()` — the just-completed Sun–Sat week, the
+  arrears convention already used across payroll. A week still in progress sorts
+  after it and still notifies.
+- There is deliberately **no bypass flag**. Kane chose "current cycle only" over a
+  backfill of the 181; a deliberate backfill later is a separate explicit action,
+  not an env var. `isWithinCurrentPayCycle` is pure and its branches are pinned by
+  tests, including the monthly-grain case.
+
 ## Drafts are structurally silent — that's what makes autosave safe
 
 `POST /api/bonus-catalog-applied` and `POST /api/hsl-bonus/entries` are the KPI
@@ -46,7 +72,13 @@ unless the week's `hsl_bonus_period_status` is `ready`/`locked` — mirroring th
 employee visibility gate in `employee-kpi-results.ts` (employees never see drafts,
 so drafts never notify). On a published week an autosave that changes nothing
 diffs to nothing. **Every notify call is best-effort in try/catch** — it must never
-fail the save/submit that triggered it (also why a missing CHECK type is silent).
+fail the save/submit that triggered it. That rule stands. What changed on
+2026-08-20 is that a failure is no longer *invisible*: every call site now routes
+through `recordNotifyFailure` (`src/lib/notifications/notify-failure-audit.ts`),
+which writes an `audit_log` row with action `notification.insert_failed` and still
+swallows the error. A missing CHECK type used to be silent, and that silence cost
+this feature three dead days — do not restore it, and equally **do not "fix" a
+future failure by making the notify fatal**.
 
 ## What looks like a bug but isn't
 
@@ -98,9 +130,15 @@ check the person has rates. Only then look at code.
 
 ## Deploy notes
 
-- **PENDING** — run `node scripts/apply-kpi-scored-notification-type.mjs` (needs
-  `DATABASE_URL`, direct port 5432). Until it runs, every insert is silently
-  swallowed by the try/catch — the standard type-CHECK footgun. Verify with
-  `--verify`. Probe first per the migration-folklore rule if in doubt. The script
-  ABORTS if the live CHECK carries a type the SQL's restated list lacks.
+- **APPLIED 2026-08-20.** `kpi.scored` is present in
+  `employee_notifications_type_check` (verified by `pg_get_constraintdef`, then
+  re-confirmed through PostgREST). **This feature was DEAD for its first three
+  days** — every insert from 08-17 to 08-20 was rejected by that CHECK and every
+  call site swallowed it, so `0` rows existed against 3,694 for
+  `payroll.available`. It surfaced only while auditing something else. A
+  documented PENDING is not a fixed thing.
+- Running an apply script needs `DATABASE_URL` = the **session pooler**
+  (`postgres.<ref>@aws-1-us-east-2.pooler.supabase.com:5432`), not the direct
+  `db.<ref>` host, which is IPv6-only and unreachable. An `@` in the password must
+  be `%40`. See memory `migration-apply-needs-database-url`.
 - No n8n changes. No env vars.
