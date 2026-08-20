@@ -1,0 +1,104 @@
+[
+  {
+    "id": "0500f610-7536-4c8e-9a8b-54c5433cfd79",
+    "work_email": "adriant@simple.biz",
+    "adjust_date": "2026-05-08",
+    "reason": "forgot_tracker",
+    "explanation": "Was actively working but forgot to start the Hubstaff tracker. Realized the gap at end of day. Chrome history confirms activity during this window (attached as proof). Total worked time for the day was 7h, not 6.5h as recorded.",
+    "requested_hours": 7,
+    "image_paths": [
+      "adriant_simple.biz/2026-05-08-x7c3mmqf/0-1780695785012.png",
+      "adriant_simple.biz/2026-05-08-x7c3mmqf/1-1780695785010.png",
+      "adriant_simple.biz/2026-05-08-x7c3mmqf/2-1780695785012.png",
+      "adriant_simple.biz/2026-05-08-x7c3mmqf/3-1780695785131.png"
+    ],
+    "status": "approved",
+    "approved_hours": 7,
+    "decided_by": "kaner@simple.biz",
+    "decided_at": "2026-06-11T18:49:31.732+00:00",
+    "decision_note": null,
+    "period_label": "2026-06",
+    "created_at": "2026-06-05T21:43:07.258825+00:00",
+    "created_by": "adriant@simple.biz",
+    "updated_at": "2026-06-11T18:49:31.732+00:00",
+    "manager_decided_by": "jeff@simple.biz",
+    "manager_decided_at": "2026-06-11T13:21:24.016+00:00",
+    "manager_decision_note": null,
+    "requested_segments": []
+  },
+  {
+    "id": "44cbb7f4-9e47-4740-a129-c333117a926a",
+    "work_email": "carla@simple.biz",
+    "adjust_date": "2026-04-09",
+    "reason": "worked_offline",
+    "explanation": "forgot to clock in",
+    "requested_hours": 10.5,
+    "image_paths": [
+      "carla_simple.biz/2026-04-09-a4lbdhvt/0-1781273320505.png"
+    ],
+    "status": "manager_denied",
+    "approved_hours": null,
+    "decided_by": null,
+    "decided_at": null,
+    "decision_note": null,
+    "period_label": "2026-06",
+    "created_at": "2026-06-12T14:08:42.701634+00:00",
+    "created_by": "carla@simple.biz",
+    "updated_at": "2026-07-02T22:22:30.854+00:00",
+    "manager_decided_by": "carla@simple.biz",
+    "manager_decided_at": "2026-07-02T22:22:30.854+00:00",
+    "manager_decision_note": null,
+    "requested_segments": []
+  },
+  {
+    "id": "d24a2580-1c1b-45d4-aa3c-fc0df3ec9d63",
+    "work_email": "carla@simple.biz",
+    "adjust_date": "2026-07-08",
+    "reason": "forgot_tracker",
+    "explanation": "Forgot to start timer (test)",
+    "requested_hours": 11.5,
+    "image_paths": [],
+    "status": "manager_denied",
+    "approved_hours": null,
+    "decided_by": null,
+    "decided_at": null,
+    "decision_note": null,
+    "period_label": "2026-07",
+    "created_at": "2026-07-10T17:29:48.094979+00:00",
+    "created_by": "carla@simple.biz",
+    "updated_at": "2026-07-10T17:30:13.633+00:00",
+    "manager_decided_by": "carla@simple.biz",
+    "manager_decided_at": "2026-07-10T17:30:13.633+00:00",
+    "manager_decision_note": null,
+    "requested_segments": []
+  },
+  {
+    "id": "12346d8a-8978-4351-8512-fd065e43af58",
+    "work_email": "earlv@simple.biz",
+    "adjust_date": "2026-08-14",
+    "reason": "forgot_tracker",
+    "explanation": "hubstaff was off from 12:50, paused it for a bio break and i was back at 12:52 and forgot to turn on my timer. screenshot says i did open a tab at 1:10 analyzed the hsl case health weekly automation for 5 minutes. Took another break for a house chore and was back at 1:36PM hubstaff on this time",
+    "requested_hours": 0.38333333333333336,
+    "image_paths": [
+      "earlv_simple.biz/2026-08-14-il2m8tn8/0-1786729831461.png"
+    ],
+    "status": "manager_denied",
+    "approved_hours": null,
+    "decided_by": null,
+    "decided_at": null,
+    "decision_note": null,
+    "period_label": "2026-08",
+    "created_at": "2026-08-14T17:50:34.590154+00:00",
+    "created_by": "earlv@simple.biz",
+    "updated_at": "2026-08-17T15:24:29.583+00:00",
+    "manager_decided_by": "carla@simple.biz",
+    "manager_decided_at": "2026-08-17T15:24:29.583+00:00",
+    "manager_decision_note": null,
+    "requested_segments": [
+      {
+        "time_in": "12:52",
+        "time_out": "13:15"
+      }
+    ]
+  }
+]

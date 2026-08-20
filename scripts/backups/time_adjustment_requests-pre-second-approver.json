@@ -1,0 +1,39 @@
+{
+  "takenAt": "2026-08-20T14:03:22.582Z",
+  "counts": [
+    {
+      "status": "approved",
+      "n": 1
+    },
+    {
+      "status": "manager_denied",
+      "n": 3
+    }
+  ],
+  "rows": [
+    {
+      "id": "0500f610-7536-4c8e-9a8b-54c5433cfd79",
+      "work_email": "adriant@simple.biz",
+      "adjust_date": "2026-05-08T04:00:00.000Z",
+      "status": "approved"
+    },
+    {
+      "id": "44cbb7f4-9e47-4740-a129-c333117a926a",
+      "work_email": "carla@simple.biz",
+      "adjust_date": "2026-04-09T04:00:00.000Z",
+      "status": "manager_denied"
+    },
+    {
+      "id": "d24a2580-1c1b-45d4-aa3c-fc0df3ec9d63",
+      "work_email": "carla@simple.biz",
+      "adjust_date": "2026-07-08T04:00:00.000Z",
+      "status": "manager_denied"
+    },
+    {
+      "id": "12346d8a-8978-4351-8512-fd065e43af58",
+      "work_email": "earlv@simple.biz",
+      "adjust_date": "2026-08-14T04:00:00.000Z",
+      "status": "manager_denied"
+    }
+  ]
+}
