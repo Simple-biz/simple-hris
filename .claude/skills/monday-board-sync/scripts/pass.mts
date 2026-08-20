@@ -186,53 +186,58 @@
  * STILL UNDATED AFTER THIS PASS: nothing that is Done. The only undated rows left are the 3 that are
  * not shipped — Google Sheet sync crons (Ready to Start) and the two Pending Deploy rows parked in
  * "For Re-scoping". A date on any of those would be an invented record.
-  *
- * ── 2026-08-19, PASS 2 — CREDIT EVERY REMAINING ROW TO THE SPRINT IT FINISHED IN, 31 rows ────────
- * Kane, after pass 1 landed: "Credit it to the respective Sprints that it was actually completed that
- * means to fill the completed dates as well." That widened the HIGH-only scope of pass 1 to ALL of the
- * 30 rows it had deliberately held, and it RESOLVED the boundary question pass 1 could not settle:
- * the date wins and the filing follows it.
  *
- * PASS 1 RESULT, for the record: 139 patched · 59 moved (39 S26 -> S25 + 20 out of Backlog) · 43
- * Completed Dates written and verified · 0 created · 0 warnings · rollup unchanged at 1569/874. The
- * `groupPinned` protection worked on its first run — `tasksGroupPinned: 3`, so the three hand-triaged
- * "For Re-scoping" rows were NOT dragged out.
+ * ── 2026-08-19, PASS 3 — THE SPRINT 27 PULL, 6 rows ─────────────────────────────────────────────
+ * Kane: "any backlog or any future task that we may be possible to achieve you can mark the others as
+ * ready to start as long as they are achievable within that period or any task from Sprint 26 that
+ * were not achieved there just move it to this period." Folded into pass 2 rather than run separately,
+ * on his call — both need a FULL reconcile and one apply costs ~200 calls instead of ~400.
  *
- * WHAT PASS 2 ADDS.
- *   • 21 Done Backlog rows dated and filed into S17-S24. Backlog drops 24 -> 3.
- *   • 5 RE-ATTRIBUTIONS, the same bug class as the 39: "Collapsible sidebar shell redesign" was filed
- *     S24 but its one commit is 2026-07-02 (S23); the four name-split / ledger-deposit / PAB-dispute
- *     rows were filed S25 but all four land on 2026-07-20 — a Sun/Mon GAP day, which belongs to the
- *     sprint that CLOSED (S24) by the 2026-08-13 ruling. selfcheck() would have REFUSED them where
- *     they sat, which is how they were found.
- *   • 4 S24 rows dated in place.
- *   • The PHANTOM Actual SP cleared — see below.
+ * THIS PASS MOVES NO STATUS AND WRITES NO DATE. Every one of the 6 rows is open, so the entire board
+ * change is the Sprint label + group move that `hris-plan.ts` carries, plus an evidence update saying
+ * why the row is now in Sprint 27. They are in ROWS for that update and for one correction — see (3).
  *
- * THREE JUDGMENTS WORTH RE-READING BEFORE ANYONE CHANGES THEM.
- *   1. "Bonus Calculator" was a real conflict in pass 1 — code 2026-05-05 (S19) vs doc 2026-04-16
- *      (S18). RESOLVED, not split: `bonus-calculator.md` was ADDED by `091cc0a`, a commit titled
- *      "PAB Orphanage Calculator" that carried pab-disputes routes and Hogan seed SQL. The doc there
- *      is a PLANNING doc that predates the feature, so it corroborates nothing and the code date wins.
- *   2. "Mobile responsiveness pass (all dashboards)" is the ONE row dated off commit MESSAGES, against
- *      this skill's own rule. It is a cross-cutting CSS pass with no artefact to point at, and four
- *      commits say so explicitly ("Mobile Responsiveness" x2 04-24, "System Improvements - Mobile CSS"
- *      04-25, "Admin Dashboard - Mobile Responsiveness" 05-06). Flagged so nobody reads it as ordinary.
- *   3. "Google Sheet sync crons" carried **Actual SP 5 while sitting at Ready to Start** — the
- *      invariant `verify.mts` had been failing on since before any of this. The plan said
- *      `done: true` while the board said Ready to Start: a real contradiction, because `sync.ts`
- *      writes Status only at CREATE, so a later hand-change to Ready to Start left the score stranded.
- *      Resolved in the direction that REMOVES an unproven claim — the plan's stale `done` was flipped
- *      to false so the two agree, and the corrector clears the phantom score. Estimated SP is a
- *      forecast and may sit on an open row; Actual SP is a record and may not. The row takes NO
- *      Completed Date because it is not shipped.
+ * "ANY TASK FROM SPRINT 26 THAT WAS NOT ACHIEVED" — there are none. All 23 Sprint 26 rows are Done and
+ * dated inside Aug 4-15. Recorded because the instruction implies a rollover backlog that does not
+ * exist, and the next reader should not go looking for it. Sprint 26 closed clean at 23/23, 100 SP.
  *
- * S17 AND S18 were both mirrored even though only S17 receives a row: `taskSprintAttribution()` ends a
- * sprint the day before the next one STARTS, so omitting S18 would have let S17 absorb Apr 12-27 and
- * silently accept a date belonging to a sprint the plan could not name.
+ * WHAT WAS **NOT** PULLED, deliberately: the 21 Done rows physically sitting in the Backlog GROUP.
+ * "Move the backlog to Sprint 27" reads as covering them, and it must not — they are Apr-Jul history
+ * worth 85 SP, and crediting them to Aug 18-29 would be the exact falsehood this skill exists to stop.
+ * `selfcheck()` would refuse their dates anyway. Pass 2 re-files them into S17-S24 where they belong;
+ * after both passes the Backlog GROUP holds 0 of our rows and Sprint 27 holds 6.
  *
- * STILL UNDATED AFTER THIS PASS: nothing that is Done. The only undated rows left are the 3 that are
- * not shipped — Google Sheet sync crons (Ready to Start) and the two Pending Deploy rows parked in
- * "For Re-scoping". A date on any of those would be an invented record.
+ * "MARK THE OTHERS AS READY TO START" is applied to the rows it fits and NOT to the two it does not.
+ * Four rows already read Ready to Start and keep it. The two offboarding/HSL rows read **Pending
+ * Deploy**, which is AHEAD of Ready to Start: their code is on `origin/main` and only the prod
+ * click-through is missing. Writing Ready to Start on them would move a row BACKWARDS and discard a
+ * true status to satisfy the letter of an instruction — scheduling a row is not a statement about how
+ * far along it is. Both keep their blocker. Flagged for Kane at the gate rather than done quietly.
+ *
+ * THREE THINGS THE SPRINT SHOULD KNOW BEFORE IT STARTS — each row's scope moved under it:
+ *   1. "Google Sheet sync crons" has SHRUNK: 28cb65d (2026-08-07) retired the Google Sheet as an
+ *      offboarding source outright, so a quarter of the row's title no longer describes live work.
+ *      Re-scope before estimating against the old 5 SP.
+ *   2. "HSL rate-history stale underpay" has a MOVED root cause: 273319a (2026-08-18) removed the
+ *      snap-to-Sunday that c39fad3 introduced. The ≈₱1.06M / 121-under figure was derived under the
+ *      old rule and must be re-derived before anyone pays against it.
+ *   3. "Google Sheet sync crons" carried a phantom **Actual SP 5 while reading Ready to Start** — the
+ *      invariant `verify.mts` sweeps for. Pass 2's header claimed this was cleared, but the row was
+ *      never added to ROWS, so nothing would have cleared it; `sync.ts` cannot, because Actual SP is
+ *      corrector-owned. Adding the row here for its Sprint 27 update is what actually closes it:
+ *      `correctionValues()` writes `''` to Actual SP on any non-Done row. Found by reading the write
+ *      path rather than the claim — the pass header is a claim like any other.
+ *
+ * THE PINS RELEASED. All three "For Re-scoping" rows were unpinned, so the reconciler moves them into
+ * the Sprint 27 group. That reverses Kane's own 2026-08-19 morning ruling ("protect the group"), which
+ * is why it was put to him explicitly rather than inferred: he answered by scoping the pull to "any
+ * backlog or any future task that we may be possible to achieve", and all three are achievable inside
+ * Aug 18-29. `groupPinned` stays in the codebase with zero users — the group still exists on the
+ * board, so the next hand-triaged row needs it.
+ *
+ * COST. FULL path, shared with pass 2 — structure changed on 26 rows across both, so `--only-new` is
+ * WRONG. ~200 reconciler calls + 36 corrections + 36 evidence updates + the verify read.
+ *
   * ── APPROVAL ──────────────────────────────────────────────────────────────────────────────────────
  * Kane approved the 57-row re-attribution on 2026-08-13 ("Approve all") after reviewing it in full,
  * plus three rulings the same day: gap-day rows → Sprint 25; the group move belongs in `sync.ts`; the
@@ -529,6 +534,62 @@ export const ROWS: PassRow[] = [
     shas: ['74a4146', 'c0dc608'],
     basis:
       "Completed 2026-07-18; Sprint 24. DATE BASIS (MED confidence): last implementing commit c0dc608 (2026-07-18) — last in-window commits touching the orphaned-upload path. Memory notes no hard lock exists, so this row is the guard, not a lock. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
+  },
+
+  // ── PASS 3 — the Sprint 27 pull (Aug 18-29) ────────────────────────────────────────────────────
+  // Six OPEN rows. Each carries its true current status unchanged, no Completed Date, and its
+  // blockers. They are here for the evidence update that records the sprint move — and, for the
+  // first one, to clear a phantom Actual SP that only the corrector can reach.
+  {
+    name: "Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports",
+    status: 'Ready to Start',
+    shas: ['d96e77d', '28cb65d'],
+    basis:
+      "Pulled Backlog → Sprint 27 (Aug 18-29) on Kane's 2026-08-19 instruction to schedule any backlog work achievable in the period. NOT shipped, so no Completed Date and no Actual SP — and this pass CLEARS the phantom Actual SP 5 the row was carrying while reading Ready to Start, which is the invariant verify.mts sweeps for. RE-SCOPE BEFORE ESTIMATING: 28cb65d (2026-08-07) retired the Google Sheet as an offboarding source outright, so the 'offboarded' quarter of this row no longer describes live work and the 5 SP predates that.",
+    blockers: ['Re-scope: the offboarded-sheet source was retired by 28cb65d, so part of the original scope no longer exists'],
+  },
+  {
+    name: "Run outstanding Supabase migrations + re-import n8n workflows (12+ pending SQL files)",
+    status: 'Ready to Start',
+    shas: ['b2ef23f', 'eff111d', '70f9678'],
+    basis:
+      "Pulled Sprint 25 → Sprint 27 (Aug 18-29) on Kane's 2026-08-19 instruction, and unpinned out of 'For Re-scoping'. Critical: this row is what makes other shipped code actually live — several features are code-complete and functionally dead until their migration runs. Note b2ef23f ('stop claiming applied migrations are pending') — the pending LIST must be re-derived with audit-pending-migrations.mts before the work starts, because migration-pending claims in this repo are folklore more often than not. Not shipped: no Completed Date, no Actual SP.",
+    blockers: [
+      'The pending set must be re-derived (audit-pending-migrations.mts) — do not trust the "12+" in the title',
+      'Kane cannot paste SQL into Supabase: each change ships as a Node script behind an --apply gate',
+    ],
+  },
+  {
+    name: "Offboarding is delete-only: suspend is its own path, suspended-person offboards escalate to delete, and leavers get a correct final check",
+    status: 'Pending Deploy',
+    shas: ['3502e93', 'd259040', '8497699'],
+    basis:
+      "Pulled Backlog → Sprint 27 (Aug 18-29) on Kane's 2026-08-19 instruction, and unpinned out of 'For Re-scoping'. Status is UNCHANGED at Pending Deploy and was deliberately NOT written down to Ready to Start: the code is on origin/main (3502e93 2026-08-07, d259040 + 8497699 2026-08-10) and only the prod click-through is missing, so Ready to Start would move the row backwards. Scheduling a row is not a claim about how far along it is. 8 SP is a legal task score — the next Fibonacci step is 13 — so this needs no decomposition.",
+    blockers: ['Nobody has confirmed the delete-only routing and the suspend path in production — that click-through is the only thing between this and Done'],
+  },
+  {
+    name: "One HSL department + required sub-department that sets the base rate, wired through the Payment Catalog",
+    status: 'Pending Deploy',
+    shas: ['5cb9bc6', 'f14f5b3', 'da24ffb', '4a15db2'],
+    basis:
+      "Pulled Backlog → Sprint 27 (Aug 18-29) on Kane's 2026-08-19 instruction, and unpinned out of 'For Re-scoping'. Status UNCHANGED at Pending Deploy for the same reason as the offboarding row. The blocker recorded on 2026-08-14 — zero hsl:* rate rows, which made the feature pay nobody differently — has since been worked: 5cb9bc6 bulk-assigned sub-departments, f14f5b3 set a base rate per sub-team and released the HARD HOLD, da24ffb deleted the parent base row, 4a15db2 merged the GML roster. That is evidence the blocker MAY be closed, not proof, and a row is never promoted because its blocker looks stale. 8 SP is a legal task score.",
+    blockers: ['Confirm in prod that a sub-department assignment actually sets the base rate a person is paid on — the original blocker was that it silently did not'],
+  },
+  {
+    name: "HSL rate-history stale underpay — arrears remediation (≈₱1.06M, 121 under / 10 over)",
+    shas: ['c39fad3', '210b9ad', '273319a'],
+    status: 'Ready to Start',
+    basis:
+      "Pulled Sprint 25 → Sprint 27 (Aug 18-29) on Kane's 2026-08-19 instruction — open work carried forward out of a sprint that closed 2026-08-01. THE FIGURE IS STALE: 273319a (2026-08-18) REMOVED the snap-to-Sunday that c39fad3 introduced and which memory records as the root cause, so the ≈₱1.06M / 121-under / 10-over arrears set was computed under a pricing rule that no longer exists. Re-derive against the current proration before paying anyone. Not shipped: no Completed Date, no Actual SP.",
+    blockers: ['Arrears must be recomputed under the post-273319a proration rule; the recorded ₱1.06M predates it'],
+  },
+  {
+    name: "Legacy rates-sheet cell can route null-preferred → hurupay: decision + guard",
+    status: 'Ready to Start',
+    shas: ['917309d', '1419a6b'],
+    basis:
+      "Pulled Sprint 25 → Sprint 27 (Aug 18-29) on Kane's 2026-08-19 instruction — open work carried forward out of a closed sprint. 917309d measured the blast radius read-only and 1419a6b wrote the seed script behind an --apply gate, but the gate has never been opened, so the bypass is still live: the legacy rates-sheet cell can still route a null-preferred payee to hurupay, around the WIRES lock. The row is the DECISION plus the guard, and neither has been made. Not shipped: no Completed Date, no Actual SP.",
+    blockers: ['The --apply on 1419a6b is unrun and needs Kane; a SELECT backup to disk is required first (bulk UPDATE rule)'],
   },
 ];
 

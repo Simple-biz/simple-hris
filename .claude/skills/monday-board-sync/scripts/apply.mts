@@ -43,6 +43,7 @@ import {
   listBoardItems,
   loadToken,
   postUpdate,
+  proposalHash,
   setColumns,
   taskItemName,
   withLock,
@@ -90,7 +91,11 @@ if (APPLY) {
     console.error(`no proposal at ${PROPOSAL_PATH} — run review.mts and show Kane the output first.`);
     process.exit(1);
   }
-  const stored = JSON.parse(fs.readFileSync(PROPOSAL_PATH, 'utf8')) as { hash: string; generatedFor: string };
+  const stored = JSON.parse(fs.readFileSync(PROPOSAL_PATH, 'utf8')) as {
+    hash: string;
+    inputsHash?: string;
+    generatedFor: string;
+  };
   if (!approved) {
     console.error(`--apply requires --approve <hash>. The current proposal's hash is ${stored.hash}.`);
     process.exit(1);
@@ -106,7 +111,24 @@ if (APPLY) {
     console.error(`proposal was generated for ${stored.generatedFor} but the pass is dated ${PASS_DATE} — re-run review.mts.`);
     process.exit(1);
   }
-  console.log(`approval accepted: ${approved}`);
+  // ── gate 2b: the SOURCE must still be what the proposal was minted from ────────────────────────
+  // The hash above binds the proposal file; this binds the working tree. Without it a still-matching
+  // hash authorises whatever `hris-plan.ts` happens to say when apply runs — and this checkout is
+  // shared between sessions, so "happens to say" is a real state, not a hypothetical. A proposal
+  // predating this check has no `inputsHash` and is treated as stale: fail closed, re-run review.
+  const liveInputs = proposalHash({ passDate: PASS_DATE, plan: PLAN_TASKS, rows: ROWS });
+  if (stored.inputsHash !== liveInputs) {
+    console.error(
+      stored.inputsHash
+        ? `the plan or pass rows CHANGED after this proposal was reviewed ` +
+          `(inputs ${stored.inputsHash} → ${liveInputs}).\n` +
+          `The approval describes a different set of writes. Re-run review.mts and get approval for the new one.`
+        : `this proposal predates the source-fingerprint check, so it cannot be proven to describe ` +
+          `the current plan. Re-run review.mts.`,
+    );
+    process.exit(1);
+  }
+  console.log(`approval accepted: ${approved} (source verified: ${liveInputs})`);
 }
 
 // ── gate 3: the labels this pass writes must still exist (the board is structure-locked) ─────────

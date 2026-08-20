@@ -58,6 +58,19 @@ const APPROVED = {
   everyRowDone: true,
 } as const;
 
+/**
+ * PASS 3 (the Sprint 27 pull) IS NOT COVERED BY THESE CONSTANTS, deliberately.
+ *
+ * Folding it in took ROWS from 30 to 36 and six of those rows are open, so both `corrections: 30` and
+ * `everyRowDone: true` now fail here. That is the gate working, not a bug to edit around: this script
+ * exists to re-run a pass Kane ALREADY reviewed, and he has not seen the folded proposal — the daily
+ * API budget died at 17:45Z on 2026-08-19 before `review.mts` could mint its hash.
+ *
+ * Do NOT relax these numbers to make it run. Once Kane approves the folded review, replace them with
+ * that proposal's real shape (and `everyRowDone: false`, since the six Sprint 27 rows are open by
+ * definition). A widened gate would let the next pass through unread.
+ */
+
 const run = (args: string[]) =>
   execFileSync('node', ['--import', 'tsx', ...args], { cwd: REPO_ROOT, encoding: 'utf8', stdio: 'pipe' });
 

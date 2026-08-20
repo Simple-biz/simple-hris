@@ -99,6 +99,29 @@ Update" carried two unrelated features, `a7ecd4c` "Callback" carried three and n
 department, `0b66a8e` "HSL - ANNOYANCE" was an offboarding workflow, and `5eb398a`'s pricing was
 reversed by a later commit — so one row must describe the current rule, not both.
 
+### 2b. Rolling into a new sprint
+
+"Pull the backlog into Sprint N" is a **grooming** pass, not a status pass. Three rules, all learned
+the hard way on 2026-08-19:
+
+- **Only OPEN rows move forward.** The Backlog group is mostly archaeology — on 2026-08-19 it held 22
+  rows of which **21 were Done**, shipped Apr–Jul, worth 85 SP. Pulling those into the live sprint
+  would credit four months of history to a two-week window and inflate its velocity. Done rows get
+  re-filed to the sprint they *finished* in; open rows roll forward. `selfcheck()` refuses a Completed
+  Date outside its sprint, so the lie fails closed — but only if someone attaches a date at all.
+- **Scheduling a row is not a claim about how far along it is.** "Mark them Ready to Start" applies to
+  rows that have not started. A row already at Pending Deploy or Waiting for Review keeps that status:
+  writing Ready to Start on it moves it BACKWARDS and discards a true status to satisfy the letter of
+  an instruction. Statuses only ever move forward on evidence — the honesty gate is unchanged by a
+  sprint move.
+- **Say what is NOT in the pull, and why.** An empty rollover is a finding too: Sprint 26 closed 23/23
+  with nothing to carry, and recording that stops the next reader hunting for a backlog that never
+  existed.
+
+Check the candidate pool against recent velocity before calling the sprint planned — S24/S25/S26 ran
+84 / 167 / 100 SP, so a 31 SP pull is a thin sprint that needs scope from somewhere other than the
+backlog.
+
 ### 3. Estimate
 Fibonacci only (1, 2, 3, 5, 8), per dev-resources.simple.biz/story-points. Calibrate against
 **current-sprint neighbours** — the Sprint 26 rows run 1–5, averaging ~3.5 — never against the bulk
@@ -109,9 +132,15 @@ Epics with child tasks.
 sub-features: HRIS-01 is 101 SP with zero task rows. Asserting the sum would fail on almost every epic.
 
 ### 4. Review — and stop
-`review.mts` is read-only. It prints what would be created, patched and corrected, each row's
-proposed status with its proof and its blockers, and the rollup. It writes `proposal.json` and an
-**approval hash**.
+`review.mts` is read-only. It prints what would be created, patched and corrected, **every row whose
+sprint changes**, each row's proposed status with its proof and its blockers, and the rollup. It
+writes `proposal.json` and an **approval hash**.
+
+The sprint moves are listed and hashed as of 2026-08-19. They were not before: "tasks to patch: 139"
+cannot distinguish re-asserting 139 correct values from re-filing 59 rows into different sprints, and
+`sprint` was absent from the hashed payload entirely — so an approval did not bind the re-filings it
+authorised. Two passes were approved through that hole. A sprint label asserts a date range, so a
+wrong one is the same class of falsehood as a wrong Completed Date.
 
 Show that output to Kane. Wait for a message. `apply.mts --apply` refuses without `--approve <hash>`,
 refuses on mismatch, and refuses if the proposal was generated for a different pass date — so what
@@ -181,16 +210,33 @@ One Gridline pass left verification dead for 5.5 hours.
 - **Board relations return an empty `text`** — use `linked_item_ids`.
 - **Re-query `groups{id title}` every pass.** A cached list goes stale; Sprint 26 was absent from the
   earlier notes entirely.
-- **There is no Sprint 27 label or group**, and the API cannot create one. When Sprint 26 ends
-  (Aug 15), someone adds it on the board by hand and mirrors it into `TASK_SPRINT_LABELS` **and
-  `TASK_SPRINT_WINDOWS`**. Until then, **hard-stop** rather than silently dumping new work into Backlog.
-  Mirroring the window is not optional bookkeeping: it is what re-bounds Sprint 26 to Aug 4-15 + its
-  own gap instead of leaving Aug 16-17 attributable to nothing.
+- **A new sprint can only be created by hand on the board** — the API cannot add a Sprint label, and
+  the board is structure-locked. Sprint 27 (`group_mm66ce8q`, label index **103**, "Sprint 27 ·
+  Aug 18-Aug 29") was added by hand and mirrored on 2026-08-19; Sprint 28 will need the same. Mirror
+  it into `TASK_GROUPS`, `TASK_SPRINT_INDEX`, `TASK_SPRINT_LABELS` **and `TASK_SPRINT_WINDOWS`**, and
+  until it exists **hard-stop** rather than silently dumping new work into Backlog. Mirroring the
+  window is not optional bookkeeping: adding S27's window is what re-bounded S26's attribution to
+  Aug 4-17 instead of leaving Aug 16-17 belonging to nothing.
+- **Label indices are the board's own and are NOT sequential.** S22 is 3, S23 is 4, S19-S21 run 10-12,
+  S27 is 103. Read `settings_str`; never guess one, and never assume the next sprint is the next index.
 - **A sprint label asserts a date range, and `selfcheck()` enforces it.** Windows live in
   `TASK_SPRINT_WINDOWS`, mirrored from the board group titles (`Sprint 26 · Aug 4-15`, …). A row whose
   Completed Date falls outside its sprint is refused. Sprints run **Tue → Sat**, so Sun+Mon between two
   sprints belong to no window; `taskSprintAttribution()` gives those gap days to the sprint that
   **closed** (Kane 2026-08-13: Sprint 26 is Aug 4-15 only), never to the one about to open.
+- **A human triage group needs `groupPinned` or the reconciler erases it.** `sync.ts` reconciles a
+  row's group to its Sprint label, which is wrong for a lane that has no Sprint label at all — "For
+  Re-scoping" (`group_mm65rmf9`) is one. A pinned row keeps its group, keeps a reconciler-owned label,
+  and is reported as `tasksGroupPinned` so the suppressed move is never invisible. No row sets it
+  today (all three were released into Sprint 27 the same day) — keep the capability anyway, the group
+  still exists.
+- **`proposal.json` and its approval hash are ONE shared file, and sessions share this checkout.**
+  A second session running `review.mts` overwrites the proposal the first one showed Kane, so an
+  approved hash can be silently replaced by a different pass's. This happened on 2026-08-19: hash
+  `3578fe5c294f` was applied at 13:19, and a concurrent session had minted `e9280075d85c` over it by
+  13:30. Before proposing, `ls` the mtimes of `proposal.json` / `pass.mts` / `hris-plan.ts`; if they
+  moved in the last few minutes, another session is mid-pass — **fold into it or wait**, never race it.
+  Two full applies also cost ~400 calls against a daily budget that one pass nearly fills.
 - **The board label is not what re-files a row — the GROUP is.** `sync.ts` writes the Sprint label on
   update but wrote the group only at create until 2026-08-13, so a plan relabel alone left rows filed
   under their old sprint heading. `move_item_to_group` now runs from the update path when the two

@@ -253,6 +253,12 @@ export interface PlanTask {
    * on 2026-08-19 three rows sat there while their labels still read Sprint 25 / Backlog / Backlog.
    * Without this flag the next reconcile would have silently dragged all three back out and erased
    * the triage. The LABEL stays reconciler-owned; only the move is suppressed. Kane's call 2026-08-19.
+   *
+   * RELEASED the same day, on all three rows, by the Sprint 27 pull — Kane scheduled them, so they
+   * belong in the sprint group, not in triage. **No row sets this today.** The capability is kept
+   * rather than deleted for one reason: "For Re-scoping" still exists on the board, so the next row
+   * a human drags there needs the same protection, and `sync.ts` still reports `tasksGroupPinned`
+   * so a suppressed move is never invisible. Deleting the flag would re-open the hole in a week.
    */
   groupPinned?: boolean;
 }
@@ -352,7 +358,10 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-02b', name: 'PAB payout-week gate + neutral mid-period Additions pill', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
   { epic: 'HRIS-02b', name: 'US holidays PAB forgiveness seed', type: 'Feature', sp: 2, done: true, sprint: 'S20' },
   { epic: 'HRIS-02b', name: 'Remove employee-facing PAB disputes (keep manager calendar + API)', type: 'Feature', sp: 2, done: true, sprint: 'S24' },
-  { epic: 'HRIS-02b', name: 'HSL rate-history stale underpay — arrears remediation (≈₱1.06M, 121 under / 10 over)', type: 'Spike', sp: 5, done: false, sprint: 'S25', priority: 'High' },
+  // Pulled S25 → Sprint 27 on 2026-08-19. Still open, and its root cause moved under it: 273319a
+  // (2026-08-18) REMOVED the snap-to-Sunday that c39fad3 introduced, so the arrears figure needs
+  // re-deriving against the current proration rule before anyone pays against it.
+  { epic: 'HRIS-02b', name: 'HSL rate-history stale underpay — arrears remediation (≈₱1.06M, 121 under / 10 over)', type: 'Spike', sp: 5, done: false, sprint: 'S27', priority: 'High' },
   { epic: 'HRIS-02b', name: 'Rate change history + manager rate views', type: 'Feature', sp: 3, done: true, sprint: 'S20' },
   { epic: 'HRIS-03a', name: 'Mark Paid bank-details override (pencil mode + endpoint + notification)', type: 'Feature', sp: 5, done: true, sprint: 'S25' },
   { epic: 'HRIS-03a', name: 'Processor filter cards redesign + real logos; focus-mode removed', type: 'Feature', sp: 3, done: true, sprint: 'S25' },
@@ -387,7 +396,12 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-13', name: 'Observe-mode mirror: driver-opened modals invisible — rrweb style-rules fix', type: 'Bug', sp: 3, done: true, sprint: 'S25' },
   { epic: 'HRIS-13', name: 'Presence heartbeat + last-seen', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
   { epic: 'HRIS-13', name: 'HR collab layer (shared cursors on checklist)', type: 'Feature', sp: 3, done: true, sprint: 'S23' },
-  { epic: 'HRIS-14', name: 'Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports', type: 'Integration', sp: 5, done: false, sprint: 'BL' },
+  // Pulled Backlog → Sprint 27 on 2026-08-19 (Kane: "any backlog or any future task that we may be
+  // possible to achieve"). Scope has SHRUNK under it since it was written — 28cb65d retired the
+  // Google Sheet as an offboarding source outright — so the sprint should re-scope it, not just
+  // schedule it. Stays `done: false`: the row carried a phantom Actual SP 5 while reading Ready to
+  // Start, which the corrector clears in this same pass.
+  { epic: 'HRIS-14', name: 'Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports', type: 'Integration', sp: 5, done: false, sprint: 'S27' },
   { epic: 'HRIS-14', name: 'CSV imports admin tab — split of legacy Csv Imports', type: 'Feature', sp: 3, done: true, sprint: 'S19' },
   { epic: 'HRIS-14', name: 'Master-list sync race + orphaned-upload guard', type: 'Bug', sp: 3, done: true, sprint: 'S24' },
   { epic: 'HRIS-14', name: 'Webhooks admin + bank-info-missing red-alarm notify email', type: 'Integration', sp: 2, done: true, sprint: 'S25' },
@@ -397,8 +411,15 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-15', name: 'Mobile responsiveness pass (all dashboards)', type: 'Chore', sp: 5, done: true, sprint: 'S19' },
   { epic: 'HRIS-15', name: 'Admin search bar + pages registry', type: 'Feature', sp: 3, done: true, sprint: 'S22' },
   { epic: 'HRIS-15', name: 'Impersonation (view-as) banner + auth', type: 'Feature', sp: 3, done: true, sprint: 'S23' },
-  { epic: 'HRIS-15', name: 'Run outstanding Supabase migrations + re-import n8n workflows (12+ pending SQL files)', type: 'Chore', sp: 3, done: false, sprint: 'S25', priority: 'Critical', groupPinned: true },
-  { epic: 'HRIS-19', name: 'Legacy rates-sheet cell can route null-preferred → hurupay: decision + guard', type: 'Spike', sp: 2, done: false, sprint: 'S25', priority: 'High' },
+  // ── Pulled into Sprint 27 on 2026-08-19 ────────────────────────────────────────────────────────
+  // Both were open work stranded in Sprint 25, a sprint that closed 2026-08-01. Carrying unfinished
+  // work forward to the live sprint is the ordinary rollover; nothing about either row is re-judged
+  // and neither gets a Completed Date, because neither is shipped.
+  //
+  // The migrations row ALSO loses `groupPinned` — see the field's own doc for why that pin existed
+  // and why Kane released it the same day he created it.
+  { epic: 'HRIS-15', name: 'Run outstanding Supabase migrations + re-import n8n workflows (12+ pending SQL files)', type: 'Chore', sp: 3, done: false, sprint: 'S27', priority: 'Critical' },
+  { epic: 'HRIS-19', name: 'Legacy rates-sheet cell can route null-preferred → hurupay: decision + guard', type: 'Spike', sp: 2, done: false, sprint: 'S27', priority: 'High' },
   { epic: 'HRIS-24', name: 'Referred-by column + Referrals week section (email-tier matching)', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
   // ── Sprint 26 reconciliation — shipped Jul 29 – Aug 5 2026 ─────────────────
   // Grouped from 171 commits by feature, not by commit. SP scored against the
@@ -487,8 +508,13 @@ export const PLAN_TASKS: PlanTask[] = [
   // Done. The HSL row's recorded blocker (zero `hsl:*` rate rows) may have cleared when 210b9ad seeded
   // the placement-only base rates at 225 / 337.50 — that is a status judgement for Kane, and a row is
   // never promoted just because its blocker LOOKS stale.
-  { epic: 'HRIS-01a', name: 'Offboarding is delete-only: suspend is its own path, suspended-person offboards escalate to delete, and leavers get a correct final check', type: 'Feature', sp: 8, done: false, sprint: 'BL', groupPinned: true },
-  { epic: 'HRIS-06', name: 'One HSL department + required sub-department that sets the base rate, wired through the Payment Catalog', type: 'Feature', sp: 8, done: false, sprint: 'BL', groupPinned: true },
+  //
+  // MOVED 2026-08-19, Backlog → Sprint 27, and unpinned out of "For Re-scoping". Both are **Pending
+  // Deploy**, not Ready to Start: the code is on `origin/main` and nobody has clicked through it in
+  // prod. Scheduling a row does NOT promote it — the honesty gate is unchanged and each keeps its
+  // blocker. 8 SP is a legal task score (the next Fibonacci step is 13), so neither needs decomposing.
+  { epic: 'HRIS-01a', name: 'Offboarding is delete-only: suspend is its own path, suspended-person offboards escalate to delete, and leavers get a correct final check', type: 'Feature', sp: 8, done: false, sprint: 'S27' },
+  { epic: 'HRIS-06', name: 'One HSL department + required sub-department that sets the base rate, wired through the Payment Catalog', type: 'Feature', sp: 8, done: false, sprint: 'S27' },
   // ── Sprint 26 third pass — committed 0cda107..3d74e09 (Aug 12 2026) ──────────────────────────
   // done:true 2026-08-12, and this row is the clearest case yet for why the honesty gate exists: it
   // sat at In Progress (unpushed), then Pending Deploy (pushed, migration un-run) before earning

@@ -13,6 +13,7 @@ import {
   PROPOSAL_PATH,
   TASK_COLS,
   TASK_SPRINT_LABELS,
+  TASK_SPRINT_WINDOWS,
   boardGroups,
   epicItemName,
   isOurTask,
@@ -28,6 +29,16 @@ if (bad.length) {
   console.error(`pass selfcheck FAILED — refusing to propose anything:\n  ${bad.join('\n  ')}`);
   process.exit(1);
 }
+
+/**
+ * The sprint whose scheduled window contains PASS_DATE, or null between sprints. Derived from the
+ * windows rather than hardcoded, so it follows the board instead of going stale the way the "there
+ * is no Sprint 27" note did. Used only to flag a Done row being moved INTO the live sprint.
+ */
+const LIVE_SPRINT =
+  (Object.keys(TASK_SPRINT_WINDOWS) as (keyof typeof TASK_SPRINT_WINDOWS)[]).find(
+    (k) => PASS_DATE >= TASK_SPRINT_WINDOWS[k].start && PASS_DATE <= TASK_SPRINT_WINDOWS[k].end,
+  ) ?? null;
 
 // Groups are re-queried every pass: a cached list goes stale (Sprint 26 was absent from the old notes).
 const groups = await boardGroups(MONDAY_BOARDS.tasks);
@@ -75,6 +86,32 @@ for (const t of willCreate) {
 console.log(`  tasks to patch:   ${willPatch}  (SP / type / sprint label / relations — never Status, never Actual SP)`);
 console.log(`  orphan rows on the board, not in the plan: ${orphans.length}`);
 for (const o of orphans) console.log(`     ! ${o.id} ${o.name.slice(0, 88)}`);
+
+// ── SPRINT MOVES — the one reconciler write the review used to hide ──────────────────────────────
+// "tasks to patch: 139" is true and useless: it cannot distinguish a pass that re-asserts 139 correct
+// values from one that re-files 59 rows into different sprints. Both the 2026-08-13 re-attribution
+// and the 2026-08-19 Sprint 27 pull were approved off a summary that never named a single row whose
+// sprint changed — and a sprint label ASSERTS a date range, so a wrong one is the same class of
+// falsehood as a wrong Completed Date. Worse, `sprint` was absent from the hashed proposal entirely,
+// so an approval hash did not bind the moves it authorised. It does now.
+const sprintMoves = PLAN_TASKS.flatMap((t) => {
+  const live = taskByName.get(taskItemName(t));
+  if (!live) return []; // a row still to be created is already listed above, with its sprint
+  const from = live.cols[TASK_COLS.sprint] || '(blank)';
+  const to = TASK_SPRINT_LABELS[t.sprint];
+  return from === to ? [] : [{ id: live.id, name: taskItemName(t), from, to, sp: t.sp, done: t.done }];
+});
+console.log(`\n=== SPRINT MOVES (label + group) — ${sprintMoves.length} ===`);
+if (!sprintMoves.length) console.log('  none — every row already carries the sprint the plan declares');
+for (const m of sprintMoves) {
+  // Flag a Done row being moved INTO the live sprint: that is how historical work gets credited to
+  // the current period, which inflates the sprint's velocity and anything riding on it.
+  const suspect =
+    m.done && LIVE_SPRINT && m.to === TASK_SPRINT_LABELS[LIVE_SPRINT]
+      ? '  <-- Done row entering the LIVE sprint, check the date'
+      : '';
+  console.log(`  ${m.id.padEnd(12)} ${String(m.sp).padStart(2)}SP ${(m.done ? 'Done ' : 'open ')} ${m.from.padEnd(10)} → ${m.to.padEnd(10)} ${m.name.slice(0, 62)}${suspect}`);
+}
 
 // ── corrections the reconciler cannot make ───────────────────────────────────────────────────────
 console.log('\n=== CORRECTIONS (execution state — Status / Actual SP / Completed Date / update) ===');
@@ -136,15 +173,35 @@ const proposal = {
   epicsToCreate: epicsMissing.map((e) => e.code),
   tasksToCreate: willCreate.map((t) => ({ name: taskItemName(t), sprint: t.sprint, sp: t.sp, done: t.done })),
   tasksToPatch: willPatch,
+  // Part of the hashed payload, not just the console: an approval must bind the sprint re-filings it
+  // authorises, or `apply.mts` can re-file rows the approver never saw named.
+  sprintMoves: sprintMoves.map((m) => ({ item: m.name, from: m.from, to: m.to })),
   corrections: corrections.map((c) => ({ item: c.itemName, to: c.to, changes: c.changes })),
   rollup: { totalSp, completedSp, sprintTasksLinked: PLAN_TASKS.length },
   orphans: orphans.map((o) => ({ id: o.id, name: o.name })),
 };
 const hash = proposalHash(proposal);
-fs.writeFileSync(PROPOSAL_PATH, JSON.stringify({ hash, generatedFor: PASS_DATE, proposal }, null, 2), 'utf8');
+/**
+ * A fingerprint of the pass's INPUTS — the plan and the pass rows — recomputable offline.
+ *
+ * The approval hash binds the proposal FILE, not the working tree, so `apply.mts` would accept a
+ * still-valid hash and then write whatever `hris-plan.ts` says at the moment it runs. That is not
+ * theoretical: on 2026-08-19 a proposal minted at 13:30 was still on disk after a second session
+ * re-filed six rows into Sprint 27, and the stored hash described none of it. `apply.mts` recomputes
+ * this and refuses on mismatch, so editing the plan after a review invalidates the approval — which
+ * is exactly what an approval is supposed to mean.
+ */
+const inputsHash = proposalHash({ passDate: PASS_DATE, plan: PLAN_TASKS, rows: ROWS });
+fs.writeFileSync(
+  PROPOSAL_PATH,
+  JSON.stringify({ hash, inputsHash, generatedFor: PASS_DATE, proposal }, null, 2),
+  'utf8',
+);
 
 console.log('\n' + '─'.repeat(96));
-console.log(`SUMMARY  ${willCreate.length} rows created · ${willPatch} patched · ${corrections.length} corrected`);
+console.log(
+  `SUMMARY  ${willCreate.length} rows created · ${willPatch} patched · ${sprintMoves.length} re-filed to a different sprint · ${corrections.length} corrected`,
+);
 // Say where the held rows actually SIT — they are not all Backlog, and a summary that assumes so
 // misreports the one thing this line exists to convey.
 const heldBySprint = new Map<string, number>();
