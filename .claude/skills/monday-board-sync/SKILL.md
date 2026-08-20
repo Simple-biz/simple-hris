@@ -292,9 +292,11 @@ One Gridline pass left verification dead for 5.5 hours.
 - **HRIS-22** "Hubstaff Live API Integration" is `Cancelled` on the board but `Shipped` in
   `hris-plan.ts`. The reconciler never overwrites board status, so this drifts until one side is
   corrected. It currently costs 12 SP of SP Completed.
-- **Nine epics carry 220 SP with zero task rows** (HRIS-01, 16, 17, 22, 23, 25, 29, 31, 32).
-- **74 pre-existing Done rows have no Completed Date** — HRIS never wrote the column before this
-  skill. Backfilling is a separate pass. The old rule here — "refuse to write a date inside the live
+- **Eight epics carry 208 SP with zero task rows** (HRIS-01, 16, 17, 22, 23, 25, 29, 31). Was nine/220 —
+  HRIS-32 gained its first child in pass 5 (the Gift Tracker roster export). Undecomposed, so their SP is
+  an independent rollup answering to nothing; decomposing them is a grooming pass nobody has run.
+- ~~**74 pre-existing Done rows have no Completed Date**~~ **CLOSED — measured 0 on 2026-08-20.** HRIS never
+  wrote the column before this skill; the backfill is finished, every Done row of ours now carries a date. The old rule here — "refuse to write a date inside the live
   sprint" — is **superseded**: it would have blocked the 20 rows that genuinely finished inside the
   live sprint on 2026-08-13. What replaced it is stronger, not looser: `selfcheck()` runs `git log` and
   refuses any Completed Date that is not the commit date of the row's last sha, so a stale backfill
