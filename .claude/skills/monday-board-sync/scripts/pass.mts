@@ -238,6 +238,60 @@
  * COST. FULL path, shared with pass 2 — structure changed on 26 rows across both, so `--only-new` is
  * WRONG. ~200 reconciler calls + 36 corrections + 36 evidence updates + the verify read.
  *
+ *
+ * ── 2026-08-20, PASS 4 — CLOSE THE MIGRATIONS ROW, AND THE THREE THINGS MEASURING IT FOUND ──
+ * Kane: "go", after being shown the three findings below.
+ *
+ * ROWS WAS REWRITTEN, not appended to. pass.mts is a PER-PASS data file, and the 30 rows of pass 2/3
+ * are applied and verified. Keeping them would re-post 30 evidence updates stamped "board sync pass
+ * 2026-08-20" onto rows that completed in April-July — a false claim in the audit trail, for zero
+ * board change. Their basis text lives in git history, the feature doc and memory.
+ *
+ * WHAT CLOSED, and the one soft spot in its evidence.
+ * "Run outstanding Supabase migrations + re-import n8n workflows (12+ pending SQL files)" -> Done.
+ *   - SQL: measured, not assumed. audit-pending-migrations.mts returned APPLIED 21 / NOT APPLIED 1 /
+ *     INCONCLUSIVE 3. "12+ pending" was ONE. That one was restore_active_employees_definer; Kane ran
+ *     it and it verified three ways (pg_class.reloptions reads security_invoker=false, anon on
+ *     active_employees went 0 -> 1307 matching service-role, verify-active-employees-roster.mjs
+ *     passed with both leak views still closed to anon).
+ *   - The 3 INCONCLUSIVE rows were CHECK constraints PostgREST cannot read. Kane pasted
+ *     pg_get_constraintdef: people.banking.overridden present; pab.excluded / pab.restored ABSENT,
+ *     and so was kpi.scored, which nobody had asked about. He then applied the 08-17 superset file
+ *     and reported "Success. No rows returned".
+ *   - n8n: all ten workflows settled on Kane's confirmation — eight done, bank-info-missing-notify
+ *     working, hubstaff-weekly-auto-sync DEPRECATED (so there is now NO scheduler for the weekly
+ *     Hubstaff pull; it is a manual button press).
+ *   - SOFT SPOT, recorded rather than glossed: the independent pg_constraint RE-read after the write
+ *     was NOT obtained. The evidence for that final DDL is Kane's report that it succeeded. That is
+ *     admissible — his confirmation counts and is named here as the basis rather than assumed — but
+ *     it is weaker than the three-way proof the definer fix got. dateBasis 'external' for exactly
+ *     that reason: the completion is an action in another system, not a commit.
+ *
+ * TITLE NOT CORRECTED, deliberately. The parenthetical is provably wrong, and fixing it would ORPHAN
+ * the row: item names are set at CREATE only, so a rename mints a duplicate and abandons the old row
+ * with its execution state. The correction goes in the evidence update instead.
+ *
+ * THE THREE NEW ROWS came out of measurement, not planning — which is the part worth keeping:
+ *   1. kpi.scored FIRES ON MONTHS-OLD WEEKS. hsl_bonus_period_status holds 181 dept-weeks at 'ready'
+ *      spanning 2026-03-01..2026-08-09, all with ZERO kpi.scored rows. The de-dupe key is the AMOUNT,
+ *      so with no prior notification every one reads as owed. Before the CHECK fix the insert threw
+ *      and nothing happened; now it succeeds — so a routine bonus edit on a March week notifies
+ *      employees about a five-month-old result. Floor the notifier by period.
+ *   2. NOTIFICATION FAILURES ARE SWALLOWED. Three notifyKpiScored call sites console.warn ("a notify
+ *      failure never fails the submission") and the PAB route console.errors and returns
+ *      notified:false. That is WHY two dead features went unnoticed — 17 days for PAB, 3 for KPI.
+ *      A console line in a serverless function is not observability.
+ *   3. PAB EXCLUSIONS ARE UNAUDITED. audit_log has 41,103 rows and audits PAB *disputes*
+ *      (pab_dispute.approved, seen 2026-08-19) but ZERO rows match an exclusion change, while 107
+ *      person-month exclusions are on record. So the action that zeroes an attendance bonus leaves no
+ *      trace of who or when, and the set of people OWED a pab.excluded notification is NOT
+ *      reconstructible — stated as a limit, not worked around.
+ *
+ * COST. --only-new is CORRECT here: this pass only ADDS rows and corrects them, 6 calls instead of
+ * ~200. The tradeoff is real and accepted — it writes NO epic relation, so the three new rows are
+ * correctly grouped/typed/scored/statused but unlinked from HRIS-06 / HRIS-15 / HRIS-02b until the
+ * next full reconcile adopts them by name.
+ *
   * ── APPROVAL ──────────────────────────────────────────────────────────────────────────────────────
  * Kane approved the 57-row re-attribution on 2026-08-13 ("Approve all") after reviewing it in full,
  * plus three rulings the same day: gap-day rows → Sprint 25; the group move belongs in `sync.ts`; the
@@ -266,7 +320,7 @@ import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-08-19';
+export const PASS_DATE = '2026-08-20';
 export const AUDIT_RANGE = '0f2d75e..HEAD';
 export const AUDIT_COMMITS = 884;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
@@ -296,300 +350,35 @@ export interface PassRow {
 
 export const ROWS: PassRow[] = [
   {
-    name: "USD⇄PHP conversion with cycle value-lock",
-    status: 'Done',
-    completed: '2026-04-08',
-    shas: ['1a92511'],
-    basis:
-      "Completed 2026-04-08; Sprint 17. DATE BASIS (MED confidence): last implementing commit 1a92511 (2026-04-08) — fx/usd-php.ts + payroll/money-php.ts. Earliest post-reinit FX work; the cycle value-lock has no separate artefact. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Dashboard-only roles + per-tab ABAC + auto-provision on assign",
-    status: 'Done',
-    completed: '2026-04-30',
-    shas: ['3fc0dc6', 'ea44b8c'],
-    basis:
-      "Completed 2026-04-30; Sprint 19. DATE BASIS (MED confidence): last implementing commit ea44b8c (2026-04-30) — rbac/ViewSwitcher.tsx + rbac/views.ts 04-16, then rbac/accounting-tabs.ts 04-30. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Delete Authorization",
-    status: 'Done',
-    completed: '2026-05-03',
-    shas: ['f548a15'],
-    basis:
-      "Completed 2026-05-03; Sprint 19. DATE BASIS (MED confidence): last implementing commit f548a15 (2026-05-03) — f548a15 carried the delete-authorization doc (via --follow, NOT the 4b323de docs move). No distinct code artefact. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Bonus Calculator",
-    status: 'Done',
-    completed: '2026-05-05',
-    shas: ['20c70dc'],
-    basis:
-      "Completed 2026-05-05; Sprint 19. DATE BASIS (MED confidence): last implementing commit 20c70dc (2026-05-05) — HslBonusCalculator.tsx + hsl-bonus routes + hsl-bonus/schema.ts. RESOLVES the doc conflict: bonus-calculator.md was ADDED by 091cc0a (2026-04-16) as a PLANNING doc inside a commit titled \"PAB Orphanage Calculator\", so the doc predates the feature and the code date is the honest one. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Mobile responsiveness pass (all dashboards)",
-    status: 'Done',
-    completed: '2026-05-06',
-    shas: ['142473b', 'f1a75ae', '714d136', '89aa317'],
-    basis:
-      "Completed 2026-05-06; Sprint 19. DATE BASIS (MED confidence): last implementing commit 89aa317 (2026-05-06) — a cross-cutting CSS pass with NO single artefact, so uniquely here the commit MESSAGES are the evidence: \"Mobile Responsiveness\" 04-24 x2, \"System Improvements - Mobile CSS\" 04-25, then \"Admin Dashboard - Mobile Responsiveness\" 05-06 completing the last dashboard. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "CSV imports admin tab — split of legacy Csv Imports",
-    status: 'Done',
-    completed: '2026-05-07',
-    shas: ['2b8fa40'],
-    basis:
-      "Completed 2026-05-07; Sprint 19. DATE BASIS (HIGH confidence): last implementing commit 2b8fa40 (2026-05-07) — 2b8fa40 added AdminCsvImports.tsx AND (via --follow) the csv-imports doc — code and doc agree on the same commit. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Orphanage budget requests + accounting approval",
-    status: 'Done',
-    completed: '2026-05-09',
-    shas: ['f27d377', '6af31d9'],
-    basis:
-      "Completed 2026-05-09; Sprint 19. DATE BASIS (HIGH confidence): last implementing commit 6af31d9 (2026-05-09) — OrphanageBudgetForm.tsx 05-07, then orphanage-budget-requests routes + the /decide approval route + OrphanageBudgetHistory + supabase lib. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Rate change history + manager rate views",
-    status: 'Done',
-    completed: '2026-05-15',
-    shas: ['7656e18', '58587aa'],
-    basis:
-      "Completed 2026-05-15; Sprint 20. DATE BASIS (HIGH confidence): last implementing commit 58587aa (2026-05-15) — hr/department-rates route 05-08, then employee-rate-history routes 05-15. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Payroll performance indexes + anti-lag pass",
-    status: 'Done',
-    completed: '2026-05-20',
-    shas: ['9614bef'],
-    basis:
-      "Completed 2026-05-20; Sprint 20. DATE BASIS (HIGH confidence): last implementing commit 9614bef (2026-05-20) — references/sql/alter/add_payroll_performance_indexes.sql. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Mesa",
-    status: 'Done',
-    completed: '2026-06-02',
-    shas: ['666ca74', 'bfcea8e', 'efbe777'],
-    basis:
-      "Completed 2026-06-02; Sprint 21. DATE BASIS (MED confidence): last implementing commit efbe777 (2026-06-02) — toggle-mesa-member 05-13, EmployeeMesa/HrMesa 05-14/15, mesa-requests + AccountingMesa 06-01, then the dispatch route 06-02. BROAD cluster — MESA ledger and per-stint accounts are separate S24 rows. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Urgent Payments",
-    status: 'Done',
-    completed: '2026-06-05',
-    shas: ['1f41c15'],
-    basis:
-      "Completed 2026-06-05; Sprint 21. DATE BASIS (MED confidence): last implementing commit 1f41c15 (2026-06-05) — the urgent-payments doc (--follow). Distinct from the two later S25 urgent rows. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Payroll Wizard Final Pay",
-    status: 'Done',
-    completed: '2026-06-10',
-    shas: ['1ebf6b3'],
-    basis:
-      "Completed 2026-06-10; Sprint 22. DATE BASIS (MED confidence): last implementing commit 1ebf6b3 (2026-06-10) — the payroll-wizard-final-pay doc (--follow). SINGLE SIGNAL. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Per-tab edit permission enforced on all write APIs (block view-only writes)",
-    status: 'Done',
-    completed: '2026-06-11',
-    shas: ['20c8024'],
-    basis:
-      "Completed 2026-06-11; Sprint 22. DATE BASIS (HIGH confidence): last implementing commit 20c8024 (2026-06-11) — rbac/ReadOnlyTab.tsx + rbac/view-tabs.ts + useFeaturePermissions.ts — one commit. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Bonus Catalog CRUD + formula engine — split of legacy 8-pt item",
-    status: 'Done',
-    completed: '2026-06-11',
-    shas: ['783fecf'],
-    basis:
-      "Completed 2026-06-11; Sprint 22. DATE BASIS (MED confidence): last implementing commit 783fecf (2026-06-11) — the bonus-catalog doc. SINGLE SIGNAL. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Employee KPI results view",
-    status: 'Done',
-    completed: '2026-06-16',
-    shas: ['c6dc7d3'],
-    basis:
-      "Completed 2026-06-16; Sprint 22. DATE BASIS (HIGH confidence): last implementing commit c6dc7d3 (2026-06-16) — kpi-results route + EmployeeKpiResults.tsx + supabase/employee-kpi-results.ts — one commit. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Admin search bar + pages registry",
-    status: 'Done',
-    completed: '2026-06-17',
-    shas: ['69c2c18'],
-    basis:
-      "Completed 2026-06-17; Sprint 22. DATE BASIS (HIGH confidence): last implementing commit 69c2c18 (2026-06-17) — AdminPages.tsx + usePagesVisibility.ts + pages/visibility.ts — one commit. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Onboarding Pay Plans",
-    status: 'Done',
-    completed: '2026-06-19',
-    shas: ['cb67856'],
-    basis:
-      "Completed 2026-06-19; Sprint 22. DATE BASIS (MED confidence): last implementing commit cb67856 (2026-06-19) — the onboarding-pay-plans doc, shared commit with gmail-surname. SINGLE SIGNAL. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Route Authorization",
-    status: 'Done',
-    completed: '2026-06-23',
-    shas: ['07e4b9f'],
-    basis:
-      "Completed 2026-06-23; Sprint 23. DATE BASIS (MED confidence): last implementing commit 07e4b9f (2026-06-23) — the route-authorization doc. SINGLE SIGNAL. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Applied-bonus tracking + cadence + manager history — split",
-    status: 'Done',
-    completed: '2026-07-07',
-    shas: ['04541bc'],
-    basis:
-      "Completed 2026-07-07; Sprint 24. DATE BASIS (MED confidence): last implementing commit 04541bc (2026-07-07) — src/lib/payroll/bonus-cadence.ts. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "New Hire Checklist",
-    status: 'Done',
-    completed: '2026-07-10',
-    shas: ['b504a17'],
-    basis:
-      "Completed 2026-07-10; Sprint 24. DATE BASIS (MED confidence): last implementing commit b504a17 (2026-07-10) — the new-hire-checklist doc; the code cluster spans 07-02..07-31 so the doc is the tightest marker. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 5 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Presence heartbeat + last-seen",
-    status: 'Done',
-    completed: '2026-07-10',
-    shas: ['04541bc', '164732e'],
-    basis:
-      "Completed 2026-07-10; Sprint 24. DATE BASIS (MED confidence): last implementing commit 164732e (2026-07-10) — presence/GlobalPingListener.tsx + presence/page-label.ts 07-07, then the presence/active route 07-10. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Collapsible sidebar shell redesign",
-    status: 'Done',
-    completed: '2026-07-02',
-    shas: ['d842f85'],
-    basis:
-      "Completed 2026-07-02; Sprint 23. DATE BASIS (HIGH confidence): last implementing commit d842f85 (2026-07-02) — CollapsibleSidebarShell.tsx + SidebarBrandMark.tsx + SidebarCollapseToggle.tsx + useSidebarCollapsed.ts — one commit. Was filed S24; 07-02 is Sprint 23. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Onboarding name split → structured first/last/extension columns",
-    status: 'Done',
-    completed: '2026-07-20',
-    shas: ['602b004'],
-    basis:
-      "Completed 2026-07-20; Sprint 24. DATE BASIS (HIGH confidence): last implementing commit 602b004 (2026-07-20) — src/lib/name/name-parts.ts + its test. Was filed S25; 2026-07-20 is a Sun/Mon GAP day, which belongs to the sprint that CLOSED (S24) per the 2026-08-13 ruling. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Profile name-parts editor (First/Middle/Last/Ext/Nickname)",
-    status: 'Done',
-    completed: '2026-07-20',
-    shas: ['602b004'],
-    basis:
-      "Completed 2026-07-20; Sprint 24. DATE BASIS (HIGH confidence): last implementing commit 602b004 (2026-07-20) — same name-parts.ts commit — the editor is the UI half of the split. Was filed S25; 07-20 is S24 by the gap-day rule. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Weekly 100+300 ledger deposits on upload + opt-in date derivation",
-    status: 'Done',
-    completed: '2026-07-20',
-    shas: ['4be8cab'],
-    basis:
-      "Completed 2026-07-20; Sprint 24. DATE BASIS (HIGH confidence): last implementing commit 4be8cab (2026-07-20) — src/lib/mesa/record-weekly-contributions.ts. Was filed S25; 07-20 is S24 by the gap-day rule. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Remove employee-facing PAB disputes (keep manager calendar + API)",
-    status: 'Done',
-    completed: '2026-07-20',
-    shas: ['c0ef4fb'],
-    basis:
-      "Completed 2026-07-20; Sprint 24. DATE BASIS (HIGH confidence): last implementing commit c0ef4fb (2026-07-20) — last commit touching employee/MyDisputes.tsx — the component still EXISTS, so the removal was an entry-point unwiring, not a file delete. Was filed S25; 07-20 is S24 by the gap-day rule. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 2 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Time-adjustment segments: require missed time-in/out (additive)",
-    status: 'Done',
-    completed: '2026-07-17',
-    shas: ['c320fd1'],
-    basis:
-      "Completed 2026-07-17; Sprint 24. DATE BASIS (MED confidence): last implementing commit c320fd1 (2026-07-17) — pickaxe on time_in across supabase/time-adjustments.ts + the time-adjustments routes, only in-window hit. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "PAB payout-week gate + neutral mid-period Additions pill",
-    status: 'Done',
-    completed: '2026-07-17',
-    shas: ['c320fd1'],
-    basis:
-      "Completed 2026-07-17; Sprint 24. DATE BASIS (MED confidence): last implementing commit c320fd1 (2026-07-17) — pickaxe on the payout-week concept across src/app, only in-window hit. SINGLE SIGNAL. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Re-hires landing invisible (offboard-row reuse) — fixes",
-    status: 'Done',
-    completed: '2026-07-17',
-    shas: ['c320fd1'],
-    basis:
-      "Completed 2026-07-17; Sprint 24. DATE BASIS (MED confidence): last implementing commit c320fd1 (2026-07-17) — last in-window commit changing off_board handling. SINGLE SIGNAL. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-  {
-    name: "Master-list sync race + orphaned-upload guard",
-    status: 'Done',
-    completed: '2026-07-18',
-    shas: ['74a4146', 'c0dc608'],
-    basis:
-      "Completed 2026-07-18; Sprint 24. DATE BASIS (MED confidence): last implementing commit c0dc608 (2026-07-18) — last in-window commits touching the orphaned-upload path. Memory notes no hard lock exists, so this row is the guard, not a lock. Credited to the sprint the work actually finished in (Kane 2026-08-19). The row was already Done and keeps its 3 SP; no status moved and no Actual SP was recomputed.",
-  },
-
-  // ── PASS 3 — the Sprint 27 pull (Aug 18-29) ────────────────────────────────────────────────────
-  // Six OPEN rows. Each carries its true current status unchanged, no Completed Date, and its
-  // blockers. They are here for the evidence update that records the sprint move — and, for the
-  // first one, to clear a phantom Actual SP that only the corrector can reach.
-  {
-    name: "Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports",
-    status: 'Ready to Start',
-    shas: ['d96e77d', '28cb65d'],
-    basis:
-      "Pulled Backlog → Sprint 27 (Aug 18-29) on Kane's 2026-08-19 instruction to schedule any backlog work achievable in the period. NOT shipped, so no Completed Date and no Actual SP — and this pass CLEARS the phantom Actual SP 5 the row was carrying while reading Ready to Start, which is the invariant verify.mts sweeps for. RE-SCOPE BEFORE ESTIMATING: 28cb65d (2026-08-07) retired the Google Sheet as an offboarding source outright, so the 'offboarded' quarter of this row no longer describes live work and the 5 SP predates that.",
-    blockers: ['Re-scope: the offboarded-sheet source was retired by 28cb65d, so part of the original scope no longer exists'],
-  },
-  {
     name: "Run outstanding Supabase migrations + re-import n8n workflows (12+ pending SQL files)",
+    status: 'Done',
+    completed: '2026-08-20',
+    dateBasis: 'external',
+    shas: ['799d6df5', '422e455f', '31b11050'],
+    basis:
+      "Done 2026-08-20; Sprint 27. THE TITLE IS WRONG and cannot be fixed without orphaning this row (item names are set at create only): \"12+ pending SQL files\" was measured at ONE. scripts/audit-pending-migrations.mts returned APPLIED 21 / NOT APPLIED 1 / INCONCLUSIVE 3. (1) restore_active_employees_definer was the single real one; Kane applied it and it verified THREE ways - pg_class.reloptions now reads security_invoker=false, anon on active_employees went 0 to 1307 matching service-role exactly, and verify-active-employees-roster.mjs passed with employee_hourly_rates_current and active_hsl_agents still closed to anon. (2) The 3 INCONCLUSIVE rows were notification-type CHECK constraints PostgREST cannot read; Kane pasted pg_get_constraintdef, which showed people.banking.overridden present but pab.excluded, pab.restored AND kpi.scored absent - two shipped features that had therefore NEVER delivered a single notification (0 rows each, against 3,694 for payroll.available). He applied the 2026-08-17 superset file, verified beforehand as a strict superset of the live 38 types with ZERO drops, and reported \"Success. No rows returned\". (3) All ten n8n workflows settled on Kane's confirmation: eight done, bank-info-missing-notify working, hubstaff-weekly-auto-sync DEPRECATED - so no scheduler now exists for the weekly Hubstaff pull and it is a manual action. DATE BASIS external: the completion is an action in Supabase and n8n, not a commit; the shas are the artefacts (799d6df5 authored the definer file, 422e455f the PAB CHECK widening, 31b11050 the kpi.scored feature and its DDL). LIMIT ON THE EVIDENCE, stated rather than glossed: the independent pg_constraint RE-read after the final write was not obtained, so that last DDL rests on Kane's report that it succeeded.",
+  },
+  {
+    name: "KPI scored notification fires on months-old weeks — floor it to the current period",
     status: 'Ready to Start',
-    shas: ['b2ef23f', 'eff111d', '70f9678'],
+    shas: ['31b11050'],
     basis:
-      "Pulled Sprint 25 → Sprint 27 (Aug 18-29) on Kane's 2026-08-19 instruction, and unpinned out of 'For Re-scoping'. Critical: this row is what makes other shipped code actually live — several features are code-complete and functionally dead until their migration runs. Note b2ef23f ('stop claiming applied migrations are pending') — the pending LIST must be re-derived with audit-pending-migrations.mts before the work starts, because migration-pending claims in this repo are folklore more often than not. Not shipped: no Completed Date, no Actual SP.",
-    blockers: [
-      'The pending set must be re-derived (audit-pending-migrations.mts) — do not trust the "12+" in the title',
-      'Kane cannot paste SQL into Supabase: each change ships as a Node script behind an --apply gate',
-    ],
+      "Sprint 27, opened 2026-08-20 by measurement. hsl_bonus_period_status holds 181 dept-weeks at status 'ready' spanning 2026-03-01 to 2026-08-09, and employee_notifications holds ZERO kpi.scored rows. notifyKpiScored de-dupes on the AMOUNT rather than on \"already notified\" (Kane's 2026-08-17 re-notify ruling, so a corrected number always reaches the employee), which means that with no prior notification on record every person in all 181 dept-weeks currently reads as owed one. Until 2026-08-20 the insert was rejected by the type CHECK and the failure was swallowed, so nothing happened; now the insert SUCCEEDS, and any bonus write or re-Mark-Ready on an old dept-week will notify employees about results up to five months stale. The fix is a period floor in src/lib/notifications/kpi-scored.ts, NOT a change to the de-dupe rule - the re-notify ruling stays intact.",
+    blockers: ["Needs Kane's call on the floor: current pay cycle only, or a deliberate one-off backfill of the 181 ready dept-weeks"],
   },
   {
-    name: "Offboarding is delete-only: suspend is its own path, suspended-person offboards escalate to delete, and leavers get a correct final check",
-    status: 'Pending Deploy',
-    shas: ['3502e93', 'd259040', '8497699'],
-    basis:
-      "Pulled Backlog → Sprint 27 (Aug 18-29) on Kane's 2026-08-19 instruction, and unpinned out of 'For Re-scoping'. Status is UNCHANGED at Pending Deploy and was deliberately NOT written down to Ready to Start: the code is on origin/main (3502e93 2026-08-07, d259040 + 8497699 2026-08-10) and only the prod click-through is missing, so Ready to Start would move the row backwards. Scheduling a row is not a claim about how far along it is. 8 SP is a legal task score — the next Fibonacci step is 13 — so this needs no decomposition.",
-    blockers: ['Nobody has confirmed the delete-only routing and the suspend path in production — that click-through is the only thing between this and Done'],
-  },
-  {
-    name: "One HSL department + required sub-department that sets the base rate, wired through the Payment Catalog",
-    status: 'Pending Deploy',
-    shas: ['5cb9bc6', 'f14f5b3', 'da24ffb', '4a15db2'],
-    basis:
-      "Pulled Backlog → Sprint 27 (Aug 18-29) on Kane's 2026-08-19 instruction, and unpinned out of 'For Re-scoping'. Status UNCHANGED at Pending Deploy for the same reason as the offboarding row. The blocker recorded on 2026-08-14 — zero hsl:* rate rows, which made the feature pay nobody differently — has since been worked: 5cb9bc6 bulk-assigned sub-departments, f14f5b3 set a base rate per sub-team and released the HARD HOLD, da24ffb deleted the parent base row, 4a15db2 merged the GML roster. That is evidence the blocker MAY be closed, not proof, and a row is never promoted because its blocker looks stale. 8 SP is a legal task score.",
-    blockers: ['Confirm in prod that a sub-department assignment actually sets the base rate a person is paid on — the original blocker was that it silently did not'],
-  },
-  {
-    name: "HSL rate-history stale underpay — arrears remediation (≈₱1.06M, 121 under / 10 over)",
-    shas: ['c39fad3', '210b9ad', '273319a'],
+    name: "Notification insert failures are swallowed into console.warn — make them observable",
     status: 'Ready to Start',
+    shas: ['31b11050', '4afac832'],
     basis:
-      "Pulled Sprint 25 → Sprint 27 (Aug 18-29) on Kane's 2026-08-19 instruction — open work carried forward out of a sprint that closed 2026-08-01. THE FIGURE IS STALE: 273319a (2026-08-18) REMOVED the snap-to-Sunday that c39fad3 introduced and which memory records as the root cause, so the ≈₱1.06M / 121-under / 10-over arrears set was computed under a pricing rule that no longer exists. Re-derive against the current proration before paying anyone. Not shipped: no Completed Date, no Actual SP.",
-    blockers: ['Arrears must be recomputed under the post-273319a proration rule; the recorded ₱1.06M predates it'],
+      "Sprint 27, opened 2026-08-20. This is the row that explains why the other two survived unnoticed. Four call sites treat a notification insert failure as ignorable: app/api/bonus-catalog-applied/route.ts, app/api/hsl-bonus/entries/route.ts and app/api/hsl-bonus/period-status/route.ts each catch and console.warn (\"Best-effort: a notify failure never fails the submission\"), and app/api/pab-exclusions/route.ts console.errors and returns notified:false in a response nobody inspects. A CHECK-constraint rejection therefore looked identical to success: pab.excluded was dead 17 days and kpi.scored 3, with zero rows inserted and zero signals raised. Best-effort delivery is the right DESIGN - a notification must never fail a payroll submission - so the fix is to make the failure visible, not to make it fatal.",
   },
   {
-    name: "Legacy rates-sheet cell can route null-preferred → hurupay: decision + guard",
+    name: "PAB exclusions leave no audit trail while PAB disputes are fully audited",
     status: 'Ready to Start',
-    shas: ['917309d', '1419a6b'],
+    shas: ['4afac832', '422e455f'],
     basis:
-      "Pulled Sprint 25 → Sprint 27 (Aug 18-29) on Kane's 2026-08-19 instruction — open work carried forward out of a closed sprint. 917309d measured the blast radius read-only and 1419a6b wrote the seed script behind an --apply gate, but the gate has never been opened, so the bypass is still live: the legacy rates-sheet cell can still route a null-preferred payee to hurupay, around the WIRES lock. The row is the DECISION plus the guard, and neither has been made. Not shipped: no Completed Date, no Actual SP.",
-    blockers: ['The --apply on 1419a6b is unrun and needs Kane; a SELECT backup to disk is required first (bulk UPDATE rule)'],
+      "Sprint 27, opened 2026-08-20. audit_log holds 41,103 rows and records PAB DISPUTES in detail (pab_dispute.approved and pab_dispute.orphanage_manager_created, most recently 2026-08-19T20:02Z), but ZERO rows match an exclusion change. app_settings.pab_period_exclusions currently carries 107 person-month entries. So the action that zeroes a person's Perfect Attendance Bonus for a month records neither who did it nor when, while merely approving a dispute is fully logged - and the notification that would have told them says \"Reach out to Accounting if this doesn't look right\", which never sent. A direct consequence: the set of people owed a missed pab.excluded notification is NOT reconstructible from the data, which is why no backfill list accompanies this row.",
   },
 ];
 

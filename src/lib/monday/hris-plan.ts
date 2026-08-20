@@ -418,7 +418,20 @@ export const PLAN_TASKS: PlanTask[] = [
   //
   // The migrations row ALSO loses `groupPinned` — see the field's own doc for why that pin existed
   // and why Kane released it the same day he created it.
-  { epic: 'HRIS-15', name: 'Run outstanding Supabase migrations + re-import n8n workflows (12+ pending SQL files)', type: 'Chore', sp: 3, done: false, sprint: 'S27', priority: 'Critical' },
+  // done:true 2026-08-20. The "(12+ pending SQL files)" in the title was FOLKLORE — measured with
+  // scripts/audit-pending-migrations.mts it was ONE (`restore_active_employees_definer`), plus three
+  // notification-type CHECK rows PostgREST cannot read. All are now applied and all ten n8n workflows
+  // are settled on Kane's confirmation. The title is deliberately NOT corrected: item names are set
+  // at CREATE only, so renaming would orphan this row and mint a duplicate. The correction lives in
+  // the row's evidence update instead.
+  { epic: 'HRIS-15', name: 'Run outstanding Supabase migrations + re-import n8n workflows (12+ pending SQL files)', type: 'Chore', sp: 3, done: true, sprint: 'S27', priority: 'Critical' },
+  // ── Sprint 27, found by MEASUREMENT on 2026-08-20 while closing the row above ─────────────────
+  // None of these three was on the board. They exist because the migrations audit turned over rocks:
+  // two shipped, "Done" features had never once worked, and the reason nobody noticed is a logging
+  // choice. Kane approved adding them 2026-08-20 ("go").
+  { epic: 'HRIS-06', name: 'KPI scored notification fires on months-old weeks — floor it to the current period', type: 'Bug', sp: 2, done: false, sprint: 'S27', priority: 'High' },
+  { epic: 'HRIS-15', name: 'Notification insert failures are swallowed into console.warn — make them observable', type: 'Chore', sp: 3, done: false, sprint: 'S27', priority: 'High' },
+  { epic: 'HRIS-02b', name: 'PAB exclusions leave no audit trail while PAB disputes are fully audited', type: 'Feature', sp: 2, done: false, sprint: 'S27', priority: 'High' },
   { epic: 'HRIS-19', name: 'Legacy rates-sheet cell can route null-preferred → hurupay: decision + guard', type: 'Spike', sp: 2, done: false, sprint: 'S27', priority: 'High' },
   { epic: 'HRIS-24', name: 'Referred-by column + Referrals week section (email-tier matching)', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
   // ── Sprint 26 reconciliation — shipped Jul 29 – Aug 5 2026 ─────────────────
