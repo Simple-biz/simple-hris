@@ -19,6 +19,7 @@ import {
   notifyPayrollAvailable,
   deletePayrollAvailableNotifications,
 } from "@/lib/notifications/payroll-available";
+import { notifyZeroHoursGapForWeek } from "@/lib/notifications/zero-hours-gap";
 import {
   recordMesaWeeklyContributions,
   deleteMesaWeeklyContributions,
@@ -595,6 +596,17 @@ export async function POST(req: NextRequest) {
       notified = await notifyPayrollAvailable({ sourceFile: fileName ?? null, uploadId });
     } catch (notifyErr) {
       console.warn("[POST /api/hubstaff-hours] payroll.available notify failed:", notifyErr);
+    }
+
+    // Zero-hours reminder for Accounting — active roster members this week's
+    // file left with no hours and no explanation (not an untracked department,
+    // not approved leave, not a new hire). Best-effort: never fails the upload.
+    // De-dupes per (recipient, source_file); its own failures are audited rather
+    // than warned. See src/lib/notifications/zero-hours-gap.ts.
+    try {
+      await notifyZeroHoursGapForWeek(fileName ?? null);
+    } catch (gapErr) {
+      console.warn("[POST /api/hubstaff-hours] payroll.hours_gap notify failed:", gapErr);
     }
 
     // Grow each opted-in member's MESA balance by this week's ₱100 + ₱300 match.

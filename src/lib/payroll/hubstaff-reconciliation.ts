@@ -53,9 +53,38 @@ const HUBSTAFF_EXEMPT_DEPTS = new Set([
   'usee',
 ]);
 
+/**
+ * Strip a trailing parenthetical QUALIFIER from a department label:
+ * `Site Building (US - Freelance)` → `site building`.
+ *
+ * A dept in this set gets renamed by adding a cohort qualifier far more often
+ * than it changes what it IS, and an exact-match-only exemption silently
+ * inverts its own meaning when that happens. Measured on the 2026-08-09 week:
+ * `Site Building` had been split into `Site Building (US - Freelance)` (20
+ * people, **0** with Hubstaff hours) and `Site Building (PH - Freelancer)` (13,
+ * **0** with hours) — 33 people the exempt list intends to excuse were being
+ * reported as unexplained reconciliation gaps, while the untouched
+ * `SMM Freelancer` label (29, 0 tracked) exempted correctly. The mechanism was
+ * fine; only the labels had drifted.
+ *
+ * This widens nothing on its own: the base label still has to be one of the
+ * five entries above, and every entry is a team that bills by deliverable or is
+ * salaried — a qualifier splitting it by cohort (`(US - Freelance)`) never makes
+ * it hourly-tracked. A dept whose base label is NOT in the set stays tracked no
+ * matter how it is qualified (`Lead Gen (PH)` is still a tracked dept), which is
+ * the case a test pins.
+ */
+function baseDeptLabel(label: string): string {
+  return label.replace(/\s*\([^)]*\)\s*$/, '').trim();
+}
+
 export function isHubstaffExemptDept(department: string | null | undefined): boolean {
   if (!department) return false;
-  return HUBSTAFF_EXEMPT_DEPTS.has(department.trim().toLowerCase());
+  const raw = department.trim().toLowerCase();
+  if (HUBSTAFF_EXEMPT_DEPTS.has(raw)) return true;
+  // Second pass: the same label with a trailing cohort qualifier removed.
+  const base = baseDeptLabel(raw);
+  return base !== raw && HUBSTAFF_EXEMPT_DEPTS.has(base);
 }
 
 /**

@@ -33,6 +33,7 @@ import {
   Trash2,
   Upload,
   UserPlus,
+  CalendarOff,
   Wallet,
   X,
   Zap,
@@ -1557,8 +1558,8 @@ const EXCEPTION_META: Record<ExceptionKind, { label: string; cls: string; Icon: 
  *  checklist, no matching stat tile) plus one per detail list. Left→right order
  *  matches the stat-tile row for the latter four, so the directional slide
  *  reads naturally. */
-type ReadinessTab = "setup" | "kpi" | "rate" | "bank" | "exc";
-const READINESS_TAB_ORDER: ReadinessTab[] = ["setup", "kpi", "rate", "bank", "exc"];
+type ReadinessTab = "setup" | "kpi" | "rate" | "bank" | "exc" | "hours";
+const READINESS_TAB_ORDER: ReadinessTab[] = ["setup", "kpi", "rate", "bank", "exc", "hours"];
 
 /** A single readiness stat tile (§6.3) — a read-only summary count. `tone` picks
  *  the palette. When `percent` is given (the dimension's 0–100 score from the
@@ -1672,6 +1673,13 @@ function ReadinessTabStrip({
     { id: "rate", label: "No Pay Rate", Icon: Wallet, blocker: true },
     { id: "bank", label: "Bank Info", Icon: Banknote },
     { id: "exc", label: "Exceptions", Icon: UserPlus, neutral: true },
+    // Neutral like Exceptions, and for the same reason: a no-hours person is
+    // correctly paid nothing this week, so the count is a reconciliation prompt
+    // ("still active? on leave? sick? or was nobody told they left?"), never a
+    // blocker to clear before running payroll. With Lead Gen tracked (Kane's
+    // 2026-08-21 ruling) it sits near 190 every week, which would make an amber
+    // "fix me" badge permanent and therefore meaningless.
+    { id: "hours", label: "No Hours", Icon: CalendarOff, neutral: true },
   ];
   return (
     <div
@@ -3080,6 +3088,7 @@ function PayrollReadinessGlance({
   const [rateQuery, setRateQuery] = useState("");
   const [bankQuery, setBankQuery] = useState("");
   const [excQuery, setExcQuery] = useState("");
+  const [hoursQuery, setHoursQuery] = useState("");
   // "Recently onboarded" filter for the No Pay Rate list — when on, only new
   // hires (started this pay week or the one before) show.
   const [rateNewOnly, setRateNewOnly] = useState(false);
@@ -3440,6 +3449,11 @@ function PayrollReadinessGlance({
   // with "ab").
   const bankPage = usePagedList(bankShown, `${bankDept}\n${bankOnPayrollOnly ? "1" : "0"}\n${bankQuery}`);
   const excPage = usePagedList(excShown, excQuery);
+  // `?? []` guards a cached snapshot taken before this dimension shipped.
+  const hoursShown = (data?.zeroHours ?? []).filter((r) =>
+    matchesQuery(hoursQuery, r.name, r.email, r.department),
+  );
+  const hoursPage = usePagedList(hoursShown, hoursQuery);
 
   // The selector header stays mounted across every body state (loading / error /
   // content) so switching weeks never yanks the control out from under the
@@ -3645,6 +3659,8 @@ function PayrollReadinessGlance({
           rate: data.missingRates.length,
           bank: data.missingBank.length,
           exc: data.exceptions.length,
+          // `??` guards a cached snapshot taken before this dimension shipped.
+          hours: data.zeroHoursCount ?? data.zeroHours?.length ?? 0,
         }}
         reduceMotion={reduceMotion}
       />
@@ -3973,7 +3989,7 @@ function PayrollReadinessGlance({
                   </>
                 )}
               </PaneBody>
-            ) : (
+            ) : readinessTab === "exc" ? (
               <PaneBody>
                 {data.exceptions.length === 0 ? (
                   <AllClear text="No exceptions this week." />
@@ -4053,6 +4069,73 @@ function PayrollReadinessGlance({
                           to={excPage.to}
                           total={excPage.total}
                           onPage={excPage.setPage}
+                        />
+                      </>
+                    )}
+                  </>
+                )}
+              </PaneBody>
+            ) : (
+              /* No Hours — active roster members this week's Hubstaff file left
+                 with no hours and nothing in the HRIS explaining it. A reminder
+                 to reconcile a person's status, NOT a payroll blocker and NOT a
+                 score input: someone with no hours is correctly paid nothing.
+                 The risk it closes is the opposite one — a leaver nobody
+                 offboarded sitting Active indefinitely. Read-only by design:
+                 the fix is an offboarding, a leave request or a conversation,
+                 none of which belong on a payroll pane. */
+              <PaneBody>
+                {(data.zeroHours?.length ?? 0) === 0 ? (
+                  <AllClear text="Everyone on the roster logged hours this week." />
+                ) : (
+                  <>
+                    <p className="px-1 pb-1.5 text-[10.5px] leading-snug text-zinc-500 dark:text-zinc-400">
+                      No hours in{" "}
+                      <span className="font-semibold text-zinc-600 dark:text-zinc-300">
+                        {data.weekLabel}
+                      </span>
+                      , and nothing on file explains it — no untracked department, no approved
+                      leave, no new-hire start date. Still working, on leave, sick, or never
+                      offboarded? Expected absences are already filtered out into Exceptions.
+                    </p>
+                    <ReadinessSearch
+                      value={hoursQuery}
+                      onChange={setHoursQuery}
+                      placeholder="Search people…"
+                      shown={hoursShown.length}
+                      total={data.zeroHours?.length ?? 0}
+                    />
+                    {hoursShown.length === 0 ? (
+                      <NoMatches query={hoursQuery} />
+                    ) : (
+                      <>
+                        <div className="space-y-0.5">
+                          {hoursPage.pageItems.map((r, i) => (
+                            <PersonLine
+                              key={`${r.email ?? r.name}:${i}`}
+                              name={r.name}
+                              email={r.email}
+                              department={r.department}
+                              // Someone already off-boarded is not an unexplained
+                              // silence — they are just awaiting their final pay,
+                              // so the row says so instead of implying a mystery.
+                              right={
+                                r.leftAt ? (
+                                  <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">
+                                    Left · final pay
+                                  </span>
+                                ) : undefined
+                              }
+                            />
+                          ))}
+                        </div>
+                        <ReadinessPager
+                          page={hoursPage.page}
+                          pageCount={hoursPage.pageCount}
+                          from={hoursPage.from}
+                          to={hoursPage.to}
+                          total={hoursPage.total}
+                          onPage={hoursPage.setPage}
                         />
                       </>
                     )}

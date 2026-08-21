@@ -51,6 +51,13 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   // sync): the employee's salary for that week is ready to view. Same
   // "Open Pay Stub" button as payroll.paid. Employee-only, ungated.
   'payroll.available': ['employee'],
+  // A freshly ingested Hubstaff week left N active roster members with no hours
+  // and no explanation (not an untracked dept, not approved leave, not a new
+  // hire) — Accounting reconciles whether they are still active, on leave, sick,
+  // or were never actually offboarded. ACCOUNTING ONLY (Kane 2026-08-21): it
+  // names headcount, not money, and HR has its own offboarding queue — adding a
+  // second view here would put a payroll-operations chore on the HR chime.
+  'payroll.hours_gap': ['accounting'],
   // Accounting excluded (or restored) this employee from a month's Perfect
   // Attendance Bonus in the Payroll Wizard's PAB settings modal. Informational
   // card only, no click-through action. Employee-only, ungated.

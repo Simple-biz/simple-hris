@@ -117,6 +117,8 @@ import {
   type PayrollBankExemptionRow,
 } from '@/lib/supabase/payroll-bank-exemptions';
 import { listPayrollWizardNotes } from '@/lib/supabase/payroll-wizard-notes';
+import { listApprovedLeavesFrom } from '@/lib/supabase/leave-requests';
+import { buildLeaveIndex, classifyZeroHours } from '@/lib/payroll/zero-hours-gap';
 import { parseAdjustmentAmount } from '@/lib/payroll/adjustment-bridge';
 import { isInvoiceInPeriod } from '@/lib/contractor/invoice-period';
 import {
@@ -252,6 +254,31 @@ export interface ReadinessBankExemption {
   exemptedBy: string | null;
 }
 
+/**
+ * An ACTIVE roster member with NO Hubstaff hours in the week in view, and
+ * nothing in the HRIS that explains it.
+ *
+ * A reminder for Accounting to reconcile a person's status — still working? on
+ * unfiled leave? sick? or never actually offboarded? — NOT a payroll blocker
+ * and NOT a score input. Someone with no hours is correctly paid nothing; the
+ * risk this closes is the opposite one, a leaver nobody offboarded sitting
+ * Active indefinitely (`jvincec@simple.biz`, Active with zero hours from
+ * 2026-08-05, found only because someone asked).
+ *
+ * Expected absences never reach this list: the classification (dept untracked
+ * by nature → approved leave → onboarding timing → unexplained) lives in
+ * `zero-hours-gap.ts` and is shared with the Accounting Overview tile and the
+ * `payroll.hours_gap` notification, so all three always agree.
+ */
+export interface ReadinessZeroHours {
+  name: string;
+  email: string | null;
+  department: string | null;
+  /** True once anyone has left — labels the row "Left · final pay" instead of
+   *  presenting a departed person as an unexplained silence. */
+  leftAt: string | null;
+}
+
 /** Why a person is expected NOT to be paid this week (an onboarding exception). */
 export type ExceptionKind =
   | 'onboarding' // still mid-onboarding (not yet promoted)
@@ -285,6 +312,13 @@ export interface PayrollReadiness {
   missingRates: ReadinessMissingRate[];
   missingBank: ReadinessMissingBank[];
   exceptions: ReadinessException[];
+  /** Active roster members with no Hubstaff hours this week and no explanation.
+   *  LISTED BUT NEVER SCORED — see `ReadinessZeroHours` and the note on
+   *  `zeroHoursDegradedReason`. */
+  zeroHours: ReadinessZeroHours[];
+  /** `zeroHours.length`, carried explicitly so a caller can render the count
+   *  without shipping the rows (the notification digest does exactly that). */
+  zeroHoursCount: number;
   /** Count of current-week Hubstaff workers considered for the rate check. */
   workerCount: number;
   /** Count of active on-channel employees considered for the bank check (the
@@ -1367,6 +1401,136 @@ async function buildMissingBank(
   return { rows: out, eligibleCount, onPayrollEligibleCount, exemptRows, degraded };
 }
 
+/**
+ * Active roster members with NO Hubstaff hours in the week in view whose silence
+ * the HRIS cannot explain — the "did anyone actually offboard this person?"
+ * reminder (Kane, 2026-08-21).
+ *
+ * Scoping mirrors `buildMissingBank` deliberately, so the two lists never
+ * disagree about who is even in scope this week: off-channel and pay-paused
+ * departments are out, onboarding-exception identities are out, people who left
+ * before the week began are out, future hires are out. What it does NOT copy is
+ * the score: this dimension is informational, so there are no denominators here
+ * and nothing is handed to `computeReadinessScore`.
+ *
+ * **Never scored, and not merely by preference.** With Lead Gen tracked (Kane's
+ * Q1) the list runs ~190 people a week, so scoring it would peg the readiness
+ * score near zero every single week and permanently kill the 100% celebration —
+ * turning a reminder into a broken gauge. `ReadinessScoreComponent['key']` is
+ * also the closed union `'rate' | 'kpi' | 'bank'` whose `SCORE_WEIGHTS` sum to
+ * 1.0 and whose points are asserted to equal the headline, so a fourth
+ * component would need a weight rebalance nobody asked for.
+ *
+ * The classification itself is NOT implemented here — it is `classifyZeroHours`,
+ * shared with the Accounting Overview tile and the notification.
+ */
+async function buildZeroHours(
+  /** The shared roster snapshot (see {@link buildMissingRates}). */
+  employees: EmployeeRow[],
+  /** Onboarding-exception identities — expected non-payments, never gaps. */
+  excludeIdentities: Set<string>,
+  /** Pay-paused departments leave this list like every other dimension. */
+  isPausedDept: (dept: string | null | undefined) => boolean,
+  /** The pay week in view — its Sunday, per `weekKeyFromSourceFile`. */
+  weekStart: string,
+  /** Every normalized email with hours in the week's Hubstaff upload. */
+  payrollEmails: Set<string>,
+  /** See {@link loadOffboardDatesByEmail}. */
+  offboardDateByEmail: Map<string, string>,
+): Promise<{ rows: ReadinessZeroHours[]; degraded: string[] }> {
+  const degraded: string[] = [];
+  const weekEnd = weekEndFromStart(weekStart);
+
+  // Only leaves whose window is still open at/after this week can excuse it.
+  const leavesRes = await listApprovedLeavesFrom(weekStart).catch(() => ({
+    rows: [],
+    error: 'unreachable',
+  }));
+  if (leavesRes.error) {
+    // Fail toward OVER-flagging (someone genuinely on leave shows as a gap) and
+    // say so, rather than silently excusing everyone — an unreadable leave table
+    // must not make the reminder look clean.
+    degraded.push(
+      'Approved leave requests couldn’t be read — people on leave may appear as unexplained no-hours rows.',
+    );
+  }
+  const leavesByEmail = buildLeaveIndex(
+    leavesRes.rows.map((r) => ({
+      email: r.employee_email,
+      start: r.start_date,
+      end: r.end_date,
+      type: r.leave_type,
+      status: r.status,
+    })),
+    (e) => normEmail(e) ?? e.trim().toLowerCase(),
+  );
+
+  const seen = new Set<string>();
+  const rows: ReadinessZeroHours[] = [];
+  for (const e of employees) {
+    if (isOffChannelDept(e.department)) continue;
+    if (isPausedDept(e.department)) continue;
+    if (excludeByIdentity(excludeIdentities, e.work_email, e.personal_email, e.name)) continue;
+
+    const w = normEmail(e.work_email ?? '');
+    const p = normEmail(e.personal_email ?? '');
+    const a1 = normEmail(e.alternate_work_email ?? '');
+    const a2 = normEmail(e.alternate_work_email_2 ?? '');
+    const n = (e.name ?? '').trim().toLowerCase();
+    const base = w || p || n;
+    if (!base) continue;
+    const idKey = `${base}|${n}`;
+    if (seen.has(idKey)) continue;
+    seen.add(idKey);
+
+    // Hours on ANY alias mean they worked. Alternates are included here (the
+    // bank check doesn't need them) because a Hubstaff row keyed on a gsuite
+    // alternate is exactly how a working person would otherwise be reported
+    // silent — the single most damaging false positive this list can produce.
+    const aliases = [w, p, a1, a2].filter((em): em is string => Boolean(em));
+    if (aliases.some((em) => payrollEmails.has(em))) continue;
+
+    const startedIso = normalizeStartDate(e.start_date);
+
+    // Someone who left BEFORE this week began is not an unexplained silence —
+    // their absence is the whole point of having left. Guarded against a
+    // recycled email the same way the bank check guards it.
+    const offAt = (() => {
+      const dates = aliases
+        .map((em) => offboardDateByEmail.get(em))
+        .filter((d): d is string => Boolean(d));
+      if (dates.length === 0) return null;
+      const latest = dates.sort()[dates.length - 1];
+      return startedIso && latest > startedIso ? latest : null;
+    })();
+    if (offAt && offAt < weekStart) continue;
+
+    if (isFutureHireForWeek(startedIso, weekStart, false)) continue;
+
+    const verdict = classifyZeroHours({
+      department: e.department,
+      startDate: e.start_date,
+      emails: aliases,
+      leavesByEmail,
+      period: { startISO: weekStart, endISO: weekEnd },
+      todayISO: new Date().toISOString().slice(0, 10),
+    });
+    if (verdict.exception) continue;
+
+    rows.push({
+      name: e.name ?? w ?? p ?? '—',
+      email: e.work_email ?? e.personal_email ?? null,
+      department: e.department ?? null,
+      leftAt: offAt,
+    });
+  }
+
+  // Departed-but-not-yet-aged-off people first (the actionable ones), then
+  // alphabetically — the same "act on these first" ordering the bank list uses.
+  rows.sort((a, b) => Number(Boolean(b.leftAt)) - Number(Boolean(a.leftAt)) || a.name.localeCompare(b.name));
+  return { rows, degraded };
+}
+
 // ── Onboarding exceptions ─────────────────────────────────────────────────────
 
 /** The exception list PLUS the identity keys of everyone on it, so the rate and
@@ -1880,6 +2044,18 @@ export async function getPayrollReadiness(
   );
   degraded.push(...ratesRes.degraded, ...bankRes.degraded);
 
+  // The zero-hours reminder. Runs on the same roster snapshot and the same
+  // week-scoping as the bank check, but feeds NO score input — see buildZeroHours.
+  const zeroHoursRes = await buildZeroHours(
+    employees,
+    exceptionIdentities,
+    isPausedDept,
+    weekStart,
+    ratesRes.payrollEmails,
+    offboardDateByEmail,
+  );
+  degraded.push(...zeroHoursRes.degraded);
+
   const missingBank = bankRes.rows;
   const missingBankOnPayroll = missingBank.reduce((n, r) => n + (r.onPayroll ? 1 : 0), 0);
 
@@ -1956,6 +2132,8 @@ export async function getPayrollReadiness(
     missingRates: ratesRes.rows,
     missingBank,
     exceptions,
+    zeroHours: zeroHoursRes.rows,
+    zeroHoursCount: zeroHoursRes.rows.length,
     workerCount: ratesRes.workerCount,
     bankEligibleCount: bankRes.eligibleCount,
     bankOnPayrollCount,

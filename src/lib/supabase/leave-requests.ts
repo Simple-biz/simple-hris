@@ -96,6 +96,41 @@ export async function listAllLeaveRequests(limit = 200): Promise<{
 }
 
 /**
+ * Every APPROVED leave whose window has not already closed before `sinceIso` —
+ * i.e. the only leaves that can still excuse a zero-hours week at or after that
+ * date. Used by the Hubstaff zero-hours reconciliation (Payroll Readiness pane +
+ * the `payroll.hours_gap` notification) where an approved Vacation IS a
+ * legitimate no-hours week (Kane, 2026-08-21).
+ *
+ * Deliberately NOT `listAllLeaveRequests`: that one caps at 200 rows and orders
+ * by recency, so the moment this table grows the oldest still-open leave silently
+ * stops excusing anyone. This is paged (`selectAllPaged`) and filtered in the
+ * database, and it skips the name/department enrichment the queue UI needs —
+ * the caller matches on email alone.
+ */
+export async function listApprovedLeavesFrom(sinceIso: string): Promise<{
+  rows: Array<Pick<LeaveRequestRow, 'employee_email' | 'start_date' | 'end_date' | 'leave_type' | 'status'>>;
+  error: string | null;
+}> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { rows: [], error: 'Supabase not configured' };
+
+  const { rows, error } = await selectAllPaged<
+    Pick<LeaveRequestRow, 'employee_email' | 'start_date' | 'end_date' | 'leave_type' | 'status'>
+  >((from, to) =>
+    supabase
+      .from(tableName())
+      .select('employee_email,start_date,end_date,leave_type,status')
+      .eq('status', 'approved')
+      .gte('end_date', sinceIso)
+      .order('start_date', { ascending: true })
+      .range(from, to),
+  );
+
+  return { rows, error: error ?? null };
+}
+
+/**
  * Backfills `employee_name` (and `department` when missing) from `active_employees`
  * for any rows the client didn't resolve at submit time. Mutates `rows` in place;
  * single bulk lookup so a long pending queue doesn't fan out N round-trips.

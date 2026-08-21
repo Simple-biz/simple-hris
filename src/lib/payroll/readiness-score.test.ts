@@ -207,3 +207,23 @@ test('value stays within [0,100] and grades band correctly with no blockers', ()
   assert.ok(atRisk.value < 85);
   assert.equal(atRisk.grade, 'at_risk');
 });
+
+// ── The score is a THREE-dimension instrument ─────────────────────────────────
+// Added 2026-08-21 with the Hubstaff zero-hours reminder, which is deliberately
+// LISTED BUT NOT SCORED. With Lead Gen tracked (Kane's Q1) that list runs ~190
+// people every week; scoring it would peg readiness near zero permanently and
+// kill the 100% celebration, turning a reminder into a broken gauge. This test
+// is the tripwire: a fourth dimension can only be added by confronting the
+// weight table and the sums-to-headline invariant on purpose.
+test('the score has exactly three dimensions — rate / kpi / bank', () => {
+  const s = computeReadinessScore(CLEAR);
+  assert.deepEqual(
+    s.components.map((c) => c.key),
+    ['rate', 'kpi', 'bank'],
+  );
+  assert.equal(s.components.reduce((n, c) => n + c.weight, 0), 1);
+  // And a clear week still reads a clean 100, however many zero-hours people
+  // the pane happens to be listing beside it.
+  assert.equal(s.value, 100);
+  assert.equal(s.grade, 'ready');
+});

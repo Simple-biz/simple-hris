@@ -46,11 +46,12 @@ import {
   type HubstaffMasterRow,
   sortHubstaffReconRows,
   downloadHubstaffReconCsv,
-  isHubstaffExemptDept,
   isHubstaffReconExcluded,
   HUBSTAFF_EXCEPTION_STATUS,
-  HUBSTAFF_LEAVE_STATUS,
 } from '@/lib/payroll/hubstaff-reconciliation';
+// The no-hours classification rule, shared with the Payroll Readiness pane and
+// the payroll.hours_gap notification — see zero-hours-gap.ts.
+import { buildLeaveIndex, classifyZeroHours } from '@/lib/payroll/zero-hours-gap';
 import { X } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -3850,105 +3851,34 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
 
     // Index leaves by normalized email so we can explain a no-hours person as
     // "on leave the whole period" rather than an unexplained gap.
-    type Leave = { email: string; start: string; end: string; type: string; status: string };
-    const leavesByEmail = new Map<string, Leave[]>();
-    for (const lv of leaveRows) {
-      const k = normEmail(lv.email) ?? lv.email;
-      const arr = leavesByEmail.get(k);
-      if (arr) arr.push(lv);
-      else leavesByEmail.set(k, [lv]);
-    }
+    const leavesByEmail = buildLeaveIndex(leaveRows, (e) => normEmail(e) ?? e);
 
     const period = parsePeriodRange(activeSourceFile); // null for "All Time"
     const todayISO = new Date().toISOString().slice(0, 10);
-    const prettyType = (t: string) => (t.trim() ? t.trim() : 'Leave');
 
     /** Classify a no-hours master employee. `exception: true` means the absence
      *  is EXPECTED (dept exempt / just hired / on leave) and is NOT a gap.
-     *  Priority: no-Hubstaff dept → leave → onboarding timing → unknown gap. */
+     *  Priority: no-Hubstaff dept → leave → onboarding timing → unknown gap.
+     *
+     *  The rule itself lives in `@/lib/payroll/zero-hours-gap` because this tile
+     *  is no longer its only consumer: the Payroll Readiness pane's "No hours
+     *  this week" section and the `payroll.hours_gap` notification fired on
+     *  Hubstaff ingest read the SAME function. A person this tile calls an
+     *  expected absence while the notification calls a gap would be worse than
+     *  either answer alone, so there is exactly one implementation. */
     const classifyNoHours = (
       e: EmployeeRow,
       w: string,
       p: string,
-    ): { reason: string; exception: boolean; status?: string } => {
-      // 0) Department has no Hubstaff by nature (freelance / project-based).
-      if (isHubstaffExemptDept(e.department)) {
-        return {
-          reason: `${e.department ?? 'This team'} — no Hubstaff tracking by nature`,
-          exception: true,
-        };
-      }
-
-      // 1) APPROVED leave (filed through the Employee portal) that OVERLAPS the pay
-      //    period OR is UPCOMING relative to it — i.e. any approved leave that
-      //    hasn't already ended before this period started (`lv.end >= startISO`).
-      //    This lets a leave filed for the following week still excuse the latest
-      //    reconciled week. Old leaves that ended before the period do NOT count.
-      //    In All-Time view we treat "on leave today or upcoming" the same way.
-      //    A no-hours person here is shown as an EXCEPTION with their time-off
-      //    excuse as the reason (not a gap). A still-pending request does NOT clear
-      //    anything, so those fall through and stay flagged until HR approves them.
-      const mine: Leave[] = [];
-      for (const k of new Set([w, p].filter(Boolean))) {
-        const arr = leavesByEmail.get(k);
-        if (arr) mine.push(...arr);
-      }
-      if (mine.length) {
-        const inWindow = mine
-          .filter((lv) => lv.status === 'approved')
-          .filter((lv) => (period ? lv.end >= period.startISO : lv.end >= todayISO))
-          .sort((a, b) => a.start.localeCompare(b.start)); // prefer the earliest relevant leave
-        const pick = inWindow[0];
-        if (pick) {
-          if (period) {
-            let phrase: string;
-            if (pick.start > period.endISO) {
-              phrase = 'Upcoming approved leave';
-            } else {
-              const whole = pick.start <= period.startISO && pick.end >= period.endISO;
-              phrase = whole ? 'On approved leave the entire period' : 'On approved leave part of the period';
-            }
-            return {
-              reason: `${phrase} — ${prettyType(pick.type)} ${pick.start}→${pick.end}`,
-              exception: true,
-              status: HUBSTAFF_LEAVE_STATUS,
-            };
-          }
-          const phrase = pick.start > todayISO ? 'Upcoming approved leave' : 'Currently on approved leave';
-          return {
-            reason: `${phrase} — ${prettyType(pick.type)} ${pick.start}→${pick.end}`,
-            exception: true,
-            status: HUBSTAFF_LEAVE_STATUS,
-          };
-        }
-      }
-
-      // 2) Onboarding timing — a start date landing in/after the period means
-      //    they were just hired and hadn't started (or only just started)
-      //    logging hours. Parse via Date since "Start Date" isn't guaranteed ISO.
-      const startMs = e.start_date ? new Date(e.start_date.trim()).getTime() : NaN;
-      if (Number.isFinite(startMs)) {
-        const startShown = new Date(startMs).toISOString().slice(0, 10);
-        if (period) {
-          const pStart = new Date(period.startISO).getTime();
-          const pEnd = new Date(period.endISO).getTime();
-          if (startMs > pEnd) return { reason: `Not started yet — hired ${startShown}, after this period`, exception: true };
-          if (startMs >= pStart) return { reason: `Newly onboarded — started ${startShown}, mid-period`, exception: true };
-        } else {
-          const now = Date.now();
-          if (startMs > now) return { reason: `Not started yet — hired ${startShown}`, exception: true };
-          if (now - startMs <= 30 * 24 * 3600 * 1000) return { reason: `Recently onboarded — started ${startShown}`, exception: true };
-        }
-      }
-
-      // 3) Nothing in the HRIS explains it — a real gap to reconcile.
-      return {
-        reason: period
-          ? 'No hours logged — reason unknown (check Hubstaff upload / time off)'
-          : 'No hours on record — reason unknown',
-        exception: false,
-      };
-    };
+    ): { reason: string; exception: boolean; status?: string } =>
+      classifyZeroHours({
+        department: e.department,
+        startDate: e.start_date,
+        emails: [w, p],
+        leavesByEmail,
+        period,
+        todayISO,
+      });
 
     const out: HubstaffMasterRow[] = [];
     const masterKeys = new Set<string>();

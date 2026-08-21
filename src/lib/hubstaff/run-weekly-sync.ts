@@ -10,6 +10,7 @@ import { replaceHubstaffHoursFromCsvText } from "@/lib/supabase/hubstaff-hours-d
 import { seedMissingDisbursementRecords } from "@/lib/payroll/disbursement-reports";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { notifyPayrollAvailable } from "@/lib/notifications/payroll-available";
+import { notifyZeroHoursGapForWeek } from "@/lib/notifications/zero-hours-gap";
 import { recordMesaWeeklyContributions } from "@/lib/mesa/record-weekly-contributions";
 
 const DAY_MS = 86_400_000;
@@ -167,6 +168,16 @@ export async function runHubstaffWeeklySync(params: {
     notified = await notifyPayrollAvailable({ sourceFile: fileName, uploadId });
   } catch (notifyErr) {
     console.warn("[hubstaff api_sync] payroll.available notify failed:", notifyErr);
+  }
+
+  // Zero-hours reminder for Accounting — active roster members this week's file
+  // left with no hours and no explanation. Best-effort; never fails the sync.
+  // De-dupes per (recipient, source_file); its own failures are audited rather
+  // than warned. See src/lib/notifications/zero-hours-gap.ts.
+  try {
+    await notifyZeroHoursGapForWeek(fileName);
+  } catch (gapErr) {
+    console.warn("[hubstaff api_sync] payroll.hours_gap notify failed:", gapErr);
   }
 
   // Weekly MESA deposit — an API sync is a new payroll week too. weekEnd is known
