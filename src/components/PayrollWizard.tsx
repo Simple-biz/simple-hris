@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, useMemo, useTransition, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import * as XLSX from 'xlsx';
 import {
   Check,
@@ -23,6 +23,7 @@ import {
   ChevronRight,
   ChevronLeft,
   ChevronDown,
+  ChevronUp,
   CalendarDays,
   X,
   Info,
@@ -105,6 +106,11 @@ import {
   orphanageCoversDay,
   type OrphanageHoursIndex,
 } from '@/lib/payroll/orphanage-pab-coverage';
+import {
+  priceOrphanageHours,
+  reconcileLockedOrphanageAmount,
+  type OrphanageReconcileResult,
+} from '@/lib/payroll/orphanage-pay-pricing';
 import {
   HSL_WEEK_MODEL_CUTOVER_KEY,
   resolveHslWeekModelWithDefault,
@@ -2369,6 +2375,24 @@ export default function PayrollWizard({
   const [orphanagePayDetail, setOrphanagePayDetail] = useState<Record<string, {
     hours: number; regH: number; otH: number; rate: number | null; otRate: number | null; payWeek: string | null;
   }>>({});
+  /** Which `source_file`'s orphanage_pay detail has finished loading. Until it has,
+   *  every locked amount reconciles as `unverifiable` merely because the record has
+   *  not arrived — so the reconciliation UI stays silent rather than telling the
+   *  operator their hours records are missing. */
+  const [orphanageDetailLoadedFor, setOrphanageDetailLoadedFor] = useState<string | null>(null);
+  /** Name/email filter over the Orphanage step's "Locked in this period" list. A busy
+   *  week locks in dozens of people and the only way to correct one is to find their
+   *  row, so the list gets the same search affordance as every other wizard table. */
+  const [orphLockedSearch, setOrphLockedSearch] = useState('');
+  /** Paste + Preview disclosure on the Orphanage step. `null` = follow the period:
+   *  open while nothing is locked in (the paste tool IS the step then), collapsed to a
+   *  slim bar once amounts exist (the locked-in list becomes the subject). An explicit
+   *  user toggle wins until the next lock-in resets it to `null`. Never hides an
+   *  in-progress draft — the collapsed bar reports the parse counts. */
+  const [orphPasteOpen, setOrphPasteOpen] = useState<boolean | null>(null);
+  /** Honour the OS reduced-motion setting: the Paste/Preview disclosure crossfades
+   *  instead of animating its height. */
+  const reduceMotion = useReducedMotion() ?? false;
   /** Per-employee numeric metrics: email → { metric → value }. Used by formula-based departments. */
   const [employeeMetrics, setEmployeeMetrics] = useState<Record<string, Record<string, number>>>({});
   /** Department-level numeric metrics: deptKey → { metric → value }. Used for pool calculations (QC, HR). */
@@ -2984,17 +3008,24 @@ export default function PayrollWizard({
       if (calcSourceFileRef.current !== sourceFile) return;
       const savedOverrides = (data.bonusOverrides ?? {}) as Record<string, number>;
       const savedOverrideNotes = (data.bonusOverrideNotes ?? {}) as Record<string, string>;
+      const savedOrphanage = (data.orphanageAmounts ?? {}) as Record<string, number>;
       if (additionsEditGenRef.current !== genAtStart) {
         // An adjustment was written while this read was in flight. Freshest
         // wins: fill the gaps from the blob, keep every live value. A blind
         // replace here is what wiped an applied week of board amounts.
         setBonusOverrides((prev) => ({ ...savedOverrides, ...prev }));
         setBonusOverrideNotes((prev) => ({ ...savedOverrideNotes, ...prev }));
+        // The Orphanage column is money on the same footing and
+        // `updateOrphanageAmount` bumps the very counter above — but this map
+        // used to be replaced unconditionally one line below, so a lock-in or a
+        // re-price landing during a hydration was silently rolled back to the
+        // blob's older figure. Same freshest-wins rule now covers it (2026-08-21).
+        setOrphanageAmounts((prev) => ({ ...savedOrphanage, ...prev }));
       } else {
         setBonusOverrides(savedOverrides);
         setBonusOverrideNotes(savedOverrideNotes);
+        setOrphanageAmounts(savedOrphanage);
       }
-      setOrphanageAmounts(data.orphanageAmounts ?? {});
       setEmployeeMetrics(data.employeeMetrics ?? {});
       setDeptMetrics(data.deptMetrics ?? {});
       // The week's own PAB / Tech / dept-bonus verdicts as the clerk locked them in.
@@ -6375,6 +6406,11 @@ export default function PayrollWizard({
    *  final pay; `null` clears it. Mirrors {@link updateBonusOverride}. */
   const updateOrphanageAmount = React.useCallback((email: string, value: number | null) => {
     if (isReplayRef.current) return; // view-only replay of a past period
+    // Mark the Additions state as newer than anything a hydration in flight is
+    // carrying, exactly as the adjustment editors do. Without this bump the
+    // freshest-wins branch in `loadAdditionsProgress` never fires for orphanage
+    // money, and a lock-in that races a period reload is rolled back in silence.
+    additionsEditGenRef.current += 1;
     const ctx = auditCtxRef.current;
     const prevValue = ctx.orphanageAmounts[email] ?? null;
     setOrphanageAmounts(prev => {
@@ -7109,36 +7145,30 @@ export default function PayrollWizard({
         const rr = ratesByEmail.get(normEmail(row.email) ?? row.email.toLowerCase()) ?? ratesByEmail.get(emKey);
         rate = rr ? parseRateField(rr.regular_rate) : null;
       }
-      if (rate == null) {
-        errors.push({ line: i + 1, email: emailRaw, reason: 'No pay rate on file — set their rate, then re-paste' });
-        continue;
-      }
 
-      // Overtime awareness: the orphanage hours stack on the employee's already-worked
-      // hours against the 40h/week regular cap. Hours that still fit under 40 pay at the
-      // regular rate; anything beyond crosses into OT (e.g. worked 39h → 1 orphanage hour
-      // is regular, the rest is OT). Honors the same global / per-department OT switches as
-      // the Initial Calculation. When OT is off for their dept, every hour stays regular.
+      // Whether overtime applies at all for this person's department this week —
+      // the same global / per-department switches the Initial Calculation honours.
       const deptKey = employeeDepts[row.email];
       const deptOtOn = otGlobalSuspended
         ? false
         : (deptKey ? (otDeptEnabled[`ot_dept_${deptKey}`] ?? true) : true);
-      // Orphanage OT always prices at the FULL OT rate (Kane 2026-08-18). On HSL
-      // sheet-form rows `row.otRate` is the 0.5× differential — correct for weekly
-      // pay, where every hour's base leg is already paid, but orphanage hours have
-      // no base leg, so the differential would half-pay them. Derive regular × 1.5
-      // for those rows (2dp, sheet rounding); every other row's stored OT rate is
-      // already the full rate.
-      const otRate = row.hogan != null ? Math.round(rate * 1.5 * 100) / 100 : row.otRate;
-      let regH = hours;
-      let otH = 0;
-      if (deptOtOn) {
-        const regCapacityLeft = Math.max(0, 40 - row.regularHours);
-        regH = Math.min(hours, regCapacityLeft);
-        otH = Math.round((hours - regH) * 1e6) / 1e6; // de-noise float subtraction
-      }
-      if (otH > 0 && otRate == null) {
-        errors.push({ line: i + 1, email: emailRaw, reason: `Hours cross into overtime (over 40h) but no OT rate on file` });
+
+      // All the arithmetic lives in `orphanage-pay-pricing.ts` (extracted +
+      // unit-tested 2026-08-21). It owns the 40h cap, the sheet's 2dp-hours
+      // rounding, and the rule this step exists to protect: orphanage OT prices
+      // at the FULL 1.5× rate, never the weekly 0.5× differential, because
+      // orphanage hours have no base leg for a differential to top up. It
+      // REFUSES a row it cannot price rather than returning a smaller number.
+      const priced = priceOrphanageHours({
+        hours,
+        regularRatePhp: rate,
+        storedOtRatePhp: row.otRate,
+        isHslSheetForm: row.hogan != null,
+        workedRegularHours: row.regularHours,
+        overtimeEnabled: deptOtOn,
+      });
+      if (!priced.ok) {
+        errors.push({ line: i + 1, email: emailRaw, reason: priced.reason });
         continue;
       }
 
@@ -7149,12 +7179,12 @@ export default function PayrollWizard({
         emailKey: row.email,
         matchedEmail: emKey,
         name: row.name || row.email,
-        hours,
-        rate,
-        otRate,
-        regH,
-        otH,
-        amount: Math.round((regH * rate + otH * (otRate ?? 0)) * 100) / 100,
+        hours: priced.hours,
+        rate: priced.rate,
+        otRate: priced.otRate,
+        regH: priced.regH,
+        otH: priced.otH,
+        amount: priced.amount,
       });
     }
     return { ok, errors };
@@ -8600,6 +8630,9 @@ export default function PayrollWizard({
         { description: 'Saved to this period — see "Locked in this period" below.' },
       );
       setOrphanagePaste('');
+      // Hand the step back to the locked-in list: `null` restores "follow the period",
+      // which now has amounts, so the paste pair folds to its bar.
+      setOrphPasteOpen(null);
       // Refresh the month-wide orphanage-hours index so the just-locked hours
       // immediately feed PAB eligibility (top-up) without a reload.
       refreshOrphanageHoursIndex();
@@ -8633,10 +8666,134 @@ export default function PayrollWizard({
         }
         // Merge under any optimistic entries already set this session (don't clobber fresher locals).
         setOrphanagePayDetail((prev) => ({ ...map, ...prev }));
+        setOrphanageDetailLoadedFor(calcSourceFile);
       })
       .catch(() => { /* table may not exist yet (migration #78) — amounts still render */ });
     return () => ctrl.abort();
   }, [currentStep, calcSourceFile]);
+
+  /**
+   * Re-price locked-in orphanage amounts from their own recorded hours.
+   *
+   * The repair for what this step got wrong: an amount is computed once at paste
+   * time and nothing has ever re-priced it, so a row locked under a bad OT rate
+   * stayed wrong until someone deleted and re-pasted it by hand. This does the
+   * re-paste, from the `orphanage_pay` record's hours, through the SAME
+   * `priceOrphanageHours` — so a re-price and a re-paste cannot produce different
+   * money.
+   *
+   * Human-initiated and audited, never automatic: a rate can legitimately change
+   * after lock-in, and a wizard that silently re-prices the period on every
+   * render is a wizard that moves money nobody asked it to move. One save for the
+   * whole batch, and a row whose live inputs still refuse to price is reported,
+   * not skipped silently.
+   */
+  const repriceOrphanageLocked = React.useCallback(async (emails: string[]) => {
+    if (isReplay) {
+      toast.error('Replaying a past period is view-only');
+      return;
+    }
+    if (emails.length === 0) return;
+    setOrphanageLockingIn(true);
+    try {
+      const rowByEmail = new Map(effectiveCalcResults.map((r) => [r.email, r]));
+      const next = { ...orphanageAmounts };
+      const repriced: Array<{ email: string; amount: number; hours: number; regH: number; otH: number; rate: number; otRate: number | null; payWeek: string | null; name: string }> = [];
+      const refused: string[] = [];
+
+      for (const email of emails) {
+        const detail = orphanagePayDetail[email.toLowerCase()];
+        if (!detail) { refused.push(`${email} — no hours record to re-price from`); continue; }
+        const row = rowByEmail.get(email);
+        if (!row) { refused.push(`${email} — not in this pay period`); continue; }
+
+        const deptKey = employeeDepts[row.email];
+        const deptOtOn = otGlobalSuspended
+          ? false
+          : (deptKey ? (otDeptEnabled[`ot_dept_${deptKey}`] ?? true) : true);
+        const priced = priceOrphanageHours({
+          hours: detail.hours,
+          regularRatePhp: row.regularRate,
+          storedOtRatePhp: row.otRate,
+          isHslSheetForm: row.hogan != null,
+          workedRegularHours: row.regularHours,
+          overtimeEnabled: deptOtOn,
+        });
+        if (!priced.ok) { refused.push(`${email} — ${priced.reason}`); continue; }
+        if (Math.abs((next[email] ?? 0) - priced.amount) < 0.005) continue; // already right
+
+        next[email] = priced.amount;
+        updateOrphanageAmount(email, priced.amount); // state + audit log
+        repriced.push({
+          email,
+          amount: priced.amount,
+          hours: priced.hours,
+          regH: priced.regH,
+          otH: priced.otH,
+          rate: priced.rate,
+          otRate: priced.otRate,
+          payWeek: detail.payWeek,
+          name: row.name || email,
+        });
+      }
+
+      if (repriced.length > 0) {
+        await saveAdditionsProgress({ orphanageAmounts: next });
+        void publishFinalPaySnapshot();
+        // Keep the first-class record in step with the money, so the next
+        // reconciliation reads a consistent pair rather than re-flagging.
+        if (calcSourceFile) {
+          try {
+            const res = await fetch('/api/orphanage-pay', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                source_file: calcSourceFile,
+                rows: repriced.map((r) => ({
+                  employeeEmail: r.email,
+                  employeeName: r.name,
+                  payWeek: r.payWeek,
+                  hours: r.hours,
+                  regHours: r.regH,
+                  otHours: r.otH,
+                  regularRatePhp: r.rate,
+                  otRatePhp: r.otRate,
+                  amountPhp: r.amount,
+                })),
+              }),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          } catch (e) {
+            console.warn('[orphanage-pay] re-price record write failed (amounts still saved in additions blob)', e);
+          }
+        }
+        setOrphanagePayDetail((prev) => {
+          const n = { ...prev };
+          for (const r of repriced) {
+            n[r.email.toLowerCase()] = { hours: r.hours, regH: r.regH, otH: r.otH, rate: r.rate, otRate: r.otRate, payWeek: r.payWeek };
+          }
+          return n;
+        });
+        const delta = repriced.reduce((s, r) => s + r.amount, 0) - repriced.reduce((s, r) => s + (orphanageAmounts[r.email] ?? 0), 0);
+        toast.success(
+          `Re-priced ${repriced.length} orphanage ${repriced.length === 1 ? 'amount' : 'amounts'}`,
+          { description: `${delta >= 0 ? '+' : ''}${formatPHP(Math.round(delta * 100) / 100)} on the Additions Orphanage column.` },
+        );
+        refreshOrphanageHoursIndex();
+      } else if (refused.length === 0) {
+        toast.info('Nothing to re-price — every amount already matches its hours');
+      }
+
+      if (refused.length > 0) {
+        toast.error(
+          `${refused.length} could not be re-priced`,
+          { description: refused.slice(0, 3).join(' · ') + (refused.length > 3 ? ` · +${refused.length - 3} more` : '') },
+        );
+      }
+    } finally {
+      setOrphanageLockingIn(false);
+    }
+  }, [isReplay, effectiveCalcResults, orphanageAmounts, orphanagePayDetail, employeeDepts, otGlobalSuspended, otDeptEnabled, updateOrphanageAmount, saveAdditionsProgress, publishFinalPaySnapshot, calcSourceFile, refreshOrphanageHoursIndex]);
 
   /** Remove one locked-in orphanage amount from this period (clears the Additions Orphanage
    *  column for that person + best-effort deletes the record row). */
@@ -14587,14 +14744,69 @@ export default function PayrollWizard({
           if (r.email && !orphNameByEmail.has(r.email)) orphNameByEmail.set(r.email, r.name || r.email);
         }
         const orphLocked = Object.entries(orphanageAmounts)
-          .map(([email, amount]) => ({
-            email,
-            name: orphNameByEmail.get(email) ?? email,
-            amount,
-            detail: orphanagePayDetail[email.toLowerCase()] ?? null,
-          }))
+          .map(([email, amount]) => {
+            const detail = orphanagePayDetail[email.toLowerCase()] ?? null;
+            // Every locked-in amount is checked against its OWN recorded hours and
+            // rates on every render. This is the guard the step never had: the
+            // amount was computed once at paste time, and for a week in
+            // August 2026 that computation used the 0.5× weekly differential, so
+            // 34 people carried half-paid orphanage OT with nothing on screen
+            // saying so. A stored amount is no longer taken on trust.
+            const check: OrphanageReconcileResult = reconcileLockedOrphanageAmount({
+              storedAmountPhp: amount,
+              record: detail
+                ? {
+                    hours: detail.hours,
+                    regHours: detail.regH,
+                    otHours: detail.otH,
+                    regularRatePhp: detail.rate,
+                    otRatePhp: detail.otRate,
+                  }
+                : null,
+            });
+            return { email, name: orphNameByEmail.get(email) ?? email, amount, detail, check };
+          })
           .sort((a, b) => a.name.localeCompare(b.name));
         const orphLockedTotal = orphLocked.reduce((s, e) => s + (e.amount ?? 0), 0);
+
+        // Nothing reconciles until the hours records have actually arrived — before
+        // that every row is `unverifiable` for want of data, which is not a finding.
+        const orphChecksReady = orphanageDetailLoadedFor === calcSourceFile;
+
+        // Rows whose stored money disagrees with their own hours × rates. Re-pricing
+        // is offered, never performed — see repriceOrphanageLocked.
+        const orphNeedsRepair = orphChecksReady
+          ? orphLocked.filter(
+              (e) => e.check.status === 'ot_underpriced' || e.check.status === 'amount_mismatch',
+            )
+          : [];
+        const orphRepairShortfall = orphNeedsRepair.reduce((s, e) => s + e.check.shortfallPhp, 0);
+        // A person the first-class record knows about who has NO amount on the
+        // Additions column. That is how a clobbered save reads from here: the hours
+        // were locked in, the money vanished. Never hidden by the search box.
+        const orphRecordedNotOnColumn = orphChecksReady
+          ? Object.entries(orphanagePayDetail)
+              .filter(([em]) => !Object.keys(orphanageAmounts).some((k) => k.toLowerCase() === em))
+              .map(([em, d]) => ({ email: em, detail: d }))
+          : [];
+
+        // Name/email filter over the locked-in list. Filtering is display-only — the
+        // total below stays the PERIOD total, never the filtered subtotal, so a search
+        // can never make the money on this step look smaller than it is.
+        const orphNeedle = orphLockedSearch.trim().toLowerCase();
+        const orphLockedShown = orphNeedle
+          ? orphLocked.filter(
+              (e) =>
+                e.name.toLowerCase().includes(orphNeedle) ||
+                e.email.toLowerCase().includes(orphNeedle),
+            )
+          : orphLocked;
+
+        // Paste + Preview disclosure. Follows the period unless the user has said
+        // otherwise: open while nothing is locked in, collapsed once amounts exist.
+        const orphPasteExpanded = orphPasteOpen ?? orphLocked.length === 0;
+        const orphDraftLines = orphOk.length + orphErrors.length;
+
         return (
           <div className="flex min-w-0 flex-col gap-5">
             {/* Header banner */}
@@ -14674,148 +14886,215 @@ export default function PayrollWizard({
               </div>
             )}
 
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-              {/* Paste input */}
-              <Card data-tutorial-target="step3-paste-data" className="border-zinc-200 dark:border-zinc-800">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <FileText className="h-4 w-4 text-rose-600 dark:text-rose-400" /> Paste data
-                  </CardTitle>
-                  <CardDescription>One row per person: Pay week, Work email, Hours (tab-separated).</CardDescription>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-3">
-                  <textarea
-                    value={orphanagePaste}
-                    onChange={(e) => setOrphanagePaste(e.target.value)}
-                    disabled={isReplay}
-                    spellCheck={false}
-                    rows={12}
-                    placeholder={'6/8- 6/14\teulap@simple.biz\t12.57\n6/8- 6/14\tjenl@simple.biz\t12.57'}
-                    className="w-full resize-y rounded-lg border border-zinc-300 bg-white px-3 py-2.5 font-mono text-[13px] leading-relaxed text-zinc-900 shadow-sm outline-none transition focus:border-rose-400 focus:ring-2 focus:ring-rose-200 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-rose-600 dark:focus:ring-rose-900/40"
-                  />
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 text-[13px]">
-                      <span className="inline-flex items-center gap-1.5 font-medium text-emerald-700 dark:text-emerald-400">
-                        <CheckCircle2 className="h-4 w-4" /> {orphOk.length} ready
+            {/* Paste + Preview. Once this period has locked-in amounts the pair folds
+                into a slim bar: the locked-in list becomes the subject of the step, and
+                the paste tool is one click away. A draft in the textarea is never
+                hidden silently — the bar reports its parse counts. */}
+            <div className="flex flex-col gap-3">
+              <AnimatePresence initial={false}>
+                {!orphPasteExpanded && (
+                  <motion.button
+                    key="orph-paste-bar"
+                    type="button"
+                    onClick={() => setOrphPasteOpen(true)}
+                    initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
+                    animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: reduceMotion ? 0.12 : 0.18, ease: 'easeOut' }}
+                    className="group flex w-full items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-left transition-colors hover:border-rose-300 hover:bg-rose-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-rose-900/50 dark:hover:bg-rose-950/15 dark:focus-visible:ring-rose-900"
+                    aria-expanded={false}
+                    aria-controls="orphanage-paste-panel"
+                  >
+                    <FileText className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                        {isReplay ? 'View the pasted hours' : 'Paste more orphanage hours'}
                       </span>
-                      {orphErrors.length > 0 && (
-                        <span className="inline-flex items-center gap-1.5 font-medium text-rose-700 dark:text-rose-400">
-                          <AlertTriangle className="h-4 w-4" /> {orphErrors.length} skipped
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {orphanagePaste.trim() !== '' && (
-                        <Button variant="ghost" size="sm" onClick={() => setOrphanagePaste('')} disabled={orphanageLockingIn} className="text-zinc-500">
-                          Clear
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        onClick={() => void lockInOrphanagePaste()}
-                        disabled={!orphReady}
-                        className="gap-2 bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50"
-                      >
-                        {orphanageLockingIn ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
-                        Lock in values
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                      <span className="block truncate text-[12px] text-zinc-600 dark:text-zinc-400">
+                        {orphDraftLines > 0
+                          ? `Draft kept — ${orphOk.length} ready${orphErrors.length > 0 ? `, ${orphErrors.length} skipped` : ''}`
+                          : 'Pay week, work email, hours — straight from your sheet'}
+                      </span>
+                    </span>
+                    {orphDraftLines > 0 && (
+                      <span className="shrink-0 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+                        Not locked in
+                      </span>
+                    )}
+                    <ChevronDown className="h-4 w-4 shrink-0 text-zinc-500 transition-colors group-hover:text-rose-600 dark:text-zinc-400 dark:group-hover:text-rose-400" />
+                  </motion.button>
+                )}
+              </AnimatePresence>
 
-              {/* Preview */}
-              <Card className="border-zinc-200 dark:border-zinc-800">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Sparkles className="h-4 w-4 text-rose-600 dark:text-rose-400" /> Preview
-                  </CardTitle>
-                  <CardDescription>
-                    {orphOk.length > 0
-                      ? <>Total to add: <span className="font-semibold text-zinc-800 dark:text-zinc-200">{formatPHP(orphTotal)}</span> across {orphOk.length} {orphOk.length === 1 ? 'person' : 'people'}.</>
-                      : 'Matched rows and their computed amounts appear here.'}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-4">
-                  {orphanagePaste.trim() === '' ? (
-                    <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-zinc-300 py-10 text-center text-sm text-zinc-400 dark:border-zinc-700 dark:text-zinc-600">
-                      <Heart className="h-6 w-6 opacity-40" />
-                      Paste your three columns to see the preview.
-                    </div>
-                  ) : (
-                    <>
-                      {orphOk.length > 0 && (
-                        <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-                          <table className="w-full text-[13px]">
-                            <thead>
-                              <tr className="border-b border-zinc-200 bg-zinc-50 text-left text-[11px] uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
-                                <th className="px-3 py-2">Employee</th>
-                                <th className="px-3 py-2 text-right">Hours</th>
-                                <th className="px-3 py-2 text-right">Rate</th>
-                                <th className="px-3 py-2 text-right">Amount</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {orphOk.map((r) => {
-                                const prev = orphanageAmounts[r.emailKey];
-                                const changed = prev !== undefined && Math.abs(prev - r.amount) > 0.005;
-                                return (
-                                  <tr key={`${r.line}-${r.emailKey}`} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
-                                    <td className="px-3 py-2" data-label="Employee">
-                                      <div className="font-medium text-zinc-800 dark:text-zinc-200">{r.name}</div>
-                                      <div className="text-[11px] text-zinc-400 dark:text-zinc-500">{r.matchedEmail}{r.payWeek ? ` · ${r.payWeek}` : ''}</div>
-                                    </td>
-                                    <td className="px-3 py-2 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400" data-label="Hours">
-                                      {r.hours.toFixed(2)}
-                                      {r.otH > 0 && (
-                                        <div className="text-[10px] font-normal text-amber-600 dark:text-amber-400">{r.regH.toFixed(2)} reg + {r.otH.toFixed(2)} OT</div>
-                                      )}
-                                    </td>
-                                    <td className="px-3 py-2 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400" data-label="Rate">
-                                      {formatPHP(r.rate)}
-                                      {r.otH > 0 && r.otRate != null && (
-                                        <div className="text-[10px] font-normal text-amber-600 dark:text-amber-400">OT {formatPHP(r.otRate)}</div>
-                                      )}
-                                    </td>
-                                    <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-white" data-label="Amount">
-                                      {formatPHP(r.amount)}
-                                      {changed && <div className="text-[10px] font-normal text-amber-600 dark:text-amber-400">was {formatPHP(prev)}</div>}
-                                    </td>
+              <AnimatePresence initial={false}>
+                {orphPasteExpanded && (
+                  <motion.div
+                    key="orph-paste-panel"
+                    id="orphanage-paste-panel"
+                    initial={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                    animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto' }}
+                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                    transition={{ duration: reduceMotion ? 0.12 : 0.24, ease: [0.22, 1, 0.36, 1] }}
+                    className="overflow-hidden"
+                  >
+                    <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+                  {/* Paste input */}
+                  <Card data-tutorial-target="step3-paste-data" className="border-zinc-200 dark:border-zinc-800">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <FileText className="h-4 w-4 text-rose-600 dark:text-rose-400" /> Paste data
+                        {orphLocked.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setOrphPasteOpen(false)}
+                            aria-expanded
+                            aria-controls="orphanage-paste-panel"
+                            className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] font-medium text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 dark:focus-visible:ring-rose-900"
+                          >
+                            Collapse
+                            <ChevronUp className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </CardTitle>
+                      <CardDescription>One row per person: Pay week, Work email, Hours (tab-separated).</CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-3">
+                      <textarea
+                        value={orphanagePaste}
+                        onChange={(e) => setOrphanagePaste(e.target.value)}
+                        disabled={isReplay}
+                        spellCheck={false}
+                        rows={12}
+                        placeholder={'6/8- 6/14\teulap@simple.biz\t12.57\n6/8- 6/14\tjenl@simple.biz\t12.57'}
+                        className="w-full resize-y rounded-lg border border-zinc-300 bg-white px-3 py-2.5 font-mono text-[13px] leading-relaxed text-zinc-900 shadow-sm outline-none transition focus:border-rose-400 focus:ring-2 focus:ring-rose-200 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-rose-600 dark:focus:ring-rose-900/40"
+                      />
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 text-[13px]">
+                          <span className="inline-flex items-center gap-1.5 font-medium text-emerald-700 dark:text-emerald-400">
+                            <CheckCircle2 className="h-4 w-4" /> {orphOk.length} ready
+                          </span>
+                          {orphErrors.length > 0 && (
+                            <span className="inline-flex items-center gap-1.5 font-medium text-rose-700 dark:text-rose-400">
+                              <AlertTriangle className="h-4 w-4" /> {orphErrors.length} skipped
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {orphanagePaste.trim() !== '' && (
+                            <Button variant="ghost" size="sm" onClick={() => setOrphanagePaste('')} disabled={orphanageLockingIn} className="text-zinc-500">
+                              Clear
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            onClick={() => void lockInOrphanagePaste()}
+                            disabled={!orphReady}
+                            className="gap-2 bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50"
+                          >
+                            {orphanageLockingIn ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
+                            Lock in values
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Preview */}
+                  <Card className="border-zinc-200 dark:border-zinc-800">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <Sparkles className="h-4 w-4 text-rose-600 dark:text-rose-400" /> Preview
+                      </CardTitle>
+                      <CardDescription>
+                        {orphOk.length > 0
+                          ? <>Total to add: <span className="font-semibold text-zinc-800 dark:text-zinc-200">{formatPHP(orphTotal)}</span> across {orphOk.length} {orphOk.length === 1 ? 'person' : 'people'}.</>
+                          : 'Matched rows and their computed amounts appear here.'}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-4">
+                      {orphanagePaste.trim() === '' ? (
+                        <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-zinc-300 py-10 text-center text-sm text-zinc-400 dark:border-zinc-700 dark:text-zinc-600">
+                          <Heart className="h-6 w-6 opacity-40" />
+                          Paste your three columns to see the preview.
+                        </div>
+                      ) : (
+                        <>
+                          {orphOk.length > 0 && (
+                            <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+                              <table className="w-full text-[13px]">
+                                <thead>
+                                  <tr className="border-b border-zinc-200 bg-zinc-50 text-left text-[11px] uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
+                                    <th className="px-3 py-2">Employee</th>
+                                    <th className="px-3 py-2 text-right">Hours</th>
+                                    <th className="px-3 py-2 text-right">Rate</th>
+                                    <th className="px-3 py-2 text-right">Amount</th>
                                   </tr>
-                                );
-                              })}
-                            </tbody>
-                            <tfoot>
-                              <tr className="border-t border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
-                                <td className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-rose-700 dark:text-rose-300" colSpan={3}>Total</td>
-                                <td className="px-3 py-2 text-right font-mono font-bold tabular-nums text-zinc-900 dark:text-white">{formatPHP(orphTotal)}</td>
-                              </tr>
-                            </tfoot>
-                          </table>
-                        </div>
-                      )}
+                                </thead>
+                                <tbody>
+                                  {orphOk.map((r) => {
+                                    const prev = orphanageAmounts[r.emailKey];
+                                    const changed = prev !== undefined && Math.abs(prev - r.amount) > 0.005;
+                                    return (
+                                      <tr key={`${r.line}-${r.emailKey}`} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
+                                        <td className="px-3 py-2" data-label="Employee">
+                                          <div className="font-medium text-zinc-800 dark:text-zinc-200">{r.name}</div>
+                                          <div className="text-[11px] text-zinc-400 dark:text-zinc-500">{r.matchedEmail}{r.payWeek ? ` · ${r.payWeek}` : ''}</div>
+                                        </td>
+                                        <td className="px-3 py-2 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400" data-label="Hours">
+                                          {r.hours.toFixed(2)}
+                                          {r.otH > 0 && (
+                                            <div className="text-[10px] font-normal text-amber-600 dark:text-amber-400">{r.regH.toFixed(2)} reg + {r.otH.toFixed(2)} OT</div>
+                                          )}
+                                        </td>
+                                        <td className="px-3 py-2 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400" data-label="Rate">
+                                          {formatPHP(r.rate)}
+                                          {r.otH > 0 && r.otRate != null && (
+                                            <div className="text-[10px] font-normal text-amber-600 dark:text-amber-400">OT {formatPHP(r.otRate)}</div>
+                                          )}
+                                        </td>
+                                        <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-white" data-label="Amount">
+                                          {formatPHP(r.amount)}
+                                          {changed && <div className="text-[10px] font-normal text-amber-600 dark:text-amber-400">was {formatPHP(prev)}</div>}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                                <tfoot>
+                                  <tr className="border-t border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
+                                    <td className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-rose-700 dark:text-rose-300" colSpan={3}>Total</td>
+                                    <td className="px-3 py-2 text-right font-mono font-bold tabular-nums text-zinc-900 dark:text-white">{formatPHP(orphTotal)}</td>
+                                  </tr>
+                                </tfoot>
+                              </table>
+                            </div>
+                          )}
 
-                      {orphErrors.length > 0 && (
-                        <div className="rounded-lg border border-rose-200 bg-rose-50/60 p-3 dark:border-rose-900/40 dark:bg-rose-950/20">
-                          <div className="mb-1.5 flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wider text-rose-700 dark:text-rose-300">
-                            <AlertTriangle className="h-3.5 w-3.5" /> {orphErrors.length} row{orphErrors.length === 1 ? '' : 's'} skipped
-                          </div>
-                          <ul className="flex flex-col gap-1 text-[12.5px] text-rose-800 dark:text-rose-300">
-                            {orphErrors.map((e, idx) => (
-                              <li key={idx} className="flex gap-2">
-                                <span className="shrink-0 font-mono text-rose-400 dark:text-rose-500">L{e.line}</span>
-                                <span className="min-w-0">
-                                  {e.email && <span className="font-medium">{e.email}</span>}{e.email ? ' — ' : ''}{e.reason}
-                                </span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
+                          {orphErrors.length > 0 && (
+                            <div className="rounded-lg border border-rose-200 bg-rose-50/60 p-3 dark:border-rose-900/40 dark:bg-rose-950/20">
+                              <div className="mb-1.5 flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wider text-rose-700 dark:text-rose-300">
+                                <AlertTriangle className="h-3.5 w-3.5" /> {orphErrors.length} row{orphErrors.length === 1 ? '' : 's'} skipped
+                              </div>
+                              <ul className="flex flex-col gap-1 text-[12.5px] text-rose-800 dark:text-rose-300">
+                                {orphErrors.map((e, idx) => (
+                                  <li key={idx} className="flex gap-2">
+                                    <span className="shrink-0 font-mono text-rose-400 dark:text-rose-500">L{e.line}</span>
+                                    <span className="min-w-0">
+                                      {e.email && <span className="font-medium">{e.email}</span>}{e.email ? ' — ' : ''}{e.reason}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </>
                       )}
-                    </>
-                  )}
-                </CardContent>
-              </Card>
+                    </CardContent>
+                  </Card>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             {/* Locked in this period — keeps locked-in orphanage pay visible in this tab */}
@@ -14830,13 +15109,105 @@ export default function PayrollWizard({
                     : 'Amounts you lock in stay here for this pay period.'}
                 </CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex flex-col gap-4">
+                {/* Reconciliation. Present whenever a locked amount disagrees with its
+                    own recorded hours and rates — the check that would have caught the
+                    half-paid orphanage OT on the week of 2026-08-09 the moment anyone
+                    opened this step. */}
+                <AnimatePresence initial={false}>
+                  {orphNeedsRepair.length > 0 && (
+                    <motion.div
+                      key="orph-repair-banner"
+                      initial={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                      animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto' }}
+                      exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                      transition={{ duration: reduceMotion ? 0.12 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                      className="overflow-hidden"
+                    >
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/25">
+                        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                            {orphNeedsRepair.length} {orphNeedsRepair.length === 1 ? 'amount does' : 'amounts do'} not match {orphNeedsRepair.length === 1 ? 'its' : 'their'} recorded hours
+                          </p>
+                          <p className="text-[12.5px] text-amber-800 dark:text-amber-300">
+                            {orphRepairShortfall > 0
+                              ? <>Short by <span className="font-semibold tabular-nums">{formatPHP(Math.round(orphRepairShortfall * 100) / 100)}</span> in total. Re-pricing uses the recorded hours at the rate on file — the same arithmetic as pasting them again.</>
+                              : <>Re-pricing uses the recorded hours at the rate on file — the same arithmetic as pasting them again.</>}
+                          </p>
+                        </div>
+                        {!isReplay && (
+                          <Button
+                            size="sm"
+                            onClick={() => void repriceOrphanageLocked(orphNeedsRepair.map((e) => e.email))}
+                            disabled={orphanageLockingIn}
+                            className="gap-2 bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+                          >
+                            {orphanageLockingIn ? <Loader2 className="h-4 w-4 animate-spin" /> : <Calculator className="h-4 w-4" />}
+                            Re-price {orphNeedsRepair.length === 1 ? 'it' : 'all'}
+                          </Button>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Hours on record with no money on the Additions column. A save that
+                    overwrote a colleague's edits reads exactly like this. */}
+                {orphRecordedNotOnColumn.length > 0 && (
+                  <div className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 dark:border-rose-900/50 dark:bg-rose-950/25">
+                    <p className="flex items-center gap-2 text-sm font-semibold text-rose-900 dark:text-rose-200">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      {orphRecordedNotOnColumn.length} {orphRecordedNotOnColumn.length === 1 ? 'person has' : 'people have'} orphanage hours on record but no amount on the Orphanage column
+                    </p>
+                    <ul className="mt-1 flex flex-col gap-0.5 text-[12.5px] text-rose-800 dark:text-rose-300">
+                      {orphRecordedNotOnColumn.map((r) => (
+                        <li key={r.email} className="font-mono">
+                          {r.email} · {r.detail.hours.toFixed(2)} h
+                          {r.detail.rate != null ? ` @ ${formatPHP(r.detail.rate)}` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1.5 text-[12.5px] text-rose-800 dark:text-rose-300">
+                      They will be paid nothing for these hours. Paste them again to put the amount back.
+                    </p>
+                  </div>
+                )}
+
                 {orphLocked.length === 0 ? (
                   <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-zinc-300 py-8 text-center text-sm text-zinc-400 dark:border-zinc-700 dark:text-zinc-600">
                     <Heart className="h-5 w-5 opacity-40" />
                     Nothing locked in yet for this period.
                   </div>
                 ) : (
+                  <div className="flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                    <div className="relative w-full max-w-xs">
+                      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500 dark:text-zinc-400" />
+                      <Input
+                        type="search"
+                        placeholder="Find a person by name or email…"
+                        value={orphLockedSearch}
+                        onChange={(e) => setOrphLockedSearch(e.target.value)}
+                        className="h-8 w-full pl-8 pr-8 text-xs"
+                      />
+                      {orphLockedSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setOrphLockedSearch('')}
+                          aria-label="Clear search"
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    {orphNeedle && (
+                      <span className="text-[12px] text-zinc-600 dark:text-zinc-400">
+                        {orphLockedShown.length} of {orphLocked.length} shown
+                      </span>
+                    )}
+                  </div>
                   <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
                     <table className="w-full text-[13px]">
                       <thead>
@@ -14848,7 +15219,14 @@ export default function PayrollWizard({
                         </tr>
                       </thead>
                       <tbody>
-                        {orphLocked.map((e) => (
+                        {orphLockedShown.length === 0 && (
+                          <tr>
+                            <td colSpan={isReplay ? 3 : 4} className="px-3 py-6 text-center text-[13px] text-zinc-600 dark:text-zinc-400">
+                              No one locked in this period matches &ldquo;{orphLockedSearch.trim()}&rdquo;.
+                            </td>
+                          </tr>
+                        )}
+                        {orphLockedShown.map((e) => (
                           <tr key={e.email} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
                             <td className="px-3 py-2" data-label="Employee">
                               <div className="font-medium text-zinc-800 dark:text-zinc-200">{e.name}</div>
@@ -14866,17 +15244,44 @@ export default function PayrollWizard({
                                 <span className="text-zinc-300 dark:text-zinc-600">—</span>
                               )}
                             </td>
-                            <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-white" data-label="Amount">{formatPHP(e.amount)}</td>
+                            <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-white" data-label="Amount">
+                              {formatPHP(e.amount)}
+                              {(e.check.status === 'ot_underpriced' || e.check.status === 'amount_mismatch') && (
+                                <div className="mt-0.5 font-sans text-[10px] font-normal leading-tight text-amber-700 dark:text-amber-400">
+                                  {e.check.shortfallPhp > 0
+                                    ? <>short {formatPHP(e.check.shortfallPhp)} — {e.check.message}</>
+                                    : e.check.message}
+                                </div>
+                              )}
+                              {orphChecksReady && e.check.status === 'unverifiable' && e.detail == null && (
+                                <div className="mt-0.5 font-sans text-[10px] font-normal leading-tight text-zinc-500 dark:text-zinc-400">
+                                  no hours record — entered by hand
+                                </div>
+                              )}
+                            </td>
                             {!isReplay && (
                               <td className="px-2 py-2 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => void removeOrphanageLocked(e.email)}
-                                  title="Remove this orphanage amount"
-                                  className="rounded p-1 text-zinc-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30 dark:hover:text-rose-400"
-                                >
-                                  <X className="h-3.5 w-3.5" />
-                                </button>
+                                <div className="flex items-center justify-end gap-0.5">
+                                  {(e.check.status === 'ot_underpriced' || e.check.status === 'amount_mismatch') && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void repriceOrphanageLocked([e.email])}
+                                      disabled={orphanageLockingIn}
+                                      title={`Re-price from ${e.detail?.hours.toFixed(2) ?? '—'} recorded hours at the rate on file`}
+                                      className="rounded p-1 text-amber-600 transition hover:bg-amber-50 hover:text-amber-800 disabled:opacity-50 dark:text-amber-400 dark:hover:bg-amber-950/30 dark:hover:text-amber-300"
+                                    >
+                                      <Calculator className="h-3.5 w-3.5" />
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => void removeOrphanageLocked(e.email)}
+                                    title="Remove this orphanage amount"
+                                    className="rounded p-1 text-zinc-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30 dark:hover:text-rose-400"
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
                               </td>
                             )}
                           </tr>
@@ -14884,13 +15289,16 @@ export default function PayrollWizard({
                       </tbody>
                       <tfoot>
                         <tr className="border-t border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
-                          <td className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-rose-700 dark:text-rose-300">Total</td>
+                          <td className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-rose-700 dark:text-rose-300">
+                            {orphNeedle ? 'Period total' : 'Total'}
+                          </td>
                           <td className="px-3 py-2" />
                           <td className="px-3 py-2 text-right font-mono font-bold tabular-nums text-zinc-900 dark:text-white">{formatPHP(orphLockedTotal)}</td>
                           {!isReplay && <td className="px-3 py-2" />}
                         </tr>
                       </tfoot>
                     </table>
+                  </div>
                   </div>
                 )}
               </CardContent>
