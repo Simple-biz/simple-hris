@@ -484,6 +484,46 @@
  *
  * COST. `--only-new` — 3 corrections, ~6 calls.
  *
+ *
+ * ── 2026-08-21, PASS 10 — RETRACTION: THE PAB AUDIT TRAIL WORKS, MY PROBE WAS BROKEN ──────
+ * Kane: "whats next for closing?"
+ *
+ * PASS 9 RECORDED A FALSE FINDING AND THIS CORRECTS IT. Pass 9 held this row at Pending Deploy and
+ * stated that audit_log contained zero pab_exclusion.* rows, i.e. that the audit trail had not
+ * written. That was WRONG, and the fault was in the verification, not the feature.
+ *
+ * THE VERIFICATION QUERY SELECTED A COLUMN THAT DOES NOT EXIST:
+ *     .select('action, created_at, actor_email, details')   ->  42703 column audit_log.actor_email
+ *                                                               does not exist
+ * PostgREST returned an error and `data` came back NULL; the probe did `(al ?? []).length` without
+ * ever checking `error`, printed 0, and 0 was read as "no rows exist". Re-run without that column and
+ * the row is there: pab_exclusion.added at 2026-08-21T12:28:23 with details
+ * {month: '2026-08', employee: 'kaner@simple.biz', excluded: true, notified: true, was_excluded: ...}.
+ *
+ * SO THE FEATURE IS PROVEN END TO END, and better than the earlier reading suggested: one click wrote
+ * the notification (12:28:22) AND the audit row (12:28:23), one second apart, with `notified: true`
+ * captured in the audit details — which is the audit trail recording that the notification succeeded.
+ *
+ * THIS IS THE THIRD TIME THIS EXACT CLASS HAS BITTEN IN A WEEK, and the pattern is worth naming
+ * because knowing about it did not prevent it:
+ *   • `security_invoker` on a view — an RLS-blocked filter returns an empty 200, not an error.
+ *   • `head: true` on a missing table — no error, count null, so a MISSING table reads as APPLIED.
+ *   • this one — a bad column name errors, `data` is NULL, and `(data ?? [])` converts an ERROR into
+ *     an empty result.
+ * The rule that would have caught all three: **an empty result and a failed query are different
+ * facts, so check `error` before believing a count of zero** — and use a negative control, which is
+ * exactly what caught the head:true bug and what this probe lacked.
+ *
+ * NOT CHANGED BY THIS: Kane is still excluded from August 2026 PAB. pab.restored is 0 rows and
+ * app_settings.pab_period_exclusions still lists him under 2026-08. That is a live data state, not a
+ * row status, and it needs a click regardless of what the board says.
+ *
+ * STILL OPEN AND UNCOVERED, carried forward rather than folded in: insertAuditLog returns { error }
+ * and the pab-exclusions call site ignores it. Today that hid nothing because the write SUCCEEDED, but
+ * it is the same silent-swallow shape the sibling row just closed, and it is one line to fix.
+ *
+ * COST. `--only-new` — 1 correction, ~4 calls.
+ *
   * ── APPROVAL ──────────────────────────────────────────────────────────────────────────────────────
  * Kane approved the 57-row re-attribution on 2026-08-13 ("Approve all") after reviewing it in full,
  * plus three rulings the same day: gap-day rows → Sprint 25; the group move belongs in `sync.ts`; the
@@ -542,30 +582,13 @@ export interface PassRow {
 
 export const ROWS: PassRow[] = [
   {
-    name: "KPI scored notification fires on months-old weeks — floor it to the current period",
-    status: 'Done',
-    completed: '2026-08-21',
-    dateBasis: 'external',
-    shas: ['31b11050', 'b831699d'],
-    basis:
-      "Done 2026-08-21; Sprint 27. Kane 2026-08-21: \"We have been using this for 3 weeks close this\" — recorded as the basis. EVIDENCE, stated exactly: the LOGIC is proven (25/25 tests pass across kpi-scored.test.ts, including 'floor keys on period_END so a CURRENT monthly period is not silenced' — which matters because the live table holds three period grains and a period_START floor would have silenced a current monthly period) and the DEPLOYMENT is proven (b831699d is an ancestor of origin/main, verified with merge-base). PRODUCTION OBSERVATION IS ABSENT AND CANNOT YET EXIST: hsl_bonus_period_status shows 0 rows touched since 2026-08-20 and audit_log 0 bonus/kpi actions in that window, so nothing has scored a dept-week since the fix landed. employee_notifications kpi.scored is still 0 rows for that reason, not because the floor failed — so '0 floor violations' is an EMPTY test, not a passing one, and is not offered as proof. The 3 weeks of use Kane refers to is the KPI Calculator; the floor itself shipped 2026-08-20. THE ASSERTION STILL TO WATCH: 158 of the 181 'ready' dept-weeks sit below the 2026-08-09 floor, so the first time anyone re-saves an old week, no notification should fire. DATE BASIS external — closed on Kane's call, not on a commit.",
-  },
-  {
-    name: "Notification insert failures are swallowed into console.warn — make them observable",
-    status: 'Done',
-    completed: '2026-08-21',
-    dateBasis: 'external',
-    shas: ['31b11050', 'b831699d'],
-    basis:
-      "Done 2026-08-21; Sprint 27. Kane 2026-08-21: \"Closed as well put them on board already with the evidence as Committed\" — recorded as the basis, and closing on review is the RIGHT call here rather than a concession: this code writes an audit row only when a notification FAILS, so the only production test is to deliberately break a notification, and manufacturing an outage to earn a Done is not a reasonable trade. THE EVIDENCE IS THEREFORE REVIEW PLUS TESTS, and it is real: all FOUR call sites that previously swallowed a failed notification are verified wired to src/lib/notifications/notify-failure-audit.ts — checked individually in bonus-catalog-applied, hsl-bonus/entries, hsl-bonus/period-status and pab-exclusions; the console.warn lines still present in pab-exclusions cover DIFFERENT conditions (unsafe email characters, a failed active_employees lookup, no roster match) and not the notification insert; 25/25 tests pass including 'the action string is stable — audit readers filter on it'; and the action string cannot be silently rejected, because audit_log.action holds 177 distinct values across 43 prefixes and is therefore free text rather than CHECK-constrained — which had to be confirmed, since a constrained action column would have made this fix dead on arrival in exactly the way it was built to catch. audit_log currently holds 0 notification.insert_failed rows, which is the desired state. DATE BASIS external — sign-off, not a commit. ONE FOLLOW-UP THIS ROW DOES NOT COVER: insertAuditLog returns { error } and the pab-exclusions call site ignores it, so an audit write that fails is itself silent.",
-  },
-  {
     name: "PAB exclusions leave no audit trail while PAB disputes are fully audited",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-08-21',
+    dateBasis: 'external',
     shas: ['4afac832', 'b831699d'],
     basis:
-      "Pending Deploy — NOT Done, and Kane's own test on 2026-08-21 is why. He reported this closed; the measurement disagrees, so it is recorded rather than accepted. WHAT THE TEST PROVED, which is a real and separate win: pab.excluded INSERTED and RENDERED — employee_notifications now holds 1 row (kaner@simple.biz, 2026-08-21T12:28:22Z, 'Excluded from Perfect Attendance Bonus') and it appears in the employee bell, for a type that had NEVER inserted once. That is end-to-end proof of the 2026-08-20 type-CHECK fix, from DDL through insert to render. WHAT IT DISPROVED: audit_log holds 0 rows for pab_exclusion.added and 0 for pab_exclusion.removed — the audit trail did not write, which is the whole content of this row. It cannot be dismissed as a skipped branch: the notification (route.ts:76) and the audit write (route.ts:143) are gated on the SAME if (changed), and the notification fired, so changed was true and insertAuditLog WAS called. TWO CANDIDATE CAUSES the data cannot yet separate: (a) DEPLOY LAG — the notification path is OLD code, b831699d added only +38 lines here, so a pre-b831699d build produces exactly this signature; the push landed ~11:51Z against a 12:28Z click, which makes lag less likely but not impossible. (b) SILENT FAILURE — insertAuditLog returns { error } and this call site ignores it, so a rejected insert leaves no trace at all: the same silent-swallow pattern as the sibling row, reproduced inside the fix. RULED OUT: a CHECK on audit_log.action, which holds 177 distinct values across 43 prefixes and is free text. TO SETTLE IT, and Kane must do this anyway: pab.restored is 0 rows, so kaner@simple.biz is CURRENTLY EXCLUDED from August 2026 PAB. Clicking restore fixes that and decides the diagnosis — an audit row appearing means (a), still nothing means (b).",
-    blockers: ["MEASURED FAILING: 0 audit_log rows for pab_exclusion.added/.removed after a real exclusion", "Kane is currently excluded from August 2026 PAB - clicking restore fixes that AND settles the diagnosis", "If restoring still writes no audit row, insertAuditLog is failing silently at this call site"],
+      "Done 2026-08-21; Sprint 27. PROVEN END TO END BY KANE'S OWN TEST, and this basis RETRACTS the pass-9 record that said otherwise. One exclusion click wrote BOTH halves one second apart: employee_notifications pab.excluded at 2026-08-21T12:28:22Z (kaner@simple.biz, 'Excluded from Perfect Attendance Bonus', visible in the employee bell per Kane's screenshot) and audit_log pab_exclusion.added at 2026-08-21T12:28:23Z with details {month: '2026-08', employee: 'kaner@simple.biz', excluded: true, notified: true} — so the audit row even records that the notification succeeded. That closes the asymmetry this row existed for: audit_log held 89 pab_dispute.* rows in full detail and NOTHING for the action that actually zeroes a person's attendance bonus, while app_settings.pab_period_exclusions carried 107 person-month entries whose author was unknowable. WHY PASS 9 GOT IT WRONG, recorded so the mistake is not repeated: the verification query selected 'actor_email', a column audit_log does not have; PostgREST returned 42703, data came back NULL, and the probe did (data ?? []).length without checking error — turning a FAILED query into an apparent zero. An empty result and a failed query are different facts. Same class as the security_invoker empty-200 and the head:true missing-table bug, and the third time in a week. DATE BASIS external: the proof is the live click on 08-21, not a commit. STILL TRUE AND NOT COVERED HERE: it cannot retroactively identify who was owed a missed pab.excluded notification (that set was never reconstructible), and insertAuditLog's returned error is still ignored at this call site.",
   },
 ];
 

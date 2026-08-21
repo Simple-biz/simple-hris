@@ -431,7 +431,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // choice. Kane approved adding them 2026-08-20 ("go").
   { epic: 'HRIS-06', name: 'KPI scored notification fires on months-old weeks — floor it to the current period', type: 'Bug', sp: 2, done: true, sprint: 'S27', priority: 'High' },
   { epic: 'HRIS-15', name: 'Notification insert failures are swallowed into console.warn — make them observable', type: 'Chore', sp: 3, done: true, sprint: 'S27', priority: 'High' },
-  { epic: 'HRIS-02b', name: 'PAB exclusions leave no audit trail while PAB disputes are fully audited', type: 'Feature', sp: 2, done: false, sprint: 'S27', priority: 'High' },
+  { epic: 'HRIS-02b', name: 'PAB exclusions leave no audit trail while PAB disputes are fully audited', type: 'Feature', sp: 2, done: true, sprint: 'S27', priority: 'High' },
   { epic: 'HRIS-19', name: 'Legacy rates-sheet cell can route null-preferred → hurupay: decision + guard', type: 'Spike', sp: 2, done: false, sprint: 'S27', priority: 'High' },
   { epic: 'HRIS-24', name: 'Referred-by column + Referrals week section (email-tier matching)', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
   // ── Sprint 26 reconciliation — shipped Jul 29 – Aug 5 2026 ─────────────────
