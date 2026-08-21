@@ -799,4 +799,29 @@ export const PLAN_TASKS: PlanTask[] = [
   // that left kpi.scored rejected for three days behind a console.warn. That DDL plus two n8n imports
   // are Kane's to run, so this row cannot pass Pending Deploy on code alone.
   { epic: 'HRIS-17', name: 'Tickets board notifies the requester on every update — comment emails and status-move emails', type: 'Feature', sp: 5, done: false, sprint: 'S27' },
+  // 2 SP: `HUBSTAFF_EXEMPT_DEPTS` matches raw master-list labels exactly, and the dept it excuses was
+  // renamed — `Site Building` became `Site Building (US - Freelance)` (20 people, ZERO with Hubstaff
+  // hours) and `Site Building (PH - Freelancer)` (13, zero) — so the list silently inverted its own
+  // meaning and the Overview "Hubstaff ↔ Master matches" tile (and its CEO mirror) reported 33
+  // deliberately-untracked freelancers as unexplained reconciliation gaps. The untouched
+  // `SMM Freelancer` label kept working, which is how it stayed invisible. Fixed by retrying the
+  // match once with a trailing parenthetical qualifier stripped; a test pins the negative control
+  // (a dept whose base label was never exempt stays tracked however it is qualified) and pins
+  // Lead Gen NOT exempt per Kane. 2 SP: one predicate and its tests, no new surface.
+  { epic: 'HRIS-14', name: 'Hubstaff exempt-department list broke on a rename, reporting 33 untracked freelancers as unexplained gaps', type: 'Bug', sp: 2, done: false, sprint: 'S27', priority: 'High' },
+  // 5 SP: nobody had offboarded jvincec@ and nothing said so — he sat Active with zero hours from
+  // 2026-08-05. The DETECTOR already existed (the Overview recon tile had him in its gap bucket the
+  // whole time, approved-leave carve-out included); what was missing was delivery, so this is a
+  // noise fix plus two delivery paths, not a new engine. `classifyZeroHours` is extracted as the ONE
+  // rule now shared by that tile, a new Readiness "No Hours" tab and a `payroll.hours_gap`
+  // notification fired on Hubstaff ingest to accounting role holders only. Scored 5, not 8, because
+  // it touches NO money path — no score component, no rate, no dispatch row — and deliberately so:
+  // Lead Gen stays tracked per Kane, which puts ~193 rows on the list every week, so the dimension
+  // is listed and never scored (a fourth score component would peg readiness near zero weekly and
+  // kill the 100% celebration). Not 3, because it carries a new notification type with its own
+  // employee_notifications CHECK widen, 44 new tests, and the exempt-list bug as a prerequisite.
+  // The DDL is APPLIED and verified (43 types live, all 39 app-mapped types still admitted), so
+  // unlike the tickets row above this one is not blocked on a migration — it is blocked only on the
+  // push, and the first real insert is unproven until the next ingest.
+  { epic: 'HRIS-20', name: 'Accounting is told who logged no Hubstaff hours — one shared no-hours rule, a Readiness tab and an ingest notification', type: 'Feature', sp: 5, done: false, sprint: 'S27' },
 ];
