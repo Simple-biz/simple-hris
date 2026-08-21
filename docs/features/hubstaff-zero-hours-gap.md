@@ -179,20 +179,43 @@ Other rules the card obeys:
 | No 5th stat tile | The tile row is `sm:grid-cols-4`; a fifth would orphan or shrink all four. The tab badge carries the count. |
 | The notification never arrives | Check the DDL first (Deploy notes), then `audit_log` for `notification.insert_failed`. |
 
+## Measured on the week it shipped (2026-08-09 → 2026-08-15)
+
+Numbers to compare against if this list ever looks wrong:
+
+| | |
+|---|---|
+| Roster / worked | 1,287 active · 1,046 logged hours |
+| Expected absences (exceptions) | 120, of which **78** are untracked-by-nature departments |
+| **Unexplained gaps** | **193** — Lead Gen 168, hsl:intake_specialist 13, hsl:filing_specialist 4, then singletons |
+| Approved leaves in scope | **1** |
+| Recipients | 10 active `accounting` role holders |
+
+The exemption fix moved this from 228 gaps to 193 (the 33 Site Building rows), and including
+**alternate work emails** in the alias set removed two more real false positives — people
+whose Hubstaff row is keyed on a gsuite alternate. That is the single most damaging mistake
+this list can make (reporting a working person as silent), which is why alias matching here
+is wider than the bank check's.
+
+`AI/API Team` is down to exactly one row: `jvincec@simple.biz`.
+
 ## Deploy notes
 
-**Migration — REQUIRED, and the feature is dead until it runs:**
+**Migration — APPLIED 2026-08-21, verified.**
 
-- `references/sql/alter/2026-08-21_add_payroll_hours_gap_notification_type.sql`
-- Apply with `node scripts/apply-hours-gap-notification-type.mjs` (verify-only:
-  `--verify`). Idempotent; restates the FULL allowed type set and aborts if the live
-  constraint carries a type the file lacks.
-- **PENDING** until Kane confirms it ran. Every `payroll.hours_gap` insert is rejected by
-  `employee_notifications_type_check` until then. `kpi.scored` shipped exactly that way and
-  wrote 0 rows for three days against 3,694 for `payroll.available`. The notifier here
-  audits its own failures, so the silence is visible — but the notification still does not
-  exist until the DDL lands.
+- `references/sql/alter/2026-08-21_add_payroll_hours_gap_notification_type.sql`, applied via
+  `node scripts/apply-hours-gap-notification-type.mjs` (verify-only: `--verify`). Idempotent;
+  restates the FULL allowed type set and aborts if the live constraint carries a type the
+  file lacks.
+- Verified twice, on a fresh connection: the live CHECK allows 43 types including
+  `payroll.hours_gap`, and **all 39 types the app maps to a dashboard are admitted** — the
+  check that matters after a full-set restatement, since a silent subset would break other
+  notification types' inserts rather than this one's.
 - Needs `DATABASE_URL` (session pooler `aws-1-us-east-2`, user `postgres.<ref>`, `@` in the
   password percent-encoded as `%40`). The script prints the exact form on a missing var.
+- **Still unproven: the first real insert.** The constraint admits the type and recipients
+  exist, but no `payroll.hours_gap` row has been written yet — the next Hubstaff ingest is
+  what proves the path. If no card appears then, read `audit_log` for
+  `notification.insert_failed` before suspecting anything else.
 
 No new tables. No env vars. No n8n import. `vercel.json` unchanged.
