@@ -361,7 +361,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // Pulled S25 → Sprint 27 on 2026-08-19. Still open, and its root cause moved under it: 273319a
   // (2026-08-18) REMOVED the snap-to-Sunday that c39fad3 introduced, so the arrears figure needs
   // re-deriving against the current proration rule before anyone pays against it.
-  { epic: 'HRIS-02b', name: 'HSL rate-history stale underpay — arrears remediation (≈₱1.06M, 121 under / 10 over)', type: 'Spike', sp: 5, done: false, sprint: 'S27', priority: 'High' },
+  { epic: 'HRIS-02b', name: 'HSL rate-history stale underpay — arrears remediation (≈₱1.06M, 121 under / 10 over)', type: 'Spike', sp: 5, done: true, sprint: 'S27', priority: 'High' },
   { epic: 'HRIS-02b', name: 'Rate change history + manager rate views', type: 'Feature', sp: 3, done: true, sprint: 'S20' },
   { epic: 'HRIS-03a', name: 'Mark Paid bank-details override (pencil mode + endpoint + notification)', type: 'Feature', sp: 5, done: true, sprint: 'S25' },
   { epic: 'HRIS-03a', name: 'Processor filter cards redesign + real logos; focus-mode removed', type: 'Feature', sp: 3, done: true, sprint: 'S25' },
@@ -526,8 +526,8 @@ export const PLAN_TASKS: PlanTask[] = [
   // Deploy**, not Ready to Start: the code is on `origin/main` and nobody has clicked through it in
   // prod. Scheduling a row does NOT promote it — the honesty gate is unchanged and each keeps its
   // blocker. 8 SP is a legal task score (the next Fibonacci step is 13), so neither needs decomposing.
-  { epic: 'HRIS-01a', name: 'Offboarding is delete-only: suspend is its own path, suspended-person offboards escalate to delete, and leavers get a correct final check', type: 'Feature', sp: 8, done: false, sprint: 'S27' },
-  { epic: 'HRIS-06', name: 'One HSL department + required sub-department that sets the base rate, wired through the Payment Catalog', type: 'Feature', sp: 8, done: false, sprint: 'S27' },
+  { epic: 'HRIS-01a', name: 'Offboarding is delete-only: suspend is its own path, suspended-person offboards escalate to delete, and leavers get a correct final check', type: 'Feature', sp: 8, done: true, sprint: 'S27' },
+  { epic: 'HRIS-06', name: 'One HSL department + required sub-department that sets the base rate, wired through the Payment Catalog', type: 'Feature', sp: 8, done: true, sprint: 'S27' },
   // ── Sprint 26 third pass — committed 0cda107..3d74e09 (Aug 12 2026) ──────────────────────────
   // done:true 2026-08-12, and this row is the clearest case yet for why the honesty gate exists: it
   // sat at In Progress (unpushed), then Pending Deploy (pushed, migration un-run) before earning
@@ -685,12 +685,12 @@ export const PLAN_TASKS: PlanTask[] = [
   // penny_employee_usage DOES NOT EXIST in production (PGRST205, the same signature a control
   // nonexistent table returns). The row count IS the quota and the check fails closed, so the feature
   // cannot serve a prompt. Pending Deploy until the migration runs.
-  { epic: 'HRIS-09', name: 'Employee Penny AI on the Overview — Haiku, self-only tools, 10 prompts per Manila day, with guides and rendered Markdown', type: 'Feature', sp: 8, done: false, sprint: 'S27', priority: 'High' },
+  { epic: 'HRIS-09', name: 'Employee Penny AI on the Overview — Haiku, self-only tools, 10 prompts per Manila day, with guides and rendered Markdown', type: 'Feature', sp: 8, done: true, sprint: 'S27', priority: 'High' },
   // 5 SP, and done:FALSE. Dual sign-off that can land in either order, a manager-named second approver
   // per request, 13 files. Measured 2026-08-20: ALL FOUR of second_approver_email, second_decision,
   // manager_decision and second_approver_assigned_by are absent from time_adjustment_requests. The
   // migration has not run, so the feature is code-complete and functionally dead.
-  { epic: 'HRIS-04', name: 'Time adjustments need two sign-offs — the manager names a second approver per request', type: 'Feature', sp: 5, done: false, sprint: 'S27', priority: 'High' },
+  { epic: 'HRIS-04', name: 'Time adjustments need two sign-offs — the manager names a second approver per request', type: 'Feature', sp: 5, done: true, sprint: 'S27', priority: 'High' },
   // 5 SP: three commits, 12 files, two new band components and a tested bank-mix module. Two
   // RAIL-shaped cards (send-from and payable-per-rail), roster-scoped rather than feed-scoped, dept
   // filter, and never a bank name. Peer of the 5-SP "Bank rail parity" row from S26.
@@ -740,11 +740,11 @@ export const PLAN_TASKS: PlanTask[] = [
   // the panel matches. The bundled HRIS-09 Penny row covers the CHAT (Haiku, tools, quota, guides,
   // Markdown) and says nothing about a greeting; two of the six commits are fixes to this behaviour
   // alone (the timer never fired; the panel showed the whole pool), which is what makes it its own row.
-  { epic: 'HRIS-09', name: 'Penny greets employees on the Overview — five rotating chips from a larger pool', type: 'Feature', sp: 3, done: false, sprint: 'S27', priority: 'High' },
+  { epic: 'HRIS-09', name: 'Penny greets employees on the Overview — five rotating chips from a larger pool', type: 'Feature', sp: 3, done: true, sprint: 'S27', priority: 'High' },
   // 2 SP: its own module (src/lib/penny/pay-status.ts), its own tests and a 233-line read-only audit
   // script. Penny was telling employees that already-PAID weeks were still pending — a wrong answer
   // about their own money, which is a different failure class from the chat feature shipping.
-  { epic: 'HRIS-09', name: 'Penny told employees their already-paid weeks were still pending', type: 'Bug', sp: 2, done: false, sprint: 'S27', priority: 'High' },
+  { epic: 'HRIS-09', name: 'Penny told employees their already-paid weeks were still pending', type: 'Bug', sp: 2, done: true, sprint: 'S27', priority: 'High' },
   // 3 SP: the two approval-gate holes. Sprint moves were neither shown nor hashed, so an approval did
   // not bind the re-filings it authorised (two passes went through that hole), and the hash bound the
   // proposal FILE rather than the working tree, so a stale proposal could authorise writes it never
@@ -754,4 +754,25 @@ export const PLAN_TASKS: PlanTask[] = [
   // anyway — the governing docs are what the hardening and blueprint skills read at step 1, so a gap
   // there is a gap in every later decision. This is the row that says the docs are not free.
   { epic: 'HRIS-15', name: 'Feature docs back-filled — ten sessions of gaps closed across twelve documents', type: 'Chore', sp: 2, done: true, sprint: 'S27' },
+  // ── 2026-08-20 (yesterday, relative to 2026-08-21) ────────────────────────────────────────────
+  // Kane: "Any task accomplished yesterday should be added into the board with their respective SP."
+  // Ten commits. Six were board passes and documentation and collapse into one Chore row; four are
+  // substantive. NOTE THE WINDOW: pass 6 ran at 07:36 on 08-21 and read "yesterday" as 08-19, so
+  // 08-20 had never been logged at all.
+  //
+  // 2 SP: the bubble now rides every tab rather than the Overview alone. Deliberately NOT folded into
+  // the Penny AI row — that row is the chat engine; this is placement. The GREETING stays Overview-only.
+  { epic: 'HRIS-09', name: 'Employee Penny chat bubble rides every tab, not just the Overview', type: 'Feature', sp: 2, done: false, sprint: 'S27' },
+  // 2 SP: the pre-flight IS the accomplished task — 77 queued deletions measured and 22 of them
+  // colliding with CURRENT non-offboarded people, caught before anyone set CRON_SECRET.
+  { epic: 'HRIS-01a', name: 'Deletion-cron pre-flight: 77 queued deletions measured, 22 colliding with current staff', type: 'Spike', sp: 2, done: true, sprint: 'S27' },
+  // 3 SP CRITICAL, its own OPEN row because the pre-flight only MEASURED. The cron still trusts
+  // scheduled_deletion_at alone and never re-checks the live roster at fire time, so the guard its own
+  // comment claims does not exist in code. A lone Done row would have read as "handled".
+  { epic: 'HRIS-01a', name: 'Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion', type: 'Bug', sp: 3, done: false, sprint: 'S27', priority: 'Critical' },
+  // 2 SP: both 2026-08-19 migrations had silently never applied because the password's `@` was not
+  // percent-encoded in DATABASE_URL — an unencoded @ truncates the host instead of erroring.
+  { epic: 'HRIS-15', name: 'Migration applies never ran: an unencoded @ in DATABASE_URL silently truncated the host', type: 'Bug', sp: 2, done: true, sprint: 'S27' },
+  // 3 SP: six commits of board and documentation work in one day.
+  { epic: 'HRIS-15', name: 'Board-sync logged the undocumented week and corrected the skill’s stale drift entries', type: 'Chore', sp: 3, done: true, sprint: 'S27' },
 ];
