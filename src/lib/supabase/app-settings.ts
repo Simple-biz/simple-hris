@@ -124,6 +124,60 @@ export async function upsertAppSetting(key: string, value: string): Promise<{ er
 }
 
 /**
+ * Compare-and-swap write, for settings whose value is a MAP that several people
+ * edit concurrently.
+ *
+ * {@link upsertAppSetting} is last-write-wins, which is correct for a scalar
+ * (an FX rate, a pulse timestamp) and silently destructive for a collection:
+ * two clerks who each read `{}`, add their own person and save will leave only
+ * the second person's entry, with no error on either side. That is already true
+ * of `payroll.wizard.exclusions` today.
+ *
+ * Pass the `updatedAt` you read alongside the value (see
+ * {@link getAppSettingWithMetaStrict}). The write lands only if the row still
+ * carries that exact timestamp; otherwise it reports `conflict` and the caller
+ * re-reads, re-merges and retries. Pass `expectedUpdatedAt: null` to mean "this
+ * key did not exist when I read it" — a plain INSERT, so a racing creator is
+ * caught as a conflict rather than overwritten.
+ *
+ * `conflict` is a normal outcome to retry, NOT an error. `error` is reserved for
+ * a write that genuinely failed.
+ */
+export async function casUpdateAppSetting(
+  key: string,
+  value: string,
+  expectedUpdatedAt: string | null,
+): Promise<{ ok: boolean; conflict: boolean; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { ok: false, conflict: false, error: 'Supabase client unavailable' };
+  const stamp = new Date().toISOString();
+
+  if (expectedUpdatedAt == null) {
+    // The key was absent when we read it. INSERT, so a concurrent creator trips
+    // the primary key instead of losing their write to ours.
+    const { error } = await supabase.from('app_settings').insert({ key, value, updated_at: stamp });
+    if (error) {
+      // 23505 = unique violation: somebody created the row between our read and
+      // this insert. Their value is in there; re-read and merge onto it.
+      const conflict = error.code === '23505';
+      return { ok: false, conflict, error: conflict ? null : error.message };
+    }
+    return { ok: true, conflict: false, error: null };
+  }
+
+  const { data, error } = await supabase
+    .from('app_settings')
+    .update({ value, updated_at: stamp })
+    .eq('key', key)
+    .eq('updated_at', expectedUpdatedAt)
+    .select('key');
+  if (error) return { ok: false, conflict: false, error: error.message };
+  // No row matched ⇒ updated_at moved under us ⇒ somebody else wrote first.
+  if (!data || data.length === 0) return { ok: false, conflict: true, error: null };
+  return { ok: true, conflict: false, error: null };
+}
+
+/**
  * Key whose value is bumped (to a fresh timestamp) every time a payment is
  * recorded or undone. The CEO live "payments to send" counter subscribes to
  * THIS key over Realtime — `app_settings` is already in the realtime

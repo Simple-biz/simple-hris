@@ -2,11 +2,17 @@
 'use client';
 
 import React, { useState } from 'react';
-import { AlertTriangle, ChevronRight, Ban } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Ban, BadgeCheck, Loader2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { formatPHP } from '@/lib/format-php';
 import type { PayrollBreakdown, ValidationFlag } from '@/lib/payroll/validation-breakdown';
+import {
+  MV_NOTE_MAX_LEN,
+  validationFor,
+  type ManualValidation,
+  type ManualValidationMap,
+} from '@/lib/payroll/manual-validation';
 
 type Props = {
   rows: PayrollBreakdown[];
@@ -16,6 +22,27 @@ type Props = {
   disabled: boolean;
   onToggleExcluded: (email: string) => void;
   onToggleAllExcluded: (emails: string[], next: boolean) => void;
+  /**
+   * Manual validation ("MV") — who has hand-checked which row this cycle, keyed
+   * by lowercased work email. An absent key means "not validated"; there is no
+   * falsy record for the unticked state.
+   */
+  validations?: ManualValidationMap;
+  /**
+   * Ticking MV. Omitted ⇒ the column renders read-only, which is what a replay
+   * of a past week wants: the record of who validated it then is history, and
+   * offering a checkbox would invite writing into a closed week.
+   */
+  onToggleValidated?: (email: string, next: boolean, note: string | null) => void;
+  /** Emails with an MV write in flight, so the cell can show it is saving. */
+  savingValidations?: ReadonlySet<string>;
+  /**
+   * Fill the parent instead of capping at ~62vh. The inline step-7 table sits in
+   * a page that scrolls, so it caps its own height; the full-screen mirror is
+   * already inside a `min-h-0 flex-1` box and must fill it, or the viewport
+   * shows a short table with dead space under it.
+   */
+  fillHeight?: boolean;
 };
 
 const H = 'px-2 py-2 text-right text-[11px] font-medium text-zinc-600 dark:text-zinc-400';
@@ -65,8 +92,141 @@ function FlagList({ flags }: { flags: ValidationFlag[] }) {
   );
 }
 
+/** `2026-08-21 14:32` in the reader's locale — short, sortable-looking, no seconds. */
+function shortStamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+/** The `by · at · note` line, used in the cell tooltip and the expanded row. */
+function validationSummary(v: ManualValidation): string {
+  const head = `Manually validated by ${v.by} on ${shortStamp(v.at)}`;
+  return v.note ? `${head} — “${v.note}”` : head;
+}
+
+/**
+ * One row's MV cell.
+ *
+ * Ticking asks for a note and does NOT require one — Kane's rule. So the prompt
+ * has two ways out that both validate ("Save" and "Skip") and only one that does
+ * not (dismiss), rather than a disabled-until-typed Save. Un-ticking is
+ * immediate: withdrawing a vouch should never be behind a form.
+ *
+ * The popover is absolutely positioned inside the cell rather than portalled,
+ * because the table body is the scroll container — a portalled panel would stay
+ * put while the row it belongs to scrolled away underneath it.
+ */
+function MvCell({
+  row, validation, saving, disabled, onToggle,
+}: {
+  row: PayrollBreakdown;
+  validation: ManualValidation | null;
+  saving: boolean;
+  disabled: boolean;
+  onToggle?: (email: string, next: boolean, note: string | null) => void;
+}) {
+  const [prompting, setPrompting] = useState(false);
+  const [draft, setDraft] = useState('');
+  const readOnly = disabled || !onToggle;
+  const who = row.name || row.email;
+
+  const commit = (note: string | null) => {
+    onToggle?.(row.email, true, note);
+    setPrompting(false);
+    setDraft('');
+  };
+
+  return (
+    <td className="relative px-2 py-2.5 text-center align-top">
+      {saving ? (
+        <Loader2 className="mx-auto h-4 w-4 animate-spin text-zinc-400" aria-label="Saving validation" />
+      ) : (
+        <input
+          type="checkbox"
+          checked={validation != null}
+          onChange={() => {
+            if (readOnly) return;
+            if (validation != null) onToggle?.(row.email, false, null);
+            else setPrompting(true);
+          }}
+          disabled={readOnly}
+          aria-label={
+            validation
+              ? `${validationSummary(validation)}. Clear the manual validation for ${who}.`
+              : `Mark ${who}'s pay as manually validated`
+          }
+          title={validation ? validationSummary(validation) : 'Not manually validated'}
+          className="h-4 w-4 cursor-pointer rounded border-zinc-300 accent-emerald-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600"
+        />
+      )}
+
+      {validation && !saving && (
+        <BadgeCheck
+          className="mx-auto mt-1 h-3 w-3 text-emerald-600 dark:text-emerald-400"
+          aria-hidden
+        />
+      )}
+
+      {prompting && (
+        <div
+          className="absolute right-1 top-8 z-30 w-64 rounded-lg border border-zinc-200 bg-white p-2.5 text-left shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+          role="dialog"
+          aria-label={`Add a note for ${who}`}
+        >
+          <p className="mb-1.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+            Note (optional)
+          </p>
+          <textarea
+            autoFocus
+            value={draft}
+            maxLength={MV_NOTE_MAX_LEN}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') { setPrompting(false); setDraft(''); }
+              // Enter saves; Shift+Enter keeps a newline, since a note may be a
+              // sentence or two.
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commit(draft); }
+            }}
+            rows={3}
+            placeholder="What did you check?"
+            className="w-full resize-none rounded border border-zinc-200 bg-white px-2 py-1.5 text-[11px] text-zinc-800 outline-none focus:border-emerald-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
+          />
+          <div className="mt-2 flex items-center justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => { setPrompting(false); setDraft(''); }}
+              className="rounded px-2 py-1 text-[11px] text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+            >
+              Cancel
+            </button>
+            {/* Skip and Save both validate. The note is genuinely optional, so
+                there is no state where the operator is stuck. */}
+            <button
+              type="button"
+              onClick={() => commit(null)}
+              className="rounded px-2 py-1 text-[11px] font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              Skip
+            </button>
+            <button
+              type="button"
+              onClick={() => commit(draft)}
+              className="rounded bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      )}
+    </td>
+  );
+}
+
 /** The worked calculation, shown when a row is expanded. */
-function WorkedTotal({ r }: { r: PayrollBreakdown }) {
+function WorkedTotal({ r, validation }: { r: PayrollBreakdown; validation: ManualValidation | null }) {
   const lines: Array<[string, string, number]> = [];
   if (r.isHsl && r.rates?.we != null) {
     lines.push(['M-F', `${r.hours.mf.toFixed(2)} h × ${formatPHP(r.rates.mf)}`, r.earnings.base]);
@@ -84,7 +244,16 @@ function WorkedTotal({ r }: { r: PayrollBreakdown }) {
   if (pab) lines.push(['Perfect attendance', '', pab]);
   if (tech) lines.push(['Tech bonus', '', tech]);
   if (other) lines.push(['Other bonuses', '', other]);
-  if (r.adjustments.adjustment) lines.push(['Adjustment', '', r.adjustments.adjustment]);
+  // Adjustment is listed UNCONDITIONALLY, unlike every other optional line here.
+  // It is the one figure an operator comes to this panel to confirm the absence
+  // of: it originates on the Payroll Notes board, so "no adjustment" and "an
+  // adjustment I can't see" look identical when the line is simply missing.
+  // Read-only — the Notes board is where it is set (see payroll-wizard-notes.md).
+  lines.push([
+    'Adjustment',
+    r.adjustments.adjustment === 0 ? 'none on the Notes board' : 'from the Notes board',
+    r.adjustments.adjustment,
+  ]);
   if (r.adjustments.orphanage) lines.push(['Orphanage', '', r.adjustments.orphanage]);
   if (r.adjustments.mesaDisbursement) lines.push(['MESA disbursement', '', r.adjustments.mesaDisbursement]);
   if (r.adjustments.mesaDeduction) lines.push(['MESA', '', -r.adjustments.mesaDeduction]);
@@ -120,12 +289,19 @@ function WorkedTotal({ r }: { r: PayrollBreakdown }) {
             ? '✓ ties to dispatch'
             : `Dispatch will send ${formatPHP(r.dispatchNet)}.`}
       </p>
+      {validation && (
+        <p className="mt-1 flex items-start gap-1.5 text-[10px] leading-snug text-emerald-700 dark:text-emerald-300">
+          <BadgeCheck className="mt-px h-3 w-3 shrink-0" aria-hidden />
+          <span>{validationSummary(validation)}</span>
+        </p>
+      )}
     </div>
   );
 }
 
 export default function ValidationBreakdownTable({
   rows, deptName, isHsl, disabled, onToggleExcluded, onToggleAllExcluded,
+  validations, onToggleValidated, savingValidations, fillHeight,
 }: Props) {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const toggleOpen = (rowKey: string) =>
@@ -144,16 +320,25 @@ export default function ValidationBreakdownTable({
   const payable = rows.filter((r) => !r.excluded);
   const subtotal = payable.reduce((s, r) => s + r.gross, 0);
 
+  const mvMap = validations ?? {};
+  const validatedCount = rows.reduce((n, r) => n + (validationFor(mvMap, r.email) ? 1 : 0), 0);
+
   // Column count for colSpan on the expanded row, the empty state and the footer.
   // Must equal the sum of the group-header spans below, or the expanded row and
   // subtotal footer under-span and the table visibly misaligns:
-  //   base: 2 + 2 + 2 + 3 + 3 + 2 = 14
-  //   HSL:  2 + 3 + 3 + 4 + 3 + 2 = 17
-  const cols = isHsl ? 17 : 14;
+  //   base: 2 + 2 + 2 + 3 + 3 + 3 = 15
+  //   HSL:  2 + 3 + 3 + 4 + 3 + 3 = 18
+  // The last group spans Gross + Excl + MV.
+  const cols = isHsl ? 18 : 15;
 
   return (
-    <div className="overflow-auto [scrollbar-gutter:stable]" style={{ maxHeight: 'min(62vh, calc(100dvh - 26rem))' }}>
-      <table className={cn('w-full text-xs', isHsl ? 'min-w-[1240px]' : 'min-w-[1040px]')}>
+    <div
+      className={cn('overflow-auto [scrollbar-gutter:stable]', fillHeight && 'h-full')}
+      style={fillHeight ? undefined : { maxHeight: 'min(62vh, calc(100dvh - 26rem))' }}
+    >
+      {/* Min-widths grew with the MV column (+64px) so the numeric cells keep
+          their breathing room instead of crushing at the old width. */}
+      <table className={cn('w-full text-xs', isHsl ? 'min-w-[1310px]' : 'min-w-[1110px]')}>
         <thead className="sticky top-0 z-20 bg-zinc-100/95 shadow-[0_1px_0_0_rgb(228_228_231)] dark:bg-zinc-900/95 dark:shadow-[0_1px_0_0_rgb(39_39_42)]">
           <tr>
             <th className={GROUP} colSpan={2} />
@@ -161,7 +346,7 @@ export default function ValidationBreakdownTable({
             <th className={cn(GROUP, 'border-l border-zinc-200 dark:border-zinc-800')} colSpan={isHsl ? 3 : 2}>Rates</th>
             <th className={cn(GROUP, 'border-l border-zinc-200 dark:border-zinc-800')} colSpan={isHsl ? 4 : 3}>Earnings</th>
             <th className={cn(GROUP, 'border-l border-zinc-200 dark:border-zinc-800')} colSpan={3}>Adjustments</th>
-            <th className={cn(GROUP, 'border-l border-zinc-200 dark:border-zinc-800')} colSpan={2}>Gross</th>
+            <th className={cn(GROUP, 'border-l border-zinc-200 dark:border-zinc-800')} colSpan={3}>Gross</th>
           </tr>
           <tr>
             <th className="w-6 px-1" />
@@ -207,6 +392,21 @@ export default function ValidationBreakdownTable({
                 <span>Excl</span>
               </div>
             </th>
+            {/* MV has no master tickbox on purpose: "validate everyone at once"
+                is exactly the claim this column exists to make impossible. */}
+            <th
+              className="min-w-[64px] px-2 text-center text-[11px] font-medium text-zinc-600 dark:text-zinc-400"
+              title="Manually Validated — someone opened this person's pay, checked it by hand, and vouched for it"
+            >
+              <div className="flex flex-col items-center leading-tight">
+                <span>MV</span>
+                {rows.length > 0 && (
+                  <span className="font-mono text-[9px] font-normal text-zinc-400">
+                    {validatedCount}/{rows.length}
+                  </span>
+                )}
+              </div>
+            </th>
           </tr>
         </thead>
 
@@ -227,6 +427,7 @@ export default function ValidationBreakdownTable({
               const hasRed = r.flags.some((f) => f.severity === 'red');
               const hasAmber = !hasRed && r.flags.some((f) => f.severity === 'amber');
               const dim = r.excluded ? 'opacity-55' : '';
+              const rowValidation = validationFor(mvMap, r.email);
               return (
                 <React.Fragment key={rowKey}>
                   <tr
@@ -310,11 +511,18 @@ export default function ValidationBreakdownTable({
                         className="h-4 w-4 cursor-pointer rounded border-zinc-300 accent-rose-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600"
                       />
                     </td>
+                    <MvCell
+                      row={r}
+                      validation={rowValidation}
+                      saving={savingValidations?.has(r.email.trim().toLowerCase()) ?? false}
+                      disabled={disabled}
+                      onToggle={onToggleValidated}
+                    />
                   </tr>
                   {isOpen && (
                     <tr>
                       <td colSpan={cols} className="p-0">
-                        <WorkedTotal r={r} />
+                        <WorkedTotal r={r} validation={rowValidation} />
                       </td>
                     </tr>
                   )}
@@ -327,13 +535,16 @@ export default function ValidationBreakdownTable({
         {rows.length > 0 && (
           <tfoot>
             <tr className="border-t-2 border-zinc-300 bg-zinc-100/80 dark:border-zinc-700 dark:bg-zinc-900/60">
-              <td colSpan={cols - 2} className="px-3 py-2.5 text-xs font-bold text-zinc-700 dark:text-zinc-300">
+              <td colSpan={cols - 3} className="px-3 py-2.5 text-xs font-bold text-zinc-700 dark:text-zinc-300">
                 {deptName} Subtotal ({payable.length} payable{excludedCount > 0 ? ` · ${excludedCount} excluded` : ''})
               </td>
               <td className="px-2 py-2.5 text-right font-mono text-xs font-bold tabular-nums text-indigo-700 dark:text-indigo-300">
                 {formatPHP(subtotal)}
               </td>
               <td />
+              <td className="px-2 py-2.5 text-center font-mono text-[10px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">
+                {validatedCount > 0 ? `${validatedCount} MV` : ''}
+              </td>
             </tr>
           </tfoot>
         )}

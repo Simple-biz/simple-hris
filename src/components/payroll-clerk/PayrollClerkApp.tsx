@@ -20,6 +20,7 @@ import DispatchLoader from './DispatchLoader';
 import ExcludedQueue from './ExcludedQueue';
 import SentPaymentsHistory from './SentPaymentsHistory';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
+import { useManualValidations } from '@/components/payroll/useManualValidations';
 import UrgentPaymentsQueue from './UrgentPaymentsQueue';
 import { PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import { useDispatchQueue } from './useDispatchQueue';
@@ -56,6 +57,10 @@ export default function PayrollClerkApp() {
     valuesWarning,
     refresh,
   } = useDispatchQueue();
+  // Same read as the embedded Accounting tab, via the same hook — these two
+  // surfaces already disagree about what they POST at Mark Paid, so the
+  // validation banner is deliberately not a second implementation.
+  const { validationFor: manualValidationFor } = useManualValidations(period.sourceFile);
   // Realtime "values locked" flag — re-pull when the wizard locks/unlocks so the
   // queue appears/clears live.
   const cycleLock = useWizardDispatchLock(period.sourceFile);
@@ -381,7 +386,14 @@ export default function PayrollClerkApp() {
         <AppFooter />
       </main>
 
-      <MarkPaidDialog row={markPaidRow} onClose={handleCloseMarkPaid} onConfirm={handleConfirmPaid} />
+      <MarkPaidDialog
+        row={markPaidRow}
+        onClose={handleCloseMarkPaid}
+        onConfirm={handleConfirmPaid}
+        // `id` is the WORK email; `email` is the payout address and is shared /
+        // recycled in the master list. See the note at the Accounting call site.
+        validation={markPaidRow ? manualValidationFor(markPaidRow.id) : null}
+      />
 
       {/* Advertise this clerk into the CEO's live payroll roster and run the
           rrweb driver so the CEO can mirror this screen on demand. This is a

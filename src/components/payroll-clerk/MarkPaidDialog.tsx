@@ -157,6 +157,19 @@ interface MarkPaidDialogProps {
    * new defaults. Optional: render sites without a queue skip it.
    */
   onBankDetailsOverridden?: () => void;
+  /**
+   * Manual validation ("MV") recorded against this person in the Payroll
+   * Wizard's Validation step — who hand-checked the pay, when, and any note they
+   * left. DISPLAY ONLY: it never enters {@link MarkPaidPayload} and nothing here
+   * writes it, so the dialog cannot manufacture a vouch.
+   *
+   * `null`/omitted means no validation was recorded, which is a normal state —
+   * MV is a spot-check, not a required step, so its absence must not read as a
+   * warning. Urgent one-off payouts pass nothing at all: they have no wizard
+   * cycle behind them (`cycle_id` is null) and so cannot have been validated in
+   * one.
+   */
+  validation?: { by: string; at: string; note: string | null } | null;
 }
 
 /* ---- gallery slide animation ----------------------------------------- */
@@ -335,6 +348,7 @@ export default function MarkPaidDialog({
   onPrev,
   onNext,
   onBankDetailsOverridden,
+  validation,
 }: MarkPaidDialogProps) {
   const defaults = useMemo(() => (row ? resolveMarkPaidDefaults(row) : null), [row]);
 
@@ -790,6 +804,47 @@ export default function MarkPaidDialog({
             {cfg.queueEffect}
           </p>
         </div>
+
+        {/* ── Manual validation ─────────────────────────────────────────
+            Shown only when someone actually vouched for this figure in the
+            wizard's Validation step. There is deliberately no "not validated"
+            state: MV is a spot-check, not a required step, so rendering its
+            absence would put a warning on almost every payment and train the
+            clerk to ignore the band entirely.
+
+            Emerald, not amber — amber is this app's warning colour and a
+            completed check is not a warning (see payroll-wizard-final-pay.md on
+            step 2's colour rule).
+
+            It sits OUTSIDE the form's `max-h-[44vh]` scroll pane on purpose, so
+            it cannot scroll out of sight above the fields. */}
+        {validation && (
+          <div className="flex items-start gap-2 border-b border-emerald-100 bg-emerald-50/70 px-6 py-2.5 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+            <CheckCircle2 className="mt-px h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+            <div className="min-w-0 text-[11px] leading-snug">
+              <p className="font-medium text-emerald-800 dark:text-emerald-300">
+                Manually validated by {validation.by}
+                <span className="font-normal text-emerald-700/80 dark:text-emerald-400/80">
+                  {' · '}
+                  {(() => {
+                    const d = new Date(validation.at);
+                    return Number.isNaN(d.getTime())
+                      ? validation.at
+                      : d.toLocaleString(undefined, {
+                          year: 'numeric', month: 'short', day: '2-digit',
+                          hour: '2-digit', minute: '2-digit',
+                        });
+                  })()}
+                </span>
+              </p>
+              {validation.note && (
+                <p className="mt-0.5 break-words text-emerald-700 dark:text-emerald-400">
+                  “{validation.note}”
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* ── Form fields ───────────────────────────────────────────── */}
         <AnimatePresence mode="wait" custom={dir} initial={false}>

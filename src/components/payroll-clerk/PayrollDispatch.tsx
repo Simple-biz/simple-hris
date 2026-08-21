@@ -41,6 +41,7 @@ import DoneQueue from './DoneQueue';
 import OrphanageQueue from './OrphanageQueue';
 import UrgentPaymentsQueue from './UrgentPaymentsQueue';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
+import { useManualValidations } from '@/components/payroll/useManualValidations';
 import { PayStubModal } from '@/components/paystub/PayStubModal';
 import ContractorInvoiceDialog from './ContractorInvoiceDialog';
 import LockToggleConfirmDialog, { deriveFirstName } from '@/components/payroll/LockToggleConfirmDialog';
@@ -228,6 +229,9 @@ export default function PayrollDispatch() {
     refresh,
   } = useDispatchQueue(selectedSourceFile);
   const viewingPastWeek = selectedSourceFile != null;
+  // Manual validations for this cycle, so Mark Paid can show who vouched for the
+  // figure. Read-only — MV is written in the wizard's Validation step.
+  const { validationFor: manualValidationFor } = useManualValidations(period.sourceFile);
   const { state: lockState, setLocked } = useDispatchLock();
   const isLgUp = useIsLgUp();
   // "Focus mode" — once processing has started (lock on) at lg+, retract the
@@ -1951,6 +1955,11 @@ export default function PayrollDispatch() {
         }
         onPrev={handleGalleryPrev}
         onNext={handleGalleryNext}
+        // Keyed on `id` (the WORK email), never `email`. `useDispatchQueue`'s own
+        // note explains why: personal addresses are shared and recycled in the
+        // master list, so an alias match could surface a validation that belongs
+        // to a different person. No fallback — showing nothing is correct here.
+        validation={markPaidRow ? manualValidationFor(markPaidRow.id) : null}
       />
       <PayStubModal
         open={viewPaystub != null}

@@ -13,6 +13,7 @@ import {
   AlertCircle,
   Lock,
   LockOpen,
+  Maximize2,
   ArrowRight,
   ArrowLeft,
   Trash2,
@@ -285,6 +286,11 @@ import {
   parseOrphanageNoneMarker,
 } from '@/lib/payroll/wizard-setup-steps';
 import ValidationBreakdownTable from '@/components/payroll/ValidationBreakdownTable';
+import ValidationFullScreen from '@/components/payroll/ValidationFullScreen';
+import {
+  parseManualValidationMap,
+  type ManualValidationMap,
+} from '@/lib/payroll/manual-validation';
 import {
   buildValidationBreakdowns,
   countRedFlags,
@@ -3952,6 +3958,87 @@ export default function PayrollWizard({
       return next;
     });
   }, [persistExclusions]);
+
+  /* ── Manual validation ("MV") ─────────────────────────────────────────────
+     Who has hand-checked which person's pay this cycle. Persisted per pay week
+     under `payroll.wizard.mv.<sourceFile>`, mirroring the exclusions above — but
+     written through its own route, not the generic app-settings POST, because
+     the server has to merge one key (two clerks validating at once would
+     otherwise silently overwrite each other), stamp the validator and the time
+     so neither can be forged, and leave an audit row. See
+     `app/api/payroll-wizard/manual-validation/route.ts`. */
+  const [mvValidations, setMvValidations] = useState<ManualValidationMap>({});
+  /** Emails with an MV write in flight, so the cell can render as saving. */
+  const [mvSaving, setMvSaving] = useState<Set<string>>(new Set());
+  const [validationFullScreen, setValidationFullScreen] = useState(false);
+
+  useEffect(() => {
+    if (!calcSourceFile) { setMvValidations({}); return; }
+    let cancelled = false;
+    const ctl = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/payroll-wizard/manual-validation?sourceFile=${encodeURIComponent(calcSourceFile)}`,
+          { cache: 'no-store', signal: ctl.signal },
+        );
+        const json = (await res.json()) as { validations?: unknown; error?: string | null };
+        if (cancelled) return;
+        // A failed read leaves the previous map alone rather than blanking it —
+        // rendering every row unticked would invite re-doing work already
+        // recorded, and re-ticking overwrites the original validator's name.
+        if (!res.ok || json.error) return;
+        const { map } = parseManualValidationMap(
+          json.validations == null ? null : JSON.stringify(json.validations),
+        );
+        setMvValidations(map);
+      } catch {
+        /* aborted or offline — keep whatever is on screen */
+      }
+    })();
+    return () => { cancelled = true; ctl.abort(); };
+  }, [calcSourceFile]);
+
+  /**
+   * Tick or clear one person's manual validation. The server is the source of
+   * truth for the resulting map, so the response replaces local state rather
+   * than the click optimistically mutating it — an optimistic tick that lost a
+   * CAS race would show a vouch that was never stored.
+   */
+  const toggleValidated = React.useCallback(
+    (email: string, next: boolean, note: string | null) => {
+      const key = normEmail(email) ?? email.trim().toLowerCase();
+      if (!key || !calcSourceFile || isReplay) return;
+      setMvSaving((prev) => new Set(prev).add(key));
+      void (async () => {
+        try {
+          const res = await fetch('/api/payroll-wizard/manual-validation', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sourceFile: calcSourceFile, email: key, validated: next, note }),
+          });
+          const json = (await res.json()) as { validations?: unknown; error?: string | null };
+          if (!res.ok || json.error) {
+            toast.error(json.error?.trim() || `Could not save the validation (HTTP ${res.status}).`);
+            return;
+          }
+          const { map } = parseManualValidationMap(
+            json.validations == null ? null : JSON.stringify(json.validations),
+          );
+          setMvValidations(map);
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : 'Could not save the validation.');
+        } finally {
+          setMvSaving((prev) => {
+            const s = new Set(prev);
+            s.delete(key);
+            return s;
+          });
+        }
+      })();
+    },
+    [calcSourceFile, isReplay],
+  );
 
   // When replaying a past period, surface whether it was already dispatched (its
   // final-pay snapshot exists) so the replay banner can label it accordingly.
@@ -16680,9 +16767,20 @@ export default function PayrollWizard({
                           {activeGroup.name} — Final Pay
                           {vNeedle && <span className="ml-1 font-normal text-zinc-400">— {filteredRows.length} of {activeGroup.rows.length}</span>}
                         </span>
-                        <span className="max-w-full truncate text-[10px] text-zinc-400">
-                          {activeGroup.rows.length} employee{activeGroup.rows.length !== 1 ? 's' : ''}
-                          {deptExcludedCount > 0 && <> · <span className="font-semibold text-rose-600 dark:text-rose-400">{deptExcludedCount} excluded</span></>}
+                        <span className="flex items-center gap-2">
+                          <span className="max-w-full truncate text-[10px] text-zinc-400">
+                            {activeGroup.rows.length} employee{activeGroup.rows.length !== 1 ? 's' : ''}
+                            {deptExcludedCount > 0 && <> · <span className="font-semibold text-rose-600 dark:text-rose-400">{deptExcludedCount} excluded</span></>}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setValidationFullScreen(true)}
+                            title="Open this table full screen"
+                            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[10px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                          >
+                            <Maximize2 className="h-3 w-3" aria-hidden />
+                            Full screen
+                          </button>
                         </span>
                       </div>
 
@@ -16693,9 +16791,38 @@ export default function PayrollWizard({
                         disabled={isReplay}
                         onToggleExcluded={toggleExcluded}
                         onToggleAllExcluded={setExcludedMany}
+                        validations={mvValidations}
+                        // Replaying a past week gets no MV control: the record of
+                        // who validated it then is history, and the route refuses
+                        // the write anyway.
+                        onToggleValidated={isReplay ? undefined : toggleValidated}
+                        savingValidations={mvSaving}
                       />
                     </div>
                   </div>
+
+                  {/* The same table, filling the viewport. It is handed the SAME
+                      `filteredRows` array and the same handlers, so it mirrors
+                      this view by construction rather than by agreement. */}
+                  <ValidationFullScreen
+                    open={validationFullScreen}
+                    onClose={() => setValidationFullScreen(false)}
+                    deptGroups={deptGroups}
+                    activeKey={activeKey}
+                    onSelectDept={setValidationDeptTab}
+                    rows={filteredRows}
+                    deptName={activeGroup.name}
+                    isHsl={filteredRows.some((r) => r.isHsl)}
+                    search={validationSearch}
+                    onSearchChange={setValidationSearch}
+                    disabled={isReplay}
+                    onToggleExcluded={toggleExcluded}
+                    onToggleAllExcluded={setExcludedMany}
+                    validations={mvValidations}
+                    onToggleValidated={isReplay ? undefined : toggleValidated}
+                    savingValidations={mvSaving}
+                    periodLabel={calcSourceFile}
+                  />
                 </div>
               );
             })()}
