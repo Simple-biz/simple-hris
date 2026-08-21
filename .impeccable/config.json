@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "gradient-text",
+        "value": "*",
+        "files": [
+          "src/components/payroll-clerk/PayrollDispatch.tsx"
+        ],
+        "createdAt": "2026-08-21T19:48:29.935Z",
+        "reason": "User confirmed the Welcome-back orange-to-rose fill is intentional; documented in docs/features/payment-dispatch.md:39"
+      }
+    ]
+  }
+}
