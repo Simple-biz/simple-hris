@@ -787,4 +787,16 @@ export const PLAN_TASKS: PlanTask[] = [
   // when the write had succeeded and my QUERY was broken. Had the write actually failed, there would
   // have been nothing to distinguish the two — which is the whole problem.
   { epic: 'HRIS-15', name: 'Audit writes fail silently: insertAuditLog’s error is discarded at 197 of 201 call sites', type: 'Bug', sp: 3, done: false, sprint: 'S27', priority: 'High' },
+  // ── Requested by Kane 2026-08-21 ─ not started ──────────────────────────────────────
+  // 5 SP, and the FIRST task row under HRIS-17, which has carried 20 SP with zero children since the
+  // board shipped in July. A ticket today emails on three things only: created (to the owner),
+  // assigned (to the dev) and done (to the creator) — so a requester hears nothing between filing and
+  // shipping. Two new n8n hooks close that: a comment mails the COUNTERPARTY (creator, or the dev when
+  // the creator is the one who typed it — exactly mirroring the in-app `ticket.replied` leg, which
+  // already ships and is the reason this is not 8 SP), and ANY status move mails the creator, with
+  // `done` still riding notifyTicketDone. Scored 5 because it carries a new `ticket.moved` notification
+  // type, and a new type is DEAD until the employee_notifications CHECK widen runs — the same footgun
+  // that left kpi.scored rejected for three days behind a console.warn. That DDL plus two n8n imports
+  // are Kane's to run, so this row cannot pass Pending Deploy on code alone.
+  { epic: 'HRIS-17', name: 'Tickets board notifies the requester on every update — comment emails and status-move emails', type: 'Feature', sp: 5, done: false, sprint: 'S27' },
 ];
