@@ -627,20 +627,15 @@ export interface PassRow {
 
 export const ROWS: PassRow[] = [
   {
-    name: "Audit writes fail silently: insertAuditLog’s error is discarded at 197 of 201 call sites",
+    name: 'Tickets board notifies the requester on every update — comment emails and status-move emails',
     status: 'Ready to Start',
-    shas: ['b831699d'],
+    shas: ['24be42cf'],
     basis:
-      "Sprint 27, opened 2026-08-21 while closing the PAB audit row. MEASURED: insertAuditLog (src/lib/supabase/audit-log.ts) returns { error } and **197 of its 201 call sites discard it**, while the helper itself neither logs nor throws. Only four capture the result — app/api/audit-log/route.ts, app/api/payment-dispatches/undo/route.ts (twice) and src/lib/notifications/notify-failure-audit.ts. So audit_log, the table this product treats as its trail of record, can fail to record anywhere with no signal at all. SCOPE CALL, which is the difference between 3 SP and 13: the fix is CENTRAL — make the helper surface its own failure — not 197 call-site edits, which would be churn AND would leave the next new call site free to reintroduce the gap. WHY THIS ROW EXISTS AT ALL: on 2026-08-21 I read 0 pab_exclusion.* rows as 'the audit write failed' when the write had succeeded and my query was broken (a phantom column gave 42703, data came back NULL, and (data ?? []) turned that into a zero). Had the write actually failed, NOTHING in the system would have distinguished the two cases — same missing signal, seen from the other side. Note notify-failure-audit.ts is one of the four that checks, so the fix for silent notification failures does not itself fail silently; that instinct just needs generalising.",
-    blockers: ["Needs a call on the central signal: console.error, a notify-failure-audit-style row, or a thrown error at the helper"],
-  },
-  {
-    name: "audit-pending-migrations reports a MISSING table as APPLIED — head:true returns no error",
-    status: 'Ready to Start',
-    shas: ['b831699d'],
-    basis:
-      "Moved Backlog → Sprint 27 on 2026-08-21 (Kane: \"SO update the board\"). probeTable() in scripts/audit-pending-migrations.mts probes with head: true, which for a MISSING table returns no error and count: null — so the code takes the !error branch and records APPLIED. A table that was never created therefore reads as applied, and any entry the audit reports as 'exists, 0 rows' is indistinguishable from absent. CRITICAL, and pulled out of the Backlog because it is not a hypothetical: a Sprint 27 row was closed Done on this tool's verdict. THE VERDICT WAS RE-CHECKED RATHER THAN ASSUMED — all nine tables the audit probes were re-read WITHOUT head:true and with a negative control that correctly returned PGRST205, and all nine genuinely exist, so '0 pending migrations' STANDS. The tool is wrong; that particular answer was not. Both facts belong here because either alone misleads. THE FIX: probe without head:true (a plain select limit 1), and carry a negative control in the run so a broken probe announces itself.",
-    blockers: ["Any past 'exists, 0 rows' verdict from this tool is unverified until re-probed without head:true"],
+      "OPENED 2026-08-21 on Kane's request, and NOT STARTED — no code exists for it yet; the sha is the commit that opened the plan row, not an implementation. This is the FIRST task row under HRIS-17, which has carried 20 SP with zero children since the board shipped in July. THE GAP, measured: src/lib/tickets/notify.ts fires exactly three emails — ticket_created (to the board owner), ticket_assigned (to the dev) and ticket_done (to the creator) — so a requester hears NOTHING between filing a ticket and it shipping. Two new n8n hooks close it. RECIPIENT RULES, Kane 2026-08-21: (Q1) a status move emails the TICKET CREATOR only, because the dev is usually the one moving the card; (Q2) a comment emails the COUNTERPARTY — the creator, or the assigned dev when the creator is the one who typed it — which is byte-for-byte the rule the in-app `ticket.replied` leg already implements at app/api/tickets/[id]/comments/route.ts:126-152; (Q3) ANY move is emailed, including a backward Testing -> In Progress bounce, so there is no status allowlist: status changed emails the creator, with `done` still riding the existing notifyTicketDone. SCORED 5, not 8: no new UI surface, no new table, and notifyTicketDone is an exact copyable precedent for both hooks. Not 3 either, because it carries a NEW `ticket.moved` notification type, and a new type is REJECTED by employee_notifications_type_check until the widen DDL runs — the exact footgun that left kpi.scored dead for three days behind a console.warn, which is why the CHECK widen ships as a Node script with an --apply gate and a guard that refuses if the LIVE constraint carries a type the file lacks.",
+    blockers: [
+      'Not started — no code written; the blueprint brief was approved 2026-08-21 but the build has not begun',
+      "Two external steps are Kane's to run, so this row cannot pass Pending Deploy on code alone: the employee_notifications CHECK widen for `ticket.moved`, and importing ticket-replied-email + ticket-moved-email into n8n",
+    ],
   },
 ];
 
