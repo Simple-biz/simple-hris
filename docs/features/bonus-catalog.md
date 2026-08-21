@@ -531,7 +531,7 @@ in it**. Kane, 2026-08-21: *"We should be able to see all the members for that
 department in here"*, then *"I want the Hogan Smith Law to be a drop down where when
 toggled we can see the Sub departments below it"*.
 
-**Files:** `src/lib/payment-catalog/dept-rail.ts` (pure, 25 tests) + the
+**Files:** `src/lib/payment-catalog/dept-rail.ts` (pure, 30 tests) + the
 `PayStructureTab` / `DeptRailRow` / `DeptMemberList` block in
 `src/components/accounting/BonusCatalog.tsx`.
 
@@ -577,24 +577,48 @@ design. A test pins that the buckets always sum to the roster.
 #### Where an individual structure RENDERS is not where it is stored
 
 `homeKeyForStructure` puts each employee-scope row under the person's **current
-placement**, not its stored `departmentKey`. Measured 2026-08-21: of the **124**
+placement**. Not its stored `departmentKey`: measured 2026-08-21, of the **124**
 individual structures filed on `hogan_smith_law`, **65 belong to people who are
-really on a sub-team**, 9 to people now in a non-HSL department, 50 to people off the
-roster. The cause is structural — `normalizeDeptToKey` collapses `hsl:*` to the
-parent and that is the key the Search person card writes under, so *every* HSL
-individual rate saved there files on the parent.
+really on a sub-team**. The cause is structural — `normalizeDeptToKey` collapses
+`hsl:*` to the parent and that is the key the Search person card writes under, so
+*every* HSL individual rate saved there files on the parent.
 
 **No money is affected**: `buildCatalogRateIndex` puts employee structures in
 `byEmail` and never reads `departmentKey` (`resolve-rate.ts:70-80`, `:119`). This is
-purely where the row appears.
+purely where the row appears. Re-homing is display only — chosen over a DB rewrite
+(Kane 2026-08-21) because it self-heals on every transfer.
 
-Re-homing is **display only** — chosen over a DB rewrite (Kane 2026-08-21) because it
-self-heals on every transfer, whereas a script has to be re-run after each one.
-`onUpsert` still files under `selectedDept`. Two fallbacks keep a row from ever
-vanishing: an owner who is off the roster keeps the stored key, and so does a
-placement the rail cannot render. Baldonebro is the worked example — a split identity
-whose `joy@hogansmith.com` row now renders under Case Managers while her stale
-`joyb@simple.biz` row stays under the parent, where it is still visible.
+**The row follows the PERSON, and resolution has three steps** — each one earning its
+place from a live failure:
+
+1. **the structure's own email** → placement;
+2. **the owner's NAME** (`normalizeNameTokens`, via `buildStructureOwnerIndex`) → for a
+   row keyed on an address the roster row does not carry. Baldonebro's stale
+   `joyb@simple.biz` row is a *third* identity, absent from the work/personal pair her
+   live `joy@hogansmith.com` row lists, so email matching alone left it unresolved —
+   and an unresolved row used to keep its stored key, which is how she kept appearing
+   under Hogan Smith Law after being placed on Case Managers (**reported twice**);
+3. **no owner anywhere** → **"No department"**, never the stored key. A department row
+   is a claim about a real person, and parking an unresolvable ghost on Hogan Smith Law
+   is exactly the false statement being complained about.
+
+A resolvable owner whose placement the rail cannot render (USEE, the Site Building
+freelancers) also lands in "No department" — which is where the *person* is listed, so
+a row and its owner are never in different places. **Nothing is ever lost**: 808
+employee structures in, 808 homed, by live check.
+
+**The name bridge is deliberately EXACT-token and unique-owner-only.** A name that maps
+to two live people is dropped rather than guessed — the master list is full of
+namesakes. And exact-token means `Joycel Baldonebro` does *not* match
+`Baldonebro, Joycel "Joy"` (the go-by token differs), which is fine because a
+structure's `employeeName` is captured *from* the roster at assignment time, so the
+real rows carry the identical master string. Subset matching would let one name claim
+several people; an unmatched row simply lands in "No department". A test pins both
+halves.
+
+Live result: **Hogan Smith Law holds 0 members and 0 rate rows.** It is a container for
+its 16 sub-teams and for genuine bare-`HSL` placements, of which there are currently
+none.
 
 #### The member list is READ-ONLY, and its rate chip is the engine's
 

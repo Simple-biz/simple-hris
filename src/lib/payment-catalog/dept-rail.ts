@@ -19,6 +19,7 @@
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import type { PayStructure } from '@/lib/payment-catalog/pay-structure';
 import { isHslSubDeptLabel } from '@/lib/departments/hsl-subdept';
+import { normalizeNameTokens } from '@/lib/name/name-tokens';
 
 /** A rail entry, exactly the `{key, name}` shape the tab already passes around. */
 export interface DeptRailEntry {
@@ -223,42 +224,107 @@ export function bucketSizes<T>(byKey: ReadonlyMap<string, T[]>): Map<string, num
   return out;
 }
 
+/** Everything needed to find the human behind a pay-structure row. */
+export interface StructureOwnerIndex {
+  /** Placement by every email a roster person is known by (work, personal, alternates). */
+  placementByEmail: ReadonlyMap<string, string>;
+  /** Placement by `normalizeNameTokens` key, for rows keyed on an address the roster
+   *  does not carry. **Ambiguous names are deliberately ABSENT** — see
+   *  {@link buildStructureOwnerIndex}. */
+  placementByNameKey: ReadonlyMap<string, string>;
+}
+
+/**
+ * Index the roster so a pay-structure row can find its owner.
+ *
+ * Email is the primary key. The NAME bridge exists because a structure can be keyed
+ * on an address the roster row does not list at all: Baldonebro's stale
+ * `joyb@simple.biz` row is a third identity, absent from the work/personal pair her
+ * live `joy@hogansmith.com` row carries. Email matching alone leaves it unresolved,
+ * and an unresolved row used to keep its stored key — which is how she kept showing
+ * under Hogan Smith Law after being placed on Case Managers.
+ *
+ * **A name that maps to more than one distinct person is dropped, not guessed.** The
+ * master list is full of namesakes, so an ambiguous name must resolve to nothing
+ * rather than to the wrong department. Same reasoning as the bank-exemption name
+ * fallback, which is likewise email-first.
+ */
+export function buildStructureOwnerIndex(
+  roster: readonly { email: string; name: string; department: string; aliases: string[] }[],
+): StructureOwnerIndex {
+  const placementByEmail = new Map<string, string>();
+  // key -> the single owning email, or null once a second distinct person claims it
+  const nameOwner = new Map<string, string | null>();
+  const nameDept = new Map<string, string>();
+
+  for (const r of roster) {
+    for (const em of [r.email, ...r.aliases]) {
+      const k = (em ?? '').trim().toLowerCase();
+      if (k && !placementByEmail.has(k)) placementByEmail.set(k, r.department);
+    }
+    const nk = normalizeNameTokens(r.name ?? '');
+    if (!nk) continue;
+    const seen = nameOwner.get(nk);
+    if (seen === undefined) {
+      nameOwner.set(nk, r.email);
+      nameDept.set(nk, r.department);
+    } else if (seen !== null && seen !== r.email) {
+      nameOwner.set(nk, null); // ambiguous — a namesake, so trust neither
+    }
+  }
+  const placementByNameKey = new Map<string, string>();
+  for (const [nk, owner] of nameOwner) {
+    if (owner !== null) placementByNameKey.set(nk, nameDept.get(nk)!);
+  }
+  return { placementByEmail, placementByNameKey };
+}
+
 /**
  * Which rail entry an employee-scope pay structure should RENDER under.
  *
- * Not `structure.departmentKey`. That is the key the row was filed under at save
- * time, and for an HSL person it is always the parent: `normalizeDeptToKey`
- * collapses every `hsl:*` cell to `hogan_smith_law`, and that is the function the
- * Search person card uses to pick its write key. Measured 2026-08-21: of the 124
- * individual structures filed on `hogan_smith_law`, **65 belong to people placed on
- * a real sub-team** — which is exactly what Kane saw ("Baldonebro ... she is a case
- * manager already").
+ * **The row follows the PERSON, always.** Not `structure.departmentKey` — that is the
+ * key the row was filed under at save time, and for an HSL person it is always the
+ * parent, because `normalizeDeptToKey` collapses every `hsl:*` cell to
+ * `hogan_smith_law` and that is the function the Search person card uses to pick its
+ * write key. Measured 2026-08-21: of the 124 individual structures filed on
+ * `hogan_smith_law`, 65 belonged to people placed on a real sub-team.
  *
- * So the row follows the person's CURRENT placement. Display only — no DB write, no
- * `departmentKey` rewrite — which means it self-heals on every transfer instead of
- * needing a script re-run after each one.
+ * Resolution order, and each step exists because the previous one missed a live case:
+ *  1. the structure's own email → placement,
+ *  2. the owner's NAME → placement, for a row keyed on an address the roster row does
+ *     not list (Kane, twice: *"Baldonebro ... is already a case manager"*),
+ *  3. no owner anywhere → **"No department"**, never the stored key. A department is a
+ *     claim about a real person; parking an unresolvable ghost on Hogan Smith Law is
+ *     exactly the false statement being complained about. Nothing vanishes — the
+ *     "No department" entry is on the rail precisely so it cannot.
  *
- * Two deliberate fallbacks, both so a row can never vanish:
- *  - person not on the roster (50 of those 124) → keep the stored key,
- *  - placement resolves to a key the rail cannot render → keep the stored key.
- * A stored key the rail also cannot render still shows: `individualForDept` is
- * compared against the selected entry, and the parent remains selectable.
+ * A resolvable owner whose placement the rail cannot render (USEE, Site Building
+ * freelancers) also lands in "No department", which is where the PERSON is listed —
+ * so a row and its owner are never in different places.
+ *
+ * Display only: `onUpsert` still files under `selectedDept`, so this self-heals on
+ * every transfer instead of needing a script re-run. No money is affected —
+ * `buildCatalogRateIndex` keys employee structures `byEmail` and never reads
+ * `departmentKey` (`resolve-rate.ts:70-80`, `:119`).
  */
 export function homeKeyForStructure(
   structure: PayStructure,
-  placementByEmail: ReadonlyMap<string, string>,
+  owners: StructureOwnerIndex,
   railKeys: ReadonlySet<string>,
 ): string {
   const em = (structure.employeeEmail ?? '').trim().toLowerCase();
-  const placement = em ? placementByEmail.get(em) : undefined;
-  if (!placement) return structure.departmentKey;
+  const byEmail = em ? owners.placementByEmail.get(em) : undefined;
+  const nk = normalizeNameTokens(structure.employeeName ?? '');
+  const placement = byEmail ?? (nk ? owners.placementByNameKey.get(nk) : undefined);
+  if (placement === undefined) return RAIL_NO_DEPARTMENT_KEY;
+
   const cell = placement.trim();
-  // A namespaced cell IS its own key (`hsl:case_managers`), and that key wins —
-  // never let the alias-map collapse to the parent decide the home.
+  // A namespaced cell IS its own key (`hsl:case_managers`), and that key wins — never
+  // let the alias-map collapse to the parent decide the home.
   if (railKeys.has(cell)) return cell;
   const lower = cell.toLowerCase();
   if (railKeys.has(lower)) return lower;
   const mapped = normalizeDeptToKey(cell);
   if (mapped && railKeys.has(mapped)) return mapped;
-  return structure.departmentKey;
+  return RAIL_NO_DEPARTMENT_KEY;
 }

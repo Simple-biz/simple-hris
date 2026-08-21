@@ -10,6 +10,7 @@ import {
   RAIL_NO_DEPARTMENT_KEY,
   HSL_PARENT_KEY,
   homeKeyForStructure,
+  buildStructureOwnerIndex,
   type DeptRailEntry,
   type RailRosterPerson,
 } from './dept-rail';
@@ -207,63 +208,133 @@ test('bucketSizes feeds rollUpCounts', () => {
 
 const RAIL_KEYS = new Set(RAIL.map((e) => e.key));
 
-const struct = (email: string, departmentKey: string): PayStructure => ({
+const struct = (email: string, departmentKey: string, name = email): PayStructure => ({
   id: `id_${email}`,
   scope: 'employee',
   departmentKey,
   employeeEmail: email,
-  employeeName: email,
+  employeeName: name,
   regularRate: 305,
   otRate: 457.5,
   currency: 'PHP',
 });
 
-test('a structure filed on the PARENT re-homes to the owner sub-team (Baldonebro)', () => {
-  // Her live master row is joy@hogansmith.com / hsl:case_managers; the row Kane saw
-  // is filed under hogan_smith_law because normalizeDeptToKey collapses her cell.
-  const placement = new Map([['joy@hogansmith.com', 'hsl:case_managers']]);
+const rosterPerson = (email: string, name: string, department: string, aliases: string[] = []) => ({
+  email,
+  name,
+  department,
+  aliases: aliases.length ? aliases : [email],
+});
+
+/** Her real live shape: work email on hogansmith.com, personal on gmail, placed on
+ *  Case Managers. `joyb@simple.biz` — the address her stale structure is keyed on —
+ *  is NOT among her aliases, which is the whole difficulty. */
+const JOY = rosterPerson(
+  'joy@hogansmith.com',
+  'Baldonebro, Joycel "Joy"',
+  'hsl:case_managers',
+  ['joy@hogansmith.com', 'baldonebrojj@gmail.com'],
+);
+
+test('her correctly-filed row renders under Case Managers', () => {
+  const owners = buildStructureOwnerIndex([JOY]);
   assert.equal(
-    homeKeyForStructure(struct('joy@hogansmith.com', HSL_PARENT_KEY), placement, RAIL_KEYS),
+    homeKeyForStructure(struct('joy@hogansmith.com', HSL_PARENT_KEY, JOY.name), owners, RAIL_KEYS),
     'hsl:case_managers',
   );
 });
 
-test('a structure whose owner is OFF the roster keeps its stored key — never vanishes', () => {
-  // joyb@simple.biz is her stale duplicate identity: no live row at all. 50 of the
-  // 124 rows on the parent are like this.
+test('her STALE THIRD IDENTITY resolves by NAME and leaves the parent', () => {
+  // The bug Kane reported twice: joyb@simple.biz is in no alias list, so an
+  // email-only lookup failed and the row kept its stored `hogan_smith_law`.
+  const owners = buildStructureOwnerIndex([JOY]);
   assert.equal(
-    homeKeyForStructure(struct('joyb@simple.biz', HSL_PARENT_KEY), new Map(), RAIL_KEYS),
-    HSL_PARENT_KEY,
+    homeKeyForStructure(struct('joyb@simple.biz', HSL_PARENT_KEY, JOY.name), owners, RAIL_KEYS),
+    'hsl:case_managers',
+  );
+});
+
+test('an AMBIGUOUS name resolves to nothing rather than the wrong department', () => {
+  const owners = buildStructureOwnerIndex([
+    rosterPerson('a@x.com', 'Santos, Maria "Maria"', 'lead_gen'),
+    rosterPerson('b@x.com', 'Santos, Maria "Maria"', 'hsl:case_managers'),
+  ]);
+  // Two live namesakes ⇒ the name bridge must refuse, so an unknown-email row falls
+  // to "No department" instead of guessing one of them.
+  assert.equal(
+    homeKeyForStructure(struct('c@x.com', 'lead_gen', 'Santos, Maria "Maria"'), owners, RAIL_KEYS),
+    RAIL_NO_DEPARTMENT_KEY,
+  );
+});
+
+test('the name key survives comma/quote/case variation', () => {
+  const owners = buildStructureOwnerIndex([JOY]);
+  for (const variant of ['BALDONEBRO, JOYCEL "JOY"', 'Baldonebro, Joycel “Joy”', '  Baldonebro,  Joycel "Joy" ']) {
+    assert.equal(
+      homeKeyForStructure(struct('ghost@x.com', HSL_PARENT_KEY, variant), owners, RAIL_KEYS),
+      'hsl:case_managers',
+      variant,
+    );
+  }
+});
+
+test('the name bridge is EXACT-token, not subset — a missing go-by token does not match', () => {
+  // 'Joycel Baldonebro' lacks the "Joy" token her master name carries, so the keys
+  // differ. Left strict on purpose: a structure's `employeeName` is captured FROM the
+  // roster at assignment time, so the real rows carry the identical master string
+  // (verified for both of hers), while subset matching would let one name claim
+  // several people. An unmatched row lands in "No department", never on a guess.
+  const owners = buildStructureOwnerIndex([JOY]);
+  assert.equal(
+    homeKeyForStructure(struct('ghost@x.com', HSL_PARENT_KEY, 'Joycel Baldonebro'), owners, RAIL_KEYS),
+    RAIL_NO_DEPARTMENT_KEY,
+  );
+});
+
+test('an owner nobody can resolve goes to No department, NOT the parent', () => {
+  const owners = buildStructureOwnerIndex([]);
+  assert.equal(
+    homeKeyForStructure(struct('ghost@simple.biz', HSL_PARENT_KEY, 'Ghost, A "A"'), owners, RAIL_KEYS),
+    RAIL_NO_DEPARTMENT_KEY,
   );
 });
 
 test('someone transferred OUT of HSL re-homes to their new department', () => {
-  const placement = new Map([['x@simple.biz', 'Lead Gen']]);
-  assert.equal(homeKeyForStructure(struct('x@simple.biz', HSL_PARENT_KEY), placement, RAIL_KEYS), 'lead_gen');
+  const owners = buildStructureOwnerIndex([rosterPerson('x@simple.biz', 'X, Y "Y"', 'Lead Gen')]);
+  assert.equal(homeKeyForStructure(struct('x@simple.biz', HSL_PARENT_KEY, 'X, Y "Y"'), owners, RAIL_KEYS), 'lead_gen');
 });
 
-test('a placement the rail cannot render keeps the stored key', () => {
-  // USEE resolves to no rail entry; the row must still show somewhere.
-  const placement = new Map([['u@simple.biz', 'USEE']]);
-  assert.equal(homeKeyForStructure(struct('u@simple.biz', 'us_manager_bonus'), placement, RAIL_KEYS), 'us_manager_bonus');
+test('a placement the rail cannot render follows the PERSON into No department', () => {
+  // USEE resolves to no rail entry, and that is where the person is listed too — a
+  // row and its owner are never in different places.
+  const owners = buildStructureOwnerIndex([rosterPerson('u@simple.biz', 'U, V "V"', 'USEE')]);
+  assert.equal(
+    homeKeyForStructure(struct('u@simple.biz', 'us_manager_bonus', 'U, V "V"'), owners, RAIL_KEYS),
+    RAIL_NO_DEPARTMENT_KEY,
+  );
 });
 
-test('a bare-HSL placement re-homes to the parent', () => {
-  const placement = new Map([['b@simple.biz', 'HSL']]);
-  assert.equal(homeKeyForStructure(struct('b@simple.biz', 'lead_gen'), placement, RAIL_KEYS), HSL_PARENT_KEY);
+test('a bare-HSL placement re-homes to the parent — the parent is for THOSE people', () => {
+  const owners = buildStructureOwnerIndex([rosterPerson('b@simple.biz', 'B, C "C"', 'HSL')]);
+  assert.equal(homeKeyForStructure(struct('b@simple.biz', 'lead_gen', 'B, C "C"'), owners, RAIL_KEYS), HSL_PARENT_KEY);
 });
 
 test('a namespaced cell wins over the alias-map collapse, casing included', () => {
-  const placement = new Map([['c@simple.biz', 'HSL:Case_Managers']]);
+  const owners = buildStructureOwnerIndex([rosterPerson('c@simple.biz', 'C, D "D"', 'HSL:Case_Managers')]);
   assert.equal(
-    homeKeyForStructure(struct('c@simple.biz', HSL_PARENT_KEY), placement, RAIL_KEYS),
+    homeKeyForStructure(struct('c@simple.biz', HSL_PARENT_KEY, 'C, D "D"'), owners, RAIL_KEYS),
     'hsl:case_managers',
   );
 });
 
-test('a blank email falls back to the stored key', () => {
-  const s0: PayStructure = { ...struct('x@x.com', 'lead_gen'), employeeEmail: undefined };
-  assert.equal(homeKeyForStructure(s0, new Map(), RAIL_KEYS), 'lead_gen');
-  const s1: PayStructure = { ...struct('x@x.com', 'lead_gen'), employeeEmail: '  ' };
-  assert.equal(homeKeyForStructure(s1, new Map(), RAIL_KEYS), 'lead_gen');
+test('a blank email still resolves by name', () => {
+  const owners = buildStructureOwnerIndex([JOY]);
+  const s0: PayStructure = { ...struct('x@x.com', 'lead_gen', JOY.name), employeeEmail: undefined };
+  assert.equal(homeKeyForStructure(s0, owners, RAIL_KEYS), 'hsl:case_managers');
+});
+
+test('no email AND no name is unplaceable, not parked on a real department', () => {
+  const owners = buildStructureOwnerIndex([JOY]);
+  const s0: PayStructure = { ...struct('x@x.com', HSL_PARENT_KEY, ''), employeeEmail: undefined };
+  assert.equal(homeKeyForStructure(s0, owners, RAIL_KEYS), RAIL_NO_DEPARTMENT_KEY);
 });

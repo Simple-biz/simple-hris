@@ -68,6 +68,7 @@ import {
   bucketSizes,
   parentOfDeptKey,
   homeKeyForStructure,
+  buildStructureOwnerIndex,
   RAIL_NO_DEPARTMENT_KEY,
   RAIL_NO_DEPARTMENT_NAME,
   type DeptRailEntry,
@@ -2126,18 +2127,9 @@ function PayStructureTab({
   // the hand-off is the whole reason the member list needs no write path of its own.
   const [addingFor, setAddingFor] = useState<string | null>(null);
 
-  // Where each person actually sits right now, keyed on every alias the catalog
-  // may hold their rows under.
-  const placementByEmail = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const r of roster) {
-      for (const em of [r.email, ...r.aliases]) {
-        const k = (em ?? '').trim().toLowerCase();
-        if (k && !m.has(k)) m.set(k, r.department);
-      }
-    }
-    return m;
-  }, [roster]);
+  // Where each person sits right now — by every alias, and by NAME for a structure
+  // keyed on an address the roster row does not carry (ambiguous names are dropped).
+  const owners = useMemo(() => buildStructureOwnerIndex(roster), [roster]);
 
   // Follow cross-tab focus requests (e.g. a Department card's "Pay structure").
   useEffect(() => {
@@ -2165,11 +2157,11 @@ function PayStructureTab({
     const own = new Map<string, number>();
     for (const s of structures) {
       if (s.scope !== 'employee') continue;
-      const key = homeKeyForStructure(s, placementByEmail, railKeys);
+      const key = homeKeyForStructure(s, owners, railKeys);
       own.set(key, (own.get(key) ?? 0) + 1);
     }
     return rollUpCounts(own, rail);
-  }, [structures, placementByEmail, railKeys, rail]);
+  }, [structures, owners, railKeys, rail]);
   const headcounts = useMemo(() => rollUpCounts(bucketSizes(membersByDept), rail), [membersByDept, rail]);
 
   // A group opens when the user toggles it, when the selected department is one of
@@ -2223,9 +2215,9 @@ function PayStructureTab({
       structures.filter(
         (s) =>
           s.scope === 'employee' &&
-          homeKeyForStructure(s, placementByEmail, railKeys) === selectedDept,
+          homeKeyForStructure(s, owners, railKeys) === selectedDept,
       ),
-    [structures, placementByEmail, railKeys, selectedDept],
+    [structures, owners, railKeys, selectedDept],
   );
 
   /** Emails that already carry an individual structure ANYWHERE — a member row
@@ -2433,7 +2425,7 @@ function PayStructureTab({
           title={isNoDeptBucket ? 'People no department claims' : 'Members'}
           subtitle={
             isNoDeptBucket
-              ? 'Their master Department cell resolves to no rail entry — listed so a filter never hides a row.'
+              ? 'Their master Department cell resolves to no department here. Rate rows for people who have left the roster land here too, so nothing is hidden.'
               : 'Everyone placed here, with the rate the engine actually pays them.'
           }
         >
