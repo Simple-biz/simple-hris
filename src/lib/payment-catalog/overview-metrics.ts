@@ -48,9 +48,18 @@ export interface OverviewInput {
   bonuses: BonusDef[];
   assignments: BonusAssignment[];
   systemBonuses: SystemBonus[];
-  /** `aliases` (work + personal emails) lets individual structures match the
+  /** The people this dashboard COUNTS: headcount, coverage and the roster-driven
+   *  spend estimate. The Payment Catalog passes its visible roster here, so
+   *  off-boarded people stop inflating the pay-mix picture.
+   *
+   *  `aliases` (work + personal emails) lets individual structures match the
    *  same way dispatch does; entries without it match on `email` alone. */
   roster: { email: string; name: string; department: string; aliases?: string[] }[];
+  /** People used only to RESOLVE A NAME for an existing structure or assignment
+   *  row (the people leaderboard, the highest-OT tile). Defaults to `roster`;
+   *  pass the unfiltered roster to keep a leaver's own rate row readable instead
+   *  of degrading it to an email localpart. Never counted. */
+  nameRoster?: { email: string; name: string; department: string; aliases?: string[] }[];
   fx: FxRates;
 }
 
@@ -224,6 +233,7 @@ function nameForEmail(
  */
 export function computeCatalogOverview(input: OverviewInput, topN = 10): CatalogOverview {
   const { bonuses, systemBonuses, roster, fx } = input;
+  const nameRoster = input.nameRoster ?? roster;
   // Drop excluded departments (e.g. US managers) from every rate / assignment
   // derivation so the standings reflect only the included org.
   const payStructures = input.payStructures.filter((s) => !EXCLUDED_DEPT_KEYS.has(s.departmentKey));
@@ -260,7 +270,7 @@ export function computeCatalogOverview(input: OverviewInput, topN = 10): Catalog
     .filter((s) => s.employeeEmail && Number.isFinite(s.regularRate))
     .map((s) => ({
       email: s.employeeEmail as string,
-      name: nameForEmail(s.employeeEmail as string, s.employeeName, roster),
+      name: nameForEmail(s.employeeEmail as string, s.employeeName, nameRoster),
       deptKey: s.departmentKey,
       deptName: deptName(s.departmentKey),
       regularNative: s.regularRate,
@@ -468,7 +478,7 @@ export function computeCatalogOverview(input: OverviewInput, topN = 10): Catalog
     if (!highestOt || p > highestOt.ratePhp) {
       const label =
         s.scope === 'employee'
-          ? nameForEmail(s.employeeEmail ?? '', s.employeeName, roster)
+          ? nameForEmail(s.employeeEmail ?? '', s.employeeName, nameRoster)
           : `${deptName(s.departmentKey)} (dept)`;
       highestOt = { rateNative: s.otRate, currency: s.currency, ratePhp: p, label };
     }

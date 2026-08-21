@@ -11,6 +11,7 @@ import { listSystemBonuses } from '@/lib/supabase/system-bonuses-db';
 import type { SystemBonus } from '@/lib/payment-catalog/system-bonus';
 import { getDepartmentRegistry } from '@/lib/departments/registry-db';
 import type { DepartmentRegistryEntry } from '@/lib/departments/registry';
+import { loadCatalogOffboardedEmails } from '@/lib/payment-catalog/catalog-offboarded-emails';
 
 export type HubstaffUploadMeta = {
   id: string;
@@ -37,6 +38,15 @@ export type InitialAccountingData = {
    *  Carried on the prefetch (rather than fetched client-side) because the
    *  registry endpoint is gated by `requireRateVisibilitySession`. */
   departmentRegistry: DepartmentRegistryEntry[];
+  /** Normalized emails of people on `employees` who have LEFT — the Payment
+   *  Catalog drops them from its search, pickers, headcounts and spend estimate.
+   *  `active_employees` cannot answer this on its own (HR keeps a leaver on the
+   *  master sheet through final pay, and the stamp lands on a duplicate row), so
+   *  it is resolved server-side from the off-board evidence tables plus the
+   *  cycle's timesheet — see `loadCatalogOffboardedEmails`. Empty means "hide
+   *  nobody", which is also what every read failure degrades to. Only the
+   *  Payment Catalog consumes it; `employees` itself is untouched. */
+  catalogOffboardedEmails: string[];
 };
 
 // `hr_coordinator` was decoupled from Accounting on 2026-06-22 — HR coordinators
@@ -61,6 +71,12 @@ export async function prefetchAccountingData(): Promise<InitialAccountingData> {
       // built-in-only resolution that shipped before this, never to worse.
       getDepartmentRegistry().catch(() => [] as DepartmentRegistryEntry[]),
     ]);
+
+  // Needs the roster, so it runs after the batch above rather than inside it.
+  // Best-effort in the same spirit: an empty set hides nobody.
+  const catalogOffboarded = await loadCatalogOffboardedEmails(
+    employeesResult.employees ?? [],
+  ).catch(() => ({ emails: [] as string[], error: null }));
 
   // Accounting surfaces (Payroll Wizard + Overview) follow the Initialized batch:
   // put the is_current upload first so `sourceFiles[0]` is the active payroll week.
@@ -91,5 +107,6 @@ export async function prefetchAccountingData(): Promise<InitialAccountingData> {
     hubstaffUploads: orderedUploads,
     systemBonuses: systemBonusesResult.bonuses ?? [],
     departmentRegistry: registryResult ?? [],
+    catalogOffboardedEmails: catalogOffboarded.emails,
   };
 }

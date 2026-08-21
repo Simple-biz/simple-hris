@@ -59,6 +59,11 @@ import {
   indexHourlyRatesByEmail,
 } from '@/lib/supabase/employee-hourly-rates';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+// The master list's date cells are free text off the Google Sheet; this parse is
+// shared with the Payment Catalog's off-board filter so the two age people off on
+// exactly the same day. Aliased to keep this file's existing call sites unchanged.
+import { normalizeMasterDate as normalizeStartDate } from '@/lib/roster/master-date';
+import { loadOffboardEvidenceByEmail } from '@/lib/roster/offboard-evidence';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 import {
   ACTIVITY_ACTIONS,
@@ -637,34 +642,6 @@ async function buildKpiReadiness(
 
 // ── Missing rates (current-week Hubstaff workers, USEE excluded) ──────────────
 
-/**
- * Normalize a master-list "Start Date" cell to a `YYYY-MM-DD` calendar date, so
- * it can be compared against the week key and rendered without a timezone shift.
- * The column is free text (it comes off the sheet), so three shapes are handled;
- * anything else returns null rather than a guess.
- */
-function normalizeStartDate(raw: string | null | undefined): string | null {
-  const s = (raw ?? '').trim();
-  if (!s) return null;
-  // Already a date (or a timestamp) — take the calendar-date prefix verbatim.
-  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-  // Sheet exports write M/D/YYYY. Native Date parsing of that is locale-dependent
-  // on Node ("5/4/2026" can read as April 5), so parse the parts explicitly.
-  const mdy = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s);
-  if (mdy) {
-    const month = Number(mdy[1]);
-    const day = Number(mdy[2]);
-    const year = mdy[3].length === 2 ? 2000 + Number(mdy[3]) : Number(mdy[3]);
-    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  }
-  // Spelled-out forms ("July 20, 2026") parse to LOCAL midnight, so local getters
-  // read back the same calendar date that was written.
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : toIsoDate(d);
-}
-
 /** Name → comparable token set: lowercased words, with the master list's
  *  surname-first commas, quoted nicknames and curly quotes stripped. So
  *  `Zambas, Alehzandra "Alexa"` → {zambas, alehzandra, alexa}, which a Hubstaff
@@ -1138,80 +1115,15 @@ function excludeByIdentity(
  * out (see `buildMissingBank`). Best-effort by design: a failed read just
  * leaves people listed longer (today's behavior) — it never hides anyone and
  * never touches the score, so it doesn't join `degraded`.
+ *
+ * The three-source union itself lives in `@/lib/roster/offboard-evidence` so the
+ * Payment Catalog's off-board filter reads the SAME evidence, from the same
+ * query, with the same best-effort-per-source degradation. This wrapper drops
+ * the reason the shared loader also carries — Readiness only ages by date.
  */
 async function loadOffboardDatesByEmail(): Promise<Map<string, string>> {
   const byEmail = new Map<string, string>();
-  const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) return byEmail;
-
-  const note = (email: unknown, when: unknown) => {
-    const em = normEmail(typeof email === 'string' ? email : '');
-    const day = normalizeStartDate(typeof when === 'string' ? when : null);
-    if (!em || !day) return;
-    const cur = byEmail.get(em);
-    if (!cur || day > cur) byEmail.set(em, day);
-  };
-
-  type Row = Record<string, unknown>;
-  const readAll = async (
-    page: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
-  ): Promise<Row[]> => {
-    const PAGE = 1000;
-    const out: Row[] = [];
-    let from = 0;
-    while (true) {
-      const { data, error } = await page(from, from + PAGE - 1);
-      if (error) throw new Error(error.message);
-      const batch = (data ?? []) as Row[];
-      out.push(...batch);
-      if (batch.length < PAGE) break;
-      from += PAGE;
-    }
-    return out;
-  };
-
-  await Promise.all([
-    readAll((from, to) =>
-      supabase
-        .from('global_master_list')
-        .select('"Work Email","Personal Email",off_boarded_at')
-        .not('off_boarded_at', 'is', null)
-        .range(from, to),
-    )
-      .then((rows) => {
-        for (const r of rows) {
-          note(r['Work Email'], r['off_boarded_at']);
-          note(r['Personal Email'], r['off_boarded_at']);
-        }
-      })
-      .catch(() => {}),
-    readAll((from, to) =>
-      supabase.from('offboarded_sheet').select('work_email, personal_email, off_boarded_at').range(from, to),
-    )
-      .then((rows) => {
-        for (const r of rows) {
-          note(r['work_email'], r['off_boarded_at']);
-          note(r['personal_email'], r['off_boarded_at']);
-        }
-      })
-      .catch(() => {}),
-    readAll((from, to) =>
-      supabase
-        .from('offboarding_queue')
-        .select('employee_email, employee_work_email, employee_personal_email, decided_at')
-        .eq('status', 'completed')
-        .range(from, to),
-    )
-      .then((rows) => {
-        for (const r of rows) {
-          note(r['employee_email'], r['decided_at']);
-          note(r['employee_work_email'], r['decided_at']);
-          note(r['employee_personal_email'], r['decided_at']);
-        }
-      })
-      .catch(() => {}),
-  ]);
-
+  for (const [email, rec] of await loadOffboardEvidenceByEmail()) byEmail.set(email, rec.offDate);
   return byEmail;
 }
 

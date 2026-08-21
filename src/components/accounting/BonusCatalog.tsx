@@ -538,6 +538,30 @@ function buildRoster(initialData?: InitialAccountingData | null): RosterEntry[] 
   return out;
 }
 
+/**
+ * Drop the people who have LEFT.
+ *
+ * `initialData.employees` is `active_employees`, which cannot tell a leaver from
+ * a current worker: HR keeps someone on the master sheet through their final pay
+ * and the off-board stamp lands on a duplicate `global_master_list` row, so not
+ * one of the 1,287 active rows carries an `off_boarded_at` while 294 of those
+ * people are gone. The verdict is therefore computed server-side, from the
+ * off-board evidence tables plus the cycle's timesheet, and arrives as
+ * `catalogOffboardedEmails` (see `loadCatalogOffboardedEmails` for the four
+ * guards that keep re-hires, suspensions and still-working people visible).
+ *
+ * Matched across EVERY alias, because the catalog keys a person's rows on any of
+ * their addresses — an exclusion naming only the primary would let a hidden
+ * person back in through a picker that matched on the personal one. An empty set
+ * (including every degraded read) hides nobody.
+ */
+function withoutOffboarded(roster: RosterEntry[], offboarded: Set<string>): RosterEntry[] {
+  if (offboarded.size === 0) return roster;
+  return roster.filter(
+    (r) => !offboarded.has(r.email) && !r.aliases.some((a) => offboarded.has(a)),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Top-level component
 // ---------------------------------------------------------------------------
@@ -560,7 +584,18 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   const [tab, setTab] = useState<CatalogTab>('overview');
   const instanceId = useId();
 
+  // TWO rosters, deliberately. `roster` is everyone on the active view and is
+  // used only to RESOLVE NAMES for rows that already exist (a leaver's
+  // individual pay structure keeps its name in the export and on the Summary).
+  // `visibleRoster` is who the catalog offers as a person: search results,
+  // pickers, department headcounts, spend. Filtering the name map too would turn
+  // an existing rate row into a bare email address.
   const roster = useMemo(() => buildRoster(initialData), [initialData]);
+  const offboardedEmails = useMemo(
+    () => new Set(initialData?.catalogOffboardedEmails ?? []),
+    [initialData],
+  );
+  const visibleRoster = useMemo(() => withoutOffboarded(roster, offboardedEmails), [roster, offboardedEmails]);
 
   // Custom departments as {key, name} for the Pay Structure rail + exports --
   // a custom key that ever collides with a built-in is dropped defensively.
@@ -959,7 +994,8 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
                 bonuses={bonuses}
                 assignments={assignments}
                 systemBonuses={systemBonuses}
-                roster={roster}
+                roster={visibleRoster}
+                nameRoster={roster}
                 fx={fx}
               />
             </motion.div>
@@ -978,7 +1014,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
                 assignments={assignments}
                 systemBonuses={systemBonuses}
                 fx={fx}
-                roster={roster}
+                roster={visibleRoster}
                 hourlyRates={initialData?.hourlyRates ?? []}
                 customDepartments={customDepartments}
                 onUpsertPay={upsertPay}
@@ -997,7 +1033,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
               className="h-full"
             >
               <DepartmentsTab
-                roster={roster}
+                roster={visibleRoster}
                 payStructures={payStructures}
                 registry={deptRegistry}
                 managersByDept={deptManagers}
@@ -1019,7 +1055,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
             >
               <PayStructureTab
                 structures={payStructures}
-                roster={roster}
+                roster={visibleRoster}
                 extraDepartments={customDepartments}
                 focusDept={payFocusDept}
                 onUpsert={upsertPay}
@@ -1055,7 +1091,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
               <AssignmentsTab
                 bonuses={bonuses}
                 assignments={assignments}
-                roster={roster}
+                roster={visibleRoster}
                 extraDepartments={customDepartments}
                 onAdd={addAssignment}
                 onRemove={removeAssignment}

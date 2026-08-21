@@ -260,13 +260,108 @@ never appeared on that list at all. The **readiness score is unaffected**:
 - Optimistic updates with refetch-on-error; framer-motion for expand/collapse and
   card transitions.
 
+### 3.2 Off-boarded people are filtered out *(added 2026-08-21)*
+
+Every people-bearing surface in the tab -- Search results, the Individual pay
+structure picker, the Bonus Assignments pickers, the Department tab's roster
+autofill and headcounts, and the Summary's headcount / coverage / spend -- reads
+**one** roster, and that roster no longer contains people who have left.
+
+**Why it needed code at all.** `active_employees` cannot answer "has this person
+left". HR keeps a leaver on the master sheet through their final pay, so they stay
+in the current upload, and `/api/hr/offboard` stamps a **duplicate**
+`global_master_list` row rather than the one the view serves. Measured 2026-08-21:
+**zero** of the 1,287 active rows carry an `off_boarded_at`, while **294** of those
+people are off-boarded according to the evidence tables. So the roster looked
+completely clean and was ~23% leavers.
+
+**The evidence** is unioned in one place, `src/lib/roster/offboard-evidence.ts`
+(`loadOffboardEvidenceByEmail`) -- stamped `global_master_list` duplicates, the
+`offboarded_sheet` ledger, and completed `offboarding_queue` rows, latest date per
+email wins, reason carried along, best-effort **per source**. Payroll Readiness'
+`loadOffboardDatesByEmail` was refactored onto the same function, so the two
+surfaces can no longer drift on what counts as evidence
+([payroll-readiness.md](./payroll-readiness.md)).
+
+**The predicate is four guards, and every one resolves toward KEEPING the person**
+(`src/lib/payment-catalog/catalog-roster-visibility.ts`, pure + unit-tested;
+assembled by `catalog-offboarded-emails.ts` and shipped on
+`prefetchAccountingData().catalogOffboardedEmails`). The asymmetry is the whole
+design: this tab is the **rate source of truth**, so a leaver who lingers a week is
+cosmetic, while an active worker who cannot be found here has no settable rate and
+silently rides a department base.
+
+| Guard | Keeps | Live count |
+| --- | --- | --- |
+| **1. Reason is a canonical departure** (allowlist over `VALID_OFFBOARD_REASONS` minus `temporary_pause`, casing-normalised) | suspensions, migration markers, unrecognised sheet labels, blanks | 28 |
+| **2. Off-date post-dates the person's own Start Date** | re-hires inheriting a previous stint's stamp; unparseable start date fails safe | 58 |
+| **3. Off-date is before the week being paid** (`payrollNotesWeekStart`) | leavers whose final pay is still being run | 0 |
+| **4. No hours in the current Hubstaff timesheet** | anyone demonstrably still working | 11 |
+
+Result today: **178 hidden, 1,109 shown.**
+
+Three traps the guards exist for, all live:
+
+- **The reason column is free text and holds non-departures.** Both casings of
+  every enum value (`Performance` 107 / `performance` 167) plus sheet-authored
+  labels (`Policy Violation`, `Declined Offer`, `Reschedule For Next Week`, even
+  `Active`) -- and, dangerously, **synthetic markers**: `duplicate_cleanup` (94
+  rows, migration #65 retiring duplicate `(Work Email, Department)` rows; its own
+  note says *"Reversible"*) and `sheet_sync` (2). `jan@simple.biz` carries one
+  across 95 master rows while working normally. Guard 1 is an **allowlist, never a
+  denylist** -- a denylist would have to grow with every invented marker, and every
+  miss hides a live person.
+- **A personal email is not an identity.** Evidence is matched on **work
+  addresses only** (`loadOffboardEvidenceByEmail('work')`, gsuite alternates
+  included). Duplicate master identities share one personal inbox, so matching on
+  it imports someone else's departure: `carla@simple.biz` (USEE, `Active`,
+  `off_boarded_at` null) picked up the 2026-06-03 `resigned` stamp belonging to
+  `carlath@simple.biz` (Accounting Team) purely through
+  `carlathomas0112@gmail.com`. `offboarding_queue.employee_email` is likewise the
+  **personal** address on all 460 completed rows. Same class as the
+  shared-personal-email KPI cross-wire and the Maria Argote split identity.
+- **The stamps lie about people who never left.** 18 people cleared guards 2-3 and
+  had logged hours in the Aug 9-15 file -- re-hires whose master Start Date never
+  moved (`sherwins@`, `kevinc@`, both already on file in the
+  readiness-bank-offboard-aging memory) plus `jeff@` and `jan@`. A timesheet row
+  cannot be forged by a stale date.
+
+**Hours are only ever a reason to KEEP someone.** A zero-hours active member with
+no off-board record still shows -- the
+catalog-visible-dispatch-absent-means-no-hours ruling stands: absence from a money
+surface is not evidence of off-boarding (`jvincec@`, verified still visible).
+
+**`Employement Status` is not usable for this** and was rejected after measuring:
+312 of 1,287 active rows are null and 95 of the 178 real leavers still read
+`Active`. HR does not maintain the column.
+
+**Two things deliberately still show a leaver:**
+
+1. **Their existing rows.** An employee-scope pay structure or bonus assignment
+   already on file keeps rendering in the Pay Structure / Assignments tabs and in
+   the export. Only the *pickers* stop offering the person. Hiding a rate row is
+   how a rate silently goes missing, and the row carries its own `employeeName`
+   snapshot anyway.
+2. **Their name.** `ExportMenu` and `computeCatalogOverview`'s `nameRoster` take
+   the **unfiltered** roster, so a leaver's rate row reads as a name rather than
+   degrading to an email localpart. `roster` (counted) and `nameRoster`
+   (name-resolution only) are separate props for exactly this reason.
+
+**Fails open at every level.** An unreadable evidence table or an unresolvable
+timesheet hides **nobody** and reports why (`CatalogOffboardedResult.error`); an
+empty exclusion set is a no-op. Verify against production with
+`scripts/verify-catalog-offboarded.mts` (read-only, `TSX_TSCONFIG_PATH=tsconfig.readiness-verify.json`)
+-- it runs the real function, buckets everyone carrying evidence by the guard that
+kept them, and fails if anyone with current-cycle hours is hidden.
+
 ### Search tab *(added 2026-07-29)*
 
 A Google-style people lookup (`SearchTab` in `BonusCatalog.tsx`, second tab
 after Overview): the Simple wordmark over a centered bar (dark mode renders the
 navy PNG as a white silhouette via `brightness-0 invert`). Typing ranks roster
 matches by name prefix → name word → name substring → email → department (top
-30). Each result row carries an **effective-rate chip resolved the way payroll
+30) -- over the roster **minus anyone who has
+left** (§3.2). Each result row carries an **effective-rate chip resolved the way payroll
 does** — individual catalog rate (emerald), else the rates-sheet rate marked
 "(sheet)", else the department base marked "(dept)", else an amber "No rate
 set" — plus a bonus-reach count, and **View** / **Edit** buttons that open the
@@ -329,6 +424,11 @@ rotating board into a static dashboard (`fee8f00` → `8764d67`).
   **not** multiply by hours — so it is a pay-*mix* picture, not an actual payout. Use the
   Accounting Overview hero for real money
   ([accounting-total-payout.md](./accounting-total-payout.md)).
+- **Headcount, coverage and spend count only current people** (§3.2, 2026-08-21): the
+  roster-driven figures exclude off-boarded people, so the pay-mix picture is no longer
+  inflated by leavers HR is still carrying through final pay. Name resolution for an
+  existing structure row keeps the full roster (`nameRoster`), so a leaver's own rate row
+  still reads as a name.
 - Each custom System Bonus variant gets its own tile here (see §6.1).
 
 > **Implementation gotcha:** the bar rows animate in with Framer Motion, which leaves an

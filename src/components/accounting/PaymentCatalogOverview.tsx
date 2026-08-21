@@ -751,6 +751,7 @@ export default function PaymentCatalogOverview({
   assignments,
   systemBonuses,
   roster,
+  nameRoster,
   fx,
 }: {
   payStructures: PayStructure[];
@@ -758,14 +759,16 @@ export default function PaymentCatalogOverview({
   assignments: BonusAssignment[];
   systemBonuses: SystemBonus[];
   roster: RosterEntry[];
+  /** Unfiltered roster, for name resolution only — see `OverviewInput.nameRoster`. */
+  nameRoster?: RosterEntry[];
   fx: FxRates;
 }) {
   const reducedRaw = useReducedMotion();
   const reduced = !!reducedRaw;
 
   const o = useMemo(
-    () => computeCatalogOverview({ payStructures, bonuses, assignments, systemBonuses, roster, fx }),
-    [payStructures, bonuses, assignments, systemBonuses, roster, fx],
+    () => computeCatalogOverview({ payStructures, bonuses, assignments, systemBonuses, roster, nameRoster, fx }),
+    [payStructures, bonuses, assignments, systemBonuses, roster, nameRoster, fx],
   );
 
   const topDept = o.topDepartments[0] ?? null;
