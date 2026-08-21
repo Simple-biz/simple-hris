@@ -524,6 +524,109 @@ accurate against dated rate history:
 | `app/api/employee-hourly-rates` `?email=` self-view branch (Dashboard / Profile / Mesa) | Applied to the returned "your current rate" row (PHP-equivalent) |
 | `src/components/employee/EmployeeMyHours.tsx` calendar | **Indirectly** -- reads `member-monthly-pay`'s `rateFromCatalog` flag; when set, uses the catalog rate for every day and bypasses per-day history (mirrors the server). It does not call `resolve-rate.ts` directly. |
 
+### 5.5 Department members + the nested HSL group *(added 2026-08-21)*
+
+The Pay Structure tab answers two questions now: what a department pays, and **who is
+in it**. Kane, 2026-08-21: *"We should be able to see all the members for that
+department in here"*, then *"I want the Hogan Smith Law to be a drop down where when
+toggled we can see the Sub departments below it"*.
+
+**Files:** `src/lib/payment-catalog/dept-rail.ts` (pure, 25 tests) + the
+`PayStructureTab` / `DeptRailRow` / `DeptMemberList` block in
+`src/components/accounting/BonusCatalog.tsx`.
+
+#### The rail is a tree, and the parent claims nobody
+
+`buildDeptRail` groups the flat 34-entry list into 18 groups; "Hogan Smith Law" holds
+all 16 `hsl:*` sub-teams, disclosed by a chevron. The custom-registry
+`<parent>:<sub>` family goes through the same code, so the two cannot diverge.
+
+**The parent key is NOT the child prefix.** HSL children are `hsl:<sub>` under
+`hogan_smith_law`; custom children are `<parentKey>:<subKey>` where the prefix *is*
+the parent. `parentOfDeptKey` is a **declared** map for exactly that reason — a
+`split(':')` yields `"hsl"`, which is not a rail key at all, and every HSL sub-team
+would silently orphan. A child whose parent is absent from the rail is **promoted**
+to top level rather than dropped.
+
+**One person, one home.** `assignRosterToRail` assigns most-specific-first, and this
+is the whole point:
+
+> `normalizeDeptToKey('hsl:case_managers')` returns `hogan_smith_law`, so the
+> membership matcher (`deptCellMatchesEntry`, lifted verbatim from
+> `IndividualPayAdder`) says **yes to the sub-team AND to the parent**. That
+> looseness is right for a "who could I add here" picker and wrong for a member
+> list. Without the resolver, "Hogan Smith Law" lists its whole 565-person family —
+> which is precisely what Kane reported as *"Baldonebro ... shouldn't have appeared
+> under hogan smith law as she is a case manager already"*.
+
+Live result: the parent's own membership is **0**, its rolled-up badge reads 546, and
+each sub-team carries its own count. A **retired or mistyped `hsl:<key>`** does NOT
+inherit the parent's collapse — it is unplaced, because saying so is the point. Bare
+`HSL` *does* fall to the parent.
+
+**Counts roll up.** `rollUpCounts` gives a collapsed parent its own plus its
+children's, or "Hogan Smith Law" reads 0 while hiding a 174-person team. Two badges
+per row: headcount (zinc) and individual structures (orange).
+
+**Nobody is hidden.** People whose department label resolves to no rail entry get a
+**"No department"** entry at the foot of the rail (`RAIL_NO_DEPARTMENT_KEY`, a `@`
+key no slug can collide with) — 60 today: USEE 26, Site Building US 20 / PH 13,
+Orphan Ministry 1, Manager 1, all labels `normalizeDeptToKey` maps to nothing by
+design. A test pins that the buckets always sum to the roster.
+
+#### Where an individual structure RENDERS is not where it is stored
+
+`homeKeyForStructure` puts each employee-scope row under the person's **current
+placement**, not its stored `departmentKey`. Measured 2026-08-21: of the **124**
+individual structures filed on `hogan_smith_law`, **65 belong to people who are
+really on a sub-team**, 9 to people now in a non-HSL department, 50 to people off the
+roster. The cause is structural — `normalizeDeptToKey` collapses `hsl:*` to the
+parent and that is the key the Search person card writes under, so *every* HSL
+individual rate saved there files on the parent.
+
+**No money is affected**: `buildCatalogRateIndex` puts employee structures in
+`byEmail` and never reads `departmentKey` (`resolve-rate.ts:70-80`, `:119`). This is
+purely where the row appears.
+
+Re-homing is **display only** — chosen over a DB rewrite (Kane 2026-08-21) because it
+self-heals on every transfer, whereas a script has to be re-run after each one.
+`onUpsert` still files under `selectedDept`. Two fallbacks keep a row from ever
+vanishing: an owner who is off the roster keeps the stored key, and so does a
+placement the rail cannot render. Baldonebro is the worked example — a split identity
+whose `joy@hogansmith.com` row now renders under Case Managers while her stale
+`joyb@simple.biz` row stays under the parent, where it is still visible.
+
+#### The member list is READ-ONLY, and its rate chip is the engine's
+
+Each row resolves through `computePersonComp` + `winningRate` — the same call the
+Search tab makes — giving the same four states (emerald individual / `(sheet)` /
+`(dept)` / amber "No rate set"). **Never a local `override ?? deptBase`**: 361 of the
+1,109 visible people are sheet-rated, and that shortcut would misstate every one of
+them and invite an accountant to "confirm" a department base into an individual
+override that silently beats their sheet rate. That finding is why
+`computePersonComp` exists (see the Search tab section).
+
+"Set rate" writes nothing itself — it hands the email to `IndividualPayAdder`, the
+adder already on the tab, so there is **one** write path and **one** place the amber
+sheet-override warning lives. It carries no `data-readonly-allow`, so a view-only
+accountant's click is swallowed by `ReadOnlyTab`. A person who already has an
+individual structure anywhere gets no button, or one person would end up with two rows.
+
+#### Interaction rules that are easy to break
+
+- **A parent row does two things**: the chevron discloses, the label selects (the
+  parent has its own rate slot). Two sibling hit targets — a button inside a button
+  is invalid HTML.
+- **Search force-opens every group.** `deptSearch` filters on display name, so a
+  child-only match behind a closed parent would simply vanish. While a query is
+  active the chevron is disabled rather than lying about a state it cannot change.
+- **A group auto-opens** when one of its children is the selection, so deep-linking
+  via `focusDept` never lands on an invisible row.
+- **The mobile select is flat** (`AnimatedSelect` has no nesting), so children are
+  indented with NBSPs. Dropping them would make 565 people unreachable on mobile.
+- Nested labels drop the `HSL — ` prefix (`stripHslPrefix`) — presentation only;
+  `formatDeptLabel`'s em-dash form stays canonical everywhere else.
+
 ### 5.3 USD corruption fix (`syncRateHistory` in the pay-structures route)
 
 When an **employee** structure is saved, `POST .../pay-structures` fires

@@ -61,6 +61,17 @@ import { Input } from '@/components/ui/input';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { hslSubDeptOptions } from '@/lib/departments/hsl-subdept';
+import {
+  buildDeptRail,
+  assignRosterToRail,
+  rollUpCounts,
+  bucketSizes,
+  parentOfDeptKey,
+  homeKeyForStructure,
+  RAIL_NO_DEPARTMENT_KEY,
+  RAIL_NO_DEPARTMENT_NAME,
+  type DeptRailEntry,
+} from '@/lib/payment-catalog/dept-rail';
 import type { InitialAccountingData } from '@/lib/accounting/prefetch';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import {
@@ -118,6 +129,7 @@ import {
   type PersonComp,
   type PersonCompIndexes,
   type SheetRate,
+  winningRate,
 } from '@/lib/payment-catalog/person-comp';
 import PaymentCatalogOverview from './PaymentCatalogOverview';
 import DepartmentsTab from './DepartmentsTab';
@@ -507,6 +519,54 @@ function ExportMenu({
   );
 }
 
+/**
+ * Build the lookups `computePersonComp` needs. ONE builder, shared by the Search
+ * tab and the Pay Structure tab's member list, because both claim to show "what
+ * this person is paid" and the catalog is the rate source of truth — two builders
+ * would be two chances to drift from the engine's
+ * `employeeCatalog ?? sheetRate ?? departmentBase` precedence.
+ *
+ * Later-one-wins on duplicate structure keys (matching `buildCatalogRateIndex`
+ * upsert-by-id semantics) and work-then-personal email for the sheet.
+ */
+function buildPersonCompIndexes(input: {
+  payStructures: PayStructure[];
+  hourlyRates: EmployeeHourlyRateRow[];
+  systemBonuses: SystemBonus[];
+  fx: FxRates;
+  assignments: BonusAssignment[];
+  customDepartments: { key: string; name: string }[];
+}): PersonCompIndexes {
+  const { payStructures, hourlyRates, systemBonuses, fx, assignments, customDepartments } = input;
+  const structByEmail = new Map<string, PayStructure>();
+  const deptStructByKey = new Map<string, PayStructure>();
+  for (const s of payStructures) {
+    if (s.scope === 'employee') {
+      const em = (s.employeeEmail ?? '').trim().toLowerCase();
+      if (em) structByEmail.set(em, s);
+    } else if (s.scope === 'department') {
+      deptStructByKey.set(s.departmentKey, s);
+    }
+  }
+  const sheetRateByEmail = new Map<string, SheetRate>();
+  for (const r of hourlyRates) {
+    const entry = { reg: parseRateText(r.regular_rate), ot: parseRateText(r.ot_rate) };
+    const we = (r.work_email ?? '').trim().toLowerCase();
+    const pe = (r.personal_email ?? '').trim().toLowerCase();
+    if (we) sheetRateByEmail.set(we, entry);
+    if (pe && !sheetRateByEmail.has(pe)) sheetRateByEmail.set(pe, entry);
+  }
+  return {
+    structByEmail,
+    deptStructByKey,
+    sheetRateByEmail,
+    resolvedSystem: resolveSystemBonuses(systemBonuses, fx),
+    systemBonuses,
+    assignments,
+    customDepartments,
+  };
+}
+
 type RosterEntry = {
   email: string;
   name: string;
@@ -638,6 +698,20 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
       cancelled = true;
     };
   }, []);
+
+  // One engine-mirroring index for every tab that shows what a person is paid.
+  const compIndexes = useMemo(
+    () =>
+      buildPersonCompIndexes({
+        payStructures,
+        hourlyRates: initialData?.hourlyRates ?? [],
+        systemBonuses,
+        fx,
+        assignments,
+        customDepartments,
+      }),
+    [payStructures, initialData, systemBonuses, fx, assignments, customDepartments],
+  );
 
   const refetch = useCallback(async () => {
     setRefreshing(true);
@@ -1016,6 +1090,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
                 fx={fx}
                 roster={visibleRoster}
                 hourlyRates={initialData?.hourlyRates ?? []}
+                compIndexes={compIndexes}
                 customDepartments={customDepartments}
                 onUpsertPay={upsertPay}
                 onDeletePay={deletePay}
@@ -1056,6 +1131,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
               <PayStructureTab
                 structures={payStructures}
                 roster={visibleRoster}
+                compIndexes={compIndexes}
                 extraDepartments={customDepartments}
                 focusDept={payFocusDept}
                 onUpsert={upsertPay}
@@ -1992,9 +2068,11 @@ function PayRateEditor({
   );
 }
 
+
 function PayStructureTab({
   structures,
   roster,
+  compIndexes,
   extraDepartments,
   focusDept,
   onUpsert,
@@ -2002,6 +2080,9 @@ function PayStructureTab({
 }: {
   structures: PayStructure[];
   roster: RosterEntry[];
+  /** Shared engine-mirroring lookups — the member list resolves each person's
+   *  effective rate through `computePersonComp`, exactly as the Search tab does. */
+  compIndexes: PersonCompIndexes;
   /** Custom departments created from the Department tab ({key, name}). */
   extraDepartments: { key: string; name: string }[];
   /** When set, the rail opens focused on this department key. */
@@ -2032,36 +2113,139 @@ function PayStructureTab({
     [extraDepartments],
   );
 
+  /** Every key the rail can actually render a row under. */
+  const railKeys = useMemo(() => new Set(allDepts.map((d) => d.key)), [allDepts]);
+
   const [selectedDept, setSelectedDept] = useState<string>(
     () => focusDept ?? DEPARTMENTS[0]?.key ?? '',
   );
   const [deptSearch, setDeptSearch] = useState('');
   const [editingDept, setEditingDept] = useState(false);
 
+  // Set by a member row's "Set rate" so the adder below opens on that person —
+  // the hand-off is the whole reason the member list needs no write path of its own.
+  const [addingFor, setAddingFor] = useState<string | null>(null);
+
+  // Where each person actually sits right now, keyed on every alias the catalog
+  // may hold their rows under.
+  const placementByEmail = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of roster) {
+      for (const em of [r.email, ...r.aliases]) {
+        const k = (em ?? '').trim().toLowerCase();
+        if (k && !m.has(k)) m.set(k, r.department);
+      }
+    }
+    return m;
+  }, [roster]);
+
   // Follow cross-tab focus requests (e.g. a Department card's "Pay structure").
   useEffect(() => {
     if (focusDept) setSelectedDept(focusDept);
   }, [focusDept]);
 
-  const countsByDept = useMemo(() => {
-    const m: Record<string, number> = {};
-    for (const s of structures) m[s.departmentKey] = (m[s.departmentKey] ?? 0) + 1;
-    return m;
-  }, [structures]);
+  // The rail entries, plus the bucket for people no department claims. The
+  // sentinel is appended LAST and deliberately carries no rate slot — it is not a
+  // department, it is the proof that nobody was hidden.
+  const railEntries = useMemo<DeptRailEntry[]>(
+    () => [...allDepts, { key: RAIL_NO_DEPARTMENT_KEY, name: RAIL_NO_DEPARTMENT_NAME }],
+    [allDepts],
+  );
+  const rail = useMemo(() => buildDeptRail(railEntries), [railEntries]);
 
-  const filteredDepts = useMemo(() => {
-    const q = deptSearch.trim().toLowerCase();
-    return allDepts.filter((d) => !q || d.name.toLowerCase().includes(q));
-  }, [deptSearch, allDepts]);
+  // Every roster person to exactly ONE entry. A sub-team beats its parent, which
+  // is why "Hogan Smith Law" no longer lists its whole 565-person family.
+  const membersByDept = useMemo(() => assignRosterToRail(roster, rail), [roster, rail]);
+  const members = useMemo(() => membersByDept.get(selectedDept) ?? [], [membersByDept, selectedDept]);
 
-  const dept = allDepts.find((d) => d.key === selectedDept) ?? allDepts[0];
+  // Two counts per entry: individual structures on file (the badge this rail has
+  // always shown) and headcount. A collapsed parent rolls its children up, or
+  // "Hogan Smith Law" reads 0 while hiding a 186-person team.
+  const structureCounts = useMemo(() => {
+    const own = new Map<string, number>();
+    for (const s of structures) {
+      if (s.scope !== 'employee') continue;
+      const key = homeKeyForStructure(s, placementByEmail, railKeys);
+      own.set(key, (own.get(key) ?? 0) + 1);
+    }
+    return rollUpCounts(own, rail);
+  }, [structures, placementByEmail, railKeys, rail]);
+  const headcounts = useMemo(() => rollUpCounts(bucketSizes(membersByDept), rail), [membersByDept, rail]);
+
+  // A group opens when the user toggles it, when the selected department is one of
+  // its children, or when the search text matches a child — otherwise a
+  // child-only match would vanish behind a closed parent.
+  const [manualOpen, setManualOpen] = useState<Set<string>>(new Set());
+  const query = deptSearch.trim().toLowerCase();
+  const filteredRail = useMemo(() => {
+    if (!query) return rail;
+    return rail
+      .map((g) => {
+        const parentHit = g.parent.name.toLowerCase().includes(query);
+        const kids = g.children.filter((c) => c.name.toLowerCase().includes(query));
+        if (parentHit) return { parent: g.parent, children: g.children };
+        if (kids.length > 0) return { parent: g.parent, children: kids };
+        return null;
+      })
+      .filter((g): g is NonNullable<typeof g> => g !== null);
+  }, [rail, query]);
+  const isGroupOpen = useCallback(
+    (parentKey: string) => {
+      if (query) return true;
+      if (manualOpen.has(parentKey)) return true;
+      const parentOfSelected = parentOfDeptKey(
+        selectedDept,
+        new Set(rail.map((g) => g.parent.key)),
+      );
+      return parentOfSelected === parentKey;
+    },
+    [query, manualOpen, selectedDept, rail],
+  );
+
+  const dept = railEntries.find((d) => d.key === selectedDept) ?? allDepts[0];
+  const isNoDeptBucket = selectedDept === RAIL_NO_DEPARTMENT_KEY;
 
   const deptStructure = structures.find(
     (s) => s.scope === 'department' && s.departmentKey === selectedDept,
   );
-  const individualForDept = structures.filter(
-    (s) => s.scope === 'employee' && s.departmentKey === selectedDept,
+
+  // Individual structures are shown under the person's CURRENT placement, not the
+  // key the row happens to be stored under (Kane 2026-08-21: "Baldonebro has a
+  // subdepartment of her own so she shouldn't have appeared under hogan smith
+  // law"). `normalizeDeptToKey` collapses every `hsl:*` cell to
+  // `hogan_smith_law`, and that is the key the Search person card writes, so 65 of
+  // the 124 rows filed on the parent belong to people who are really on a
+  // sub-team. Re-homing is DISPLAY ONLY and self-heals on transfer; `onUpsert`
+  // still files under `selectedDept`. Someone off the roster keeps their stored
+  // key so their row never disappears.
+  const individualForDept = useMemo(
+    () =>
+      structures.filter(
+        (s) =>
+          s.scope === 'employee' &&
+          homeKeyForStructure(s, placementByEmail, railKeys) === selectedDept,
+      ),
+    [structures, placementByEmail, railKeys, selectedDept],
   );
+
+  /** Emails that already carry an individual structure ANYWHERE — a member row
+   *  must not offer "Set rate" for someone whose override is simply filed under
+   *  another key, or two rows would be created for one person. */
+  const overriddenEmails = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of structures) {
+      if (s.scope !== 'employee') continue;
+      const em = (s.employeeEmail ?? '').trim().toLowerCase();
+      if (em) set.add(em);
+    }
+    return set;
+  }, [structures]);
+
+  // Clear a pending "Set rate" hand-off when the department changes, so the adder
+  // never opens on someone who is no longer on screen.
+  useEffect(() => {
+    setAddingFor(null);
+  }, [selectedDept]);
 
   // Collapse the dept editor when switching departments.
   useEffect(() => {
@@ -2096,36 +2280,61 @@ function PayStructureTab({
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-          {filteredDepts.map((d) => {
-            const hasDeptRate = structures.some(
-              (s) => s.scope === 'department' && s.departmentKey === d.key,
-            );
+          {filteredRail.map((group) => {
+            const open = isGroupOpen(group.parent.key);
+            const hasKids = group.children.length > 0;
             return (
-              <button
-                key={d.key}
-                type="button"
-                onClick={() => setSelectedDept(d.key)}
-                className={`flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left text-sm transition-colors ${
-                  selectedDept === d.key
-                    ? 'bg-orange-100 font-medium text-orange-900 dark:bg-blue-950/60 dark:text-white'
-                    : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900'
-                }`}
-              >
-                <span className="flex min-w-0 items-center gap-1.5">
-                  {hasDeptRate && (
-                    <span
-                      className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
-                      title="Department rate set"
-                    />
+              <div key={group.parent.key}>
+                <DeptRailRow
+                  entry={group.parent}
+                  selected={selectedDept === group.parent.key}
+                  hasDeptRate={structures.some(
+                    (x) => x.scope === 'department' && x.departmentKey === group.parent.key,
                   )}
-                  <span className="truncate">{d.name}</span>
-                </span>
-                {countsByDept[d.key] ? (
-                  <span className="ml-1 shrink-0 rounded-full bg-orange-200/70 px-1.5 text-[10px] font-bold text-orange-800 dark:bg-blue-900/60 dark:text-blue-200">
-                    {countsByDept[d.key]}
-                  </span>
-                ) : null}
-              </button>
+                  structureCount={structureCounts.get(group.parent.key) ?? 0}
+                  headcount={headcounts.get(group.parent.key) ?? 0}
+                  onSelect={() => setSelectedDept(group.parent.key)}
+                  disclosure={
+                    hasKids
+                      ? {
+                          open,
+                          // The search box force-opens every group, so the chevron
+                          // is inert while a query is active rather than lying
+                          // about a state it cannot change.
+                          locked: query !== '',
+                          onToggle: () =>
+                            setManualOpen((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(group.parent.key)) next.delete(group.parent.key);
+                              else next.add(group.parent.key);
+                              return next;
+                            }),
+                          childCount: group.children.length,
+                        }
+                      : undefined
+                  }
+                />
+                {hasKids && (
+                  <Expand show={open}>
+                    <div className="ml-3 border-l border-zinc-200 pl-1.5 dark:border-zinc-800">
+                      {group.children.map((c) => (
+                        <DeptRailRow
+                          key={c.key}
+                          entry={c}
+                          nested
+                          selected={selectedDept === c.key}
+                          hasDeptRate={structures.some(
+                            (x) => x.scope === 'department' && x.departmentKey === c.key,
+                          )}
+                          structureCount={structureCounts.get(c.key) ?? 0}
+                          headcount={headcounts.get(c.key) ?? 0}
+                          onSelect={() => setSelectedDept(c.key)}
+                        />
+                      ))}
+                    </div>
+                  </Expand>
+                )}
+              </div>
             );
           })}
         </div>
@@ -2139,7 +2348,12 @@ function PayStructureTab({
             ariaLabel="Select department"
             value={selectedDept}
             onChange={setSelectedDept}
-            options={allDepts.map((d) => ({ value: d.key, label: d.name }))}
+            options={rail.flatMap((g) => [
+              { value: g.parent.key, label: g.parent.name },
+              // Indented rather than nested: AnimatedSelect is a flat list, and
+              // dropping the children would make 565 people unreachable on mobile.
+              ...g.children.map((c) => ({ value: c.key, label: `\u00A0\u00A0\u00A0${c.name}` })),
+            ])}
           />
         </div>
 
@@ -2213,6 +2427,24 @@ function PayStructureTab({
           </AnimatePresence>
         </Section>
 
+        {/* Members of this department */}
+        <Section
+          icon={Users}
+          title={isNoDeptBucket ? 'People no department claims' : 'Members'}
+          subtitle={
+            isNoDeptBucket
+              ? 'Their master Department cell resolves to no rail entry — listed so a filter never hides a row.'
+              : 'Everyone placed here, with the rate the engine actually pays them.'
+          }
+        >
+          <DeptMemberList
+            members={members}
+            compIndexes={compIndexes}
+            overriddenEmails={overriddenEmails}
+            onSetRate={setAddingFor}
+          />
+        </Section>
+
         {/* Individual overrides */}
         <Section
           icon={Users}
@@ -2223,6 +2455,8 @@ function PayStructureTab({
             roster={roster}
             deptKey={selectedDept}
             deptName={dept?.name ?? ''}
+            preselectEmail={addingFor}
+            onPreselectConsumed={() => setAddingFor(null)}
             existingEmails={new Set(individualForDept.map((s) => (s.employeeEmail ?? '').toLowerCase()))}
             onAdd={(emp, regular, ot, currency, effectiveDate) =>
               onUpsert({
@@ -2269,6 +2503,236 @@ function PayStructureTab({
   );
 }
 
+/**
+ * One row of the Pay Structure department rail.
+ *
+ * A parent row does TWO things and there is no precedent for it in this codebase:
+ * the chevron discloses its children, the label selects the department (the parent
+ * has its own rate slot, so it must stay selectable). They are therefore separate
+ * hit targets — nesting a button inside a button is invalid HTML, so the row is a
+ * flex container holding two siblings, never one wrapping the other.
+ */
+function DeptRailRow({
+  entry,
+  selected,
+  hasDeptRate,
+  structureCount,
+  headcount,
+  onSelect,
+  nested = false,
+  disclosure,
+}: {
+  entry: DeptRailEntry;
+  selected: boolean;
+  hasDeptRate: boolean;
+  /** Individual pay structures homed here (own + children when collapsed). */
+  structureCount: number;
+  /** People placed here (own + children when collapsed). */
+  headcount: number;
+  onSelect: () => void;
+  nested?: boolean;
+  disclosure?: { open: boolean; locked: boolean; onToggle: () => void; childCount: number };
+}) {
+  return (
+    <div
+      className={`flex items-center rounded-md transition-colors ${
+        selected
+          ? 'bg-orange-100 text-orange-900 dark:bg-blue-950/60 dark:text-white'
+          : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900'
+      }`}
+    >
+      {disclosure ? (
+        <button
+          type="button"
+          onClick={disclosure.onToggle}
+          disabled={disclosure.locked}
+          aria-expanded={disclosure.open}
+          aria-label={`${disclosure.open ? 'Collapse' : 'Expand'} ${entry.name} sub-departments`}
+          title={
+            disclosure.locked
+              ? 'Groups stay open while searching'
+              : `${disclosure.open ? 'Hide' : 'Show'} ${disclosure.childCount} sub-departments`
+          }
+          className="shrink-0 rounded-md py-2 pl-1.5 pr-0.5 text-zinc-400 transition-colors hover:text-zinc-700 disabled:opacity-40 dark:hover:text-zinc-200"
+        >
+          <ChevronRight
+            className={`h-3.5 w-3.5 transition-transform duration-200 ${disclosure.open ? 'rotate-90' : ''}`}
+          />
+        </button>
+      ) : (
+        <span className={nested ? 'w-1.5' : 'w-[22px]'} aria-hidden />
+      )}
+      <button
+        type="button"
+        onClick={onSelect}
+        className={`flex min-w-0 flex-1 items-center justify-between py-2 pr-2.5 text-left text-sm ${
+          selected ? 'font-medium' : ''
+        } ${disclosure ? 'pl-0.5' : 'pl-1'}`}
+      >
+        <span className="flex min-w-0 items-center gap-1.5">
+          {hasDeptRate && (
+            <span
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
+              title="Department rate set"
+            />
+          )}
+          <span className="truncate">{nested ? stripHslPrefix(entry.name) : entry.name}</span>
+        </span>
+        <span className="ml-1 flex shrink-0 items-center gap-1">
+          {headcount > 0 && (
+            <span
+              className="rounded-full bg-zinc-200/80 px-1.5 text-[10px] font-semibold tabular-nums text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+              title={`${headcount} ${headcount === 1 ? 'person' : 'people'}`}
+            >
+              {headcount}
+            </span>
+          )}
+          {structureCount > 0 && (
+            <span
+              className="rounded-full bg-orange-200/70 px-1.5 text-[10px] font-bold tabular-nums text-orange-800 dark:bg-blue-900/60 dark:text-blue-200"
+              title={`${structureCount} individual pay ${structureCount === 1 ? 'structure' : 'structures'}`}
+            >
+              {structureCount}
+            </span>
+          )}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+/** `HSL — Intake Specialist` reads as `Intake Specialist` once it sits visibly
+ *  under Hogan Smith Law. The em dash form stays canonical everywhere else
+ *  (`formatDeptLabel`), so this is presentation-local and never a value. */
+function stripHslPrefix(name: string): string {
+  const m = /^HSL\s+[\u2013\u2014-]\s+(.+)$/.exec(name.trim());
+  return m ? m[1] : name;
+}
+
+/**
+ * The department's people, with the rate the ENGINE pays each of them.
+ *
+ * Read-only by design (Kane's call, 2026-08-21). The rate chip resolves through
+ * `computePersonComp` + `winningRate`, the same call the Search tab makes, because
+ * the Payment Catalog is the rate source of truth and a naive
+ * `override ?? deptBase` here would misstate pay for every sheet-rated person —
+ * most tenured staff — and invite an accountant to "confirm" a department base into
+ * an individual override that silently beats their sheet rate. That finding is why
+ * `computePersonComp` exists (see bonus-catalog.md, Search tab).
+ *
+ * "Set rate" writes nothing itself; it hands the email to the adder already on this
+ * tab, so there is exactly one write path and exactly one place the amber
+ * sheet-override warning has to live.
+ */
+function DeptMemberList({
+  members,
+  compIndexes,
+  overriddenEmails,
+  onSetRate,
+}: {
+  members: RosterEntry[];
+  compIndexes: PersonCompIndexes;
+  overriddenEmails: ReadonlySet<string>;
+  onSetRate: (email: string) => void;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const PAGE = 25;
+
+  const rows = useMemo(
+    () =>
+      members.map((m) => {
+        const comp = computePersonComp(m, compIndexes);
+        return { person: m, rate: winningRate(comp) };
+      }),
+    [members, compIndexes],
+  );
+
+  if (members.length === 0) {
+    return <p className="text-sm text-zinc-400">Nobody is placed in this department.</p>;
+  }
+
+  const shown = showAll ? rows : rows.slice(0, PAGE);
+  const noRate = rows.filter((r) => r.rate === null).length;
+
+  return (
+    <div>
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+        <span>
+          <span className="font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">
+            {members.length.toLocaleString()}
+          </span>{' '}
+          {members.length === 1 ? 'person' : 'people'}
+        </span>
+        {noRate > 0 && (
+          <span className="text-amber-600 dark:text-amber-400">
+            {noRate} with no rate anywhere
+          </span>
+        )}
+      </div>
+      <div className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+        {shown.map(({ person, rate }) => (
+          <div key={person.email} className="flex items-center gap-2 px-3 py-2">
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm text-zinc-800 dark:text-zinc-100">{person.name}</span>
+              <span className="block truncate text-[11px] text-zinc-400">{person.email}</span>
+            </span>
+            <RateSourceChip rate={rate} />
+            {!overriddenEmails.has(person.email) && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => onSetRate(person.email)}
+                // Mutating control: deliberately NO data-readonly-allow, so a
+                // view-only accountant's click is swallowed by ReadOnlyTab.
+                className="shrink-0 gap-1 text-[11px]"
+              >
+                <Pencil className="h-3 w-3" />
+                Set rate
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+      {rows.length > PAGE && (
+        <button
+          type="button"
+          onClick={() => setShowAll((v) => !v)}
+          className="mt-2 text-xs font-medium text-orange-600 hover:underline dark:text-blue-400"
+        >
+          {showAll ? 'Show fewer' : `Show all ${rows.length.toLocaleString()}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** The effective-rate chip, in the Search tab's vocabulary: emerald individual,
+ *  plain "(sheet)", muted "(dept)", amber when nothing resolves. Same four states,
+ *  same order of precedence, so the two surfaces can never read differently. */
+function RateSourceChip({ rate }: { rate: ReturnType<typeof winningRate> }) {
+  if (!rate) {
+    return (
+      <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
+        No rate set
+      </span>
+    );
+  }
+  const label = formatRate(rate.regular, rate.currency);
+  if (rate.source === 'individual') {
+    return (
+      <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+        {label}
+      </span>
+    );
+  }
+  return (
+    <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium tabular-nums text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+      {label} <span className="text-zinc-400">({rate.source === 'sheet' ? 'sheet' : 'dept'})</span>
+    </span>
+  );
+}
+
 function RateStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -2288,6 +2752,8 @@ function nextMondayIso(): string {
 
 function IndividualPayAdder({
   roster,
+  preselectEmail,
+  onPreselectConsumed,
   deptKey,
   deptName,
   existingEmails,
@@ -2297,12 +2763,28 @@ function IndividualPayAdder({
   deptKey: string;
   deptName: string;
   existingEmails: Set<string>;
+  /** Email handed over by a member row's "Set rate" — opens the picker on that
+   *  person so the member list needs no write path of its own. */
+  preselectEmail?: string | null;
+  onPreselectConsumed?: () => void;
   onAdd: (emp: RosterEntry, regular: number, ot: number | undefined, currency: PayCurrency, effectiveDate: string) => void;
 }) {
   const [empEmail, setEmpEmail] = useState('');
   const [open, setOpen] = useState(false);
   const [filterByDept, setFilterByDept] = useState(true);
   const [effectiveDate, setEffectiveDate] = useState<string>(nextMondayIso);
+
+  // A member row's "Set rate" hands its email over here. The dept filter is
+  // dropped for the hand-off: a re-homed member can sit under a sub-team while the
+  // adder is scoped to the parent, and a preselected person who then failed the
+  // filter would render as an empty picker.
+  useEffect(() => {
+    const em = (preselectEmail ?? '').trim().toLowerCase();
+    if (!em) return;
+    setFilterByDept(false);
+    setEmpEmail(em);
+    onPreselectConsumed?.();
+  }, [preselectEmail, onPreselectConsumed]);
 
   const deptMatched = useMemo(() => {
     // Built-in departments match via the alias map; custom (Department-tab)
@@ -4237,6 +4719,7 @@ function SearchTab({
   fx,
   roster,
   hourlyRates,
+  compIndexes,
   customDepartments,
   onUpsertPay,
   onDeletePay,
@@ -4251,6 +4734,8 @@ function SearchTab({
   roster: RosterEntry[];
   /** The rates-sheet table (employee_hourly_rates) -- the engine's middle rate layer. */
   hourlyRates: EmployeeHourlyRateRow[];
+  /** Shared engine-mirroring lookups, built once by the host tab. */
+  compIndexes: PersonCompIndexes;
   /** Custom departments created from the Department tab ({key, name}). */
   customDepartments: { key: string; name: string }[];
   onUpsertPay: (s: PayStructure, effectiveDate?: string) => void;
@@ -4262,35 +4747,6 @@ function SearchTab({
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
 
-  const compIndexes = useMemo<PersonCompIndexes>(() => {
-    const structByEmail = new Map<string, PayStructure>();
-    const deptStructByKey = new Map<string, PayStructure>();
-    for (const s of payStructures) {
-      if (s.scope === 'employee') {
-        const em = (s.employeeEmail ?? '').trim().toLowerCase();
-        if (em) structByEmail.set(em, s);
-      } else if (s.scope === 'department') {
-        deptStructByKey.set(s.departmentKey, s);
-      }
-    }
-    const sheetRateByEmail = new Map<string, SheetRate>();
-    for (const r of hourlyRates) {
-      const entry = { reg: parseRateText(r.regular_rate), ot: parseRateText(r.ot_rate) };
-      const we = (r.work_email ?? '').trim().toLowerCase();
-      const pe = (r.personal_email ?? '').trim().toLowerCase();
-      if (we) sheetRateByEmail.set(we, entry);
-      if (pe && !sheetRateByEmail.has(pe)) sheetRateByEmail.set(pe, entry);
-    }
-    return {
-      structByEmail,
-      deptStructByKey,
-      sheetRateByEmail,
-      resolvedSystem: resolveSystemBonuses(systemBonuses, fx),
-      systemBonuses,
-      assignments,
-      customDepartments,
-    };
-  }, [payStructures, hourlyRates, systemBonuses, fx, assignments, customDepartments]);
 
   // Departments that actually exist in the catalog universe (built-in payroll
   // depts + Department-tab registry). Bonus assignments filed outside this set
