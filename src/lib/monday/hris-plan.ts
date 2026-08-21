@@ -729,4 +729,29 @@ export const PLAN_TASKS: PlanTask[] = [
   // employee-scope override on a key that is no longer placeable is the exact shape of the Lawang
   // underpay, and nothing re-derives these.
   { epic: 'HRIS-02b', name: 'Five employees still hold a rate override keyed to the retired bare hsl department', type: 'Bug', sp: 2, done: false, sprint: 'BL', priority: 'High' },
+  // ── 2026-08-19 work the 08-20 logging pass did not cover ──────────────────────────────────────
+  // Kane 2026-08-20: "Every single success yesterday that wasnt added to the monday board let us push
+  // to monday." The 28-row pass earlier today caught the day's headline features; these four are what
+  // was left. Two are sub-features that the bundled Penny row does NOT describe, and two are the
+  // day's tooling/documentation work, which no pass has ever logged.
+  //
+  // 3 SP: six commits of proactive-greeting behaviour (e8ef4ff2..7d7688cc) — the bubble opens itself
+  // 5s after the Overview mounts, offers five chips drawn fresh from a larger pool each refresh, and
+  // the panel matches. The bundled HRIS-09 Penny row covers the CHAT (Haiku, tools, quota, guides,
+  // Markdown) and says nothing about a greeting; two of the six commits are fixes to this behaviour
+  // alone (the timer never fired; the panel showed the whole pool), which is what makes it its own row.
+  { epic: 'HRIS-09', name: 'Penny greets employees on the Overview — five rotating chips from a larger pool', type: 'Feature', sp: 3, done: false, sprint: 'S27', priority: 'High' },
+  // 2 SP: its own module (src/lib/penny/pay-status.ts), its own tests and a 233-line read-only audit
+  // script. Penny was telling employees that already-PAID weeks were still pending — a wrong answer
+  // about their own money, which is a different failure class from the chat feature shipping.
+  { epic: 'HRIS-09', name: 'Penny told employees their already-paid weeks were still pending', type: 'Bug', sp: 2, done: false, sprint: 'S27', priority: 'High' },
+  // 3 SP: the two approval-gate holes. Sprint moves were neither shown nor hashed, so an approval did
+  // not bind the re-filings it authorised (two passes went through that hole), and the hash bound the
+  // proposal FILE rather than the working tree, so a stale proposal could authorise writes it never
+  // described. Both closed and both since exercised for real.
+  { epic: 'HRIS-15', name: 'Board-sync approval binds the sprint moves and the working tree, not just the proposal file', type: 'Chore', sp: 3, done: true, sprint: 'S27' },
+  // 2 SP: twelve feature docs, ten sessions of undocumented behaviour. Not a feature, and logged
+  // anyway — the governing docs are what the hardening and blueprint skills read at step 1, so a gap
+  // there is a gap in every later decision. This is the row that says the docs are not free.
+  { epic: 'HRIS-15', name: 'Feature docs back-filled — ten sessions of gaps closed across twelve documents', type: 'Chore', sp: 2, done: true, sprint: 'S27' },
 ];

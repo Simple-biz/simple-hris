@@ -292,6 +292,44 @@
  * correctly grouped/typed/scored/statused but unlinked from HRIS-06 / HRIS-15 / HRIS-02b until the
  * next full reconcile adopts them by name.
  *
+ *
+ * ── 2026-08-20, PASS 6 — THE FOUR THINGS YESTERDAY'S LOG MISSED ────────────────────
+ * Kane: "Every single success yesterday that wasnt added to the monday board let us push to monday."
+ *
+ * ROWS rewritten again (per-pass file). Pass 5's 29 rows applied at 09:05 under hash ddfcf89d9558.
+ *
+ * HOW THE GAP WAS FOUND. Every 2026-08-19 commit was listed, clustered on FILE OVERLAP, and matched
+ * against the 170 plan rows. 22 commits; pass 5 covered the headline features. Four clusters had no
+ * row, and the two Penny ones are the interesting case: the bundled HRIS-09 row is titled "Haiku,
+ * self-only tools, 10 prompts per Manila day, with guides and rendered Markdown" — it describes the
+ * CHAT and says nothing about a proactive greeting or about pay-status correctness. Reading the row
+ * TITLE against the diff, rather than assuming a feature-shaped row absorbs everything that touched
+ * the same component, is what surfaced them. Six of the day's commits were greeting behaviour.
+ *
+ * STATUSES, and why two are NOT Done. All eleven commits are on origin/main, but pushed is Pending
+ * Deploy — Vercel having deployed is not anyone having looked. The greeting and the pay-status fix are
+ * user-facing behaviour nobody has confirmed in production, so they carry blockers and wait.
+ *
+ * The two Chore rows ARE Done, on different evidence in each case:
+ *   • The board-sync hardening is proven by USE: the inputsHash gate fired on its first real write
+ *     today ("approval accepted: 98579ab77d67 (source verified: 7eb9bf9db186)") and the SPRINT MOVES
+ *     section rendered in the review Kane approved. It runs from the repo, not from Vercel, so the
+ *     environment it must work in is the one it already worked in. dateBasis 'external' because the
+ *     proof is that run, not the commit — the code landed 08-19 and became provable 08-20, and the
+ *     standing rule is that the Completed Date is the day it became PROVABLE.
+ *   • The docs back-fill is Done on the commit itself: documentation is complete when it is written,
+ *     and its last sha 0d47dbb0 lands 2026-08-19, inside Sprint 27's attribution window.
+ *
+ * A JUDGEMENT CALL, flagged rather than buried: logging a DOCS-only commit as a board row cuts against
+ * this skill's own warning that a docs commit is not a shipped feature (488cf44 "HSL Weekend Hours
+ * Fix" carried no code and must never have been credited as one). The distinction drawn here is
+ * INTENT: 488cf44 was a commit whose MESSAGE claimed a feature it did not contain, whereas
+ * 1504cc58 + 0d47dbb0 are a deliberate two-commit documentation sweep across twelve governing docs,
+ * and the governing docs are what the hardening and blueprint skills read at step 1. If Kane would
+ * rather the board carry only product rows, this is the one to cut.
+ *
+ * COST. `--only-new` — 4 rows, ~6 calls. No epic relation until the next full reconcile.
+ *
   * ── APPROVAL ──────────────────────────────────────────────────────────────────────────────────────
  * Kane approved the 57-row re-attribution on 2026-08-13 ("Approve all") after reviewing it in full,
  * plus three rulings the same day: gap-day rows → Sprint 25; the group move belongs in `sync.ts`; the
@@ -349,265 +387,38 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // ── the 22 rows Kane confirmed live in production 2026-08-20 ─────────────────────────────────
-  // ONE basis covers all of them and is stated on each: asked explicitly whether the week's shipped
-  // work had been used in prod, he answered that it had. That confirmation IS the evidence the
-  // honesty gate asks for, and it is recorded rather than assumed. Everything here is also an
-  // ancestor of origin/main (ca8721dc) and carries no .sql, no apply-*.mjs and no workflow json, so
-  // no external step ever stood between any of them and live.
   {
-    name: 'Employee payroll-processing bar sweeps one direction, driven by CSS',
-    status: 'Done',
-    completed: '2026-08-13',
-    shas: ['2086cd06', '8c78f91c'],
-    basis:
-      'Done 2026-08-13; Sprint 26. The processing bar animated in both directions and was driven by Framer Motion; it now sweeps one way from a CSS keyframe. Kane confirmed 2026-08-20 he has used this in production. On origin/main, three files, no external step.',
-  },
-  {
-    name: 'HSL Lead Nurture sub-team retired — Simple Texting is the only placement-only team',
-    status: 'Done',
-    completed: '2026-08-13',
-    shas: ['6835f4b2', 'b05a4301'],
-    basis:
-      'Done 2026-08-13; Sprint 26. Retirement follows the documented ordering — code first, rate row second — so 6835f4b2 removed the sub-team from hsl-subdept.ts and the schema with tests, and b05a4301 deleted the now-orphaned rate row under a separate explicit approval with a SELECT backup written to disk first (backup_hsl_pay_structures_2026-08-13T14-07-03-564Z.json, in the diff). Simple Texting is now the only placement-only sub-team. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'HSL sub-departments bulk-assigned from the KPI Role column (482 people) plus the EGS, Mail Sorting and Executive Assistants rosters',
-    status: 'Done',
-    completed: '2026-08-14',
-    shas: ['0f2bbd9e', '5cb9bc6e', 'e3da4a17', '6e2d255e'],
-    basis:
-      "Done 2026-08-14; Sprint 26. 482 people re-keyed from the KPI Role column by bulk-assign-hsl-subdepartments.mts, with Executive Guest Services, Hearing Prep Team - Mail Sorting and Executive Assistants seeded, and both Guard-8 divergence reports closed by hand (valeriec@ to HSL, chariso@ to Client VA). Every step wrote a SELECT backup first — four backup JSONs and a plan CSV are in the diff. DELIBERATELY NOT the same row as the 8-SP \"One HSL department + required sub-department\" model row: that one is the dept/sub-dept model and its Payment Catalog wiring, this one is the data migration that populated it, and f14f5b35 / da24ffb6 / e68195d7 (per-sub-team base rates, parent-row annihilation, the picker fix) belong to that row rather than this one. Kane confirmed 2026-08-20 he has used this in production.",
-  },
-  {
-    name: 'Employee department directory with SP rankings and per-team policies',
-    status: 'Done',
-    completed: '2026-08-14',
-    shas: ['473f86d4'],
-    basis:
-      'Done 2026-08-14; Sprint 26. A new team tab named after the employee\'s own department, a /api/team-rankings route, a tested rankings reader and a tested per-team policies module. Ranking is a TIER flag and never shows pesos; the policies drive no logic. Nine files, 2,184 lines. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'Reopen a closed pay cycle, and fire the completion confetti on a clean close',
-    status: 'Done',
-    completed: '2026-08-14',
-    shas: ['1ac87fa6', 'c35d6da8', '3a50322f'],
-    basis:
-      'Done 2026-08-14; Sprint 26. Reopen is not the inverse of close: it burns the claim, archives the record under a prefix the close-out scan deliberately does not see, and suppresses the re-fire. Alongside it the completion confetti gained its second trigger, and 3a50322f settled the rule that a close still owing people celebrates anyway — closed is closed. Two API routes, a store, a trigger module and its tests. 0e402a0d is EXCLUDED from the shas: it carries only .claude/settings.json and one cycle_complete_claim backup JSON produced by exercising this, so it is an artefact of the work rather than part of it. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'Payroll Wizard Processing Tutorial Mode — chat-head guide, Sun–Sat processing narrative and rings on the real controls',
-    status: 'Done',
-    completed: '2026-08-17',
-    shas: ['afc5128f', '97668362', '17339b8a', '97c3d235', '012e619a'],
-    basis:
-      'Done 2026-08-17; Sprint 26 (Aug 17 is a gap day, which the closed sprint absorbs). Five commits: the tutorial subsystem and Sun–Sat processing narrative with tested guide and narrative modules plus a new audit-week route (afc5128f), the panel-and-modal shell replaced by a chat head (97668362), that head restyled to the wizard indigo (17339b8a), moved off the Payroll Notes readiness FAB it was covering (97c3d235), and finally pointed at the REAL controls — FX boxes, HSL columns, PAB month (012e619a). Scored 8 on Kane\'s big-ticket ruling and kept as a task row linked to HRIS-02a. The invariant that keeps it safe: the guide NEVER gates a control and the narrative is render-only, so the whole thing is removable via the [WIZARD-TUTORIAL] markers. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'KPI Calculator scoring autosaves — the Save button is gone',
-    status: 'Done',
-    completed: '2026-08-17',
-    shas: ['de28167b'],
-    basis:
-      'Done 2026-08-17; Sprint 26. The Save button is removed and scoring persists as it is entered, gated by kpiAutosaveGate: never persist a load-seeded value and never persist a just-failed one, or a calculator that failed to load would silently overwrite real scores with blanks. Applied across both DeptBonusCalculator and HslBonusCalculator; SUBMISSION stays manual. New tested module, eight files, 867 lines. Known open thread carried forward rather than hidden: the executive_assistants case still lacks a test. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'Tech Bonus week picker becomes a calendar behind a Change week toggle, and the picked week fires that week everywhere',
-    status: 'Done',
-    completed: '2026-08-17',
-    shas: ['08e7fcba', 'ff772591', '836e3d7c', '8f92a283'],
-    basis:
-      'Done 2026-08-17; Sprint 26. The picker became a calendar (08e7fcba), was reduced to a plain small one and shed a phantom salary badge (ff772591), had the picked week pinned end-to-end so it fires THAT week at every gate rather than today\'s (836e3d7c), then retracted behind a Change week toggle (8f92a283). The pinning is the load-bearing part and follows the standing rule that every gate resolves through resolveIsTechBonusWeek and never the raw flag. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'Wizard step-2 conversion rates become cards with flag pairs; Additions declutter behind info icons',
-    status: 'Done',
-    completed: '2026-08-17',
-    shas: ['04142ef7', 'bbae3b19', 'ca4cf533'],
-    basis:
-      'Done 2026-08-17; Sprint 26. Step-2 conversion rates became cards with the reference detail behind info icons (04142ef7, which also added a Base UI popover to components/ui and one index.css rule), then gained flag pairs (bbae3b19); the Additions step retired its trashcan and moved two texts behind info icons (ca4cf533). Presentation only — no rate, gate or total changed. The COP card stays teal, never amber, because amber means warning on these cards. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'Notification chimes are view-scoped so HR no longer hears money',
-    status: 'Done',
-    completed: '2026-08-17',
-    shas: ['4e8309af'],
-    basis:
-      'Done 2026-08-17; Sprint 26. The chime had a single unscoped mount, so an HR user heard payroll money land. Every mount now passes a view and the pairing is tested (notification-views.test.ts), with a 100-line doc added. THE COMMIT MESSAGE IS THE WHOLE STORY OF WHY THIS ROW DID NOT EXIST UNTIL TODAY: it is literally "Push". Clustering this range by message rather than by file overlap would have missed the feature entirely. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'Salary “Ready to View” card discloses that bonuses are not in yet',
-    status: 'Done',
-    completed: '2026-08-17',
-    shas: ['6c494769'],
-    basis:
-      'Done 2026-08-17; Sprint 26. Seventeen lines on one card so an employee opening "Ready to View" is told the figure does not yet include bonuses, rather than reading a total that later moves. Scored 1 — the floor — because it is copy on an existing surface, but it is a real change to what an employee is told about their pay. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'Mid-week rate-change effective dates are real — snap-to-Sunday removed, changed weeks price 2dp legs, HSL transition OT counts every hour',
-    status: 'Done',
-    completed: '2026-08-18',
-    shas: ['273319a7'],
-    basis:
-      'Done 2026-08-18; Sprint 27. A payroll RULING rather than a UI change, scored 8 on Kane\'s big-ticket rule and linked to HRIS-02b. Snap-to-Sunday was the root cause of the mid-week underpay and is deleted; a week containing a rate change now prices two legs at 2dp; and OT across an HSL transition counts EVERY hour rather than only the post-transition ones. 16 files including audit-midweek-effective-date-underpay.mts and fix-midweek-transfer-effective-dates.mts, both run. THIS REVERSES A ROW THIS BOARD ALREADY MARKED DONE: "Rate-history effective_from snapped to the pay-week start" (c39fad3b, 3 SP, Done 2026-08-04) introduced exactly the snap this deletes. That row keeps its SP because it was real, shipped work, but it no longer describes how the system behaves and has been given its own superseding update. Kane confirmed 2026-08-20 he has used this in production; re-lock after deploy.',
-  },
-  {
-    name: 'Payroll Readiness recent-changes activity feed, and KPI rows show who submitted and when',
-    status: 'Done',
-    completed: '2026-08-18',
-    shas: ['a44098be'],
-    basis:
-      'Done 2026-08-18; Sprint 27. An activity feed at the bottom of each pane plus submitted-by and when on KPI rows. Deliberately narrow: audited SAVES only and never presence, and templates never print details. Where a KPI submitter is unknown it falls back to locked_by with NO timestamp rather than inventing one. Seven files, new tested module. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'Payroll Notes Offboarded pane cached and live with filters, a per-pane data-pull stamp and a Realtime signal dot',
-    status: 'Done',
-    completed: '2026-08-18',
-    shas: ['ce4e5e22', 'ce4ead97'],
-    basis:
-      'Done 2026-08-18; Sprint 27. The Offboarded pane became cached+live with search and a dept filter, every pane now stamps its own "Last data pull", and the Rates tab was removed (ce4e5e22); then each freshness line gained a Realtime signal dot — emerald for a live subscription at ~1s, amber for the ~30s poll — with an honest pre-subscribe default rather than an optimistic green (ce4ead97). Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'Wizard Reports and Overview CSV itemize bonuses and adjustments end-to-end',
-    status: 'Done',
-    completed: '2026-08-18',
-    shas: ['89c7aa5c'],
-    basis:
-      'Done 2026-08-18; Sprint 27. Bonuses and adjustments are itemized through the shared report-rows builder, so the wizard Reports table, the PDF and the Overview CSV agree line for line — held by an identity test rather than by three parallel implementations. A payout-extras fetch failure now ABORTS the export instead of quietly producing a short one, which is the part that matters: a silently incomplete payroll export is worse than no export. Nine files, one new route. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'Overview Tech Eligible badge uses the wizard’s own 30-day pay gate',
-    status: 'Done',
-    completed: '2026-08-18',
-    shas: ['42137521', 'c4f160b5'],
-    basis:
-      'Done 2026-08-18; Sprint 27. The badge computed its own eligibility and could therefore disagree with the wizard that actually pays. Both now call the SAME shared predicate, anchored on the cycle week start rather than on today. c4f160b5 is the INDEX.md row mapping the memory entry to the Accounting surface — a one-character diff, included because it is what makes the rule findable next time. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'Orphanage OT prices at the full 1.5× rate, never the 0.5× differential',
-    status: 'Done',
-    completed: '2026-08-18',
-    shas: ['41a21ae1'],
-    basis:
-      'Done 2026-08-18; Sprint 27. Seventeen lines, and money: orphanage OT was pricing at the 0.5× weekly differential that the HSL sheet-form rule uses, instead of the full 1.5×. The two rules genuinely differ — weekly HSL OT is a derived 0.5×, orphanage OT is a full 1.5× — and the code had collapsed them into one. Scored 2 rather than 1 because the diff size understates it: this is an underpay class, not a cosmetic fix. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'People → Bank changes band: send-from and payable-per-rail cards, per-rail counts, dept filter, no bank names',
-    status: 'Done',
-    completed: '2026-08-19',
-    shas: ['2c4df1fc', 'bac166f1', '633104d2'],
-    basis:
-      'Done 2026-08-19; Sprint 27. Opened with send-from and receiving-bank KPI cards (2c4df1fc), widened to per-rail counts, a rail split and a dept filter that scopes the whole band (bac166f1), then settled as TWO RAIL-shaped cards with no bank names anywhere (633104d2) — the final rule, and the one the row describes. Roster-scoped rather than feed-scoped; HiGlobe reads as wallet and Wise as bank; Wepay is dropped by rule. Twelve files, a tested bank-mix module. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'Gift Tracker tenure-gift roster export (CSV/XLSX/PDF) at master-list grain',
-    status: 'Done',
-    completed: '2026-08-19',
-    shas: ['0d1d3960'],
-    basis:
-      'Done 2026-08-19; Sprint 27. A three-format export built at MASTER-LIST grain, which is the whole design: people who never submitted a shipping address are the POINT of the report, not an omission from it, so the roster leads and submissions join onto it. Off-roster submitters are appended and flagged rather than dropped. No price and no payment appears anywhere — the gift feature is info-only. Seven files, 1,714 lines, new tested module. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'HSL KPI roster merged with the Global Master List — a placement alone reaches the Wizard rail',
-    status: 'Done',
-    completed: '2026-08-19',
-    shas: ['91056fa5', '54d8a197', '01c97f6d', '4a15db2c'],
-    basis:
-      'Done 2026-08-19; Sprint 27. The Global Master List is merged into the team-members roster, so a placement alone now reaches the Wizard rail; the plain-name fallback was deliberately DROPPED, which is what strands cjm@, jamec@ and ellyt@ until they are placed properly. Ten files, a tested pure merge function and a live read-only verifier. A DATE TRAP WORTH RECORDING: the branch commits are authored AND committed 2026-08-03, but the work did not land until the 4a15db2c merge on 2026-08-19. The merge sha is therefore listed LAST on purpose — selfcheck() derives the Completed Date from the final sha, so ending on 01c97f6d would have dated this Aug 3 and filed a fortnight of unmerged work into Sprint 25. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'p-0 dialogs get a dvh height cap so a modal footer can never go unreachable',
-    status: 'Done',
-    completed: '2026-08-19',
-    shas: ['531613f9'],
-    basis:
-      'Done 2026-08-19; Sprint 27. The milestone modal did not fit small viewports and its footer was unreachable. Root cause is general, not local: the base DialogContent has NO height cap at all, so any p-0 dialog must add gap-0 plus a dvh cap itself. Scored 2 rather than 1 for that reason — the finding applies to every p-0 dialog in the app, and is now written down. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-  {
-    name: 'Payment Catalog Bonus Library cards get an Edit button',
-    status: 'Done',
-    completed: '2026-08-19',
-    shas: ['94531923'],
-    basis:
-      'Done 2026-08-19; Sprint 27. An Edit button on the Bonus Library cards, so a bonus can be corrected in place instead of deleted and re-added. Two files, 59 lines. Kane confirmed 2026-08-20 he has used this in production.',
-  },
-
-  // ── the 3 rows that CANNOT be Done, measured against the live database 2026-08-20 ────────────
-  // Kane's confirmation covers the 22 above and was asked for row by row; it is deliberately NOT
-  // applied to these three, because no assertion can create a table or a column. Each carries the
-  // measurement that settles it, so none of this rests on a doc or a memory line saying PENDING —
-  // five such claims in this repo have turned out stale.
-  {
-    name: 'kpi.scored employee notification — toast plus live update the moment a dept-week is scored',
+    name: "Penny greets employees on the Overview — five rotating chips from a larger pool",
     status: 'Pending Deploy',
-    shas: ['31b11050'],
+    shas: ['e8ef4ff2', 'efec41aa', 'b1b893d0', 'f4abd38c', 'ea348fda', '7d7688cc'],
     basis:
-      'Pending Deploy, NOT Done; Sprint 26. Fifteen files, an employee toast, a live update on scoring, and its own DDL adding the kpi.scored notification type. The type CHECK was rejecting every insert until the superset file was applied on 2026-08-20, and all four call sites swallow a failed notify into console.warn, so the failure was invisible for three days. MEASURED THIS MORNING, after that DDL landed: employee_notifications still holds ZERO kpi.scored rows, against 3,694 payroll.available. The insert can now succeed but nothing has ever been delivered, so nobody has seen this feature work — which is precisely the gap between Pending Deploy and Done. Two follow-up rows are already open against it (the months-old-week floor, and making swallowed notify failures observable).',
-    blockers: [
-      'No kpi.scored notification has ever been delivered — score a dept-week and confirm the employee receives it',
-      'Fix the period floor first: 181 ready dept-weeks back to 2026-03-01 currently read as owed a notification',
-    ],
+      "Sprint 27, opened 2026-08-20 for work shipped 2026-08-19. SIX commits of proactive-greeting behaviour that the bundled Penny row does not describe: e8ef4ff2 (the bubble artwork), efec41aa (the bubble opens itself 5s after the Overview mounts), b1b893d0 (the timer would never have fired), f4abd38c (the PAB verdict dropped from under the bubble, bigger bubble), ea348fda (five greeting chips, a different five drawn from a larger pool each refresh) and 7d7688cc (the panel shows five too, not the whole pool). The HRIS-09 Penny row is titled for the CHAT - Haiku, self-only tools, 10 prompts per Manila day, guides and rendered Markdown - and says nothing about a greeting; two of these six are fixes to greeting behaviour alone, which is what makes this its own row rather than a line in that one. STATUS: Pending Deploy, not Done. All six are on origin/main, but pushed is not proven - this is visible behaviour on the employee Overview and nobody has confirmed it in production.",
+    blockers: ["Nobody has confirmed in prod that the greeting actually opens 5s after the Overview mounts and that the chips rotate - that click-through is the only thing between this and Done"],
   },
   {
-    name: 'Employee Penny AI on the Overview — Haiku, self-only tools, 10 prompts per Manila day, with guides and rendered Markdown',
+    name: "Penny told employees their already-paid weeks were still pending",
     status: 'Pending Deploy',
-    shas: ['70f96781', '1aa281ab', '39fe7255', '9d40a096', 'efec41aa', 'b1b893d0', 'f4abd38c', 'ea348fda', '7d7688cc'],
+    shas: ['9d40a096'],
     basis:
-      'Pending Deploy, NOT Done; Sprint 27; scored 8 on Kane\'s big-ticket rule. Nine code commits plus the asset commit e8ef4ff2: the Overview bubble on Haiku with tools that take no email argument (70f96781), Markdown actually rendered rather than printed raw (1aa281ab), self-service guides for COE, pay stubs and filing leave (39fe7255), a fix so employees are no longer told old PAID weeks are "pending" (9d40a096), a 5s greeting (efec41aa) whose timer would never have fired (b1b893d0), a bigger bubble minus the PAB verdict (f4abd38c), and five rotating greeting chips (ea348fda, 7d7688cc). MEASURED 2026-08-20: the table penny_employee_usage DOES NOT EXIST in production. PGRST205, byte-identical in shape to what a control table named definitely_not_a_table_xyz returns, so this is a real absence and not a permissions artefact. The row COUNT is the quota and the check fails closed, so the feature cannot serve a single prompt. The volume of polish on top of it is exactly why this needed measuring rather than assuming: it looks finished.',
-    blockers: [
-      'Run references/sql/create/2026-08-19_penny_employee_usage.sql (or node scripts/apply-penny-employee-usage.mjs --apply) — the table is absent, so the quota gate fails closed and Penny answers nobody',
-    ],
+      "Sprint 27, opened 2026-08-20 for work shipped 2026-08-19 (9d40a096). Penny was telling employees that weeks they had ALREADY BEEN PAID were still pending - a wrong answer about their own money, which is a different failure class from the chat feature shipping and is why this is a Bug row and not part of the Penny feature row. The fix is its own module (src/lib/penny/pay-status.ts, 140 lines) with its own tests (173 lines) plus a 233-line read-only audit script (scripts/audit-employee-pay-status.mts), and it changed src/lib/anthropic/employee-tools.ts so the tool answers from real pay status. STATUS: Pending Deploy - on origin/main, but no one has asked Penny about a paid week in production and seen the corrected answer.",
+    blockers: ["Needs one prod check: ask Penny about a week that is already paid and confirm it no longer reports pending"],
   },
   {
-    name: 'Time adjustments need two sign-offs — the manager names a second approver per request',
-    status: 'Pending Deploy',
-    shas: ['eff111db'],
-    basis:
-      'Pending Deploy, NOT Done; Sprint 27. Dual sign-off that can land in either order, with the manager naming a second approver per request — naming someone grants access to THAT row only and is additive to the department check, never a replacement. Thirteen files, 1,542 lines, two new routes. MEASURED 2026-08-20: all four of second_approver_email, second_approver_assigned_by, second_decision and manager_decision are ABSENT from time_adjustment_requests (the table holds 4 rows: 1 approved, 3 manager_denied). The migration has not run, so the feature is code-complete and functionally dead — the canonical case the honesty gate exists for.',
-    blockers: [
-      'Run references/sql/alter/2026-08-19_time_adjustment_second_approver.sql (or node scripts/apply-time-adjustment-second-approver.mjs --apply) — all four columns are absent',
-    ],
-  },
-
-  // ── Backlog · Unscheduled — three rows opened by MEASUREMENT today, not by a doc claim ───────
-  {
-    name: 'audit-pending-migrations reports a MISSING table as APPLIED — head:true returns no error',
-    status: 'Ready to Start',
-    shas: ['b2ef23fd', 'f18c8123'],
-    basis:
-      'Backlog, CRITICAL, opened 2026-08-20 by measurement. scripts/audit-pending-migrations.mts is the tool this project uses to replace "PENDING" folklore with an observation, and for TABLES it returns the wrong answer. probeTable() does select(\'*\', {head:true, count:\'exact\'}) and then treats a falsy error as APPLIED — but PostgREST returns NO ERROR AT ALL for a table that does not exist under head:true, just count:null. Proven twice today: penny_employee_usage (genuinely absent) and a control table named definitely_not_a_table_xyz both come back clean, while the positive control employee_notifications returns count=181799 — which is why this never surfaced. probeColumn() fails differently: a missing column errors with code:undefined and an empty message, so it matches neither the 42703 branch nor the regex nor the PGRST205 branch, and lands INCONCLUSIVE instead of NOT APPLIED. CONSEQUENCE, stated plainly: any table-creating migration that never ran was counted APPLIED, and the Sprint 27 row "Run outstanding Supabase migrations..." was closed Done on 2026-08-20 on the strength of that audit\'s APPLIED 21 / NOT APPLIED 1 / INCONCLUSIVE 3. The fix is to drop head:true for existence probes (a plain .limit(1) DOES error correctly) and to treat an empty-code error as NOT APPLIED rather than INCONCLUSIVE. Not fixed in this pass on purpose: it is a non-trivial correctness edit to existing code and belongs behind the hardening skill.',
-    blockers: ['Re-run the auditor after the fix and re-adjudicate the Sprint 27 migrations row against the corrected verdicts'],
-  },
-  {
-    name: 'Lawang rate shadow: hours ride lawangc@ on a stale 175 employee-scope override',
-    status: 'Ready to Start',
-    shas: ['4447e404'],
-    basis:
-      'Backlog, opened 2026-08-20. Hours ride lawangc@ against a stale employee-scope override of 175 while the real identity sits on a separate row, so the wrong rate prices the work. scripts/fix-lawang-rate-shadow.mts exists and has NEVER been run. WHERE IT WAS HIDING: it was committed inside 4447e404, whose entire commit message is "ss" — the second of four misleading messages in this range, and the reason this never reached the board. Blocked on Kane, by project rule: it is a bulk UPDATE, so it needs a SELECT backup written to disk first and an explicit --apply.',
-    blockers: ['Kane to approve and run scripts/fix-lawang-rate-shadow.mts --apply, SELECT backup first'],
-  },
-  {
-    name: 'Five employees still hold a rate override keyed to the retired bare hsl department',
-    status: 'Ready to Start',
-    shas: ['da24ffb6', '4a15db2c'],
-    basis:
-      'Backlog, opened 2026-08-20 by measurement. payment_catalog_pay_structures holds five live rows with scope=\'employee\' and department_key=\'hsl\' — glendac@, domv@, beao@, joee@ and jesr@ — all stamped created_by "rate-divergence fix 2026-07-29", at 265/397.50 and 225/337.50. WHAT WAS CHECKED AND CLEARED: no DEPARTMENT-scope bare-hsl row exists, so the parent-department cutover claim (parent base row DELETED) holds and is NOT contradicted. The finding is narrower and still real: bare "HSL" is no longer a placeable department, yet five people carry a personal override keyed to it, and nothing re-derives those rows. That is the same shape as the Lawang rate shadow — a stale employee-scope override outranking the correct sub-team rate — which is why it is worth a row rather than a note.',
-    blockers: ['Decide per person: re-key to the correct hsl:* sub-team, or delete the override and let the sub-team base rate apply'],
-  },
-
-  // ── one already-Done row that needs a correction posted, not a status change ─────────────────
-  // Kane's call 2026-08-20, asked explicitly: leave it Done with its 3 SP, and post a superseding
-  // update. It keeps its SP because it was real work that shipped and was correct when it shipped;
-  // it gets the update because the board should not silently assert a rule that has been deleted.
-  // The name cannot be fixed — item names are set at CREATE only, so a rename orphans the row and
-  // mints a duplicate.
-  {
-    name: 'Rate-history effective_from snapped to the pay-week start',
+    name: "Board-sync approval binds the sprint moves and the working tree, not just the proposal file",
     status: 'Done',
-    completed: '2026-08-04',
-    shas: ['c39fad3b'],
+    completed: '2026-08-20',
+    dateBasis: 'external',
+    shas: ['7fd64a13', 'ca8721dc'],
     basis:
-      'SUPERSEDED 2026-08-18 — this row stays Done and keeps its 3 SP, but it no longer describes how the system behaves. The snap-to-Sunday it shipped was later identified as the ROOT CAUSE of a mid-week underpay and was REMOVED by 273319a7 ("Mid-week rate-change effective dates are real"), which now prices a changed week as two 2dp legs from the real effective date. Read the Sprint 27 row for the current rule; read this one only as history. Nothing about the original work was wrong at the time: mid-week effective dates were producing inconsistent history and snapping them was a defensible fix, which is why the SP is not clawed back. The status and date are unchanged — only this update is new.',
+      "Done 2026-08-20; Sprint 27. TWO holes in this skill's own approval gate, both closed and both since exercised for real. (1) SPRINT MOVES were neither shown nor hashed: review.mts printed only \"tasks to patch: 139\", which cannot distinguish re-asserting 139 correct values from re-filing 59 rows into different sprints, and `sprint` was absent from the hashed proposal entirely - so an approval hash did not bind the re-filings it authorised, and TWO passes were approved through that hole. A sprint label asserts a date range, so a wrong one is the same class of falsehood as a wrong Completed Date. (2) The hash bound the proposal FILE, not the working tree: apply.mts compared the approved hash against proposal.json and then wrote whatever hris-plan.ts said at run time - observed live, a proposal minted at 13:30 was still on disk after a concurrent session re-filed six rows into Sprint 27 and described none of it. review.mts now stores an inputsHash over {passDate, PLAN_TASKS, ROWS} and apply.mts recomputes it offline, refusing on mismatch; a proposal without one is treated as stale and fails closed. DATE BASIS external: this runs from the repo rather than from Vercel, and the proof is that it RAN - the gate fired on its first real write today, \"approval accepted: 98579ab77d67 (source verified: 7eb9bf9db186)\", and the SPRINT MOVES section rendered in the review Kane approved. Code landed 2026-08-19 (7fd64a13, ca8721dc) and became provable 2026-08-20; the standing rule is that the Completed Date is the day it became PROVABLE.",
+  },
+  {
+    name: "Feature docs back-filled — ten sessions of gaps closed across twelve documents",
+    status: 'Done',
+    completed: '2026-08-19',
+    shas: ['1504cc58', '0d47dbb0'],
+    basis:
+      "Done 2026-08-19; Sprint 27. A deliberate two-commit documentation sweep: 1504cc58 back-filled ten sessions across cycle-closeout, department-transfers, hsl-subdepartments, payment-dispatch, payroll-readiness and payroll-wizard-final-pay, and 0d47dbb0 closed the remaining gaps in hsl-subdepartments, hsl-weekend-ot-pay, kpi-scored-notification and payroll-readiness - twelve documents in total. Logged deliberately, and the call is flagged: this skill warns that a docs commit is not a shipped feature (488cf44 \"HSL Weekend Hours Fix\" carried no code and must never be credited as one). The distinction is INTENT - 488cf44 was a commit whose message claimed a feature it did not contain, while these two ARE the deliverable, and the governing docs are what the hardening and blueprint skills read at step 1, so a gap there is a gap in every later decision. DATE BASIS commit: documentation is complete when it is written, and the last sha 0d47dbb0 lands 2026-08-19, inside Sprint 27's attribution window. If the board should carry only product rows, this is the row to cut.",
   },
 ];
 
