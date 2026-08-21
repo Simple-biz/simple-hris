@@ -524,6 +524,51 @@
  *
  * COST. `--only-new` — 1 correction, ~4 calls.
  *
+ *
+ * ── 2026-08-21, PASS 11 — THE TWO ITEMS LEFT ON THE TABLE, AND A FULL RECONCILE ──────────
+ * Kane: "SO update the board."
+ *
+ * FULL PATH THIS TIME, not `--only-new`, for two reasons that both matter:
+ *   1. This pass MOVES a row between sprints (Backlog → Sprint 27), and `--only-new` skips the
+ *      reconciler entirely, so it cannot write a Sprint label or a group move. Using it here would
+ *      have silently half-applied the pass.
+ *   2. It pays off accumulated relation debt. Six consecutive `--only-new` passes created rows with
+ *      NO epic relation — correctly grouped, typed, scored and statused, but unlinked from their
+ *      epics. A full reconcile adopts every one of them by name and repairs the relation graph.
+ *
+ * ROW 1 — AUDIT WRITES FAIL SILENTLY, and the number is measured rather than impressionistic.
+ * `insertAuditLog` returns `{ error }`; **197 of its 201 call sites discard it**, and the helper
+ * itself neither logs nor throws. Only four sites capture the result: app/api/audit-log/route.ts,
+ * payment-dispatches/undo (twice) and notify-failure-audit.ts. So the table this product treats as
+ * its trail of record can fail to record, everywhere, with no signal.
+ *
+ * The scope call, stated because it is the difference between 3 SP and 13: the fix is CENTRAL — make
+ * the helper surface its own failure — not 197 call-site edits. Editing 197 sites would be churn with
+ * a worse outcome, because the next new call site would reintroduce the gap.
+ *
+ * Worth recording that notify-failure-audit.ts is one of the FOUR that checks. The fix for silent
+ * notification failures does not itself fail silently, which is the right instinct applied in one
+ * place and missing in 197 others.
+ *
+ * AND THIS IS THE BUG THAT FOOLED ME. On 2026-08-21 I read 0 pab_exclusion rows as "the audit write
+ * failed", when the write had SUCCEEDED and my query was broken (a phantom column → 42703 → data
+ * NULL → a zero). Had the write genuinely failed, nothing in the system would have distinguished the
+ * two cases. That is not a coincidence, it is the same missing signal seen from the other side.
+ *
+ * ROW 2 — THE head:true TOOLING BUG COMES OUT OF THE BACKLOG. `probeTable()` in
+ * audit-pending-migrations.mts uses `head: true`, which returns no error and `count: null` for a
+ * MISSING table — so a table that was never created reads as APPLIED. It is Critical and it sat in
+ * the Backlog while a Sprint 27 row was closed Done on that tool's verdict. Pulled into the sprint
+ * because a measurement tool that can report a missing table as present undermines every migration
+ * claim made with it, including ones already acted on.
+ *
+ * The verdict it produced was re-checked rather than assumed: all nine tables the audit probes were
+ * re-read WITHOUT head:true and with a negative control that correctly returned PGRST205. All nine
+ * genuinely exist, so "0 pending migrations" STANDS. The tool is wrong; that particular answer was
+ * not. Both facts are recorded because either one alone is misleading.
+ *
+ * COST. FULL reconcile — ~200 calls + 2 corrections + 2 evidence updates + the verify read.
+ *
   * ── APPROVAL ──────────────────────────────────────────────────────────────────────────────────────
  * Kane approved the 57-row re-attribution on 2026-08-13 ("Approve all") after reviewing it in full,
  * plus three rulings the same day: gap-day rows → Sprint 25; the group move belongs in `sync.ts`; the
@@ -582,13 +627,20 @@ export interface PassRow {
 
 export const ROWS: PassRow[] = [
   {
-    name: "PAB exclusions leave no audit trail while PAB disputes are fully audited",
-    status: 'Done',
-    completed: '2026-08-21',
-    dateBasis: 'external',
-    shas: ['4afac832', 'b831699d'],
+    name: "Audit writes fail silently: insertAuditLog’s error is discarded at 197 of 201 call sites",
+    status: 'Ready to Start',
+    shas: ['b831699d'],
     basis:
-      "Done 2026-08-21; Sprint 27. PROVEN END TO END BY KANE'S OWN TEST, and this basis RETRACTS the pass-9 record that said otherwise. One exclusion click wrote BOTH halves one second apart: employee_notifications pab.excluded at 2026-08-21T12:28:22Z (kaner@simple.biz, 'Excluded from Perfect Attendance Bonus', visible in the employee bell per Kane's screenshot) and audit_log pab_exclusion.added at 2026-08-21T12:28:23Z with details {month: '2026-08', employee: 'kaner@simple.biz', excluded: true, notified: true} — so the audit row even records that the notification succeeded. That closes the asymmetry this row existed for: audit_log held 89 pab_dispute.* rows in full detail and NOTHING for the action that actually zeroes a person's attendance bonus, while app_settings.pab_period_exclusions carried 107 person-month entries whose author was unknowable. WHY PASS 9 GOT IT WRONG, recorded so the mistake is not repeated: the verification query selected 'actor_email', a column audit_log does not have; PostgREST returned 42703, data came back NULL, and the probe did (data ?? []).length without checking error — turning a FAILED query into an apparent zero. An empty result and a failed query are different facts. Same class as the security_invoker empty-200 and the head:true missing-table bug, and the third time in a week. DATE BASIS external: the proof is the live click on 08-21, not a commit. STILL TRUE AND NOT COVERED HERE: it cannot retroactively identify who was owed a missed pab.excluded notification (that set was never reconstructible), and insertAuditLog's returned error is still ignored at this call site.",
+      "Sprint 27, opened 2026-08-21 while closing the PAB audit row. MEASURED: insertAuditLog (src/lib/supabase/audit-log.ts) returns { error } and **197 of its 201 call sites discard it**, while the helper itself neither logs nor throws. Only four capture the result — app/api/audit-log/route.ts, app/api/payment-dispatches/undo/route.ts (twice) and src/lib/notifications/notify-failure-audit.ts. So audit_log, the table this product treats as its trail of record, can fail to record anywhere with no signal at all. SCOPE CALL, which is the difference between 3 SP and 13: the fix is CENTRAL — make the helper surface its own failure — not 197 call-site edits, which would be churn AND would leave the next new call site free to reintroduce the gap. WHY THIS ROW EXISTS AT ALL: on 2026-08-21 I read 0 pab_exclusion.* rows as 'the audit write failed' when the write had succeeded and my query was broken (a phantom column gave 42703, data came back NULL, and (data ?? []) turned that into a zero). Had the write actually failed, NOTHING in the system would have distinguished the two cases — same missing signal, seen from the other side. Note notify-failure-audit.ts is one of the four that checks, so the fix for silent notification failures does not itself fail silently; that instinct just needs generalising.",
+    blockers: ["Needs a call on the central signal: console.error, a notify-failure-audit-style row, or a thrown error at the helper"],
+  },
+  {
+    name: "audit-pending-migrations reports a MISSING table as APPLIED — head:true returns no error",
+    status: 'Ready to Start',
+    shas: ['b831699d'],
+    basis:
+      "Moved Backlog → Sprint 27 on 2026-08-21 (Kane: \"SO update the board\"). probeTable() in scripts/audit-pending-migrations.mts probes with head: true, which for a MISSING table returns no error and count: null — so the code takes the !error branch and records APPLIED. A table that was never created therefore reads as applied, and any entry the audit reports as 'exists, 0 rows' is indistinguishable from absent. CRITICAL, and pulled out of the Backlog because it is not a hypothetical: a Sprint 27 row was closed Done on this tool's verdict. THE VERDICT WAS RE-CHECKED RATHER THAN ASSUMED — all nine tables the audit probes were re-read WITHOUT head:true and with a negative control that correctly returned PGRST205, and all nine genuinely exist, so '0 pending migrations' STANDS. The tool is wrong; that particular answer was not. Both facts belong here because either alone misleads. THE FIX: probe without head:true (a plain select limit 1), and carry a negative control in the run so a broken probe announces itself.",
+    blockers: ["Any past 'exists, 0 rows' verdict from this tool is unverified until re-probed without head:true"],
   },
 ];
 

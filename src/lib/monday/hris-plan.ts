@@ -718,7 +718,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // wrong differently: a missing column errors with code:undefined and an empty message, matching no
   // branch, so it lands INCONCLUSIVE instead of NOT APPLIED. Consequence: every table-creating
   // migration that never ran was counted APPLIED, and the S27 migrations row was closed Done on it.
-  { epic: 'HRIS-15', name: 'audit-pending-migrations reports a MISSING table as APPLIED — head:true returns no error', type: 'Bug', sp: 3, done: false, sprint: 'BL', priority: 'Critical' },
+  { epic: 'HRIS-15', name: 'audit-pending-migrations reports a MISSING table as APPLIED — head:true returns no error', type: 'Bug', sp: 3, done: false, sprint: 'S27', priority: 'Critical' },
   // 3 SP: hours ride lawangc@ against a stale 175 employee-scope override while the person's real
   // identity sits on another row. The fix script exists (committed inside a commit messaged "ss") and
   // has never been run — it needs Kane's --apply and a SELECT backup first.
@@ -775,4 +775,16 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-15', name: 'Migration applies never ran: an unencoded @ in DATABASE_URL silently truncated the host', type: 'Bug', sp: 2, done: true, sprint: 'S27' },
   // 3 SP: six commits of board and documentation work in one day.
   { epic: 'HRIS-15', name: 'Board-sync logged the undocumented week and corrected the skill’s stale drift entries', type: 'Chore', sp: 3, done: true, sprint: 'S27' },
+  // ── Found 2026-08-21 while closing the PAB audit row ──────────────────────────────────────────
+  // 3 SP: `insertAuditLog` returns `{ error }` and **197 of its 201 call sites discard it**, while the
+  // helper itself neither logs nor throws. So every audit write in the product can fail with no
+  // signal anywhere — in the one table this product treats as its trail of record. Measured, not
+  // estimated: only app/api/audit-log/route.ts, payment-dispatches/undo (x2) and
+  // notify-failure-audit.ts capture the result. The fix is CENTRAL (make the helper surface its own
+  // failure), not 197 call-site edits — which is why this is 3 SP and not 13.
+  //
+  // This is also the bug that fooled ME on 2026-08-21: I read 0 audit rows as "the write failed",
+  // when the write had succeeded and my QUERY was broken. Had the write actually failed, there would
+  // have been nothing to distinguish the two — which is the whole problem.
+  { epic: 'HRIS-15', name: 'Audit writes fail silently: insertAuditLog’s error is discarded at 197 of 201 call sites', type: 'Bug', sp: 3, done: false, sprint: 'S27', priority: 'High' },
 ];
