@@ -2114,9 +2114,6 @@ function PayStructureTab({
     [extraDepartments],
   );
 
-  /** Every key the rail can actually render a row under. */
-  const railKeys = useMemo(() => new Set(allDepts.map((d) => d.key)), [allDepts]);
-
   const [selectedDept, setSelectedDept] = useState<string>(
     () => focusDept ?? DEPARTMENTS[0]?.key ?? '',
   );
@@ -2157,17 +2154,21 @@ function PayStructureTab({
     const own = new Map<string, number>();
     for (const s of structures) {
       if (s.scope !== 'employee') continue;
-      const key = homeKeyForStructure(s, owners, railKeys);
+      const key = homeKeyForStructure(s, owners, rail);
       own.set(key, (own.get(key) ?? 0) + 1);
     }
     return rollUpCounts(own, rail);
-  }, [structures, owners, railKeys, rail]);
+  }, [structures, owners, rail]);
   const headcounts = useMemo(() => rollUpCounts(bucketSizes(membersByDept), rail), [membersByDept, rail]);
 
   // A group opens when the user toggles it, when the selected department is one of
   // its children, or when the search text matches a child — otherwise a
   // child-only match would vanish behind a closed parent.
-  const [manualOpen, setManualOpen] = useState<Set<string>>(new Set());
+  // Tri-state on purpose: absent = follow the auto-open rule, true/false = the user
+  // has spoken and wins. A plain "open" Set made the chevron DEAD while one of the
+  // group's children was selected — it rendered aria-expanded and a "Collapse"
+  // tooltip while doing nothing, because the auto-open rule was an unconditional OR.
+  const [groupOpen, setGroupOpen] = useState<Map<string, boolean>>(new Map());
   const query = deptSearch.trim().toLowerCase();
   const filteredRail = useMemo(() => {
     if (!query) return rail;
@@ -2181,20 +2182,27 @@ function PayStructureTab({
       })
       .filter((g): g is NonNullable<typeof g> => g !== null);
   }, [rail, query]);
+  const parentOfSelected = useMemo(
+    () => parentOfDeptKey(selectedDept, new Set(rail.map((g) => g.parent.key))),
+    [selectedDept, rail],
+  );
   const isGroupOpen = useCallback(
     (parentKey: string) => {
+      // A search force-opens everything; the chevron says so by disabling itself.
       if (query) return true;
-      if (manualOpen.has(parentKey)) return true;
-      const parentOfSelected = parentOfDeptKey(
-        selectedDept,
-        new Set(rail.map((g) => g.parent.key)),
-      );
+      const explicit = groupOpen.get(parentKey);
+      if (explicit !== undefined) return explicit;
       return parentOfSelected === parentKey;
     },
-    [query, manualOpen, selectedDept, rail],
+    [query, groupOpen, parentOfSelected],
   );
 
   const dept = railEntries.find((d) => d.key === selectedDept) ?? allDepts[0];
+  /** Set only when the SELECTED entry is a parent — i.e. it has children below it. */
+  const selectedGroup = useMemo(
+    () => rail.find((g) => g.parent.key === selectedDept) ?? null,
+    [rail, selectedDept],
+  );
   const isNoDeptBucket = selectedDept === RAIL_NO_DEPARTMENT_KEY;
 
   const deptStructure = structures.find(
@@ -2215,23 +2223,42 @@ function PayStructureTab({
       structures.filter(
         (s) =>
           s.scope === 'employee' &&
-          homeKeyForStructure(s, owners, railKeys) === selectedDept,
+          homeKeyForStructure(s, owners, rail) === selectedDept,
       ),
-    [structures, owners, railKeys, selectedDept],
+    [structures, owners, rail, selectedDept],
   );
 
-  /** Emails that already carry an individual structure ANYWHERE — a member row
-   *  must not offer "Set rate" for someone whose override is simply filed under
-   *  another key, or two rows would be created for one person. */
+  /**
+   * Everyone who already carries an individual structure ANYWHERE.
+   *
+   * This — not the department-local set — is what both the member list and the
+   * ADDER gate on, and getting that wrong is a money bug. The adder writes under
+   * `selectedDept`, and the DB's real uniqueness is `(department_key, email)`, so a
+   * department-local guard computed in RE-HOMED space stops covering the write: with
+   * Hogan Smith Law selected, the 65 people whose rows are stored on the parent but
+   * render under a sub-team drop out of the local set, are re-offered by the picker
+   * with a BLANK editor, and saving resolves to their existing row and UPDATES it —
+   * then `syncRateHistory` pushes that into `employee_rate_history`,
+   * `employee_hourly_rates` and the Google rates sheet. Their real rate, overwritten
+   * from an empty form.
+   *
+   * Keyed across every alias, because a structure can be filed under a personal or
+   * alternate address (Baldonebro's stale row is a third identity) and one person
+   * must never end up with two employee-scope rows.
+   */
   const overriddenEmails = useMemo(() => {
     const set = new Set<string>();
-    for (const s of structures) {
-      if (s.scope !== 'employee') continue;
-      const em = (s.employeeEmail ?? '').trim().toLowerCase();
-      if (em) set.add(em);
+    for (const st of structures) {
+      if (st.scope !== 'employee') continue;
+      const em = (st.employeeEmail ?? '').trim().toLowerCase();
+      if (!em) continue;
+      set.add(em);
+      // Fold in the owner's other addresses so the guard holds whichever one a
+      // picker or a member row happens to key on.
+      for (const alias of owners.aliasesFor(em)) set.add(alias);
     }
     return set;
-  }, [structures]);
+  }, [structures, owners]);
 
   // Clear a pending "Set rate" hand-off when the department changes, so the adder
   // never opens on someone who is no longer on screen.
@@ -2295,10 +2322,12 @@ function PayStructureTab({
                           // about a state it cannot change.
                           locked: query !== '',
                           onToggle: () =>
-                            setManualOpen((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(group.parent.key)) next.delete(group.parent.key);
-                              else next.add(group.parent.key);
+                            setGroupOpen((prev) => {
+                              const next = new Map(prev);
+                              // Write the negation of what is CURRENTLY shown, so the
+                              // first click always visibly does something even when
+                              // the auto-open rule put the group open.
+                              next.set(group.parent.key, !open);
                               return next;
                             }),
                           childCount: group.children.length,
@@ -2362,7 +2391,13 @@ function PayStructureTab({
           </motion.h2>
         </AnimatePresence>
 
-        {/* Department-wide pay structure */}
+        {/* Department-wide pay structure.
+            Hidden for the "No department" bucket: it is not a department, and a rate
+            saved there would file `department_key='@no_department'` into the rate
+            source of truth, where nothing resolves it and nobody would ever find it
+            again. The sentinel is documented as carrying no rate slot; this is the
+            code that actually enforces it. */}
+        {!isNoDeptBucket && (
         <Section
           icon={Building2}
           title="Department pay structure"
@@ -2418,6 +2453,7 @@ function PayStructureTab({
             )}
           </AnimatePresence>
         </Section>
+        )}
 
         {/* Members of this department */}
         <Section
@@ -2434,22 +2470,49 @@ function PayStructureTab({
             compIndexes={compIndexes}
             overriddenEmails={overriddenEmails}
             onSetRate={setAddingFor}
+            subTeams={
+              // A parent's own bucket is empty by design once everyone is placed on a
+              // sub-team, so a flat "nobody is placed here" would flatly contradict
+              // the 546 on its own badge. Hand the children over and let the empty
+              // state say what is actually true, with a way to get there.
+              selectedGroup && selectedGroup.children.length > 0
+                ? selectedGroup.children.map((c) => ({
+                    key: c.key,
+                    name: stripHslPrefix(c.name),
+                    count: headcounts.get(c.key) ?? 0,
+                  }))
+                : undefined
+            }
+            onPickSubTeam={setSelectedDept}
           />
         </Section>
 
-        {/* Individual overrides */}
+        {/* Individual overrides. The adder is hidden for the "No department" bucket
+            for the same reason as the department rate: `departmentKey` would be the
+            sentinel. Existing rows still RENDER here — that is the whole point of the
+            bucket — they just cannot be created here. */}
         <Section
           icon={Users}
           title="Individual pay structure"
-          subtitle="Override the department default for a specific person."
+          subtitle={
+            isNoDeptBucket
+              ? 'Rows that belong to people the rail cannot place. Editable here; new ones are added from a real department.'
+              : 'Override the department default for a specific person.'
+          }
         >
+          {!isNoDeptBucket && (
           <IndividualPayAdder
             roster={roster}
             deptKey={selectedDept}
             deptName={dept?.name ?? ''}
             preselectEmail={addingFor}
             onPreselectConsumed={() => setAddingFor(null)}
-            existingEmails={new Set(individualForDept.map((s) => (s.employeeEmail ?? '').toLowerCase()))}
+            // The ALL-SCOPE set, never the department-local one: the write files
+            // under `selectedDept` and the DB is unique on (department_key, email),
+            // so a guard computed in re-homed space would let the picker re-offer
+            // someone whose row already occupies that slot — and the save would
+            // overwrite their live rate from a blank editor.
+            existingEmails={overriddenEmails}
             onAdd={(emp, regular, ot, currency, effectiveDate) =>
               onUpsert({
                 id: newPayId(),
@@ -2463,6 +2526,7 @@ function PayStructureTab({
               }, effectiveDate)
             }
           />
+          )}
           {individualForDept.length === 0 ? (
             <p className="text-sm text-zinc-400">No individual overrides in this department.</p>
           ) : (
@@ -2540,12 +2604,16 @@ function DeptRailRow({
           disabled={disclosure.locked}
           aria-expanded={disclosure.open}
           aria-label={`${disclosure.open ? 'Collapse' : 'Expand'} ${entry.name} sub-departments`}
+          // Navigation, not mutation: a view-only accountant must still be able to
+          // reach the 16 sub-teams, so this is carved out of ReadOnlyTab (the
+          // "Set rate" button and every rate editor deliberately are NOT).
+          data-readonly-allow
           title={
             disclosure.locked
               ? 'Groups stay open while searching'
               : `${disclosure.open ? 'Hide' : 'Show'} ${disclosure.childCount} sub-departments`
           }
-          className="shrink-0 rounded-md py-2 pl-1.5 pr-0.5 text-zinc-400 transition-colors hover:text-zinc-700 disabled:opacity-40 dark:hover:text-zinc-200"
+          className="shrink-0 rounded-md py-2 pl-1.5 pr-0.5 text-zinc-400 transition-colors hover:text-zinc-700 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-orange-500 disabled:opacity-40 dark:hover:text-zinc-200 dark:focus-visible:ring-blue-400"
         >
           <ChevronRight
             className={`h-3.5 w-3.5 transition-transform duration-200 ${disclosure.open ? 'rotate-90' : ''}`}
@@ -2557,7 +2625,8 @@ function DeptRailRow({
       <button
         type="button"
         onClick={onSelect}
-        className={`flex min-w-0 flex-1 items-center justify-between py-2 pr-2.5 text-left text-sm ${
+        data-readonly-allow
+        className={`flex min-w-0 flex-1 items-center justify-between py-2 pr-2.5 text-left text-sm focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-orange-500 dark:focus-visible:ring-blue-400 ${
           selected ? 'font-medium' : ''
         } ${disclosure ? 'pl-0.5' : 'pl-1'}`}
       >
@@ -2621,11 +2690,17 @@ function DeptMemberList({
   compIndexes,
   overriddenEmails,
   onSetRate,
+  subTeams,
+  onPickSubTeam,
 }: {
   members: RosterEntry[];
   compIndexes: PersonCompIndexes;
   overriddenEmails: ReadonlySet<string>;
   onSetRate: (email: string) => void;
+  /** Set when the selected entry is a PARENT — its children and their headcounts, so
+   *  an empty own-bucket can explain itself instead of denying the rolled-up badge. */
+  subTeams?: { key: string; name: string; count: number }[];
+  onPickSubTeam?: (key: string) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
   const PAGE = 25;
@@ -2640,7 +2715,38 @@ function DeptMemberList({
   );
 
   if (members.length === 0) {
-    return <p className="text-sm text-zinc-400">Nobody is placed in this department.</p>;
+    const viaSubTeams = (subTeams ?? []).filter((t) => t.count > 0);
+    const total = viaSubTeams.reduce((n, t) => n + t.count, 0);
+    if (total === 0) {
+      return <p className="text-sm text-zinc-400">Nobody is placed in this department.</p>;
+    }
+    // The badge on this row says `total`. Saying "nobody is placed here" beside it
+    // would be a flat contradiction, so say the true thing and offer the way in.
+    return (
+      <div>
+        <p className="mb-2 text-sm text-zinc-500 dark:text-zinc-400">
+          Nobody sits on this department directly —{' '}
+          <span className="font-semibold text-zinc-700 dark:text-zinc-200">{total.toLocaleString()}</span>{' '}
+          {total === 1 ? 'person is' : 'people are'} on its {viaSubTeams.length} sub-departments.
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {viaSubTeams.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => onPickSubTeam?.(t.key)}
+              data-readonly-allow
+              className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 px-2.5 py-1 text-xs text-zinc-600 transition-colors hover:border-orange-300 hover:bg-orange-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-orange-500 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-blue-800 dark:hover:bg-blue-950/40 dark:focus-visible:ring-blue-400"
+            >
+              {t.name}
+              <span className="rounded-full bg-zinc-100 px-1.5 text-[10px] font-semibold tabular-nums text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                {t.count}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
   }
 
   const shown = showAll ? rows : rows.slice(0, PAGE);
@@ -2669,7 +2775,7 @@ function DeptMemberList({
               <span className="block truncate text-[11px] text-zinc-400">{person.email}</span>
             </span>
             <RateSourceChip rate={rate} />
-            {!overriddenEmails.has(person.email) && (
+            {![person.email, ...person.aliases].some((e) => overriddenEmails.has(e)) && (
               <Button
                 type="button"
                 size="sm"
@@ -2690,6 +2796,7 @@ function DeptMemberList({
         <button
           type="button"
           onClick={() => setShowAll((v) => !v)}
+          data-readonly-allow
           className="mt-2 text-xs font-medium text-orange-600 hover:underline dark:text-blue-400"
         >
           {showAll ? 'Show fewer' : `Show all ${rows.length.toLocaleString()}`}
@@ -2766,14 +2873,16 @@ function IndividualPayAdder({
   const [filterByDept, setFilterByDept] = useState(true);
   const [effectiveDate, setEffectiveDate] = useState<string>(nextMondayIso);
 
-  // A member row's "Set rate" hands its email over here. The dept filter is
-  // dropped for the hand-off: a re-homed member can sit under a sub-team while the
-  // adder is scoped to the parent, and a preselected person who then failed the
-  // filter would render as an empty picker.
+  // A member row's "Set rate" hands its email over here.
+  //
+  // The dept filter is deliberately NOT touched. Turning it off would leave it off
+  // for every later manual add on the tab — a silent mode change from one click. The
+  // preselected person is admitted to `list` explicitly instead (see below), which
+  // covers the case the filter would have hidden: a re-homed member sitting under a
+  // sub-team while the adder is scoped to the parent.
   useEffect(() => {
     const em = (preselectEmail ?? '').trim().toLowerCase();
     if (!em) return;
-    setFilterByDept(false);
     setEmpEmail(em);
     onPreselectConsumed?.();
   }, [preselectEmail, onPreselectConsumed]);
@@ -2800,8 +2909,15 @@ function IndividualPayAdder({
   }, [roster, deptKey, deptName]);
   const list = useMemo(() => {
     const base = filterByDept ? deptMatched : roster;
-    return base.filter((r) => !existingEmails.has(r.email.toLowerCase()));
-  }, [roster, deptMatched, existingEmails, filterByDept]);
+    const filtered = base.filter((r) => !existingEmails.has(r.email.toLowerCase()));
+    // A handed-over person is admitted even when the dept filter would hide them,
+    // so the picker is never empty right after a "Set rate" click.
+    if (empEmail && !filtered.some((r) => r.email === empEmail)) {
+      const handed = roster.find((r) => r.email === empEmail);
+      if (handed) return [handed, ...filtered];
+    }
+    return filtered;
+  }, [roster, deptMatched, existingEmails, filterByDept, empEmail]);
 
   const emp = roster.find((r) => r.email === empEmail);
 

@@ -18,7 +18,6 @@
  */
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import type { PayStructure } from '@/lib/payment-catalog/pay-structure';
-import { isHslSubDeptLabel } from '@/lib/departments/hsl-subdept';
 import { normalizeNameTokens } from '@/lib/name/name-tokens';
 
 /** A rail entry, exactly the `{key, name}` shape the tab already passes around. */
@@ -131,7 +130,8 @@ export interface RailRosterPerson {
  * Note this is deliberately LOOSE: an `hsl:collections` cell matches its sub-team
  * entry AND the parent entry, since `normalizeDeptToKey` returns `hogan_smith_law`.
  * That is correct for a "who could I add here" picker and wrong for a membership
- * list — {@link assignRosterToRail} is what resolves it to one home.
+ * list — {@link assignRosterToRail} and {@link railKeyForCell} are what resolve it to
+ * one home, children before parents.
  */
 export function deptCellMatchesEntry(cell: string, entry: DeptRailEntry): boolean {
   const c = (cell ?? '').trim().toLowerCase();
@@ -179,16 +179,18 @@ export function assignRosterToRail<T extends RailRosterPerson>(
 
   for (const person of roster) {
     const cell = (person.department ?? '').trim();
-    // A namespaced cell is only ever its own sub-team — never let the parent's
-    // alias-map collapse claim it.
+    // Children first: a namespaced cell is its own sub-team, and the parent's
+    // alias-map collapse must never claim it.
     const specific = children.find((c) => deptCellMatchesEntry(cell, c));
     if (specific) { push(specific.key, person); continue; }
-    // A cell that names a SPECIFIC sub-team the rail doesn't carry (a retired or
-    // mistyped `hsl:<key>`) must not fall through to the parent's collapse either —
-    // it is unplaced, and saying so is the point.
-    const parent = isHslSubDeptLabel(cell)
-      ? undefined
-      : parents.find((p) => deptCellMatchesEntry(cell, p));
+    // Then the parent. An HSL-family cell that matched no child lands here by
+    // DESIGN — bare `HSL`, `Hogan Smith Law`, a retired key like
+    // `hsl:lead_nurture`, a typo like `hsl:typo_team`: all of them are HSL people
+    // with no resolvable sub-team, which is exactly what the parent bucket means.
+    // (An earlier version excluded cells naming a known-but-absent sub-team; that
+    // branch was unreachable, since the rail always carries all 16, and it made the
+    // parent's meaning harder to state than it is.)
+    const parent = parents.find((p) => p.key !== RAIL_NO_DEPARTMENT_KEY && deptCellMatchesEntry(cell, p));
     if (parent) { push(parent.key, person); continue; }
     push(RAIL_NO_DEPARTMENT_KEY, person);
   }
@@ -232,6 +234,10 @@ export interface StructureOwnerIndex {
    *  does not carry. **Ambiguous names are deliberately ABSENT** — see
    *  {@link buildStructureOwnerIndex}. */
   placementByNameKey: ReadonlyMap<string, string>;
+  /** Every OTHER address the owner of `email` is known by, `email` included. Empty
+   *  when the address belongs to nobody on the roster. Used by the "already has an
+   *  override" guard, which must hold whichever alias a row happens to be keyed on. */
+  aliasesFor(email: string): string[];
 }
 
 /**
@@ -276,7 +282,16 @@ export function buildStructureOwnerIndex(
   for (const [nk, owner] of nameOwner) {
     if (owner !== null) placementByNameKey.set(nk, nameDept.get(nk)!);
   }
-  return { placementByEmail, placementByNameKey };
+  const aliasGroups = new Map<string, string[]>();
+  for (const r of roster) {
+    const group = [...new Set([r.email, ...r.aliases].map((e) => (e ?? '').trim().toLowerCase()).filter(Boolean))];
+    for (const em of group) if (!aliasGroups.has(em)) aliasGroups.set(em, group);
+  }
+  return {
+    placementByEmail,
+    placementByNameKey,
+    aliasesFor: (email: string) => aliasGroups.get((email ?? '').trim().toLowerCase()) ?? [],
+  };
 }
 
 /**
@@ -310,21 +325,35 @@ export function buildStructureOwnerIndex(
 export function homeKeyForStructure(
   structure: PayStructure,
   owners: StructureOwnerIndex,
-  railKeys: ReadonlySet<string>,
+  rail: readonly DeptRailGroup[],
 ): string {
   const em = (structure.employeeEmail ?? '').trim().toLowerCase();
   const byEmail = em ? owners.placementByEmail.get(em) : undefined;
   const nk = normalizeNameTokens(structure.employeeName ?? '');
   const placement = byEmail ?? (nk ? owners.placementByNameKey.get(nk) : undefined);
   if (placement === undefined) return RAIL_NO_DEPARTMENT_KEY;
+  // Resolve the cell with the rail's OWN matcher, most-specific first — the same
+  // call `assignRosterToRail` makes. A second, weaker chain (key/lowercase/alias-map)
+  // could not see a CUSTOM department, whose entry matches only by display NAME, so
+  // every in-app-department person's override row was exiled to "No department".
+  return railKeyForCell(placement, rail);
+}
 
-  const cell = placement.trim();
-  // A namespaced cell IS its own key (`hsl:case_managers`), and that key wins — never
-  // let the alias-map collapse to the parent decide the home.
-  if (railKeys.has(cell)) return cell;
-  const lower = cell.toLowerCase();
-  if (railKeys.has(lower)) return lower;
-  const mapped = normalizeDeptToKey(cell);
-  if (mapped && railKeys.has(mapped)) return mapped;
+/**
+ * The rail entry a raw department CELL belongs to, most-specific first, or
+ * {@link RAIL_NO_DEPARTMENT_KEY}. The single definition of "where does this cell
+ * live", shared by member assignment and structure re-homing so a person and their
+ * own rate row can never land in different places.
+ */
+export function railKeyForCell(cell: string, rail: readonly DeptRailGroup[]): string {
+  const raw = (cell ?? '').trim();
+  if (!raw) return RAIL_NO_DEPARTMENT_KEY;
+  for (const g of rail) {
+    for (const c of g.children) if (deptCellMatchesEntry(raw, c)) return c.key;
+  }
+  for (const g of rail) {
+    if (g.parent.key === RAIL_NO_DEPARTMENT_KEY) continue;
+    if (deptCellMatchesEntry(raw, g.parent)) return g.parent.key;
+  }
   return RAIL_NO_DEPARTMENT_KEY;
 }

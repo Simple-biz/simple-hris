@@ -125,18 +125,21 @@ test('bare HSL falls to the PARENT, not to No department', () => {
   assert.equal(byKey.get(RAIL_NO_DEPARTMENT_KEY), undefined);
 });
 
-test('a RETIRED or mistyped hsl:<key> is UNPLACED, not silently parked on the parent', () => {
+test('any HSL cell with no resolvable sub-team lands on the PARENT, which is what it means', () => {
   const rail = buildDeptRail(RAIL);
-  // hsl:collections is a real sub-team but absent from THIS rail; hsl:typo_team is
-  // not a sub-team at all. Neither should inherit the parent's collapse: the point
-  // of the list is that these people have no home.
+  // hsl:collections is a real sub-team absent from THIS rail; hsl:typo_team is not a
+  // sub-team at all; hsl:lead_nurture is the one retired key. All three are HSL
+  // people with no team, which is precisely the parent bucket.
   const byKey = assignRosterToRail(
-    [person('r@x.com', 'hsl:collections'), person('t@x.com', 'hsl:typo_team')],
+    [
+      person('r@x.com', 'hsl:collections'),
+      person('t@x.com', 'hsl:typo_team'),
+      person('n@x.com', 'hsl:lead_nurture'),
+    ],
     rail,
   );
-  assert.deepEqual(byKey.get(RAIL_NO_DEPARTMENT_KEY)?.map((p) => p.email).sort(), ['r@x.com']);
-  // hsl:typo_team is NOT a known sub-team label, so it takes the parent's collapse.
-  assert.deepEqual(byKey.get(HSL_PARENT_KEY)?.map((p) => p.email), ['t@x.com']);
+  assert.deepEqual(byKey.get(HSL_PARENT_KEY)?.map((p) => p.email).sort(), ['n@x.com', 'r@x.com', 't@x.com']);
+  assert.equal(byKey.get(RAIL_NO_DEPARTMENT_KEY), undefined);
 });
 
 test('an unresolvable label reaches the No department bucket', () => {
@@ -206,7 +209,7 @@ test('bucketSizes feeds rollUpCounts', () => {
 
 // ── homeKeyForStructure — the Baldonebro fix ────────────────────────────────
 
-const RAIL_KEYS = new Set(RAIL.map((e) => e.key));
+const RAIL_TREE = buildDeptRail([...RAIL, { key: RAIL_NO_DEPARTMENT_KEY, name: 'No department' }]);
 
 const struct = (email: string, departmentKey: string, name = email): PayStructure => ({
   id: `id_${email}`,
@@ -239,7 +242,7 @@ const JOY = rosterPerson(
 test('her correctly-filed row renders under Case Managers', () => {
   const owners = buildStructureOwnerIndex([JOY]);
   assert.equal(
-    homeKeyForStructure(struct('joy@hogansmith.com', HSL_PARENT_KEY, JOY.name), owners, RAIL_KEYS),
+    homeKeyForStructure(struct('joy@hogansmith.com', HSL_PARENT_KEY, JOY.name), owners, RAIL_TREE),
     'hsl:case_managers',
   );
 });
@@ -249,7 +252,7 @@ test('her STALE THIRD IDENTITY resolves by NAME and leaves the parent', () => {
   // email-only lookup failed and the row kept its stored `hogan_smith_law`.
   const owners = buildStructureOwnerIndex([JOY]);
   assert.equal(
-    homeKeyForStructure(struct('joyb@simple.biz', HSL_PARENT_KEY, JOY.name), owners, RAIL_KEYS),
+    homeKeyForStructure(struct('joyb@simple.biz', HSL_PARENT_KEY, JOY.name), owners, RAIL_TREE),
     'hsl:case_managers',
   );
 });
@@ -262,7 +265,7 @@ test('an AMBIGUOUS name resolves to nothing rather than the wrong department', (
   // Two live namesakes ⇒ the name bridge must refuse, so an unknown-email row falls
   // to "No department" instead of guessing one of them.
   assert.equal(
-    homeKeyForStructure(struct('c@x.com', 'lead_gen', 'Santos, Maria "Maria"'), owners, RAIL_KEYS),
+    homeKeyForStructure(struct('c@x.com', 'lead_gen', 'Santos, Maria "Maria"'), owners, RAIL_TREE),
     RAIL_NO_DEPARTMENT_KEY,
   );
 });
@@ -271,7 +274,7 @@ test('the name key survives comma/quote/case variation', () => {
   const owners = buildStructureOwnerIndex([JOY]);
   for (const variant of ['BALDONEBRO, JOYCEL "JOY"', 'Baldonebro, Joycel “Joy”', '  Baldonebro,  Joycel "Joy" ']) {
     assert.equal(
-      homeKeyForStructure(struct('ghost@x.com', HSL_PARENT_KEY, variant), owners, RAIL_KEYS),
+      homeKeyForStructure(struct('ghost@x.com', HSL_PARENT_KEY, variant), owners, RAIL_TREE),
       'hsl:case_managers',
       variant,
     );
@@ -286,7 +289,7 @@ test('the name bridge is EXACT-token, not subset — a missing go-by token does 
   // several people. An unmatched row lands in "No department", never on a guess.
   const owners = buildStructureOwnerIndex([JOY]);
   assert.equal(
-    homeKeyForStructure(struct('ghost@x.com', HSL_PARENT_KEY, 'Joycel Baldonebro'), owners, RAIL_KEYS),
+    homeKeyForStructure(struct('ghost@x.com', HSL_PARENT_KEY, 'Joycel Baldonebro'), owners, RAIL_TREE),
     RAIL_NO_DEPARTMENT_KEY,
   );
 });
@@ -294,14 +297,27 @@ test('the name bridge is EXACT-token, not subset — a missing go-by token does 
 test('an owner nobody can resolve goes to No department, NOT the parent', () => {
   const owners = buildStructureOwnerIndex([]);
   assert.equal(
-    homeKeyForStructure(struct('ghost@simple.biz', HSL_PARENT_KEY, 'Ghost, A "A"'), owners, RAIL_KEYS),
+    homeKeyForStructure(struct('ghost@simple.biz', HSL_PARENT_KEY, 'Ghost, A "A"'), owners, RAIL_TREE),
     RAIL_NO_DEPARTMENT_KEY,
   );
 });
 
 test('someone transferred OUT of HSL re-homes to their new department', () => {
   const owners = buildStructureOwnerIndex([rosterPerson('x@simple.biz', 'X, Y "Y"', 'Lead Gen')]);
-  assert.equal(homeKeyForStructure(struct('x@simple.biz', HSL_PARENT_KEY, 'X, Y "Y"'), owners, RAIL_KEYS), 'lead_gen');
+  assert.equal(homeKeyForStructure(struct('x@simple.biz', HSL_PARENT_KEY, 'X, Y "Y"'), owners, RAIL_TREE), 'lead_gen');
+});
+
+test('a CUSTOM department cell resolves — it matches by display NAME only', () => {
+  // The regression this guards: a second, weaker resolution chain (key / lowercase /
+  // alias-map) cannot see a custom department, so every in-app-department person's
+  // override row was exiled to "No department".
+  const owners = buildStructureOwnerIndex([
+    rosterPerson('ea@simple.biz', 'EA, Person "P"', 'Executive Assistants'),
+  ]);
+  assert.equal(
+    homeKeyForStructure(struct('ea@simple.biz', 'lead_gen', 'EA, Person "P"'), owners, RAIL_TREE),
+    'executive_assistants',
+  );
 });
 
 test('a placement the rail cannot render follows the PERSON into No department', () => {
@@ -309,20 +325,20 @@ test('a placement the rail cannot render follows the PERSON into No department',
   // row and its owner are never in different places.
   const owners = buildStructureOwnerIndex([rosterPerson('u@simple.biz', 'U, V "V"', 'USEE')]);
   assert.equal(
-    homeKeyForStructure(struct('u@simple.biz', 'us_manager_bonus', 'U, V "V"'), owners, RAIL_KEYS),
+    homeKeyForStructure(struct('u@simple.biz', 'us_manager_bonus', 'U, V "V"'), owners, RAIL_TREE),
     RAIL_NO_DEPARTMENT_KEY,
   );
 });
 
 test('a bare-HSL placement re-homes to the parent — the parent is for THOSE people', () => {
   const owners = buildStructureOwnerIndex([rosterPerson('b@simple.biz', 'B, C "C"', 'HSL')]);
-  assert.equal(homeKeyForStructure(struct('b@simple.biz', 'lead_gen', 'B, C "C"'), owners, RAIL_KEYS), HSL_PARENT_KEY);
+  assert.equal(homeKeyForStructure(struct('b@simple.biz', 'lead_gen', 'B, C "C"'), owners, RAIL_TREE), HSL_PARENT_KEY);
 });
 
 test('a namespaced cell wins over the alias-map collapse, casing included', () => {
   const owners = buildStructureOwnerIndex([rosterPerson('c@simple.biz', 'C, D "D"', 'HSL:Case_Managers')]);
   assert.equal(
-    homeKeyForStructure(struct('c@simple.biz', HSL_PARENT_KEY, 'C, D "D"'), owners, RAIL_KEYS),
+    homeKeyForStructure(struct('c@simple.biz', HSL_PARENT_KEY, 'C, D "D"'), owners, RAIL_TREE),
     'hsl:case_managers',
   );
 });
@@ -330,11 +346,11 @@ test('a namespaced cell wins over the alias-map collapse, casing included', () =
 test('a blank email still resolves by name', () => {
   const owners = buildStructureOwnerIndex([JOY]);
   const s0: PayStructure = { ...struct('x@x.com', 'lead_gen', JOY.name), employeeEmail: undefined };
-  assert.equal(homeKeyForStructure(s0, owners, RAIL_KEYS), 'hsl:case_managers');
+  assert.equal(homeKeyForStructure(s0, owners, RAIL_TREE), 'hsl:case_managers');
 });
 
 test('no email AND no name is unplaceable, not parked on a real department', () => {
   const owners = buildStructureOwnerIndex([JOY]);
   const s0: PayStructure = { ...struct('x@x.com', HSL_PARENT_KEY, ''), employeeEmail: undefined };
-  assert.equal(homeKeyForStructure(s0, owners, RAIL_KEYS), RAIL_NO_DEPARTMENT_KEY);
+  assert.equal(homeKeyForStructure(s0, owners, RAIL_TREE), RAIL_NO_DEPARTMENT_KEY);
 });

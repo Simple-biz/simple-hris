@@ -560,9 +560,15 @@ is the whole point:
 > under hogan smith law as she is a case manager already"*.
 
 Live result: the parent's own membership is **0**, its rolled-up badge reads 546, and
-each sub-team carries its own count. A **retired or mistyped `hsl:<key>`** does NOT
-inherit the parent's collapse — it is unplaced, because saying so is the point. Bare
-`HSL` *does* fall to the parent.
+each sub-team carries its own count. **Every HSL cell with no resolvable sub-team lands
+on the parent** — bare `HSL`, `Hogan Smith Law`, the retired `hsl:lead_nurture`, a typo
+like `hsl:typo_team` — because "HSL person with no team" is exactly what the parent
+bucket means. (An earlier version excluded cells naming a known-but-absent sub-team;
+that branch was unreachable, since the rail always carries all 16.)
+
+`railKeyForCell` is the single answer to "where does this cell live", shared by member
+assignment and structure re-homing, so a person and their own rate row can never land
+in different places. Resolving a cell any other way is how the bug below happened.
 
 **Counts roll up.** `rollUpCounts` gives a collapsed parent its own plus its
 children's, or "Hogan Smith Law" reads 0 while hiding a 174-person team. Two badges
@@ -633,8 +639,27 @@ override that silently beats their sheet rate. That finding is why
 "Set rate" writes nothing itself — it hands the email to `IndividualPayAdder`, the
 adder already on the tab, so there is **one** write path and **one** place the amber
 sheet-override warning lives. It carries no `data-readonly-allow`, so a view-only
-accountant's click is swallowed by `ReadOnlyTab`. A person who already has an
-individual structure anywhere gets no button, or one person would end up with two rows.
+accountant's click is swallowed by `ReadOnlyTab`.
+
+> **The adder gates on the ALL-SCOPE, alias-keyed override set, never the
+> department-local one.** This is a money rule, and the first version got it wrong. The
+> adder writes under `selectedDept` and the DB is unique on `(department_key, email)`,
+> so a guard computed in **re-homed** space stops covering the write: with Hogan Smith
+> Law selected, the 65 people whose rows are *stored* on the parent but *render* under
+> a sub-team fell out of the local set, the picker re-offered them with a **blank**
+> editor, and saving resolved to their existing row and **UPDATED** it — then
+> `syncRateHistory` pushed that into `employee_rate_history`, `employee_hourly_rates`
+> and the Google rates sheet. A live individual rate, overwritten from an empty form.
+> Both the member list and the picker now answer "does this person already have an
+> override?" from `overriddenEmails`, keyed across every alias because a row can be
+> filed under a personal or alternate address. Verified live: **0 of the 808
+> employee-structure owners are re-offerable.**
+
+**The "No department" bucket is not a department.** Its department-rate editor and its
+adder are both hidden, or a rate would be filed under `department_key='@no_department'`
+in the rate source of truth, where nothing resolves it and nobody would find it again.
+Existing rows still *render* there — that is the point of the bucket — they just cannot
+be created there.
 
 #### Interaction rules that are easy to break
 
@@ -644,8 +669,23 @@ individual structure anywhere gets no button, or one person would end up with tw
 - **Search force-opens every group.** `deptSearch` filters on display name, so a
   child-only match behind a closed parent would simply vanish. While a query is
   active the chevron is disabled rather than lying about a state it cannot change.
+- **Disclosure is TRI-STATE** (`Map<string, boolean>`): absent = follow the auto-open
+  rule, `true`/`false` = the user has spoken and wins. A plain "open" `Set` made the
+  chevron **dead** whenever one of the group's children was selected — it rendered
+  `aria-expanded` and a "Collapse" tooltip while doing nothing, because auto-open was
+  an unconditional OR. The toggle writes the negation of what is currently *shown*, so
+  the first click always visibly does something.
 - **A group auto-opens** when one of its children is the selection, so deep-linking
   via `focusDept` never lands on an invisible row.
+- **A parent's Members panel never denies its own badge.** Once everyone is placed on
+  a sub-team the parent's own bucket is empty, so a flat "nobody is placed in this
+  department" would sit directly beside a badge reading 546. It shows the sub-team
+  breakdown with counts instead, each one a way in.
+- **The chevron, the rail labels and "Show all" carry `data-readonly-allow`** — they
+  are navigation. Without it `ReadOnlyTab` swallowed them and a view-only accountant
+  could not reach the 16 sub-teams at all. "Set rate" and every rate editor
+  deliberately stay unmarked.
+- Focus rings are `ring-inset`: `Expand`'s `overflow-hidden` clips an outset ring.
 - **The mobile select is flat** (`AnimatedSelect` has no nesting), so children are
   indented with NBSPs. Dropping them would make 565 people unreachable on mobile.
 - Nested labels drop the `HSL — ` prefix (`stripHslPrefix`) — presentation only;
