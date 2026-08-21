@@ -30,6 +30,8 @@ import {
   PROPOSAL_PATH,
   SKILL_DIR,
   TASK_COLS,
+  correctionValues,
+  DailyLimitExceeded,
   TASK_GROUPS,
   TASK_PRIORITY_INDEX,
   TASK_SPRINT_INDEX,
@@ -50,6 +52,7 @@ import {
 } from './monday.mts';
 import { PASS_DATE, ROWS, selfcheck, updateBody } from './pass.mts';
 import type { PassRow } from './pass.mts';
+import { queuePendingRows } from './pending-sp.mts';
 
 const args = process.argv.slice(2);
 const APPLY = args.includes('--apply');
@@ -132,6 +135,18 @@ if (APPLY) {
 }
 
 // ── gate 3: the labels this pass writes must still exist (the board is structure-locked) ─────────
+/**
+ * Item names whose correction actually LANDED this run. Module-level so the outermost
+ * DailyLimitExceeded handler can queue everything that did not, wherever the budget died —
+ * including phase 1, before a single correction is attempted. Measured 2026-08-21: the
+ * budget was already spent by 13:17Z, so apply.mts died on the label-gate read and the
+ * in-loop handler never ran. A queue that only covers a mid-loop death is not a queue.
+ */
+const WRITTEN_ITEM_NAMES = new Set<string>();
+
+// Inside the try: the label gate is the FIRST call that can hit a dead budget, and on
+// 2026-08-21 that is exactly where it died.
+try {
 await assertLabelsUnchanged();
 console.log('labels verified against hris-plan.ts');
 
@@ -157,29 +172,13 @@ if (overlap.length) {
 }
 for (const row of ROWS) assertNameIsSafe(taskItemName({ name: row.name }));
 
-/**
- * The execution-state payload for ONE row — used by BOTH write paths so the rule cannot drift
- * between them.
- *
- * Actual SP and Completed Date are a RECORD of shipped work, so they accompany Done and nothing
- * else. On a row moving OFF Done they are actively CLEARED rather than left behind: a Pending
- * Deploy row still carrying an Actual SP is precisely the phantom verify.mts sweeps for. Actual SP
- * is never invented — it is always the plan's own `sp`, the identical value the create path writes.
- */
-function correctionValues(row: PassRow, planSp: number): Record<string, unknown> {
-  const done = row.status === 'Done';
-  return {
-    [TASK_COLS.status]: { index: TASK_STATUS_INDEX[row.status] },
-    [TASK_COLS.actualSp]: done ? String(planSp) : '',
-    [TASK_COLS.completed]: done && row.completed ? { date: row.completed } : '',
-  };
-}
+// correctionValues now lives in monday.mts so the flush path shares the identical rule.
 
 /** How a correction reads in the console — the same facts the proposal hash was taken over. */
 const describe = (row: PassRow, planSp: number) =>
   `${row.status}${row.status === 'Done' ? ` · actual ${planSp} SP · completed ${row.completed}` : ''}`;
 
-await withLock(async () => {
+  await withLock(async () => {
   process.env.MONDAY = loadToken();
 
   // ── LEAN PATH — create only the rows this pass names, then correct them ────────────────────────
@@ -239,6 +238,7 @@ await withLock(async () => {
       if (APPLY) {
         await postUpdate(id, updateBody(row));
         applied.push({ item: itemName, id, status: row.status });
+      WRITTEN_ITEM_NAMES.add(itemName);
       }
     }
 
@@ -312,9 +312,21 @@ await withLock(async () => {
 
     console.log(`  ${hit.id} → ${describe(row, plan.sp)}  ${row.name.slice(0, 52)}`);
     if (APPLY) {
-      await setColumns(MONDAY_BOARDS.tasks, hit.id, vals);
-      await postUpdate(hit.id, updateBody(row));
-      applied.push({ item: itemName, id: hit.id, status: row.status });
+      try {
+        await setColumns(MONDAY_BOARDS.tasks, hit.id, vals);
+        await postUpdate(hit.id, updateBody(row));
+        applied.push({ item: itemName, id: hit.id, status: row.status });
+        WRITTEN_ITEM_NAMES.add(itemName);
+      } catch (e) {
+        // A dead budget mid-corrections used to drop the TAIL of the pass on the
+        // floor: the run ended, the rows were never written, and the SP was only
+        // recoverable by re-deriving the whole pass from git. Now the unwritten
+        // remainder (this row included) is persisted and flushed later on Kane's
+        // word — see pending-sp.mts.
+        // Re-thrown: the outermost handler owns queueing, so there is exactly ONE place
+        // that decides what is owed, wherever the budget died.
+        throw e;
+      }
     }
   }
 
@@ -338,3 +350,29 @@ await withLock(async () => {
     console.log(`plan is ${PLAN_TASKS.length} tasks; the project's Sprint Tasks relation was re-pointed at all of them.`);
   }
 });
+} catch (e) {
+  // The ONE place that decides what the board is owed. Any DailyLimitExceeded -- the
+  // phase-1 label gate, the structure reconcile, or mid-corrections -- lands here, and
+  // every row whose correction did not land is persisted rather than lost.
+  if (e instanceof DailyLimitExceeded) {
+    const owed = ROWS.filter((r) => !WRITTEN_ITEM_NAMES.has(taskItemName({ name: r.name })));
+    const q = queuePendingRows(owed, {
+      passDate: PASS_DATE,
+      approvalHash: approved ?? null,
+      inputsHash: null,
+      reason: 'DAILY_LIMIT_EXCEEDED',
+      now: new Date().toISOString(),
+    });
+    const NL = String.fromCharCode(10);
+    console.log('');
+    console.log(`  BUDGET DIED. ${WRITTEN_ITEM_NAMES.size} correction(s) had landed.`);
+    console.log(`  QUEUED ${q.queued} unwritten row(s) to pending-sp.json (${q.superseded} superseded).`);
+    for (const l of String(e.message).split(NL).slice(1, 3)) console.log(l);
+    console.log('');
+    console.log('  Flush when the budget resets (Kane says "push"):');
+    console.log('    node --import tsx .claude/skills/monday-board-sync/scripts/flush-pending.mts --apply');
+    process.exitCode = 3;
+  } else {
+    throw e;
+  }
+}

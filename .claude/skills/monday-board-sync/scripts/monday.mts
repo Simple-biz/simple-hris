@@ -45,6 +45,8 @@ export const {
   taskItemName,
 } = plan;
 export type { PlanEpic, PlanTask, TaskStatus, TaskType } from '../../../../src/lib/monday/hris-plan';
+/** Keys of TASK_STATUS_INDEX — the statuses the corrector may write. */
+type TaskStatusName = keyof typeof TASK_STATUS_INDEX;
 
 export const REPO_ROOT = path.resolve(import.meta.dirname, '../../../..');
 export const SKILL_DIR = path.resolve(import.meta.dirname, '..');
@@ -338,6 +340,31 @@ export function assertNameIsSafe(name: string): void {
     throw new Error(`item name contains angle brackets — Monday strips tags on create: ${name}`);
   }
   if (name !== name.trim()) throw new Error(`item name has leading/trailing whitespace: ${JSON.stringify(name)}`);
+}
+
+/**
+ * The execution-state payload for ONE row — used by ALL write paths (full apply,
+ * --only-new, and the pending-SP flush) so the rule cannot drift between them.
+ *
+ * Actual SP and Completed Date are a RECORD of shipped work, so they accompany Done
+ * and nothing else. On a row moving OFF Done they are actively CLEARED rather than
+ * left behind: a Pending Deploy row still carrying an Actual SP is precisely the
+ * phantom verify.mts sweeps for. Actual SP is never invented — it is always the
+ * plan's own `sp`, the identical value the create path writes.
+ *
+ * Lives here rather than in apply.mts because apply.mts RUNS a pass at import time;
+ * anything that needs this rule must be able to import it without triggering one.
+ */
+export function correctionValues(
+  row: { status: TaskStatusName; completed?: string },
+  planSp: number,
+): Record<string, unknown> {
+  const done = row.status === 'Done';
+  return {
+    [TASK_COLS.status]: { index: TASK_STATUS_INDEX[row.status] },
+    [TASK_COLS.actualSp]: done ? String(planSp) : '',
+    [TASK_COLS.completed]: done && row.completed ? { date: row.completed } : '',
+  };
 }
 
 /** Stable hash of a proposal, so an approval can be bound to exactly what was shown. */

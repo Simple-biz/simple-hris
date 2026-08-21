@@ -597,6 +597,60 @@ pass 4's own residue: the working tree was clean and `f51b4cd5` already containe
 Recent mtimes alone cannot tell "a session is writing right now" from "a session just finished and
 committed". The tree state is what separates them, and it is free to check.
 
+## The pending-SP ledger — 2026-08-21
+
+Kane: *"if the Monday API Budget is exhausted we would store our SP and when I call to push it you
+will push our pending SP to Monday."* Built as `pending-sp.json` (tracked in git) plus
+`scripts/flush-pending.mts`.
+
+### The hole it closes
+
+A full pass is ~200 calls against a UTC-day bucket. The 08-20 failure was the *lucky* shape: the
+apply finished and only `verify.mts` died. The unlucky shape is the budget dying **between
+corrections** — the run ends, the tail is never written, and the SP is recoverable only by
+re-deriving the whole pass from git.
+
+### Why a one-command flush does not defeat the approval gate
+
+A queued entry carries the approval hash it was born under, so flushing it **completes an
+already-approved write that the budget interrupted**. That is the entire justification, and it is
+why an entry with **no hash** is refused rather than written — `review.mts` is the only path to
+approval.
+
+### Time is the new adversary, so the flush re-derives
+
+`apply.mts` refuses a proposal minted for a different pass date, and that gate stays. `revalidate()`
+re-checks against the current repo and plan and refuses on: no approval hash · re-scored since
+queueing · name no longer in the plan byte-exact · Done with no Completed Date or with an open
+blocker · **Completed Date no longer equal to the last sha's commit date** · a sha git cannot
+resolve or that is no longer an ancestor of `origin/main`.
+
+That fifth one is the point. A Completed Date is a claim about when work became provable, and a
+rebase or amend between queue and flush would let a stale date land looking fresh. All seven classes
+were exercised against synthetic entries; only the still-true entry passed.
+
+**The Completed Date is never moved to the flush day.** The lag goes into the evidence update
+instead — queue date, original approval hash, and how many days late — so the trail shows the board
+caught up after the fact rather than pretending it was current.
+
+### Two things building it taught
+
+**A queue that only covers a mid-loop death is not a queue.** The first version hooked the
+corrections loop. Then the real budget was already dead when I tested — other sessions had spent it
+by 13:17Z — and `apply.mts` died on the **phase-1 label gate**, before a single correction, so the
+hook never fired and nothing was queued. Fixed by hoisting a module-level `WRITTEN_ITEM_NAMES` set
+and putting **one** handler around everything from the label gate onward: whatever landed is known,
+so whatever did not can be queued from any death point.
+
+**`correctionValues()` moved to `monday.mts`.** It was private to `apply.mts`, which runs a pass at
+import time — so the flush could not import it without triggering one. Copying it would have given
+the board two write rules that could drift, which the two-writer split exists to prevent. Now all
+three write paths import the same function.
+
+Cost: 1 budget probe + ~2 calls per row, so a 10-row flush is ~21 calls against the ~200 a reconcile
+needs — affordable on a partly-spent budget. It takes the same `.apply.lock`, writes only corrector
+columns, and marks entries flushed **one at a time** so a mid-flush death leaves an accurate ledger.
+
 ## Cross-links
 
 `docs/features/INDEX.md` · memory `monday-hris-board-sync` · pass evidence

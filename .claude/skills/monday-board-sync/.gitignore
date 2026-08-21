@@ -2,3 +2,7 @@
 proposal.json
 apply-result.json
 .apply.lock
+flush-result.json
+
+# pending-sp.json is deliberately NOT ignored - it is a durable ledger of SP the
+# board still owes, and a shared checkout means another session must see it.

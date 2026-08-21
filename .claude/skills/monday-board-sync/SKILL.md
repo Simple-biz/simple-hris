@@ -34,6 +34,11 @@ So the split is by **column**, which is the boundary `sync.ts:5-10` already decl
 |---|---|---|
 | the reconciler | existence, Estimated SP, Type, Sprint, Quarter, both relations, project rollup | `hris-plan.ts` → `sync.ts` |
 | this skill's corrector | Status, Actual SP, Completed Date, item updates | `scripts/pass.mts` → `apply.mts` |
+| the deferred corrector | the SAME corrector columns, written later | `pending-sp.json` → `flush-pending.mts` |
+
+The third row is not a third rule. `correctionValues()` lives in `monday.mts` and is
+imported by every write path, so the full apply, `--only-new` and the flush cannot
+drift from one another.
 
 `apply.mts` runs the **real** `syncHrisBoard` for structure — not a reimplementation — then corrects.
 `apply.mts` asserts at runtime that its column set is disjoint from the reconciler's update payload.
@@ -179,6 +184,12 @@ gets written is provably what he saw.
 then corrections plus an evidence update on every row it touches. Keep that update habit: it is what
 lets anyone reconstruct the claim later, including *why* a row is Done.
 
+### 5b. If the budget dies, flush later
+
+Nothing to decide in the moment: `apply.mts` queues what it could not write and says so. When
+Kane says **push**, run `flush-pending.mts --apply`. Read what it REFUSES — a refusal is a
+finding about drift, not an obstacle to route around, and the fix is never to delete the entry.
+
 ### 6. Verify by re-reading
 `verify.mts`. **Never report a sync as done off the write log** — the log says what was sent, not what
 the board holds. With an empty `ROWS` it also serves as the standalone board audit: name parity both
@@ -226,6 +237,61 @@ One Gridline pass left verification dead for 5.5 hours.
   scored and statused but NOT linked to its epic until a full reconcile runs. Reach for the full
   path when the pass changes structure (new epic, re-scored rows, a sprint move).
 - `monday.mts` raises `DailyLimitExceeded` immediately instead of retrying, so a blown budget is loud.
+- **A blown budget no longer loses the SP** — see the pending ledger below.
+
+## The pending-SP ledger — when the budget dies, the SP is owed, not lost
+
+`pending-sp.json` (tracked in git, unlike `proposal.json`) holds corrections that were
+approved but could not be written. `flush-pending.mts` writes them later, on Kane's word.
+
+**Why it exists.** A full pass is ~200 calls against a UTC-day bucket. On 2026-08-20 the
+apply finished and `verify.mts` died instantly — that was the *lucky* ordering. The unlucky
+one is the budget dying **between corrections**, which silently drops the tail of the pass:
+the run ends, the rows are never written, and the SP is only recoverable by re-deriving the
+whole pass from git. `apply.mts` now catches `DailyLimitExceeded` in its corrections loop and
+queues every row it had not yet written, this one included.
+
+**Why a one-command flush does not break the approval gate.** A queued entry carries the
+approval hash it was born under, so flushing it **completes an already-approved write the
+budget interrupted** — it does not invent a new one. That is the entire justification. An
+entry with **no hash** (work that never reached a proposal) is reported and **refused**;
+`review.mts` is the only way it becomes writable.
+
+**What a delay can invalidate is re-checked at flush time.** `apply.mts` refuses a proposal
+minted for a different pass date, and that gate is right and stays. The flush does not bypass
+it — `revalidate()` re-derives from the current repo and plan, and refuses on any of:
+
+| Refusal | Why it matters |
+|---|---|
+| no approval hash | it was never approved by anyone |
+| re-scored since queueing | the queued Actual SP is stale; the plan is the authority |
+| name no longer in the plan byte-exact | a rename orphans the row; writing would target nothing |
+| Done with no Completed Date, or with an open blocker | the honesty gate is unchanged by a delay |
+| Completed Date ≠ the last sha's commit date **now** | a rebase or amend since queueing; refuses rather than writing a date that contradicts history |
+| a sha git cannot resolve, or that is no longer an ancestor of `origin/main` | unverifiable is a failure, not a pass |
+
+All seven verified against synthetic entries on 2026-08-21; only the still-true entry passed.
+
+**The Completed Date is NEVER moved to the flush day.** Work finished when it finished; the
+flush is when the board caught up. The delay goes into the evidence update instead, naming the
+queue date, the original approval hash and the lag — so a reader can see the board lagged and
+that the date is the work's, not the write's.
+
+**Flush mechanics.** `flush-pending.mts` (dry run by default, `--apply` to write):
+
+- probes the budget with **one** cheap call first, and if it is still dead touches **nothing**
+  and exits 3 — so a dead budget costs 1 call rather than re-fragmenting the queue
+- costs ~2 calls per row (exact-name lookup, then set + update): a 10-row flush is ~21 calls,
+  affordable on a partly-spent budget, where a full reconcile is not
+- writes only corrector columns and an item update — never a relation, never structure
+- takes the same `.apply.lock` as `apply.mts`, so a flush and an apply cannot race
+- marks each entry flushed **one at a time**, so a mid-flush budget death leaves an accurate
+  ledger instead of a batch claiming more than it wrote
+- entries are **superseded, never duplicated**, when a later pass re-queues the same row; a
+  flushed entry is history and is never rewritten
+
+Flushed entries stay in the file as the audit trail. `verify-one.mts <itemId>` still owes a
+re-read afterwards — a flush log is not a board state.
 
 ## Traps — all verified against the live board 2026-08-11
 
