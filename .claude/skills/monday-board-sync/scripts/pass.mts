@@ -394,6 +394,44 @@
  *
  * COST. `--only-new` — 5 creates + 10 corrections, ~17 calls. No epic relation until a full reconcile.
  *
+ *
+ * ── 2026-08-21, PASS 8 — THE PUSH LANDED: In Progress → Pending Deploy on three rows ──────
+ * Kane: "how do we close this I already pushed it."
+ *
+ * VERIFIED, not taken on trust: `git fetch` then `merge-base --is-ancestor` — origin/main is now
+ * `bbf55811` and b831699d IS an ancestor. The reason these three sat at In Progress is gone, so they
+ * advance exactly one step. They do NOT go Done, and the distinction matters:
+ *
+ *   LOGIC proven      — 25/25 tests pass across kpi-scored.test.ts and notify-failure-audit.test.ts,
+ *                       including "floor keys on period_END so a CURRENT monthly period is not
+ *                       silenced" and "floor does NOT touch the amount-diff rule".
+ *   DEPLOYMENT proven — the commit is on origin/main, which Vercel deploys.
+ *   PRODUCTION USE    — ABSENT. Measured directly: kpi.scored notifications 0,
+ *                       audit_log notification.insert_failed 0, audit_log pab_exclusion.added /
+ *                       .removed 0, pab.excluded / pab.restored notifications 0. Nothing has
+ *                       triggered any of the three paths since the deploy. Zero rows is absence of
+ *                       evidence, not evidence of absence — and it is certainly not proof of working.
+ *
+ * HOW EACH ONE ACTUALLY CLOSES, because "wait and see" is not a plan:
+ *   • PAB exclusions audit — ONE toggle closes it, and closes more than itself. Excluding a person
+ *     then restoring them writes pab_exclusion.added + pab_exclusion.removed to audit_log AND fires
+ *     pab.excluded + pab.restored notifications, which have never once inserted (0 rows against 3,694
+ *     for payroll.available). So a single 30-second action proves the audit trail AND proves the
+ *     2026-08-20 type-CHECK fix end to end.
+ *   • kpi.scored floor — Mark Ready (or re-save) any CURRENT dept-week, i.e. period_end on or after
+ *     the just-completed Sun–Sat week. Two things must then hold: that week's employees get notified,
+ *     and NO notification appears for any of the 181 older 'ready' dept-weeks going back to
+ *     2026-03-01. The second half is the actual assertion of this row and it is checkable by query.
+ *   • Notify-failure observability — CANNOT be positively proven in production without deliberately
+ *     breaking a notification, and manufacturing an outage to earn a Done is not a reasonable trade.
+ *     Its evidence is therefore: all four call sites verified wired to notify-failure-audit
+ *     (bonus-catalog-applied, hsl-bonus/entries, hsl-bonus/period-status, pab-exclusions), 25 passing
+ *     tests including "the action string is stable — audit readers filter on it", and Kane's sign-off
+ *     on that as sufficient. This row is the one place where waiting for evidence means waiting for a
+ *     bug, and it should be closed on review rather than left open forever.
+ *
+ * COST. `--only-new` — 3 corrections, no creates, ~6 calls.
+ *
   * ── APPROVAL ──────────────────────────────────────────────────────────────────────────────────────
  * Kane approved the 57-row re-attribution on 2026-08-13 ("Approve all") after reviewing it in full,
  * plus three rulings the same day: gap-day rows → Sprint 25; the group move belongs in `sync.ts`; the
@@ -452,131 +490,28 @@ export interface PassRow {
 
 export const ROWS: PassRow[] = [
   {
-    name: "Penny greets employees on the Overview — five rotating chips from a larger pool",
-    status: 'Done',
-    completed: '2026-08-21',
-    dateBasis: 'external',
-    shas: ['e8ef4ff2', 'efec41aa', 'b1b893d0', 'f4abd38c', 'ea348fda', '7d7688cc'],
-    basis:
-      "Done 2026-08-21; Sprint 27. Kane 2026-08-21 confirmed this deployed; his confirmation is asked-for and recorded as the basis, which is what the honesty gate requires. \"Lets mark Penny tasks as done both of them they are already deployed\". EVIDENCE LIMIT, stated plainly: unlike the pay-status row there is no usage table behind the greeting, so his confirmation is the WHOLE of the evidence — nothing independently proves the bubble opens 5s after mount or that the chips rotate. Shipped over six commits on 2026-08-19: e8ef4ff2 artwork, efec41aa the 5s open, b1b893d0 a timer that would never have fired, f4abd38c the PAB verdict dropped plus a bigger bubble, ea348fda five chips drawn from a larger pool, 7d7688cc the panel matching. DATE BASIS external: the code landed 08-19 and became provable on 08-21 when Kane confirmed it live.",
-  },
-  {
-    name: "Penny told employees their already-paid weeks were still pending",
-    status: 'Done',
-    completed: '2026-08-21',
-    dateBasis: 'external',
-    shas: ['9d40a096'],
-    basis:
-      "Done 2026-08-21; Sprint 27. Kane 2026-08-21 confirmed this deployed; his confirmation is asked-for and recorded as the basis, which is what the honesty gate requires. INDEPENDENT CORROBORATION, which is stronger: penny_employee_usage holds 25 prompts from 10 distinct employees (manila_day 2026-08-20 and 2026-08-21) and tools_used includes get_my_pay and get_my_pay_schedule — so the corrected pay-status path has RUN in production, not merely deployed. Shipped 9d40a096 (2026-08-19) as its own module src/lib/penny/pay-status.ts with 173 lines of tests and a 233-line read-only audit script. The bug: Penny told employees that weeks they had already been PAID were still pending. DATE BASIS external — the proof is the confirmed live usage, not the commit.",
-  },
-  {
-    name: "Employee Penny AI on the Overview — Haiku, self-only tools, 10 prompts per Manila day, with guides and rendered Markdown",
-    status: 'Done',
-    completed: '2026-08-20',
-    dateBasis: 'external',
-    shas: ['70f96781', '1aa281ab', '39fe7255', 'a2ae19b0'],
-    basis:
-      "Done 2026-08-20; Sprint 27. PROVEN BY PRODUCTION USE, not by assertion: penny_employee_usage holds 25 prompts from 10 DISTINCT employees, and every row is self-only — subject_email == session_email with elevated false — which is the designed privacy invariant holding under real traffic. tools_used spans get_my_bonus_status (4), get_company_benefits (4), get_my_pay_schedule (2), get_my_pay, get_my_contacts, get_my_leave_requests, get_company_how_to_guides and get_my_profile, so the tool surface is exercised, not just reachable. Its external step is also closed: the usage table itself was applied 2026-08-20 (a2ae19b0 fixed the unencoded @ that had blocked it) and probing WITHOUT head:true confirms it exists with rows. Shipped 70f96781 with 1aa281ab (Markdown rendering) and 39fe7255 (self-service guides). DATE BASIS external: the DDL landing and the first real usage are actions in Supabase, not commits.",
-  },
-  {
-    name: "Time adjustments need two sign-offs — the manager names a second approver per request",
-    status: 'Done',
-    completed: '2026-08-20',
-    dateBasis: 'external',
-    shas: ['eff111db', 'a2ae19b0'],
-    basis:
-      "Done 2026-08-20; Sprint 27. PROVEN BY PRODUCTION USE: audit_log carries time_adjustment.manager_approved and time_adjustment.second_approved on 2026-08-20T17:52Z, and a real time_adjustment_requests row holds second_approver_email=aliviah@simple.biz with second_decision=approved and manager_decision=approved — the dual-approval flow has run end to end on live data, which is stronger than a click-through. Three further time_adjustment.submitted rows landed 2026-08-21, so the surface is in daily use. Its external step is closed: all EIGHT columns the migration declares are present (second_approver_email, _assigned_by, _assigned_at, second_decision, second_decided_by, second_decided_at, second_decision_note, manager_decision), probed individually with a negative control that correctly returned 42703. Shipped eff111db; unblocked by a2ae19b0. DATE BASIS external — the migration ran and the flow was exercised on 08-20.",
-  },
-  {
-    name: "Offboarding is delete-only: suspend is its own path, suspended-person offboards escalate to delete, and leavers get a correct final check",
-    status: 'Done',
-    completed: '2026-08-21',
-    dateBasis: 'external',
-    shas: ['3502e93', 'd259040', '8497699'],
-    basis:
-      "Done 2026-08-21; Sprint 27. Kane 2026-08-21: \"Offboarding Delete and Suspend is also accomplished\" — recorded as the basis. This row sat at Pending Deploy since 2026-08-10 with exactly one thing outstanding, the prod click-through, and that is what his confirmation supplies. Shipped 3502e93 (every offboard rides the delete pathway; deactivate = suspend-only), d259040 (manager Offboard always deletes, suspended people escalate) and 8497699 (Reactivation sends the verified hris-reactivate-suspended envelope). 8 SP is a legal task score — the next Fibonacci step is 13. DATE BASIS external: the code landed 08-07..08-10 and became provable on 08-21 when Kane confirmed it live. NOTE, separate row: the scheduled-deletion CRON is a different surface and is NOT covered by this — it still has 22 current employees queued for deletion.",
-  },
-  {
-    name: "One HSL department + required sub-department that sets the base rate, wired through the Payment Catalog",
-    status: 'Done',
-    completed: '2026-08-21',
-    dateBasis: 'external',
-    shas: ['5cb9bc6', 'f14f5b3', 'da24ffb', '4a15db2'],
-    basis:
-      "Done 2026-08-21; Sprint 27. Kane 2026-08-21: \"HSL Subdepartments are already deployed\" — recorded as the basis. The blocker recorded on 2026-08-14 was that zero hsl:* rate rows existed, so the feature paid nobody differently; it has since been worked through 5cb9bc6 (sub-departments bulk-assigned from the KPI Role column, 482 people), f14f5b3 (a base rate per sub-team, HARD HOLD released), da24ffb (parent base row deleted) and 4a15db2 (GML roster merged so a placement alone reaches the Wizard rail). Kane's confirmation is what closes it — a row is never promoted merely because its blocker LOOKS stale. 8 SP is a legal task score. DATE BASIS external. STILL OPEN separately: five employees hold a rate override keyed to the retired bare hsl department.",
-  },
-  {
-    name: "HSL rate-history stale underpay — arrears remediation (≈₱1.06M, 121 under / 10 over)",
-    status: 'Done',
-    completed: '2026-08-21',
-    dateBasis: 'external',
-    shas: ['c39fad3', '210b9ad', '273319a'],
-    basis:
-      "Done 2026-08-21; Sprint 27. Kane 2026-08-21: \"HSL Rate history stale underpay has been tackled last week already and we wouldnt run payroll with it being stuck\" — recorded as the basis. Kane CONFIRMED on 2026-08-21 that the underpay was tackled and that payroll has run since, which is the confirmation this external date rests on. THE GO-FORWARD HALF IS INDEPENDENTLY CORROBORATED: the 2026-07-29 fix-forward (scripts/fix-rate-underpayments.mjs --apply) corrected 64 people via per-employee catalog structures plus fresh actor-authored history rows, taking divergences from 94 to 5 adjudicated holds and immune rows from 481 to 545; and 273319a (2026-08-18) removed the snap-to-Sunday that memory records as the root cause. LIMIT NAMED RATHER THAN IMPLIED: 'payroll runs' is evidence about PRICING going forward, not about the ≈₱1.06M of arrears owed on already-PAID cycles, and paid stubs are FROZEN by design (paystub-fresh.ts snapshot) so a history fix cannot re-price them. The reimbursement half rests on Kane's statement alone. If that back-payment never happened it needs its own row — this basis exists so nobody later reads this Done as proof that 121 people were paid back.",
-  },
-  {
-    name: "Employee Penny chat bubble rides every tab, not just the Overview",
-    status: 'Pending Deploy',
-    shas: ['a21a51b6'],
-    basis:
-      "Sprint 27, opened 2026-08-21 for work shipped 2026-08-20 (a21a51b6, and it IS on origin/main). Kept off the Penny AI row deliberately: that row is the chat engine, this is placement, and placement is a separate thing to get wrong. STATUS Pending Deploy, not Done: Kane's confirmation covered the two rows he named and is not stretched to a third he did not mention. Note the greeting deliberately stays Overview-only, so this is the bubble's placement and not the greeting's.",
-    blockers: ["Kane confirmed the two Penny rows he named; nobody has confirmed the bubble on a non-Overview tab in prod"],
-  },
-  {
-    name: "Deletion-cron pre-flight: 77 queued deletions measured, 22 colliding with current staff",
-    status: 'Done',
-    completed: '2026-08-20',
-    shas: ['f0eadd18'],
-    basis:
-      "Done 2026-08-20; Sprint 27. The accomplished task is the MEASUREMENT, taken before anyone set CRON_SECRET: 77 deletions are queued and due, and 22 of them share a work email with a CURRENT, non-offboarded row in active_employees, the oldest queued 2026-07-24. Enabling the nightly cron would have deleted 22 working employees' Google Workspace accounts. f0eadd18 is a 572-line report and no code, which is why this is a Spike and why the FIX is a separate open row rather than folded in. The pre-flight also caught its own first answer being wrong: an unpaged active_employees read returned exactly 1000 rows — PostgREST's silent cap, which this project's own rules call out — hiding marka@, joyq@ and niczm@ and understating the collision count as 19. A truncated read made a deletion risk look smaller than it was.",
-  },
-  {
-    name: "Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion",
-    status: 'Ready to Start',
-    shas: ['f0eadd18'],
-    basis:
-      "Sprint 27, opened 2026-08-21 for the danger f0eadd18 measured and did NOT fix. app/api/cron/process-scheduled-deletions trusts scheduled_deletion_at alone and never re-checks the live roster at fire time, so the guard its own comment claims — that re-onboard and CSV reconcile null the column so a resurrected row never appears — does not exist in code, and for these 22 it demonstrably did not happen (consistent with the known re-hire path leaving a stale offboard flag). CRITICAL because the trigger is one env var: the cron is already scheduled nightly in vercel.json and has 401'd since inception only because isAuthorized() fails closed while CRON_SECRET is unset. Setting it fires offboarding_delete at everything queued. This is NOT covered by the offboarding delete-only row Kane confirmed — that is the manager-initiated path, this is the scheduled one.",
-    blockers: ["Do NOT set CRON_SECRET until a fire-time live-roster re-check ships AND the 22 collisions are cleared", "The 22 gml_ids are listed in reports/deletion-cron-preflight-2026-08-20.json"],
-  },
-  {
-    name: "Migration applies never ran: an unencoded @ in DATABASE_URL silently truncated the host",
-    status: 'Done',
-    completed: '2026-08-20',
-    shas: ['52fe1005', 'a2ae19b0'],
-    basis:
-      "Done 2026-08-20; Sprint 27. Both 2026-08-19 migrations had silently never applied, and the cause was not a missing variable but a malformed one: the password's @ was not percent-encoded in DATABASE_URL, and an unencoded @ truncates the host rather than erroring, so every attempt failed in a way that looked like something else. VERIFIED INDEPENDENTLY on 2026-08-21, probing WITHOUT head:true (which returns no error and count:null for a missing table) and with a negative control that correctly returned PGRST205 and 42703: penny_employee_usage exists and holds 25 rows, and all EIGHT second-approver columns on time_adjustment_requests are present. Fixing this is what made the Penny usage table and the dual-approval flow real. Shipped a2ae19b0, with 52fe1005 recording the diagnosis.",
-  },
-  {
-    name: "Board-sync logged the undocumented week and corrected the skill’s stale drift entries",
-    status: 'Done',
-    completed: '2026-08-20',
-    shas: ['4c77989b', 'f18c8123', 'f51b4cd5', '818c9b34', 'ead5cc7f'],
-    basis:
-      "Done 2026-08-20; Sprint 27. Six commits of board and documentation work in one day: 818c9b34 logged the undocumented week (28 rows created, 80 SP), f18c8123 closed the migrations row and opened the three findings that measuring it produced, ead5cc7f corrected two stale Known-drift entries in the skill, and 4c77989b / f51b4cd5 recorded the Sprint 27 pull and pass 4. Logged on the same judgement as the 08-19 docs row and flagged the same way: the governing docs and the skill are what hardening and blueprint read at step 1, so drift there is drift in every later decision. If the board should carry only product rows, this and the 08-19 docs row are the two to cut together.",
-  },
-  {
     name: "KPI scored notification fires on months-old weeks — floor it to the current period",
-    status: 'In Progress',
+    status: 'Pending Deploy',
     shas: ['31b11050', 'b831699d'],
     basis:
-      "In Progress, NOT Done — Sprint 27. b831699d implements this row: kpi-scored.ts +41 with +56 lines of new tests, flooring the notifier by period so a bonus edit on a March dept-week can no longer notify employees about a five-month-old result. NOT on origin/main: `git merge-base --is-ancestor b831699d origin/main` fails and origin/main is still a21a51b6 (2026-08-20 13:01). Committed locally is In Progress by the honesty gate's own table — Vercel cannot have deployed it and nobody can have clicked it. Kane said this was 'fixed already' and the CODE is indeed complete; holding it here is not doubt about the work, it is the gate refusing 'it obviously works'. One git push moves it to Pending Deploy. The hazard it closes is live in the meantime: 181 dept-weeks sit at 'ready' back to 2026-03-01 with zero kpi.scored rows, and the de-dupe key is the AMOUNT, so every one still reads as owed.",
-    blockers: ["b831699d is not on origin/main - Kane pushes"],
+      "Pending Deploy — Sprint 27. PUSH CONFIRMED 2026-08-21: origin/main is bbf55811 and b831699d is an ancestor, verified with git fetch + merge-base --is-ancestor rather than taken on trust. That removes the only reason this row sat at In Progress, so it advances to Pending Deploy. NOT Done: Vercel deploying is not anyone having looked. LOGIC PROVEN SEPARATELY from deployment: kpi-scored.test.ts passes, including 'floor keys on period_END so a CURRENT monthly period is not silenced' — which matters because the live table holds three grains (173 Sun→Sat, 10 Mon→Sun, 4 monthly pre-cutover HSL) and a period_START floor would have silenced a current monthly period. The floor is payrollNotesWeekStart(), the just-completed Sun–Sat, so a week still in progress still notifies. PRODUCTION USE ABSENT, measured: employee_notifications type kpi.scored is still 0 rows, so nothing has exercised it. TO CLOSE: Mark Ready or re-save any CURRENT dept-week, then confirm two things — that week's employees are notified, and NO notification appears for any of the 181 older 'ready' dept-weeks going back to 2026-03-01. That second half is what this row actually asserts.",
+    blockers: ["Mark Ready any CURRENT dept-week, then confirm no notification fires for the 181 older ready weeks"],
   },
   {
     name: "Notification insert failures are swallowed into console.warn — make them observable",
-    status: 'In Progress',
+    status: 'Pending Deploy',
     shas: ['31b11050', 'b831699d'],
     basis:
-      "In Progress, NOT Done — Sprint 27. CHECKED ON KANE'S REQUEST and the code IS complete: b831699d adds src/lib/notifications/notify-failure-audit.ts (+98) with +51 lines of tests, and all FOUR call sites that previously swallowed a failed notification are wired to it — verified individually in bonus-catalog-applied, hsl-bonus/entries, hsl-bonus/period-status and pab-exclusions. The console.warn lines still present in pab-exclusions are for DIFFERENT conditions (unsafe email characters, a failed active_employees lookup, no roster match), not the notification insert. NOT on origin/main: `git merge-base --is-ancestor b831699d origin/main` fails and origin/main is still a21a51b6 (2026-08-20 13:01). Committed locally is In Progress by the honesty gate's own table — Vercel cannot have deployed it and nobody can have clicked it. Kane said this was 'fixed already' and the CODE is indeed complete; holding it here is not doubt about the work, it is the gate refusing 'it obviously works'. One git push moves it to Pending Deploy. That silent swallow is why two shipped features stayed dead for 17 and 3 days.",
-    blockers: ["b831699d is not on origin/main - Kane pushes"],
+      "Pending Deploy — Sprint 27. PUSH CONFIRMED 2026-08-21: origin/main is bbf55811 and b831699d is an ancestor, verified with git fetch + merge-base --is-ancestor rather than taken on trust. That removes the only reason this row sat at In Progress, so it advances to Pending Deploy. NOT Done: Vercel deploying is not anyone having looked. CODE VERIFIED COMPLETE on Kane's request: all FOUR call sites that previously swallowed a failed notification are wired to src/lib/notifications/notify-failure-audit.ts, checked individually in bonus-catalog-applied, hsl-bonus/entries, hsl-bonus/period-status and pab-exclusions. The console.warn lines still present in pab-exclusions cover DIFFERENT conditions (unsafe email characters, a failed active_employees lookup, no roster match), not the notification insert. It records an audit_log row with action 'notification.insert_failed' rather than a log line, because a console line in a serverless function is not observability — that invisibility is why pab.excluded stayed dead 17 days and kpi.scored 3. Tests pass, including 'the action string is stable — audit readers filter on it'. THIS ROW CANNOT BE POSITIVELY PROVEN IN PRODUCTION: it writes only when a notification FAILS, and audit_log holds 0 notification.insert_failed rows, which is the DESIRED state. Manufacturing a failure to earn a Done is not a reasonable trade, so this should close on the wiring plus the tests plus Kane's sign-off — named here so the decision is visible rather than the row sitting open forever waiting for a bug.",
+    blockers: ["Cannot be proven in prod without causing a notification failure - needs Kane's sign-off on the wiring + tests instead"],
   },
   {
     name: "PAB exclusions leave no audit trail while PAB disputes are fully audited",
-    status: 'In Progress',
+    status: 'Pending Deploy',
     shas: ['4afac832', 'b831699d'],
     basis:
-      "In Progress, NOT Done — Sprint 27. b831699d adds the PAB exclusion audit trail (app/api/pab-exclusions/route.ts +38 plus docs/features/pab-exclusions.md as a new governing doc), closing the asymmetry where audit_log recorded PAB disputes in full but zero rows for the action that zeroes a person's attendance bonus. NOT on origin/main: `git merge-base --is-ancestor b831699d origin/main` fails and origin/main is still a21a51b6 (2026-08-20 13:01). Committed locally is In Progress by the honesty gate's own table — Vercel cannot have deployed it and nobody can have clicked it. Kane said this was 'fixed already' and the CODE is indeed complete; holding it here is not doubt about the work, it is the gate refusing 'it obviously works'. One git push moves it to Pending Deploy. ON KANE'S REMARK that there are no more PAB disputes: audit_log says 89 pab_dispute* rows exist with 34 in August 2026 and the most recent on 2026-08-19T20:02Z, so the manager and Accounting paths are live — what was retired is the EMPLOYEE-facing ability to file or view one. And this row is about EXCLUSIONS, a different action from a dispute, so it stands either way. It cannot retroactively identify who was owed a missed pab.excluded notification; that set was never reconstructible.",
-    blockers: ["b831699d is not on origin/main - Kane pushes"],
+      "Pending Deploy — Sprint 27. PUSH CONFIRMED 2026-08-21: origin/main is bbf55811 and b831699d is an ancestor, verified with git fetch + merge-base --is-ancestor rather than taken on trust. That removes the only reason this row sat at In Progress, so it advances to Pending Deploy. NOT Done: Vercel deploying is not anyone having looked. The change adds insertAuditLog with action 'pab_exclusion.added' / 'pab_exclusion.removed' to app/api/pab-exclusions/route.ts, plus docs/features/pab-exclusions.md as a new governing doc, closing the asymmetry where audit_log recorded PAB disputes in full (89 rows, 34 in August 2026) but nothing at all for the action that actually zeroes a person's attendance bonus for a month. PRODUCTION USE ABSENT, measured: 0 rows for either action, because no exclusion has been toggled since the deploy. TO CLOSE — and this is the cheapest close on the board: exclude one person then restore them. That writes both audit actions AND fires pab.excluded + pab.restored notifications, which have NEVER inserted (0 rows each against 3,694 for payroll.available), so one 30-second action proves this row and independently re-proves the 2026-08-20 type-CHECK fix end to end. It still cannot retroactively identify who was owed a missed pab.excluded notification; that set was never reconstructible.",
+    blockers: ["Exclude one person then restore them - writes both audit actions and fires the two notification types that have never inserted"],
   },
 ];
 
