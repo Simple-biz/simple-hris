@@ -432,6 +432,58 @@
  *
  * COST. `--only-new` — 3 corrections, no creates, ~6 calls.
  *
+ *
+ * ── 2026-08-21, PASS 9 — THE TEST CLOSED TWO ROWS AND DISPROVED THE THIRD ──────────────
+ * Kane ran the tests: "1. Its closed now / 2. We have been using this for 3 weeks close this /
+ * 3. Closed as well put them on board already with the evidence as Committed."
+ *
+ * TWO CLOSE. ONE DOES NOT, AND THE MEASUREMENT IS WHY — the PAB row Kane reported as closed is the
+ * one his own test proved is NOT working. Reporting it Done would have been the exact failure this
+ * skill exists to prevent, so it stays Pending Deploy with the finding recorded.
+ *
+ * WHAT THE PAB TEST ACTUALLY PROVED, which is a real and separate win: `pab.excluded` INSERTED and
+ * RENDERED. employee_notifications now holds 1 row of type pab.excluded — kaner@simple.biz,
+ * 2026-08-21T12:28:22Z, "Excluded from Perfect Attendance Bonus" — and Kane's screenshot shows it in
+ * the employee bell. That type had NEVER inserted once (0 rows against 3,694 for payroll.available),
+ * so this is end-to-end proof of the 2026-08-20 type-CHECK fix, from DDL through insert to render.
+ *
+ * WHAT IT DISPROVED: audit_log holds **0** rows for pab_exclusion.added or pab_exclusion.removed. The
+ * audit trail did not write. This is not ambiguous, and the code says why it cannot be dismissed as a
+ * skipped branch: the notification (route.ts:76) and the audit write (route.ts:143) are gated on the
+ * SAME `if (changed)`. The notification fired, so `changed` was true, so insertAuditLog WAS called.
+ *
+ * TWO CANDIDATE CAUSES, and the data cannot yet separate them:
+ *   (a) DEPLOY LAG — the notification path is OLD code; b831699d only added +38 lines to this route.
+ *       So a pre-b831699d build fires the notification and writes no audit row, which is exactly what
+ *       we observe. The push landed ~11:51Z and the click was 12:28Z, which makes lag less likely but
+ *       not impossible.
+ *   (b) SILENT FAILURE — insertAuditLog returns `{ error }` rather than throwing, and the PAB call
+ *       site does `await insertAuditLog({...})` and IGNORES the result. So a rejected insert leaves no
+ *       trace whatsoever. That is the same silent-swallow pattern as the sibling row is meant to fix,
+ *       reproduced INSIDE the fix. Worth closing on its own merits regardless of today's cause.
+ *   RULED OUT: a CHECK on audit_log.action. It holds 177 distinct action values across 43 prefixes, so
+ *   it is free text and cannot be rejecting a new string the way employee_notifications.type did.
+ *
+ * HOW TO SETTLE IT, and Kane needs to do it anyway: he excluded HIMSELF and never restored —
+ * pab.restored is 0 rows, so kaner@simple.biz is currently excluded from August 2026 PAB. Clicking
+ * restore both fixes that and settles the diagnosis: an audit row appearing means (a), still nothing
+ * means (b).
+ *
+ * THE KPI FLOOR ROW CLOSES ON KANE'S CALL, WITH ITS EVIDENCE STATED HONESTLY. "We have been using this
+ * for 3 weeks" is true of the KPI Calculator; the FLOOR shipped 2026-08-20. It has no production
+ * observation and cannot have any: hsl_bonus_period_status shows **0 rows touched since 2026-08-20**
+ * and audit_log **0 bonus/kpi actions** in that window, so nothing has scored a dept-week since the
+ * fix landed. kpi.scored is still 0 rows for that reason and NOT because the floor is broken — which
+ * also means 0 floor violations is not a passing test, it is an empty one. What IS proven is the
+ * logic: 25/25 tests pass including "floor keys on period_END so a CURRENT monthly period is not
+ * silenced" and "floor does NOT touch the amount-diff rule".
+ *
+ * THE OBSERVABILITY ROW CLOSES ON SIGN-OFF, as agreed — it writes only when a notification FAILS, so
+ * the only production test is to break one. audit_log holds 0 notification.insert_failed rows, which
+ * is the DESIRED state and unprovable either way.
+ *
+ * COST. `--only-new` — 3 corrections, ~6 calls.
+ *
   * ── APPROVAL ──────────────────────────────────────────────────────────────────────────────────────
  * Kane approved the 57-row re-attribution on 2026-08-13 ("Approve all") after reviewing it in full,
  * plus three rulings the same day: gap-day rows → Sprint 25; the group move belongs in `sync.ts`; the
@@ -491,27 +543,29 @@ export interface PassRow {
 export const ROWS: PassRow[] = [
   {
     name: "KPI scored notification fires on months-old weeks — floor it to the current period",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-08-21',
+    dateBasis: 'external',
     shas: ['31b11050', 'b831699d'],
     basis:
-      "Pending Deploy — Sprint 27. PUSH CONFIRMED 2026-08-21: origin/main is bbf55811 and b831699d is an ancestor, verified with git fetch + merge-base --is-ancestor rather than taken on trust. That removes the only reason this row sat at In Progress, so it advances to Pending Deploy. NOT Done: Vercel deploying is not anyone having looked. LOGIC PROVEN SEPARATELY from deployment: kpi-scored.test.ts passes, including 'floor keys on period_END so a CURRENT monthly period is not silenced' — which matters because the live table holds three grains (173 Sun→Sat, 10 Mon→Sun, 4 monthly pre-cutover HSL) and a period_START floor would have silenced a current monthly period. The floor is payrollNotesWeekStart(), the just-completed Sun–Sat, so a week still in progress still notifies. PRODUCTION USE ABSENT, measured: employee_notifications type kpi.scored is still 0 rows, so nothing has exercised it. TO CLOSE: Mark Ready or re-save any CURRENT dept-week, then confirm two things — that week's employees are notified, and NO notification appears for any of the 181 older 'ready' dept-weeks going back to 2026-03-01. That second half is what this row actually asserts.",
-    blockers: ["Mark Ready any CURRENT dept-week, then confirm no notification fires for the 181 older ready weeks"],
+      "Done 2026-08-21; Sprint 27. Kane 2026-08-21: \"We have been using this for 3 weeks close this\" — recorded as the basis. EVIDENCE, stated exactly: the LOGIC is proven (25/25 tests pass across kpi-scored.test.ts, including 'floor keys on period_END so a CURRENT monthly period is not silenced' — which matters because the live table holds three period grains and a period_START floor would have silenced a current monthly period) and the DEPLOYMENT is proven (b831699d is an ancestor of origin/main, verified with merge-base). PRODUCTION OBSERVATION IS ABSENT AND CANNOT YET EXIST: hsl_bonus_period_status shows 0 rows touched since 2026-08-20 and audit_log 0 bonus/kpi actions in that window, so nothing has scored a dept-week since the fix landed. employee_notifications kpi.scored is still 0 rows for that reason, not because the floor failed — so '0 floor violations' is an EMPTY test, not a passing one, and is not offered as proof. The 3 weeks of use Kane refers to is the KPI Calculator; the floor itself shipped 2026-08-20. THE ASSERTION STILL TO WATCH: 158 of the 181 'ready' dept-weeks sit below the 2026-08-09 floor, so the first time anyone re-saves an old week, no notification should fire. DATE BASIS external — closed on Kane's call, not on a commit.",
   },
   {
     name: "Notification insert failures are swallowed into console.warn — make them observable",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-08-21',
+    dateBasis: 'external',
     shas: ['31b11050', 'b831699d'],
     basis:
-      "Pending Deploy — Sprint 27. PUSH CONFIRMED 2026-08-21: origin/main is bbf55811 and b831699d is an ancestor, verified with git fetch + merge-base --is-ancestor rather than taken on trust. That removes the only reason this row sat at In Progress, so it advances to Pending Deploy. NOT Done: Vercel deploying is not anyone having looked. CODE VERIFIED COMPLETE on Kane's request: all FOUR call sites that previously swallowed a failed notification are wired to src/lib/notifications/notify-failure-audit.ts, checked individually in bonus-catalog-applied, hsl-bonus/entries, hsl-bonus/period-status and pab-exclusions. The console.warn lines still present in pab-exclusions cover DIFFERENT conditions (unsafe email characters, a failed active_employees lookup, no roster match), not the notification insert. It records an audit_log row with action 'notification.insert_failed' rather than a log line, because a console line in a serverless function is not observability — that invisibility is why pab.excluded stayed dead 17 days and kpi.scored 3. Tests pass, including 'the action string is stable — audit readers filter on it'. THIS ROW CANNOT BE POSITIVELY PROVEN IN PRODUCTION: it writes only when a notification FAILS, and audit_log holds 0 notification.insert_failed rows, which is the DESIRED state. Manufacturing a failure to earn a Done is not a reasonable trade, so this should close on the wiring plus the tests plus Kane's sign-off — named here so the decision is visible rather than the row sitting open forever waiting for a bug.",
-    blockers: ["Cannot be proven in prod without causing a notification failure - needs Kane's sign-off on the wiring + tests instead"],
+      "Done 2026-08-21; Sprint 27. Kane 2026-08-21: \"Closed as well put them on board already with the evidence as Committed\" — recorded as the basis, and closing on review is the RIGHT call here rather than a concession: this code writes an audit row only when a notification FAILS, so the only production test is to deliberately break a notification, and manufacturing an outage to earn a Done is not a reasonable trade. THE EVIDENCE IS THEREFORE REVIEW PLUS TESTS, and it is real: all FOUR call sites that previously swallowed a failed notification are verified wired to src/lib/notifications/notify-failure-audit.ts — checked individually in bonus-catalog-applied, hsl-bonus/entries, hsl-bonus/period-status and pab-exclusions; the console.warn lines still present in pab-exclusions cover DIFFERENT conditions (unsafe email characters, a failed active_employees lookup, no roster match) and not the notification insert; 25/25 tests pass including 'the action string is stable — audit readers filter on it'; and the action string cannot be silently rejected, because audit_log.action holds 177 distinct values across 43 prefixes and is therefore free text rather than CHECK-constrained — which had to be confirmed, since a constrained action column would have made this fix dead on arrival in exactly the way it was built to catch. audit_log currently holds 0 notification.insert_failed rows, which is the desired state. DATE BASIS external — sign-off, not a commit. ONE FOLLOW-UP THIS ROW DOES NOT COVER: insertAuditLog returns { error } and the pab-exclusions call site ignores it, so an audit write that fails is itself silent.",
   },
   {
     name: "PAB exclusions leave no audit trail while PAB disputes are fully audited",
     status: 'Pending Deploy',
     shas: ['4afac832', 'b831699d'],
     basis:
-      "Pending Deploy — Sprint 27. PUSH CONFIRMED 2026-08-21: origin/main is bbf55811 and b831699d is an ancestor, verified with git fetch + merge-base --is-ancestor rather than taken on trust. That removes the only reason this row sat at In Progress, so it advances to Pending Deploy. NOT Done: Vercel deploying is not anyone having looked. The change adds insertAuditLog with action 'pab_exclusion.added' / 'pab_exclusion.removed' to app/api/pab-exclusions/route.ts, plus docs/features/pab-exclusions.md as a new governing doc, closing the asymmetry where audit_log recorded PAB disputes in full (89 rows, 34 in August 2026) but nothing at all for the action that actually zeroes a person's attendance bonus for a month. PRODUCTION USE ABSENT, measured: 0 rows for either action, because no exclusion has been toggled since the deploy. TO CLOSE — and this is the cheapest close on the board: exclude one person then restore them. That writes both audit actions AND fires pab.excluded + pab.restored notifications, which have NEVER inserted (0 rows each against 3,694 for payroll.available), so one 30-second action proves this row and independently re-proves the 2026-08-20 type-CHECK fix end to end. It still cannot retroactively identify who was owed a missed pab.excluded notification; that set was never reconstructible.",
-    blockers: ["Exclude one person then restore them - writes both audit actions and fires the two notification types that have never inserted"],
+      "Pending Deploy — NOT Done, and Kane's own test on 2026-08-21 is why. He reported this closed; the measurement disagrees, so it is recorded rather than accepted. WHAT THE TEST PROVED, which is a real and separate win: pab.excluded INSERTED and RENDERED — employee_notifications now holds 1 row (kaner@simple.biz, 2026-08-21T12:28:22Z, 'Excluded from Perfect Attendance Bonus') and it appears in the employee bell, for a type that had NEVER inserted once. That is end-to-end proof of the 2026-08-20 type-CHECK fix, from DDL through insert to render. WHAT IT DISPROVED: audit_log holds 0 rows for pab_exclusion.added and 0 for pab_exclusion.removed — the audit trail did not write, which is the whole content of this row. It cannot be dismissed as a skipped branch: the notification (route.ts:76) and the audit write (route.ts:143) are gated on the SAME if (changed), and the notification fired, so changed was true and insertAuditLog WAS called. TWO CANDIDATE CAUSES the data cannot yet separate: (a) DEPLOY LAG — the notification path is OLD code, b831699d added only +38 lines here, so a pre-b831699d build produces exactly this signature; the push landed ~11:51Z against a 12:28Z click, which makes lag less likely but not impossible. (b) SILENT FAILURE — insertAuditLog returns { error } and this call site ignores it, so a rejected insert leaves no trace at all: the same silent-swallow pattern as the sibling row, reproduced inside the fix. RULED OUT: a CHECK on audit_log.action, which holds 177 distinct values across 43 prefixes and is free text. TO SETTLE IT, and Kane must do this anyway: pab.restored is 0 rows, so kaner@simple.biz is CURRENTLY EXCLUDED from August 2026 PAB. Clicking restore fixes that and decides the diagnosis — an audit row appearing means (a), still nothing means (b).",
+    blockers: ["MEASURED FAILING: 0 audit_log rows for pab_exclusion.added/.removed after a real exclusion", "Kane is currently excluded from August 2026 PAB - clicking restore fixes that AND settles the diagnosis", "If restoring still writes no audit row, insertAuditLog is failing silently at this call site"],
   },
 ];
 
