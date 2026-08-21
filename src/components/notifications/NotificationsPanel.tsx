@@ -520,10 +520,13 @@ export default function NotificationsPanel({
               const isPayrollStart = n.type === 'payroll.processing_started';
               const isPayrollStop  = n.type === 'payroll.processing_stopped';
               const isPayroll = isPayrollStart || isPayrollStop;
-              // Ticket cards (replies, assignments) wear the board's
-              // red-and-black theme: black surface, solid red accents —
+              // Ticket cards (replies, assignments, column moves) wear the
+              // board's red-and-black theme: black surface, solid red accents —
               // deliberately flat, no gradients.
-              const isTicket = n.type === 'ticket.replied' || n.type === 'ticket.assigned';
+              const isTicket =
+                n.type === 'ticket.replied' ||
+                n.type === 'ticket.assigned' ||
+                n.type === 'ticket.moved';
               // Cards that carry an "Open Pay Stub" button opening the statement
               // in a modal: Payment Dispatch marked this person paid
               // (payroll.paid), or Accounting uploaded a new week whose pay is now

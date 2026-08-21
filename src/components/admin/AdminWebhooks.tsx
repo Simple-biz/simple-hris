@@ -140,6 +140,18 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
       'Fired when a ticket is moved into the Done column. POSTs the ticket + creator email; the n8n flow emails the creator that they can refresh the HRIS and test the change.',
   },
   {
+    slug: 'ticket_replied',
+    label: 'Ticket Replied → Email Counterparty (n8n)',
+    description:
+      "Fired when a comment lands on a /tickets ticket. POSTs the full reply text plus send_to — the ONE person the reply concerns: the ticket's creator, or the assigned developer when the creator is the one who typed it. Never the person who wrote the comment. Pairs with the in-app ticket.replied notification, which goes to both parties; the email is deliberately the narrower of the two.",
+  },
+  {
+    slug: 'ticket_moved',
+    label: 'Ticket Moved → Email Creator (n8n)',
+    description:
+      "Fired when a ticket changes column. POSTs from/to statuses, a forward/backward direction flag, and send_to = the ticket's CREATOR (never the developer, who is usually the one moving the card; nothing is sent when the creator moves it themselves). Every move fires, including a backward Testing → In Progress bounce — except Done, which has its own richer ticket_done email so one move never sends two.",
+  },
+  {
     slug: 'ticket_assigned',
     label: 'Ticket Assigned → Email Assignee (n8n)',
     description:

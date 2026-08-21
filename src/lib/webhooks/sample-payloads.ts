@@ -314,6 +314,43 @@ export const WEBHOOK_SAMPLE_PAYLOADS: Record<string, unknown> = {
     ticket_url: 'https://app.simple.biz/tickets?ticket=128',
   },
 
+  ticket_replied: {
+    event: 'ticket.replied',
+    send_to: 'accounting@simple.biz',
+    recipient_name: 'Alex Rivera',
+    recipient_is_creator: true,
+    replier_email: 'kaner@simple.biz',
+    replier_name: 'Kane',
+    ticket_no: 128,
+    title: 'Payroll Wizard: rate snapshot toggle stays open on mobile',
+    comment_body:
+      'Reproduced on a 390px viewport — the popup keeps its desktop width. Pushing a fix behind the 1180px gate now.',
+    priority_label: 'Medium',
+    status_label: 'In Progress',
+    replied_at: '2026-08-21T09:12:00.000Z',
+    board_url: 'https://app.simple.biz/tickets',
+    ticket_url: 'https://app.simple.biz/tickets?ticket=128',
+  },
+
+  ticket_moved: {
+    event: 'ticket.moved',
+    send_to: 'accounting@simple.biz',
+    creator_name: 'Alex Rivera',
+    ticket_no: 128,
+    title: 'Payroll Wizard: rate snapshot toggle stays open on mobile',
+    description: 'Reported by accounting — panel does not collapse below 1180px.',
+    from_status: 'in_progress',
+    from_label: 'In Progress',
+    to_status: 'testing',
+    to_label: 'Testing',
+    direction: 'forward',
+    priority_label: 'Medium',
+    moved_by: 'kaner@simple.biz',
+    moved_at: '2026-08-21T10:04:00.000Z',
+    board_url: 'https://app.simple.biz/tickets',
+    ticket_url: 'https://app.simple.biz/tickets?ticket=128',
+  },
+
   ticket_assigned: {
     event: 'ticket.assigned',
     send_to: 'kaner@simple.biz',

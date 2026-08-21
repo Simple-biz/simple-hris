@@ -5,7 +5,9 @@ import {
   TICKET_PRIORITY_LABELS,
   TICKET_STATUS_LABELS,
   type TicketRow,
+  type TicketStatus,
 } from './types';
+import { commentEmailRecipient, moveEmailRecipient, type TicketParties } from './recipients';
 
 /** Origin used for links inside the emails. NEXTAUTH_URL is localhost during
  *  dev — a link nobody's inbox can open — so anything non-public falls back to
@@ -96,6 +98,130 @@ export async function notifyTicketDone(ticket: TicketRow, movedBy: string): Prom
         done_at: new Date().toISOString(),
         board_url: `${origin}/tickets`,
         // Deep link — the board auto-opens this ticket's details dialog.
+        ticket_url: `${origin}/tickets?ticket=${encodeURIComponent(ticket.id)}`,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    // Best-effort only — the move is already saved.
+  }
+}
+
+/**
+ * Fire the `ticket_replied` webhook (n8n) when a comment lands on a ticket —
+ * the n8n side emails the ONE person the reply concerns, resolved by
+ * `commentEmailRecipient`: the ticket's creator, or the assigned developer when
+ * the creator is the one who typed it. Kane's rule 2026-08-21.
+ *
+ * Resolution mirrors every other hook here (Admin → Webhooks slug
+ * `ticket_replied`, then N8N_TICKETS_REPLIED_WEBHOOK_URL). No-op when
+ * unconfigured; never throws — the comment is already saved.
+ *
+ * This is the EMAIL leg only. The in-app `ticket.replied` rows are written by
+ * POST /api/tickets/[id]/comments and go to creator AND assignee; the email is
+ * deliberately the narrower of the two, because an inbox is not a panel.
+ */
+export async function notifyTicketReplied(
+  ticket: TicketRow | (TicketParties & Pick<TicketRow, 'id' | 'ticket_no' | 'title' | 'priority' | 'status'>),
+  comment: { body: string; author_email: string; author_name: string | null },
+): Promise<void> {
+  try {
+    // Decided here, in code, exactly like every other send_to on this board —
+    // never inside the n8n workflow. A null recipient means the only party is
+    // the person who typed it, and n8n's Gmail node is stop-on-error, so an
+    // empty To would fail the whole run rather than skip it.
+    const sendTo = commentEmailRecipient(ticket, comment.author_email);
+    if (!sendTo) return;
+
+    const url = await resolveWebhookUrl('ticket_replied', {
+      envVars: ['N8N_TICKETS_REPLIED_WEBHOOK_URL'],
+    });
+    if (!url) return;
+
+    const origin = publicOrigin();
+    const recipientName = await lookupFullNameForEmail(sendTo);
+    const body = comment.body.trim();
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: 'ticket.replied',
+        send_to: sendTo,
+        recipient_name: recipientName ?? sendTo.split('@')[0],
+        // Whether the reader is the requester or the dev changes how the email
+        // should read, and n8n cannot work that out from send_to alone.
+        recipient_is_creator: sendTo === (ticket.created_by ?? '').trim().toLowerCase(),
+        replier_email: comment.author_email,
+        replier_name: comment.author_name ?? comment.author_email.split('@')[0],
+        ticket_no: ticket.ticket_no,
+        title: ticket.title,
+        // The whole reply — the point of the email is not having to open the
+        // board to read it. The panel excerpt is capped; this is not.
+        comment_body: body,
+        priority_label: TICKET_PRIORITY_LABELS[ticket.priority] ?? ticket.priority,
+        status_label: TICKET_STATUS_LABELS[ticket.status] ?? ticket.status,
+        replied_at: new Date().toISOString(),
+        board_url: `${origin}/tickets`,
+        ticket_url: `${origin}/tickets?ticket=${encodeURIComponent(ticket.id)}`,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    // Best-effort only — the comment is already saved.
+  }
+}
+
+/**
+ * Fire the `ticket_moved` webhook (n8n) when a ticket changes column — the n8n
+ * side emails the ticket's CREATOR where their request went. Kane's rules
+ * 2026-08-21: the creator only (never the developer, who is usually the one
+ * moving the card), and EVERY move, including a backward Testing → In Progress
+ * bounce, because "your ticket went back" is real news.
+ *
+ * `done` is excluded by the caller, not here: it has its own richer
+ * "refresh and test it" email (notifyTicketDone), and one move must never send
+ * two emails.
+ *
+ * Resolution mirrors the other hooks (Admin → Webhooks slug `ticket_moved`,
+ * then N8N_TICKETS_MOVED_WEBHOOK_URL). No-op when unconfigured; never throws.
+ */
+export async function notifyTicketMoved(
+  ticket: TicketRow,
+  from: TicketStatus,
+  movedBy: string,
+): Promise<void> {
+  try {
+    const sendTo = moveEmailRecipient(ticket, movedBy);
+    if (!sendTo) return;
+
+    const url = await resolveWebhookUrl('ticket_moved', {
+      envVars: ['N8N_TICKETS_MOVED_WEBHOOK_URL'],
+    });
+    if (!url) return;
+
+    const origin = publicOrigin();
+    const order = ['todo', 'in_progress', 'testing', 'done'] as const;
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: 'ticket.moved',
+        send_to: sendTo,
+        creator_name: ticket.created_by_name ?? ticket.created_by.split('@')[0],
+        ticket_no: ticket.ticket_no,
+        title: ticket.title,
+        description: ticket.description ?? '',
+        from_status: from,
+        from_label: TICKET_STATUS_LABELS[from] ?? from,
+        to_status: ticket.status,
+        to_label: TICKET_STATUS_LABELS[ticket.status] ?? ticket.status,
+        // Lets one workflow phrase a bounce-back differently from progress
+        // without hardcoding the column order in n8n.
+        direction: order.indexOf(ticket.status) < order.indexOf(from) ? 'backward' : 'forward',
+        priority_label: TICKET_PRIORITY_LABELS[ticket.priority] ?? ticket.priority,
+        moved_by: movedBy,
+        moved_at: new Date().toISOString(),
+        board_url: `${origin}/tickets`,
         ticket_url: `${origin}/tickets?ticket=${encodeURIComponent(ticket.id)}`,
       }),
       signal: AbortSignal.timeout(10_000),

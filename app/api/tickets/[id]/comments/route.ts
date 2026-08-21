@@ -6,6 +6,8 @@ import { getSessionActor } from '@/lib/auth/session-actor';
 import { lookupFullNameForEmail } from '@/lib/supabase/announcements';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import type { TicketComment } from '@/lib/tickets/types';
+import { notifyTicketReplied } from '@/lib/tickets/notify';
+import type { TicketRow } from '@/lib/tickets/types';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -66,7 +68,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { data: ticket, error: ticketErr } = await supabase
     .from('tickets')
-    .select('id, ticket_no, title, created_by, assigned_to, archived_at')
+    .select('id, ticket_no, title, created_by, assigned_to, archived_at, priority, status')
     .eq('id', id)
     .maybeSingle();
   if (ticketErr) return NextResponse.json({ error: ticketErr.message }, { status: 500 });
@@ -108,10 +110,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // is notified twice when they're both creator and assignee. Best-effort: a
   // notification hiccup must not fail the reply that's already saved.
   const t = ticket as {
+    id: string;
     ticket_no: number;
     title: string;
     created_by: string;
     assigned_to: string | null;
+    priority: TicketRow['priority'];
+    status: TicketRow['status'];
   };
   const replier = authorName ?? authz.sessionEmail;
   const preview = `${body.slice(0, 140)}${body.length > 140 ? '…' : ''}`;
@@ -149,6 +154,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         if (notifErr) console.warn('[tickets] reply notification failed:', notifErr.message);
       });
   }
+
+  // EMAIL leg — one recipient, resolved by the shared rule: the creator, or the
+  // assigned developer when the creator is the one who typed this. Deliberately
+  // narrower than the in-app rows above (which go to both parties): a panel row
+  // is cheap, an inbox is not. Fire-and-forget, like every hook on this board.
+  void notifyTicketReplied(t, {
+    body,
+    author_email: authz.sessionEmail,
+    author_name: authorName,
+  });
 
   return NextResponse.json({ comment: data as TicketComment });
 }

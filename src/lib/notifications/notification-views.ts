@@ -63,6 +63,9 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   // The recipient was assigned a ticket to fix. Same home as replies — the
   // assignee may hold NO board role, so the message itself carries the ask.
   'ticket.assigned': ['employee'],
+  // The recipient's own ticket changed column. Same home as the other two —
+  // the requester is an employee first, whatever dashboard they also hold.
+  'ticket.moved': ['employee'],
   // The manager published (or changed) this employee's KPI bonus for a
   // dept-week — carries the peso amount. Fired on Mark Ready/Lock and on any
   // change landing on an already-published week. Employee-only, ungated.

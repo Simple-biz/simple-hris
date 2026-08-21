@@ -59,10 +59,57 @@ Jul 17 work).
 - **Live**: Supabase Realtime with a 30s poll + focus-refresh fallback (a
   "Live"/"degraded" indicator tracks the websocket). Refetches never clobber
   an in-flight drag.
-- **Notifications**: assignment fires an n8n email
-  (`references/n8n/ticket-assigned-email.workflow.json`, webhook configured in
-  Admin → Webhooks) and in-app notifications via
-  `src/lib/tickets/notify.ts` → NotificationsPanel.
+
+## Notifications — who hears what, and why
+
+Five outbound events. Every one of them decides its recipient **in code**, in
+`src/lib/tickets/notify.ts`, and hands n8n a `send_to` — the Gmail node never
+picks a recipient itself. That is one place to read and one place to fix.
+
+| Event | Webhook slug | Email goes to | In-app type |
+| --- | --- | --- | --- |
+| Ticket created | `ticket_created` | the board owner (`kaner@`) — never the filer | — |
+| Assignee set/changed | `ticket_assigned` | the new assignee | `ticket.assigned` |
+| Comment added | `ticket_replied` | **the counterparty** (see below) | `ticket.replied` → creator **and** assignee |
+| Column changed | `ticket_moved` | **the creator only** | `ticket.moved` |
+| Moved to Done | `ticket_done` | the creator | `ticket.moved` |
+
+The recipient rules are Kane's, 2026-08-21, and both live in one pure module,
+`src/lib/tickets/recipients.ts`, so the email leg and the in-app leg can never
+drift apart:
+
+- **A comment emails the counterparty** — the ticket's creator, or the assigned
+  developer when the creator is the one who typed it. Nobody is ever emailed
+  about their own comment. A third party commenting does **not** silence the
+  creator.
+- **A move emails the creator, and only the creator.** The developer is usually
+  the one dragging the card, so mailing them their own move is noise — and the
+  dev is deliberately **not** a fallback here, which is the one place the move
+  rule differs from the comment rule. Creator moved it themselves → nobody is
+  mailed.
+- **Every move fires**, including a backward `testing → in_progress` bounce:
+  "your ticket went back" is real news, so there is **no status allowlist**. The
+  n8n payload carries `direction: forward | backward` so one workflow can phrase
+  a bounce differently without hardcoding the column order.
+- **`done` is excluded from `ticket_moved`** by the PATCH route, not by the hook.
+  It has its own richer "refresh and test it" email, and one move must never send
+  two emails. It still writes the in-app `ticket.moved` row.
+
+Two things that look like bugs and are not:
+
+- **The email is narrower than the in-app row on comments.** `ticket.replied`
+  rows go to creator *and* assignee; the email goes to one person. A panel row is
+  cheap, an inbox is not. Do not "fix" the asymmetry by widening the email.
+- **A hook with no configured webhook sends nothing and logs nothing.** Every
+  hook resolves its URL (Admin → Webhooks slug first, then the env var) and
+  silently returns when there is none. All five are `void`-called with a 10s
+  `AbortSignal.timeout` and never throw, because a notification hiccup must not
+  fail the comment or move that is already saved.
+
+**An empty `send_to` must never reach n8n.** The Gmail node is stop-on-error, so
+an empty To fails the whole workflow run instead of skipping it — which is how
+the orientation-email Invalid-To incident happened. `recipients.ts` returns
+`null` rather than an empty string, and each hook returns early on it.
 
 ## Adjacent surfaces
 
@@ -83,3 +130,28 @@ Jul 17 work).
 | `references/sql/migrate/2026-07-15_tickets_kanban.sql` | Tables: tickets, comments + realtime |
 | `references/sql/migrate/2026-07-16_tickets_archive_history.sql` | `archived_at/by` + `ticket_events` history |
 | `references/sql/migrate/2026-07-16_tickets_dedicated_role_only.sql` | Revokes leaked per-dashboard `tickets` grants (re-grant the Tickets role afterwards to whoever should keep access) |
+| `references/sql/alter/2026-08-21_add_ticket_moved_notification_type.sql` | Widens `employee_notifications_type_check` to allow `ticket.moved`. **PENDING** — run `node scripts/apply-ticket-moved-notification-type.mjs --apply` (verify-only without the flag) |
+
+## Deploy notes — update notifications (2026-08-21)
+
+Two external steps, both **PENDING** until Kane confirms them. The code is inert
+until both land, and inert *quietly*:
+
+1. **The CHECK widen.** Until `2026-08-21_add_ticket_moved_notification_type.sql`
+   runs, every `ticket.moved` insert is rejected by the constraint and the only
+   trace is a `console.warn` in the PATCH route. This is exactly how `kpi.scored`
+   shipped dead for three days in August 2026 — 0 rows written, nobody noticed,
+   found only while auditing something else. The apply script is gated
+   (`--apply`, verify-only by default) and **aborts** if the live constraint
+   allows a type its SQL list is missing, because `ADD CONSTRAINT` restates the
+   full set and a subset would silently break every other type.
+2. **The n8n imports.** `references/n8n/ticket-replied-email.workflow.json` and
+   `ticket-moved-email.workflow.json`, then paste each webhook URL into
+   Admin → Webhooks under `ticket_replied` / `ticket_moved` (or set
+   `N8N_TICKETS_REPLIED_WEBHOOK_URL` / `N8N_TICKETS_MOVED_WEBHOOK_URL`). Until
+   then both hooks no-op by design — no error, no email.
+
+Neither step can be inferred to have happened. Check the constraint with
+`node scripts/apply-ticket-moved-notification-type.mjs` (no flag: it reads and
+prints the live definition) and check the hooks by sending a test from
+Admin → Webhooks.

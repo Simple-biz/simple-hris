@@ -91,6 +91,16 @@ const ACTIONS: Partial<Record<AppView, Record<string, ActionResolver>>> = {
         label: 'Open ticket',
       };
     },
+    // The requester's ticket changed column. Same deep link as a reply — the
+    // dialog opens on the activity feed, which is where the move is spelled
+    // out. `details.ticket_id` is stamped by PATCH /api/tickets/[id].
+    'ticket.moved': (details) => {
+      const id = readString(details, 'ticket_id');
+      return {
+        href: id ? `/tickets?ticket=${encodeURIComponent(id)}` : '/tickets',
+        label: 'Open ticket',
+      };
+    },
   },
 };
 

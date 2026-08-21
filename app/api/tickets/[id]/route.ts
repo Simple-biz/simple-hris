@@ -7,11 +7,17 @@ import { lookupFullNameForEmail } from '@/lib/supabase/announcements';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { logTicketEvent } from '@/lib/tickets/events';
 import { listTicketMembers } from '@/lib/tickets/members';
-import { notifyTicketDone, sendTicketAssignedNotifications } from '@/lib/tickets/notify';
+import {
+  notifyTicketDone,
+  notifyTicketMoved,
+  sendTicketAssignedNotifications,
+} from '@/lib/tickets/notify';
+import { moveEmailRecipient } from '@/lib/tickets/recipients';
 import {
   TICKET_BOARD_MOVERS,
   TICKET_BOARD_OWNER,
   TICKET_STATUSES,
+  TICKET_STATUS_LABELS,
   TICKET_PRIORITIES,
   isAssignableDeveloper,
   type TicketFieldChange,
@@ -270,6 +276,56 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // Fires only on the transition (not on later edits to an already-done card).
   if (moved && ticket.status === 'done') {
     void notifyTicketDone(ticket, authz.sessionEmail);
+  }
+
+  // ANY OTHER column change → tell the CREATOR where their request went, both
+  // legs (Kane 2026-08-21). Three rules are load-bearing here:
+  //   · creator only — the developer is usually the one moving the card, so
+  //     mailing them their own move is noise. moveEmailRecipient enforces it.
+  //   · every move, including a backward Testing → In Progress bounce: "your
+  //     ticket went back" is real news, so there is no status allowlist.
+  //   · `done` is excluded because notifyTicketDone already sends a richer
+  //     "refresh and test it" email — one move must never send two emails.
+  // Guarded by `moved`, so a position-only reorder or a title edit sends
+  // nothing. Fire-and-forget: a notification must not fail the saved move.
+  if (moved && ticket.status !== 'done') {
+    void notifyTicketMoved(ticket, beforeRow.status, authz.sessionEmail);
+  }
+
+  // In-app leg for the move, on EVERY transition including done — a panel row
+  // is cheap, and a creator who does not live in their inbox should still see
+  // the card move. `ticket.moved` is a NEW notification type: until the
+  // employee_notifications CHECK widen runs
+  // (scripts/apply-ticket-moved-notification-type.mjs) every one of these
+  // inserts is REJECTED, and the .then below is the only place that says so.
+  // That is exactly how kpi.scored shipped dead for three days.
+  if (moved) {
+    const moveRecipient = moveEmailRecipient(ticket, authz.sessionEmail);
+    if (moveRecipient) {
+      const fromLabel = TICKET_STATUS_LABELS[beforeRow.status] ?? beforeRow.status;
+      const toLabel = TICKET_STATUS_LABELS[ticket.status] ?? ticket.status;
+      void supabase
+        .from('employee_notifications')
+        .insert({
+          recipient_email: moveRecipient,
+          type: 'ticket.moved',
+          tone: ticket.status === 'done' ? 'positive' : 'neutral',
+          title: `Ticket #${ticket.ticket_no} moved to ${toLabel}`,
+          message:
+            `${authz.sessionEmail} moved "${ticket.title}" from ${fromLabel} to ${toLabel}.` +
+            (ticket.status === 'done' ? ' Refresh the HRIS and test it out.' : ''),
+          details: {
+            ticket_id: ticket.id,
+            ticket_no: ticket.ticket_no,
+            from: beforeRow.status,
+            to: ticket.status,
+            moved_by: authz.sessionEmail,
+          },
+        })
+        .then(({ error: notifErr }) => {
+          if (notifErr) console.warn('[tickets] move notification failed:', notifErr.message);
+        });
+    }
   }
 
   // Newly assigned → notify the developer right away (in-app + email legs,
