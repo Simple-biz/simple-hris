@@ -36,7 +36,10 @@ const BANK_USED_OPTIONS = [
   'x0048',
   'Remitly',
   'HiGlobe',
-  'Hurupay',
+  // Rebranded from 'Hurupay' 2026-08-24. Rows already written keep the old
+  // spelling; this list only seeds NEW picks (the field starts empty, it is
+  // never matched against a stored value).
+  'Kolan',
 ] as const;
 
 /* ---- status configuration -------------------------------------------- */
@@ -379,7 +382,7 @@ export default function MarkPaidDialog({
 
   // The hero leads with the figure the clerk keys into the processor. Wise is
   // the only rail keyed in pesos, so it alone leads with the PHP amount; every
-  // other rail (Hurupay, HiGlobe, wires) leads with USD and keeps the PHP
+  // other rail (Kolan, HiGlobe, wires) leads with USD and keeps the PHP
   // equivalent on the secondary line. COP payees and genuinely USD-paid people
   // (US managers, USD contractors) are untouched. If a PHP row somehow lacks a
   // USD figure, fall back to the peso hero rather than showing "—" big.
@@ -514,7 +517,7 @@ export default function MarkPaidDialog({
 
   const open    = row != null;
   /**
-   * Hurupay and Higlobe don't hand back a usable confirmation reference, so a
+   * Kolan and Higlobe don't hand back a usable confirmation reference, so a
    * transaction ID can't be required for them — the clerk would have to invent one.
    * Every other rail still requires it. Mirrored server-side in
    * POST /api/payment-dispatches (TXN_OPTIONAL_PROCESSORS).
@@ -865,7 +868,7 @@ export default function MarkPaidDialog({
               cfg={cfg}
               placeholder={
                 txnOptional
-                  ? 'Optional — Hurupay/Higlobe give no reference'
+                  ? 'Optional — Kolan/Higlobe give no reference'
                   : 'Paste confirmation from processor'
               }
               value={transactionId}

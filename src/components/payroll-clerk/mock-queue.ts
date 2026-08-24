@@ -46,8 +46,11 @@ export interface ProcessorMeta {
 
 export const PROCESSORS: ProcessorMeta[] = [
   {
+    // id + detailFields are STORED keys (employee_ids.bank_preferred,
+    // employee_ids.hurupay_email) and never move; only `label` follows the
+    // 2026-08-24 Hurupay -> Kolan rebrand.
     id: 'hurupay',
-    label: 'Hurupay',
+    label: 'Kolan',
     blurb: 'Email only',
     detailFields: ['hurupay_email'],
   },
@@ -496,7 +499,10 @@ export function processorIdFromBankPreferred(raw: string | null | undefined): Pr
   if (!raw) return null;
   const v = String(raw).trim().toLowerCase().replace(/\s+/g, '');
   if (!v) return null;
-  if (v === 'hurupay' || v === 'huru' || v === 'huropay') return 'hurupay';
+  // 'kolan' is the post-rebrand spelling of the SAME rail (2026-08-24). A sheet
+  // cell saying "Kolan" that resolved to null would drop the person out of the
+  // dispatch queue entirely — unrouted people are never queued.
+  if (v === 'hurupay' || v === 'huru' || v === 'huropay' || v === 'kolan') return 'hurupay';
   if (v === 'wepay') return 'wepay';
   if (v === 'higlobe' || v === 'higloble' || v === 'higlobel') return 'higlobe';
   if (v === 'wise' || v === 'transferwise') return 'wise';

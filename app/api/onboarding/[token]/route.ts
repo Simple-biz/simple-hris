@@ -211,7 +211,7 @@ export async function POST(
   if (!body.contract_signature) missing.push("contract_signature");
   if (!body.contract_date) missing.push("contract_date");
 
-  // Hurupay-specific required field (only when the hire chose hurupay).
+  // Kolan-specific required field (only when the hire chose hurupay).
   if (body.payment_method === "hurupay" && !body.hurupay_email?.trim()) {
     missing.push("hurupay_email");
   }

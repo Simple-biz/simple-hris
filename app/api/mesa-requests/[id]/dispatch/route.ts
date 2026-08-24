@@ -46,7 +46,7 @@ export async function POST(
       note?: string | null;
     };
 
-    // Hurupay and Higlobe return no usable confirmation reference, so a transaction
+    // Kolan and Higlobe return no usable confirmation reference, so a transaction
     // ID cannot be required for them — the clerk would have to invent one. This
     // queue uses the SHARED MarkPaidDialog with a clerk-picked processor, so the
     // rule has to match the dialog's (`txnOptional`) or a legitimately blank field

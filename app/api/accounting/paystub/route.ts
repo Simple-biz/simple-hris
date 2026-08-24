@@ -123,7 +123,7 @@ export async function GET(req: NextRequest) {
   } catch {
     /* best-effort — the statement still renders without the COP equivalent */
   }
-  // Display pay date: real disbursement date, else the scheduled Tue (HuruPay) /
+  // Display pay date: real disbursement date, else the scheduled Tue (Kolan) /
   // Thu (wires) for this week + this employee's payout method.
   const processor = await resolveEmployeeProcessor([email]);
   return NextResponse.json({

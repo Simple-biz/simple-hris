@@ -1210,7 +1210,7 @@ function PeoplePreviewSnapshotCard({
                 <SnapshotRow label="Address" value={prefBank.address} />
               </>
             )}
-            {proc === 'hurupay' && <SnapshotRow label="Hurupay email" value={b.hurupay_email} mono />}
+            {proc === 'hurupay' && <SnapshotRow label="Kolan email" value={b.hurupay_email} mono />}
             {proc === 'wepay' && <SnapshotRow label="WePay email" value={b.wepay_email} mono />}
             {proc === 'higlobe' && (
               <>

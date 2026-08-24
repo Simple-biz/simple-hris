@@ -522,7 +522,7 @@ function renderOnboardingEmailHtml(args: {
                       <span style="color:${COLORS.orange};">●</span>&nbsp;&nbsp;Your contact info<br />
                       <span style="color:${COLORS.orange};">●</span>&nbsp;&nbsp;Non-solicitation &amp; privacy agreements<br />
                       <span style="color:${COLORS.orange};">●</span>&nbsp;&nbsp;W-8BEN upload (only if you're outside the US)<br />
-                      <span style="color:${COLORS.orange};">●</span>&nbsp;&nbsp;How you'd like to be paid — Hurupay or wire transfer<br />
+                      <span style="color:${COLORS.orange};">●</span>&nbsp;&nbsp;How you'd like to be paid — Kolan or wire transfer<br />
                       <span style="color:${COLORS.orange};">●</span>&nbsp;&nbsp;Contract worker agreement signature
                     </p>
                     ${isResend

@@ -32,7 +32,7 @@ const ALLOWED_FIELDS = [
   // already gated to the same roles that approve employee-initiated Bank
   // Preferred changes (accounting | ceo | admin) — a direct accounting edit IS
   // the approval. The WIRES lock is still enforced below against the LIVE
-  // stored value: a wires/null person can never be moved onto Hurupay/HiGlobe.
+  // stored value: a wires/null person can never be moved onto Kolan/HiGlobe.
   'bank_preferred',
   'preferred_processor',
   'bank_name',
@@ -137,7 +137,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ email
   // WIRES lock (same rule as the employee flow + approval PATCH): a person
   // whose LIVE bank_preferred is wires-preferred (anything but exactly
   // hurupay/higlobe, including null/legacy) can never be moved onto
-  // Hurupay/HiGlobe. Checked against the stored value, not the form's.
+  // Kolan/HiGlobe. Checked against the stored value, not the form's.
   if (Object.prototype.hasOwnProperty.call(update, 'bank_preferred')) {
     const current = row?.bank_preferred ?? null;
     if (!isBankPreferredTransitionAllowed(current, update.bank_preferred)) {
@@ -145,7 +145,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ email
         {
           ok: false,
           error:
-            'Blocked by the WIRES lock: a wires-preferred employee cannot be switched to Hurupay/HiGlobe.',
+            'Blocked by the WIRES lock: a wires-preferred employee cannot be switched to Kolan/HiGlobe.',
         },
         { status: 400 },
       );

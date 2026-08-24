@@ -1889,7 +1889,7 @@ export default function EmployeeProfile({
                           {pendingBankPreferred
                             ? 'Your change is awaiting Accounting approval. Until then, your current setting below stays active.'
                             : isWiresPreferred(bankPreferred)
-                              ? 'You are set to WIRES — salary is sent by bank wire, so Hurupay/HiGlobe are not available. Changes need Accounting approval.'
+                              ? 'You are set to WIRES — salary is sent by bank wire, so Kolan/HiGlobe are not available. Changes need Accounting approval.'
                               : 'The bank Payment Dispatch routes your salary through. Changes need Accounting approval before they take effect. Independent of your disbursement channel above.'}
                         </p>
                       </div>

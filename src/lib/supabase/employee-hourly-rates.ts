@@ -122,11 +122,18 @@ export function mapEmployeeHourlyRateRow(row: RawRow): EmployeeHourlyRateRow {
     "Bank preferred",
     "BankPreferred",
   ]);
+  // Column stays `hurupay_email` in the DB, but the SHEET header follows the
+  // Kolan rebrand (2026-08-24). Both spellings are accepted so a renamed sheet
+  // column cannot silently blank the wallet email and flip the payee to
+  // "missing bank info" in Payroll Readiness.
   const hurupay_email = getField(idx, [
     "Hurupay Email",
     "hurupay_email",
     "HuruPay Email Account",
     "Hurupay Email Account",
+    "Kolan Email",
+    "kolan_email",
+    "Kolan Email Account",
   ]);
   const higlobe_email = getField(idx, [
     "HiGlobe Email",

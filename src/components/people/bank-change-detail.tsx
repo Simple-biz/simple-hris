@@ -56,7 +56,7 @@ const FIELD_LABELS: Record<string, string> = {
   alt_account_holder_name: 'Alt account holder',
   alt_account_number: 'Alt account number',
   alt_routing_number: 'Alt routing',
-  hurupay_email: 'Hurupay email',
+  hurupay_email: 'Kolan email',
   wepay_email: 'Wepay email',
   higlobe_email: 'HiGlobe email',
   higlobe_account_name: 'HiGlobe name',

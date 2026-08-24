@@ -50,7 +50,11 @@ export function resolveMarkPaidDefaults(row: MarkPaidRow): MarkPaidDefaults {
   const d = row.details ?? {};
   switch (p) {
     case 'hurupay':
-      return { preferredBank: 'Hurupay', accountNumber: d.hurupay_email ?? '', accountHolder: row.name, swiftCode: '', showSwiftField: false };
+      // 'Kolan' is PERSISTED to payment_dispatches.recipient_preferred_bank on
+      // every mark-paid. Dispatch rows written before 2026-08-24 keep saying
+      // 'Hurupay' and are deliberately NOT backfilled: the ledger records what
+      // the rail was called when the money moved. Read back for display only.
+      return { preferredBank: 'Kolan', accountNumber: d.hurupay_email ?? '', accountHolder: row.name, swiftCode: '', showSwiftField: false };
     case 'wepay':
       return { preferredBank: 'Wepay', accountNumber: d.wepay_email ?? '', accountHolder: row.name, swiftCode: '', showSwiftField: false };
     case 'higlobe':

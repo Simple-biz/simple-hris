@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Required field guards ──────────────────────────────────────────────────
-  // Hurupay and Higlobe return no usable confirmation reference, so a transaction
+  // Kolan and Higlobe return no usable confirmation reference, so a transaction
   // ID cannot be required for them — requiring it would only make the clerk type a
   // placeholder, which is worse than an honest blank. Mirrored client-side in
   // MarkPaidDialog (`txnOptional`).

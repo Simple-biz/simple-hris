@@ -9,7 +9,16 @@
 *send-from rail*. It is a first-class, employee-owned field that wins Payment
 Dispatch's processor-routing precedence, is **held for Accounting approval**
 before it takes effect, and carries a hard **WIRES lock** that a wires employee
-can never be moved off of onto Hurupay/HiGlobe.
+can never be moved off of onto Kolan/HiGlobe.
+
+> **Rebrand, 2026-08-24 — Hurupay is now Kolan.** Only the human-visible label
+> changed. The processor **id**, `employee_ids.bank_preferred`, the
+> `hr_onboarding_submissions.payment_method` CHECK, and the `hurupay_email` /
+> `"Hurupay Email"` columns all still read `hurupay`. Renaming any of them would
+> make `isWiresPreferred()` classify every Kolan payee as WIRES and lock them out
+> of their own rail. Where this doc writes `hurupay` in code font it means the
+> STORED VALUE and is still literally correct.
+
 
 > **Do not conflate three separate things.** They live in different columns and
 > mean different things:
@@ -32,7 +41,7 @@ can never be moved off of onto Hurupay/HiGlobe.
 A `SmoothSelect` below the Disbursement form. Options and their stored processor
 ids come from `BANK_PREFERRED_OPTIONS` in
 [`src/lib/employee-payment-processors.ts`](../../src/lib/employee-payment-processors.ts):
-HiGlobe / Hurupay / Jeeves / Wise / **x1153**.
+HiGlobe / Kolan / Jeeves / Wise / **x1153**.
 
 - **`x1153` → `wires`.** `x1153` is a specific wire account, not a distinct
   processor, so it maps to the `wires` processor id. Because there is no separate
@@ -113,20 +122,29 @@ and [`[id]/route.ts`](../../app/api/bank-preferred-requests/[id]/route.ts).
 ## 4. The WIRES lock
 
 A **WIRES employee** — one whose `employee_ids.bank_preferred` is anything but
-exactly `hurupay`/`higlobe`, **including `null` and legacy free-text** — can
-**never** be switched to Hurupay or HiGlobe. WIRES is the residual bucket.
+exactly `hurupay`/`kolan`/`higlobe`, **including `null` and legacy free-text** —
+can **never** be switched to Kolan or HiGlobe. WIRES is the residual bucket.
+
+**`kolan` is the rebranded spelling of `hurupay` (2026-08-24) and counts as that
+same wallet rail — nothing else was widened.** The stored value stays
+`hurupay`; `kolan` is accepted defensively because the rates sheet is free text
+and a human will eventually type the new name. Reading it as WIRES would be a
+misclassification that permanently locks a wallet payee out of their own rail.
+Every other legacy spelling — including the `huru`/`huropay` aliases the TEXT
+normaliser separately accepts — still counts as WIRES, and
+`employee-payment-processors.test.ts` pins that non-widening explicitly.
 
 Single source of truth, both unit-tested (incl. mixed-case legacy free-text) in
 [`src/lib/employee-payment-processors.ts`](../../src/lib/employee-payment-processors.ts):
 
 ```ts
-isWiresPreferred(value)                    // true unless value is exactly hurupay/higlobe
+isWiresPreferred(value)                    // true unless value is exactly hurupay/kolan/higlobe
 isBankPreferredTransitionAllowed(current, next)
   // false iff current is wires-preferred and next is NOT wires-preferred
 ```
 
 **Allowed:** `hurupay ↔ higlobe`, and `anything → wires`.
-**Blocked:** `wires/null/legacy → hurupay | higlobe`.
+**Blocked:** `wires/null/legacy → hurupay | kolan | higlobe`.
 
 Four enforcement sites (defense in depth):
 
@@ -391,7 +409,7 @@ one number.
 - **any rail somebody is actually on**, retired or not. Wise and Jeeves are retired
   from the pickers yet carry 386 and 3 live payees; a rail with people on it must
   never be missing from Accounting's view.
-- plus every **still-offered** rail at zero (muted), because "Hurupay: 0" is a real
+- plus every **still-offered** rail at zero (muted), because "Kolan: 0" is a real
   answer and an absent row is indistinguishable from a forgotten one.
 - a rail that is **both retired and empty** is dropped. That is Wepay today (Kane,
   2026-08-19: *let us remove We Pay*), and it is dropped **by rule, not by name**:

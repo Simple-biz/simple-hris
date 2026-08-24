@@ -510,7 +510,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           error:
-            "This employee is set to WIRES and can only be paid via wires — Hurupay/HiGlobe is not possible.",
+            "This employee is set to WIRES and can only be paid via wires — Kolan/HiGlobe is not possible.",
         },
         { status: 400 },
       );

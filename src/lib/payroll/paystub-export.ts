@@ -31,7 +31,7 @@ import { dedupeOneRowPerWeek } from './paystub-week-dedupe';
 export interface PayStubWeek {
   sourceFile: string;
   paidAt: string | null;
-  /** Display pay date: real disbursement date, else the scheduled Tue (HuruPay) /
+  /** Display pay date: real disbursement date, else the scheduled Tue (Kolan) /
    *  Thu (wires) for this week. Preferred over `paidAt` for the Paid column. */
   payDate?: string | null;
   /** Dispatch status from the paystub API ('paid' | 'issued'). Present on a stub

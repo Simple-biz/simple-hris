@@ -9,6 +9,7 @@ import {
   toTitleCaseNameOrNull,
 } from "../text/sanitize-name";
 import { composeFullName } from "../hr/work-email";
+import { CURRENT_PAYOUT_BRAND, type PayoutBrand } from "../onboarding/payout-brand";
 
 const TABLE = "hr_onboarding_submissions";
 export const HR_ONBOARDING_BUCKET = "hr-onboarding-files";
@@ -102,6 +103,13 @@ export type HrOnboardingSubmissionRow = {
 
   payment_method: OnboardingPaymentMethod | null;
   hurupay_email: string | null;
+  /**
+   * DISPLAY brand the hire actually saw for the wallet rail. `null` on every
+   * row signed before the 2026-08-24 Kolan rebrand. Deliberately NOT in
+   * LIST_COLUMNS — the detail modal hydrates via select("*"), so the HR table
+   * keeps loading on a database where the migration has not run yet.
+   */
+  payout_brand: PayoutBrand | null;
   bank_full_name: string | null;
   bank_account_name: string | null;
   bank_account_number: string | null;
@@ -516,6 +524,10 @@ export async function submitHrOnboarding(
     ...(input.w8ben_file_name !== undefined && { w8ben_file_name: input.w8ben_file_name }),
     payment_method: input.payment_method,
     hurupay_email: input.hurupay_email?.trim().toLowerCase() || null,
+    // Stamped server-side, never taken from the client: it records which brand
+    // THIS BUILD showed the hire, so HR's copy of older paperwork keeps saying
+    // "Hurupay". Routing is unaffected — payment_method stays 'hurupay'.
+    payout_brand: CURRENT_PAYOUT_BRAND,
     bank_full_name: input.bank_full_name?.trim() || null,
     bank_account_name: input.bank_account_name?.trim() || null,
     bank_account_number: input.bank_account_number?.trim() || null,
@@ -554,6 +566,13 @@ export async function submitHrOnboarding(
       test: /middle_name/i,
       keys: ["middle_name"],
       note: "references/sql/alter/add_middle_name_to_onboarding.sql",
+    },
+    // A brand stamp must never be the reason a hire's paperwork fails to land.
+    // Dropped rows simply read "Hurupay" until the migration runs.
+    {
+      test: /payout_brand/i,
+      keys: ["payout_brand"],
+      note: "references/sql/alter/add_payout_brand_to_onboarding.sql",
     },
   ];
   for (let attempt = 0; ; attempt++) {

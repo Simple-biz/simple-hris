@@ -68,7 +68,7 @@ const COLUMNS: { key: string; header: string }[] = [
   { key: 'preferred_bank_slot',   header: 'Preferred Bank Slot' },
 
   // ── Per-channel emails / handles (20–25) ──
-  { key: 'hurupay_email',         header: 'HuruPay Email' },
+  { key: 'kolan_email',           header: 'Kolan Email' },
   { key: 'wepay_email',           header: 'WePay Email' },
   { key: 'higlobe_email',         header: 'HiGlobe Email' },
   { key: 'higlobe_account_name',  header: 'HiGlobe Account Name' },
@@ -166,7 +166,9 @@ export function buildExportRows(
       preferred_bank_slot: ids?.preferred_bank_slot ?? '',
 
       // Per-channel
-      hurupay_email: ids?.hurupay_email ?? '',
+      // DB column keeps its name; only the CSV header rebrands. The rates-sheet
+      // importer accepts both spellings, so this export still round-trips.
+      kolan_email: ids?.hurupay_email ?? '',
       wepay_email: ids?.wepay_email ?? '',
       higlobe_email: ids?.higlobe_email ?? '',
       higlobe_account_name: ids?.higlobe_account_name ?? '',

@@ -613,7 +613,7 @@ export default function OnboardingFormPage() {
         if (form.payment_method == null) return 'Please choose a payment method.';
         if (form.payment_method === 'hurupay') {
           if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.hurupay_email.trim())) {
-            return 'Please enter the email for your Hurupay account.';
+            return 'Please enter the email for your Kolan account.';
           }
         }
         if (form.payment_method === 'wires') {
@@ -1668,12 +1668,12 @@ function Step1Welcome({
           You will be paid weekly for the work completed the previous week, according
           to the pay plan emailed to you. While we process payments weekly, please note
           that international wires typically take 2-5 business days, depending on your
-          bank. As an alternative, we also offer <strong>Hurupay</strong> which is faster
+          bank. As an alternative, we also offer <strong>Kolan</strong> which is faster
           for receiving your pay.{' '}
           <span className="rounded bg-yellow-100 px-1.5 py-0.5 font-semibold text-yellow-900">
             Please complete the form indicating your preferred payment method.
           </span>{' '}
-          If you have any questions regarding your pay or have questions about Hurupay,
+          If you have any questions regarding your pay or have questions about Kolan,
           Fran in our accounting department is available at{' '}
           <a href="mailto:payroll@simple.biz" className="text-emerald-700 hover:underline">
             payroll@simple.biz
@@ -1684,25 +1684,25 @@ function Step1Welcome({
 
       <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
         <h3 className="inline-block rounded bg-yellow-200 px-1.5 py-0.5 text-sm font-semibold text-yellow-900">
-          Hurupay
+          Kolan
         </h3>
         <p className="mt-2 text-xs leading-relaxed text-zinc-700">
-          Please download the Hurupay app on your phone and create your account at{' '}
+          Please download the Kolan app on your phone and create your account at{' '}
           <a
-            href="https://hurupay.com"
+            href="https://kolan.xyz/"
             target="_blank"
             rel="noopener noreferrer"
             className="font-semibold text-emerald-700 hover:underline"
           >
-            hurupay.com
+            kolan.xyz
           </a>
           .
         </p>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-xs text-zinc-700">
-          <li>Create a Hurupay account with your <strong>personal email</strong> (not your work email).</li>
+          <li>Create a Kolan account with your <strong>personal email</strong> (not your work email).</li>
           <li>Secure it with a 6-digit PIN (and optionally add 2FA for enhanced security).</li>
           <li>
-            Share your email address(es) linked with your Hurupay account and your complete
+            Share your email address(es) linked with your Kolan account and your complete
             personal address with zipcode for payroll purposes to{' '}
             <a href="mailto:payroll@simple.biz" className="text-emerald-700 hover:underline">
               payroll@simple.biz
@@ -1927,7 +1927,7 @@ function Step5Payment({
       <div>
         <h2 className="text-xl font-bold text-zinc-900">How would you like to be paid?</h2>
         <p className="mt-1 text-sm text-zinc-600">
-          We support Hurupay and international wire transfers.
+          We support Kolan and international wire transfers.
         </p>
       </div>
 
@@ -1936,8 +1936,8 @@ function Step5Payment({
           <ChoiceCard
             active={form.payment_method === 'hurupay'}
             onClick={() => update('payment_method', 'hurupay')}
-            title="Hurupay"
-            description="Faster — set it up via the Hurupay app and email payroll@simple.biz."
+            title="Kolan"
+            description="Faster — set it up via the Kolan app and email payroll@simple.biz."
           />
           <ChoiceCard
             active={form.payment_method === 'wires'}
@@ -1952,15 +1952,15 @@ function Step5Payment({
         <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/40 p-4">
           <div>
             <h3 className="inline-block rounded bg-yellow-200 px-1.5 py-0.5 text-sm font-semibold text-yellow-900">
-              Hurupay
+              Kolan
             </h3>
             <p className="mt-2 text-xs leading-relaxed text-zinc-700">
-              Enter the email tied to your Hurupay account. We have suggested your
-              personal email, but you can change it to whichever email your Hurupay
+              Enter the email tied to your Kolan account. We have suggested your
+              personal email, but you can change it to whichever email your Kolan
               account uses.
             </p>
           </div>
-          <Field label="Hurupay account email" required>
+          <Field label="Kolan account email" required>
             <Input
               type="email"
               value={form.hurupay_email}
@@ -1979,7 +1979,7 @@ function Step5Payment({
               Wires
             </h3>
             <p className="mt-2 text-xs leading-relaxed text-zinc-700">
-              If you don't have a Hurupay account, we can send a wire transfer instead. To set this
+              If you don't have a Kolan account, we can send a wire transfer instead. To set this
               up, please send us your wire transfer details. Please ensure all information is accurate
               and complete. Incomplete or incorrect details may cause delays in processing your payment.
               We recommend double-checking all information before submitting to ensure timely processing.

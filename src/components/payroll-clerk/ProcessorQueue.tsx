@@ -177,7 +177,7 @@ const NO_DEPT = '__none__';
 
 const FIELD_LABELS: Record<string, string> = {
   email: 'Work email',
-  hurupay_email: 'Hurupay email',
+  hurupay_email: 'Kolan email',
   higlobe_email: 'Higlobe email',
   higlobe_account_name: 'Higlobe account name',
   phone_number: 'Phone',
@@ -869,7 +869,7 @@ const QueueRowItem = React.memo(function QueueRowItem({
     PROCESSORS.find((p) => p.id === row.processor)?.detailFields ?? ['email'];
   // Receiving end — the SAME resolver the Mark Paid dialog pre-fills from, so the
   // "To Recipient Bank" column can never disagree with the dialog the clerk pays
-  // out of (wallet email for Hurupay/Wepay/HiGlobe/Wise-wallet, bank account for
+  // out of (wallet email for Kolan/Wepay/HiGlobe/Wise-wallet, bank account for
   // wires/Jeeves/Wise-into-bank).
   const recipientBank = useMemo(() => resolveMarkPaidDefaults(row), [row]);
   // A contractor row settles an approved invoice rather than paying hours, so its

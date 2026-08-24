@@ -386,13 +386,13 @@ export function PayoutDetailsFields({
         {processor === 'hurupay' && (
           <FormField
             disabled={disabled}
-            label="Hurupay Email"
+            label="Kolan Email"
             required
             type="email"
             placeholder="you@example.com"
             value={payout.hurupayEmail}
             onChange={(v) => update('hurupayEmail', v)}
-            hint="The email registered to your Hurupay account."
+            hint="The email registered to your Kolan account."
           />
         )}
 

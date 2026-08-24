@@ -6,6 +6,15 @@ This document covers the entire Payment Dispatch feature: the UI Lenny uses, the
 
 > **Related:** non-weekly payouts that bypass this cycle (MESA disbursements + orphanage budget requests) live in the **URGENT** tab — see [urgent-payments.md](./urgent-payments.md).
 
+> **Rebrand, 2026-08-24 — Hurupay is now Kolan.** Only the human-visible label
+> changed. The processor **id**, `employee_ids.bank_preferred`, the
+> `hr_onboarding_submissions.payment_method` CHECK, and the `hurupay_email` /
+> `"Hurupay Email"` columns all still read `hurupay`. Renaming any of them would
+> make `isWiresPreferred()` classify every Kolan payee as WIRES and lock them out
+> of their own rail. Where this doc writes `hurupay` in code font it means the
+> STORED VALUE and is still literally correct.
+
+
 ---
 
 ## 1. Origin
@@ -54,11 +63,11 @@ Three animated stat cards (`HeroStat` component, motion spring-counter via `Anim
 
 ### 3.3 Processor cards
 
-A row of 8 filter cards (All + Hurupay + Wepay + HiGlobe + Wise + Jeeves + Wires + History). Each card uses `ProcessorCard.tsx` and has its own brand identity:
+A row of 8 filter cards (All + Kolan + Wepay + HiGlobe + Wise + Jeeves + Wires + History). Each card uses `ProcessorCard.tsx` and has its own brand identity:
 
 | Processor | Gradient | Notes |
 |---|---|---|
-| Hurupay | orange → amber | Most common in production data |
+| Kolan (id `hurupay`) | orange → amber | Most common in production data. Rebranded from Hurupay 2026-08-24 — **label only**, the id is unchanged |
 | Wepay | sky → blue | Email only |
 | HiGlobe | emerald → teal | Email + account holder name |
 | Wise | green → lime | Brand-matched green |
@@ -69,9 +78,17 @@ Active card is highlighted via Framer Motion's **`layoutId`** glow that physical
 
 #### 3.3.1 Brand logo support
 
-`ProcessorLogo.tsx` does a HEAD probe on `/processors/{id}.svg`. If the asset exists, it renders the brand SVG inside a white tile. Otherwise it falls back to a gradient monogram tile (or icon, for non-brand cards like All / History).
+`ProcessorLogo.tsx` takes an explicit `logoSrc` prop and renders that image on a white plate; if it fails to load (`onError`) it falls back to a gradient monogram tile (or icon, for non-brand cards like All / History). **There is no HEAD probe and no `/processors/{id}.svg` convention** — that was never implemented. The live assets are PNGs at the public root (`/kolan.png`, `/higlobe.png`, `/wise.png`, `/jeeves.png`).
 
-To add a real brand logo: drop the SVG into `public/processors/` named after the processor id (e.g. `wise.svg`). See `public/processors/README.md`.
+The path is hardcoded in **three independent registries**, and all three must agree or one rail shows two different marks:
+
+| Registry | Feeds |
+|---|---|
+| `src/lib/employee-payment-processors.ts` | employee + Payroll Readiness pickers |
+| `src/lib/contractor/invoice-payment.ts` | contractor invoice gateways |
+| `PROCESSOR_VISUALS` in `PayrollDispatch.tsx` | the Payment Dispatch filter cards |
+
+The plate adapts to the artwork: `ProcessorLogo` measures the decoded image and gives a squarish **mark** (aspect < 1.5, e.g. Kolan) vertical padding, while a horizontal **wordmark** (Wise, HiGlobe) fills the plate height. See `public/processors/README.md`.
 
 ### 3.4 The table
 
@@ -143,7 +160,7 @@ map built once per load for the *whole cycle*, including everyone already paid
   argument so a caller can't ship a silently blank column. The standalone clerk app's
   **Sent payments** table is unchanged apart from getting the map for its export.
 
-Click the row to expand the processor-specific contact details (Hurupay email, Higlobe email + account name, phone, full address, city, province/state) with copy buttons on each.
+Click the row to expand the processor-specific contact details (Kolan email, Higlobe email + account name, phone, full address, city, province/state) with copy buttons on each.
 
 #### Search
 
@@ -170,7 +187,7 @@ Modal organised into two field groups (`MarkPaidDialog.tsx`):
 
 **Recipient banking** (snapshotted to the dispatch row, pre-filled from rates):
 
-- **Preferred bank** — readable bank name (e.g. "Hurupay", "BPI", "UnionBank")
+- **Preferred bank** — readable bank name (e.g. "Kolan", "BPI", "UnionBank"). Historical rows may read "Hurupay" — the pre-2026-08-24 name of the same rail
 - **Account holder** — name on the recipient's account
 - **Account number / wallet ID** — for digital wallets this is usually the email; for wires it's the bank account number
 - **SWIFT code** — only shown for the Wires processor
@@ -190,7 +207,7 @@ The pre-fills follow Carla's per-processor spec:
 
 | Processor | Pre-filled values |
 |---|---|
-| Hurupay | bank=Hurupay · acct=hurupay_email · holder=name |
+| Kolan | bank=Kolan · acct=hurupay_email · holder=name. `preferredBank` is **persisted** to `payment_dispatches.recipient_preferred_bank`; rows written before 2026-08-24 say `Hurupay` and are deliberately not backfilled |
 | Wepay | bank=Wepay · acct=work email · holder=name |
 | HiGlobe | bank=HiGlobe · acct=higlobe_email · holder=higlobe_account_name |
 | Wise | bank=Wise · acct=work email · holder=name |
@@ -267,6 +284,11 @@ COP-denominated people (Colombian staff on a COP pay structure) are paid in thei
 ### 4.1 Schema additions
 
 Two migrations (both idempotent, in `references/`):
+
+> The quoted `"Hurupay Email"` column below keeps its name after the Kolan
+> rebrand. The sheet-import alias list in `employee-hourly-rates.ts` accepts
+> **both** `"Hurupay Email"` and `"Kolan Email"` headers so a renamed sheet
+> column cannot silently blank the wallet email.
 
 #### `seed_payroll_dispatch_columns.sql` (migration #11)
 
@@ -1037,7 +1059,7 @@ superseded on the points below. §12.1–§12.2 are from earlier in the month;
 In [MarkPaidDialog.tsx](src/components/payroll-clerk/MarkPaidDialog.tsx) the **Bank used (sent from)** field became a `<select>` (the `FieldSelect` component) instead of free text, driven by the `BANK_USED_OPTIONS` constant. This replaces the inconsistent free-text spellings that were hard to report on. Options, in the accounting team's canonical order:
 
 ```
-Chase · Jeeves · Parallax · PayPal · Wise · x1161 · x1153 · x0048 · Remitly · HiGlobe · Hurupay
+Chase · Jeeves · Parallax · PayPal · Wise · x1161 · x1153 · x0048 · Remitly · HiGlobe · Kolan
 ```
 
 - The select opens on a disabled `Select a bank…` placeholder option (empty `value`), rendered in muted placeholder color via the `placeholderActive` prop while nothing is chosen.
@@ -1075,7 +1097,8 @@ authoritative, `preferred_processor` must be NULL (it outranks the CSV).
 This whole feature — the employee **Bank Preferred** dropdown, its **Accounting
 approval gate** (changes held in `bank_preferred_change_requests` until approved
 in the Issues tab), and the **WIRES lock** (a wires/null/legacy employee can
-never be switched to hurupay/higlobe) — has its own doc:
+never be switched to hurupay/higlobe — the stored values, which `kolan` also
+resolves to) — has its own doc:
 [bank-preferred-routing.md](./bank-preferred-routing.md).
 
 #### 12.3.1 Sub-₱7k wires → Wise (temporary weekly reroute, 2026-07-29)
@@ -1160,7 +1183,7 @@ tile. Cards were also widened so the ~3:1 logos are legible. See
 ### 12.6 Processor buckets always visible during processing (focus-mode removed)
 
 §3.3's rail list is stale; the live rail is
-All · Urgent · Hurupay · HiGlobe · Wise · Jeeves · Wires · USD · Done ·
+All · Urgent · Kolan · HiGlobe · Wise · Jeeves · Wires · USD · Done ·
 Orphanage · Excluded (Reports left the rail 2026-08-12). A short-lived **"focus mode"** used to retract the
 processor-bucket rail and compact the KPI hero stats when processing started; it
 was **removed entirely** (`PayrollDispatch.tsx`) after it caused a "buckets

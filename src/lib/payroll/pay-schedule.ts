@@ -2,8 +2,8 @@
  * Disbursement-date schedule by payout method.
  *
  * Operational rule (owner): payroll is disbursed the week AFTER the pay period —
- * HuruPay on Tuesday, wires on Thursday. So a stub's "pay date" is the Tuesday
- * (HuruPay / default) or Thursday (wires) of the week following the pay week.
+ * Kolan on Tuesday, wires on Thursday. So a stub's "pay date" is the Tuesday
+ * (Kolan / default) or Thursday (wires) of the week following the pay week.
  * This mirrors the wizard's existing `salary_date = weekStart + 8` intent
  * (documented as "the Tuesday after the pay period's Sunday").
  *
@@ -44,7 +44,7 @@ function nextWeekday(d: Date, targetDow: number): Date {
   return r;
 }
 
-/** True when this processor is paid by wire (Thursday); everything else (HuruPay
+/** True when this processor is paid by wire (Thursday); everything else (Kolan
  *  and other rails) defaults to Tuesday. */
 export function isWireProcessor(processor: string | null | undefined): boolean {
   const v = (processor ?? "").trim().toLowerCase();
@@ -53,7 +53,7 @@ export function isWireProcessor(processor: string | null | undefined): boolean {
 
 /**
  * The scheduled pay date (ISO YYYY-MM-DD) for a pay week + method: the Tuesday
- * (HuruPay / default) or Thursday (wires) of the week AFTER the pay week ends.
+ * (Kolan / default) or Thursday (wires) of the week AFTER the pay week ends.
  * `weekEndIso` is the pay-period end (Saturday for non-HSL). Null when the week
  * end can't be parsed.
  */
@@ -87,7 +87,9 @@ function processorFromBankPreferred(raw: string | null | undefined): string | nu
   if (!raw) return null;
   const v = String(raw).trim().toLowerCase().replace(/\s+/g, "");
   if (!v) return null;
-  if (v === "hurupay" || v === "huru" || v === "huropay") return "hurupay";
+  // 'kolan' is the post-rebrand spelling of the SAME rail (2026-08-24) — see
+  // processorIdFromBankPreferredText in src/lib/employee-payment-processors.ts.
+  if (v === "hurupay" || v === "huru" || v === "huropay" || v === "kolan") return "hurupay";
   if (v === "wepay") return "wepay";
   if (v === "higlobe" || v === "higloble" || v === "higlobel") return "higlobe";
   if (v === "wise" || v === "transferwise") return "wise";
@@ -126,7 +128,7 @@ export async function resolveEmployeeProcessor(emails: string[]): Promise<string
       // Map through the SAME text normalizer the legacy cell uses. Stored
       // bank_preferred values include account-suffix codes ("x1153"), and
       // returning one raw made isWireProcessor() false — so a wires payee got
-      // the Tuesday (HuruPay) pay date on their stub while Payment Dispatch
+      // the Tuesday (Kolan) pay date on their stub while Payment Dispatch
       // paid them Thursday.
       const p = processorFromBankPreferred(r.bank_preferred);
       if (p) return p;

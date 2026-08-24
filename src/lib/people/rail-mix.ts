@@ -47,7 +47,7 @@ export interface RailAssignment {
 
 export interface RailSlice {
   key: ProcessorId;
-  /** "Hurupay", "Wires", … */
+  /** "Kolan", "Wires", … */
   label: string;
   /** People routed on this rail. */
   count: number;
@@ -89,7 +89,7 @@ function bySizeThenName(a: RailSlice, b: RailSlice): number {
  *   - **any rail somebody is actually on**, retired or not. Wise and Jeeves are
  *     retired from the pickers yet still carry live payees, and a rail with people
  *     on it must never be hidden from Accounting.
- *   - plus every **still-offered** rail at zero, because "Hurupay: 0" is a real
+ *   - plus every **still-offered** rail at zero, because "Kolan: 0" is a real
  *     answer and a missing row is indistinguishable from a forgotten one.
  *   - a rail that is **both retired and empty** is dropped. That is Wepay today,
  *     and it is dropped BY RULE, not by name: the row returns by itself the moment

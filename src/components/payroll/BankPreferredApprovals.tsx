@@ -160,7 +160,7 @@ export function BankPreferredApprovals() {
                   </div>
                   {wiresLocked && (
                     <div className="mt-1 text-[11px] font-medium text-rose-600 dark:text-rose-400">
-                      WIRES employee — Hurupay/HiGlobe not possible. Deny this request.
+                      WIRES employee — Kolan/HiGlobe not possible. Deny this request.
                     </div>
                   )}
                 </div>
@@ -183,7 +183,7 @@ export function BankPreferredApprovals() {
                     disabled={acting || wiresLocked}
                     title={
                       wiresLocked
-                        ? 'This employee is set to WIRES and cannot be paid via Hurupay/HiGlobe. Deny this request.'
+                        ? 'This employee is set to WIRES and cannot be paid via Kolan/HiGlobe. Deny this request.'
                         : undefined
                     }
                     onClick={() => void decide(row, 'approved')}

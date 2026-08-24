@@ -11,11 +11,13 @@ interface ProcessorLogoProps {
   FallbackIcon: React.ComponentType<{ className?: string }>;
   /**
    * Real brand logo (e.g. "/wise.png"). When present, the logo renders on a
-   * WIDE white plate (see `logoClassName`) instead of the square icon tile —
-   * these are horizontal wordmarks (Wise ~2.4:1, Hurupay/Higlobe ~3:1), so a
-   * square + object-contain would shrink them to an unreadable sliver. If the
-   * image fails to load, we fall back to the gradient monogram/icon tile so a
-   * broken asset never leaves an empty box.
+   * WIDE white plate (see `logoClassName`) instead of the square icon tile.
+   * Most of these are horizontal wordmarks (Wise ~2.4:1, HiGlobe ~3:1) and a
+   * square + object-contain would shrink them to an unreadable sliver; Kolan is
+   * a squarish brand MARK instead, which the plate detects from the decoded
+   * aspect ratio and pads vertically so it sits on the plate rather than
+   * filling it edge to edge. If the image fails to load, we fall back to the
+   * gradient monogram/icon tile so a broken asset never leaves an empty box.
    */
   logoSrc?: string;
   /** Wrapper sizing/shape classes for the tile/plate (e.g. "h-11 w-[80px]"). */
@@ -46,9 +48,27 @@ export default function ProcessorLogo({
   // images can be complete before React hydrates (onLoad never fires), so a
   // ref callback checks `complete` and skips the skeleton entirely.
   const [logoLoaded, setLogoLoaded] = React.useState(false);
-  const logoRef = React.useCallback((el: HTMLImageElement | null) => {
-    if (el?.complete && el.naturalWidth > 0) setLogoLoaded(true);
+  // Aspect ratio of the decoded logo, so the plate can tell a horizontal
+  // WORDMARK (Wise, HiGlobe ~2.4-3:1) from a squarish BRAND MARK (Kolan). A
+  // mark sized to the full plate height touches both edges and reads as a
+  // cramped sticker, so it gets vertical breathing room the wordmarks don't
+  // need. Null until decode — treated as a wordmark, which is the old behaviour.
+  const [logoAspect, setLogoAspect] = React.useState<number | null>(null);
+  const noteAspect = React.useCallback((el: HTMLImageElement | null) => {
+    if (el && el.naturalWidth > 0 && el.naturalHeight > 0) {
+      setLogoAspect(el.naturalWidth / el.naturalHeight);
+    }
   }, []);
+  const logoRef = React.useCallback(
+    (el: HTMLImageElement | null) => {
+      if (el?.complete && el.naturalWidth > 0) {
+        setLogoLoaded(true);
+        noteAspect(el);
+      }
+    },
+    [noteAspect],
+  );
+  const isMark = logoAspect !== null && logoAspect < 1.5;
   const showLogo = Boolean(logoSrc) && !logoFailed;
 
   if (showLogo) {
@@ -61,6 +81,9 @@ export default function ProcessorLogo({
           // box" bug). White plate stays white in dark mode on purpose — brand
           // wordmarks are drawn for a light background.
           'relative flex items-center justify-center overflow-hidden rounded-xl bg-white px-1.5 shadow-sm',
+          // Square marks get vertical padding so they sit ON the plate rather
+          // than filling it edge to edge; wordmarks keep the full height.
+          isMark && 'py-1.5',
           className,
         )}
       >
@@ -81,7 +104,10 @@ export default function ProcessorLogo({
             'max-h-full max-w-full object-contain transition-opacity duration-200 ease-out motion-reduce:transition-none',
             logoLoaded ? 'opacity-100' : 'opacity-0',
           )}
-          onLoad={() => setLogoLoaded(true)}
+          onLoad={(e) => {
+            setLogoLoaded(true);
+            noteAspect(e.currentTarget);
+          }}
           onError={() => setLogoFailed(true)}
         />
       </div>

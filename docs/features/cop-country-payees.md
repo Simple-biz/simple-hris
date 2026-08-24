@@ -12,7 +12,7 @@ rows / paystubs showed a **peso** figure they never actually receive. Now the nu
 
 > The dedicated **COP tab** in Payment Dispatch is effectively dead for these people:
 > that tab is driven by `payCurrency === 'COP'` (a COP *Pay Structure*), and they have
-> none. Don't "fix" their tab placement — they belong on Hurupay/Wires like any PHP payee.
+> none. Don't "fix" their tab placement — they belong on Kolan/Wires like any PHP payee.
 
 Live example (Jul 2026 cycle — exactly 4 active payees): Arturo Yepes, Maria Canas,
 Reinel Ruiz (Lead Gen) and Sonia Cardenas (Client VA).
@@ -65,7 +65,7 @@ rowSecondaryIsCop(row)  → payCurrency !== 'COP' && countryCurrency === 'COP' &
 rowSecondaryAmount(row) → rowSecondaryIsCop ? formatCOP(amountCOP) : formatPHP(amountPHP)
 ```
 
-- **Queue rows** (Hurupay / Wires / All pending / Excluded): the big **USD** number is
+- **Queue rows** (Kolan / Wires / All pending / Excluded): the big **USD** number is
   unchanged; the small line beneath it shows `$COP526.686` instead of `₱10,161.52`.
 - **Mark Paid dialog** (`MarkPaidDialog.tsx`): same swap on the secondary amount, and its
   **copy button pastes a bare integer** — `526686`, no symbol, no separators — so it drops

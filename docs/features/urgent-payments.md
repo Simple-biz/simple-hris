@@ -33,7 +33,7 @@ Covered by `src/lib/payroll/urgent-cycle.test.ts`.
 
 ## Where it lives
 
-- **Accounting → Payment Dispatch** (`src/components/payroll-clerk/PayrollDispatch.tsx`) — the URGENT card sits **directly above Hurupay** in the processor filter rail (right after "All pending"), amber/Zap themed with a pulsing glow.
+- **Accounting → Payment Dispatch** (`src/components/payroll-clerk/PayrollDispatch.tsx`) — the URGENT card sits **directly above Kolan** in the processor filter rail (right after "All pending"), amber/Zap themed with a pulsing glow.
 - **Payroll Clerk** (`/payroll-clerk` → `PayrollClerkApp.tsx` + `PayrollClerkSidebar.tsx`) — a pre-existing "Urgent Payments" sidebar entry. Both surfaces render the same `UrgentPaymentsQueue`.
 - **Reports** — weekly "Urgent · &lt;dates&gt;" cards appeared in the Reports grid on both surfaces until the Reports tab was removed (2026-08-12); the weekly summary buckets survive in `listDisbursementReports()` (see **Weekly-bucket reports**).
 
@@ -219,7 +219,7 @@ The function is gone, removed with the Payment Dispatch Reports tab. The urgent 
 **File:** `src/components/payroll-clerk/PayrollDispatch.tsx` (+ `ProcessorCard.tsx`)
 
 - A `'urgent'` tab id and `URGENT_VISUAL` (Zap, amber→orange gradient, "MESA · pay now").
-- The card renders **directly above Hurupay** (after "All pending") and short-circuits `renderBody()` to `<UrgentPaymentsQueue>` before the cycle-ready/loading gates (urgent bypasses the weekly cycle).
+- The card renders **directly above Kolan** (after "All pending") and short-circuits `renderBody()` to `<UrgentPaymentsQueue>` before the cycle-ready/loading gates (urgent bypasses the weekly cycle).
 - **Glowing outer border:** `ProcessorCard` gained an opt-in `glowBorder` prop — a slow (2s) amber box-shadow pulse via `motion`'s `animate`, plus an amber border. The glow is a box-shadow on the button itself, so it renders **outside** the card's `overflow-hidden` clip. Only the URGENT card sets `glowBorder`.
 - The badge count (`urgentCount`) is lazy — it populates the first time the tab is opened (same as the `/payroll-clerk` sidebar); the glow flags the card regardless.
 
@@ -285,7 +285,7 @@ The company match was **lowered from ₱400 to ₱300** (weekly total previously
 | `src/components/payroll-clerk/UrgentPaymentsQueue.tsx` | **Edited** — two sections (MESA + orphanage budgets); per-card processor select + filter rail; orphanage wire cards; count = MESA + budget |
 | `src/components/payroll-clerk/OrphanageMarkPaidDialog.tsx` | **New** — extracted from `OrphanageQueue.tsx`; shared by the Orphanage tab and the Urgent queue |
 | `src/components/payroll-clerk/OrphanageQueue.tsx` | **Edited** — imports the extracted dialog; dropped the inlined copy |
-| `src/components/payroll-clerk/PayrollDispatch.tsx` | **Edited** — `'urgent'` tab + URGENT card above Hurupay (`glowBorder`) + render branch + `urgentCount` |
+| `src/components/payroll-clerk/PayrollDispatch.tsx` | **Edited** — `'urgent'` tab + URGENT card above Kolan (`glowBorder`) + render branch + `urgentCount` |
 | `src/components/payroll-clerk/ProcessorCard.tsx` | **Edited** — opt-in `glowBorder` pulsing amber outer glow |
 | `src/components/payroll-clerk/DispatchReports.tsx` | **Edited** — removed flat urgent panel; urgent card styling; mark-all-paid hidden for urgent *(surface removed 2026-08-12)* |
 | `src/lib/payroll/disbursement-reports.ts` | **Edited** — `sundayWeekRange`, `loadUrgentDispatchRows` (MESA + synthetic orphanage budgets), `buildUrgentWeeklyReports`, urgent branch in `getDisbursementReportDetail` |

@@ -73,7 +73,7 @@ export async function PATCH(
       // WHICH processor pays this person. Every other path that writes this
       // column (people/[email]/banking, update-employee-ids, bank-update/save)
       // refuses while payroll is processing; without the same check here, an
-      // approval could reroute someone from wires to Hurupay *after* the
+      // approval could reroute someone from wires to Kolan *after* the
       // dispatch queue was built. Denials stay open — they change nothing.
       const lock = await getPayrollDispatchLock();
       if (lock.locked) {
@@ -110,7 +110,7 @@ export async function PATCH(
         return NextResponse.json(
           {
             error:
-              'This employee is set to WIRES and can only be paid via wires — approving Hurupay/HiGlobe is not possible. Deny this request instead.',
+              'This employee is set to WIRES and can only be paid via wires — approving Kolan/HiGlobe is not possible. Deny this request instead.',
           },
           { status: 400 },
         );

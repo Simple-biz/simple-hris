@@ -307,7 +307,7 @@ function bankingToForm(b: Banking | null): BankForm {
 
 const PROCESSOR_OPTIONS = [
   { value: '', label: 'Not set' },
-  { value: 'hurupay', label: 'Hurupay' },
+  { value: 'hurupay', label: 'Kolan' },
   { value: 'wepay', label: 'WePay' },
   { value: 'higlobe', label: 'HiGlobe' },
   { value: 'wise', label: 'Wise' },
@@ -3575,7 +3575,7 @@ function PersonDetailDialog({
                         options={[
                           { value: '', label: 'Not set' },
                           // WIRES lock: a wires-preferred person (incl. unset)
-                          // can never be offered Hurupay/HiGlobe — same option
+                          // can never be offered Kolan/HiGlobe — same option
                           // filter as the employee's own profile dropdown; the
                           // API re-enforces against the stored value on save.
                           ...BANK_PREFERRED_OPTIONS.filter(
@@ -3636,7 +3636,7 @@ function PersonDetailDialog({
                       <EditField label="Phone number" value={bankForm.phone_number} onChange={(v) => updBank('phone_number', v)} accent={accent} />
                     )}
                     {editProc === 'hurupay' && (
-                      <EditField label="Hurupay email" value={bankForm.hurupay_email} onChange={(v) => updBank('hurupay_email', v)} accent={accent} type="email" />
+                      <EditField label="Kolan email" value={bankForm.hurupay_email} onChange={(v) => updBank('hurupay_email', v)} accent={accent} type="email" />
                     )}
                     {editProc === 'wepay' && (
                       <EditField label="WePay email" value={bankForm.wepay_email} onChange={(v) => updBank('wepay_email', v)} accent={accent} type="email" />
@@ -3710,7 +3710,7 @@ function PersonDetailDialog({
                       <Field label="Address" value={prefBank.address} wide />
                     </>
                   )}
-                  {proc === 'hurupay' && <Field label="Hurupay email" value={banking?.hurupay_email ?? null} />}
+                  {proc === 'hurupay' && <Field label="Kolan email" value={banking?.hurupay_email ?? null} />}
                   {proc === 'wepay' && <Field label="WePay email" value={banking?.wepay_email ?? null} />}
                   {proc === 'higlobe' && (
                     <>

@@ -61,6 +61,7 @@ import {
   PrivacyText,
 } from '@/components/onboarding/agreement-texts';
 import { formatLongDate } from '@/lib/onboarding/ip-assignment-text';
+import { payoutBrandLabel } from '@/lib/onboarding/payout-brand';
 import { currencyForCountry, ONBOARDING_COUNTRIES, resolveOnboardingCountry } from '@/lib/onboarding/countries';
 import { addWeeks, formatWeekLabel, sundayIso } from '@/lib/hr/hiring-week';
 import {
@@ -211,6 +212,8 @@ type SubmissionRow = {
   w8ben_file_name: string | null;
   payment_method: PaymentMethod | null;
   hurupay_email: string | null;
+  /** Brand the hire saw; null on pre-2026-08-24 paperwork. See payout-brand.ts. */
+  payout_brand?: string | null;
   bank_full_name: string | null;
   bank_account_name: string | null;
   bank_account_number: string | null;
@@ -6279,8 +6282,15 @@ function SubmissionDetailDialog({
                           <WireDetailsCard row={row} />
                         ) : row.payment_method === 'hurupay' ? (
                           <>
-                            <DetailRow label="Method" value="Hurupay" />
-                            <DetailRow label="Hurupay email" value={row.hurupay_email} mono copyable />
+                            {/* Historical record: paperwork signed before the
+                                2026-08-24 rebrand still reads "Hurupay". */}
+                            <DetailRow label="Method" value={payoutBrandLabel(row.payout_brand)} />
+                            <DetailRow
+                              label={`${payoutBrandLabel(row.payout_brand)} email`}
+                              value={row.hurupay_email}
+                              mono
+                              copyable
+                            />
                           </>
                         ) : (
                           <DetailRow label="Method" value="—" />

@@ -1,5 +1,5 @@
 // Payment rails a contractor can attach to an invoice so Accounting knows how to
-// pay it. Grouped by region: "Global" rails (Hurupay, Higlobe, manual Wires) and
+// pay it. Grouped by region: "Global" rails (Kolan, Higlobe, manual Wires) and
 // "US" rails (ACH).
 //
 // This is deliberately its OWN small model, kept separate from the employee
@@ -23,7 +23,8 @@ export interface InvoiceProcessorOption {
 }
 
 export const INVOICE_PROCESSOR_OPTIONS: InvoiceProcessorOption[] = [
-  { id: 'hurupay', label: 'Hurupay', blurb: 'Email transfer',        region: 'global', Icon: Wallet,   logoSrc: '/hurupay.png' },
+  // `id` is the stored gateway key and never moves; only the label rebrands.
+  { id: 'hurupay', label: 'Kolan',   blurb: 'Email transfer',        region: 'global', Icon: Wallet,   logoSrc: '/kolan.png' },
   { id: 'higlobe', label: 'Higlobe', blurb: 'Email + account holder', region: 'global', Icon: Wallet,   logoSrc: '/higlobe.png' },
   { id: 'wires',   label: 'Wires',   blurb: 'International bank wire',  region: 'global', Icon: Banknote },
   { id: 'ach',     label: 'ACH',     blurb: 'US bank transfer',        region: 'us',     Icon: Landmark },
@@ -83,7 +84,7 @@ export function paymentFieldSpecs(processor: InvoiceProcessorId): PaymentFieldSp
   switch (processor) {
     case 'hurupay':
       return [
-        { key: 'email', label: 'Hurupay Email', kind: 'email', placeholder: 'you@example.com', required: true },
+        { key: 'email', label: 'Kolan Email', kind: 'email', placeholder: 'you@example.com', required: true },
       ];
     case 'higlobe':
       return [

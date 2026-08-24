@@ -93,7 +93,7 @@ const PROCESSOR_VISUALS: Record<ProcessorId, ProcessorVisual> = {
     accent: 'from-orange-500 to-amber-500',
     glow: 'from-orange-100/80 via-amber-50/60 to-white dark:from-orange-950/40 dark:via-amber-950/30 dark:to-zinc-900',
     blurb: 'Email only',
-    logoSrc: '/hurupay.png',
+    logoSrc: '/kolan.png',
   },
   wepay: {
     Icon: Wallet,

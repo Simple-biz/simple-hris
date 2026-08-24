@@ -111,7 +111,9 @@ test('hurupay wallet employee is unaffected — email id, no bank, no SWIFT', ()
     },
   });
 
-  assert.equal(d.preferredBank, 'Hurupay');
+  // Rebranded 2026-08-24. Deliberate paired change with mark-paid-defaults.ts —
+  // the processor id stayed 'hurupay', only the persisted bank NAME rebranded.
+  assert.equal(d.preferredBank, 'Kolan');
   assert.equal(d.accountNumber, 'huru@example.com');
   assert.equal(d.showSwiftField, false);
 });

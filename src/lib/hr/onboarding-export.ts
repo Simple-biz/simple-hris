@@ -22,6 +22,8 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
 import * as XLSX from 'xlsx';
 
+import { payoutBrandLabel } from '../onboarding/payout-brand';
+
 // ---------------------------------------------------------------------------
 // Input + structured model
 // ---------------------------------------------------------------------------
@@ -60,6 +62,8 @@ export interface OnboardingExportInput {
   w8ben_file_name: string | null;
   payment_method: string | null;
   hurupay_email: string | null;
+  /** Brand stamp; null on pre-2026-08-24 paperwork. See lib/onboarding/payout-brand.ts. */
+  payout_brand?: string | null;
   bank_full_name: string | null;
   bank_account_name: string | null;
   bank_account_number: string | null;
@@ -139,7 +143,10 @@ function payment(r: OnboardingExportInput): { method: string; summary: string; l
   const method = clean(r.payment_method);
   if (method === 'hurupay') {
     const email = clean(r.hurupay_email) || DASH;
-    return { method: 'HuruPay', summary: `HuruPay ${email}`, lines: [`HuruPay: ${email}`] };
+    // The packet is a copy of what the hire signed, so it prints the brand THEY
+    // saw — "Hurupay" for anyone onboarded before 2026-08-24.
+    const brand = payoutBrandLabel(r.payout_brand);
+    return { method: brand, summary: `${brand} ${email}`, lines: [`${brand}: ${email}`] };
   }
   if (method === 'wires') {
     const address = clean(r.bank_full_address) || join([r.bank_street, r.bank_city, r.bank_province, r.bank_postal_code]);

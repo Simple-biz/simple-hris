@@ -81,3 +81,21 @@ test('unrouted person is never payable regardless of stored details', () => {
   const row = { bank_name: 'BDO', account_number: '99' };
   assert.equal(isPayoutComplete(row, undefined), false);
 });
+
+// ── Kolan rebrand (2026-08-24) ──────────────────────────────────────────────
+// The legacy 'HuruPay' fixtures above are kept on purpose: the rates sheet is
+// full of pre-rebrand spellings and they must keep resolving. These ADD the new
+// spelling rather than replacing them.
+test('a rebranded "Kolan" sheet cell routes to the hurupay rail', () => {
+  const row = {};
+  assert.equal(resolveEffectivePayoutProcessor(row, { bankPreferredRaw: 'Kolan' }), 'hurupay');
+  assert.equal(resolveEffectivePayoutProcessor(row, { bankPreferredRaw: 'kolan ' }), 'hurupay');
+});
+
+// The failure this guards: an unresolved rail is not "defaults to wires", it is
+// NULL — and Payment Dispatch excludes unrouted people from the queue outright,
+// so the person silently goes unpaid.
+test('"Kolan" never resolves to null (an unrouted person is never queued)', () => {
+  assert.notEqual(resolveEffectivePayoutProcessor({ bank_preferred: 'Kolan' }, undefined), null);
+  assert.equal(resolveEffectivePayoutProcessor({ bank_preferred: 'Kolan' }, undefined), 'hurupay');
+});

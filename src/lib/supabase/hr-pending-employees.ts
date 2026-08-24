@@ -930,7 +930,7 @@ export async function promoteHrPendingEmployee(
     }
   }
 
-  // Pre-fill the hire's payout details (incl. the Hurupay email they entered on
+  // Pre-fill the hire's payout details (incl. the Kolan email they entered on
   // the onboarding form) into the `employee_ids` table so their employee-portal
   // Profile > payment section is pre-filled on first login. The profile reads
   // this table via /api/employee-ids. Crucially this UPSERTS: a freshly promoted
