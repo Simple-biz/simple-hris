@@ -16,6 +16,15 @@
 // All three run entirely in the browser (in-memory Blob download) — the rows are
 // already loaded in the tab, so there's no server round-trip.
 //
+// PII: the payee's receiving account appears as LAST 4 ONLY, and it is masked on
+// the SERVER (people-roster.ts) before it is ever put on the wire — this module
+// receives "···1234" and has no full number to leak. That mirrors Kane's
+// 2026-08-12 ruling for the cycle close-out report and the default masking the
+// People Banking pane already applies; the audited reveal endpoint stays the only
+// path to a full number. The last-4 shown is SLOT-AWARE (alternative slot wins
+// when it is the preferred one), so it names the account Payment Dispatch would
+// actually pay — never a stale primary.
+//
 // The visual theme deliberately mirrors the CEO dashboard (the warm orange→rose
 // gradient + amber/gold accents on warm-neutral surfaces), matching the sibling
 // `global-master-list-export.ts`. pdf-lib fills are single-colour, so the
@@ -56,6 +65,15 @@ export interface RosterExportInput {
   hours: { thisWeek: number; ot: number };
   processor: string | null;
   hasBanking: boolean;
+  /** Last 4 of the account Payment Dispatch would pay to, ALREADY MASKED
+   *  server-side ("···1234"). Required, not optional: a roster row that cannot
+   *  supply it must not be silently exportable as a blank. Null = no bank
+   *  account on file (wallet rails carry none). The full number never reaches
+   *  the browser, so there is nothing here to redact. */
+  accountLast4: string | null;
+  /** ISO timestamp of the person's most recent payout-detail change, or null
+   *  when nothing is on record. */
+  bankUpdatedAt: string | null;
 }
 
 /** One person, normalized for the flat table (raw numerics kept for XLSX sums). */
@@ -74,6 +92,10 @@ export interface RosterExportRecord {
   hasBanking: boolean;
   startDate: string; // formatted, or ''
   location: string;
+  /** Masked last-4 as it arrived from the server, or '' when none. */
+  accountLast4: string;
+  /** Formatted change date, or '' when nothing is on record. */
+  bankUpdated: string;
 }
 
 export interface RosterExportModel {
@@ -166,6 +188,8 @@ export function buildRosterExport(input: BuildRosterExportInput): RosterExportMo
     hasBanking: !!r.hasBanking,
     startDate: formatDate(r.start_date),
     location: locationOf(r) || DASH,
+    accountLast4: clean(r.accountLast4),
+    bankUpdated: formatDate(r.bankUpdatedAt ?? null),
   }));
 
   const depts = new Set<string>();
@@ -253,28 +277,37 @@ function scopeCountLabel(model: RosterExportModel): string {
 // Shared columns — the flat CSV / XLSX table
 // ---------------------------------------------------------------------------
 
-/** Per-column value accessors. `num` marks columns kept numeric in the XLSX. */
+/** Per-column value accessors. `num` marks columns kept numeric in the XLSX;
+ *  `width` is that column's Excel width. The width lives ON the column rather
+ *  than in a parallel array so adding a column cannot silently shift every
+ *  later column's width by one. */
 interface FlatColumn {
   header: (m: RosterExportModel) => string;
   get: (r: RosterExportRecord) => string;
   num?: (r: RosterExportRecord) => number;
+  width: number;
 }
 
 const FLAT_COLUMNS: FlatColumn[] = [
-  { header: () => 'Employee ID', get: (r) => r.employeeId },
-  { header: () => 'Name', get: (r) => r.name },
-  { header: () => 'Department', get: (r) => r.department },
-  { header: () => 'Work Email', get: (r) => r.workEmail },
-  { header: () => 'Personal Email', get: (r) => r.personalEmail },
-  { header: (m) => m.hoursHeader, get: (r) => String(r.hours), num: (r) => r.hours },
-  { header: () => 'OT Hours', get: (r) => String(r.otHours), num: (r) => r.otHours },
-  { header: () => 'Pay Rate', get: (r) => fmtMoney(r.rateRegular, r.currency) },
-  { header: () => 'OT Rate', get: (r) => fmtMoney(r.rateOt, r.currency) },
-  { header: () => 'Currency', get: (r) => r.currency },
-  { header: () => 'Payout Method', get: (r) => r.payout },
-  { header: () => 'Banking on File', get: (r) => (r.hasBanking ? 'Yes' : 'No') },
-  { header: () => 'Start Date', get: (r) => r.startDate || DASH },
-  { header: () => 'Location', get: (r) => r.location },
+  { header: () => 'Employee ID', get: (r) => r.employeeId, width: 14 },
+  { header: () => 'Name', get: (r) => r.name, width: 26 },
+  { header: () => 'Department', get: (r) => r.department, width: 20 },
+  { header: () => 'Work Email', get: (r) => r.workEmail, width: 32 },
+  { header: () => 'Personal Email', get: (r) => r.personalEmail, width: 32 },
+  { header: (m) => m.hoursHeader, get: (r) => String(r.hours), num: (r) => r.hours, width: 15 },
+  { header: () => 'OT Hours', get: (r) => String(r.otHours), num: (r) => r.otHours, width: 11 },
+  { header: () => 'Pay Rate', get: (r) => fmtMoney(r.rateRegular, r.currency), width: 14 },
+  { header: () => 'OT Rate', get: (r) => fmtMoney(r.rateOt, r.currency), width: 14 },
+  { header: () => 'Currency', get: (r) => r.currency, width: 9 },
+  { header: () => 'Payout Method', get: (r) => r.payout, width: 16 },
+  { header: () => 'Banking on File', get: (r) => (r.hasBanking ? 'Yes' : 'No'), width: 15 },
+  // The receiving account, last 4 only, already masked upstream. Sits next to
+  // Payout Method on purpose: a wallet-rail payee can still carry a bank account
+  // on file, and the rail column is what says where the money actually goes.
+  { header: () => 'Account No. (last 4)', get: (r) => r.accountLast4 || DASH, width: 20 },
+  { header: () => 'Bank Info Updated', get: (r) => r.bankUpdated || DASH, width: 18 },
+  { header: () => 'Start Date', get: (r) => r.startDate || DASH, width: 14 },
+  { header: () => 'Location', get: (r) => r.location, width: 26 },
 ];
 
 // ---------------------------------------------------------------------------
@@ -317,8 +350,6 @@ export function rosterToCsv(model: RosterExportModel): string {
 // XLSX
 // ---------------------------------------------------------------------------
 
-const XLSX_COLUMN_WIDTHS = [14, 26, 20, 32, 32, 15, 11, 14, 14, 9, 16, 15, 14, 26];
-
 /** Build a native Excel workbook: a titled sheet with one row per person. */
 export function buildRosterWorkbook(model: RosterExportModel): XLSX.WorkBook {
   const wb = XLSX.utils.book_new();
@@ -340,7 +371,7 @@ export function buildRosterWorkbook(model: RosterExportModel): XLSX.WorkBook {
   });
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols'] = [{ wch: 5 }, ...XLSX_COLUMN_WIDTHS.map((wch) => ({ wch }))];
+  ws['!cols'] = [{ wch: 5 }, ...FLAT_COLUMNS.map((c) => ({ wch: c.width }))];
   const headerRow = 5; // 1-indexed row that holds the column headers
   const lastCol = FLAT_COLUMNS.length; // 0=`#`, then one per column
   ws['!autofilter'] = { ref: `A${headerRow}:${XLSX.utils.encode_col(lastCol)}${headerRow + model.rows.length}` };
@@ -559,15 +590,42 @@ export async function generateRosterPdf(
   const PAD_X = 6;
   const PAD_Y = 5;
 
+  // Portrait Letter gives 524pt of table, and ten columns is what fits. Every
+  // width below is budgeted from MEASURED Helvetica 8.5pt metrics — header and
+  // widest realistic value — plus the 12pt of cell padding:
+  //
+  //   value   "1284" 18.8 · employee_id YYMM-NNNN 40.4 · "PHP 1,234.56" 52.9 ·
+  //           "Higlobe" 28.8 · "···7890" 26.0 · "Aug 21, 2026" 50.3
+  //   header  Department 47.4 · Payout 27.7 · Last 4 24.6 · Bank Updated 57.1
+  //
+  // Every column is sized so its VALUES sit on one line. **Name keeps the 98pt
+  // it had before the two banking columns landed** — the master list stores
+  // `Cuevas, Mary Rose "Penelope"`-shaped names at 158-168pt, so 76% of the
+  // roster already wrapped there and squeezing it to pay for the new columns
+  // would have taken that to 96% and added a third line to the longest tenth.
+  // The 21pt came out of columns that were over-provisioned instead.
+  //
+  // "Bank Updated" is the one header wider than its column, and that is
+  // deliberate: it wraps to two lines in the header BAND, which costs 11pt once
+  // per page rather than a point off every row. Spending Name's width on a
+  // one-line header would have been the expensive trade. `drawHeader` renders
+  // every wrapped line (it used to draw only the first), so the label survives.
+  // The account column is headed "Last 4" because "Acct (last 4)" needs 54.5pt;
+  // the CSV and XLSX, which have the room, spell it "Account No. (last 4)".
+  const FIXED: Col[] = [
+    { header: '#', width: 31, align: 'right' },
+    { header: 'ID', width: 53 },
+    { header: 'Name', width: 98 },
+    { header: 'Department', width: 60 },
+    { header: 'Hours', width: 38, align: 'right' },
+    { header: 'OT', width: 34, align: 'right' },
+    { header: 'Rate', width: 66, align: 'right' },
+    { header: 'Payout', width: 41 },
+    { header: 'Last 4', width: 39, align: 'right' },
+  ];
   const columns: Col[] = [
-    { header: '#', width: 22, align: 'right' },
-    { header: 'ID', width: 50 },
-    { header: 'Name', width: 100 },
-    { header: 'Department', width: 82 },
-    { header: 'Hours', width: 46, align: 'right' },
-    { header: 'OT', width: 40, align: 'right' },
-    { header: 'Rate', width: 74, align: 'right' },
-    { header: 'Payout', width: CONTENT_W - 22 - 50 - 100 - 82 - 46 - 40 - 74 },
+    ...FIXED,
+    { header: 'Bank Updated', width: CONTENT_W - FIXED.reduce((w, c) => w + c.width, 0) },
   ];
   const tableRows = model.rows.map((r, i) => [
     String(i + 1),
@@ -578,20 +636,29 @@ export async function generateRosterPdf(
     fmtHours(r.otHours, true),
     fmtMoney(r.rateRegular, r.currency, true),
     r.payout,
+    r.accountLast4 || DASH,
+    r.bankUpdated || DASH,
   ]);
 
   const drawTable = (cols: Col[], rows: string[][]) => {
-    const headerH = LH + PAD_Y * 2;
+    // Header labels wrap like body cells and the band grows to the tallest one.
+    // Rendering only line 0 (the old behaviour) silently TRUNCATED any header
+    // too wide for its column — a column could lose its name with nothing on the
+    // page to show it had, which is how "Last 4" first shipped as "Last".
+    const headerLines = cols.map((c) => wrapText(c.header, bold, BODY, c.width - PAD_X * 2));
+    const headerH = Math.max(1, ...headerLines.map((l) => l.length)) * LH + PAD_Y * 2;
     const drawHeader = () => {
       state.page.drawRectangle({ x: MARGIN, y: state.y - headerH, width: CONTENT_W, height: headerH, color: ORANGE });
       let x = MARGIN;
-      for (const c of cols) {
-        const label = wrapText(c.header, bold, BODY, c.width - PAD_X * 2)[0];
-        const tw = bold.widthOfTextAtSize(label, BODY);
-        const tx = c.align === 'right' ? x + c.width - PAD_X - tw : x + PAD_X;
-        state.page.drawText(label, { x: tx, y: state.y - PAD_Y - BODY, size: BODY, font: bold, color: WHITE });
+      cols.forEach((c, i) => {
+        const lines = headerLines[i];
+        for (let li = 0; li < lines.length; li++) {
+          const tw = bold.widthOfTextAtSize(lines[li], BODY);
+          const tx = c.align === 'right' ? x + c.width - PAD_X - tw : x + PAD_X;
+          state.page.drawText(lines[li], { x: tx, y: state.y - PAD_Y - BODY - li * LH, size: BODY, font: bold, color: WHITE });
+        }
         x += c.width;
-      }
+      });
       state.y -= headerH;
     };
 

@@ -77,6 +77,13 @@ interface RosterRow {
   hours: Hours;
   processor: string | null;
   hasBanking: boolean;
+  /** Already-masked last 4 of the account Payment Dispatch would pay to
+   *  ("···1234"), slot-aware. Null when there is no bank account on file.
+   *  Export-only — the roster table does not render it. */
+  accountLast4: string | null;
+  /** ISO timestamp of this person's most recent payout-detail change, or null
+   *  when none is on record. Export-only. */
+  bankUpdatedAt: string | null;
 }
 
 /** Fresh master fields returned by PATCH /api/people/[email]/profile — merged

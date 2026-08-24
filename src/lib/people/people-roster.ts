@@ -6,8 +6,15 @@ import { getEmployeeIds, type EmployeeIdRow } from '@/lib/supabase/employee-ids'
 import {
   isPayoutComplete,
   resolveEffectivePayoutProcessor,
+  resolvePreferredAccountNumber,
   type PayoutLegacyExtras,
 } from '@/lib/employee/payout-completeness';
+import { fetchLatestBankChangeAtByEmail } from '@/lib/supabase/bank-update-history';
+// ONE masking rule for every export artifact — Kane's 2026-08-12 ruling that a
+// payee row carries bank name + account LAST-4 only, shared with the Payment
+// Dispatch cycle close-out report. Re-implementing it here is how two files end
+// up disagreeing about what "masked" means.
+import { maskAccountLast4 } from '@/lib/payroll/mask-account';
 import { buildRailMix, buildRailMixByDepartment, type RailMix, type DeptRailAssignment } from './rail-mix';
 import {
   getEmployeeHourlyRatesRows,
@@ -80,6 +87,16 @@ export interface PeopleRosterRow {
    *  cell), NOT the raw Disbursement pick. */
   processor: string | null;
   hasBanking: boolean;
+  /** Last 4 of the RECEIVING account Payment Dispatch would actually pay to,
+   *  already masked ("···1234"). SLOT-AWARE via `resolvePreferredAccountNumber`,
+   *  so it can never name an account PD would not use. Null when neither bank
+   *  slot carries a number — every wallet rail, and anyone with no bank details.
+   *  The FULL number never leaves the server on this route: only the reveal
+   *  endpoint (which audit-logs the access) may return it. */
+  accountLast4: string | null;
+  /** When this person's payout details last changed (ISO), newest across every
+   *  channel that writes `bank_update_history`. Null = no change on record. */
+  bankUpdatedAt: string | null;
 }
 
 /** Week-level KPI rollups for the People tab cards (scoped to the resolved week). */
@@ -392,12 +409,13 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
   const rangeEnd = (scope.rangeEnd ?? '').trim();
   const rangeMode = !!(rangeStart && rangeEnd);
 
-  const [{ employees, error }, rateCtx, hoursCtx, rangeCtx, idsRes] = await Promise.all([
+  const [{ employees, error }, rateCtx, hoursCtx, rangeCtx, idsRes, bankChangedRes] = await Promise.all([
     getEmployeesForAuthorizedServerRoute(),
     loadPeopleRateContext(),
     rangeMode ? Promise.resolve(null) : loadHoursContext(scope.sourceFile),
     rangeMode ? loadRangeHoursContext(rangeStart, rangeEnd) : Promise.resolve(null),
     getEmployeeIds(),
+    fetchLatestBankChangeAtByEmail(),
   ]);
   if (error) return { rows: [], sourceFile: null, summary: EMPTY_SUMMARY, range: null, error };
 
@@ -546,6 +564,14 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
       hours,
       processor: effectiveProcessor,
       hasBanking,
+      // Slot-aware, then masked — the export never sees a full account number.
+      accountLast4: maskAccountLast4(resolvePreferredAccountNumber(idsRecord)),
+      // Newest change across every alias: a person with two work addresses can
+      // have saved under either one.
+      bankUpdatedAt: aliases.reduce<string | null>((newest, em) => {
+        const at = bankChangedRes.byEmail.get(em);
+        return at && (!newest || at > newest) ? at : newest;
+      }, null),
     };
   });
 
@@ -580,7 +606,21 @@ export async function buildPeopleRoster(scope: PeopleRosterScope = {}): Promise<
     ? { weeks: rangeCtx!.weeks, start: rangeCtx!.coveredStart, end: rangeCtx!.coveredEnd }
     : null;
 
-  return { rows, sourceFile: rangeMode ? null : hoursCtx!.sourceFile, summary, range, error: null };
+  // A bank-history read failure is NON-fatal (rows are still correct) but must
+  // not pass silently: with an empty map every row's `bankUpdatedAt` is null,
+  // which reads as "nobody ever changed their bank". The People tab renders this
+  // string as a banner above a populated roster.
+  const historyWarning = bankChangedRes.error
+    ? `Bank change history unavailable — the "Bank Info Updated" column will read blank: ${bankChangedRes.error}`
+    : null;
+
+  return {
+    rows,
+    sourceFile: rangeMode ? null : hoursCtx!.sourceFile,
+    summary,
+    range,
+    error: historyWarning,
+  };
 }
 
 /**

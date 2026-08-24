@@ -31,6 +31,7 @@
 import * as XLSX from 'xlsx';
 import type { CycleCloseoutRecord, CycleCloseoutUnpaidPayee } from '@/lib/payroll/cycle-closeout';
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
+import { maskAccountLast4 } from './mask-account';
 
 // ─── Shared row projections ───────────────────────────────────────────────────
 
@@ -66,12 +67,10 @@ export interface PrematureUnpaidRow extends CycleCloseoutUnpaidPayee {
   amountSource?: UnpaidAmountSource | null;
 }
 
-export function maskAccountLast4(v: string | null | undefined): string | null {
-  if (!v) return null;
-  const digits = String(v).replace(/\D/g, '');
-  if (!digits) return null;
-  return `···${digits.slice(-4)}`;
-}
+// The masking rule itself lives in `mask-account.ts` (dependency-free, so the
+// People roster export can share it without pulling SheetJS into a server
+// bundle). Re-exported here because this module's public API and tests own it.
+export { maskAccountLast4 };
 
 /**
  * Project live dispatch rows to paid-detail rows. Filters to `status === 'paid'`

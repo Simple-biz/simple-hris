@@ -2,6 +2,7 @@ import 'server-only';
 
 import { createSupabaseServiceRoleClient } from './server';
 import { normEmail } from '@/lib/email/norm-email';
+import { selectAllPaged } from './select-all-paged';
 
 /**
  * Bank/payout change history — a dedicated, non-clearable table (separate from
@@ -154,4 +155,52 @@ export async function getPeopleBankHistory(
 
   if (error) return { rows: [], error: error.message };
   return { rows: (data ?? []).map(toEntry), error: null };
+}
+
+/**
+ * Newest change timestamp per person, across EVERYONE — the roster-wide
+ * "when did this person's payout details last change?" lookup behind the People
+ * export's *Bank Info Updated* column.
+ *
+ * Why this table and not `employee_ids.bank_last_self_updated_at`: that stamp is
+ * written by only three of the six routes that change payout details (it misses
+ * the People-tab admin edit, the Mark Paid override and the contractor profile),
+ * whereas every one of the six calls `insertBankUpdateHistory`. Measured against
+ * production 2026-08-24: all 740 stamped people also have a history row and the
+ * stamp is never newer than it, so this is a strict superset — one source, no
+ * coalescing.
+ *
+ * PAGED: 1,334 rows today, so a bare select would silently stop at PostgREST's
+ * 1000-row cap and read as "nobody past row 1000 ever changed their bank"
+ * (CLAUDE.md; see select-all-paged.ts). Ordered newest-first so the FIRST row
+ * seen for an email is its latest — no per-row comparison needed.
+ *
+ * Keys are normalised work emails. Callers look up through the person's whole
+ * alias set, because the save route keys the row on whichever address it was
+ * given.
+ */
+export async function fetchLatestBankChangeAtByEmail(): Promise<{
+  byEmail: Map<string, string>;
+  error: string | null;
+}> {
+  const byEmail = new Map<string, string>();
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { byEmail, error: 'Supabase not configured' };
+
+  const { rows, error } = await selectAllPaged<{ work_email: string | null; created_at: string }>(
+    (from, to) =>
+      supabase
+        .from('bank_update_history')
+        .select('work_email, created_at')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to),
+  );
+
+  for (const r of rows) {
+    const key = normEmail(r.work_email ?? '');
+    if (!key || !r.created_at) continue;
+    if (!byEmail.has(key)) byEmail.set(key, r.created_at); // newest-first: first wins
+  }
+  return { byEmail, error };
 }

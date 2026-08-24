@@ -207,3 +207,30 @@ export function payoutRequirementFor(processor: ProcessorId): PayoutRequirement 
 export function isWalletRail(processor: ProcessorId): boolean {
   return payoutRequirementFor(processor) !== 'bank + account';
 }
+
+/**
+ * The RECEIVING account Payment Dispatch would actually show and pay to —
+ * SLOT-AWARE, with the same cross-slot fallback PD's queue row uses
+ * (`mock-queue.ts` preferredBankSlot + pickFirst, mirrored in the Payroll
+ * Wizard's rate-snapshot card and the People Banking pane): the preferred slot
+ * wins, the other slot backfills when it is empty.
+ *
+ * Resolving this any other way is the drift class the 2026-08-10 People-vs-PD
+ * audit closed — 14 people sit on the alternative slot today and 8 of them
+ * carry a DIFFERENT alt account number, so "just read account_number" prints
+ * an account the payment is not going to.
+ *
+ * '' when neither slot carries a number — every wallet rail (Kolan/HiGlobe/
+ * WePay deposit to a wallet email, not a bank account) and anyone with no bank
+ * details on file. There is deliberately no legacy rates-sheet fallback: PD
+ * backfills wallet EMAILS from that row, never account numbers.
+ */
+export function resolvePreferredAccountNumber(
+  row: Record<string, unknown> | null | undefined,
+): string {
+  if (!row) return '';
+  const { payout } = payoutDraftFromIdsRow(row);
+  return payout.preferredBankSlot === 'alternative'
+    ? payout.altAccountNumber || payout.accountNumber
+    : payout.accountNumber || payout.altAccountNumber;
+}
