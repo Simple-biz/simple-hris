@@ -6,9 +6,9 @@ with the named people behind every number. It answers one question per hiring we
 *how many of the people HR sent us actually turned up?* — and it answers it without
 touching a single pay figure.
 
-Shipped 2026-08-24. Kane's ask: *"we should have a place where we can see weekly the
-number of people who showed up in Orientation and the ones that were not"*, followed by
-*"the week should match from HR's New Hire Checklist"*.
+Shipped 2026-08-24, commit `06f7f669`. Kane's ask: *"we should have a place where we can
+see weekly the number of people who showed up in Orientation and the ones that were not"*,
+followed by *"the week should match from HR's New Hire Checklist"*.
 
 ## Key files
 
