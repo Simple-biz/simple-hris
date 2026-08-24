@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { parseCsv } from "@/lib/csv/parse-csv";
 import { upsertAppSetting } from "@/lib/supabase/app-settings";
 import { mapHubstaffHoursRow, type PayrollHubstaffRow } from "@/lib/supabase/hubstaff-hours";
+import { payrollWeekFilenameError } from "@/lib/hubstaff/calendar-column-dedupe";
 
 function getTableName(): string {
   return process.env.NEXT_PUBLIC_SUPABASE_HUBSTAFF_HOURS_TABLE?.trim() || "hubstaff_hours";
@@ -729,6 +730,20 @@ export async function replaceHubstaffHoursFromCsvText(
 ): Promise<{ rowCount: number; uploadId: string }> {
   const supabase = requireServiceRole();
   const table = getTableName();
+
+  // The week key comes from the FILENAME, so it is validated before a single row
+  // is written. `source_file` is the only address a pay week has, and an
+  // unparseable one does not fail loudly anywhere — it degrades every reader at
+  // once (see `payrollWeekFilenameError`). This is the same single-choke-point
+  // treatment the blocked-email filter below gets: both ingest paths (manual CSV
+  // upload and the API sync) come through here, and the API sync already
+  // satisfies the contract by construction.
+  //
+  // Ordering matters: `createPendingHubstaffUpload` below writes the archive row
+  // BEFORE the data rows land, so refusing here is what keeps a bad name from
+  // leaving a promoted, half-written batch behind.
+  const nameError = payrollWeekFilenameError(sourceFile);
+  if (nameError) throw new Error(nameError);
 
   const grid = parseCsv(csvText);
   if (grid.length < 2) {

@@ -163,6 +163,39 @@ that kept re-arriving with each upload after his rows were purged; his historica
 discovery script does **not** probe `hubstaff_hours` — check that table directly
 when hunting an identity.
 
+**Filename contract — enforced at ingest (2026-08-24).** A Hubstaff batch's
+`source_file` is not a label, it is the **only address the pay week has** (the
+ingest key is `(source_file, row position)`, §2). Seventeen modules re-derive the
+week by running `parseDateRangeFromFilename` over it, so a name that does not
+parse fails *nowhere* and degrades *everywhere*, silently.
+`replaceHubstaffHoursFromCsvText` now refuses the upload before writing a single
+row — same single-choke-point treatment as the blocklist above, so both the
+manual CSV upload and the API sync are covered:
+
+| Requirement | Why |
+|---|---|
+| the name contains `YYYY-MM-DD_to_YYYY-MM-DD` | it is the week key; nothing can look the week up without it |
+| the start date is a **Sunday** | every reader looks a week up by its Sunday. A Monday-anchored name parses fine and strands exactly the same rows, so checking only the pattern leaves half the failure class open (see `payroll-readiness.md` → Week resolution) |
+
+The **span is deliberately not checked**: production carries both 7-day
+(`..._2026-08-16_to_2026-08-22`) and 8-day (`..._2026-06-14_to_2026-06-21`)
+ranges, and refusing the latter would reject names this system already accepted.
+
+The API-sync path always satisfied this by construction (`apiSyncFileName`,
+asserted in `build-weekly-summary.test.ts`); the manual upload was the one entry
+point that trusted the browser's filename. Validator + tests:
+`payrollWeekFilenameError` in `src/lib/hubstaff/calendar-column-dedupe.ts`,
+`src/lib/hubstaff/payroll-week-filename.test.ts`.
+
+**What an undatable name cost, live on 2026-08-24.** A manual upload named
+`"8:16 - 8:22 csv.csv"` was accepted and promoted to `is_current`. For ~25
+minutes: both manager KPI Calculators hung on their loading skeleton with no
+error shown (see `hsl-kpi-calculator-2026-07.md` → First-load reveal), and that
+week's MESA deposits were skipped outright — `mesa.md`: "undatable filenames are
+skipped" — at ₱100 + ₱300 per opted-in member. The re-upload under the correct
+name recovered the deposits (idempotent per member/week); the hang needed a code
+fix.
+
 ---
 
 ## 5. Endpoints

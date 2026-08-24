@@ -26,6 +26,7 @@ import {
 } from '@/lib/hubstaff/current-upload';
 import HslBonusReadyPreview from './HslBonusReadyPreview';
 import KpiCalculatorLoading from './KpiCalculatorLoading';
+import { kpiCalculatorRevealed } from '@/lib/manager/kpi-calculator-reveal';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { slugifyDeptKey } from '@/lib/departments/registry';
@@ -757,20 +758,36 @@ export default function HslBonusCalculator({
 
   // First-load gate: show a loading screen until every visible dept's initial
   // fetch has settled, so switching to the tab doesn't flash an empty calculator.
-  const [booted, setBooted] = useState(false);
+  const [loadsSettled, setLoadsSettled] = useState(false);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       await Promise.all(visibleDepts.map((k) => loadDept(k)));
       // Stay on the loading screen until the payroll week is known either way —
-      // weekly branches skip their fetch while it's unresolved, so flipping
-      // `booted` first would flash an empty calculator that looks like "no scores".
-      if (!cancelled && (weekResolved || weekError)) setBooted(true);
+      // weekly branches skip their fetch while it's unresolved, so flipping this
+      // first would flash an empty calculator that looks like "no scores".
+      if (!cancelled && weekResolved) setLoadsSettled(true);
     })();
     return () => {
       cancelled = true;
     };
   }, [visibleDepts, loadDept]);
+
+  // `weekError` is handled OUTSIDE that effect, on purpose. It used to be the
+  // `|| weekError` half of the condition above, where it could never fire: the
+  // resolver sets it only after its three attempts have failed, by which time
+  // the effect has already awaited its loads and settled — and it is neither one
+  // of that effect's deps nor part of `loadDept`'s identity
+  // (`[weekStart, weekResolved]`), so the effect never re-ran to observe it.
+  // `booted` stayed false forever and the loading screen became terminal,
+  // hiding the very alert that explains it.
+  //
+  // Derived every render rather than latched from another effect, so it cannot
+  // be re-broken by a dependency list. Revealing on the error is safe by
+  // construction, not by care: every branch is held on `weekResolved` (still
+  // false) at each read and write site, and `kpiAutosaveGate` refuses on the
+  // same flag. What appears is the chrome plus the rose alert below.
+  const booted = kpiCalculatorRevealed({ dataSettled: loadsSettled, weekError });
 
   // ── Live refresh ───────────────────────────────────────────────────────────
   // Reload every visible dept, but skip any with unsaved local edits (`dirty`)

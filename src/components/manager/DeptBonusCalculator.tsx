@@ -87,6 +87,7 @@ import {
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import KpiCalculatorLoading from './KpiCalculatorLoading';
+import { kpiCalculatorRevealed } from '@/lib/manager/kpi-calculator-reveal';
 import { validateFormula, evaluateFormula } from '@/lib/bonus-catalog/formula';
 import type { BonusDef, BonusAssignment } from '@/lib/bonus-catalog/types';
 import { effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
@@ -1441,7 +1442,27 @@ export default function DeptBonusCalculator({
   // in before we reveal the calculator — otherwise switching to the tab flashes
   // an empty grid. (`.every` is vacuously true when nothing is visible, which
   // the parent already guards against.)
-  const ready = catalogLoaded && visibleDeptKeys.every((k) => state[k]?.loaded);
+  //
+  // `weekError` RELEASES this gate, and that is the whole point. `loadDept`
+  // refuses to run until the payroll week resolves (correctly — see
+  // `weekResolved`), so it never marks a dept `loaded`, so a week that never
+  // resolves left `ready` false forever. The skeleton has no terminal state, so
+  // it WAS the screen. Worse, the rose "Couldn't confirm the payroll week" alert
+  // renders below this return: the one surface that could explain the hang was
+  // the one thing the hang hid. (Live 2026-08-24: a batch named
+  // `"8:16 - 8:22 csv.csv"` was promoted to current and this tab never loaded.)
+  //
+  // Releasing here paints the real chrome, that alert, and each card's own
+  // loading state — the shape `HslBonusCalculator` already intended with
+  // `weekResolved || weekError`. Nothing becomes writable and nothing reads as
+  // scored: `state[k]` is still undefined for every dept (every card is
+  // optional-chained off `d?`), the autosave loop skips a dept with no state,
+  // and `kpiAutosaveGate` still sees `weekResolved: false`. Three independent
+  // holds, none of them this gate.
+  const ready = kpiCalculatorRevealed({
+    dataSettled: catalogLoaded && visibleDeptKeys.every((k) => state[k]?.loaded),
+    weekError,
+  });
 
   // One-shot: land directly on the caller-requested department once data is in
   // (the Payroll Readiness "fix it from here" modal). Consumed once so closing

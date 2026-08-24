@@ -246,6 +246,43 @@ only for genuine one-off deltas (and is how you make a per-person exception).
 review cards are badged **"manual · Adjustment"**; apply those via the Adjustment
 column as before.
 
+## First-load reveal *(2026-08-24 — the skeleton was terminal)*
+
+One tab renders two calculators and each had grown its own first-load gate:
+`DeptBonusCalculator.ready` (derived) and `HslBonusCalculator.booted` (a latch
+set from an effect). **Both waited on data that a failed week-resolution never
+produces**, so `KpiCalculatorLoading` — a shimmer of the real chrome — became the
+final state. It reads as a page still working, forever.
+
+Both components already held the right thing to show: an identical rose
+*"Couldn't confirm the payroll week"* alert. In both it renders **inside** the
+chrome the gate was withholding, so the gate hid the only surface that could
+explain the gate.
+
+The rule now lives in one place both call — `kpiCalculatorRevealed`
+(`src/lib/manager/kpi-calculator-reveal.ts`, tested):
+
+> **An unresolvable payroll week is TERMINAL, not pending.**
+
+| Failure | Was | Now |
+|---|---|---|
+| Departments | `ready` required every visible dept `loaded`, but `loadDept` returns early until the week resolves, so no dept ever loaded | `weekError` releases the gate; cards show their own per-card loading state under the alert |
+| HSL | `booted` had `weekResolved \|\| weekError`, but `weekError` is set *after* the boot effect settled and was neither a dep nor part of `loadDept`'s identity — so the effect never re-ran to observe it | `booted` is **derived every render** (`loadsSettled` + `weekError`), so it cannot be re-broken by a dependency list |
+
+**This loosens nothing.** `loadDept`'s early return stays — reading the
+local-clock seed week is what made another manager's applied bonuses look absent.
+Every read and write remains held on `weekResolved` at its own site, and
+`kpiAutosaveGate` refuses on the same flag (see Autosave, above: writing early
+"strands rows no reader asks for"). Three independent holds; this gate was never
+one of them, it only looked like one. On the departments side an unresolved week
+also leaves `state[k]` undefined for every dept — every card reads through `d?.`
+and the autosave loop skips a dept with no state — so a released gate cannot
+present an empty week as a scored one.
+
+**Root cause is upstream.** The week is derived from the Hubstaff batch
+*filename*; an undatable name resolves to nothing. That is now refused at ingest
+— see `csv-imports.md` §4 → Hubstaff → *Filename contract*.
+
 ## Known gap (low, not fixed)
 
 - **Removed depts still show on Employee Dashboard.** `getEmployeeKpiResults` has no

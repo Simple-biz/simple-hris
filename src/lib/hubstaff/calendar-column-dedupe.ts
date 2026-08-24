@@ -820,3 +820,59 @@ export function columnsAreAllCanonical(cols: string[]): boolean {
   }
   return hasDayCol;
 }
+
+/**
+ * The week key contract for a Hubstaff batch filename.
+ *
+ * `source_file` is not a label — it is the **only** address a pay week has
+ * (`csv-imports.md`: the Hubstaff ingest key is `(source_file, row position)`).
+ * Seventeen modules re-derive the week by running `parseDateRangeFromFilename`
+ * over it, so a name that does not parse does not fail anywhere: it degrades
+ * everywhere at once, silently. Observed live on 2026-08-24, when a manual
+ * upload named `"8:16 - 8:22 csv.csv"` was promoted to `is_current`:
+ *
+ *  - both KPI Calculators sat on their loading skeleton forever, because the
+ *    payroll week never resolved and the gate had no terminal state;
+ *  - that week's MESA deposits were skipped outright — `mesa.md`: "undatable
+ *    filenames are skipped" — at ₱100 + ₱300 per opted-in member.
+ *
+ * The API-sync path has always satisfied this contract by construction
+ * (`apiSyncFileName`, asserted in `build-weekly-summary.test.ts`). The manual
+ * CSV upload is the one entry point that never checked, so this generalises the
+ * already-tested invariant to every caller instead of trusting the browser's
+ * filename.
+ *
+ * Two requirements, because they are one failure class:
+ *
+ *  1. **The range must parse** — `YYYY-MM-DD_to_YYYY-MM-DD`.
+ *  2. **The start must be a Sunday.** Every stored week key is the filename's
+ *     start date verbatim, and it is Sunday-anchored on purpose
+ *     (`payroll-readiness.md`: a Monday anchor "pulled the Sunday back a full
+ *     week and made every dept read Pending"). A Monday-anchored name parses
+ *     fine and strands exactly the same rows, so checking only (1) would leave
+ *     half the class open.
+ *
+ * The span is deliberately NOT checked: real batches in production carry both
+ * 7-day (`2026-08-16_to_2026-08-22`) and 8-day (`2026-06-14_to_2026-06-21`)
+ * ranges, and rejecting the latter would refuse names this system already
+ * accepted.
+ *
+ * Returns null when the name is valid, or an operator-facing reason when it is
+ * not — phrased for someone re-picking a file, not for a log.
+ */
+export function payrollWeekFilenameError(filename: string | null | undefined): string | null {
+  const name = (filename ?? '').trim();
+  if (!name) {
+    return 'This upload has no filename, so its pay week has no address. Re-upload the file with a name like "simple-biz_daily_report_2026-08-16_to_2026-08-22.csv".';
+  }
+  const range = parseDateRangeFromFilename(name);
+  if (!range) {
+    return `"${name}" has no pay week in it. Rename the file to include the week it covers, as YYYY-MM-DD_to_YYYY-MM-DD — e.g. "simple-biz_daily_report_2026-08-16_to_2026-08-22.csv" — then upload it again. Without that, payroll, the KPI calculators and the MESA deposits cannot tell which week these hours belong to.`;
+  }
+  if (range.start.getDay() !== 0) {
+    const iso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return `"${name}" starts on ${iso(range.start)}, which is not a Sunday. Pay weeks are Sunday-anchored — every reader looks the week up by its Sunday, so a week filed under any other day is invisible to them. Rename the file to start on the week's Sunday and upload it again.`;
+  }
+  return null;
+}
