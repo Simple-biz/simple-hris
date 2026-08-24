@@ -1,0 +1,45 @@
+{
+  "generatedAt": "2026-08-21T18:19:11.270Z",
+  "underpaidRows": 0,
+  "underpaidTotalPhp": 0,
+  "overpaidRows": 2,
+  "overpaidTotalPhp": 1724.24,
+  "findings": [
+    {
+      "sourceFile": "simple-biz_daily_report_2026-07-19_to_2026-07-25.csv",
+      "email": "cjm@simple.biz",
+      "name": "Celmarie Joy M. Menor",
+      "hours": 22.99,
+      "regHours": 0,
+      "otHours": 22.99,
+      "regularRatePhp": 325,
+      "otRatePhp": 487.5,
+      "blobAmountPhp": 12069.75,
+      "recordAmountPhp": 11207.63,
+      "lockedBy": "carla@simple.biz",
+      "lockedAt": "2026-07-27T23:16:27.62+00:00",
+      "kind": "amount_mismatch",
+      "expectedAmountPhp": 11207.63,
+      "shortfallPhp": -862.12,
+      "note": "Stored amount does not match its own hours × rates (11207.63 expected)"
+    },
+    {
+      "sourceFile": "simple-biz_daily_report_2026-07-19_to_2026-07-25.csv",
+      "email": "jamec@simple.biz",
+      "name": "JAMEMARIE CABER",
+      "hours": 22.99,
+      "regHours": 0,
+      "otHours": 22.99,
+      "regularRatePhp": 325,
+      "otRatePhp": 487.5,
+      "blobAmountPhp": 12069.75,
+      "recordAmountPhp": 11207.63,
+      "lockedBy": "carla@simple.biz",
+      "lockedAt": "2026-07-27T23:16:27.62+00:00",
+      "kind": "amount_mismatch",
+      "expectedAmountPhp": 11207.63,
+      "shortfallPhp": -862.12,
+      "note": "Stored amount does not match its own hours × rates (11207.63 expected)"
+    }
+  ]
+}

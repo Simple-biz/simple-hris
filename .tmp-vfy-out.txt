@@ -1,0 +1,1390 @@
+=== src/components/employee/EmployeeSidebar.tsx:352 (of 375)
+  346|           <div className={cn('flex min-w-0 flex-col overflow-hidden sb-collapse-fade')}>
+  347|             <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-200">
+  348|               {employeeName}
+  349|             </span>
+  350|             {(department || employeeId) && (
+  351|               <span className="truncate text-[10px] text-zinc-500 dark:text-zinc-500">
+>>352|                 {department || '—'}{employeeId ? ` · ${employeeId}` : ''}
+  353|               </span>
+  354|             )}
+  355|           </div>
+  356|         </div>
+  357|         <Button
+=== app/api/department-transfers/route.ts:271 (of 307)
+  265|         await supabase.from('employee_notifications').insert(
+  266|           sourceManagers.map((to) => ({
+  267|             recipient_email: to,
+  268|             type: 'transfer.release_requested',
+  269|             tone: 'neutral',
+  270|             title: 'Transfer Release Request',
+>>271|             message: `${sessionEmail} would like to move ${who} from ${fromDept} to ${toDept} (proposed ${proposed}). Release or decline in My Team.`,
+  272|             details: {
+  273|               request_id: id,
+  274|               employee_email: identifying,
+  275|               from_department: fromDept,
+  276|               to_department: toDept,
+=== app/api/department-transfers/[id]/route.ts:291 (of 405)
+  285|     if (supabase && row.requested_by) {
+  286|       await supabase.from('employee_notifications').insert({
+  287|         recipient_email: row.requested_by,
+  288|         type: 'transfer.released',
+  289|         tone: 'positive',
+  290|         title: 'Transfer Released',
+>>291|         message: `${sessionEmail} released ${row.employee_name ?? row.employee_email} to ${row.to_department}, effective ${effectiveDate}.`,
+  292|         details: {
+  293|           request_id: id,
+  294|           employee_email: row.employee_email,
+  295|           from_department: row.from_department,
+  296|           to_department: row.to_department,
+=== app/api/department-transfers/[id]/route.ts:249 (of 405)
+  243|       if (supabase && row.requested_by) {
+  244|         await supabase.from('employee_notifications').insert({
+  245|           recipient_email: row.requested_by,
+  246|           type: 'transfer.declined',
+  247|           tone: 'neutral',
+  248|           title: 'Transfer Declined',
+>>249|           message: `${sessionEmail} declined releasing ${row.employee_name ?? row.employee_email} to ${row.to_department}${note ? `: "${note}"` : '.'}`,
+  250|           details: {
+  251|             request_id: id,
+  252|             employee_email: row.employee_email,
+  253|             from_department: row.from_department,
+  254|             to_department: row.to_department,
+=== src/components/manager/ManagerApp.tsx:3271 (of 4652)
+  3265|               your team list and leave queue stay empty.
+  3266|             </>
+  3267|           ) : scoped ? (
+  3268|             <>
+  3269|               Showing active roster members in{' '}
+  3270|               <span className="font-medium text-zinc-700 dark:text-zinc-300">
+>>3271|                 {teamGate.departments.join(', ')}
+  3272|               </span>{' '}
+  3273|               (matched from HR master list, case-insensitive).
+  3274|             </>
+  3275|           ) : (
+  3276|             <>
+=== src/components/manager/ManagerApp.tsx:3658 (of 4652)
+  3652|                                     </button>
+  3653|                                   </td>
+  3654|                                   <td data-label="Department" className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
+  3655|                                     {m.department ? (
+  3656|                                       <span className="inline-flex items-center gap-1">
+  3657|                                         <Building2 className="h-3 w-3 text-zinc-400" />
+>>3658|                                         {m.department}
+  3659|                                       </span>
+  3660|                                     ) : (
+  3661|                                       <span className="text-zinc-400">—</span>
+  3662|                                     )}
+  3663|                                   </td>
+=== src/components/manager/ManagerApp.tsx:3967 (of 4652)
+  3961|                                 >
+  3962|                                   {roleLine ?? 'No title set'}
+  3963|                                 </p>
+  3964|                                 <div className="mt-1 flex flex-wrap items-center gap-1">
+  3965|                                   {m.department && (
+  3966|                                     <span className="rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
+>>3967|                                       {m.department}
+  3968|                                     </span>
+  3969|                                   )}
+  3970|                                   {m.mesa_member && (
+  3971|                                     <span title="MESA Program — ₱100 deducted per paycheck" className="rounded-md border border-teal-200 bg-teal-50 px-1.5 py-0.5 text-[10px] font-semibold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300">
+  3972|                                       MESA −₱100
+=== src/components/manager/ManagerApp.tsx:2206 (of 4652)
+  2200|                 className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-900 transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+  2201|               >
+  2202|                 <option value="">Select who else must approve…</option>
+  2203|                 {candidates.map((c) => (
+  2204|                   <option key={c.email} value={c.email}>
+  2205|                     {c.name}
+>>2206|                     {c.department ? ` — ${c.department}` : ''}
+  2207|                   </option>
+  2208|                 ))}
+  2209|               </select>
+  2210|               {candidates.length === 0 ? (
+  2211|                 // Naming someone grants them nothing — an admin provisions Manager
+=== src/components/admin/AdminRoles.tsx:573 (of 1811)
+  567|       const json = (await res.json()) as { success?: boolean; error?: string };
+  568|       if (!res.ok || !json.success) {
+  569|         toast.error(json.error || 'Failed to update department');
+  570|         return;
+  571|       }
+  572|       toast.success(
+>>573|         isOn ? `Removed from ${department}` : `Now manages ${department}`,
+  574|       );
+  575|       await refreshDeptAssignments();
+  576|     } catch (e) {
+  577|       toast.error(e instanceof Error ? e.message : 'Failed');
+  578|     } finally {
+=== src/components/admin/AdminRoles.tsx:1085 (of 1811)
+  1079|                           )}
+  1080|                         </div>
+  1081|                         <p className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+  1082|                           {e.work_email || e.personal_email || 'No email'}
+  1083|                         </p>
+  1084|                         {e.department && (
+>>1085|                           <p className="mt-0.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500">{e.department}</p>
+  1086|                         )}
+  1087|                       </div>
+  1088|                       <div className="flex max-w-[40%] shrink-0 flex-wrap justify-end gap-1">
+  1089|                         {assignedRoles.length === 0 ? (
+  1090|                           <span className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500">No roles</span>
+=== src/components/people/PeopleTab.tsx:3466 (of 4136)
+  3460|                     <InfoRow icon={User} label="First name" value={viewParts.first || null} />
+  3461|                     <InfoRow icon={User} label="Last name" value={viewParts.last || null} />
+  3462|                     {viewParts.middle && <InfoRow icon={User} label="Middle name" value={viewParts.middle} />}
+  3463|                     {viewParts.extension && <InfoRow icon={User} label="Extension" value={viewParts.extension} />}
+  3464|                     {viewParts.nickname && <InfoRow icon={User} label="Nickname" value={viewParts.nickname} />}
+  3465|                     <InfoRow icon={IdCard} label="Employee ID" value={row.employee_id} mono copyable />
+>>3466|                     <InfoRow icon={Building2} label="Department" value={row.department} />
+  3467|                     <InfoRow icon={CalendarDays} label="Start date" value={formatHireDate(row.start_date)} />
+  3468|                     <InfoRow icon={Hourglass} label="Tenure" value={tenureFrom(row.start_date)} />
+  3469|                   </InfoCard>
+  3470| 
+  3471|                   <InfoCard icon={ContactIcon} title="Contact" accent={accent}>
+=== src/components/people/PeopleTab.tsx:3451 (of 4136)
+  3445|                         <span className={cn('shrink-0 rounded-full bg-white/70 px-2 py-0.5 text-[10.5px] font-medium dark:bg-zinc-950/40', accent.chipText)}>
+  3446|                           “{viewParts.nickname}”
+  3447|                         </span>
+  3448|                       )}
+  3449|                     </div>
+  3450|                     <p className="truncate text-[11.5px] text-zinc-500 dark:text-zinc-400">
+>>3451|                       {row.department || 'No department'}
+  3452|                       {row.employee_id && <span className="font-mono"> · {row.employee_id}</span>}
+  3453|                     </p>
+  3454|                   </div>
+  3455|                 </div>
+  3456| 
+=== src/components/people/PeopleTab.tsx:3262 (of 4136)
+  3256|             ) : (
+  3257|               <TeamAvatar name={row.name ?? ''} email={row.work_email} size="xl" />
+  3258|             )}
+  3259|             <div className="min-w-0 flex-1">
+  3260|               <DialogTitle className="truncate text-lg">{row.name ?? '—'}</DialogTitle>
+  3261|               <DialogDescription className="truncate">
+>>3262|                 {row.department ?? '—'} · {row.work_email ?? row.employee_id ?? ''}
+  3263|               </DialogDescription>
+  3264|             </div>
+  3265|             {canPay && onPay && (
+  3266|               <Button
+  3267|                 type="button"
+=== src/components/people/PeopleTab.tsx:2445 (of 4136)
+  2439|                 {pageDepts.map((d, i) => (
+  2440|                   <tr
+  2441|                     key={`${d.department}|${leaderStart + i}`}
+  2442|                     className="border-b border-zinc-100 transition-colors last:border-0 hover:bg-zinc-50 dark:border-zinc-900 dark:hover:bg-zinc-900/50"
+  2443|                   >
+  2444|                     <td className="px-4 py-2.5 tabular-nums text-zinc-400" data-label="#">{leaderStart + i + 1}</td>
+>>2445|                     <td className="px-3 py-2.5 font-medium text-zinc-900 dark:text-zinc-100" data-label="Department">{d.department}</td>
+  2446|                     <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600 dark:text-zinc-300" data-label="People">{d.people}</td>
+  2447|                     <td className="px-3 py-2.5 text-right tabular-nums font-medium text-amber-600 dark:text-amber-400" data-label="OT hours">
+  2448|                       {fmtHours(d.otHours)}
+  2449|                     </td>
+  2450|                     <td className="px-4 py-2.5 text-right" data-label="OT pay">
+=== src/components/people/PeopleTab.tsx:2607 (of 4136)
+  2601|         </div>
+  2602|       </div>
+  2603|       <div className="mb-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-zinc-600 dark:text-zinc-300">
+  2604|         {series.map((s) => (
+  2605|           <span key={s.dept} className="flex items-center gap-1.5">
+  2606|             <span className={cn('h-2 w-2 shrink-0 rounded-full', s.color.dot)} />
+>>2607|             <span className="max-w-[120px] truncate">{s.dept}</span>
+  2608|           </span>
+  2609|         ))}
+  2610|       </div>
+  2611|       <div className="relative" onMouseEnter={onInteract}>
+  2612|         <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label={`Department ${gran.label.toLowerCase()} overtime trend`} onMouseLeave={() => setHover(null)}>
+=== src/components/people/PeopleTab.tsx:2669 (of 4136)
+  2663|               </div>
+  2664|               <ul className="mt-1 space-y-0.5">
+  2665|                 {series.map((s) => (
+  2666|                   <li key={s.dept} className="flex items-center justify-between gap-2">
+  2667|                     <span className="flex min-w-0 items-center gap-1.5">
+  2668|                       <span className={cn('h-2 w-2 shrink-0 rounded-full', s.color.dot)} />
+>>2669|                       <span className="truncate text-zinc-700 dark:text-zinc-200">{s.dept}</span>
+  2670|                     </span>
+  2671|                     <span className="shrink-0 tabular-nums text-zinc-500 dark:text-zinc-400">{fmtVal(s.values[hover])}</span>
+  2672|                   </li>
+  2673|                 ))}
+  2674|               </ul>
+=== src/components/people/PeopleTab.tsx:917 (of 4136)
+  911|           <SmoothSelect
+  912|             value={deptFilter}
+  913|             onChange={setDeptFilter}
+  914|             aria-label="Filter by department"
+  915|             className="w-full shrink-0 sm:w-48"
+  916|             options={[
+>>917|               { value: 'all', label: 'All departments' },
+  918|               ...departments.map((d) => ({ value: d, label: d })),
+  919|             ]}
+  920|           />
+  921|           {/* Show only people who rendered (or are on track for) overtime. */}
+  922|           <Button
+=== src/components/people/PeopleTab.tsx:785 (of 4136)
+  779|     return periods.find((p) => p.file === period)?.label ?? (period ? labelForSourceFile(period) : 'Current week');
+  780|   }, [range, rangeMeta, periods, period]);
+  781| 
+  782|   // One-line description of the active in-view filter — carried into exports so a
+  783|   // downloaded roster says exactly what slice it captured.
+  784|   const filterLabel = useMemo(() => {
+>>785|     const parts: string[] = [deptFilter === 'all' ? 'All departments' : deptFilter];
+  786|     if (otOnly) parts.push('OT only');
+  787|     const q = query.trim();
+  788|     if (q) parts.push(`matching "${q}"`);
+  789|     return parts.join(' · ');
+  790|   }, [deptFilter, otOnly, query]);
+=== src/components/Overview.tsx:1642 (of 5287)
+  1636|                               >
+  1637|                                 Master
+  1638|                               </Badge>
+  1639|                             )}
+  1640|                           </td>
+  1641|                           <td className="px-4 py-3.5 text-zinc-800 dark:text-zinc-200">
+>>1642|                             {row.department ?? '—'}
+  1643|                           </td>
+  1644|                           <td className="px-4 py-3.5 font-medium text-zinc-800 dark:text-zinc-200">
+  1645|                             {row.name ?? '—'}
+  1646|                           </td>
+  1647|                           <td className="px-4 py-3.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">
+=== src/components/Overview.tsx:1477 (of 5287)
+  1471|                           <div className="truncate font-medium leading-tight text-zinc-900 dark:text-white">{row.name ?? '—'}</div>
+  1472|                           <div className="truncate font-mono text-[11px] leading-tight text-zinc-500 dark:text-zinc-400">{email || '—'}</div>
+  1473|                         </div>
+  1474|                       </div>
+  1475|                       <div className="flex flex-wrap items-center gap-1.5">
+  1476|                         <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[11.5px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+>>1477|                           {row.department ?? '—'}
+  1478|                         </span>
+  1479|                         <span className="inline-flex items-center gap-1.5 text-[10.5px] font-medium text-zinc-500 dark:text-zinc-400">
+  1480|                           <span className={cn('inline-block h-1.5 w-1.5 rounded-full', isHubstaff ? 'bg-blue-700 dark:bg-blue-500' : 'bg-emerald-700 dark:bg-emerald-500')} />
+  1481|                           {isHubstaff ? 'Hubstaff' : 'Master'}
+  1482|                         </span>
+=== src/components/Overview.tsx:4881 (of 5287)
+  4875|                                   className="border-emerald-300 bg-emerald-50 font-mono text-[10px] text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300"
+  4876|                                 >
+  4877|                                   Master
+  4878|                                 </Badge>
+  4879|                               )}
+  4880|                             </TableCell>
+>>4881|                             <TableCell className="text-zinc-800 dark:text-zinc-200">{row.department ?? '—'}</TableCell>
+  4882|                             <TableCell className="font-medium text-zinc-800 dark:text-zinc-200">{row.name ?? '—'}</TableCell>
+  4883|                             <TableCell className="font-mono text-xs text-zinc-600 dark:text-zinc-400">
+  4884|                               <div>{row.personal_email ?? row.work_email ?? '—'}</div>
+  4885|                               {(() => {
+  4886|                                 const loc = [row.city, row.province].filter(Boolean).join(', ');
+=== src/components/Overview.tsx:4777 (of 5287)
+  4771|                             })()}
+  4772|                           </div>
+  4773|                           <div className="min-w-0">
+  4774|                             <div className="truncate font-medium text-zinc-900 dark:text-white">{row.name ?? '—'}</div>
+  4775|                             <div className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{row.personal_email ?? row.work_email ?? '—'}</div>
+  4776|                             {row.department && (
+>>4777|                               <div className="mt-1 text-[11.5px] text-zinc-600 dark:text-zinc-400">{row.department}</div>
+  4778|                             )}
+  4779|                             {row.start_date && (
+  4780|                               <div className="text-[11px] text-zinc-400 dark:text-zinc-600">{formatStartDate(row.start_date)}</div>
+  4781|                             )}
+  4782|                             {(() => {
+=== src/components/Overview.tsx:323 (of 5287)
+  317|             key={s.dept}
+  318|             className={`flex cursor-default items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] transition-colors ${hovered === s.dept ? 'bg-zinc-100 dark:bg-zinc-800' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'}`}
+  319|             onMouseEnter={() => setHovered(s.dept)}
+  320|             onMouseLeave={() => setHovered(null)}
+  321|           >
+  322|             <span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: s.color }} />
+>>323|             <span className="min-w-0 flex-1 truncate text-zinc-600 dark:text-zinc-400">{s.dept}</span>
+  324|             <span className="shrink-0 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">{s.count}</span>
+  325|             <span className="shrink-0 text-[10px] text-zinc-400">{s.pct.toFixed(0)}%</span>
+  326|           </div>
+  327|         ))}
+  328|       </div>
+=== src/components/Overview.tsx:311 (of 5287)
+  305|           />
+  306|         ))}
+  307|         <text x={cx} y={cy - 5} textAnchor="middle" fontSize="18" fontWeight="700" fill="#18181b">
+  308|           {hov ? hov.count : total}
+  309|         </text>
+  310|         <text x={cx} y={cy + 10} textAnchor="middle" fontSize="9" fill="#a1a1aa">
+>>311|           {hov ? hov.dept.slice(0, 13) : 'employees'}
+  312|         </text>
+  313|       </svg>
+  314|       <div className="max-h-[12rem] w-full overflow-y-auto space-y-0.5 pr-0.5">
+  315|         {slices.map((s) => (
+  316|           <div
+=== src/components/Overview.tsx:1341 (of 5287)
+  1335|               <SmoothSelect
+  1336|                 aria-label="Department"
+  1337|                 value={departmentFilter}
+  1338|                 onChange={(v) => setDepartmentFilter(v)}
+  1339|                 triggerClassName="h-8"
+  1340|                 options={[
+>>1341|                   { value: '', label: 'All departments' },
+  1342|                   ...departmentOptions.map((d) => ({ value: d, label: d })),
+  1343|                 ]}
+  1344|               />
+  1345|               <SmoothSelect
+  1346|                 aria-label="PAB month"
+=== src/components/Overview.tsx:4271 (of 5287)
+  4265|       const techElig = emailKey ? techEligibilityByEmail.get(emailKey) : undefined;
+  4266|       const techStatus = techElig === true ? 'Eligible' : techElig === false ? 'Pending' : 'N/A';
+  4267|       return [
+  4268|         row.name ?? '',
+  4269|         row.personal_email ?? '',
+  4270|         row.work_email ?? '',
+>>4271|         row.department ?? '',
+  4272|         row.recordSource === 'master' ? 'Master' : 'Hubstaff',
+  4273|         row.employee_id ?? '',
+  4274|         row.start_date ?? '',
+  4275|         pay ? pay.hours.toFixed(2) : '',
+  4276|         pay?.pay != null ? pay.pay.toFixed(2) : '',
+=== src/components/accounting/PayrollWizardNotesFab.tsx:2434 (of 5852)
+  2428|                   {d.name}
+  2429|                 </option>
+  2430|               ))}
+  2431|             </select>
+  2432|             {isHslSub && (
+  2433|               <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+>>2434|                 {person.department} is an HSL sub-department — the rate files under Hogan
+  2435|                 Smith Law.
+  2436|               </p>
+  2437|             )}
+  2438|           </div>
+  2439|           <div className="grid grid-cols-2 gap-2">
+=== src/components/accounting/PayrollWizardNotesFab.tsx:1909 (of 5852)
+  1903|         <div className="truncate text-[10px] text-zinc-400 dark:text-zinc-500">
+  1904|           {person.email || "—"}
+  1905|         </div>
+  1906|       </div>
+  1907|       <div className="min-w-0 truncate text-[11px] text-zinc-600 dark:text-zinc-300">
+  1908|         <span className="text-zinc-400 sm:hidden dark:text-zinc-500">Dept · </span>
+>>1909|         {person.department?.trim() || "—"}
+  1910|       </div>
+  1911|       <div className="min-w-0 text-[11px] text-zinc-600 dark:text-zinc-300">
+  1912|         <span className="text-zinc-400 sm:hidden dark:text-zinc-500">Started · </span>
+  1913|         {formatStartDate(person.startDate)}
+  1914|         {person.recentlyOnboarded && (
+=== src/components/accounting/PayrollWizardNotesFab.tsx:2242 (of 5852)
+  2236| }) {
+  2237|   return (
+  2238|     <div className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-orange-50/50 dark:hover:bg-blue-950/30">
+  2239|       <div className="min-w-0 flex-1">
+  2240|         <div className="truncate text-[13px] font-medium text-zinc-800 dark:text-zinc-100">{name}</div>
+  2241|         <div className="truncate text-[10px] text-zinc-400 dark:text-zinc-500">
+>>2242|           {[department, email].filter(Boolean).join(" · ") || "—"}
+  2243|         </div>
+  2244|       </div>
+  2245|       {right}
+  2246|     </div>
+  2247|   );
+=== src/components/accounting/PayrollWizardNotesFab.tsx:5772 (of 5852)
+  5766|                   >
+  5767|                     <span className="min-w-0 flex-1">
+  5768|                       <span className="block truncate text-[13px] font-medium text-zinc-800 dark:text-zinc-100">
+  5769|                         {w.name}
+  5770|                       </span>
+  5771|                       <span className="block truncate text-[10.5px] text-zinc-400 dark:text-zinc-500">
+>>5772|                         {[w.department, w.work_email].filter(Boolean).join(" · ") || "—"}
+  5773|                       </span>
+  5774|                     </span>
+  5775|                     {w.off_boarded_at && (
+  5776|                       <span
+  5777|                         className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold tracking-wide text-amber-700 uppercase dark:bg-amber-950/50 dark:text-amber-300"
+=== src/components/accounting/PayrollWizardNotesFab.tsx:3397 (of 5852)
+  3391|       const dept = r.department?.trim();
+  3392|       if (dept) counts.set(dept, (counts.get(dept) ?? 0) + 1);
+  3393|       else none += 1;
+  3394|     }
+  3395|     const opts = [...counts.entries()]
+  3396|       .sort((a, b) => a[0].localeCompare(b[0]))
+>>3397|       .map(([dept, n]) => ({ value: dept, label: `${dept} (${n})` }));
+  3398|     if (none > 0) opts.push({ value: BANK_NO_DEPT, label: `No department (${none})` });
+  3399|     return [{ value: "", label: "All departments" }, ...opts];
+  3400|   }, [data?.missingBank]);
+  3401|   // If a live refresh clears the selected department's last row (or a week
+  3402|   // switch swaps the list), fall back to "all" so the filter never strands an
+=== src/components/manager/transfer-charts.tsx:265 (of 289)
+  259|       {top.map((row, i) => {
+  260|         const frac = row.count / peak;
+  261|         return (
+  262|           <div key={`${row.from}→${row.to}-${uid}-${i}`} className="group">
+  263|             <div className="mb-1 flex items-center justify-between gap-2 text-[12px]">
+  264|               <span className="flex min-w-0 items-center gap-1.5">
+>>265|                 <span className="truncate font-medium text-zinc-600 dark:text-zinc-300">{row.from}</span>
+  266|                 <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0 text-zinc-400" aria-hidden fill="none">
+  267|                   <path d="M3 8h9M9 4.5L12.5 8 9 11.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+  268|                 </svg>
+  269|                 <span className="truncate font-semibold text-zinc-800 dark:text-zinc-100">{row.to}</span>
+  270|               </span>
+=== src/components/manager/ManagerTransfers.tsx:541 (of 2030)
+  535|         if (json.applied === false) {
+  536|           toast.warning(
+  537|             json.error ||
+  538|               `Released ${row.employee_name ?? row.employee_email}, but the department move needs a manual apply.`,
+  539|           );
+  540|         } else {
+>>541|           toast.success(`${row.employee_name ?? row.employee_email} moved to ${row.to_department}`);
+  542|         }
+  543|         setDeclineFor(null);
+  544|         setDeclineNote('');
+  545|         load({ silent: true });
+  546|         return;
+=== src/components/manager/ManagerTransfers.tsx:1490 (of 2030)
+  1484|                                       </span>
+  1485|                                     ) : (
+  1486|                                       <span
+  1487|                                         className="font-medium text-rose-600 dark:text-rose-400"
+  1488|                                         title={`No manager is assigned to ${r.from_department}, so no one can release this. Ask an admin to assign one (or to apply it directly).`}
+  1489|                                       >
+>>1490|                                         · no manager on {r.from_department} — ask an admin
+  1491|                                       </span>
+  1492|                                     ))}
+  1493|                                 </div>
+  1494|                               </div>
+  1495|                               <div className="flex items-center gap-2">
+=== src/components/manager/ManagerTransferDialog.tsx:203 (of 406)
+  197|           proposed_effective_date: effectiveDate,
+  198|           reason: reason.trim() || null,
+  199|         }),
+  200|       });
+  201|       const json = (await res.json()) as { error?: string };
+  202|       if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
+>>203|       toast.success(`Release request sent to ${currentDept || 'the current'} manager`);
+  204|       onOpenChange(false);
+  205|       onSubmitted?.();
+  206|     } catch (e) {
+  207|       toast.error(e instanceof Error ? e.message : 'Failed to send transfer request');
+  208|     } finally {
+=== app/api/employee/penny-chat/route.ts:183 (of 413)
+  177|     month: '2-digit',
+  178|     day: '2-digit',
+  179|   }).format(now);
+  180|   return [
+  181|     '## Who you are talking to',
+  182|     '',
+>>183|     `You are speaking with ${ctx.name ?? 'this employee'}${ctx.department ? `, on the ${ctx.department} team` : ''}.`,
+  184|     'Every tool you call already answers about this person — you never need to,',
+  185|     'and never can, name them in a tool call.',
+  186|     '',
+  187|     '## Current date and time',
+  188|     '',
+=== src/lib/anthropic/admin-tools.ts:759 (of 1488)
+  753|   const { data, error } = await q;
+  754|   if (error) return { error: error.message };
+  755| 
+  756|   const rows = ((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+  757|     employee: r.employee_name,
+  758|     employee_email: r.employee_work_email ?? r.employee_email,
+>>759|     from_department: r.from_department,
+  760|     to_department: r.to_department,
+  761|     status: r.status,
+  762|     reason: r.reason,
+  763|     requested_by: r.requested_by,
+  764|     approved_or_declined_by: r.approver_email,
+=== src/components/employee/EmployeeProfile.tsx:1484 (of 2370)
+  1478|                   <Section
+  1479|                     title="Employment"
+  1480|                     description="Authoritative source: HR roster (same as payroll)"
+  1481|                   >
+  1482|                     <Row
+  1483|                       label="Department"
+>>1484|                       value={employmentDepartment ?? '—'}
+  1485|                     />
+  1486|                     <Row
+  1487|                       label="Start Date"
+  1488|                       value={formatStartDate(master?.start_date ?? null) ?? '—'}
+  1489|                     />
+=== src/components/employee/EmployeeProfile.tsx:1359 (of 2370)
+  1353|           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+  1354|             <h1 className="truncate text-[20px] font-semibold tracking-[-0.02em] text-zinc-900 dark:text-zinc-50 sm:text-[28px]">
+  1355|               {displayName}
+  1356|             </h1>
+  1357|             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-zinc-500 dark:text-zinc-400">
+  1358|               {employmentDepartment && (
+>>1359|                 <span className="text-zinc-700 dark:text-zinc-200">{employmentDepartment}</span>
+  1360|               )}
+  1361|               {employmentDepartment && master?.employee_id && (
+  1362|                 <span className="text-zinc-300 dark:text-zinc-700">·</span>
+  1363|               )}
+  1364|               {master?.employee_id && (
+=== src/components/employee/EmployeeProfile.tsx:2319 (of 2370)
+  2313|               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-950/60">
+  2314|                 <DoorOpen className="h-4 w-4 text-red-600 dark:text-red-400" />
+  2315|               </div>
+  2316|               <div className="min-w-0">
+  2317|                 <h3 className="text-base font-bold text-zinc-900 dark:text-white">Submit your resignation?</h3>
+  2318|                 <p className="mt-0.5 text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+>>2319|                   This notifies your{employmentDepartment ? ` ${employmentDepartment}` : ''} manager. After
+  2320|                   they approve it, HR will begin your offboarding.
+  2321|                 </p>
+  2322|               </div>
+  2323|             </div>
+  2324|             <div className="space-y-2 px-5 py-4 text-[13px]">
+=== src/components/employee/EmployeePolicies.tsx:131 (of 191)
+  125|               Company Policies
+  126|             </h2>
+  127|             <Badge
+  128|               variant="outline"
+  129|               className="border-orange-200 bg-orange-50 text-orange-700 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-orange-300"
+  130|             >
+>>131|               {deptLabel}
+  132|             </Badge>
+  133|           </div>
+  134|           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-500">
+  135|             The {total} expectations every team member is asked to follow. Read through them so
+  136|             you know what to count on from your teammates—and what they count on from you.
+=== src/components/employee/EmployeeTeam.tsx:1103 (of 1173)
+  1097|                         {ss?.role_title?.trim() && (
+  1098|                           <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+  1099|                             {ss.role_title}
+  1100|                           </p>
+  1101|                         )}
+  1102|                         {t.department && (
+>>1103|                           <p className="text-xs text-zinc-500 dark:text-zinc-400">{t.department}</p>
+  1104|                         )}
+  1105|                         <div className="flex flex-wrap gap-1.5 pt-1">
+  1106|                           {t.isManager && (
+  1107|                             <span className="inline-flex items-center gap-1 rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">
+  1108|                               <Shield className="h-2.5 w-2.5" />
+=== src/components/employee/EmployeeMesa.tsx:1444 (of 2198)
+  1438|                     )}
+  1439|                   </dd>
+  1440|                 </div>
+  1441|                 <div className="min-w-0">
+  1442|                   <dt className="text-[11px] text-zinc-500 dark:text-zinc-400">Department</dt>
+  1443|                   <dd className="truncate text-sm font-medium text-zinc-900 dark:text-white">
+>>1444|                     {dept || <span className="text-zinc-400 dark:text-zinc-600">Not on file</span>}
+  1445|                   </dd>
+  1446|                 </div>
+  1447|                 <div className="min-w-0 sm:col-span-2">
+  1448|                   <dt className="text-[11px] text-zinc-500 dark:text-zinc-400">Simple.biz email</dt>
+  1449|                   <dd className="truncate font-mono text-[12px] text-zinc-700 dark:text-zinc-300">
+=== src/components/admin/AdminGlobalMasterList.tsx:1057 (of 1076)
+  1051|                 <section className="space-y-2">
+  1052|                   <h3 className="border-b border-zinc-100 pb-1 text-xs font-bold uppercase tracking-wide text-zinc-800 dark:border-zinc-800/80 dark:text-zinc-200">
+  1053|                     Master list information
+  1054|                   </h3>
+  1055|                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+  1056|                     <Field icon={IdCard} label="Employee ID" value={selected.employee_id} mono />
+>>1057|                     <Field icon={Building2} label="Department" value={selected.department} />
+  1058|                     <Field icon={Mail} label="Work email" value={selected.work_email} mono />
+  1059|                     <Field icon={Mail} label="Personal email" value={selected.personal_email} mono />
+  1060|                     {alternateEmails && (
+  1061|                       <Field icon={Mail} label="Alternate emails" value={alternateEmails} mono />
+  1062|                     )}
+=== src/components/admin/AdminGlobalMasterList.tsx:781 (of 1076)
+  775|                                   : statusLabel(detail, null)
+  776|                                 : 'Online'}
+  777|                             </p>
+  778|                           ) : (
+  779|                             row.department && (
+  780|                               <p className="mt-0.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500">
+>>781|                                 {row.department}
+  782|                               </p>
+  783|                             )
+  784|                           )}
+  785|                         </div>
+  786|                       </button>
+=== src/components/hr/HrOffboarding.tsx:848 (of 1116)
+  842|                       const isRemovingFromSheet = removingFromSheet === email;
+  843|                       const anyBusy = isRestoring || isRemovingFromSheet;
+  844|                       return (
+  845|                         <tr key={r.id} className="align-middle hover:bg-zinc-50/60 dark:hover:bg-zinc-900/30">
+  846|                           <td data-label="Name" className="px-4 py-2.5 font-medium text-zinc-900 dark:text-zinc-100">{r.Name ?? '—'}</td>
+  847|                           <td data-label="Work email" className="break-all px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">{email || '—'}</td>
+>>848|                           <td data-label="Department" className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">{r.Department ?? '—'}</td>
+  849|                           <td data-label="Reason" className="px-4 py-2.5">
+  850|                             {r.off_boarded_reason ? (
+  851|                               <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
+  852|                                 {REASON_LABELS[r.off_boarded_reason] ?? r.off_boarded_reason}
+  853|                               </span>
+=== src/components/hr/HrApp.tsx:1091 (of 3059)
+  1085|                 </tr>
+  1086|               </thead>
+  1087|               <tbody className="divide-y divide-zinc-50 dark:divide-zinc-800/60">
+  1088|                 {pageRows.map((r, i) => (
+  1089|                   <tr key={`${r.work_email ?? r.personal_email ?? i}`} className="hover:bg-zinc-50/60 dark:hover:bg-zinc-800/30">
+  1090|                     <td data-label="Name" className="px-4 py-2 font-medium text-zinc-800 dark:text-zinc-200">{r.name ?? '—'}</td>
+>>1091|                     <td data-label="Dept" className="px-4 py-2 text-zinc-500 dark:text-zinc-400">{r.department ?? '—'}</td>
+  1092|                     <td data-label="Work email" className="px-4 py-2 font-mono text-zinc-500 dark:text-zinc-400">{r.work_email ?? '—'}</td>
+  1093|                     <td data-label="Personal email" className="px-4 py-2 font-mono text-zinc-500 dark:text-zinc-400">{r.personal_email ?? '—'}</td>
+  1094|                     <td data-label="Location" className="px-4 py-2 text-zinc-500 dark:text-zinc-400">{r.city ?? '—'}</td>
+  1095|                     <td data-label="Start date" className="px-4 py-2 text-zinc-400">{fmtDate(r.start_date)}</td>
+  1096|                     <td data-label="Tenure" className="px-4 py-2 tabular-nums text-zinc-400">{tenure(r.start_date)}</td>
+=== src/components/hr/HrApp.tsx:2325 (of 3059)
+  2319|                 <li key={d.department} className="group">
+  2320|                   <div className="mb-1 flex items-baseline justify-between gap-3">
+  2321|                     <span className="truncate text-[12px] font-medium text-zinc-700 dark:text-zinc-300">
+  2322|                       <span className="mr-2 inline-block w-4 text-right font-mono text-[10px] text-zinc-400 tabular-nums dark:text-zinc-600">
+  2323|                         {String(i + 1).padStart(2, '0')}
+  2324|                       </span>
+>>2325|                       {d.department}
+  2326|                     </span>
+  2327|                     <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+  2328|                       {d.count}
+  2329|                       <span className="ml-1.5 text-zinc-400 dark:text-zinc-600">{sharePct.toFixed(0)}%</span>
+  2330|                     </span>
+=== src/components/hr/HrApp.tsx:2538 (of 3059)
+  2532|                     y={y + barH / 2 + 4}
+  2533|                     textAnchor="end"
+  2534|                     fontSize={11}
+  2535|                     fill="currentColor"
+  2536|                     className="font-medium text-zinc-700 dark:text-zinc-300"
+  2537|                   >
+>>2538|                     {row.dept.length > 20 ? row.dept.slice(0, 18) + '…' : row.dept}
+  2539|                   </text>
+  2540| 
+  2541|                   {/* Track */}
+  2542|                   <rect
+  2543|                     x={LABEL_W}
+=== src/components/hr/HrApp.tsx:2130 (of 3059)
+  2124|                   </div>
+  2125|                   <div className="min-w-0 flex-1">
+  2126|                     <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
+  2127|                       {row.name ?? row.work_email ?? '—'}
+  2128|                     </p>
+  2129|                     <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+>>2130|                       {row.department ?? 'Unassigned'}
+  2131|                     </p>
+  2132|                     <p className="mt-0.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500">
+  2133|                       {row.work_email ?? row.personal_email ?? '—'}
+  2134|                     </p>
+  2135|                   </div>
+=== src/components/hr/HrMesa.tsx:920 (of 1026)
+  914|               >
+  915|                 <X className="h-4 w-4" />
+  916|               </button>
+  917|             </div>
+  918|             <div className="space-y-3 px-5 py-4">
+  919|               <InfoRow label="Email" value={reviewTarget.work_email} />
+>>920|               <InfoRow label="Department" value={reviewTarget.department} />
+  921|               {reviewTarget.fpu_date && <InfoRow label="FPU Completed" value={reviewTarget.fpu_date} />}
+  922|               <div>
+  923|                 <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+  924|                   Review Notes (optional)
+  925|                 </p>
+=== src/components/hr/HrOffboardQueueProcessor.tsx:484 (of 652)
+  478|                     <p className="truncate font-mono text-[11px] text-zinc-500">
+  479|                       {current.employee_work_email ?? current.employee_personal_email ?? '—'}
+  480|                     </p>
+  481|                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
+  482|                       {current.department && (
+  483|                         <span className="rounded-full bg-zinc-800/80 px-2 py-0.5 text-[10px] font-medium text-zinc-400 ring-1 ring-zinc-700/50">
+>>484|                           {current.department}
+  485|                         </span>
+  486|                       )}
+  487|                       <span className="text-[10px] text-zinc-500">
+  488|                         requested by {current.requested_by_name ?? current.requested_by}
+  489|                       </span>
+=== src/components/hr/OffboardingWeeklyPulse.tsx:445 (of 494)
+  439|                   className="flex items-center gap-3 text-[13px]"
+  440|                 >
+  441|                   <span
+  442|                     className="min-w-0 flex-1 truncate text-zinc-700 dark:text-zinc-300"
+  443|                     title={d.dept}
+  444|                   >
+>>445|                     {d.dept}
+  446|                   </span>
+  447|                   <span className="h-2 w-20 shrink-0 overflow-hidden rounded-full bg-rose-100/80 sm:w-24 dark:bg-rose-950/50">
+  448|                     <motion.span
+  449|                       className="block h-full rounded-full bg-gradient-to-r from-rose-400 to-rose-600 dark:from-rose-500 dark:to-rose-400"
+  450|                       initial={false}
+=== src/components/LeaveRequestsPanel.tsx:502 (of 737)
+  496|               >
+  497|                 <X className="h-4 w-4" />
+  498|               </button>
+  499|             </div>
+  500|             <div className="space-y-3 px-5 py-4">
+  501|               <InfoRow label="Email" value={selected.employee_email} />
+>>502|               {selected.department && <InfoRow label="Department" value={selected.department} />}
+  503|               <InfoRow label="Type" value={selected.leave_type} />
+  504|               <InfoRow
+  505|                 label="Dates"
+  506|                 value={`${formatDateRange(selected.start_date, selected.end_date)} (${daysBetween(selected.start_date, selected.end_date)} day${daysBetween(selected.start_date, selected.end_date) === 1 ? '' : 's'})`}
+  507|               />
+=== src/components/audit/AuditLogPanel.tsx:488 (of 1408)
+  482|     // ── Teams & transfers ───────────────────────────────────────────────
+  483|     case 'department_transfer.requested':
+  484|       return `Transfer requested: ${String(details?.employee_email ?? '?')} (${String(details?.from_department ?? '?')} → ${String(details?.to_department ?? '?')})`;
+  485|     case 'department_transfer.cancelled':
+  486|       return `Transfer request cancelled: ${String(details?.employee_email ?? '?')}`;
+  487|     case 'department_manager.assigned':
+>>488|       return `Manager assigned: ${String(details?.manager_email ?? '?')} → ${String(details?.department ?? '?')}`;
+  489|     case 'department_manager.revoked':
+  490|       return `Manager revoked: ${String(details?.manager_email ?? '?')} ← ${String(details?.department ?? '?')}`;
+  491| 
+  492|     // ── Leave (deletions) ───────────────────────────────────────────────
+  493|     case 'leave.owner_deleted':
+=== src/components/audit/AuditLogPanel.tsx:484 (of 1408)
+  478|       const ok = !details?.webhook_error;
+  479|       return `Onboarding invite ${ok ? 'sent' : 'FAILED'}: ${String(details?.to ?? '?')}${ok ? '' : ` — ${String(details?.webhook_error)}`}`;
+  480|     }
+  481| 
+  482|     // ── Teams & transfers ───────────────────────────────────────────────
+  483|     case 'department_transfer.requested':
+>>484|       return `Transfer requested: ${String(details?.employee_email ?? '?')} (${String(details?.from_department ?? '?')} → ${String(details?.to_department ?? '?')})`;
+  485|     case 'department_transfer.cancelled':
+  486|       return `Transfer request cancelled: ${String(details?.employee_email ?? '?')}`;
+  487|     case 'department_manager.assigned':
+  488|       return `Manager assigned: ${String(details?.manager_email ?? '?')} → ${String(details?.department ?? '?')}`;
+  489|     case 'department_manager.revoked':
+=== src/components/PayrollWizard.tsx:1303 (of 20270)
+  1297|         <div className="mt-3 divide-y divide-zinc-100 dark:divide-zinc-900">
+  1298|           <SnapshotRow
+  1299|             label="Assigned to"
+  1300|             value={snap.structure.employeeName || snap.structure.employeeEmail}
+  1301|           />
+  1302|           <SnapshotRow label="Email" value={snap.structure.employeeEmail} mono />
+>>1303|           <SnapshotRow label="Department" value={snap.structure.departmentKey} />
+  1304|           <SnapshotRow label="Updated" value={updatedStamp(snap.structure)} />
+  1305|         </div>
+  1306|       )}
+  1307|       {snap.kind === 'department' && (
+  1308|         <p className="mt-2 text-[10.5px] text-zinc-400 dark:text-zinc-500">
+=== src/components/PayrollWizard.tsx:1309 (of 20270)
+  1303|           <SnapshotRow label="Department" value={snap.structure.departmentKey} />
+  1304|           <SnapshotRow label="Updated" value={updatedStamp(snap.structure)} />
+  1305|         </div>
+  1306|       )}
+  1307|       {snap.kind === 'department' && (
+  1308|         <p className="mt-2 text-[10.5px] text-zinc-400 dark:text-zinc-500">
+>>1309|           No individual structure — {snap.deptLabel}&apos;s base rate is the catalog&apos;s answer for this person.
+  1310|         </p>
+  1311|       )}
+  1312|     </RateSnapshotShell>
+  1313|   );
+  1314| }
+=== src/components/manager/HslBonusCalculator.tsx:3114 (of 3242)
+  3108|                           <span className="block truncate font-mono text-[10px] text-zinc-400">
+  3109|                             {email || 'no work email on file'}
+  3110|                           </span>
+  3111|                         </span>
+  3112|                         {c.department && (
+  3113|                           <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+>>3114|                             {c.department}
+  3115|                           </span>
+  3116|                         )}
+  3117|                         {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />}
+  3118|                       </button>
+  3119|                     );
+=== src/components/manager/DeptBonusCalculator.tsx:4209 (of 4739)
+  4203|                           <span className="block truncate font-mono text-[10px] text-zinc-400">
+  4204|                             {email || 'no email on file'}
+  4205|                           </span>
+  4206|                         </span>
+  4207|                         {c.department && (
+  4208|                           <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+>>4209|                             {c.department}
+  4210|                           </span>
+  4211|                         )}
+  4212|                         {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />}
+  4213|                       </button>
+  4214|                     );
+=== src/components/manager/NewlyHiredPanel.tsx:694 (of 1380)
+  688|         <Card className="overflow-hidden border border-violet-200/80 bg-gradient-to-br from-white to-violet-50/40 ring-1 ring-violet-500/10 dark:border-violet-900/50 dark:from-zinc-950 dark:to-violet-950/15">
+  689|           <CardContent className="flex flex-col gap-2 p-4 sm:flex-row sm:items-start sm:justify-between">
+  690|             <div className="min-w-0 flex-1 space-y-1">
+  691|               <div className="flex flex-wrap items-center gap-2">
+  692|                 <span className="text-sm font-semibold text-zinc-900 dark:text-white">{r.name}</span>
+  693|                 <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
+>>694|                   {r.department}
+  695|                 </span>
+  696|                 <span className="inline-flex items-center gap-1 rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:border-violet-800/70 dark:bg-violet-950/30 dark:text-violet-300">
+  697|                   <UserPlus className="h-3 w-3" /> Manually onboarded
+  698|                 </span>
+  699|               </div>
+=== src/components/manager/ManagerOffboardQueueDialog.tsx:274 (of 354)
+  268|                       </div>
+  269|                       <div className="min-w-0 flex-1">
+  270|                         <p className="truncate text-sm font-medium text-zinc-100">
+  271|                           {p.name ?? p.work_email ?? p.personal_email}
+  272|                         </p>
+  273|                         <p className="truncate font-mono text-[10.5px] text-zinc-500">
+>>274|                           {p.department ? `${p.department} · ` : ''}{p.work_email ?? p.personal_email ?? '—'}
+  275|                         </p>
+  276|                       </div>
+  277|                       {rs.overridden ? (
+  278|                         <button
+  279|                           type="button"
+=== src/components/accounting/BonusCatalog.tsx:4491 (of 5085)
+  4485|       </span>
+  4486|       <div className="min-w-0 flex-1">
+  4487|         <span className="block truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
+  4488|           {person.name}
+  4489|         </span>
+  4490|         <span className="block truncate text-xs text-zinc-500">
+>>4491|           {person.department || 'No department'} &middot; {person.email}
+  4492|         </span>
+  4493|       </div>
+  4494|       <div className="hidden shrink-0 items-center gap-1.5 md:flex">
+  4495|         {rateChip ? (
+  4496|           <span
+=== src/components/accounting/BonusCatalog.tsx:2344 (of 5085)
+  2338|             setOpen(true);
+  2339|           }}
+  2340|           placeholder="Search for a person..."
+  2341|           options={list.map((r) => ({
+  2342|             value: r.email,
+  2343|             label: r.name,
+>>2344|             hint: r.department ? `(${r.department})` : undefined,
+  2345|           }))}
+  2346|         />
+  2347|         {!open && (
+  2348|           <Button
+  2349|             type="button"
+=== src/components/accounting/DepartmentsTab.tsx:1412 (of 2022)
+  1406|                           <span className="block truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
+  1407|                             {p.name}
+  1408|                           </span>
+  1409|                           <span className="block truncate text-[11px] text-zinc-400">{p.email}</span>
+  1410|                         </span>
+  1411|                         <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+>>1412|                           {p.department || 'No department'}
+  1413|                         </span>
+  1414|                       </button>
+  1415|                     </li>
+  1416|                   ))}
+  1417|                 </motion.ul>
+=== src/components/ceo/CeoOverviewKpis.tsx:781 (of 929)
+  775|           ) : (
+  776|             <ul className="space-y-2.5">
+  777|               {pagedDepartments.map((d) => (
+  778|                 <li key={d.department} className="space-y-1">
+  779|                   <div className="flex items-center justify-between gap-2 text-[12px]">
+  780|                     <span className="min-w-0 truncate text-zinc-600 dark:text-zinc-300" title={d.department}>
+>>781|                       {d.department}
+  782|                     </span>
+  783|                     <span className="shrink-0 font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
+  784|                       {d.count}
+  785|                     </span>
+  786|                   </div>
+=== src/components/ceo/CeoFinancialReports.tsx:813 (of 984)
+  807|       ) : (
+  808|         <ul className="space-y-2.5">
+  809|           {period.byDepartment.map((d) => (
+  810|             <li key={d.department} className="space-y-1">
+  811|               <div className="flex items-center justify-between gap-2 text-[13px]">
+  812|                 <span className="flex min-w-0 items-center gap-2">
+>>813|                   <span className="truncate font-medium text-zinc-700 dark:text-zinc-200" title={d.department}>{d.department}</span>
+  814|                   <span className="shrink-0 text-[11px] text-zinc-400">{fmtInt(d.peopleCount)} ppl · {fmtInt(d.hours)}h</span>
+  815|                 </span>
+  816|                 <span className="shrink-0 font-mono font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
+  817|                   {fmtPhp0(d.payoutPhp)}
+  818|                   <span className="ml-1.5 text-[11px] font-normal text-zinc-400">{Math.round((d.payoutPhp / period.payoutPhp) * 100)}%</span>
+=== src/components/ceo/CeoFinancialReports.tsx:933 (of 984)
+  927|               list.map((r) => (
+  928|                 <tr key={r.email} className="border-b border-zinc-50 dark:border-zinc-900">
+  929|                   <td data-label="Name" className="py-2 pr-3">
+  930|                     <div className="font-medium text-zinc-800 dark:text-zinc-100">{r.name ?? r.email}</div>
+  931|                     <div className="text-[11px] text-zinc-400">{r.email}</div>
+  932|                   </td>
+>>933|                   <td data-label="Department" className="py-2 pr-3 text-zinc-600 dark:text-zinc-300">{r.department}</td>
+  934|                   <td data-label="Hours" className="py-2 pr-3 text-right tabular-nums text-zinc-600 dark:text-zinc-300">{r.hours.toFixed(1)}</td>
+  935|                   <td data-label="Payout" className="py-2 pr-3 text-right font-mono font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">{fmtPhp0(r.payoutPhp)}</td>
+  936|                   <td data-label="≈ USD" className="py-2 pr-3 text-right font-mono tabular-nums text-zinc-500 dark:text-zinc-400">{fmtUsd0(r.payoutUsd)}</td>
+  937|                   <td data-label="Status" className="py-2 text-right">
+  938|                     <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide', STATUS_TONE[r.status] ?? STATUS_TONE.pending)}>
+=== src/components/payroll/AccountingMesa.tsx:1022 (of 3576)
+  1016|                             <div className="mt-0.5 text-[10.5px] text-amber-700 dark:text-amber-400">
+  1017|                               {r.off_roster_reason}
+  1018|                             </div>
+  1019|                           )}
+  1020|                         </td>
+  1021|                         <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="Department">
+>>1022|                           {r.department}
+  1023|                         </td>
+  1024|                         <td className="px-4 py-3" data-label="Type">
+  1025|                           <Badge
+  1026|                             variant="outline"
+  1027|                             className={cn('text-[10.5px] font-semibold uppercase tracking-wide', TYPE_COLORS[r.request_type])}
+=== src/components/orphanage/GiftTracker.tsx:1212 (of 1853)
+  1206|       >
+  1207|         <td className="px-4 py-3">
+  1208|           <div className="flex flex-col">
+  1209|             <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.name}</span>
+  1210|             <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{row.email}</span>
+  1211|             {row.department ? (
+>>1212|               <span className="mt-0.5 text-[11px] text-emerald-600/80 dark:text-emerald-400/80">{row.department}</span>
+  1213|             ) : null}
+  1214|           </div>
+  1215|         </td>
+  1216|         <td className="whitespace-nowrap px-4 py-3 text-xs text-zinc-700 dark:text-zinc-300">
+  1217|           {row.startDate ? formatDate(row.startDate) : <span className="text-zinc-400">—</span>}
+=== src/components/orphanage/CreateOrphanageStyleDisputeDialog.tsx:625 (of 895)
+  619|                           >
+  620|                             <span className="flex min-w-0 flex-col">
+  621|                               <span className="truncate font-medium text-zinc-800 dark:text-zinc-200">
+  622|                                 {e.displayName?.trim() || we}
+  623|                               </span>
+  624|                               {e.department ? (
+>>625|                                 <span className="truncate text-[9px] text-zinc-500">{e.department}</span>
+  626|                               ) : null}
+  627|                             </span>
+  628|                             <span className="truncate font-mono text-[10px] text-zinc-500">{we}</span>
+  629|                           </button>
+  630|                         );
+=== src/components/payroll/OrphanageVisits.tsx:384 (of 546)
+  378|                           className="flex w-full flex-col px-3 py-2 text-left text-xs transition-colors hover:bg-rose-50 dark:hover:bg-rose-950/30"
+  379|                         >
+  380|                           <span className="truncate font-medium text-zinc-800 dark:text-zinc-200">
+  381|                             {e.name ?? email}
+  382|                           </span>
+  383|                           <span className="truncate text-[10px] text-zinc-500">
+>>384|                             {email}{e.department ? ` · ${e.department}` : ''}
+  385|                           </span>
+  386|                         </button>
+  387|                       );
+  388|                     })
+  389|                   )}
+=== src/components/tickets/TicketsOverview.tsx:456 (of 581)
+  450|                         {m.email}
+  451|                       </span>
+  452|                     </span>
+  453|                   </span>
+  454|                 </td>
+  455|                 <td className="truncate px-1 py-2 text-xs text-muted-foreground" title={m.department ?? undefined}>
+>>456|                   {m.department ?? '—'}
+  457|                 </td>
+  458|                 <td className="py-2 text-right">
+  459|                   <span
+  460|                     className={cn(
+  461|                       'inline-flex h-5 items-center gap-1.5 rounded-full px-2 text-[11px] font-medium whitespace-nowrap',
+=== src/components/people/PeopleBankChanges.tsx:527 (of 627)
+  521|               </span>
+  522|               <span
+  523|                 className="inline-flex min-w-0 items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400"
+  524|                 title={department || 'Not on the active roster'}
+  525|               >
+  526|                 <Building2 className="h-3 w-3 shrink-0 text-zinc-400" />
+>>527|                 <span className="truncate">{department || '—'}</span>
+  528|               </span>
+  529|             </div>
+  530|           </div>
+  531| 
+  532|           {/* Time + a View action that opens the full breakdown. */}
+=== src/components/employee/GiftShippingCard.tsx:784 (of 1083)
+  778|                 <div>
+  779|                   <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">Name</div>
+  780|                   <div className="mt-0.5 font-medium text-zinc-900 dark:text-zinc-100">{prefill.name ?? '—'}</div>
+  781|                 </div>
+  782|                 <div>
+  783|                   <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">Department</div>
+>>784|                   <div className="mt-0.5 font-medium text-zinc-900 dark:text-zinc-100">{prefill.department ?? '—'}</div>
+  785|                 </div>
+  786|                 <div>
+  787|                   <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">Personal email</div>
+  788|                   <div className="mt-0.5 font-mono text-[11px] text-zinc-800 dark:text-zinc-200 break-all">{personalEmail}</div>
+  789|                 </div>
+=== src/components/accounting/HubstaffMasterMatchesModal.tsx:273 (of 326)
+  267|                           {r.name || r.workEmail || '—'}
+  268|                         </span>
+  269|                         <StatusBadge status={r.status} />
+  270|                       </div>
+  271|                       <div className="truncate text-[11px] text-zinc-400">
+  272|                         {r.workEmail || r.personalEmail || '—'}
+>>273|                         {r.department ? ` · ${r.department}` : ''}
+  274|                       </div>
+  275|                       {r.reason && (
+  276|                         <div className="mt-0.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+  277|                           {r.reason}
+  278|                         </div>
+=== src/components/hr/HrGlobalMasterList.tsx:298 (of 1493)
+  292|           <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+  293|             {row.employee_id ?? '—'}
+  294|           </p>
+  295|         </div>
+  296|         {row.department && (
+  297|           <span
+>>298|             title={row.department}
+  299|             className="max-w-[45%] shrink-0 truncate rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+  300|           >
+  301|             {formatDeptLabel(row.department)}
+  302|           </span>
+  303|         )}
+=== src/lib/hr/global-master-list-export.ts:139 (of 622)
+  133| 
+  134| /** Shape the raw roster rows into a clean, per-employee export model. */
+  135| export function buildMasterListExport(input: BuildMasterListInput): MasterListExportModel {
+  136|   const rows: MasterListRecord[] = input.rows.map((r) => ({
+  137|     employeeId: clean(r.employee_id) || DASH,
+  138|     name: clean(r.name) || 'Unknown',
+>>139|     department: clean(r.department) || DASH,
+  140|     workEmail: clean(r.work_email) || DASH,
+  141|     personalEmail: clean(r.personal_email) || DASH,
+  142|     phone: clean(r.phone_number) || DASH,
+  143|     location: locationOf(r) || DASH,
+  144|     startDate: formatDate(r.start_date),
+=== src/lib/gift-tracker/shipping-export.ts:311 (of 958)
+  305|     const sub =
+  306|       (current ? subs.find((s) => s.milestone_index === current.index) : undefined) ??
+  307|       subs[subs.length - 1];
+  308| 
+  309|     const name = clean(e.name) || key;
+  310|     const workEmail = clean(e.work_email);
+>>311|     const department = clean(e.department) || DASH;
+  312| 
+  313|     const submittedAddress = clean(sub?.preferred_delivery_location);
+  314|     const home = homeAddressOf(e);
+  315|     const shippingAddress = submittedAddress || home;
+  316|     const addressSource: AddressSource = submittedAddress
+=== src/components/payroll/AccountingMesa.tsx:557 (of 3576)
+  551|         { header: 'Submitted', pdfWeight: 52, xlsxWidth: 14 },
+  552|         { header: 'Reviewed by', pdfWeight: 62, xlsxWidth: 22 },
+  553|       ],
+  554|       rows: filtered.map((r) => [
+  555|         r.full_name,
+  556|         r.work_email,
+>>557|         r.department || '-',
+  558|         TYPE_LABELS[r.request_type],
+  559|         details(r),
+  560|         r.amount_needed != null ? formatPhpExport(r.amount_needed) : '-',
+  561|         // Only a disbursement can carry a receipt; "-" for the rest, and for a
+  562|         // list served before the receipts migration ran (count undefined) so the
+=== src/components/admin/AdminDesignSpecs.tsx:611 (of 769)
+  605|                           className="block truncate text-sm font-medium text-zinc-900 dark:text-zinc-100"
+  606|                           title={dev.email}
+  607|                         >
+  608|                           {dev.name ?? dev.email.split('@')[0]}
+  609|                         </span>
+  610|                         <span className="block truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+>>611|                           {dev.department ?? dev.email}
+  612|                         </span>
+  613|                       </span>
+  614|                       <span className="flex shrink-0 flex-col items-end gap-1">
+  615|                         <span
+  616|                           className={cn(
+=== src/components/payroll-clerk/UrgentPaymentsQueue.tsx:1146 (of 1446)
+  1140|       </div>
+  1141| 
+  1142|       {/* Info */}
+  1143|       <div className="min-w-0 flex-1 space-y-0.5">
+  1144|         <div className="flex flex-wrap items-center gap-2">
+  1145|           <span className="font-semibold text-zinc-900 dark:text-zinc-100">{row.full_name}</span>
+>>1146|           <span className="text-xs text-zinc-400 dark:text-zinc-500">{row.department}</span>
+  1147|         </div>
+  1148|         <div className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500">{row.work_email}</div>
+  1149|         {row.disbursement_reason && (
+  1150|           <div className="flex flex-wrap items-center gap-1.5 pt-1">
+  1151|             <Badge variant="outline" className="border-amber-200 bg-amber-50 text-[10.5px] text-amber-700 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-300">
+=== src/components/hr/HrOnboarding.tsx:1483 (of 2216)
+  1477|             </thead>
+  1478|             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+  1479|               {(deptGroups.length === 1 ? (rows ?? []) : activeMembers).map((r) => (
+  1480|                 <tr key={r.id} className="bg-white dark:bg-zinc-950">
+  1481|                   <td className="px-3 py-2 font-medium text-zinc-800 dark:text-zinc-100">{r.display_name ?? r.name}</td>
+  1482|                   {deptGroups.length === 1 && (
+>>1483|                     <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400">{r.department ?? '—'}</td>
+  1484|                   )}
+  1485|                   <td className="px-3 py-2 font-mono text-zinc-600 dark:text-zinc-400">{r.work_email ?? '—'}</td>
+  1486|                   <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400">{formatDate(r.start_date)}</td>
+  1487|                 </tr>
+  1488|               ))}
+=== src/components/payroll-clerk/DeptChip.tsx:21 (of 25)
+  15|   if (!name) return null;
+  16|   return (
+  17|     <span
+  18|       className="inline-flex max-w-full items-center truncate rounded-full bg-zinc-100 px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-800/70 dark:text-zinc-400"
+  19|       title={`Department: ${name}`}
+  20|     >
+>>21|       {name}
+  22|     </span>
+  23|   );
+  24| }
+  25| 
+=== src/components/paystub/PayStubStatement.tsx:384 (of 545)
+  378|             </div>
+  379|             <div className="min-w-0 sm:text-right">
+  380|               <div className="text-[10px] font-bold uppercase leading-[13px] tracking-[0.12em] text-[#556377]">
+  381|                 Department
+  382|               </div>
+  383|               <div className="mt-[3px] break-words text-[14px] font-bold leading-5 text-[#102034]">
+>>384|                 {view.department || '—'}
+  385|               </div>
+  386|             </div>
+  387|           </div>
+  388|         </div>
+  389| 
+=== src/lib/documents/coe-document.ts:392 (of 557)
+  386|   richParagraph([
+  387|     { text: 'This is to certify that ' },
+  388|     { text: facts.workerName, bold: true },
+  389|     { text: ' has been contracted with Simple since ' },
+  390|     { text: facts.startDateLabel, bold: true },
+  391|     { text: ' as part of our ' },
+>>392|     { text: facts.team, bold: true },
+  393|     { text: '. Their work schedule consists of ' },
+  394|     { text: `${facts.weeklyHours} hours per week`, bold: true },
+  395|     { text: ', with an hourly rate of ' },
+  396|     { text: facts.hourlyRate, bold: true, color: NAVY },
+  397|     { text: ' and an overtime rate of ' },
+=== src/lib/transfers/apply-transfer.ts:135 (of 207)
+  129|           recipient_email: to,
+  130|           type: 'transfer.applied',
+  131|           tone: 'positive',
+  132|           title: 'Transfer Applied',
+  133|           message: alreadyInTarget
+  134|             ? `${who} is confirmed in ${row.to_department}.`
+>>135|             : `${who} has moved from ${row.from_department} to ${row.to_department}${
+  136|                 row.effective_date ? ` (effective ${row.effective_date})` : ''
+  137|               }.`,
+  138|           details: {
+  139|             request_id: row.id,
+  140|             employee_email: row.employee_email,
+=== src/lib/payroll/paystub-export.ts:486 (of 674)
+  480|     right(`Exported ${formatTimestamp(generatedAt)}`, top - 21, 8.5, font);
+  481|     right(`${String.fromCharCode(0xa9)} ${year} Simple.biz`, top - 32, 8, font);
+  482| 
+  483|     state.y = top - 46;
+  484|     state.page.drawText('Pay Stubs', { x: MARGIN, y: state.y, size: 16, font: bold, color: NAVY });
+  485|     state.y -= 15;
+>>486|     const sub = `${opts.employeeName}${opts.department ? ` · ${opts.department}` : ''}   ${String.fromCharCode(0xb7)}   ${weeks.length} paid ${weeks.length === 1 ? 'week' : 'weeks'}`;
+  487|     state.page.drawText(sanitize(sub), { x: MARGIN, y: state.y, size: 9, font, color: MUTED });
+  488|     state.y -= 10;
+  489|     state.page.drawLine({
+  490|       start: { x: MARGIN, y: state.y }, end: { x: PAGE_W - MARGIN, y: state.y },
+  491|       thickness: 1.3, color: NAVY,
+=== src/components/employee/RequestDocumentsTab.tsx:222 (of 644)
+  216|         toast.error('No pay-stub weeks found for that period');
+  217|         return;
+  218|       }
+  219| 
+  220|       const bytes = await generatePayStubsPdf(
+  221|         weeks,
+>>222|         { employeeName: employeeName || employeeEmail, department },
+  223|         new Date(),
+  224|       );
+  225|       const ab = new ArrayBuffer(bytes.byteLength);
+  226|       new Uint8Array(ab).set(bytes);
+  227|       const label = PAYSTUB_PERIODS.find((p) => p.value === paystubPeriod)?.label ?? 'Pay stubs';
+=== src/lib/transfers/transfers-export.ts:177 (of 775)
+  171|   fileBase?: string;
+  172|   /** Include the catalog rate-change column. Defaults to true (Accounting). */
+  173|   includeRateChange?: boolean;
+  174| }): TransferExportModel {
+  175|   const rows: TransferExportRecord[] = input.rows.map((r) => ({
+  176|     employee: clean(r.employee_name) || clean(r.employee_email) || 'Unknown',
+>>177|     from: clean(r.from_department) || DASH,
+  178|     to: clean(r.to_department) || DASH,
+  179|     status: STATUS_LABEL[r.status] ?? r.status,
+  180|     requestedBy: clean(r.requested_by) || DASH,
+  181|     releasedBy: clean(r.decided_by) || DASH,
+  182|     effective: effectiveStr(r),
+=== src/lib/people/people-roster-export.ts:157 (of 718)
+  151| 
+  152| /** Shape the raw roster rows into a clean, per-person export model + rollups. */
+  153| export function buildRosterExport(input: BuildRosterExportInput): RosterExportModel {
+  154|   const rows: RosterExportRecord[] = input.rows.map((r) => ({
+  155|     employeeId: clean(r.employee_id) || DASH,
+  156|     name: clean(r.name) || 'Unknown',
+>>157|     department: clean(r.department) || DASH,
+  158|     workEmail: clean(r.work_email) || DASH,
+  159|     personalEmail: clean(r.personal_email) || DASH,
+  160|     hours: Number.isFinite(r.hours?.thisWeek) ? r.hours.thisWeek : 0,
+  161|     otHours: Number.isFinite(r.hours?.ot) ? r.hours.ot : 0,
+  162|     rateRegular: r.rate?.regular ?? null,
+=== src/lib/anthropic/admin-tools.ts:301 (of 1488)
+  295|     resource_id: r.resource_id,
+  296|     // The IP separates a staff-side edit from the employee's own submission on
+  297|     // flows that share an action name — it must survive into the answer.
+  298|     ip_address: r.ip_address,
+  299|     // Bank/profile events carry a full before→after `changes` array; the old
+  300|     // 600-char cut truncated those mid-array and lost the "after" values.
+>>301|     details: truncate(safeJson(r.details), 1500),
+  302|   };
+  303| }
+  304| 
+  305| /**
+  306|  * Every audit event about ONE person, without the recency blind spot.
+=== src/lib/anthropic/ceo-tools.ts:306 (of 1431)
+  300|     return name.includes(q) || local.includes(q);
+  301|   });
+  302| 
+  303|   const shown = matches.slice(0, 8).map((e) => ({
+  304|     name: e.name,
+  305|     work_email: e.work_email ?? null,
+>>306|     department: e.department,
+  307|     employee_id: e.employee_id,
+  308|   }));
+  309| 
+  310|   return {
+  311|     match_count: matches.length,
+=== src/lib/payroll/readiness-activity.ts:65 (of 187)
+  59| /** Best-effort dept display: the audit rows carry the dept KEY the calculator
+  60|  *  posted; the composer passes key→display-name from the KPI rows it already
+  61|  *  built, and an unknown key falls back to the key itself (readable enough). */
+  62| function deptLabel(details: Record<string, unknown> | null, deptNames?: Map<string, string>): string | null {
+  63|   const key = detailString(details, 'department');
+  64|   if (!key) return null;
+>>65|   return deptNames?.get(key) ?? key;
+  66| }
+  67| 
+  68| /** Allowlist: audited action → surface + line template. Anything not listed is
+  69|  *  dropped — the feed names payroll-relevant traffic only (rates / bank / KPI /
+  70|  *  People tab, blueprint Q3). */
+=== src/lib/rates/export-csv.ts:142 (of 238)
+  136|     return {
+  137|       // Identity
+  138|       employee_id: p.employeeId ?? master?.employee_id ?? '',
+  139|       name: p.displayName ?? master?.name ?? '',
+  140|       work_email: p.workEmail ?? master?.work_email ?? '',
+  141|       personal_email: p.personalEmail ?? master?.personal_email ?? '',
+>>142|       department: p.department ?? master?.department ?? '',
+  143|       organization: p.organization ?? '',
+  144|       start_date: master?.start_date ?? '',
+  145| 
+  146|       // Status
+  147|       status: p.suspended ? 'Suspended' : 'Active',
+=== src/lib/payment-catalog/overview-metrics.ts:207 (of 507)
+  201| // humanize to the nonsense "Hsl:intake Specialist", so they resolve through
+  202| // formatDeptLabel first ("HSL — Intake Specialist").
+  203| const deptName = (key: string) =>
+  204|   DEPT_NAME.get(key) ??
+  205|   (isHslSubDeptLabel(key)
+  206|     ? formatDeptLabel(key)
+>>207|     : key.replace(/_+/g, ' ').replace(/(^|\s)[a-z]/g, (c) => c.toUpperCase()));
+  208| 
+  209| function nameForEmail(
+  210|   email: string,
+  211|   fallbackName: string | undefined,
+  212|   roster: OverviewInput['roster'],
+=== src/components/accounting/BonusCatalog.tsx:4675 (of 5085)
+  4669|           </button>
+  4670|           <div className="min-w-0">
+  4671|             <h2 className="truncate text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+  4672|               {person.name}
+  4673|             </h2>
+  4674|             <p className="truncate text-xs text-zinc-500">
+>>4675|               {person.department || 'No department'} &middot; {person.email}
+  4676|             </p>
+  4677|           </div>
+  4678|         </div>
+  4679|         <EditToggle on={editing} onChange={onEditingChange} />
+  4680|       </div>
+=== src/components/accounting/BonusCatalog.tsx:4611 (of 5085)
+  4605|   const rateSourceText =
+  4606|     comp.rateSource === 'individual'
+  4607|       ? 'Individual catalog rate -- overrides the rates sheet and the department default.'
+  4608|       : comp.rateSource === 'sheet'
+  4609|         ? 'Paid from the rates sheet -- no individual catalog rate.'
+  4610|         : comp.rateSource === 'department'
+>>4611|           ? `Department default${person.department ? ` for ${person.department}` : ''} -- no individual or sheet rate.`
+  4612|           : '';
+  4613|   const editorInitial =
+  4614|     comp.override ??
+  4615|     (comp.rateSource === 'sheet' && comp.sheetRate
+  4616|       ? {
+=== src/components/accounting/BonusCatalog.tsx:4803 (of 5085)
+  4797|                 Assign
+  4798|               </Button>
+  4799|             </div>
+  4800|           ) : (
+  4801|             <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+  4802|               Personal bonuses can&apos;t be assigned here:{' '}
+>>4803|               {person.department ? `"${person.department}"` : "this person's department"} isn&apos;t
+  4804|               wired into the bonus calculators, so a bonus filed under it would never be applied or
+  4805|               paid.
+  4806|             </p>
+  4807|           ))}
+  4808|         {comp.employeeAssignments.length === 0 ? (
+=== src/components/accounting/BonusCatalog.tsx:4844 (of 5085)
+  4838|       </Section>
+  4839| 
+  4840|       {/* Department bonuses */}
+  4841|       <Section
+  4842|         icon={Building2}
+  4843|         title="Department bonuses"
+>>4844|         subtitle={`Common bonuses assigned to everyone in ${person.department || 'their department'}.`}
+  4845|       >
+  4846|         {comp.commonAssignments.length === 0 ? (
+  4847|           <p className="text-sm text-zinc-400">No department-wide bonuses reach this person.</p>
+  4848|         ) : (
+  4849|           <div className="space-y-2">
+=== src/components/accounting/BonusCatalog.tsx:3860 (of 5085)
+  3854|           value={empEmail}
+  3855|           onChange={setEmpEmail}
+  3856|           placeholder="Search for a person..."
+  3857|           options={list.map((r) => ({
+  3858|             value: r.email,
+  3859|             label: r.name,
+>>3860|             hint: r.department ? `(${r.department})` : undefined,
+  3861|           }))}
+  3862|         />
+  3863|         <AnimatedSelect
+  3864|           ariaLabel="Select a bonus"
+  3865|           className="min-w-[12rem]"
+=== src/components/people/PeopleTab.tsx:918 (of 4136)
+  912|             value={deptFilter}
+  913|             onChange={setDeptFilter}
+  914|             aria-label="Filter by department"
+  915|             className="w-full shrink-0 sm:w-48"
+  916|             options={[
+  917|               { value: 'all', label: 'All departments' },
+>>918|               ...departments.map((d) => ({ value: d, label: d })),
+  919|             ]}
+  920|           />
+  921|           {/* Show only people who rendered (or are on track for) overtime. */}
+  922|           <Button
+  923|             type="button"
+=== src/components/hr/HrGlobalMasterList.tsx:714 (of 1493)
+  708|       <p className="mt-1 flex flex-wrap items-center justify-center gap-1 text-xs text-zinc-500 dark:text-zinc-400">
+  709|         {query ? (
+  710|           <>
+  711|             Nothing in the roster matches <Chip>{query}</Chip>
+  712|             {dept && (
+  713|               <>
+>>714|                 in <Chip>{dept}</Chip>
+  715|               </>
+  716|             )}
+  717|           </>
+  718|         ) : (
+  719|           <>
+=== src/components/PayrollWizard.tsx:16459 (of 20270)
+  16453|                   {dispatchData.rateIssues.slice(0, 8).map((x) => (
+  16454|                     <li key={x.email} className="text-xs text-amber-900 dark:text-amber-200">
+  16455|                       <span className="font-semibold">{x.name}</span>
+  16456|                       {x.department ? (
+  16457|                         <span className="text-amber-800/70 dark:text-amber-300/60">
+  16458|                           {' '}
+>>16459|                           · {x.department}
+  16460|                         </span>
+  16461|                       ) : null}
+  16462|                       {x.paidRate != null && x.sheetRate != null && (
+  16463|                         <span>
+  16464|                           {' '}
+=== src/components/accounting/PaymentCatalogOverview.tsx:254 (of 918)
+  248|                 {money(p.rateNative, p.currency)}
+  249|                 <span className="text-sm font-medium text-zinc-400">/hr</span>
+  250|               </StatValue>
+  251|               <StatSub>
+  252|                 <span className="font-medium text-zinc-700 dark:text-zinc-200">{p.name}</span>
+  253|                 {' · '}
+>>254|                 {p.deptName}
+  255|               </StatSub>
+  256|               <div className="mt-1.5 flex items-center gap-1.5">
+  257|                 <span
+  258|                   className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+  259|                     p.source === 'individual'
+=== src/lib/notifications/kpi-scored.ts:301 (of 335)
+  295|   }
+  296| 
+  297|   const plan = planKpiScoredInserts(totalsByLogin, lastNotified);
+  298|   if (plan.length === 0) return { inserted: 0, skipped };
+  299| 
+  300|   // ── 5. Build + bulk-insert ──────────────────────────────────────────────────
+>>301|   const departmentName = DEPT_NAME_BY_KEY[department] ?? department;
+  302|   const weekHuman = formatWeekHuman(periodStart, periodEnd);
+  303|   const weekPhrase = weekHuman ? ` for ${weekHuman}` : '';
+  304| 
+  305|   const rows = plan.map((p) => ({
+  306|     recipient_email: p.recipientEmail,
+=== app/api/hr/onboarding-submissions/[id]/send/route.ts:400 (of 571)
+  394|               </p>
+  395|               <h1 style="margin:8px 0 0 0;font-size:24px;line-height:1.25;font-weight:700;color:#ffffff;">
+  396|                 ${isResend ? "Review your onboarding submission" : "Your onboarding form is ready"}
+  397|               </h1>
+  398|               ${
+  399|                 safeDept
+>>400|                   ? `<p style="margin:6px 0 0 0;font-size:13px;color:rgba(255,255,255,0.72);">For the <strong style="color:#ffffff;font-weight:600;">${safeDept}</strong> team</p>`
+  401|                   : ""
+  402|               }
+  403|             </td>
+  404|           </tr>
+  405| 

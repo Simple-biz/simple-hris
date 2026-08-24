@@ -1083,7 +1083,10 @@
       "PowerShell(node --import tsx --test src/lib/notifications/kpi-scored.test.ts 2>$null)",
       "PowerShell(node --import tsx --test src/lib/notifications/notification-views.test.ts 2>$null)",
       "PowerShell(npx tsc --noEmit 2>$null | Where-Object { $_ -notmatch '^\\\\.next/' }; \"---done---\")",
-      "PowerShell(git add app/api/bonus-catalog-applied/route.ts app/api/hsl-bonus/entries/route.ts app/api/hsl-bonus/period-status/route.ts docs/features/INDEX.md docs/features/notification-alerts.md docs/features/kpi-scored-notification.md docs/superpowers/plans/2026-08-17-kpi-scored-notification.md references/sql/alter/2026-08-17_add_kpi_scored_notification_type.sql scripts/apply-kpi-scored-notification-type.mjs src/components/employee/EmployeeApp.tsx src/components/employee/EmployeeKpiResults.tsx src/components/notifications/NotificationsPanel.tsx src/lib/notifications/notification-views.ts src/lib/notifications/kpi-scored.ts src/lib/notifications/kpi-scored.test.ts)"
+      "PowerShell(git add app/api/bonus-catalog-applied/route.ts app/api/hsl-bonus/entries/route.ts app/api/hsl-bonus/period-status/route.ts docs/features/INDEX.md docs/features/notification-alerts.md docs/features/kpi-scored-notification.md docs/superpowers/plans/2026-08-17-kpi-scored-notification.md references/sql/alter/2026-08-17_add_kpi_scored_notification_type.sql scripts/apply-kpi-scored-notification-type.mjs src/components/employee/EmployeeApp.tsx src/components/employee/EmployeeKpiResults.tsx src/components/notifications/NotificationsPanel.tsx src/lib/notifications/notification-views.ts src/lib/notifications/kpi-scored.ts src/lib/notifications/kpi-scored.test.ts)",
+      "Bash(cp \"C:/Users/Kane/AppData/Local/Temp/claude/c--Users-Kane-Desktop-simple-hris/e62977ef-3ae1-4495-9145-746a31f90189/scratchpad/probe-dispatch-cols.mjs\" \"c:/Users/Kane/Desktop/simple-hris/.tmp-mv-probe.mjs\" && cd \"c:/Users/Kane/Desktop/simple-hris\" && node .tmp-mv-probe.mjs 2>&1 | head -120)",
+      "Bash(echo \"=== EXIT $? ===\")",
+      "Bash(tee /tmp/tsc-mv.txt)"
     ],
     "additionalDirectories": [
       "\\tmp",

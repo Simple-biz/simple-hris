@@ -1429,3 +1429,45 @@
     inset 0 0 0 0.5px rgb(255 255 255 / 0.12),
     inset 0 -14px 30px -18px rgb(255 255 255 / 0.07);
 }
+
+/* ==========================================================================
+   PAYROLL WIZARD — step-rail progress line
+   --------------------------------------------------------------------------
+   A determinate bar along the bottom edge of any step whose data is still in
+   flight, completing in green when it lands. The point is to stop Accounting
+   reading a half-loaded number as a wrong number: an unfinished line means
+   "not final yet", a green one means "this tab is safe to judge now".
+
+   Plain on purpose. Earlier cuts used the masked conic sweep of .urgent-ring /
+   .prism-rim; on a payroll rail that reads as a feature rather than a status
+   light. Everything here is a track, a fill, and two colours.
+
+   The fill is driven from a rAF loop in StepDataProgress (PayrollWizard.tsx)
+   writing `transform: scaleX()`, predicted from that step's own remembered load
+   times. Only the last stretch to 100% is a CSS transition, so a completed bar
+   is always the data actually landing.
+   ========================================================================== */
+
+.wizard-step-progress {
+  /* Neutral track, so it reads the same under the orange fill and the green
+     one, in both themes. */
+  background: rgba(113, 113, 122, 0.28);
+}
+
+.wizard-step-progress-bar {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #f97316;
+  /* Starts empty; the rAF loop takes over on the first frame. scaleX rather
+     than width so the fill runs on the compositor. */
+  transform: scaleX(0);
+  transform-origin: left center;
+  will-change: transform;
+}
+
+/* Landed. The transition that carries the last stretch to 100% is set inline
+   at the same moment, so both the fill and the colour ease together. */
+.wizard-step-progress-bar.is-done {
+  background: #10b981;
+}

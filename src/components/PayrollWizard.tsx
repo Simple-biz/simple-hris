@@ -61,6 +61,12 @@ import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
 import { useWizardFollow } from '@/hooks/useWizardFollow';
 import { cn } from '@/lib/utils';
+import {
+  STEP_LOAD_MS_DEFAULT,
+  predictedProgress,
+  readStepLoadEstimate,
+  recordStepLoadDuration,
+} from '@/lib/payroll/step-load-prediction';
 import { formatPHP } from '@/lib/format-php';
 import { formatMoney, normalizeCurrency, sumByCurrency, CONTRACTOR_CURRENCIES } from '@/lib/contractor-currency';
 import { InvoiceViewDialog, type SavedInvoice } from '@/components/contractor/InvoiceReceiptDialog';
@@ -1730,6 +1736,146 @@ const SignedAmountInput = React.memo(function SignedAmountInput({
         setText(displayFor(committedRef.current));
       }}
     />
+  );
+});
+
+/** How long the finished green line holds before it clears. Long enough to be
+ *  noticed on a tab Accounting wasn't watching, short enough that the rail
+ *  doesn't end up permanently striped. */
+const STEP_PROGRESS_HOLD_MS = 1700;
+
+/** How long a step must stay quiet before it counts as landed. Loaders hand off
+ *  to each other — the upload list finishing is what STARTS the preview fetch —
+ *  so a step reads as "not loading" for a render or two between two of its own
+ *  fetches. Without this grace window every hand-off completes the bar and then
+ *  has to start it over. */
+const STEP_PROGRESS_GRACE_MS = 280;
+
+/**
+ * The step-rail progress line: a determinate orange bar along the bottom edge of
+ * a step whose data is in flight, filling on a prediction from that step's own
+ * previous load times, then completing in green when the data lands.
+ *
+ * The prediction itself lives in `@/lib/payroll/step-load-prediction`, where the
+ * invariant it has to hold — prediction alone never fills the bar — is covered
+ * by tests.
+ *
+ * It owns its own timers and animation frame rather than the wizard owning eight
+ * sets of them, and it renders nothing at all for a step that was never
+ * loading — completing a bar for a step that never waited would be a lie.
+ *
+ * Rendered as a SIBLING of the step button, never a child: steps that aren't the
+ * current one are dimmed (opacity-50/70), opacity applies to descendants, and a
+ * bar inside would be dimmed along with them — losing exactly the signal it
+ * exists to carry.
+ *
+ * The fill is written straight to `style.transform` from a rAF loop rather than
+ * through React state. Sixty re-renders a second across eight steps, while the
+ * payroll fetches are already tying up the main thread, is the one thing that
+ * would make this stutter — and scaleX runs on the compositor.
+ */
+const StepDataProgress = React.memo(function StepDataProgress({
+  stepId,
+  loading,
+}: {
+  stepId: number;
+  loading: boolean;
+}) {
+  const [phase, setPhase] = useState<'idle' | 'loading' | 'done'>(loading ? 'loading' : 'idle');
+  const barRef = useRef<HTMLSpanElement | null>(null);
+  /** Start of the CURRENT wait, kept across loader hand-offs. */
+  const startRef = useRef<number | null>(null);
+  const estimateRef = useRef(STEP_LOAD_MS_DEFAULT);
+  const rafRef = useRef(0);
+  /** Whether this step has actually been seen waiting — gates the completion. */
+  const waitedRef = useRef(loading);
+
+  useEffect(() => {
+    if (loading) {
+      waitedRef.current = true;
+      setPhase('loading');
+      // Only stamp the start on the way IN to a wait. Keeping it across a
+      // hand-off means the bar carries on from where it was, and the duration
+      // recorded is the whole wait Accounting actually sat through.
+      if (startRef.current == null) {
+        startRef.current = performance.now();
+        estimateRef.current = readStepLoadEstimate(stepId);
+      }
+      const bar = barRef.current;
+      if (bar) bar.style.transition = 'none';
+
+      const tick = () => {
+        const start = startRef.current;
+        const el = barRef.current;
+        if (start != null && el) {
+          const p = predictedProgress(performance.now() - start, estimateRef.current);
+          el.style.transform = `scaleX(${p})`;
+        }
+        rafRef.current = window.requestAnimationFrame(tick);
+      };
+      rafRef.current = window.requestAnimationFrame(tick);
+      return () => window.cancelAnimationFrame(rafRef.current);
+    }
+
+    if (!waitedRef.current) return;
+
+    let holdTimer = 0;
+    const graceTimer = window.setTimeout(() => {
+      waitedRef.current = false;
+      const start = startRef.current;
+      if (start != null) {
+        // The wait ended when `loading` went false, which was GRACE ago.
+        recordStepLoadDuration(stepId, performance.now() - start - STEP_PROGRESS_GRACE_MS);
+      }
+      startRef.current = null;
+      setPhase('done');
+
+      // Run the last stretch to 100% on the next frame. Setting the transition
+      // and the transform in one commit is the classic case where the browser
+      // may collapse them and snap instead of animating.
+      const el = barRef.current;
+      if (el) {
+        window.requestAnimationFrame(() => {
+          el.style.transition = 'transform 340ms ease-out, background-color 600ms ease-out';
+          el.style.transform = 'scaleX(1)';
+        });
+      }
+
+      holdTimer = window.setTimeout(() => setPhase('idle'), STEP_PROGRESS_HOLD_MS);
+    }, STEP_PROGRESS_GRACE_MS);
+
+    return () => {
+      window.clearTimeout(graceTimer);
+      window.clearTimeout(holdTimer);
+    };
+  }, [loading, stepId]);
+
+  return (
+    <AnimatePresence>
+      {phase !== 'idle' && (
+        <motion.span
+          aria-hidden
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.35, ease: 'easeOut' }}
+          /* Inset by the card's 12px corner radius so the line runs along the
+             straight part of the bottom edge instead of being clipped to a
+             taper by the rounded corners. */
+          className="wizard-step-progress pointer-events-none absolute bottom-0 left-3 right-3 h-[3px] overflow-hidden rounded-full"
+        >
+          <span
+            ref={barRef}
+            className={cn(
+              'wizard-step-progress-bar',
+              /* Applied to an element already on screen, which is what lets the
+                 fill transition orange → green instead of snapping. */
+              phase === 'done' && 'is-done',
+            )}
+          />
+        </motion.span>
+      )}
+    </AnimatePresence>
   );
 });
 
@@ -4760,6 +4906,89 @@ export default function PayrollWizard({
       .finally(() => { if (!cancelled) setContractorInvoicesLoading(false); });
     return () => { cancelled = true; };
   }, [currentStep]);
+
+  /**
+   * ── Step-rail data ring: which steps are still waiting on data ────────────
+   * Accounting kept reading a half-loaded wizard as a wrong wizard. Each step
+   * from Initialize Payroll Data (1) through Dispatch (8) wears a running
+   * orange outline while its OWN data is in flight, and turns green when that
+   * data lands — so a tab going green is a statement that its figures can now
+   * be judged, not just that the page finished mounting.
+   *
+   * That only means anything if the mapping is real, so each step below lists
+   * exactly the fetches its numbers depend on. Every flag used here settles in
+   * a `finally`, so the ring cannot become the forever-spinner that a terminal
+   * skeleton once was — a stalled fetch that rejects still ends the animation.
+   *
+   * Deliberately NOT used: `orphanageDetailLoadedFor`. Its loader never sets
+   * the marker on a failed or aborted fetch, so a ring driven off it would run
+   * forever on exactly the case the ring is supposed to survive. Step 3 rides
+   * the shared hours + rates below, which is what prices orphanage pay anyway.
+   *
+   * Also excluded: `hslSyncLoading` and the upload-progress spinners. Those are
+   * actions Accounting just took, already reported by the button they pressed —
+   * this ring is about data arriving, not about work they asked for.
+   */
+  /** The list of uploaded weeks. Nothing downstream knows which week it is until this lands. */
+  const loadingUploadList = sourceFilesLoading;
+  /** Step 1's raw Hubstaff preview table. */
+  const loadingPreview = hubstaffPreviewLoading;
+  /** The active week's hours — the filtered load, or the unfiltered fallback when no week exists. */
+  const loadingWeekHours = calcSourceFileLoading || unfilteredHubstaffLoading;
+  /** `employee_hourly_rates` — every peso figure past step 1 is hours × this. */
+  const loadingRates = hourlyRatesLoading;
+  /** The all-weeks PAB merge (Additions). The slowest of the set: one fetch per archived upload. */
+  const loadingPabMerge = !pabMergeLoaded;
+  /** HSL KPI bonus amounts for the pinned week. */
+  const loadingHslKpi = hslKpiLoading;
+
+  const isStepDataLoading = React.useCallback(
+    (stepId: number) => {
+      switch (stepId) {
+        // Upload list + the preview table it renders. Rates and bonuses don't
+        // appear on this step, so it goes green well before the rest.
+        case 1:
+          return loadingUploadList || loadingPreview;
+        // Hours × rates.
+        case 2:
+          return loadingUploadList || loadingWeekHours || loadingRates;
+        // Orphanage pay is priced from the same hours and rates.
+        case 3:
+          return loadingUploadList || loadingWeekHours || loadingRates;
+        // Initial pay + KPI bonuses. `hslStepLoading` is only ever true while
+        // Accounting is standing on the step (its effect is gated on
+        // currentStep), which is also the only time its absence is misleading.
+        case 4:
+          return loadingUploadList || loadingWeekHours || loadingRates || loadingHslKpi
+            || (currentStep === 4 && hslStepLoading);
+        // Bonuses and adjustments: needs the PAB merge and the HSL amounts on
+        // top of the base pay.
+        case 5:
+          return loadingUploadList || loadingWeekHours || loadingRates || loadingPabMerge || loadingHslKpi;
+        // Contractor invoices are independent of hours, but the period they're
+        // scoped to comes from the active week. Same step-scoped caveat as 4.
+        case 6:
+          return loadingUploadList || (currentStep === 6 && contractorInvoicesLoading);
+        // Validation and Dispatch read the finished numbers, so they wait on
+        // everything and are the last two to go green. That is the point: these
+        // are the steps where a premature reading actually costs money.
+        case 7:
+        case 8:
+          return loadingUploadList || loadingPreview || loadingWeekHours || loadingRates
+            || loadingPabMerge || loadingHslKpi;
+        // Reports (9) is a post-dispatch summary — outside the range.
+        default:
+          return false;
+      }
+    },
+    [
+      loadingUploadList, loadingPreview, loadingWeekHours, loadingRates,
+      loadingPabMerge, loadingHslKpi, currentStep, hslStepLoading, contractorInvoicesLoading,
+    ],
+  );
+
+  /** Rail-level summary — drives the single screen-reader announcement. */
+  const anyStepDataLoading = steps.some((step) => isStepDataLoading(step.id));
 
   /**
    * The effective PAB end, extended so the last HSL week is fully evaluated.
@@ -18494,13 +18723,16 @@ export default function PayrollWizard({
         <div
           className="flex shrink-0 gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:w-64 md:flex-col md:gap-4 md:overflow-y-auto md:overflow-x-visible md:pr-2 md:pb-0"
         >
-          {steps.map((step) => (
+          {steps.map((step) => {
+          const stepLoading = isStepDataLoading(step.id);
+          return (
+          /* StepDataProgress is a sibling of the button, not a child — see its own doc. */
+          <div key={step.id} className="relative shrink-0">
             <button
               type="button"
-              key={step.id}
               onClick={() => setCurrentStep(step.id)}
               className={cn(
-                "relative flex shrink-0 items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition-all duration-300 md:items-start md:gap-4 md:p-4",
+                "relative flex w-full shrink-0 items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition-all duration-300 md:items-start md:gap-4 md:p-4",
                 currentStep === step.id
                   ? "bg-indigo-600/10 border-indigo-600/50 shadow-[0_0_20px_rgba(79,70,229,0.1)]"
                   : currentStep > step.id
@@ -18533,7 +18765,17 @@ export default function PayrollWizard({
                 />
               )}
             </button>
-          ))}
+            <StepDataProgress stepId={step.id} loading={stepLoading} />
+          </div>
+          );
+          })}
+          {/* One live region for the whole rail. Per-step regions would fire
+              eight announcements at once, then eight more when they cleared. */}
+          <span className="sr-only" aria-live="polite">
+            {anyStepDataLoading
+              ? 'Payroll wizard data is still loading. Figures are not final yet.'
+              : 'Payroll wizard data loaded.'}
+          </span>
         </div>
 
         {/* Main Content Area */}
