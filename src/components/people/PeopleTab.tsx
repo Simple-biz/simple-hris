@@ -26,7 +26,11 @@ import { BankChangeDetailDialog, timeAgo, type BankChangeEntry } from './bank-ch
 import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import { parseNameParts, composeMasterListName, type NameParts } from '@/lib/name/name-parts';
 import { isHslFamilyLabel, formatDeptLabel } from '@/lib/departments/hsl-subdept';
-import { BANK_PREFERRED_OPTIONS, isWiresPreferred } from '@/lib/employee-payment-processors';
+import {
+  BANK_PREFERRED_OPTIONS,
+  isWalletRailLocked,
+  mirroredDisbursementFor,
+} from '@/lib/employee-payment-processors';
 import {
   buildRosterExport,
   downloadRosterCsv,
@@ -2972,7 +2976,21 @@ function PersonDetailDialog({
   const [bankSaving, setBankSaving] = useState(false);
   const [bankForm, setBankForm] = useState<BankForm>(() => bankingToForm(null));
   const bankInitialRef = useRef<BankForm>(bankingToForm(null));
-  const updBank = (k: keyof BankForm, v: string) => setBankForm((f) => ({ ...f, [k]: v }));
+  const updBank = (k: keyof BankForm, v: string) =>
+    setBankForm((f) => {
+      const next = { ...f, [k]: v };
+      // WALLET MIRROR (Kane, 2026-08-24): picking Kolan or HiGlobe as the
+      // send-from rail also sets the Disbursement channel, because those two
+      // pay INTO the same wallet they send from. Mirrored here purely so the
+      // form SHOWS what will be saved — the server applies the same rule from
+      // the same helper, so a client that skips this still lands correct.
+      // Every other rail leaves Disbursement alone.
+      if (k === 'bank_preferred') {
+        const mirrored = mirroredDisbursementFor(v);
+        if (mirrored) next.preferred_processor = mirrored;
+      }
+      return next;
+    });
 
   // Sensitive-info gate: clicking Edit opens a warning first, unless it's been
   // snoozed ("Don't show again soon"). The snooze is time-boxed, not permanent.
@@ -3573,14 +3591,34 @@ function PersonDetailDialog({
                         aria-label="Bank Preferred (send-from rail)"
                         className="mt-1 w-full"
                         options={[
-                          { value: '', label: 'Not set' },
-                          // WIRES lock: a wires-preferred person (incl. unset)
-                          // can never be offered Kolan/HiGlobe — same option
-                          // filter as the employee's own profile dropdown; the
-                          // API re-enforces against the stored value on save.
+                          // "Not set" is withheld from a locked payee: clearing
+                          // would launder the WIRES lock (wires -> unset ->
+                          // wallet), and the API refuses it, so offering it
+                          // would just produce a 400.
+                          //
+                          // Judged on effective_processor, NOT bank_preferred:
+                          // a payee can be explicitly on wires via the legacy
+                          // rates cell with bank_preferred still null, and the
+                          // API checks all three tiers. Reading tier 1 here
+                          // would offer options the save then rejects.
+                          ...(isWalletRailLocked(banking?.effective_processor ?? null)
+                            ? []
+                            : [{ value: '', label: 'Not set' }]),
+                          // WIRES lock: a person EXPLICITLY on a wire rail can
+                          // never be offered Kolan/HiGlobe. A person who has
+                          // never been assigned a rail at all IS offerable —
+                          // that is the whole point of isWalletRailLocked vs
+                          // isWiresPreferred.
+                          //
+                          // Keyed on effective_processor (all three routing
+                          // tiers), which is what /api/people/[email]/banking
+                          // re-checks on save, so the dropdown and the API can
+                          // never disagree. "Pays via" below shows the same
+                          // value, so the reason an option is missing is
+                          // visible in the panel.
                           ...BANK_PREFERRED_OPTIONS.filter(
                             (o) =>
-                              !isWiresPreferred(bankInitialRef.current.bank_preferred || null) ||
+                              !isWalletRailLocked(banking?.effective_processor ?? null) ||
                               (o.id !== 'hurupay' && o.id !== 'higlobe'),
                           ).map((o) => ({ value: o.id, label: o.label })),
                         ]}

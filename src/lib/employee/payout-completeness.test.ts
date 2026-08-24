@@ -5,6 +5,10 @@ import {
   isPayoutComplete,
   resolveEffectivePayoutProcessor,
 } from './payout-completeness';
+import {
+  isWalletRailLocked,
+  isBankPreferredTransitionAllowed,
+} from '../employee-payment-processors';
 
 /**
  * These pin the SHARED "how would Payment Dispatch route/pay this person"
@@ -98,4 +102,53 @@ test('a rebranded "Kolan" sheet cell routes to the hurupay rail', () => {
 test('"Kolan" never resolves to null (an unrouted person is never queued)', () => {
   assert.notEqual(resolveEffectivePayoutProcessor({ bank_preferred: 'Kolan' }, undefined), null);
   assert.equal(resolveEffectivePayoutProcessor({ bank_preferred: 'Kolan' }, undefined), 'hurupay');
+});
+
+// ── Wallet-rail lock, judged on the EFFECTIVE rail (2026-08-24) ─────────────
+// The lock must read all three routing tiers, not just employee_ids
+// .bank_preferred. ~1,351 people were seeded into the legacy rates cell in
+// 2026-07-22 with preferred_processor deliberately cleared for 466 of them, so
+// a large population is EXPLICITLY on wires while tier 1 is still NULL. A
+// tier-1-only lock reads them as "never assigned" and would let a wire-only
+// payee onto a wallet they cannot receive into.
+test('lock: a legacy sheet-routed wires payee is LOCKED even with bank_preferred null', () => {
+  const row = { bank_preferred: null, preferred_processor: null };
+  const effective = resolveEffectivePayoutProcessor(row, { bankPreferredRaw: 'x1153' });
+  assert.equal(effective, 'wires');
+  assert.equal(isWalletRailLocked(effective), true);
+});
+
+test('lock: a wires DISBURSEMENT pick locks too, with bank_preferred null', () => {
+  const row = { bank_preferred: null, preferred_processor: 'wires' };
+  assert.equal(isWalletRailLocked(resolveEffectivePayoutProcessor(row, undefined)), true);
+});
+
+// The converse the old tier-1-only predicate also got wrong: someone already
+// being paid on a wallet via the sheet read as locked out of their own rail.
+test('lock: a legacy sheet-routed KOLAN payee is NOT locked', () => {
+  const row = { bank_preferred: null, preferred_processor: null };
+  assert.equal(
+    isWalletRailLocked(resolveEffectivePayoutProcessor(row, { bankPreferredRaw: 'Kolan' })),
+    false,
+  );
+});
+
+// Only a person with NO rail anywhere is assignable — that is the narrow case
+// Kane's ruling opened.
+test('lock: only a person unrouted in ALL THREE tiers is assignable', () => {
+  const row = { bank_preferred: null, preferred_processor: null };
+  const effective = resolveEffectivePayoutProcessor(row, { bankPreferredRaw: null });
+  assert.equal(effective, null, 'no tier resolves anything');
+  assert.equal(isWalletRailLocked(effective), false);
+  assert.equal(isBankPreferredTransitionAllowed(effective, 'kolan'), true);
+});
+
+// Tier precedence still holds: an explicit bank_preferred beats the sheet, so a
+// wallet pick already applied is not re-locked by a stale wires cell.
+test('lock: tier 1 wins over a stale legacy wires cell', () => {
+  const row = { bank_preferred: 'hurupay', preferred_processor: null };
+  assert.equal(
+    isWalletRailLocked(resolveEffectivePayoutProcessor(row, { bankPreferredRaw: 'x1161' })),
+    false,
+  );
 });

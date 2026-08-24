@@ -1908,6 +1908,15 @@ export default function EmployeeProfile({
                           ...BANK_PREFERRED_OPTIONS
                             // WIRES lock: a WIRES employee can only stay WIRES,
                             // so never offer hurupay/higlobe to them.
+                            //
+                            // Deliberately the CONSERVATIVE predicate, not
+                            // isWalletRailLocked. This component only knows tier
+                            // 1 (`bank_preferred`); it cannot see the
+                            // disbursement pick or the legacy rates cell, so it
+                            // cannot tell "never assigned" from "on wires via
+                            // the sheet". Self-service stays locked when unset
+                            // and the employee asks Accounting, who CAN see all
+                            // three tiers in People → Banking.
                             .filter((o) =>
                               isWiresPreferred(bankPreferred) ? isWiresPreferred(o.id) : true,
                             )

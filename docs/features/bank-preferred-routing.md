@@ -29,10 +29,24 @@ can never be moved off of onto Kolan/HiGlobe.
 > | **Disbursement** | `employee_ids.preferred_processor` | How the employee elects to **receive** (radio tiles, own detail fields). |
 > | **Receiving account** | `employee_ids.account_number` / `swift_code` / wallet-email cols | The employee's own bank/wallet where the money lands. |
 >
-> A Bank Preferred change never touches the receiving account; the Disbursement
-> picker and Bank Preferred dropdown keep **independent** React state. The first
-> build wired both to `preferred_processor`, so changing one flipped the other —
-> that was a bug, now fixed.
+> A Bank Preferred change **never touches the receiving account**. That part is
+> absolute: `account_number`, `swift_code` and the wallet-email columns are the
+> employee's own data and no rail pick may write them.
+>
+> The **Disbursement** picker is a different story as of **2026-08-24** (Kane).
+> The first build wired both fields to `preferred_processor`, so changing either
+> flipped the other — that was a bug and it stays fixed. But the two **wallet**
+> rails are now deliberately coupled in ONE direction:
+>
+> **Setting Bank Preferred to Kolan or HiGlobe also sets Disbursement to match.**
+>
+> Kolan and HiGlobe pay *into* the same wallet they send *from*, so "send from
+> Kolan, receive on Wise" describes nothing real — it just asks the employee for
+> detail fields nobody will ever use. Wise / Jeeves / Wires impose nothing and
+> remain fully independent, which is what the original decoupling protected. The
+> rule lives in `mirroredDisbursementFor()` and is applied server-side in
+> `app/api/people/[email]/banking/route.ts`, so it holds however the save was
+> made; the People-tab form mirrors it only so the UI shows what will be saved.
 
 ---
 
@@ -121,9 +135,24 @@ and [`[id]/route.ts`](../../app/api/bank-preferred-requests/[id]/route.ts).
 
 ## 4. The WIRES lock
 
-A **WIRES employee** — one whose `employee_ids.bank_preferred` is anything but
-exactly `hurupay`/`kolan`/`higlobe`, **including `null` and legacy free-text** —
-can **never** be switched to Kolan or HiGlobe. WIRES is the residual bucket.
+A **WIRES employee** — one whose `employee_ids.bank_preferred` is set to anything
+but exactly `hurupay`/`kolan`/`higlobe`, **including legacy free-text** — can
+**never** be switched to Kolan or HiGlobe. WIRES is the residual bucket.
+
+**`null` is NOT a lockout (changed 2026-08-24, Kane).** Two different questions
+share the word "wires" and used to share one predicate:
+
+| Question | Predicate | Unset (`null`/`''`) means |
+|---|---|---|
+| Which rail does this person get paid on? | `isWiresPreferred` | **wires** — no rail assigned ⇒ paid by bank wire |
+| Is this person barred from the wallet rails? | `isWalletRailLocked` | **not locked** — never assigned ≠ put on wires |
+
+Collapsing those two meant a payee whose `bank_preferred` had simply never been
+populated could never be placed on Kolan/HiGlobe at all — **including every new
+hire**. Routing is unchanged: `isWiresPreferred` still answers the routing
+question exactly as before, and only the transition guard's `current` side moved
+to the narrower predicate. A person **explicitly** on `wires`/`x1153`/legacy text
+is still locked, and that is pinned by test.
 
 **`kolan` is the rebranded spelling of `hurupay` (2026-08-24) and counts as that
 same wallet rail — nothing else was widened.** The stored value stays
@@ -143,16 +172,40 @@ isBankPreferredTransitionAllowed(current, next)
   // false iff current is wires-preferred and next is NOT wires-preferred
 ```
 
-**Allowed:** `hurupay ↔ higlobe`, and `anything → wires`.
-**Blocked:** `wires/null/legacy → hurupay | kolan | higlobe`.
+**Allowed:** `hurupay ↔ higlobe`, `anything → wires`, and `unassigned → any rail`
+(unassigned = **no** tier resolves a rail at all).
+**Blocked:** `wires/legacy → hurupay | kolan | higlobe`, and `wires/legacy → unset`
+(clearing would launder the lock, since unassigned is assignable).
 
-Four enforcement sites (defense in depth):
+**"Current" means the EFFECTIVE rail, not `employee_ids.bank_preferred` alone.**
+`resolveWalletRailLock()` resolves all three tiers and **fails closed** — a read
+error is a 503, never an unlocked payee. A tier-1-only check would read the
+~1,351 people seeded into the legacy cell in 2026-07-22 (466 with
+`preferred_processor` deliberately cleared) as "never assigned", because their
+`bank_preferred` is still NULL — and let a wire-only payee onto a wallet in a
+single save.
+
+Five enforcement sites (defense in depth). They deliberately do **not** all ask
+the same question, and that asymmetry is the design:
+
+- The two **server gates** resolve the **effective** rail across all three tiers
+  (`resolveWalletRailLock`) and fail closed. They are the real gate.
+- The three **client / pre-filter** sites see only tier 1, so they use the
+  **conservative** `isWiresPreferred` and treat unset as locked. Being stricter
+  than the gate is safe; being looser is not. A UI that offers an option the API
+  refuses is a bad prompt, but a UI that offers one the API *accepts* when it
+  should not is a mispaid salary.
+
+**Never wire a client site to `isBankPreferredTransitionAllowed` on a tier-1
+snapshot.** Doing so is what silently un-disabled the Approve button for the
+legacy sheet-routed population when `null` stopped meaning "locked".
 
 | Site | Behavior |
 |---|---|
 | `update-employee-ids` intercept | **400** before a request is even filed |
 | Approval **PATCH** re-check | re-checks against the **live** stored value at approve time → 400, request stays pending |
-| Employee Profile dropdown | **hides** hurupay/higlobe options for a wires employee |
+| People → Banking save (`/api/people/[email]/banking`) | **400** against the stored value, then applies the wallet mirror |
+| Employee Profile dropdown | **hides** hurupay/higlobe options for an explicitly-wires employee |
 | Accounting approvals row | **Approve disabled** + an "owner-only / locked" row note |
 
 ## 5. Mark Paid bank-details override

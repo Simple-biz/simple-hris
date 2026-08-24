@@ -168,9 +168,13 @@ async function interceptBankPreferred(opts: {
   // no-op request to avoid filing an empty approval. (Set requires a value.)
   if (!target) return { requested: false };
 
-  // WIRES lock: a WIRES employee (anything not hurupay/higlobe, incl. null) can
-  // never be switched to hurupay/higlobe. Reject BEFORE filing a request so an
-  // impossible change never enters the approval queue.
+  // WIRES lock PRE-FILTER, not the gate. Rejects the obvious cases before a
+  // request enters the approval queue, but it only sees tier 1 (`currentValue`
+  // is `employee_ids.bank_preferred`), so a payee who is explicitly on wires via
+  // the legacy rates cell can still file. That is safe: the approval PATCH
+  // re-checks the EFFECTIVE rail across all three tiers via
+  // resolveWalletRailLock() and fails closed, so such a request can be filed but
+  // never approved. The money gate is there, not here.
   if (!isBankPreferredTransitionAllowed(current, target)) {
     return { requested: false, forbidden: true };
   }

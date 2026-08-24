@@ -10,11 +10,13 @@ import { getPayrollDispatchLock } from '@/lib/supabase/payroll-dispatch-lock';
 import { invalidateRateProfilesCache } from '@/lib/supabase/employee-rate-profiles';
 import { maskFieldValue } from '@/lib/bank-update/mask-field';
 import { getEmployeeIdRowByEmail } from '@/lib/supabase/employee-ids';
+import { resolveWalletRailLock } from '@/lib/employee/wallet-rail-lock';
 import { getEmployeeMasterRecord } from '@/lib/supabase/employees';
 import { getPeopleBanking } from '@/lib/people/people-banking';
 import {
   BANK_PREFERRED_OPTIONS,
   isBankPreferredTransitionAllowed,
+  mirroredDisbursementFor,
 } from '@/lib/employee-payment-processors';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 
@@ -135,21 +137,45 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ email
   if (rowErr) return NextResponse.json({ ok: false, error: rowErr }, { status: 500 });
 
   // WIRES lock (same rule as the employee flow + approval PATCH): a person
-  // whose LIVE bank_preferred is wires-preferred (anything but exactly
-  // hurupay/higlobe, including null/legacy) can never be moved onto
-  // Kolan/HiGlobe. Checked against the stored value, not the form's.
+  // EXPLICITLY on a wire rail can never be moved onto Kolan/HiGlobe. Checked
+  // against the stored value, not the form's. Someone who has never been
+  // assigned a rail at all is assignable — see isWalletRailLocked.
   if (Object.prototype.hasOwnProperty.call(update, 'bank_preferred')) {
-    const current = row?.bank_preferred ?? null;
+    // Judged on the EFFECTIVE rail across all three tiers, not just
+    // `bank_preferred`: a person can be explicitly on wires via the legacy
+    // rates cell while tier 1 is still NULL, and reading tier 1 alone would
+    // treat them as "never assigned" and let them onto a wallet. Fails closed —
+    // a read error surfaces as a 503 rather than an unlocked payee.
+    const railLock = await resolveWalletRailLock(row?.work_email ?? email);
+    if (railLock.error) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Could not verify the current payout rail for this employee, so the Bank Preferred change was not saved. Please retry. (${railLock.error})`,
+        },
+        { status: 503 },
+      );
+    }
+    const current = railLock.locked ? (railLock.effectiveRail ?? 'wires') : (row?.bank_preferred ?? null);
     if (!isBankPreferredTransitionAllowed(current, update.bank_preferred)) {
       return NextResponse.json(
         {
           ok: false,
           error:
-            'Blocked by the WIRES lock: a wires-preferred employee cannot be switched to Kolan/HiGlobe.',
+            'Blocked by the WIRES lock: an employee set to wires cannot be switched to Kolan/HiGlobe.',
         },
         { status: 400 },
       );
     }
+
+    // WALLET MIRROR (Kane, 2026-08-24). Kolan and HiGlobe pay INTO the wallet
+    // they send from, so the Disbursement channel follows the rail — there is
+    // no coherent "send from Kolan, receive on Wise". Every other rail imposes
+    // nothing and the two fields stay independent, which is what the original
+    // 2026-07-22 decoupling protected. Applied server-side so it holds however
+    // the save was made, and it never touches the RECEIVING ACCOUNT.
+    const mirrored = mirroredDisbursementFor(update.bank_preferred as string | null);
+    if (mirrored) update.preferred_processor = mirrored;
   }
 
   const changedFields = Object.keys(update);

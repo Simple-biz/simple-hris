@@ -12,6 +12,10 @@ import { pulseBankChanges } from '@/lib/supabase/app-settings';
 import {
   bankPreferredLabelForProcessor,
   isBankPreferredTransitionAllowed,
+  mirroredDisbursementFor,
+} from '@/lib/employee-payment-processors';
+import { resolveWalletRailLock } from '@/lib/employee/wallet-rail-lock';
+import {
 } from '@/lib/employee-payment-processors';
 import type { ProcessorId } from '@/lib/employee-payment-processors';
 import { randomUUID } from 'crypto';
@@ -86,26 +90,29 @@ export async function PATCH(
         );
       }
 
-      // WIRES lock re-check: verify against the CURRENT stored value, not the
-      // request's from_value (it may have changed since the request was filed).
-      // A WIRES employee can never be approved onto hurupay/higlobe.
-      const { data: liveRows, error: liveReadErr } = await supabase
-        .from('employee_ids')
-        .select('bank_preferred')
-        .ilike('work_email', workEmail)
-        .limit(1);
-      // A failed read falls through to liveCurrent=null → treated as WIRES →
-      // approve blocked. That's the safe (fail-closed) direction, but log it so
-      // a transient DB blip isn't misdiagnosed as "this employee is WIRES".
-      if (liveReadErr) {
+      // WIRES lock re-check against the LIVE state, not the request's
+      // from_value (it may have changed since the request was filed), and on
+      // the EFFECTIVE rail across all three routing tiers — tier 1 alone would
+      // read a legacy sheet-routed wires payee as "never assigned".
+      //
+      // MUST fail closed. This used to rely on a failed read collapsing to
+      // null, which WAS the safe direction while null meant "locked"; once null
+      // became "assignable" (2026-08-24) that same code silently inverted to
+      // fail-OPEN, so the error is now explicit rather than implied.
+      const railLock = await resolveWalletRailLock(workEmail);
+      if (railLock.error) {
         console.error(
-          `bank-preferred approve: live bank_preferred read failed for ${workEmail}: ${liveReadErr.message}`,
+          `bank-preferred approve: wallet-rail lock check failed for ${workEmail}: ${railLock.error}`,
+        );
+        return NextResponse.json(
+          {
+            error:
+              'Could not verify the current payout rail for this employee, so the approval was not applied. Please retry.',
+          },
+          { status: 503 },
         );
       }
-      const liveCurrent =
-        Array.isArray(liveRows) && liveRows[0] && typeof liveRows[0].bank_preferred === 'string'
-          ? (liveRows[0].bank_preferred as string)
-          : null;
+      const liveCurrent = railLock.locked ? (railLock.effectiveRail ?? 'wires') : null;
       if (!isBankPreferredTransitionAllowed(liveCurrent, row.to_value)) {
         return NextResponse.json(
           {
@@ -118,7 +125,17 @@ export async function PATCH(
 
       const { data: updatedRows, error: updErr } = await supabase
         .from('employee_ids')
-        .update({ bank_preferred: row.to_value, bank_last_self_updated_at: nowIso })
+        .update({
+          bank_preferred: row.to_value,
+          bank_last_self_updated_at: nowIso,
+          // WALLET MIRROR (Kane, 2026-08-24) — the same rule the People → Banking
+          // save applies, from the same helper. This is the ONE path an
+          // employee's own Kolan/HiGlobe pick can land through, so omitting it
+          // here would leave the two write paths disagreeing.
+          ...(mirroredDisbursementFor(row.to_value)
+            ? { preferred_processor: mirroredDisbursementFor(row.to_value) }
+            : {}),
+        })
         .ilike('work_email', workEmail)
         .select('employee_id');
 

@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   bankPreferredLabelForProcessor,
-  isBankPreferredTransitionAllowed,
+  isWiresPreferred,
   type ProcessorId,
 } from '@/lib/employee-payment-processors';
 import type { BankPreferredRequestRow } from '@/lib/supabase/bank-preferred-requests';
@@ -135,7 +135,20 @@ export function BankPreferredApprovals() {
         <ul className="space-y-2">
           {rows.map((row) => {
             const acting = actingId === row.id;
-            const wiresLocked = !isBankPreferredTransitionAllowed(row.from_value, row.to_value);
+            // CONSERVATIVE on purpose, and deliberately NOT
+            // isBankPreferredTransitionAllowed. A queue row carries only
+            // `from_value` — the tier-1 snapshot taken when the request was
+            // FILED — so it cannot tell "never assigned" from "on wires via the
+            // rates sheet", and it may be stale besides. Warning on a null
+            // from_value is the safe error: the approve API re-resolves the
+            // EFFECTIVE rail (resolveWalletRailLock) and is the real gate.
+            //
+            // Using the transition predicate directly here was a regression:
+            // once null became "assignable" this row silently un-disabled
+            // Approve and dropped its red note for exactly the legacy
+            // sheet-routed population the lock exists to protect.
+            const wiresLocked =
+              isWiresPreferred(row.from_value) && !isWiresPreferred(row.to_value);
             return (
               <li
                 key={row.id}

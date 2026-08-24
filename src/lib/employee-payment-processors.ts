@@ -97,17 +97,75 @@ export function isWiresPreferred(value: string | null | undefined): boolean {
 }
 
 /**
- * The only forbidden Bank Preferred transition: a WIRES employee cannot be
- * switched to `hurupay` (Kolan) or `higlobe` (impossible to pay a wire recipient
- * via a wallet). Everything else is allowed — hurupay↔higlobe, and moving TO wires.
+ * The two WALLET rails. Money on these lands in a wallet the recipient tops up
+ * from, so the rail Accounting sends FROM and the channel the employee receives
+ * ON are physically the same account. Every other rail (wise / jeeves / wires)
+ * sends from one place into the person's own bank, so the two stay independent.
+ */
+export const WALLET_RAILS = ['hurupay', 'higlobe'] as const satisfies readonly ProcessorId[];
+
+/**
+ * Whether a stored Bank Preferred value is an EXPLICIT non-wallet rail — the
+ * thing the WIRES lock actually protects.
+ *
+ * Deliberately NOT the same predicate as `isWiresPreferred`. That one answers
+ * "which rail does this person get paid on?", where an unset value correctly
+ * falls into the WIRES residual — a person with no rail is paid by wire. This
+ * one answers "is this person LOCKED OUT of the wallet rails?", and never having
+ * been assigned a rail is not a lockout. Before 2026-08-24 the two questions
+ * shared one predicate, so a payee whose `bank_preferred` had simply never been
+ * populated could never be put on Kolan/HiGlobe at all — including every new
+ * hire. Kane's ruling: unset ⇒ assignable; explicitly on wires ⇒ still locked.
+ *
+ * `wires` / `x1153` / legacy free-text ⇒ locked. `null` / `''` / whitespace ⇒ not locked.
+ */
+export function isWalletRailLocked(current: string | null | undefined): boolean {
+  const v = (current ?? '').trim();
+  if (!v) return false; // never assigned a rail — not a lockout
+  return isWiresPreferred(v);
+}
+
+/**
+ * The only forbidden Bank Preferred transition: an employee EXPLICITLY on a wire
+ * rail cannot be switched to `hurupay` (Kolan) or `higlobe` — you cannot pay a
+ * wire recipient into a wallet. Everything else is allowed: hurupay↔higlobe,
+ * moving TO wires, and assigning a wallet to someone who has no rail yet.
  * `current` is the employee's stored Bank Preferred; `next` is the requested one.
  */
 export function isBankPreferredTransitionAllowed(
   current: string | null | undefined,
   next: string | null | undefined,
 ): boolean {
-  if (isWiresPreferred(current) && !isWiresPreferred(next)) return false;
+  if (isWalletRailLocked(current) && !isWiresPreferred(next)) return false;
+  // LAUNDERING GUARD. Unset is assignable (see isWalletRailLocked), so without
+  // this a locked payee could be walked onto a wallet in two saves:
+  //   wires -> "Not set" -> Kolan
+  // Clearing a WALLET rail stays allowed — it launders nothing, since unset was
+  // already assignable to a wallet.
+  if (isWalletRailLocked(current) && !(next ?? '').trim()) return false;
   return true;
+}
+
+/**
+ * The Disbursement channel that must follow a Bank Preferred pick, or `null`
+ * when the pick imposes nothing.
+ *
+ * Only the WALLET rails mirror. Setting Bank Preferred to Kolan means Accounting
+ * pays out of Kolan into the employee's Kolan wallet — there is no coherent way
+ * for the person to "receive on" anything else, so leaving Disbursement pointed
+ * at Wise just asks the employee for detail fields nobody will use. Wise /
+ * Jeeves / Wires impose nothing and keep the two fields independent, which is
+ * what the original 2026-07-22 decoupling was protecting.
+ *
+ * This never touches the RECEIVING ACCOUNT (account_number / swift_code /
+ * wallet-email columns) — that remains the employee's own data.
+ */
+export function mirroredDisbursementFor(
+  bankPreferred: string | null | undefined,
+): ProcessorId | null {
+  const rail = processorIdFromBankPreferredText(bankPreferred);
+  if (!rail) return null;
+  return (WALLET_RAILS as readonly ProcessorId[]).includes(rail) ? rail : null;
 }
 
 /**
