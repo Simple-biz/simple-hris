@@ -694,7 +694,12 @@ export default function HrNewHireChecklist({
           fired: boolean;
           count: number;
           error: string | null;
-          skipped?: { name: string | null; personal_email: string | null }[];
+          skipped?: {
+            name: string | null;
+            personal_email: string | null;
+            department: string | null;
+            reason: 'not_lead_gen' | 'invalid_email';
+          }[];
         };
         error?: string;
       };
@@ -708,17 +713,29 @@ export default function HrNewHireChecklist({
       broadcastChanged();
       void loadPeriods();
       toast.success(`Locked in ${fresh.length} ${fresh.length === 1 ? 'hire' : 'hires'} for ${formatWeekLabel(period)}`);
-      // Hires whose email cell holds no usable address were left out of the
-      // orientation send — tell HR exactly who, or they silently get nothing.
+      // Hires left out of the orientation send — tell HR exactly who and why,
+      // or they silently get nothing. Two different situations, two toasts:
+      // an invalid address is a cell to FIX, a non-Lead-Gen hire is expected.
       const skipped = json.webhook?.skipped ?? [];
-      if (skipped.length > 0) {
+      const badEmail = skipped.filter((s) => s.reason !== 'not_lead_gen');
+      const offDept = skipped.filter((s) => s.reason === 'not_lead_gen');
+      if (badEmail.length > 0) {
         toast.warning(
-          `${skipped.length} ${skipped.length === 1 ? 'hire' : 'hires'} got NO orientation email (invalid address): ` +
-            skipped.map((s) => `${s.name ?? 'Unnamed'} (${s.personal_email || 'no email'})`).join(', ') +
+          `${badEmail.length} ${badEmail.length === 1 ? 'hire' : 'hires'} got NO orientation email (invalid address): ` +
+            badEmail.map((s) => `${s.name ?? 'Unnamed'} (${s.personal_email || 'no email'})`).join(', ') +
             '. Fix the email cell, then resend.',
           { duration: Infinity, closeButton: true },
         );
-      } else if (json.webhook && json.webhook.fired && json.webhook.error) {
+      }
+      if (offDept.length > 0) {
+        toast.info(
+          `${offDept.length} non-Lead-Gen ${offDept.length === 1 ? 'hire' : 'hires'} did not get the orientation email: ` +
+            offDept.map((s) => `${s.name ?? 'Unnamed'} (${s.department || 'no department'})`).join(', ') +
+            '. Orientation is Lead Gen only — if a department is wrong, fix it and reopen.',
+          { duration: 12000, closeButton: true },
+        );
+      }
+      if (badEmail.length === 0 && offDept.length === 0 && json.webhook && json.webhook.fired && json.webhook.error) {
         toast.warning(`Week locked, but the orientation email automation failed: ${json.webhook.error}`);
       }
       return true;

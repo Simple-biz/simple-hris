@@ -2,8 +2,8 @@
 
 The HR **New Hire Checklist** tab is a per-week intake grid for recruits: HR captures each hire's
 name, personal email, location, phone, interview date, source, referrer, recruiter, department, and
-country, then **Lock in** the week to fire the orientation-welcome webhook and feed the
-department-scoped **Bulk Invite** in the onboarding Generate-link flow. Each row lives in its own
+country, then **Lock in** the week to fire the orientation-welcome webhook (**Lead Gen hires only** —
+see below) and feed the department-scoped **Bulk Invite** in the onboarding Generate-link flow. Each row lives in its own
 Sun–Sat week (anchored on that week's Sunday, `YYYY-MM-DD`).
 
 As of **2026-07-10** the grid is **read-only and modal-only**: nothing is typed directly into a cell
@@ -145,14 +145,45 @@ Unknown `values` keys are dropped by `pickFields` (only `HR_NEW_HIRE_CHECKLIST_F
 
 ## Lock-in webhook
 
-`fireNewHireChecklistLockWebhook` POSTs **one** event (`new_hire_checklist.locked`) carrying every
-hire as a **self-contained** item in `rows[]` — each row has its own fields plus the shared
-week/email fields (`start_date`, `orientation_date`, `orientation_weekday`, `zoom_link`) and a derived
-`first_name`, so an n8n **Split Out** on `body.rows` yields ready-to-send per-hire items. Hires start
-and orient the **Monday** of the Sun-anchored week (`ORIENT_OFFSET_DAYS = 1`). The URL resolves
-through the Admin → Webhooks slug registry (`new_hire_checklist_lock`) with an env-var override and a
-hard-coded default; the POST is best-effort with a 25s timeout and never throws. No `cell_edits` /
-timestamp noise is sent.
+`fireNewHireChecklistLockWebhook` POSTs **one** event (`new_hire_checklist.locked`) carrying each
+**sendable** hire as a **self-contained** item in `rows[]` — each row has its own fields plus the
+shared week/email fields (`start_date`, `orientation_date`, `orientation_weekday`, `zoom_link`), a
+derived `first_name`, and `lead_gen: true`, so an n8n **Split Out** on `body.rows` yields
+ready-to-send per-hire items. Hires start and orient the **Monday** of the Sun-anchored week
+(`ORIENT_OFFSET_DAYS = 1`). The URL resolves through the Admin → Webhooks slug registry
+(`new_hire_checklist_lock`) with an env-var override and a hard-coded default; the POST is
+best-effort with a 25s timeout and never throws. No `cell_edits` / timestamp noise is sent.
+
+### Lead Gen only — who is left out, and why
+
+This email **is** the Lead Gen orientation invite: it carries the orientation Zoom link, meeting ID
+and passcode, and orientation is a Lead Gen ritual. So `rows[]` is **not** every hire in the week:
+
+| Left out | `skipped[].reason` | What HR sees | What HR does |
+|---|---|---|---|
+| Department is not Lead Gen | `not_lead_gen` | info toast naming the hire + their department | nothing, unless the department is wrong |
+| `personal_email` holds no usable address | `invalid_email` | sticky warning toast | fix the cell, resend that hire |
+
+- The gate is **`isLeadGenDepartment`** (`src/lib/hr/offboard-webhooks.ts`) — literally the same
+  predicate that decides whether marking a hire "orientation attended" fires the CallTools-creation
+  webhook. Both orientation surfaces therefore agree on who is Lead Gen, and there is one place to
+  change it.
+- It resolves through `normalizeDeptToKey`, so casing and spacing never matter and both **"Lead Gen"**
+  and **"Lead Generation"** send. Everything else — including a **blank** or unrecognised department —
+  is **not** Lead Gen and is withheld. The gate **fails closed** on purpose: a missing department
+  must never mail a Zoom link to someone who is not invited.
+- The department check runs **before** the email check, so a withheld non-Lead-Gen hire is reported
+  as `not_lead_gen` even when their email cell is also junk — HR is not sent chasing a cell that
+  changes nothing.
+- `hire_index` still counts the hire's place in the **full** week, withheld rows included, so a
+  trimmed resend still lines up with the original run's n8n item numbering.
+- The gate lives in the **sender**, not only in n8n. The flow's Filter node (
+  `references/n8n/orientation-email-leadgen-only.json`) is a deliberate **second** layer: editing or
+  losing it in the n8n cloud UI cannot re-open the hole.
+
+**Why it exists:** on 2026-08-21 the locked 2026-08-23 week (79 rows) shipped every row to a flow
+with no filter, so the one **HSL** hire on it — Giducos, Vera — received the Lead Gen orientation
+link. Teal caught it and told her to disregard it.
 
 ---
 

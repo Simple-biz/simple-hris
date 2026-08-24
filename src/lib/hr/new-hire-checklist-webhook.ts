@@ -1,4 +1,5 @@
 import { resolveWebhookUrl } from "@/lib/webhooks/resolve-webhook";
+import { isLeadGenDepartment } from "@/lib/hr/offboard-webhooks";
 import type {
   HrChecklistPeriod,
   HrNewHireChecklistRow,
@@ -20,7 +21,22 @@ import type {
  * etc. with no array index and no `body` prefix. No `cell_edits` / timestamp
  * noise is sent.
  *
- * n8n flow: Webhook → Split Out (Fields To Split Out = `body.rows`) → Gmail.
+ * LEAD GEN ONLY (2026-08-24). This email IS the Lead Gen orientation invite —
+ * it carries the orientation Zoom link, and orientation is a Lead Gen ritual.
+ * Hires in every other department are WITHHELD from `rows[]` right here, at the
+ * sender, so the scope holds even if the n8n filter is edited away in the cloud
+ * UI. The gate is `isLeadGenDepartment` — the SAME predicate that gates the
+ * CallTools-creation webhook on orientation attendance — so both orientation
+ * surfaces agree on exactly who counts as Lead Gen. A blank or unrecognised
+ * department resolves to no key and is therefore withheld: fail closed. Every
+ * withheld hire comes back through `skipped` (reason "not_lead_gen") so HR is
+ * told who got nothing — a withheld hire is never a silent drop.
+ *
+ * (2026-08-21: an HSL hire on the 2026-08-23 week received the Zoom link
+ * because this sender shipped all 79 rows and the flow had no filter.)
+ *
+ * n8n flow: Webhook → Split Out (Fields To Split Out = `body.rows`) → Filter
+ * (Lead Gen only, second layer) → Gmail.
  *
  * URL resolution goes through the Admin -> Webhooks slug registry
  * (resolveWebhookUrl) so the endpoint can be rotated from the UI without a
@@ -171,11 +187,23 @@ function resolveUrl(): Promise<string> {
   }).then((u) => u ?? DEFAULT_URL);
 }
 
-/** A hire left out of the payload because its email cell holds no usable address. */
+/**
+ * Why a hire was left out of the send:
+ *   "not_lead_gen"   — their department is not Lead Gen (orientation is Lead Gen
+ *                      only), or the cell is blank / unrecognised. Expected, not
+ *                      an error: nothing to fix unless the department is wrong.
+ *   "invalid_email"  — the `personal_email` cell holds no usable address (see
+ *                      sanitizePersonalEmail). HR must fix the cell and resend.
+ */
+export type LockWebhookSkipReason = "not_lead_gen" | "invalid_email";
+
+/** A hire left out of the payload, with the reason HR needs to act on it. */
 export type LockWebhookSkippedRow = {
   id: string;
   name: string | null;
   personal_email: string | null;
+  department: string | null;
+  reason: LockWebhookSkipReason;
 };
 
 export type NewHireChecklistLockWebhookResult = {
@@ -253,14 +281,36 @@ export function buildLockWebhookPayload(args: {
   const skipped: LockWebhookSkippedRow[] = [];
   const rows: Record<string, unknown>[] = [];
   args.rows.forEach((row, i) => {
+    // Department gate FIRST: a non-Lead-Gen hire is withheld whatever their
+    // email cell looks like, and reporting "not_lead_gen" (rather than an email
+    // complaint) is what tells HR there is nothing to fix.
+    if (!isLeadGenDepartment(row.department)) {
+      skipped.push({
+        id: row.id,
+        name: row.name,
+        personal_email: row.personal_email,
+        department: row.department,
+        reason: "not_lead_gen",
+      });
+      return;
+    }
     const { email } = sanitizePersonalEmail(row.personal_email);
     if (!email) {
-      skipped.push({ id: row.id, name: row.name, personal_email: row.personal_email });
+      skipped.push({
+        id: row.id,
+        name: row.name,
+        personal_email: row.personal_email,
+        department: row.department,
+        reason: "invalid_email",
+      });
       return;
     }
     rows.push({
       ...toCleanHire(row, email),
       ...emailFields,
+      // Explicit, already-decided flag for n8n: the flow's Filter node reads
+      // this rather than re-deriving Lead Gen from the department string.
+      lead_gen: true,
       hire_index: i + 1,
     });
   });
@@ -299,10 +349,18 @@ export async function fireNewHireChecklistLockWebhook(args: {
 
   const { payload, skipped } = buildLockWebhookPayload(args);
   const count = (payload.rows as unknown[]).length;
-  if (skipped.length > 0) {
+  const badEmail = skipped.filter((s) => s.reason === "invalid_email");
+  const offDept = skipped.filter((s) => s.reason === "not_lead_gen");
+  if (badEmail.length > 0) {
     console.warn(
-      `[new-hire-checklist] ${skipped.length} hire(s) skipped for unusable email:`,
-      skipped.map((s) => `${s.name ?? s.id} <${s.personal_email ?? ""}>`).join("; "),
+      `[new-hire-checklist] ${badEmail.length} hire(s) skipped for unusable email:`,
+      badEmail.map((s) => `${s.name ?? s.id} <${s.personal_email ?? ""}>`).join("; "),
+    );
+  }
+  if (offDept.length > 0) {
+    console.warn(
+      `[new-hire-checklist] ${offDept.length} hire(s) withheld from the orientation email (not Lead Gen):`,
+      offDept.map((s) => `${s.name ?? s.id} [${s.department ?? "no department"}]`).join("; "),
     );
   }
   if (count === 0) {

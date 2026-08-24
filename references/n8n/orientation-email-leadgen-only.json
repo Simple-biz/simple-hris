@@ -1,0 +1,140 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "609dd382-6214-41c7-8a16-ed94a0b84110",
+        "options": {}
+      },
+      "id": "ec695437-f55b-48cf-95c5-4a395257dbbd",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        144,
+        1088
+      ],
+      "webhookId": "609dd382-6214-41c7-8a16-ed94a0b84110"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "body.rows",
+        "options": {}
+      },
+      "id": "5d252d9c-809c-4904-8a0f-fb4a8fba1b00",
+      "name": "Split Out Rows",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        368,
+        1088
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b6d1f0a3-9c47-4e18-a0f2-1d5c8e2b7a41",
+              "leftValue": "={{ $json.lead_gen === true }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "a3f1c07e-2d55-4c11-9b6a-7e0c1f4d8b92",
+              "leftValue": "={{ ($json.department ?? '').toString().toLowerCase().replace(/[^a-z]/g, '') }}",
+              "rightValue": "leadgen",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "7c1b9a24-0e6f-4a3d-8f52-6b9d3ac81f47",
+      "name": "Lead Gen Only",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        592,
+        1088
+      ],
+      "notes": "SECOND layer. The HRIS sender already withholds non-Lead-Gen hires (isLeadGenDepartment in src/lib/hr/new-hire-checklist-webhook.ts) and stamps lead_gen:true on every row it sends. This node re-checks: lead_gen === true, OR a department that normalises to \"leadgen\" (so an older or hand-trimmed payload without the flag is still gated). A blank or missing department with no flag matches NEITHER and gets nothing — fail closed. Do not delete this node; do not relax it to let unknown departments through.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.personal_email }}",
+        "subject": "Welcome to Simple — Your First Day Details",
+        "message": "=<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\" />\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n<meta name=\"color-scheme\" content=\"light\" />\n<meta name=\"supported-color-schemes\" content=\"light\" />\n<title>Welcome to Simple</title>\n<!--\n  Onboarding / welcome email. Same email-safe scaffold as paystub.html\n  (table layout, inline styles, MSO fixes, orange Simple card).\n\n  Populated by n8n from the \"Lock in\" webhook, after a Split Out on body.rows\n  so each field sits at the item root. Placeholder fields used below:\n    first_name           greeting name    e.g. Maria\n    start_date           MM/DD/YYYY       e.g. 06/29/2026\n    orientation_weekday  weekday name     e.g. Monday\n    orientation_date     MM/DD/YYYY       e.g. 06/29/2026\n    zoom_link            full Zoom join URL\n  The hire's personal_email is the Gmail node's \"To\" field, not used in the body.\n\n  Only Lead Gen hires reach this node -- the \"Lead Gen Only\" filter upstream\n  drops every other department, so nobody outside Lead Gen gets the orientation\n  link. A blank or missing department counts as NOT Lead Gen and gets nothing.\n\n  WARNING: never put a literal double-brace placeholder in this HTML comment.\n  n8n evaluates EVERY double-brace block in the message as an expression, and an\n  empty one (or bad syntax) makes the whole send fail with \"invalid syntax\".\n-->\n<style>\nbody,table,td,a{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;}\ntable,td{mso-table-lspace:0pt;mso-table-rspace:0pt;}\nimg{-ms-interpolation-mode:bicubic;border:0;height:auto;line-height:100%;outline:none;text-decoration:none;}\ntable{border-collapse:collapse !important;}\nhtml{height:100% !important;}\nbody{height:100% !important;margin:0 !important;padding:0 !important;width:100% !important;}\nbody,table,td,div,p,a{font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}\n.mono{font-family:\"SFMono-Regular\",Consolas,\"Liberation Mono\",Menlo,monospace;font-variant-numeric:tabular-nums;letter-spacing:0.04em;}\n.sec-head{background-color:#334155;padding:5px 12px;font-size:11px;line-height:13px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#fff;mso-line-height-rule:exactly;}\n.body-p{font-size:14px;line-height:22px;color:#334155;margin:0;}\n.sched-when{width:38%;padding:8px 8px 8px 0;font-size:13px;line-height:18px;font-weight:700;color:#102034;border-bottom:1px solid #edf2f7;vertical-align:top;}\n.sched-what{width:62%;padding:8px 0;font-size:13px;line-height:18px;color:#556377;border-bottom:1px solid #edf2f7;vertical-align:top;}\n@media screen and (max-width:600px){\n.email-shell{padding:18px 10px !important;}\n.statement-card{width:100% !important;max-width:100% !important;}\n.px{padding-left:20px !important;padding-right:20px !important;}\n.top-pad{padding-top:14px !important;}\n.brand-logo{width:92px !important;}\n.stack-cell{display:block !important;width:100% !important;text-align:left !important;padding-right:0 !important;}\n.stack-cell+.stack-cell{padding-top:6px !important;}\n.sched-when,.sched-what{display:block !important;width:100% !important;}\n.sched-when{padding-bottom:0 !important;border-bottom:0 !important;}\n.sched-what{padding-top:2px !important;}\n}\n</style>\n</head>\n\n<body style=\"margin:0;padding:0;height:100%;background-color:#f4f7fb;\">\n<div style=\"display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;line-height:1px;\">We're thrilled to have you joining us here at Simple &#8212; your start date is {{ $json.body?.start_date || $json.start_date }}.</div>\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" height=\"100%\" class=\"email-shell\" style=\"height:100vh;background-color:#f4f7fb;padding:20px 16px;\">\n<tr>\n<td align=\"center\" valign=\"middle\" style=\"vertical-align:middle;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"560\" class=\"statement-card\" style=\"width:560px;max-width:560px;background-color:#f97316;border-radius:17px;box-shadow:0 20px 48px rgba(16, 32, 52, 0.16), 0 2px 6px rgba(16, 32, 52, 0.07);overflow:hidden;\">\n<tr>\n<td style=\"padding:3px;font-size:0;line-height:0;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width:100%;background-color:#fbfcfe;border-radius:14px;overflow:hidden;\">\n\n<!-- HEADER -->\n<tr>\n<td class=\"px top-pad\" align=\"center\" style=\"padding:18px 32px 16px 32px;background-color:#fff;border-bottom:1px solid #eef2f6;text-align:center;\">\n<img class=\"brand-logo\" src=\"https://host.simple.biz/email/simplelogo.png\" alt=\"Simple\" width=\"112\" style=\"display:block;width:112px;height:auto;border:0;margin:0 auto 10px auto;\" />\n<div style=\"font-size:26px;line-height:32px;font-weight:700;color:#102034;margin-top:0;letter-spacing:0;text-align:center;\">Welcome to Simple</div>\n<div style=\"font-size:13px;line-height:19px;color:#556377;margin-top:4px;text-align:center;\">Your official start date is <span style=\"font-weight:700;color:#f97316;\">{{ $json.body?.start_date || $json.start_date }}</span></div>\n</td>\n</tr>\n\n<!-- INTRO -->\n<tr>\n<td class=\"px\" style=\"padding:20px 32px 4px 32px;\">\n<p class=\"body-p\" style=\"font-size:15px;line-height:23px;color:#102034;font-weight:600;margin:0 0 8px 0;\">Hello {{ $json.body?.first_name || $json.first_name || 'there' }},</p>\n<p class=\"body-p\">We&#8217;re thrilled to have you joining us here at Simple! We can&#8217;t wait for you to get started. Here is everything you need for your first day.</p>\n</td>\n</tr>\n\n<!-- PAPERWORK -->\n<tr>\n<td class=\"px\" style=\"padding:16px 32px 0 32px;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width:100%;\">\n<tr><td class=\"sec-head\">Onboarding Paperwork</td></tr>\n</table>\n</td>\n</tr>\n<tr>\n<td class=\"px\" style=\"padding:12px 32px 4px 32px;\">\n<p class=\"body-p\">You&#8217;ll receive an email from <a href=\"mailto:payroll@simple.biz\" style=\"color:#c2410c;font-weight:700;text-decoration:none;\">payroll@simple.biz</a> with your onboarding paperwork. Please complete it as soon as you receive it &#8212; otherwise you won&#8217;t have the essential tools to work with.</p>\n<p class=\"body-p\" style=\"margin-top:10px;\">Once your paperwork is complete, you&#8217;ll receive:</p>\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width:100%;margin-top:8px;\">\n<tr>\n<td valign=\"top\" style=\"width:22px;padding:3px 0;font-size:14px;line-height:20px;color:#f97316;font-weight:800;\">&#8226;</td>\n<td style=\"padding:3px 0;font-size:14px;line-height:20px;color:#334155;\">Your new <strong style=\"color:#102034;\">work email</strong></td>\n</tr>\n<tr>\n<td valign=\"top\" style=\"width:22px;padding:3px 0;font-size:14px;line-height:20px;color:#f97316;font-weight:800;\">&#8226;</td>\n<td style=\"padding:3px 0;font-size:14px;line-height:20px;color:#334155;\">A <strong style=\"color:#102034;\">Hubstaff</strong> invitation</td>\n</tr>\n<tr>\n<td valign=\"top\" style=\"width:22px;padding:3px 0;font-size:14px;line-height:20px;color:#f97316;font-weight:800;\">&#8226;</td>\n<td style=\"padding:3px 0;font-size:14px;line-height:20px;color:#334155;\">A <strong style=\"color:#102034;\">Roboform</strong> invitation</td>\n</tr>\n</table>\n<p class=\"body-p\" style=\"margin-top:8px;font-size:12px;line-height:18px;color:#556377;\">These are sent automatically later in the day.</p>\n</td>\n</tr>\n\n<!-- ORIENTATION SCHEDULE -->\n<tr>\n<td class=\"px\" style=\"padding:20px 32px 0 32px;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width:100%;\">\n<tr><td class=\"sec-head\">Orientation &amp; Training</td></tr>\n</table>\n</td>\n</tr>\n<tr>\n<td class=\"px\" style=\"padding:10px 32px 0 32px;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width:100%;background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;\">\n<tr>\n<td style=\"padding:12px 16px 4px 16px;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width:100%;\">\n<tr>\n<td class=\"sched-when\">Orientation</td>\n<td class=\"sched-what\">{{ $json.body?.orientation_weekday || $json.orientation_weekday }}, {{ $json.body?.orientation_date || $json.orientation_date }}<br /><strong style=\"color:#102034;\">10:00 AM EST</strong> &#160;&#183;&#160; 10:00 PM Manila</td>\n</tr>\n<tr>\n<td class=\"sched-when\" style=\"border-bottom:0;\">Training</td>\n<td class=\"sched-what\" style=\"border-bottom:0;\">Immediately after, until<br /><strong style=\"color:#102034;\">4:00 PM EST</strong> &#160;&#183;&#160; 4:00 AM Manila</td>\n</tr>\n</table>\n</td>\n</tr>\n</table>\n</td>\n</tr>\n<tr>\n<td class=\"px\" style=\"padding:12px 32px 0 32px;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width:100%;background-color:#fff7ed;border:1px solid #fed7aa;border-radius:10px;\">\n<tr>\n<td style=\"padding:10px 16px;font-size:13px;line-height:19px;color:#9a3412;\"><strong style=\"color:#7c2d12;\">Please bring:</strong> your work device and your USB headset.</td>\n</tr>\n</table>\n</td>\n</tr>\n\n<!-- ZOOM DETAILS -->\n<tr>\n<td class=\"px\" style=\"padding:20px 32px 0 32px;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width:100%;\">\n<tr><td class=\"sec-head\">Join the Zoom Meeting</td></tr>\n</table>\n</td>\n</tr>\n<tr>\n<td class=\"px\" align=\"center\" style=\"padding:14px 32px 0 32px;text-align:center;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:0 auto;\">\n<tr>\n<td align=\"center\" bgcolor=\"#f97316\" style=\"border-radius:9px;\">\n<a href=\"{{ $json.body?.zoom_link || $json.zoom_link || 'https://zoom.us/j/3136183188' }}\" target=\"_blank\" style=\"display:inline-block;padding:13px 34px;font-size:14px;line-height:18px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:9px;\">Join Zoom Meeting</a>\n</td>\n</tr>\n</table>\n</td>\n</tr>\n<tr>\n<td class=\"px\" style=\"padding:14px 32px 0 32px;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width:100%;background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;\">\n<tr>\n<td class=\"stack-cell\" style=\"width:50%;padding:11px 16px;border-right:1px solid #e2e8f0;\">\n<div style=\"font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#556377;\">Meeting ID</div>\n<div class=\"mono\" style=\"font-size:16px;line-height:22px;font-weight:700;color:#102034;margin-top:3px;\">313 618 3188</div>\n</td>\n<td class=\"stack-cell\" style=\"width:50%;padding:11px 16px;\">\n<div style=\"font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#556377;\">Passcode</div>\n<div class=\"mono\" style=\"font-size:16px;line-height:22px;font-weight:700;color:#102034;margin-top:3px;\">dsZeA8</div>\n</td>\n</tr>\n</table>\n</td>\n</tr>\n\n<!-- RESOURCES -->\n<tr>\n<td class=\"px\" style=\"padding:20px 32px 0 32px;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width:100%;\">\n<tr><td class=\"sec-head\">Helpful Resources</td></tr>\n</table>\n</td>\n</tr>\n<tr>\n<td class=\"px\" style=\"padding:12px 32px 4px 32px;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"width:100%;\">\n<tr>\n<td valign=\"top\" style=\"width:22px;padding:4px 0;font-size:14px;line-height:20px;color:#f97316;font-weight:800;\">&#8226;</td>\n<td style=\"padding:4px 0;font-size:14px;line-height:20px;color:#334155;\"><a href=\"https://drive.google.com/file/d/1Mm-9KcU6698vL1wAjJA0m9t5Js7LcbNs/view\" target=\"_blank\" style=\"color:#c2410c;font-weight:700;text-decoration:underline;\">Review this document</a> for more information.</td>\n</tr>\n<tr>\n<td valign=\"top\" style=\"width:22px;padding:4px 0;font-size:14px;line-height:20px;color:#f97316;font-weight:800;\">&#8226;</td>\n<td style=\"padding:4px 0;font-size:14px;line-height:20px;color:#334155;\"><a href=\"https://www.youtube.com/shorts/9-vtDojIGrM\" target=\"_blank\" style=\"color:#c2410c;font-weight:700;text-decoration:underline;\">Watch this short video</a> from our team on why they work at Simple and how we help orphans in the Philippines.</td>\n</tr>\n</table>\n</td>\n</tr>\n\n<!-- CLOSING -->\n<tr>\n<td class=\"px\" style=\"padding:18px 32px 16px 32px;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;\">\n<tr><td style=\"padding:10px 14px;font-size:12px;line-height:18px;color:#556377;\">Have a question before your first day? Just reply to this email &#8212; we&#8217;re happy to help.</td></tr>\n</table>\n</td>\n</tr>\n\n<!-- FOOTER -->\n<tr>\n<td class=\"px\" style=\"background-color:#f8fafc;border-top:1px solid #eef2f6;padding:10px 32px;\">\n<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\">\n<tr>\n<td style=\"font-size:11px;line-height:16px;color:#556377;\">Automated dispatch from Simple HRIS</td>\n<td align=\"right\" style=\"font-size:11px;line-height:16px;font-weight:700;color:#334155;white-space:nowrap;\">Simple Onboarding</td>\n</tr>\n</table>\n</td>\n</tr>\n</table>\n</td>\n</tr>\n</table>\n</td>\n</tr>\n</table>\n</body>\n</html>\n",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "bfc0a0a6-6531-48b5-9500-bef36dbb664a",
+      "name": "Orientation Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        816,
+        1088
+      ],
+      "webhookId": "a74dbfd7-5f81-40a6-8541-99b747900bb9",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "iCU2lfOW9tX5wNeR",
+          "name": "Teal Gmail"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Split Out Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Rows": {
+      "main": [
+        [
+          {
+            "node": "Lead Gen Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Gen Only": {
+      "main": [
+        [
+          {
+            "node": "Orientation Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

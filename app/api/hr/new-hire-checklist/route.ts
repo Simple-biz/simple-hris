@@ -314,6 +314,8 @@ export async function PUT(req: Request) {
       webhook_skipped: (webhook?.skipped ?? []).map((s) => ({
         name: s.name,
         personal_email: s.personal_email,
+        department: s.department,
+        reason: s.reason,
       })),
     },
   });
