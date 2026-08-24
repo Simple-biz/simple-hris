@@ -4599,8 +4599,8 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
       </div>
 
       <div className="grid grid-cols-1 gap-3 lg:min-h-0 lg:flex-1 lg:overflow-hidden lg:grid-cols-3 2xl:grid-cols-4">
-        <Card size="sm" className="flex min-h-0 flex-col overflow-hidden bg-gradient-to-br from-white to-blue-50/20 shadow-sm ring-1 ring-orange-200/90 max-h-[70vh] lg:max-h-none dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 dark:ring-blue-900/70 lg:col-span-2 2xl:col-span-3">
-          <CardHeader className="shrink-0 flex flex-row items-center justify-between gap-4 pb-1.5">
+        <Card size="sm" className="flex min-h-0 flex-col overflow-hidden bg-gradient-to-br from-white to-blue-50/20 shadow-sm ring-1 ring-orange-200/90 max-h-[70vh] lg:max-h-none dark:bg-zinc-900/40 dark:bg-none dark:ring-blue-900/70 lg:col-span-2 2xl:col-span-3">
+          <CardHeader className="shrink-0 flex flex-row items-center justify-between gap-4 pb-1.5 pt-1.5">
             <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">Employees</CardTitle>
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="border-blue-500/20 bg-blue-500/10 font-mono text-[10px] text-blue-700 dark:border-blue-500/30 dark:text-blue-400">
@@ -4889,15 +4889,15 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                     wraps itself in its own `overflow-x-auto` div, which becomes
                     a second scroll container inside this one and steals the
                     sticky header's containing block. */}
-                <div className="hidden min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-200 md:block dark:border-zinc-800">
+                <div className="-mx-3 hidden min-h-0 flex-1 overflow-auto border-y border-zinc-200 md:block dark:border-zinc-800">
                   <table className="w-full min-w-[1000px] table-fixed border-collapse text-[13px]">
                     <colgroup>
-                      {/* Name + email take whatever the fixed columns leave. The
-                          others are sized so that remainder lands near 340px at
-                          the card's usual width — wider and the Employee cell
-                          opens a dead gap before the ID. */}
-                      <col />
+                      {/* ID leads; name + email take whatever the fixed
+                          columns leave. The rest are sized so that remainder
+                          lands near 340px at the card's usual width — wider and
+                          the Employee cell opens a dead gap after the name. */}
                       <col className="w-[104px]" />
+                      <col />
                       <col className="w-[240px]" />
                       <col className="w-[176px]" />
                       <col className="w-[112px]" />
@@ -4906,8 +4906,8 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                     </colgroup>
                     <thead>
                       <tr>
-                        <RosterSortHeader label="Employee" sortKey="name" sort={employeeSort} onSort={toggleEmployeeSort} />
                         <RosterSortHeader label="ID" sortKey="employee_id" sort={employeeSort} onSort={toggleEmployeeSort} />
+                        <RosterSortHeader label="Employee" sortKey="name" sort={employeeSort} onSort={toggleEmployeeSort} />
                         <RosterSortHeader label="Department" sortKey="department" sort={employeeSort} onSort={toggleEmployeeSort} />
                         <th scope="col" className={ROSTER_TH}>Location</th>
                         <RosterSortHeader label="Started" sortKey="start_date" sort={employeeSort} onSort={toggleEmployeeSort} />
@@ -4921,11 +4921,11 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                       {payoutLoading || pabMetrics.loading ? (
                         Array.from({ length: 8 }).map((_, i) => (
                           <tr key={`skel-${i}`} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
+                            <td className="px-3 py-2"><span className="inline-block h-5 w-[72px] animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" /></td>
                             <td className="px-3 py-2">
                               <span className="block h-3.5 w-40 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
                               <span className="mt-1.5 block h-2.5 w-56 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800/60" />
                             </td>
-                            <td className="px-3 py-2"><span className="inline-block h-5 w-[72px] animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" /></td>
                             <td className="px-3 py-2"><span className="inline-block h-3 w-32 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></td>
                             <td className="px-3 py-2"><span className="inline-block h-3 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></td>
                             <td className="px-3 py-2"><span className="inline-block h-3 w-20 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></td>
@@ -4965,7 +4965,19 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                               key={`${row.recordSource}-${row.personal_email ?? ''}-${row.name ?? ''}-${(safePage - 1) * pageSize + i}`}
                               className="group/row border-b border-zinc-100 transition-colors last:border-0 hover:bg-[#fafaf8] motion-reduce:transition-none dark:border-zinc-800/60 dark:hover:bg-zinc-900/50"
                             >
-                              {/* Employee — the row's subject, so it leads. Two lines
+                              {/* Employee ID leads: it is the payroll key people
+                                  read a row by, per Kane. */}
+                              <td className="px-3 py-2">
+                                {row.employee_id ? (
+                                  <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
+                                    {row.employee_id}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
+                                )}
+                              </td>
+
+                              {/* Two lines
                                   ALWAYS (email falls back to a dash) so row heights
                                   stay uniform down the page. */}
                               <td className="px-3 py-2">
@@ -4987,16 +4999,6 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                                 <div className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400" title={shownEmail || undefined}>
                                   {shownEmail || '—'}
                                 </div>
-                              </td>
-
-                              <td className="px-3 py-2">
-                                {row.employee_id ? (
-                                  <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
-                                    {row.employee_id}
-                                  </span>
-                                ) : (
-                                  <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
-                                )}
                               </td>
 
                               {/* `hsl:ssd_medical_records` is a storage key, not a
@@ -5211,8 +5213,8 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         {/* Side stack: bonuses · department mix · pending activity */}
         <div className="flex flex-col gap-3 lg:min-h-0 lg:overflow-y-auto">
           {/* Bonuses compact */}
-          <Card size="sm" className="shrink-0 overflow-hidden bg-gradient-to-br from-white to-orange-50/20 shadow-sm ring-1 ring-orange-200/90 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 dark:ring-blue-900/70">
-            <CardHeader className="shrink-0 pb-1.5">
+          <Card size="sm" className="shrink-0 overflow-hidden bg-gradient-to-br from-white to-orange-50/20 shadow-sm ring-1 ring-orange-200/90 dark:bg-zinc-900/40 dark:bg-none dark:ring-blue-900/70">
+            <CardHeader className="shrink-0 pb-1.5 pt-1.5">
               <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">Bonuses</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -5240,7 +5242,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
 
           {/* Department mix */}
           <Card size="sm" className="shrink-0 overflow-hidden bg-white shadow-sm ring-1 ring-orange-200/90 dark:bg-zinc-900/40 dark:ring-blue-900/70">
-            <CardHeader className="shrink-0 flex flex-row items-center justify-between pb-1.5">
+            <CardHeader className="shrink-0 flex flex-row items-center justify-between pb-1.5 pt-1.5">
               <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">Department mix</CardTitle>
               <Badge variant="outline" className="border-zinc-200 bg-zinc-50 font-mono text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
                 {departmentMix.total} total
@@ -5260,7 +5262,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
 
           {/* Pending activity */}
           <Card size="sm" className="flex min-h-[220px] flex-col overflow-hidden bg-white shadow-sm ring-1 ring-orange-200/90 dark:bg-zinc-900/40 dark:ring-blue-900/70">
-            <CardHeader className="shrink-0 flex flex-row items-center justify-between pb-1.5">
+            <CardHeader className="shrink-0 flex flex-row items-center justify-between pb-1.5 pt-1.5">
               <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">Pending</CardTitle>
               <Badge
                 variant="outline"
