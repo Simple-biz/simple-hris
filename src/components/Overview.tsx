@@ -134,6 +134,12 @@ type EmployeeSortState = { key: EmployeeSortKey; dir: 'asc' | 'desc' } | null;
 /** One class string for every header cell so the sticky row can't drift.
  *  `sticky` sits on the `th`, not the `thead`: Safari has never honoured a
  *  sticky `thead`, and the rows would scroll straight over the labels. */
+/** Location and Started drop out on a narrow card. Declared once so the
+ *  header, the skeleton and the body row can never disagree about which
+ *  columns exist at a given width. */
+const ROSTER_COL_LOCATION = 'hidden w-[176px] @min-[1080px]/roster:table-cell';
+const ROSTER_COL_STARTED = 'hidden w-[112px] @min-[720px]/roster:table-cell';
+
 const ROSTER_TH =
   'sticky top-0 z-10 border-b border-zinc-200 bg-[#fafaf8] px-3 py-2.5 text-left align-middle ' +
   'text-[10.5px] font-semibold uppercase tracking-[0.07em] text-zinc-600 ' +
@@ -144,11 +150,16 @@ function RosterSortHeader({
   sortKey,
   sort,
   onSort,
+  className,
 }: {
   label: string;
   sortKey: EmployeeSortKey;
   sort: EmployeeSortState;
   onSort: (key: EmployeeSortKey) => void;
+  /** Column width + container-query visibility. With `table-fixed` the header
+   *  row is what sizes the table, so widths live here rather than in a
+   *  `<colgroup>` — a `<col>` can't be hidden per breakpoint, a `<th>` can. */
+  className?: string;
 }) {
   const active = sort?.key === sortKey;
   const dir = active ? sort!.dir : null;
@@ -156,7 +167,7 @@ function RosterSortHeader({
     <th
       scope="col"
       aria-sort={dir === 'asc' ? 'ascending' : dir === 'desc' ? 'descending' : 'none'}
-      className={ROSTER_TH}
+      className={cn(ROSTER_TH, className)}
     >
       <button
         type="button"
@@ -4889,30 +4900,24 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                     wraps itself in its own `overflow-x-auto` div, which becomes
                     a second scroll container inside this one and steals the
                     sticky header's containing block. */}
-                <div className="-mx-3 hidden min-h-0 flex-1 overflow-auto border-y border-zinc-200 md:block dark:border-zinc-800">
-                  <table className="w-full min-w-[1000px] table-fixed border-collapse text-[13px]">
-                    <colgroup>
-                      {/* ID leads; name + email take whatever the fixed
-                          columns leave. The rest are sized so that remainder
-                          lands near 340px at the card's usual width — wider and
-                          the Employee cell opens a dead gap after the name. */}
-                      <col className="w-[104px]" />
-                      <col />
-                      <col className="w-[240px]" />
-                      <col className="w-[176px]" />
-                      <col className="w-[112px]" />
-                      <col className="w-[128px]" />
-                      <col className="w-[84px]" />
-                    </colgroup>
+                {/* A QUERY container, not a viewport one: this card is
+                    `lg:col-span-2` of a 3-column grid, so its width tracks the
+                    sidebar and the side stack, not the window. At a 1440
+                    viewport with the rail open it is ~770px wide while
+                    `lg:` has long since fired — breakpoint-driven columns
+                    would hide the wrong ones. Ladder: Started ≥720, a wider
+                    Department ≥900, Location ≥1080. */}
+                <div className="@container/roster -mx-3 hidden min-h-0 flex-1 overflow-auto border-y border-zinc-200 md:block dark:border-zinc-800">
+                  <table className="w-full min-w-[560px] table-fixed border-collapse text-[13px]">
                     <thead>
                       <tr>
-                        <RosterSortHeader label="ID" sortKey="employee_id" sort={employeeSort} onSort={toggleEmployeeSort} />
+                        <RosterSortHeader label="ID" sortKey="employee_id" sort={employeeSort} onSort={toggleEmployeeSort} className="w-[96px]" />
                         <RosterSortHeader label="Employee" sortKey="name" sort={employeeSort} onSort={toggleEmployeeSort} />
-                        <RosterSortHeader label="Department" sortKey="department" sort={employeeSort} onSort={toggleEmployeeSort} />
-                        <th scope="col" className={ROSTER_TH}>Location</th>
-                        <RosterSortHeader label="Started" sortKey="start_date" sort={employeeSort} onSort={toggleEmployeeSort} />
-                        <th scope="col" className={ROSTER_TH}>PAB</th>
-                        <th scope="col" className={cn(ROSTER_TH, 'text-right')}>
+                        <RosterSortHeader label="Department" sortKey="department" sort={employeeSort} onSort={toggleEmployeeSort} className="w-[160px] @min-[900px]/roster:w-[224px]" />
+                        <th scope="col" className={cn(ROSTER_TH, ROSTER_COL_LOCATION)}>Location</th>
+                        <RosterSortHeader label="Started" sortKey="start_date" sort={employeeSort} onSort={toggleEmployeeSort} className={ROSTER_COL_STARTED} />
+                        <th scope="col" className={cn(ROSTER_TH, 'w-[116px]')}>PAB</th>
+                        <th scope="col" className={cn(ROSTER_TH, 'w-[72px] text-right')}>
                           <span className="sr-only">Actions</span>
                         </th>
                       </tr>
@@ -4927,8 +4932,8 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                               <span className="mt-1.5 block h-2.5 w-56 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800/60" />
                             </td>
                             <td className="px-3 py-2"><span className="inline-block h-3 w-32 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></td>
-                            <td className="px-3 py-2"><span className="inline-block h-3 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></td>
-                            <td className="px-3 py-2"><span className="inline-block h-3 w-20 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></td>
+                            <td className={cn('px-3 py-2', ROSTER_COL_LOCATION)}><span className="inline-block h-3 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></td>
+                            <td className={cn('px-3 py-2', ROSTER_COL_STARTED)}><span className="inline-block h-3 w-20 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></td>
                             <td className="px-3 py-2"><span className="inline-block h-5 w-[88px] animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" /></td>
                             <td className="px-3 py-2 text-right"><span className="inline-block h-6 w-14 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" /></td>
                           </tr>
@@ -5011,11 +5016,11 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                               {/* Own column, not a second line under the email: as a
                                   stacked line it made every row with a city taller
                                   than every row without one. */}
-                              <td className="truncate px-3 py-2 text-[12px] text-zinc-500 dark:text-zinc-400" title={location || undefined}>
+                              <td className={cn('truncate px-3 py-2 text-[12px] text-zinc-500 dark:text-zinc-400', ROSTER_COL_LOCATION)} title={location || undefined}>
                                 {location || <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                               </td>
 
-                              <td className="px-3 py-2 text-[12px] tabular-nums text-zinc-600 dark:text-zinc-400">
+                              <td className={cn('px-3 py-2 text-[12px] tabular-nums text-zinc-600 dark:text-zinc-400', ROSTER_COL_STARTED)}>
                                 {formatStartDate(row.start_date)}
                               </td>
 
