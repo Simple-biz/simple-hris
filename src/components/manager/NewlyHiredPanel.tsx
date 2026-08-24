@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CalendarCheck, CheckCircle2, ClipboardCheck, Copy, Download, FileSpreadsheet, FileText, Layers, Loader2, Phone, RotateCcw, Search, UserPlus, X, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardCheck, Copy, Download, FileSpreadsheet, Layers, Loader2, Phone, RotateCcw, Search, UserPlus, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -11,16 +11,8 @@ import { formatWeekLabel } from '@/lib/hr/hiring-week';
 import { isLeadGenDepartment } from '@/lib/hr/calltools-username';
 import type { HrPendingStatus } from '@/lib/supabase/hr-pending-employees';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
-import {
-  attendanceRate,
-  buildOrientationWeeks,
-  pickChecklistWeek,
-  weekKeyFromIso,
-  OFF_CHECKLIST_LABEL,
-  UNDATED_WEEK,
-  type OrientationHire,
-} from '@/lib/manager/orientation-weekly';
-import { downloadOrientationPdf } from '@/lib/manager/orientation-pdf';
+import { pickChecklistWeek, weekKeyFromIso } from '@/lib/manager/orientation-weekly';
+import { useOrientationHistory } from '@/hooks/useOrientationHistory';
 
 /**
  * Shape returned by `/api/manager/pending-hires`. Subset of
@@ -267,186 +259,6 @@ function downloadBlob(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-/**
- * The weekly orientation tally.
- *
- * Reads from the same `buildOrientationWeeks` model the PDF renders, so the
- * screen and the export can never disagree. "Did not attend" is anyone with no
- * `orientation_attended_at` stamp — the sub-columns split that into people
- * already offboarded as no-shows and people nobody has marked either way.
- */
-function OrientationSummaryCard({
-  summary,
-  loading,
-  error,
-  open,
-  onToggle,
-  onRetry,
-}: {
-  summary: ReturnType<typeof buildOrientationWeeks>;
-  loading: boolean;
-  error: string | null;
-  open: boolean;
-  onToggle: () => void;
-  onRetry: () => void;
-}) {
-  const { weeks, offChecklist, totals } = summary;
-  const allWeeks = [...weeks, ...offChecklist];
-
-  if (loading) {
-    return (
-      <Card className="border-blue-100/70 bg-white/60 dark:border-blue-950/50 dark:bg-zinc-950/40">
-        <CardContent className="flex items-center gap-2 px-4 py-3 text-xs text-zinc-500 dark:text-zinc-400">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading orientation attendance…
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // No silent degradation: the week key comes from HR's checklist, and falling
-  // back to the hire's own dates is the 46%-wrong grouping this replaced.
-  if (error) {
-    return (
-      <Card className="border-rose-200/70 bg-rose-50/40 dark:border-rose-900/50 dark:bg-rose-950/15">
-        <CardContent className="flex flex-wrap items-center gap-2 px-4 py-3 text-xs text-rose-700 dark:text-rose-300">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          <span className="min-w-0 flex-1">Orientation attendance couldn&apos;t load — {error}</span>
-          <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5 text-[11px]" onClick={onRetry}>
-            <RotateCcw className="h-3 w-3" /> Retry
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (allWeeks.length === 0) return null;
-
-  const overallRate = attendanceRate(totals);
-
-  const rateTone = (pct: number | null): string => {
-    if (pct == null) return 'text-zinc-400';
-    if (pct >= 95) return 'text-emerald-700 dark:text-emerald-300';
-    if (pct >= 85) return 'text-amber-700 dark:text-amber-300';
-    return 'text-rose-700 dark:text-rose-300';
-  };
-
-  return (
-    <Card className="overflow-hidden border-blue-100/70 bg-gradient-to-br from-white to-blue-50/30 ring-1 ring-blue-500/5 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/10">
-      <CardContent className="p-0">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left transition-colors hover:bg-blue-50/50 dark:hover:bg-blue-950/20"
-        >
-          <CalendarCheck className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
-          <span className="text-sm font-semibold text-zinc-900 dark:text-white">Orientation attendance</span>
-          <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-            {allWeeks.length} week{allWeeks.length === 1 ? '' : 's'}
-          </span>
-          <span className="ml-auto flex items-center gap-2 text-[11px] font-medium">
-            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-              {totals.attended} attended
-            </span>
-            <span
-              className={cn(
-                'rounded-full px-2 py-0.5',
-                totals.notAttended > 0
-                  ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
-                  : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400',
-              )}
-            >
-              {totals.notAttended} did not
-            </span>
-            <span className={cn('tabular-nums font-semibold', rateTone(overallRate))}>
-              {overallRate == null ? '—' : `${overallRate}%`}
-            </span>
-          </span>
-        </button>
-
-        {open && (
-          <div className="overflow-x-auto border-t border-blue-100/70 dark:border-blue-950/50">
-            <table className="w-full min-w-[560px] text-xs">
-              <thead>
-                <tr className="bg-blue-50/60 text-[10px] uppercase tracking-wide text-blue-700 dark:bg-blue-950/25 dark:text-blue-300">
-                  <th scope="col" className="px-4 py-2 text-left font-semibold">Hiring week</th>
-                  <th scope="col" className="px-3 py-2 text-right font-semibold">Hires</th>
-                  <th scope="col" className="px-3 py-2 text-right font-semibold">Attended</th>
-                  <th scope="col" className="px-3 py-2 text-right font-semibold">Did not attend</th>
-                  <th scope="col" className="px-3 py-2 text-right font-semibold">No-show</th>
-                  <th scope="col" className="px-3 py-2 text-right font-semibold">Awaiting</th>
-                  <th scope="col" className="px-4 py-2 text-right font-semibold">Rate</th>
-                </tr>
-              </thead>
-              <tbody>
-                {allWeeks.map((w) => {
-                  const pct = attendanceRate(w);
-                  return (
-                    <tr
-                      key={`${w.onChecklist ? 'hr' : 'off'}:${w.weekStart}`}
-                      className="border-t border-zinc-100 dark:border-zinc-900"
-                    >
-                      <td className="px-4 py-2 text-zinc-700 dark:text-zinc-200">
-                        {w.weekStart === UNDATED_WEEK ? 'No date on record' : w.label}
-                        {!w.onChecklist && (
-                          <span
-                            className="ml-2 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300"
-                            title="These hires match no row in HR's New Hire Checklist, so they're shown under the week HR staged them instead."
-                          >
-                            {OFF_CHECKLIST_LABEL}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-300">{w.total}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-emerald-700 dark:text-emerald-300">{w.attended}</td>
-                      <td
-                        className={cn(
-                          'px-3 py-2 text-right tabular-nums font-semibold',
-                          w.notAttended > 0 ? 'text-rose-700 dark:text-rose-300' : 'text-zinc-400 dark:text-zinc-600',
-                        )}
-                      >
-                        {w.notAttended}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums text-zinc-500 dark:text-zinc-400">{w.noShow}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-zinc-500 dark:text-zinc-400">{w.stillOpen}</td>
-                      <td className={cn('px-4 py-2 text-right tabular-nums font-semibold', rateTone(pct))}>
-                        {pct == null ? '—' : `${pct}%`}
-                      </td>
-                    </tr>
-                  );
-                })}
-                <tr className="border-t-2 border-blue-200 bg-blue-50/40 font-semibold dark:border-blue-900 dark:bg-blue-950/20">
-                  <td className="px-4 py-2 text-zinc-800 dark:text-zinc-100">Total</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-200">{totals.total}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-emerald-700 dark:text-emerald-300">{totals.attended}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-rose-700 dark:text-rose-300">{totals.notAttended}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-300">{totals.noShow}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-300">{totals.stillOpen}</td>
-                  <td className={cn('px-4 py-2 text-right tabular-nums', rateTone(overallRate))}>
-                    {overallRate == null ? '—' : `${overallRate}%`}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <p className="px-4 py-2 text-[10px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-              Weeks are HR&apos;s New Hire Checklist weeks. <strong>Did not attend</strong> means nobody
-              marked the hire as having attended orientation — split into <strong>no-show</strong>{' '}
-              (already offboarded) and <strong>awaiting</strong> (still unmarked).
-              {totals.unmatched > 0 && (
-                <>
-                  {' '}
-                  {totals.unmatched} hire{totals.unmatched === 1 ? '' : 's'} match no checklist row and
-                  appear under the week HR staged them.
-                </>
-              )}
-            </p>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPanelProps) {
   const [rows, setRows] = useState<PendingHireRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -471,20 +283,19 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   // Building the .xlsx lazy-loads the `xlsx` lib, so keep the button busy while
   // the dynamic import + write runs.
   const [xlsxBusy, setXlsxBusy] = useState(false);
-  const [pdfBusy, setPdfBusy] = useState(false);
   // Orientation HISTORY — a second, read-only fetch alongside the actionable
-  // list. `/api/manager/pending-hires` deliberately returns only what a manager
-  // can act on (`pending_work_email` / `ready` + recent Bypass), which as of
-  // 2026-08-24 is 3 of the 40 people who were never marked orientation
-  // attended: promoted hires (they attended) and no_show hires (the whole point
-  // of the report) are filtered out before the client sees them. So the weekly
-  // summary, the No-shows list and the PDF ride this instead. It never feeds
-  // the actionable card list — that would put ~974 cards on screen instead of 3.
-  const [history, setHistory] = useState<OrientationHire[]>([]);
-  const [checklistWeeks, setChecklistWeeks] = useState<Map<string, string[]>>(new Map());
-  const [historyError, setHistoryError] = useState<string | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(true);
-  const [summaryOpen, setSummaryOpen] = useState(true);
+  // list, shared with the Orientation tab via one hook so the two can never
+  // disagree about a week or a count. This panel needs it for exactly two
+  // things: the HR checklist week its cards group by, and the no-show rows.
+  //
+  // `/api/manager/pending-hires` returns only what a manager can act on
+  // (`pending_work_email` / `ready` + recent Bypass) — as of 2026-08-24 that is
+  // 3 of the 40 people never marked orientation attended, because every
+  // `promoted` and every `no_show` row is filtered out before the client sees
+  // it. That is why the No-shows section below could never render from `rows`.
+  //
+  // History never feeds the ACTIONABLE card list: 975 rows against ~3.
+  const { hires: history, checklistWeeks, error: historyError } = useOrientationHistory();
   // Live progress for a bulk run (orientation mark OR no-show) — drives a modal
   // that shows, in real time, how many hires have actually been processed so
   // far. null when no bulk run is in flight or awaiting review. `kind` selects
@@ -516,51 +327,16 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
     }
   }, []);
 
-  /**
-   * Loads the orientation history + the checklist week map. Kept separate from
-   * `refresh` so a history failure can never blank the actionable list a
-   * manager still needs to work, and vice versa.
-   *
-   * On failure the state is CLEARED rather than left stale: the weekly summary
-   * refuses to render and the PDF button disables. There is no safe degradation
-   * here — falling back to the hire's own dates is exactly the 46%-wrong week
-   * key this replaced, and an export that silently prints wrong weeks is worse
-   * than no export.
-   */
-  const refreshHistory = useCallback(async () => {
-    setHistoryLoading(true);
-    setHistoryError(null);
-    try {
-      const res = await fetch('/api/manager/orientation-history', { cache: 'no-store' });
-      const json = (await res.json()) as {
-        rows?: OrientationHire[];
-        checklistWeeks?: Record<string, string[]>;
-        error?: string | null;
-      };
-      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
-      setHistory(json.rows ?? []);
-      setChecklistWeeks(new Map(Object.entries(json.checklistWeeks ?? {})));
-    } catch (e) {
-      setHistoryError(e instanceof Error ? e.message : 'Failed to load orientation history');
-      setHistory([]);
-      setChecklistWeeks(new Map());
-    } finally {
-      setHistoryLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     void refresh();
-    void refreshHistory();
-  }, [refresh, refreshHistory]);
+  }, [refresh]);
 
   // Reload if the dept assignments arrive after first mount (the page first
   // renders with teamGate kind=loading; once it resolves we re-hit the API).
   useEffect(() => {
     if (teamGate.kind === 'loading') return;
     void refresh();
-    void refreshHistory();
-  }, [teamGate.kind, refresh, refreshHistory]);
+  }, [teamGate.kind, refresh]);
 
   async function markAttended(id: number, attendedOn: string, isEdit = false) {
     setBusyId(id);
@@ -642,13 +418,6 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   // ── Derived history state ────────────────────────────────────────────────
   // Declared ABOVE the early returns: these are hooks, and the empty/error
   // branches below return before the main render.
-
-  /** The weekly tally. One model, three consumers: this panel, the No-shows
-   *  list, and the PDF — so they can never disagree on a number. */
-  const summary = useMemo(
-    () => buildOrientationWeeks({ hires: history, checklistWeeksByEmail: checklistWeeks }),
-    [history, checklistWeeks],
-  );
 
   /**
    * No-shows come from the HISTORY read, never from `rows`.
@@ -945,33 +714,6 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
       toast.error(e instanceof Error ? e.message : 'Failed to build the Excel file');
     } finally {
       setXlsxBusy(false);
-    }
-  }
-
-  /**
-   * PDF — the weekly attendance report. Unlike CSV / Excel this is NOT the
-   * on-screen view: it is the whole history for the manager's scope, because a
-   * report filtered by whatever is typed in the search box is not a report.
-   * Guarded by `historyError` at the button, so it can never print a document
-   * built from a partial or wrongly-weeked roster.
-   */
-  async function exportPdf() {
-    setPdfBusy(true);
-    try {
-      await downloadOrientationPdf({
-        summary,
-        generatedAt: new Date(),
-        scopeLabel:
-          teamGate.kind === 'elevated'
-            ? 'All departments'
-            : teamGate.kind === 'department' && teamGate.departments.length > 0
-              ? teamGate.departments.map((d) => formatDeptLabel(d)).join(', ')
-              : 'Your departments',
-      });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to build the PDF');
-    } finally {
-      setPdfBusy(false);
     }
   }
 
@@ -1294,35 +1036,24 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
           >
             {xlsxBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />} Excel
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-9 gap-1.5 text-xs"
-            onClick={() => void exportPdf()}
-            disabled={pdfBusy || historyLoading || historyError != null || summary.totals.total === 0}
-            title={
-              historyError
-                ? `Orientation history failed to load — ${historyError}`
-                : 'Download the weekly orientation attendance report (all weeks, not just the current view)'
-            }
-          >
-            {pdfBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />} PDF
-          </Button>
         </div>
       </div>
 
-      {/* Weekly orientation attendance. Scoped to the manager's departments and
-          deliberately NOT narrowed by the search / batch filters below — a
-          tally that moves while you type is not a tally. */}
-      <OrientationSummaryCard
-        summary={summary}
-        loading={historyLoading}
-        error={historyError}
-        open={summaryOpen}
-        onToggle={() => setSummaryOpen((v) => !v)}
-        onRetry={() => void refreshHistory()}
-      />
+      {/* The history read supplies BOTH the HR checklist week these cards group
+          by and the no-show rows. When it fails, `checklistWeeks` is empty and
+          `batchKeyOf` silently falls back to the hire's staged week — the same
+          key that was one week off for 46% of the roster. Say so rather than
+          letting a manager read wrong batch labels as if they were right. */}
+      {historyError && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-200">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0 flex-1">
+            Couldn&apos;t load HR&apos;s checklist weeks ({historyError}). Hires are grouped by the
+            week HR staged them, which can be a week early, and no-shows aren&apos;t shown. The{' '}
+            <strong>Orientation</strong> tab has a Retry.
+          </span>
+        </div>
+      )}
 
       {visibleActive.length === 0 && visibleNoShow.length === 0 && (
         <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15">

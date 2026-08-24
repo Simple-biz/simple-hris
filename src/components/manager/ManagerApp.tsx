@@ -77,6 +77,7 @@ import type { OffboardingQueueStatus } from '@/lib/supabase/offboarding-queue';
 import type { ResignationRequestRow } from '@/lib/supabase/resignation-requests';
 import { offboardReasonLabel } from '@/lib/hr/offboard-reasons';
 import NewlyHiredPanel from '@/components/manager/NewlyHiredPanel';
+import OrientationAttendancePanel from '@/components/manager/OrientationAttendancePanel';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
@@ -2679,10 +2680,16 @@ function CallToolsUsernameCell({
 function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusConsumed }: TeamPanelProps) {
   const { medals, draggedMedal, dragOverEmail, setDragOverEmail, openAwardForDrop } = useMedalCtx();
 
-  // Inner tab toggle: Roster (existing) | Newly Hired (HR pending hires routed
-  // here by department_managers).
-  // Lives inside the My Team panel so it doesn't claim a top-level sidebar slot.
-  const [innerTab, setInnerTab] = useState<'roster' | 'newly-hired'>('roster');
+  // Inner tab toggle: Roster (existing) | New Hire Check List (HR pending hires
+  // routed here by department_managers) | Orientation (the weekly attendance
+  // tally + its PDF).
+  //
+  // All three live inside the My Team panel rather than claiming top-level
+  // sidebar slots — which also means they inherit the `manager`/`team` feature
+  // permission. A new top-level tab would be a NEW feature key, and a missing
+  // grant is hidden by default (docs/features/rbac-feature-permissions.md), so
+  // nobody but an admin would see it until it was granted person by person.
+  const [innerTab, setInnerTab] = useState<'roster' | 'newly-hired' | 'orientation'>('roster');
   const unassigned = teamGate.kind === 'department' && teamGate.departments.length === 0;
   const scoped = teamGate.kind === 'department' && teamGate.departments.length > 0;
   // Live presence — drives the green "online" dots on roster rows and the
@@ -3312,6 +3319,20 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
             >
               New Hire Check List
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={innerTab === 'orientation'}
+              onClick={() => setInnerTab('orientation')}
+              className={cn(
+                'rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
+                innerTab === 'orientation'
+                  ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
+                  : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+              )}
+            >
+              Orientation
+            </button>
           </div>
           {innerTab === 'roster' && !unassigned && members.length > 0 && (
             <div role="tablist" aria-label="Roster layout" className="flex items-center gap-0.5 rounded-lg border border-blue-100/80 bg-blue-50/50 p-0.5 dark:border-blue-950/50 dark:bg-blue-950/20">
@@ -3368,6 +3389,8 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
       {innerTab === 'newly-hired' && (
         <NewlyHiredPanel viewerEmail={viewerEmail} teamGate={teamGate} />
       )}
+
+      {innerTab === 'orientation' && <OrientationAttendancePanel teamGate={teamGate} />}
 
       {innerTab === 'roster' && !unassigned && (
         <div className="flex flex-wrap items-center gap-2">

@@ -1,10 +1,16 @@
 # Orientation attendance — the weekly "who showed up" tally on My Team
 
-Manager Dashboard → **My Team → New Hire Check List** carries a weekly tally of who
-showed up for orientation and who did not, plus an **Export PDF** that ships that tally
-with the named people behind every number. It answers one question per hiring week —
-*how many of the people HR sent us actually turned up?* — and it answers it without
-touching a single pay figure.
+Manager Dashboard → **My Team → Orientation** is a weekly tally of who showed up for
+orientation and who did not, with an **Export PDF** that ships that tally plus the named
+people behind every number. It answers one question per hiring week — *how many of the
+people HR sent us actually turned up?* — and it answers it without touching a single pay
+figure.
+
+It is the **third inner tab** on My Team, beside Roster and New Hire Check List — not a
+top-level sidebar entry. That is deliberate: an inner tab inherits the `manager`/`team`
+feature permission, while a new top-level tab would be a new feature key, and a missing
+grant is **hidden by default** ([rbac-feature-permissions.md](./rbac-feature-permissions.md)),
+so nobody but an admin would see it until it was granted person by person.
 
 Shipped 2026-08-24, commit `06f7f669`. Kane's ask: *"we should have a place where we can
 see weekly the number of people who showed up in Orientation and the ones that were not"*,
@@ -14,13 +20,16 @@ followed by *"the week should match from HR's New Hire Checklist"*.
 
 | Piece | File |
 | --- | --- |
+| The tab | [OrientationAttendancePanel.tsx](src/components/manager/OrientationAttendancePanel.tsx) |
+| The shared read | [useOrientationHistory.ts](src/hooks/useOrientationHistory.ts) |
 | The model (pure, tested) | [orientation-weekly.ts](src/lib/manager/orientation-weekly.ts) |
 | Its test | [orientation-weekly.test.ts](src/lib/manager/orientation-weekly.test.ts) |
 | The PDF | [orientation-pdf.ts](src/lib/manager/orientation-pdf.ts) |
 | The history read | [route.ts](app/api/manager/orientation-history/route.ts) |
 | Hire rows, paged | `listOrientationHistory` in [hr-pending-employees.ts](src/lib/supabase/hr-pending-employees.ts) |
 | Checklist weeks, paged | `listChecklistWeeksByEmail` in [hr-new-hire-checklist.ts](src/lib/supabase/hr-new-hire-checklist.ts) |
-| The panel | [NewlyHiredPanel.tsx](src/components/manager/NewlyHiredPanel.tsx) |
+| The sibling tab (no-shows, week labels) | [NewlyHiredPanel.tsx](src/components/manager/NewlyHiredPanel.tsx) |
+| The inner-tab switch | [ManagerApp.tsx](src/components/manager/ManagerApp.tsx) |
 
 ## "Did not attend" means the stamp is missing — never what `status` says
 
@@ -82,7 +91,11 @@ labelled gap.
 | Read | Answers | Feeds |
 | --- | --- | --- |
 | `/api/manager/pending-hires` | "what can I action right now" | the actionable hire cards |
-| `/api/manager/orientation-history` | "who showed up and who didn't" | the tally, the No-shows list, the PDF |
+| `/api/manager/orientation-history` | "who showed up and who didn't" | the Orientation tab, the No-shows list, the week labels, the PDF |
+
+Both My Team tabs read the history through **one hook**, `useOrientationHistory`, so they
+cannot disagree about a week or a count. Inner tabs unmount on switch, so that is one fetch
+per visit — the same way every other panel in this dashboard loads.
 
 The history route is **not** a widening of the actionable one. That route filters to
 `status in (pending_work_email, ready)` plus recent Bypass rows, which as of 2026-08-24 is
@@ -124,18 +137,27 @@ key this replaced, and an export that quietly prints wrong weeks is worse than n
 (the same rule as the Overview CSV in [accounting-total-payout.md](./accounting-total-payout.md)).
 
 A history failure also cannot blank the actionable list, and vice versa: the two reads have
-separate state and separate error branches. The tab's "No newly hired employees" empty
-state now requires **both** to be empty, or a manager with an idle week would lose the
-report.
+separate state and separate error branches. The New Hire Check List's "No newly hired
+employees" empty state requires **both** to be empty, or a manager with an idle actionable
+list would lose the no-show cards.
+
+> **A history failure degrades the New Hire Check List's week labels, so it says so.**
+> That tab groups its hire cards by the same checklist week. When the read fails,
+> `checklistWeeks` is empty and `batchKeyOf` falls back to the hire's staged week — the key
+> that was one week off for 46% of the roster. It renders an amber banner naming the
+> failure and pointing at the Orientation tab's Retry, rather than showing wrong batch
+> labels as though they were right. **If you ever remove that banner, remove the fallback
+> too** — a silently wrong week is the exact failure this feature exists to fix.
 
 ## What each export carries
 
-| Export | Scope |
-| --- | --- |
-| CSV / Excel | the **current view** — respects search + batch, unchanged behaviour |
-| **PDF** | the **whole history** for the manager's scope, regardless of filters |
+| Export | Lives on | Scope |
+| --- | --- | --- |
+| CSV / Excel | New Hire Check List | the **current view** — respects search + batch |
+| **PDF** | Orientation | the **whole history** for the manager's scope |
 
-The PDF is a report, and a report narrowed by whatever is in the search box is not one.
+The PDF is a report, and a report narrowed by whatever is in the search box is not one —
+which is also why it sits on the tab that has no search box.
 Page 1 is the weekly table with a totals row; page 2+ lists the people per week, **did-not-
 attend first**. It mirrors the Payment Catalog export
 ([catalog-export.ts](src/lib/payment-catalog/catalog-export.ts)) so the two read as one
