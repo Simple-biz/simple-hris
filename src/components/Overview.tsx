@@ -137,8 +137,8 @@ type EmployeeSortState = { key: EmployeeSortKey; dir: 'asc' | 'desc' } | null;
 /** Location and Started drop out on a narrow card. Declared once so the
  *  header, the skeleton and the body row can never disagree about which
  *  columns exist at a given width. */
-const ROSTER_COL_LOCATION = 'hidden w-[176px] @min-[1080px]/roster:table-cell';
-const ROSTER_COL_STARTED = 'hidden w-[112px] @min-[720px]/roster:table-cell';
+const ROSTER_COL_LOCATION = 'hidden w-[168px] @min-[1030px]/roster:table-cell';
+const ROSTER_COL_STARTED = 'hidden w-[104px] @min-[740px]/roster:table-cell';
 
 const ROSTER_TH =
   'sticky top-0 z-10 border-b border-zinc-200 bg-[#fafaf8] px-3 py-2.5 text-left align-middle ' +
@@ -4905,19 +4905,21 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                     sidebar and the side stack, not the window. At a 1440
                     viewport with the rail open it is ~770px wide while
                     `lg:` has long since fired — breakpoint-driven columns
-                    would hide the wrong ones. Ladder: Started ≥720, a wider
-                    Department ≥900, Location ≥1080. */}
-                <div className="@container/roster -mx-3 hidden min-h-0 flex-1 overflow-auto border-y border-zinc-200 md:block dark:border-zinc-800">
-                  <table className="w-full min-w-[560px] table-fixed border-collapse text-[13px]">
+                    would hide the wrong ones. Ladder: Started ≥740, a wider
+                    Department ≥860, Location ≥1030 — measured on the WRAPPER,
+                    which is the card minus its px-3, so each gate sits ~24
+                    below the card width it is meant to fire at. */}
+                <div className="@container/roster hidden min-h-0 flex-1 overflow-auto rounded-xl border border-zinc-200 md:block dark:border-zinc-800">
+                  <table className="w-full min-w-[600px] table-fixed border-collapse text-[13px]">
                     <thead>
                       <tr>
-                        <RosterSortHeader label="ID" sortKey="employee_id" sort={employeeSort} onSort={toggleEmployeeSort} className="w-[96px]" />
+                        <RosterSortHeader label="ID" sortKey="employee_id" sort={employeeSort} onSort={toggleEmployeeSort} className="w-[112px]" />
                         <RosterSortHeader label="Employee" sortKey="name" sort={employeeSort} onSort={toggleEmployeeSort} />
-                        <RosterSortHeader label="Department" sortKey="department" sort={employeeSort} onSort={toggleEmployeeSort} className="w-[160px] @min-[900px]/roster:w-[224px]" />
+                        <RosterSortHeader label="Department" sortKey="department" sort={employeeSort} onSort={toggleEmployeeSort} className="w-[148px] @min-[860px]/roster:w-[220px]" />
                         <th scope="col" className={cn(ROSTER_TH, ROSTER_COL_LOCATION)}>Location</th>
                         <RosterSortHeader label="Started" sortKey="start_date" sort={employeeSort} onSort={toggleEmployeeSort} className={ROSTER_COL_STARTED} />
-                        <th scope="col" className={cn(ROSTER_TH, 'w-[116px]')}>PAB</th>
-                        <th scope="col" className={cn(ROSTER_TH, 'w-[72px] text-right')}>
+                        <th scope="col" className={cn(ROSTER_TH, 'w-[110px]')}>PAB</th>
+                        <th scope="col" className={cn(ROSTER_TH, 'w-[84px] text-right')}>
                           <span className="sr-only">Actions</span>
                         </th>
                       </tr>
@@ -4974,7 +4976,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                                   read a row by, per Kane. */}
                               <td className="px-3 py-2">
                                 {row.employee_id ? (
-                                  <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
+                                  <span className="inline-flex items-center whitespace-nowrap rounded-md border border-orange-200 bg-orange-50 px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
                                     {row.employee_id}
                                   </span>
                                 ) : (
