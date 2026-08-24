@@ -8,6 +8,7 @@
 // recoloured one) lands everywhere at once.
 
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
+import { formatDeptLabel, isHslSubDeptLabel } from '@/lib/departments/hsl-subdept';
 
 /** Per-department accent hex. Distinct hues on purpose — the sales family in
  *  particular must stay tellable apart from the fallback. */
@@ -39,8 +40,17 @@ export function catalogDeptColor(key: string): string {
 
 /** Unknown keys are in-app (Payment Catalog -> Department) departments whose
  *  slug derives from the label -- humanize it back ("executive_assistants" ->
- *  "Executive Assistants"). Already-human labels pass through unchanged. */
+ *  "Executive Assistants"). Already-human labels pass through unchanged.
+ *
+ *  HSL sub-teams are NAMESPACED, not slugs: the generic humanizer turns
+ *  `hsl:filing_specialist` into the nonsense "Hsl:filing Specialist", so they
+ *  resolve through `formatDeptLabel` first ("HSL — Filing Specialist"). Same
+ *  guard `overview-metrics.ts` already carries; see hsl-subdepartments.md:32,
+ *  "displayed anywhere a human reads it". */
 export function humanizeDeptKey(key: string): string {
+  if (isHslSubDeptLabel(key) || key.trim().toLowerCase().startsWith('hsl:')) {
+    return formatDeptLabel(key);
+  }
   return key.replace(/_+/g, ' ').replace(/(^|\s)[a-z]/g, (c) => c.toUpperCase());
 }
 

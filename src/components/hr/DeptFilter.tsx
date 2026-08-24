@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { Select as SelectPrimitive } from '@base-ui/react/select';
 import { Building2, CheckIcon, ChevronDownIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 const ALL = '__all_depts__';
 
@@ -41,7 +42,11 @@ export default function DeptFilter<T>({
     return Array.from(seen).sort((a, b) => a.localeCompare(b));
   }, [rows, getDept]);
 
-  const labelFor = (v: string) => (v && v !== ALL ? v : 'All departments');
+  /** VALUES stay the raw master-list cell — callers filter rows by string equality
+   *  and a filter must never hide a row. Only the LABEL is prettified, so an
+   *  `hsl:filing_specialist` cell reads "HSL — Filing Specialist"
+   *  (hsl-subdepartments.md:32). */
+  const labelFor = (v: string) => (v && v !== ALL ? formatDeptLabel(v) || v : 'All departments');
 
   return (
     <SelectPrimitive.Root
@@ -91,8 +96,8 @@ export default function DeptFilter<T>({
                   value={d}
                   className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-zinc-700 outline-none data-highlighted:bg-emerald-50 data-highlighted:text-emerald-900 data-selected:font-medium data-selected:text-emerald-700 dark:text-zinc-300 dark:data-highlighted:bg-emerald-950/40 dark:data-highlighted:text-emerald-100 dark:data-selected:text-emerald-300"
                 >
-                  <SelectPrimitive.ItemText className="min-w-0 flex-1 truncate">
-                    {d}
+                  <SelectPrimitive.ItemText className="min-w-0 flex-1 truncate" title={d}>
+                    {formatDeptLabel(d) || d}
                   </SelectPrimitive.ItemText>
                   <SelectPrimitive.ItemIndicator className="flex h-3.5 w-3.5 items-center justify-center">
                     <CheckIcon className="h-3 w-3" />

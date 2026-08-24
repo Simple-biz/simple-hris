@@ -15,6 +15,7 @@ import {
 } from '@/lib/tickets/types';
 import { PRIORITY_STYLES, STATUS_STYLES, initialsFor, relativeTime } from './TicketCard';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 /**
  * /tickets → Overview: headline counts and breakdowns computed client-side
  * from the same board fetch (no extra endpoint; realtime refreshes flow in).
@@ -453,7 +454,7 @@ function MembersTable({ members, error }: { members: TicketMember[] | null; erro
                   </span>
                 </td>
                 <td className="truncate px-1 py-2 text-xs text-muted-foreground" title={m.department ?? undefined}>
-                  {m.department ?? '—'}
+                  {formatDeptLabel(m.department) || '—'}
                 </td>
                 <td className="py-2 text-right">
                   <span

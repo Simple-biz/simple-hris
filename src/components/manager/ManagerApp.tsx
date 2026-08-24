@@ -2203,7 +2203,7 @@ function ManagerAdjustmentCard({
                 {candidates.map((c) => (
                   <option key={c.email} value={c.email}>
                     {c.name}
-                    {c.department ? ` — ${c.department}` : ''}
+                    {c.department ? ` — ${formatDeptLabel(c.department)}` : ''}
                   </option>
                 ))}
               </select>
@@ -3268,7 +3268,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
             <>
               Showing active roster members in{' '}
               <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                {teamGate.departments.join(', ')}
+                {teamGate.departments.map((d) => formatDeptLabel(d) || d).join(', ')}
               </span>{' '}
               (matched from HR master list, case-insensitive).
             </>
@@ -3653,9 +3653,9 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                   </td>
                                   <td data-label="Department" className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
                                     {m.department ? (
-                                      <span className="inline-flex items-center gap-1">
+                                      <span className="inline-flex items-center gap-1" title={m.department ?? undefined}>
                                         <Building2 className="h-3 w-3 text-zinc-400" />
-                                        {m.department}
+                                        {formatDeptLabel(m.department)}
                                       </span>
                                     ) : (
                                       <span className="text-zinc-400">—</span>
@@ -3963,8 +3963,8 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                                 </p>
                                 <div className="mt-1 flex flex-wrap items-center gap-1">
                                   {m.department && (
-                                    <span className="rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
-                                      {m.department}
+                                    <span className="rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300" title={m.department ?? undefined}>
+                                      {formatDeptLabel(m.department)}
                                     </span>
                                   )}
                                   {m.mesa_member && (

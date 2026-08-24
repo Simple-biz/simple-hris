@@ -17,6 +17,7 @@ import {
   downloadHubstaffReconCsv,
 } from '@/lib/payroll/hubstaff-reconciliation';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 /** Rows shown per page in the drill-down list. */
 const PAGE_SIZE = 10;
 
@@ -270,7 +271,7 @@ export default function HubstaffMasterMatchesModal({
                       </div>
                       <div className="truncate text-[11px] text-zinc-400">
                         {r.workEmail || r.personalEmail || '—'}
-                        {r.department ? ` · ${r.department}` : ''}
+                        {r.department ? ` · ${formatDeptLabel(r.department)}` : ''}
                       </div>
                       {r.reason && (
                         <div className="mt-0.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">

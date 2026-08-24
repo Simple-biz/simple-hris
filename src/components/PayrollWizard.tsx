@@ -296,6 +296,7 @@ import {
   countRedFlags,
   type BreakdownInput,
 } from '@/lib/payroll/validation-breakdown';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 function findHeaderColumn(header: string[], ...labels: string[]): number {
   const norm = header.map((h) => h.trim().toLowerCase());
@@ -11143,7 +11144,7 @@ export default function PayrollWizard({
                                       title={`Global Master List department “${l}” is paid on this row`}
                                       className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0 text-[10px] font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
                                     >
-                                      {l}
+                                      {formatDeptLabel(l) || l}
                                     </span>
                                   ))}
                                 {workerCount > 0 && (

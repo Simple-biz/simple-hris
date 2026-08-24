@@ -38,6 +38,7 @@ import { cn } from '@/lib/utils';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { toast } from 'sonner';
 import type { AuditLogEntry } from '@/lib/supabase/audit-log';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 type SortKey = 'created_at' | 'action' | 'user_name';
 type SortDir = 'asc' | 'desc';
@@ -302,6 +303,13 @@ function paymentAmounts(details: Record<string, unknown> | null): string {
   return parts.join(' / ');
 }
 
+/** Department values inside audit `details` are the RAW master-list cell
+ *  (`hsl:filing_specialist`). The stored record is never rewritten — only the
+ *  sentence a human reads is prettified, per hsl-subdepartments.md:32. */
+function dep(v: unknown, fallback = '?'): string {
+  return formatDeptLabel(v == null ? null : String(v)) || fallback;
+}
+
 export function formatActionLabel(action: string, details: Record<string, unknown> | null): string {
   switch (action) {
     case 'settings.rule.toggle':
@@ -309,7 +317,7 @@ export function formatActionLabel(action: string, details: Record<string, unknow
     case 'settings.ot.global':
       return `Global OT Suspension → ${details?.suspended ? 'On' : 'Off'}`;
     case 'settings.ot.department':
-      return `${details?.department ?? 'Dept'} Overtime → ${details?.enabled ? 'On' : 'Off'}`;
+      return `${dep(details?.department, 'Dept')} Overtime → ${details?.enabled ? 'On' : 'Off'}`;
     case 'csv.upload': {
       const mode = details?.mode === 'replace' ? 'replaced' : 'appended';
       return `CSV ${mode}: ${details?.file ?? 'file'} (${details?.rows ?? '?'} rows)`;
@@ -442,7 +450,7 @@ export function formatActionLabel(action: string, details: Record<string, unknow
           : action === 'payroll.kpi.locked'
             ? 'locked'
             : 'reopened';
-      const dept = String(details?.department ?? '?');
+      const dept = dep(details?.department);
       const period = String(details?.period_start ?? '?');
       const src = String(pick(details, 'source_label', 'source') ?? '');
       return `KPI ${verb}: ${dept} for ${period}${src ? ` (via ${src})` : ''}`;
@@ -473,7 +481,7 @@ export function formatActionLabel(action: string, details: Record<string, unknow
     case 'hr.employee.reonboarded':
       return `Re-onboarded: ${String(details?.target_email ?? '?')}`;
     case 'hr.onboarding.set_work_email':
-      return `Work email assigned: ${String(details?.name ?? '?')} → ${String(details?.work_email ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}`;
+      return `Work email assigned: ${String(details?.name ?? '?')} → ${String(details?.work_email ?? '?')}${details?.department ? ` (${dep(details.department)})` : ''}`;
     case 'hr.onboarding.send_webhook': {
       const ok = !details?.webhook_error;
       return `Onboarding invite ${ok ? 'sent' : 'FAILED'}: ${String(details?.to ?? '?')}${ok ? '' : ` — ${String(details?.webhook_error)}`}`;
@@ -481,13 +489,13 @@ export function formatActionLabel(action: string, details: Record<string, unknow
 
     // ── Teams & transfers ───────────────────────────────────────────────
     case 'department_transfer.requested':
-      return `Transfer requested: ${String(details?.employee_email ?? '?')} (${String(details?.from_department ?? '?')} → ${String(details?.to_department ?? '?')})`;
+      return `Transfer requested: ${String(details?.employee_email ?? '?')} (${dep(details?.from_department)} → ${dep(details?.to_department)})`;
     case 'department_transfer.cancelled':
       return `Transfer request cancelled: ${String(details?.employee_email ?? '?')}`;
     case 'department_manager.assigned':
-      return `Manager assigned: ${String(details?.manager_email ?? '?')} → ${String(details?.department ?? '?')}`;
+      return `Manager assigned: ${String(details?.manager_email ?? '?')} → ${dep(details?.department)}`;
     case 'department_manager.revoked':
-      return `Manager revoked: ${String(details?.manager_email ?? '?')} ← ${String(details?.department ?? '?')}`;
+      return `Manager revoked: ${String(details?.manager_email ?? '?')} ← ${dep(details?.department)}`;
 
     // ── Leave (deletions) ───────────────────────────────────────────────
     case 'leave.owner_deleted':
@@ -505,7 +513,7 @@ export function formatActionLabel(action: string, details: Record<string, unknow
     case 'orphanage_budget.created':
       return `Orphanage budget request: ${String(details?.visit_type ?? 'visit')}${details?.final_amount != null ? ` — ₱${String(details.final_amount)}` : ''}`;
     case 'fpu.enroll':
-      return `FPU enrollment: ${String(details?.full_name ?? details?.email ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}`;
+      return `FPU enrollment: ${String(details?.full_name ?? details?.email ?? '?')}${details?.department ? ` (${dep(details.department)})` : ''}`;
     case 'employee_gift_shipping.edited': {
       const fields = (details?.fields_changed as string[] | undefined)?.join(', ');
       return `Gift shipping edited: ${String(details?.personal_email ?? '?')}${fields ? ` (${fields})` : ''}`;
@@ -515,9 +523,9 @@ export function formatActionLabel(action: string, details: Record<string, unknow
 
     // ── HR: pending hires / onboarding pipeline ─────────────────────────
     case 'hr.pending.created':
-      return `Hire staged: ${String(pick(details, 'name', 'personal_email') ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}`;
+      return `Hire staged: ${String(pick(details, 'name', 'personal_email') ?? '?')}${details?.department ? ` (${dep(details.department)})` : ''}`;
     case 'hr.onboarding.submitted':
-      return `Onboarding paperwork submitted: ${String(pick(details, 'name', 'personal_email') ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}${details?.resubmission ? ' · re-submission' : ''}`;
+      return `Onboarding paperwork submitted: ${String(pick(details, 'name', 'personal_email') ?? '?')}${details?.department ? ` (${dep(details.department)})` : ''}${details?.resubmission ? ' · re-submission' : ''}`;
     case 'hr.orientation.marked':
       return `Orientation attended: ${String(pick(details, 'name', 'work_email') ?? '?')}${details?.attended_on ? ` — ${String(details.attended_on)}` : ''}${details?.already_marked ? ' · re-marked' : ''}`;
     case 'hr.orientation.cleared':
@@ -535,7 +543,7 @@ export function formatActionLabel(action: string, details: Record<string, unknow
       return `Bulk unpromote: ${reverted}/${total} sent back to Ready`;
     }
     case 'hr.pending.promoted':
-      return `Hire promoted: ${String(pick(details, 'name', 'work_email') ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}`;
+      return `Hire promoted: ${String(pick(details, 'name', 'work_email') ?? '?')}${details?.department ? ` (${dep(details.department)})` : ''}`;
     case 'hr.pending.unpromoted':
       return `Hire sent back to Ready: ${String(pick(details, 'name', 'work_email') ?? '?')}`;
     case 'hr.pending.updated': {
@@ -546,11 +554,11 @@ export function formatActionLabel(action: string, details: Record<string, unknow
     case 'hr.pending.retry_workspace':
       return `Workspace setup retried: ${String(pick(details, 'work_email', 'target_email', 'name', 'resource_id') ?? '?')}`;
     case 'hr.hire.cancelled':
-      return `Hire cancelled: ${String(pick(details, 'target_email', 'work_email', 'name') ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}`;
+      return `Hire cancelled: ${String(pick(details, 'target_email', 'work_email', 'name') ?? '?')}${details?.department ? ` (${dep(details.department)})` : ''}`;
     case 'hr.hire.deleted':
       return `Hire permanently deleted: ${String(pick(details, 'name', 'work_email', 'target_email') ?? '?')}`;
     case 'hr.onboarding.link_created':
-      return `Onboarding link created: ${String(pick(details, 'invite_name', 'invite_personal_email') ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}`;
+      return `Onboarding link created: ${String(pick(details, 'invite_name', 'invite_personal_email') ?? '?')}${details?.department ? ` (${dep(details.department)})` : ''}`;
     case 'hr.onboarding.archived':
       return `Onboarding submission archived: ${String(pick(details, 'name', 'personal_email') ?? '?')}`;
     case 'hr.onboarding.deleted':
@@ -558,7 +566,7 @@ export function formatActionLabel(action: string, details: Record<string, unknow
     case 'hr.onboarding.set_workspace_status':
       return `Workspace status set: ${String(pick(details, 'work_email', 'target_email') ?? '?')}${details?.status ? ` → ${String(details.status)}` : ''}`;
     case 'hr.pay_plan.uploaded':
-      return `Pay plan uploaded: ${String(details?.department ?? '?')}${details?.country ? ` (${String(details.country)})` : ''}`;
+      return `Pay plan uploaded: ${dep(details?.department)}${details?.country ? ` (${String(details.country)})` : ''}`;
     case 'hr.pay_plan.deleted':
       return `Pay plan deleted${details?.id ? ` (#${String(details.id)})` : ''}`;
 
@@ -590,7 +598,7 @@ export function formatActionLabel(action: string, details: Record<string, unknow
 
     // ── Global Master List ──────────────────────────────────────────────
     case 'master.add':
-      return `Employee added to master list: ${String(pick(details, 'name', 'work_email') ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}`;
+      return `Employee added to master list: ${String(pick(details, 'name', 'work_email') ?? '?')}${details?.department ? ` (${dep(details.department)})` : ''}`;
 
     // ── MESA ────────────────────────────────────────────────────────────
     case 'mesa.request.approved':
@@ -620,13 +628,13 @@ export function formatActionLabel(action: string, details: Record<string, unknow
 
     // ── Transfers (approve / reject) ────────────────────────────────────
     case 'department_transfer.approved':
-      return `Transfer approved: ${String(details?.employee_email ?? '?')}${details?.to_department ? ` → ${String(details.to_department)}` : ''}`;
+      return `Transfer approved: ${String(details?.employee_email ?? '?')}${details?.to_department ? ` → ${dep(details.to_department)}` : ''}`;
     case 'department_transfer.rejected':
       return `Transfer rejected: ${String(details?.employee_email ?? '?')}`;
 
     // ── Announcements ───────────────────────────────────────────────────
     case 'announcement.posted': {
-      const where = details?.scope === 'department' ? String(details?.department ?? 'a department') : 'general';
+      const where = details?.scope === 'department' ? dep(details?.department, 'a department') : 'general';
       return `Announcement posted: “${String(details?.title ?? 'Untitled')}” (${where})`;
     }
     case 'announcement.pin_toggled':

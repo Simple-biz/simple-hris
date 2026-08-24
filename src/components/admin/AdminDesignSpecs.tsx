@@ -24,6 +24,7 @@ import {
 } from '@/lib/tickets/types';
 import { PRIORITY_STYLES, STATUS_STYLES, initialsFor } from '@/components/tickets/TicketCard';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 /**
  * Design & Specifications
  * -----------------------
@@ -608,7 +609,7 @@ function TicketDevelopersSection({ onNavigate }: { onNavigate?: (tab: string) =>
                           {dev.name ?? dev.email.split('@')[0]}
                         </span>
                         <span className="block truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                          {dev.department ?? dev.email}
+                          {formatDeptLabel(dev.department) || dev.email}
                         </span>
                       </span>
                       <span className="flex shrink-0 flex-col items-end gap-1">

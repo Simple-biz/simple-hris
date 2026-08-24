@@ -39,6 +39,7 @@ import { BASE_SOURCE_OPTIONS, isReferralSource } from '@/lib/hr/referral-source'
 import { useChecklistRoom } from '@/hooks/useChecklistRoom';
 import NewHireChecklistLockDialog, { type LockDialogMode } from './NewHireChecklistLockDialog';
 import NewHireQuickAddDialog, { type QuickAddValues } from './NewHireQuickAddDialog';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 /** Grid columns, in display order. Keys match the DB / API field names 1:1. */
 const COLUMNS = [
@@ -1211,7 +1212,7 @@ export default function HrNewHireChecklist({
                 >
                   <option value="" className={SELECT_OPTION_CLASS}>Choose…</option>
                   {departments.map((d) => (
-                    <option key={d} value={d} className={SELECT_OPTION_CLASS}>{d}</option>
+                    <option key={d} value={d} className={SELECT_OPTION_CLASS}>{formatDeptLabel(d) || d}</option>
                   ))}
                 </select>
               ) : (
@@ -1324,7 +1325,7 @@ export default function HrNewHireChecklist({
               >
                 <option value="" className={SELECT_OPTION_CLASS}>All departments</option>
                 {filterOptions.departments.map((d) => (
-                  <option key={d} value={d} className={SELECT_OPTION_CLASS}>{d}</option>
+                  <option key={d} value={d} className={SELECT_OPTION_CLASS}>{formatDeptLabel(d) || d}</option>
                 ))}
               </select>
 

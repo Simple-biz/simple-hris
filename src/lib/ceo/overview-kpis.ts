@@ -20,6 +20,7 @@ import {
   formatDisbursementReportName,
   type DisbursementReportSummary,
 } from '@/lib/payroll/disbursement-reports';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 /** One bar in the "headcount by department" graph. */
 export interface CeoDeptCount {
@@ -192,7 +193,7 @@ function buildFallbackReconRows(pay: CurrentPayResult, roster: PeopleRosterRow[]
     const noHours = didWork
       ? null
       : isHubstaffExemptDept(r.department)
-        ? { reason: `${r.department ?? 'This team'} — no Hubstaff tracking by nature`, exception: true }
+        ? { reason: `${formatDeptLabel(r.department) || 'This team'} — no Hubstaff tracking by nature`, exception: true }
         : reasonForNoHoursCeo(r, pay.period.start, pay.period.end);
     out.push({
       status: didWork

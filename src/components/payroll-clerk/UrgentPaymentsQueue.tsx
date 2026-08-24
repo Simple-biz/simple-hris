@@ -32,6 +32,7 @@ import OrphanageMarkPaidDialog, { type OrphanageMarkPaidPayload } from './Orphan
 import { PROCESSORS, DISPATCH_PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import type { OrphanagePendingItem } from '@/lib/supabase/orphanage-dispatches';
 import type { PaymentDispatchRow, PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 export interface UrgentPaymentRow {
   id: string;
@@ -1233,7 +1234,7 @@ function OneOffCard({
       <div className="min-w-0 flex-1 space-y-0.5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold text-zinc-900 dark:text-zinc-100">{row.full_name}</span>
-          {row.department && <span className="text-xs text-zinc-400 dark:text-zinc-500">{row.department}</span>}
+          {row.department && <span className="text-xs text-zinc-400 dark:text-zinc-500" title={row.department}>{formatDeptLabel(row.department)}</span>}
         </div>
         <div className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500">{row.work_email}</div>
         {row.note && (

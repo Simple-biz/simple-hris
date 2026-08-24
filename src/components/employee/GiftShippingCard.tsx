@@ -27,6 +27,7 @@ import {
 } from '@/lib/gift-milestones';
 import type { EmployeeGiftShippingRow } from '@/lib/supabase/employee-gift-shipping';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 export type GiftShippingStatus =
   | 'none' /* no milestone in window */
   | 'unsubmitted' /* milestone open, employee hasn't filled the form yet */
@@ -781,7 +782,7 @@ export default function GiftShippingCard({
                 </div>
                 <div>
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">Department</div>
-                  <div className="mt-0.5 font-medium text-zinc-900 dark:text-zinc-100">{prefill.department ?? '—'}</div>
+                  <div className="mt-0.5 font-medium text-zinc-900 dark:text-zinc-100" title={prefill.department ?? undefined}>{formatDeptLabel(prefill.department) || '—'}</div>
                 </div>
                 <div>
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">Personal email</div>

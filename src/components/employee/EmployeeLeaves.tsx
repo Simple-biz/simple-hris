@@ -34,6 +34,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { LeaveRequestRow } from '@/lib/supabase/leave-requests';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 type LeaveTypeMeta = {
   value: string;
   label: string;
@@ -219,7 +220,7 @@ export default function EmployeeLeaves({
           ? 'No department manager is configured yet — accounting will follow up.'
           : managers.length === 1
             ? `Sent to your manager (${managers[0]}). Any single approval clears the request.`
-            : `Sent to ${managers.length} ${department ?? ''} managers. Any one approval clears the request.`;
+            : `Sent to ${managers.length} ${formatDeptLabel(department)} managers. Any one approval clears the request.`;
       toast.success('Leave request submitted', { description });
 
       setReason('');
@@ -399,7 +400,7 @@ export default function EmployeeLeaves({
                   <div className="grid gap-2 sm:grid-cols-3">
                     <InfoRow
                       icon={Users}
-                      title={`Sent to your ${department || 'department'} managers`}
+                      title={`Sent to your ${formatDeptLabel(department) || 'department'} managers`}
                       body="Everyone who manages your department sees it at the same time."
                     />
                     <InfoRow
@@ -646,7 +647,7 @@ function LeaveHero({
             variant="outline"
             className="shrink-0 border-orange-200 bg-orange-50 text-orange-700 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-orange-300"
           >
-            {department}
+            {formatDeptLabel(department)}
           </Badge>
         )}
       </div>

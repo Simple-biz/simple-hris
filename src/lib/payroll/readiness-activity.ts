@@ -13,6 +13,8 @@
  * blueprint Q1 = audited saves only, no presence).
  */
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+
 /** One line of the Readiness pane's bottom feed, fully composed server-side —
  *  the client renders it verbatim. */
 export interface ReadinessActivityLine {
@@ -62,7 +64,9 @@ function detailString(details: Record<string, unknown> | null, key: string): str
 function deptLabel(details: Record<string, unknown> | null, deptNames?: Map<string, string>): string | null {
   const key = detailString(details, 'department');
   if (!key) return null;
-  return deptNames?.get(key) ?? key;
+  // A key the name map doesn't carry is still shown to a human, so it must not
+  // read as a raw `hsl:<sub>` slug (hsl-subdepartments.md:32).
+  return deptNames?.get(key) ?? (formatDeptLabel(key) || key);
 }
 
 /** Allowlist: audited action → surface + line template. Anything not listed is

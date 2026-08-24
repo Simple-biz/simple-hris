@@ -49,6 +49,7 @@ import {
   type DisputesByEmployee,
 } from '@/lib/pab-disputes/fetch-orphanage-overlap';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 const PAGE_SIZE = 15;
 
 type EmployeeOption = {
@@ -381,7 +382,7 @@ export default function OrphanageVisits({ sessionEmail }: { sessionEmail?: strin
                             {e.name ?? email}
                           </span>
                           <span className="truncate text-[10px] text-zinc-500">
-                            {email}{e.department ? ` · ${e.department}` : ''}
+                            {email}{e.department ? ` · ${formatDeptLabel(e.department)}` : ''}
                           </span>
                         </button>
                       );

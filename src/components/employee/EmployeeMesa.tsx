@@ -35,6 +35,7 @@ import { toast } from 'sonner';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { MesaLedgerEvent, MesaMemberSummary } from '@/lib/mesa/ledger';
 import MesaReceiptDialog from './MesaReceiptDialog';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 interface Props {
   employeeEmail: string;
@@ -1441,7 +1442,7 @@ function MesaRequestForm({
                 <div className="min-w-0">
                   <dt className="text-[11px] text-zinc-500 dark:text-zinc-400">Department</dt>
                   <dd className="truncate text-sm font-medium text-zinc-900 dark:text-white">
-                    {dept || <span className="text-zinc-400 dark:text-zinc-600">Not on file</span>}
+                    {formatDeptLabel(dept) || <span className="text-zinc-400 dark:text-zinc-600">Not on file</span>}
                   </dd>
                 </div>
                 <div className="min-w-0 sm:col-span-2">

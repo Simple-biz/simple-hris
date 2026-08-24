@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 import { addWeeks, formatWeekLabel, sundayIso } from '@/lib/hr/hiring-week';
 import { getHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 /**
  * Offboarding → "Weekly overview": two KPI cards (people offboarded + attrition
  * rate) scoped by their own Sun–Sat week selector, mirroring the HR dashboard's
@@ -442,7 +443,7 @@ export default function OffboardingWeeklyPulse({
                     className="min-w-0 flex-1 truncate text-zinc-700 dark:text-zinc-300"
                     title={d.dept}
                   >
-                    {d.dept}
+                    {formatDeptLabel(d.dept) || d.dept}
                   </span>
                   <span className="h-2 w-20 shrink-0 overflow-hidden rounded-full bg-rose-100/80 sm:w-24 dark:bg-rose-950/50">
                     <motion.span

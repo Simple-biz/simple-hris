@@ -103,6 +103,7 @@ import {
   type PayCurrency,
 } from '@/lib/payment-catalog/pay-structure';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 // -- Types ---------------------------------------------------------------------
 
 type BonusStatus = 'draft' | 'ready' | 'locked';
@@ -4205,8 +4206,8 @@ function AddExternalMemberModal({
                           </span>
                         </span>
                         {c.department && (
-                          <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                            {c.department}
+                          <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400" title={c.department ?? undefined}>
+                            {formatDeptLabel(c.department)}
                           </span>
                         )}
                         {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />}
@@ -4264,8 +4265,8 @@ function AddExternalMemberModal({
                               {offboardedLeftLabel(o)}
                             </span>
                             {c.department && (
-                              <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                                {c.department}
+                              <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400" title={c.department ?? undefined}>
+                                {formatDeptLabel(c.department)}
                               </span>
                             )}
                             {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />}
@@ -4311,7 +4312,7 @@ function AddExternalMemberModal({
               </div>
               {selected?.department && (
                 <div className="mt-0.5 truncate font-mono text-[10px] text-zinc-400">
-                  {selected.offboarded ? 'Was in' : 'Currently in'}: {selected.department}
+                  {selected.offboarded ? 'Was in' : 'Currently in'}: {formatDeptLabel(selected.department)}
                 </div>
               )}
             </div>

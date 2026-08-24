@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { fetchRosterEmailSet, isOnRoster } from '@/lib/roster/roster-emails';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 type FpuEnrollment = {
   id: string;
   email: string;
@@ -254,7 +255,7 @@ export default function HrFpuEnrollments() {
                         </span>
                         <span className="inline-flex items-center gap-1">
                           <Building2 className="h-3.5 w-3.5 text-zinc-400" />
-                          {r.department || '—'}
+                          {formatDeptLabel(r.department) || '—'}
                         </span>
                         <span className="inline-flex items-center gap-1">
                           <Clock className="h-3.5 w-3.5 text-zinc-400" />

@@ -60,7 +60,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
-import { hslSubDeptOptions } from '@/lib/departments/hsl-subdept';
+import { formatDeptLabel, hslSubDeptOptions } from '@/lib/departments/hsl-subdept';
 import {
   buildDeptRail,
   assignRosterToRail,
@@ -2967,7 +2967,7 @@ function IndividualPayAdder({
           options={list.map((r) => ({
             value: r.email,
             label: r.name,
-            hint: r.department ? `(${r.department})` : undefined,
+            hint: r.department ? `(${formatDeptLabel(r.department)})` : undefined,
           }))}
         />
         {!open && (
@@ -4483,7 +4483,7 @@ function EmployeeBonusAdder({
           options={list.map((r) => ({
             value: r.email,
             label: r.name,
-            hint: r.department ? `(${r.department})` : undefined,
+            hint: r.department ? `(${formatDeptLabel(r.department)})` : undefined,
           }))}
         />
         <AnimatedSelect
@@ -5088,7 +5088,7 @@ function SearchResultRow({
           {person.name}
         </span>
         <span className="block truncate text-xs text-zinc-500">
-          {person.department || 'No department'} &middot; {person.email}
+          {formatDeptLabel(person.department) || 'No department'} &middot; {person.email}
         </span>
       </div>
       <div className="hidden shrink-0 items-center gap-1.5 md:flex">
@@ -5208,7 +5208,7 @@ function PersonCompCard({
       : comp.rateSource === 'sheet'
         ? 'Paid from the rates sheet -- no individual catalog rate.'
         : comp.rateSource === 'department'
-          ? `Department default${person.department ? ` for ${person.department}` : ''} -- no individual or sheet rate.`
+          ? `Department default${person.department ? ` for ${formatDeptLabel(person.department)}` : ''} -- no individual or sheet rate.`
           : '';
   const editorInitial =
     comp.override ??
@@ -5272,7 +5272,7 @@ function PersonCompCard({
               {person.name}
             </h2>
             <p className="truncate text-xs text-zinc-500">
-              {person.department || 'No department'} &middot; {person.email}
+              {formatDeptLabel(person.department) || 'No department'} &middot; {person.email}
             </p>
           </div>
         </div>
@@ -5400,7 +5400,7 @@ function PersonCompCard({
           ) : (
             <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
               Personal bonuses can&apos;t be assigned here:{' '}
-              {person.department ? `"${person.department}"` : "this person's department"} isn&apos;t
+              {person.department ? `"${formatDeptLabel(person.department)}"` : "this person's department"} isn&apos;t
               wired into the bonus calculators, so a bonus filed under it would never be applied or
               paid.
             </p>
@@ -5441,7 +5441,7 @@ function PersonCompCard({
       <Section
         icon={Building2}
         title="Department bonuses"
-        subtitle={`Common bonuses assigned to everyone in ${person.department || 'their department'}.`}
+        subtitle={`Common bonuses assigned to everyone in ${formatDeptLabel(person.department) || 'their department'}.`}
       >
         {comp.commonAssignments.length === 0 ? (
           <p className="text-sm text-zinc-400">No department-wide bonuses reach this person.</p>

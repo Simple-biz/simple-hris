@@ -15,6 +15,7 @@ import {
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { RailMixBand } from './rail-mix-band';
 import { NO_DEPARTMENT, type RailMix } from '@/lib/people/rail-mix';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 // Kept literal to avoid pulling the server-only app-settings module into the
 // client bundle — must match BANK_CHANGES_PULSE_KEY in src/lib/supabase/app-settings.ts.
@@ -603,7 +604,7 @@ function EmptyState({ searching, department }: { searching: boolean; department:
           <Search className="mb-2 h-6 w-6 text-zinc-300 dark:text-zinc-600" />
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
             {department && !searching
-              ? `No bank changes from ${department}.`
+              ? `No bank changes from ${formatDeptLabel(department)}.`
               : 'No bank changes match your search.'}
           </p>
           {department && (

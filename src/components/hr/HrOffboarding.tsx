@@ -33,6 +33,7 @@ import type { OffboardingQueueRow } from '@/lib/supabase/offboarding-queue';
 import HrOffboardQueueProcessor from './HrOffboardQueueProcessor';
 import OffboardingWeeklyPulse from './OffboardingWeeklyPulse';
 import DeptFilter from './DeptFilter';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 type HistoryRow = {
   id: string;
@@ -680,7 +681,7 @@ export default function HrOffboarding() {
                             <div className="break-all font-mono text-[11px] text-zinc-500">{r.employee_work_email ?? r.employee_email}</div>
                           </td>
                           <td data-label="Personal email" className="break-all px-4 py-4 font-mono text-[11px] text-zinc-500">{r.employee_personal_email ?? '—'}</td>
-                          <td data-label="Department" className="px-4 py-4 text-xs text-zinc-700 dark:text-zinc-300">{r.department ?? '—'}</td>
+                          <td data-label="Department" className="px-4 py-4 text-xs text-zinc-700 dark:text-zinc-300" title={r.department ?? undefined}>{formatDeptLabel(r.department) || '—'}</td>
                           <td data-label="Reason" className="px-4 py-4">
                             <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
                               {REASON_LABELS[r.reason] ?? r.reason}
@@ -776,7 +777,7 @@ export default function HrOffboarding() {
                             <div className="break-all font-mono text-[11px] text-zinc-500">{r.employee_work_email ?? r.employee_email}</div>
                           </td>
                           <td data-label="Personal email" className="break-all px-4 py-4 font-mono text-[11px] text-zinc-500">{r.employee_personal_email ?? '—'}</td>
-                          <td data-label="Department" className="px-4 py-4 text-xs text-zinc-700 dark:text-zinc-300">{r.department ?? '—'}</td>
+                          <td data-label="Department" className="px-4 py-4 text-xs text-zinc-700 dark:text-zinc-300" title={r.department ?? undefined}>{formatDeptLabel(r.department) || '—'}</td>
                           <td data-label="Reason" className="px-4 py-4">
                             {reasonKey ? (
                               <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">

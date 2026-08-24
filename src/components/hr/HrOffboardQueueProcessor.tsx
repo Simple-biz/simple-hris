@@ -37,6 +37,7 @@ const QUEUE_REASON_OPTIONS = OFFBOARD_REASON_OPTIONS.filter((r) =>
   isQueueableOffboardReason(r.value),
 );
 import type { OffboardingQueueRow } from '@/lib/supabase/offboarding-queue';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 interface Props {
   open: boolean;
@@ -480,8 +481,8 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                     </p>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       {current.department && (
-                        <span className="rounded-full bg-zinc-800/80 px-2 py-0.5 text-[10px] font-medium text-zinc-400 ring-1 ring-zinc-700/50">
-                          {current.department}
+                        <span className="rounded-full bg-zinc-800/80 px-2 py-0.5 text-[10px] font-medium text-zinc-400 ring-1 ring-zinc-700/50" title={current.department ?? undefined}>
+                          {formatDeptLabel(current.department)}
                         </span>
                       )}
                       <span className="text-[10px] text-zinc-500">

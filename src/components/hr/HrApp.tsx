@@ -65,6 +65,7 @@ import { sundayIso } from '@/lib/hr/hiring-week';
 import DeptFilter from './DeptFilter';
 import HrCollabLayer from './HrCollabLayer';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 }
@@ -778,7 +779,7 @@ function OffboardReasonsCard({
             )}
             <span className="text-sm text-zinc-400 dark:text-zinc-500">
               separation{total !== 1 ? 's' : ''} on record
-              {dept ? ` · ${dept}` : ''}
+              {dept ? ` · ${formatDeptLabel(dept)}` : ''}
             </span>
           </div>
         </div>
@@ -1088,7 +1089,7 @@ function RosterCard({ loading, roster }: { loading: boolean; roster: EmployeeRow
                 {pageRows.map((r, i) => (
                   <tr key={`${r.work_email ?? r.personal_email ?? i}`} className="hover:bg-zinc-50/60 dark:hover:bg-zinc-800/30">
                     <td data-label="Name" className="px-4 py-2 font-medium text-zinc-800 dark:text-zinc-200">{r.name ?? '—'}</td>
-                    <td data-label="Dept" className="px-4 py-2 text-zinc-500 dark:text-zinc-400">{r.department ?? '—'}</td>
+                    <td data-label="Dept" className="px-4 py-2 text-zinc-500 dark:text-zinc-400" title={r.department ?? undefined}>{formatDeptLabel(r.department) || '—'}</td>
                     <td data-label="Work email" className="px-4 py-2 font-mono text-zinc-500 dark:text-zinc-400">{r.work_email ?? '—'}</td>
                     <td data-label="Personal email" className="px-4 py-2 font-mono text-zinc-500 dark:text-zinc-400">{r.personal_email ?? '—'}</td>
                     <td data-label="Location" className="px-4 py-2 text-zinc-500 dark:text-zinc-400">{r.city ?? '—'}</td>
@@ -1504,8 +1505,8 @@ function PhilippinesMapCard({
                                 {emp.name ?? 'Unknown'}
                               </p>
                               {emp.department && (
-                                <p className="truncate text-[10px] text-zinc-400 dark:text-zinc-500">
-                                  {emp.department}
+                                <p className="truncate text-[10px] text-zinc-400 dark:text-zinc-500" title={emp.department}>
+                                  {formatDeptLabel(emp.department)}
                                 </p>
                               )}
                             </div>
@@ -2126,8 +2127,8 @@ function RecentHiresCard({
                     <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
                       {row.name ?? row.work_email ?? '—'}
                     </p>
-                    <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                      {row.department ?? 'Unassigned'}
+                    <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400" title={row.department ?? undefined}>
+                      {formatDeptLabel(row.department) || 'Unassigned'}
                     </p>
                     <p className="mt-0.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500">
                       {row.work_email ?? row.personal_email ?? '—'}
@@ -2242,7 +2243,7 @@ function RecentHiresCard({
                   {row.name ?? row.work_email ?? '—'}
                 </p>
                 <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                  <span className="font-medium text-zinc-600 dark:text-zinc-300">{row.department ?? 'Unassigned'}</span>
+                  <span className="font-medium text-zinc-600 dark:text-zinc-300" title={row.department ?? undefined}>{formatDeptLabel(row.department) || 'Unassigned'}</span>
                   <span className="mx-1.5 text-zinc-300 dark:text-zinc-700">&middot;</span>
                   {row.work_email ?? row.personal_email ?? '—'}
                 </p>
@@ -2322,7 +2323,7 @@ function DepartmentBarsCard({
                       <span className="mr-2 inline-block w-4 text-right font-mono text-[10px] text-zinc-400 tabular-nums dark:text-zinc-600">
                         {String(i + 1).padStart(2, '0')}
                       </span>
-                      {d.department}
+                      {formatDeptLabel(d.department)}
                     </span>
                     <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
                       {d.count}
@@ -2392,8 +2393,8 @@ function DeptSummaryCard({
           <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-zinc-400 dark:text-zinc-500">
             Largest Team
           </p>
-          <p className="mt-1 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-            {largest.department}
+          <p className="mt-1 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50" title={largest.department}>
+            {formatDeptLabel(largest.department)}
           </p>
           <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
             {largest.count} {largest.count === 1 ? 'person' : 'people'} &middot; {totalActive > 0 ? ((largest.count / totalActive) * 100).toFixed(0) : 0}% of headcount
@@ -2535,7 +2536,10 @@ function AttritionByDeptCard({
                     fill="currentColor"
                     className="font-medium text-zinc-700 dark:text-zinc-300"
                   >
-                    {row.dept.length > 20 ? row.dept.slice(0, 18) + '…' : row.dept}
+                    {(() => {
+                      const label = formatDeptLabel(row.dept) || row.dept;
+                      return label.length > 20 ? label.slice(0, 18) + '…' : label;
+                    })()}
                   </text>
 
                   {/* Track */}

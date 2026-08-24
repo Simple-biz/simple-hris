@@ -22,6 +22,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage } from 'pd
 import * as XLSX from 'xlsx';
 import type { PayStubView } from './paystub-view';
 import { dedupeOneRowPerWeek } from './paystub-week-dedupe';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 // ---------------------------------------------------------------------------
 // Model
@@ -249,7 +250,7 @@ export function buildPayStubsWorkbook(
 
   const banner: (string | number)[][] = [
     ['Pay Stubs'],
-    [`Employee: ${opts.employeeName}${opts.department ? ` · ${opts.department}` : ''}`],
+    [`Employee: ${opts.employeeName}${opts.department ? ` · ${formatDeptLabel(opts.department)}` : ''}`],
     [`Exported ${formatTimestamp(generatedAt)} · ${weeks.length} ${weeks.length === 1 ? 'week' : 'weeks'}`],
     ['Pulled from Simple-HRIS System'],
     [],
@@ -483,7 +484,7 @@ export async function generatePayStubsPdf(
     state.y = top - 46;
     state.page.drawText('Pay Stubs', { x: MARGIN, y: state.y, size: 16, font: bold, color: NAVY });
     state.y -= 15;
-    const sub = `${opts.employeeName}${opts.department ? ` · ${opts.department}` : ''}   ${String.fromCharCode(0xb7)}   ${weeks.length} paid ${weeks.length === 1 ? 'week' : 'weeks'}`;
+    const sub = `${opts.employeeName}${opts.department ? ` · ${formatDeptLabel(opts.department)}` : ''}   ${String.fromCharCode(0xb7)}   ${weeks.length} paid ${weeks.length === 1 ? 'week' : 'weeks'}`;
     state.page.drawText(sanitize(sub), { x: MARGIN, y: state.y, size: 9, font, color: MUTED });
     state.y -= 10;
     state.page.drawLine({

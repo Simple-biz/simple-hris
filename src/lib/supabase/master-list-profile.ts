@@ -1,6 +1,7 @@
 import { createSupabaseServiceRoleClient } from './server';
 import { masterListDisplayName } from '@/lib/name/display-name';
 import { toTitleCaseName } from '@/lib/text/sanitize-name';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 /**
  * Canonical master-list "Name". A value already in surname-first form — it
@@ -213,7 +214,7 @@ export async function updateMasterListProfile(
         ok: false,
         code: 'collision',
         error: `Another active employee already uses ${nextWork}${
-          nextDept ? ` in ${nextDept}` : ''
+          nextDept ? ` in ${formatDeptLabel(nextDept)}` : ''
         }. Change the work email or department first.`,
       };
     }

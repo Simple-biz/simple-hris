@@ -26,6 +26,7 @@ import {
   markFetchedThisSession,
 } from '@/lib/accounting/tab-cache';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 /** In-session cache key for the one-shot KPI snapshot (headcount, system
  *  overview, last cycle). The live "payments to send" counter is separate
  *  (usePaymentsLive / Realtime) and stays live regardless. */
@@ -778,7 +779,7 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
                 <li key={d.department} className="space-y-1">
                   <div className="flex items-center justify-between gap-2 text-[12px]">
                     <span className="min-w-0 truncate text-zinc-600 dark:text-zinc-300" title={d.department}>
-                      {d.department}
+                      {formatDeptLabel(d.department)}
                     </span>
                     <span className="shrink-0 font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
                       {d.count}

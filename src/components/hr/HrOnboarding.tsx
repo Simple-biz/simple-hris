@@ -47,6 +47,7 @@ import type {
   HrPendingStatus,
 } from '@/lib/supabase/hr-pending-employees';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 type TabFilter = 'pending' | 'ready' | 'promoted' | 'failed' | 'cancelled' | 'no_show' | 'all';
 type SubTab = 'pending-hires' | 'onboarding-form';
 
@@ -1017,8 +1018,8 @@ export default function HrOnboarding({ deepLink }: { deepLink?: OnboardingDeepLi
                               </div>
                             )}
                           </td>
-                          <td data-label="Department" className="px-4 py-3 text-xs text-zinc-700 dark:text-zinc-300">
-                            {row.department}
+                          <td data-label="Department" className="px-4 py-3 text-xs text-zinc-700 dark:text-zinc-300" title={row.department ?? undefined}>
+                            {formatDeptLabel(row.department)}
                           </td>
                           <td data-label="Country" className="px-4 py-3 text-xs text-zinc-700 dark:text-zinc-300">
                             {row.country ?? '—'}
@@ -1451,7 +1452,7 @@ function BulkActionConfirmDialog({
                     : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700',
                 )}
               >
-                {dept}
+                {formatDeptLabel(dept) || dept}
                 <span className={cn(
                   'rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
                   activeDept === dept

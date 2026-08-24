@@ -1846,8 +1846,8 @@ export default function HrOnboardingForm({
                           {r.invite_personal_email ?? r.email ?? '—'}
                         </div>
                       </td>
-                      <td data-label="Department" className="px-4 py-3 text-xs text-zinc-700 dark:text-zinc-300">
-                        {r.invite_department ?? '—'}
+                      <td data-label="Department" className="px-4 py-3 text-xs text-zinc-700 dark:text-zinc-300" title={r.invite_department ?? undefined}>
+                        {formatDeptLabel(r.invite_department) || '—'}
                       </td>
                       <td data-label="Country" className="px-4 py-3 text-xs text-zinc-700 dark:text-zinc-300">
                         {r.country ?? r.invite_country ?? '—'}
@@ -3004,7 +3004,7 @@ function GenerateLinkDialog({
               <p className="mt-1 text-[12px] text-zinc-500 dark:text-zinc-400">
                 <span className="font-semibold text-emerald-700 dark:text-emerald-400">{sent} sent</span>
                 {failed > 0 && <>, <span className="font-semibold text-rose-600 dark:text-rose-400">{failed} failed</span></>}
-                {dept.trim() ? ` — ${dept.trim()}` : ''}
+                {dept.trim() ? ` — ${formatDeptLabel(dept)}` : ''}
               </p>
             </DialogHeader>
           </div>
@@ -3047,7 +3047,7 @@ function GenerateLinkDialog({
                 <Link2 className="h-4 w-4" />
               </span>
               {bulkMode
-                ? `Bulk onboarding${dept.trim() ? ` — ${dept.trim()}` : ''}`
+                ? `Bulk onboarding${dept.trim() ? ` — ${formatDeptLabel(dept)}` : ''}`
                 : 'Generate onboarding link'}
             </DialogTitle>
             <p className="mt-1.5 text-[12px] leading-relaxed text-zinc-600 dark:text-zinc-400">
@@ -5265,7 +5265,7 @@ function PayPlansDialog({ open, onClose }: { open: boolean; onClose: () => void 
       const json = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Upload failed');
       toast.success(
-        `Pay plan ${replacingExisting ? 'replaced' : 'saved'} for ${dept} · ${country}`,
+        `Pay plan ${replacingExisting ? 'replaced' : 'saved'} for ${formatDeptLabel(dept)} · ${country}`,
       );
       setFile(null);
       await loadPlans();
@@ -5429,8 +5429,8 @@ function PayPlansDialog({ open, onClose }: { open: boolean; onClose: () => void 
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                          {p.department}
+                        <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100" title={p.department}>
+                          {formatDeptLabel(p.department)}
                         </span>
                         <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
                           <Globe className="h-2.5 w-2.5" />
@@ -5775,8 +5775,8 @@ function LinkCreatedDialog({
                 </span>
               )}
               {row.invite_department && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
-                  {row.invite_department}
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300" title={row.invite_department}>
+                  {formatDeptLabel(row.invite_department)}
                 </span>
               )}
             </div>
@@ -6080,7 +6080,7 @@ function SubmissionDetailDialog({
           <DialogDescription className="text-xs">
             {hydrating
               ? 'Loading submission…'
-              : `Submitted ${fmtDateTime(row.submitted_at)} · ${row.invite_department ?? '—'}`}
+              : `Submitted ${fmtDateTime(row.submitted_at)} · ${formatDeptLabel(row.invite_department) || '—'}`}
           </DialogDescription>
         </DialogHeader>
 

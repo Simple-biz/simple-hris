@@ -12,6 +12,7 @@ import {
   type ProratedLineView,
 } from '@/lib/payroll/paystub-view';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 /**
  * The pay statement itself — a faithful React port of the emailed paystub
  * (`docs/features/paystub.html` / the n8n "Paystub Automation" Gmail node). Same
@@ -381,7 +382,7 @@ export function PayStubStatement({
                 Department
               </div>
               <div className="mt-[3px] break-words text-[14px] font-bold leading-5 text-[#102034]">
-                {view.department || '—'}
+                {formatDeptLabel(view.department) || '—'}
               </div>
             </div>
           </div>

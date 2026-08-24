@@ -31,6 +31,7 @@ import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { MesaMemberSummary } from '@/lib/mesa/ledger';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 type MesaTab = 'eligible' | 'requests' | 'fpu';
 
 type EligibleRow = {
@@ -427,9 +428,9 @@ function MesaEligibleList() {
                         className="px-4 py-2.5 text-zinc-600 dark:text-zinc-400"
                       >
                         {r.department ? (
-                          <span className="inline-flex items-center gap-1">
+                          <span className="inline-flex items-center gap-1" title={r.department ?? undefined}>
                             <Building2 className="h-3 w-3 text-zinc-400" />
-                            {r.department}
+                            {formatDeptLabel(r.department)}
                           </span>
                         ) : (
                           <span className="text-zinc-400">—</span>
@@ -820,8 +821,8 @@ function MesaOptInQueue() {
                         <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.full_name}</div>
                         <div className="mt-0.5 font-mono text-[11px] text-zinc-500">{r.work_email}</div>
                       </td>
-                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="Department">
-                        {r.department}
+                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="Department" title={r.department ?? undefined}>
+                        {formatDeptLabel(r.department)}
                       </td>
                       <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="FPU Completed">
                         {r.fpu_date ?? <span className="text-zinc-400">—</span>}

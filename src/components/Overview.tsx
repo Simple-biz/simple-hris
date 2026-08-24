@@ -1407,7 +1407,7 @@ function SimpleView({
                 triggerClassName="h-8"
                 options={[
                   { value: '', label: 'All departments' },
-                  ...departmentOptions.map((d) => ({ value: d, label: d })),
+                  ...departmentOptions.map((d) => ({ value: d, label: formatDeptLabel(d) || d })),
                 ]}
               />
               <SmoothSelect
@@ -1542,7 +1542,7 @@ function SimpleView({
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[11.5px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                          {row.department ?? '—'}
+                          {formatDeptLabel(row.department) || '—'}
                         </span>
                         <span className="inline-flex items-center gap-1.5 text-[10.5px] font-medium text-zinc-500 dark:text-zinc-400">
                           <span className={cn('inline-block h-1.5 w-1.5 rounded-full', isHubstaff ? 'bg-blue-700 dark:bg-blue-500' : 'bg-emerald-700 dark:bg-emerald-500')} />
@@ -1707,7 +1707,7 @@ function SimpleView({
                             )}
                           </td>
                           <td className="px-4 py-3.5 text-zinc-800 dark:text-zinc-200">
-                            {row.department ?? '—'}
+                            {formatDeptLabel(row.department) || '—'}
                           </td>
                           <td className="px-4 py-3.5 font-medium text-zinc-800 dark:text-zinc-200">
                             {row.name ?? '—'}
@@ -4676,7 +4676,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                         triggerClassName="h-9 w-full"
                         options={[
                           { value: '', label: 'All departments' },
-                          ...departmentOptions.map((d) => ({ value: d, label: d })),
+                          ...departmentOptions.map((d) => ({ value: d, label: formatDeptLabel(d) || d })),
                         ]}
                       />
                     </div>
@@ -4850,7 +4850,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                             <div className="truncate font-medium text-zinc-900 dark:text-white">{row.name ?? '—'}</div>
                             <div className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{row.personal_email ?? row.work_email ?? '—'}</div>
                             {row.department && (
-                              <div className="mt-1 text-[11.5px] text-zinc-600 dark:text-zinc-400">{row.department}</div>
+                              <div className="mt-1 text-[11.5px] text-zinc-600 dark:text-zinc-400" title={row.department}>{formatDeptLabel(row.department)}</div>
                             )}
                             {row.start_date && (
                               <div className="text-[11px] text-zinc-400 dark:text-zinc-600">{formatStartDate(row.start_date)}</div>

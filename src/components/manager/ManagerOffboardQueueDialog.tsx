@@ -16,6 +16,7 @@ import {
   type OffboardReason,
 } from '@/lib/hr/offboard-reasons';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 // Temporary Pause only suspends the account (no actual offboarding) — that's
 // the Suspend action's job, so managers see it greyed out here. The server
 // also rejects it (POST /api/offboarding-queue): everything queued via
@@ -271,7 +272,7 @@ export default function ManagerOffboardQueueDialog({ open, people, onOpenChange,
                           {p.name ?? p.work_email ?? p.personal_email}
                         </p>
                         <p className="truncate font-mono text-[10.5px] text-zinc-500">
-                          {p.department ? `${p.department} · ` : ''}{p.work_email ?? p.personal_email ?? '—'}
+                          {p.department ? `${formatDeptLabel(p.department)} · ` : ''}{p.work_email ?? p.personal_email ?? '—'}
                         </p>
                       </div>
                       {rs.overridden ? (

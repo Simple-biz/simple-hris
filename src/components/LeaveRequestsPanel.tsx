@@ -35,6 +35,7 @@ import type { LeaveRequestRow } from '@/lib/supabase/leave-requests';
 import { LEAVE_DELETE_ROLES } from '@/lib/supabase/leave-requests';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 const PAGE_SIZE = 15;
 
 type StatusFilter = 'all' | 'pending' | 'approved' | 'rejected' | 'cancelled';
@@ -358,7 +359,7 @@ export default function LeaveRequestsPanel() {
                             </div>
                           </td>
                           <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="Department">
-                            {r.department || '-'}
+                            {formatDeptLabel(r.department) || '-'}
                           </td>
                           <td className="px-4 py-3" data-label="Type">
                             <Badge
@@ -499,7 +500,7 @@ export default function LeaveRequestsPanel() {
             </div>
             <div className="space-y-3 px-5 py-4">
               <InfoRow label="Email" value={selected.employee_email} />
-              {selected.department && <InfoRow label="Department" value={selected.department} />}
+              {selected.department && <InfoRow label="Department" value={formatDeptLabel(selected.department)} />}
               <InfoRow label="Type" value={selected.leave_type} />
               <InfoRow
                 label="Dates"

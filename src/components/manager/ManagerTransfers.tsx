@@ -538,7 +538,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
               `Released ${row.employee_name ?? row.employee_email}, but the department move needs a manual apply.`,
           );
         } else {
-          toast.success(`${row.employee_name ?? row.employee_email} moved to ${row.to_department}`);
+          toast.success(`${row.employee_name ?? row.employee_email} moved to ${formatDeptLabel(row.to_department)}`);
         }
         setDeclineFor(null);
         setDeclineNote('');
@@ -607,12 +607,12 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
         // Employee isn't on the active roster — the request was retired, not applied.
         toast.warning(`${who} isn't on the active roster — request cleared (off-boarded or email changed).`);
       } else if (json.already_in_target) {
-        toast.success(`${who} is already in ${row.to_department} — marked applied.`);
+        toast.success(`${who} is already in ${formatDeptLabel(row.to_department)} — marked applied.`);
       } else {
         toast.success(
           json.sheet_synced === false
-            ? `${who} moved to ${row.to_department} (Sheet not synced — retry in Accounting)`
-            : `${who} moved to ${row.to_department}`,
+            ? `${who} moved to ${formatDeptLabel(row.to_department)} (Sheet not synced — retry in Accounting)`
+            : `${who} moved to ${formatDeptLabel(row.to_department)}`,
         );
       }
       load({ silent: true });
@@ -1485,7 +1485,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
                                     ) : (
                                       <span
                                         className="font-medium text-rose-600 dark:text-rose-400"
-                                        title={`No manager is assigned to ${r.from_department}, so no one can release this. Ask an admin to assign one (or to apply it directly).`}
+                                        title={`No manager is assigned to ${formatDeptLabel(r.from_department)}, so no one can release this. Ask an admin to assign one (or to apply it directly).`}
                                       >
                                         · no manager on {r.from_department} — ask an admin
                                       </span>

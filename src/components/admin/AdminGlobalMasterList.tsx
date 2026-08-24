@@ -45,6 +45,7 @@ import {
 import { useAdminPingSender } from '@/components/presence/GlobalPingListener';
 import { useWatchScreen } from '@/components/presence/CobrowseProvider';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 const PAGE_SIZE = 10;
 
 type DepartmentFilter = '__all__' | '__unassigned__' | string;
@@ -649,7 +650,7 @@ export default function AdminGlobalMasterList() {
                 options={[
                   { value: '__all__', label: 'All departments' },
                   { value: '__unassigned__', label: 'Unassigned' },
-                  ...departmentOptions.map((dep) => ({ value: dep, label: dep })),
+                  ...departmentOptions.map((dep) => ({ value: dep, label: formatDeptLabel(dep) || dep })),
                 ]}
               />
               <div className="flex shrink-0 items-center justify-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50/80 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/40">
@@ -777,8 +778,8 @@ export default function AdminGlobalMasterList() {
                             </p>
                           ) : (
                             row.department && (
-                              <p className="mt-0.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500">
-                                {row.department}
+                              <p className="mt-0.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500" title={row.department}>
+                                {formatDeptLabel(row.department)}
                               </p>
                             )
                           )}

@@ -30,6 +30,7 @@ import {
   type PayStubView,
   type ProratedLineView,
 } from '@/lib/payroll/paystub-view';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 export interface PayStubEmailOptions {
   /** Real disbursement date, else the scheduled Tue/Thu — drives the paid pill. */
@@ -443,7 +444,7 @@ ${copRow}
 </td>
 <td class="stack-cell" align="right" style="width:50%;vertical-align:top;text-align:right;padding:8px 0 8px 0;border-bottom:1px solid #e2e8f0;">
 <div style="font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#556377;">Department</div>
-<div style="font-size:14px;line-height:20px;font-weight:700;color:#102034;margin-top:3px;">${esc(view.department || '—')}</div>
+<div style="font-size:14px;line-height:20px;font-weight:700;color:#102034;margin-top:3px;">${esc(formatDeptLabel(view.department) || '—')}</div>
 </td>
 </tr>
 </table>

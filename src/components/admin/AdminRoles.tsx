@@ -35,6 +35,7 @@ import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { FEATURE_CATALOG, ROLE_TO_FEATURE_VIEW, type FeatureAccess, type FeatureViewKey } from '@/lib/rbac/feature-permissions';
 import { HSL_DEPTS, HSL_DEPT_KEYS, hslAccessKey, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 import { normalizeCurrency, CONTRACTOR_CURRENCIES, type ContractorCurrency } from '@/lib/contractor-currency';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 // Roles are strictly DASHBOARD ACCESS now: one role unlocks one dashboard.
 // The legacy viewer / payroll_coordinator / payroll_manager roles were retired
@@ -570,7 +571,7 @@ export default function AdminRoles() {
         return;
       }
       toast.success(
-        isOn ? `Removed from ${department}` : `Now manages ${department}`,
+        isOn ? `Removed from ${formatDeptLabel(department)}` : `Now manages ${formatDeptLabel(department)}`,
       );
       await refreshDeptAssignments();
     } catch (e) {
@@ -1256,7 +1257,7 @@ export default function AdminRoles() {
                               ) : (
                                 <Plus className="h-3 w-3" aria-hidden />
                               )}
-                              {dept}
+                              {formatDeptLabel(dept) || dept}
                             </button>
                           );
                         })}

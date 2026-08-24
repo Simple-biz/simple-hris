@@ -23,7 +23,7 @@ import {
   Trophy,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { collapseHslFamilyLabel } from '@/lib/departments/hsl-subdept';
+import { formatDeptLabel, collapseHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ConstructionMark from '@/components/common/ConstructionMark';
@@ -349,7 +349,7 @@ export default function EmployeeSidebar({
             </span>
             {(department || employeeId) && (
               <span className="truncate text-[10px] text-zinc-500 dark:text-zinc-500">
-                {department || '—'}{employeeId ? ` · ${employeeId}` : ''}
+                {formatDeptLabel(department) || '—'}{employeeId ? ` · ${employeeId}` : ''}
               </span>
             )}
           </div>

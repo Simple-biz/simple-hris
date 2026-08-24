@@ -919,7 +919,7 @@ export default function PeopleTab({
             className="w-full shrink-0 sm:w-48"
             options={[
               { value: 'all', label: 'All departments' },
-              ...departments.map((d) => ({ value: d, label: d })),
+              ...departments.map((d) => ({ value: d, label: formatDeptLabel(d) || d })),
             ]}
           />
           {/* Show only people who rendered (or are on track for) overtime. */}
@@ -3277,7 +3277,7 @@ function PersonDetailDialog({
             <div className="min-w-0 flex-1">
               <DialogTitle className="truncate text-lg">{row.name ?? '—'}</DialogTitle>
               <DialogDescription className="truncate">
-                {row.department ?? '—'} · {row.work_email ?? row.employee_id ?? ''}
+                {formatDeptLabel(row.department) || '—'} · {row.work_email ?? row.employee_id ?? ''}
               </DialogDescription>
             </div>
             {canPay && onPay && (
@@ -3466,7 +3466,7 @@ function PersonDetailDialog({
                       )}
                     </div>
                     <p className="truncate text-[11.5px] text-zinc-500 dark:text-zinc-400">
-                      {row.department || 'No department'}
+                      {formatDeptLabel(row.department) || 'No department'}
                       {row.employee_id && <span className="font-mono"> · {row.employee_id}</span>}
                     </p>
                   </div>

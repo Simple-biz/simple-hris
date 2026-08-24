@@ -36,6 +36,7 @@ import type {
   FinancialPeriodRecipient,
 } from '@/lib/ceo/financial-reports';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 const CACHE_KEY = 'ceo:financial-reports';
 
 /* ── formatting ───────────────────────────────────────────────────────────── */
@@ -810,7 +811,7 @@ function DepartmentTable({ period }: { period: FinancialPeriodPoint }) {
             <li key={d.department} className="space-y-1">
               <div className="flex items-center justify-between gap-2 text-[13px]">
                 <span className="flex min-w-0 items-center gap-2">
-                  <span className="truncate font-medium text-zinc-700 dark:text-zinc-200" title={d.department}>{d.department}</span>
+                  <span className="truncate font-medium text-zinc-700 dark:text-zinc-200" title={d.department}>{formatDeptLabel(d.department)}</span>
                   <span className="shrink-0 text-[11px] text-zinc-400">{fmtInt(d.peopleCount)} ppl · {fmtInt(d.hours)}h</span>
                 </span>
                 <span className="shrink-0 font-mono font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">

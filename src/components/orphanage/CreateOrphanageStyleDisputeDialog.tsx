@@ -58,6 +58,7 @@ import {
   type PabDayDisputeRow,
 } from '@/lib/supabase/pab-day-disputes';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 export type EmployeeOption = {
   id: string;
   displayName: string;
@@ -622,7 +623,7 @@ export default function CreateOrphanageStyleDisputeDialog({
                                 {e.displayName?.trim() || we}
                               </span>
                               {e.department ? (
-                                <span className="truncate text-[9px] text-zinc-500">{e.department}</span>
+                                <span className="truncate text-[9px] text-zinc-500" title={e.department ?? undefined}>{formatDeptLabel(e.department)}</span>
                               ) : null}
                             </span>
                             <span className="truncate font-mono text-[10px] text-zinc-500">{we}</span>

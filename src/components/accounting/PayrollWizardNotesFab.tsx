@@ -112,6 +112,7 @@ import {
   TAB_CACHE_KEYS,
 } from "@/lib/accounting/tab-cache";
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 /**
  * The Payroll Wizard's floating "Notes" checklist — carry-over items for the
  * next payroll week (missed bonuses, rate changes, staged deductions), the
@@ -1914,7 +1915,7 @@ function RatePersonRow({
       </div>
       <div className="min-w-0 truncate text-[11px] text-zinc-600 dark:text-zinc-300">
         <span className="text-zinc-400 sm:hidden dark:text-zinc-500">Dept · </span>
-        {person.department?.trim() || "—"}
+        {formatDeptLabel(person.department) || "—"}
       </div>
       <div className="min-w-0 text-[11px] text-zinc-600 dark:text-zinc-300">
         <span className="text-zinc-400 sm:hidden dark:text-zinc-500">Started · </span>
@@ -2247,7 +2248,7 @@ function PersonLine({
       <div className="min-w-0 flex-1">
         <div className="truncate text-[13px] font-medium text-zinc-800 dark:text-zinc-100">{name}</div>
         <div className="truncate text-[10px] text-zinc-400 dark:text-zinc-500">
-          {[department, email].filter(Boolean).join(" · ") || "—"}
+          {[formatDeptLabel(department) || null, email].filter(Boolean).join(" · ") || "—"}
         </div>
       </div>
       {right}
@@ -3403,7 +3404,7 @@ function PayrollReadinessGlance({
     }
     const opts = [...counts.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([dept, n]) => ({ value: dept, label: `${dept} (${n})` }));
+      .map(([dept, n]) => ({ value: dept, label: `${formatDeptLabel(dept) || dept} (${n})` }));
     if (none > 0) opts.push({ value: BANK_NO_DEPT, label: `No department (${none})` });
     return [{ value: "", label: "All departments" }, ...opts];
   }, [data?.missingBank]);
@@ -4357,7 +4358,7 @@ function OffboardedGlance({
     }
     const opts = [...counts.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([dept, n]) => ({ value: dept, label: `${dept} (${n})` }));
+      .map(([dept, n]) => ({ value: dept, label: `${formatDeptLabel(dept) || dept} (${n})` }));
     if (none > 0) opts.push({ value: BANK_NO_DEPT, label: `No department (${none})` });
     return [{ value: "", label: "All departments" }, ...opts];
   }, [people]);
@@ -5852,7 +5853,7 @@ function WorkerNoteCell({
                         {w.name}
                       </span>
                       <span className="block truncate text-[10.5px] text-zinc-400 dark:text-zinc-500">
-                        {[w.department, w.work_email].filter(Boolean).join(" · ") || "—"}
+                        {[formatDeptLabel(w.department) || null, w.work_email].filter(Boolean).join(" · ") || "—"}
                       </span>
                     </span>
                     {w.off_boarded_at && (

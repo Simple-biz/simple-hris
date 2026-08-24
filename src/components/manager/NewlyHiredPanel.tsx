@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { formatWeekLabel, sundayIso } from '@/lib/hr/hiring-week';
 import { isLeadGenDepartment } from '@/lib/hr/calltools-username';
 import type { HrPendingStatus } from '@/lib/supabase/hr-pending-employees';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 /**
  * Shape returned by `/api/manager/pending-hires`. Subset of
@@ -690,8 +691,8 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
             <div className="min-w-0 flex-1 space-y-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-semibold text-zinc-900 dark:text-white">{r.name}</span>
-                <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
-                  {r.department}
+                <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300" title={r.department ?? undefined}>
+                  {formatDeptLabel(r.department)}
                 </span>
                 <span className="inline-flex items-center gap-1 rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:border-violet-800/70 dark:bg-violet-950/30 dark:text-violet-300">
                   <UserPlus className="h-3 w-3" /> Manually onboarded
@@ -722,8 +723,8 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
             <div className="min-w-0 flex-1 space-y-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-semibold text-zinc-900 dark:text-white">{r.name}</span>
-                <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
-                  {r.department}
+                <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300" title={r.department ?? undefined}>
+                  {formatDeptLabel(r.department)}
                 </span>
                 <span className="inline-flex items-center gap-1 rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:border-rose-800/70 dark:bg-rose-950/30 dark:text-rose-300">
                   <XCircle className="h-3 w-3" /> Did not attend
@@ -770,8 +771,8 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
             <div className="min-w-0 flex-1 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-semibold text-zinc-900 dark:text-white">{r.name}</span>
-              <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
-                {r.department}
+              <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300" title={r.department ?? undefined}>
+                {formatDeptLabel(r.department)}
               </span>
               {attended ? (
                 <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:border-emerald-800/70 dark:bg-emerald-950/30 dark:text-emerald-300">

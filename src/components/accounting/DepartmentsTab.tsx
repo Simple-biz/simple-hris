@@ -71,6 +71,7 @@ import {
   type PayStructure,
 } from '@/lib/payment-catalog/pay-structure';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 /** Shared easing -- matches the catalog's tab transition. */
 const EASE = [0.22, 1, 0.36, 1] as const;
 
@@ -1409,7 +1410,7 @@ function StepPeople({
                           <span className="block truncate text-[11px] text-zinc-400">{p.email}</span>
                         </span>
                         <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
-                          {p.department || 'No department'}
+                          {formatDeptLabel(p.department) || 'No department'}
                         </span>
                       </button>
                     </li>

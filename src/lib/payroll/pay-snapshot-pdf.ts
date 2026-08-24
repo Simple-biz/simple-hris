@@ -13,6 +13,7 @@
 import { PDFDocument, rgb, type PDFFont } from 'pdf-lib';
 import { embedPdfFonts } from '@/lib/pdf/fonts';
 import { embedSimpleLogo, simpleLogoWidthForHeight } from '@/lib/pdf/logo';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 type Color = ReturnType<typeof rgb>;
 
@@ -135,7 +136,7 @@ export async function generatePaySnapshotPdf(
 
   text('PAY SUMMARY', MARGIN, y, { size: 17, font: bold, color: NAVY });
   y -= 17;
-  const who = input.department ? `${input.employeeName} · ${input.department}` : input.employeeName;
+  const who = input.department ? `${input.employeeName} · ${formatDeptLabel(input.department)}` : input.employeeName;
   text(who, MARGIN, y, { size: 10.5, color: MUTED });
   y -= 14;
   text(input.weekLabel, MARGIN, y, { size: 10.5, font: bold, color: TEXT });

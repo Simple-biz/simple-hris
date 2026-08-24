@@ -44,6 +44,7 @@ import {
   downloadGiftRosterXlsx,
 } from '@/lib/gift-tracker/shipping-export';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 /* ── Export menu (PDF · XLSX · CSV) ─────────────────────────────────────────
  * Lifted from HrGlobalMasterList's inline ExportMenu — the repo has no dropdown
  * primitive. Themed emerald for the Gift Tracker.
@@ -1209,7 +1210,7 @@ function RowItem({
             <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.name}</span>
             <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{row.email}</span>
             {row.department ? (
-              <span className="mt-0.5 text-[11px] text-emerald-600/80 dark:text-emerald-400/80">{row.department}</span>
+              <span className="mt-0.5 text-[11px] text-emerald-600/80 dark:text-emerald-400/80" title={row.department ?? undefined}>{formatDeptLabel(row.department)}</span>
             ) : null}
           </div>
         </td>
@@ -1715,7 +1716,7 @@ function SubmissionsPanel({
                           })}
                         </span>
                         {department && (
-                          <span className="text-emerald-600/80 dark:text-emerald-400/80">{department}</span>
+                          <span className="text-emerald-600/80 dark:text-emerald-400/80" title={department ?? undefined}>{formatDeptLabel(department)}</span>
                         )}
                       </div>
                       <div className="mt-1 text-[10.5px] text-zinc-400 dark:text-zinc-500">

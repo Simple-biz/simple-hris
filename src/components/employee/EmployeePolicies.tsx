@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 type Policy = {
   title: string;
@@ -114,7 +115,8 @@ interface Props {
 
 export default function EmployeePolicies({ department }: Props) {
   const total = sections.reduce((n, s) => n + s.policies.length, 0);
-  const deptLabel = department?.trim() || 'Your Team';
+  // Display only — `department` stays raw for the policy lookup below.
+  const deptLabel = formatDeptLabel(department) || 'Your Team';
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 p-4 sm:p-6 dark:bg-none dark:bg-[#0d1117]">

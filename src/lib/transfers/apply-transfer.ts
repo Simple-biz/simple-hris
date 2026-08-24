@@ -8,6 +8,7 @@ import {
 import { updateMasterSheetDepartment } from '@/lib/google-sheets/update-master-sheet-department';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { loadActiveDeptsByEmail, partitionStaleTransfers } from '@/lib/transfers/stale-transfers';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 /** Today's business date (YYYY-MM-DD) in Manila — the timezone the roster runs
  *  on. Used to decide whether a released transfer's effective date is due. */
@@ -81,7 +82,7 @@ export async function applyApprovedTransfer(
   //     it in "approved" forever, mirroring the pending-row stale sweep.
   if (master.resolution === 'notFound') {
     const who = row.employee_name ?? row.employee_email;
-    const note = `Auto-cancelled: ${who} is not on the active roster, so the move to ${row.to_department} can't be applied (off-boarded or email changed).`;
+    const note = `Auto-cancelled: ${who} is not on the active roster, so the move to ${formatDeptLabel(row.to_department)} can't be applied (off-boarded or email changed).`;
     await cancelStaleTransfer({ id: row.id, note, fromStatus: 'approved' });
     return { applied: false, sheetSynced: false, sheetError: null, cancelled: true, error: null };
   }
@@ -131,8 +132,8 @@ export async function applyApprovedTransfer(
           tone: 'positive',
           title: 'Transfer Applied',
           message: alreadyInTarget
-            ? `${who} is confirmed in ${row.to_department}.`
-            : `${who} has moved from ${row.from_department} to ${row.to_department}${
+            ? `${who} is confirmed in ${formatDeptLabel(row.to_department)}.`
+            : `${who} has moved from ${formatDeptLabel(row.from_department)} to ${formatDeptLabel(row.to_department)}${
                 row.effective_date ? ` (effective ${row.effective_date})` : ''
               }.`,
           details: {
@@ -191,7 +192,7 @@ export async function sweepStalePendingReleaseRequests(): Promise<StaleSweepResu
   const cancelled: StaleSweepResult['cancelled'] = [];
   for (const row of stale) {
     const who = row.employee_name ?? row.employee_email;
-    const note = `Auto-cancelled: ${who} is no longer in ${row.from_department} (already transferred out).`;
+    const note = `Auto-cancelled: ${who} is no longer in ${formatDeptLabel(row.from_department)} (already transferred out).`;
     const { changed } = await cancelStaleTransfer({ id: row.id, note });
     if (changed) {
       cancelled.push({

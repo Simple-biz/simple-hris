@@ -808,3 +808,63 @@ Managers 55 · SSD Med Rec 51 · … ) instead of `1` everywhere, and the parent
 "Hogan Smith Law" entry prices nobody. Backups:
 `backup_hsl_rekey_employee_structures_2026-08-14T20-33-16-104Z.json` and
 `backup_hsl_pay_structures_2026-08-14T20-37-06-801Z.json`.
+
+## 12. The app-wide display sweep (2026-08-24)
+
+Kane: *"All Dashboards and Instances — `hsl:filing_specialist` — I shouldn't see
+something like this. Please check Payment Catalog for the Update Data."*
+
+§1 has said since 2026-08-10 that `hsl:<key>` is *"displayed anywhere a human reads
+it"* as **HSL — Filing Specialist**. Only the surfaces built during that change
+actually did it. §11's cutover then made the gap universal: with **579 of 579**
+active HSL people relabeled off the parent, every people list in the product now
+had a slug in it. The reference rendering was the Payment Catalog's own — its Pay
+Structure rail and export both derive from `hslSubDeptOptions()`, so
+`hsl:filing_specialist` reads **Filing Specialist** nested under Hogan Smith Law
+(`stripHslPrefix` is presentation-local; the em-dash form stays canonical).
+
+**The one rule.** `formatDeptLabel(raw)` wraps every department value on its way to
+a human — Accounting, Payment Catalog, Admin, CEO, HR, Manager, Payroll, People,
+Tickets, Orphanage, Audit, the Employee portal, the paystub statement, its email
+and its export. It is a **no-op on every non-HSL label**, so wrapping is always
+safe and never needs a conditional.
+
+**Two chokepoints did most of the work:**
+
+| Fix | Covers |
+|---|---|
+| `dept-identity.ts` — `humanizeDeptKey` routes `hsl:*` through `formatDeptLabel` before the slug humanizer | `catalogDeptName` and both KPI calculators; it used to emit `Hsl:filing Specialist`, the exact defect §3 warns about |
+| `hr/DeptFilter.tsx` — option **labels** formatted, **values** untouched | the shared HR dropdown (Overview roster, Onboarding, Offboarding) |
+
+**What deliberately still holds the raw string** (unchanged by this sweep):
+
+- **Exports of the master list** — `global-master-list-export.ts` reads
+  `r.department` directly; the sheet-vs-DB clobber sweep compares literal
+  Department strings (§5).
+- **`title` tooltips** — the prettified spot carries the literal value, so the raw
+  cell is one hover away. New wrapped sites follow the same pattern.
+- **Search haystacks** — typing `intake` still finds them (§5).
+- **Filter and query VALUES, map keys, URLs** — a filter never hides a row, so
+  only the label a human reads was touched.
+- **Master-sheet sync paths** — those mirror the sheet verbatim.
+
+**Payment Dispatch was already clean and stays untouched.** `current-pay.ts`
+resolves the cell through `deptKeyOf` → `hogan_smith_law` → `DEPARTMENTS`, so a
+dispatch row reads **"Hogan Smith Law"**, never a slug. It shows *less* than the
+Payment Catalog does (the sub-team is lost), which is a separate question from
+this one — the dispatch dept filter keys on that name, so changing it moves a
+filter, not a label.
+
+**Enforced by test.** `src/lib/departments/dept-label-render.test.ts` pins the
+formatter for both sub-team keyspaces *and* source-scans `src/components/**/*.tsx`
+for a JSX child that renders a department value without it. Keys, URLs, counts,
+type literals and plural prose are excluded by pattern; the four remaining
+exceptions are named in `ALLOWED_SNIPPETS` with a reason each. Verified
+non-vacuous: a probe component rendering `{row.department ?? '—'}` fails it.
+
+> **Open.** Aggregation surfaces (CEO headcount-by-department, HR department
+> stats, CEO financial reports) still **group** on the raw cell, so HSL renders as
+> up to 16 rows — now correctly named, but not rolled up. Labels were prettified;
+> grouping was not, because re-grouping changes the numbers on a KPI card and that
+> is a different decision. The Payment Catalog rail already rolls up
+> (`rollUpCounts`, `bonus-catalog.md` §5.5) if that behaviour is wanted here.

@@ -72,6 +72,7 @@ import {
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 type MesaView = 'requests' | 'non-members' | 'active-members';
 
 /** Peso, two decimals — follows the app-wide money convention. */
@@ -912,7 +913,7 @@ export default function AccountingMesa() {
               triggerClassName="w-44"
               options={[
                 { value: '', label: 'All departments' },
-                ...departments.map((d) => ({ value: d, label: d })),
+                ...departments.map((d) => ({ value: d, label: formatDeptLabel(d) || d })),
               ]}
             />
           </div>
@@ -1018,8 +1019,8 @@ export default function AccountingMesa() {
                             </div>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="Department">
-                          {r.department}
+                        <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="Department" title={r.department ?? undefined}>
+                          {formatDeptLabel(r.department)}
                         </td>
                         <td className="px-4 py-3" data-label="Type">
                           <Badge
@@ -2571,7 +2572,7 @@ function MesaNonMembers() {
             triggerClassName="w-44"
             options={[
               { value: '', label: 'All departments' },
-              ...departments.map((d) => ({ value: d, label: d })),
+              ...departments.map((d) => ({ value: d, label: formatDeptLabel(d) || d })),
             ]}
           />
         </div>
@@ -2957,7 +2958,7 @@ function MesaActiveMembers() {
             triggerClassName="w-44"
             options={[
               { value: '', label: 'All departments' },
-              ...departments.map((d) => ({ value: d, label: d })),
+              ...departments.map((d) => ({ value: d, label: formatDeptLabel(d) || d })),
             ]}
           />
         </div>
@@ -3291,7 +3292,7 @@ function MesaMemberDetail({
             </h3>
             <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-500">
               {summary.email}
-              {summary.department ? ` · ${summary.department}` : ''}
+              {summary.department ? ` · ${formatDeptLabel(summary.department)}` : ''}
               {summary.accountNumber ? ` · Acct ${summary.accountNumber}` : ''}
             </p>
           </div>
