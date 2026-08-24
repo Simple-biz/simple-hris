@@ -4,6 +4,7 @@ import {
 } from "./server";
 import { isReferralSource } from "@/lib/hr/referral-source";
 import { nameTokens } from "@/lib/name/name-tokens";
+import { selectAllPaged } from "./select-all-paged";
 
 /**
  * Data access for the HR "New Hire Checklist" tab — a free-form, spreadsheet
@@ -878,4 +879,58 @@ export async function listHrChecklistPeriods(): Promise<{
     b.period_start.localeCompare(a.period_start),
   );
   return { periods, error: null };
+}
+
+/**
+ * Every week each personal email appears under, for the Manager → My Team
+ * orientation-attendance report (`src/lib/manager/orientation-weekly.ts`).
+ *
+ * The checklist's `period_start` is the AUTHORITATIVE hiring week: a staged hire
+ * in `hr_pending_employees` carries no link back to this table and its own
+ * `start_date` is null on 973 of 974 live rows, so the only honest way to say
+ * which week someone belongs to is to join on `personal_email` and read the week
+ * HR filed them under.
+ *
+ * An email legitimately appears under SEVERAL weeks (a re-list / re-hire) — 52
+ * do as of 2026-08-24, and none twice within one week — so every week is
+ * returned and `pickChecklistWeek` resolves which one a given hire belongs to.
+ *
+ * PAGED, and that is not defensive: this table holds 1,331 rows, so the
+ * `.range(0, 9999)` style used elsewhere in this file returns only the first
+ * 1,000 (PostgREST caps at `db.max-rows` with NO error) and would silently file
+ * 331 hires under the wrong week.
+ */
+export async function listChecklistWeeksByEmail(): Promise<{
+  weeksByEmail: Map<string, string[]>;
+  error: string | null;
+}> {
+  const sb = client();
+  const { rows, error } = await selectAllPaged<{
+    personal_email: string | null;
+    period_start: string | null;
+  }>((from, to) =>
+    sb
+      .from(TABLE)
+      .select("personal_email, period_start")
+      .not("period_start", "is", null)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (error) return { weeksByEmail: new Map(), error };
+
+  const weeksByEmail = new Map<string, string[]>();
+  for (const r of rows) {
+    const email = (r.personal_email ?? "").trim().toLowerCase();
+    const week = (r.period_start ?? "").trim();
+    if (!email || !week) continue;
+    const bucket = weeksByEmail.get(email);
+    if (bucket) {
+      // Same email listed twice in one week is a duplicate row, not a second
+      // claim — keep the week once so the tie-break stays deterministic.
+      if (!bucket.includes(week)) bucket.push(week);
+    } else {
+      weeksByEmail.set(email, [week]);
+    }
+  }
+  return { weeksByEmail, error: null };
 }

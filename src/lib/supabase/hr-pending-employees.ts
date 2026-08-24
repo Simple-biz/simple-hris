@@ -7,6 +7,7 @@ import { getCurrentMasterListUploadId } from "./global-master-list-db";
 import { getHrOnboardingSubmissionById } from "./hr-onboarding-submissions";
 import { normalizeDeptToKey } from "../payroll/normalize-dept-key";
 import { masterListDisplayName, nameLastFirstQuoted } from "../name/display-name";
+import { selectAllPaged } from "./select-all-paged";
 
 /**
  * Maps an onboarding submission's payment details onto the `employee_ids`
@@ -1410,3 +1411,42 @@ export async function clearPendingHireOrientation(
   return { row: data as HrPendingEmployeeRow, error: null };
 }
 
+
+/**
+ * Every staged hire on record, for the Manager → My Team orientation-attendance
+ * report. Deliberately NOT the same read as {@link listManagerPendingHires}.
+ *
+ * That reader answers "what can this manager action right now", so it filters to
+ * `status in (pending_work_email, ready)` plus recent Bypass rows. This one
+ * answers "who showed up for orientation and who didn't", which is a HISTORY
+ * question — it must include `promoted` hires (they attended; that is why they
+ * were promoted) and `no_show` hires (they are the whole point of the report).
+ * As of 2026-08-24 the actionable read returns 3 of the 40 people who were never
+ * marked attended; this one returns all 40.
+ *
+ * PAGED. The table is at 974 rows growing ~60/week and PostgREST truncates at
+ * `db.max-rows = 1000` with no error even when an explicit `.range()` is given
+ * (memory/postgrest-1000-cap-sweep) — an un-paged read here becomes a silently
+ * wrong headcount, which is the one failure this report cannot tolerate.
+ *
+ * `departments` empty/omitted = no department scope (elevated callers). The
+ * comparison is trim/case-insensitive because intake stores whatever was typed
+ * while `department_managers` may capitalize differently.
+ */
+export async function listOrientationHistory(
+  departments?: string[],
+): Promise<{ rows: HrPendingEmployeeRow[]; error: string | null }> {
+  const sb = client();
+  const { rows, error } = await selectAllPaged<HrPendingEmployeeRow>((from, to) =>
+    sb.from(TABLE).select("*").order("id", { ascending: true }).range(from, to),
+  );
+  if (error) return { rows: [], error };
+
+  if (!departments || departments.length === 0) return { rows, error: null };
+  const wanted = new Set(departments.map((d) => d.trim().toLowerCase()).filter(Boolean));
+  if (wanted.size === 0) return { rows: [], error: null };
+  return {
+    rows: rows.filter((r) => wanted.has((r.department ?? "").trim().toLowerCase())),
+    error: null,
+  };
+}
