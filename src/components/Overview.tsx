@@ -32,6 +32,7 @@ import {
   UserMinus,
   UserPlus,
   ArrowRight,
+  ArrowUp,
   LayoutGrid,
   Rows3,
   Activity,
@@ -53,7 +54,6 @@ import {
 // the payroll.hours_gap notification — see zero-hours-gap.ts.
 import { buildLeaveIndex, classifyZeroHours } from '@/lib/payroll/zero-hours-gap';
 import { X } from 'lucide-react';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -69,7 +69,7 @@ import type { PayrollHubstaffRow } from '@/lib/supabase/hubstaff-hours';
 import { normEmail } from '@/lib/email/norm-email';
 import { toast } from 'sonner';
 import type { PayoutExtrasPerson } from '@/lib/payroll/payout-extras';
-import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
+import { formatDeptLabel, isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { phpHourlyPayFromSeconds, splitRegularOvertimeSeconds } from '@/lib/payroll/money-php';
 import {
   getCurrentPabMonth,
@@ -121,7 +121,71 @@ import {
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-const PAGE_SIZE = 10;
+const DEFAULT_PAGE_SIZE = 10;
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+
+/** Roster columns the Expanded table can sort by. `null` = the default order
+ *  (`mergedEmployees` is already name-ascending), which the third click on a
+ *  header restores — otherwise a sort applied here would silently follow the
+ *  viewer into the Simple view, which has no header to undo it. */
+type EmployeeSortKey = 'name' | 'employee_id' | 'department' | 'start_date';
+type EmployeeSortState = { key: EmployeeSortKey; dir: 'asc' | 'desc' } | null;
+
+/** One class string for every header cell so the sticky row can't drift.
+ *  `sticky` sits on the `th`, not the `thead`: Safari has never honoured a
+ *  sticky `thead`, and the rows would scroll straight over the labels. */
+const ROSTER_TH =
+  'sticky top-0 z-10 border-b border-zinc-200 bg-[#fafaf8] px-3 py-2.5 text-left align-middle ' +
+  'text-[10.5px] font-semibold uppercase tracking-[0.07em] text-zinc-600 ' +
+  'dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400';
+
+function RosterSortHeader({
+  label,
+  sortKey,
+  sort,
+  onSort,
+}: {
+  label: string;
+  sortKey: EmployeeSortKey;
+  sort: EmployeeSortState;
+  onSort: (key: EmployeeSortKey) => void;
+}) {
+  const active = sort?.key === sortKey;
+  const dir = active ? sort!.dir : null;
+  return (
+    <th
+      scope="col"
+      aria-sort={dir === 'asc' ? 'ascending' : dir === 'desc' ? 'descending' : 'none'}
+      className={ROSTER_TH}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        title={`Sort by ${label.toLowerCase()}`}
+        className={cn(
+          // `uppercase` has to be re-stated here: the UA stylesheet sets
+          // `text-transform: none` on <button>, which beats the th's inherited
+          // uppercase and left one header in sentence case.
+          'group/sort -mx-1 inline-flex max-w-full items-center gap-1 rounded px-1 py-0.5',
+          'uppercase tracking-[0.07em] transition-colors',
+          'hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/70',
+          'motion-reduce:transition-none dark:hover:text-zinc-100',
+          active && 'text-zinc-900 dark:text-zinc-100',
+        )}
+      >
+        <span className="truncate">{label}</span>
+        <ArrowUp
+          aria-hidden="true"
+          className={cn(
+            'size-3 shrink-0 transition-all duration-150 motion-reduce:transition-none',
+            !active && 'opacity-0 group-hover/sort:opacity-40',
+            dir === 'desc' && 'rotate-180',
+          )}
+        />
+      </button>
+    </th>
+  );
+}
 
 /** Generates a page number array with ellipsis markers (represented as -1). */
 function buildPageRange(current: number, total: number): (number | -1)[] {
@@ -415,6 +479,8 @@ interface SimpleViewProps {
    *  resolved / when the viewed scope has no wizard data. */
   payoutExtras: import('@/lib/payroll/payout-extras').PayoutExtras | null;
   pageRows: OverviewEmployeeRow[];
+  /** Rows per page — owned by the parent so both views page identically. */
+  pageSize: number;
   filteredTotal: number;
   totalPages: number;
   safePage: number;
@@ -513,6 +579,7 @@ function SimpleView({
   techBonusPhp,
   payoutExtras,
   pageRows,
+  pageSize,
   filteredTotal,
   totalPages,
   safePage,
@@ -1722,8 +1789,8 @@ function SimpleView({
               <div>
                 Showing{' '}
                 <strong className="font-medium text-zinc-900 dark:text-white">
-                  {filteredTotal === 0 ? 0 : (safePage - 1) * 10 + 1}–
-                  {Math.min(safePage * 10, filteredTotal)}
+                  {filteredTotal === 0 ? 0 : (safePage - 1) * pageSize + 1}–
+                  {Math.min(safePage * pageSize, filteredTotal)}
                 </strong>{' '}
                 of {filteredTotal}
               </div>
@@ -2546,6 +2613,9 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
   /** Month filter (YYYY-MM). Empty string = All months / no override. */
   const [monthFilter, setMonthFilter] = useState<string>('');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  /** Expanded-view roster sort. Null = the default name-ascending order. */
+  const [employeeSort, setEmployeeSort] = useState<EmployeeSortState>(null);
   const [totalPayout, setTotalPayout] = useState<number | null>(payoutSeed?.totalPayout ?? null);
   const [payoutLoading, setPayoutLoading] = useState(!payoutSeed);
   /** Bumped by the live-refresh hook (Realtime / poll / focus) to re-run the
@@ -3814,21 +3884,82 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     return list;
   }, [mergedEmployees, departmentFilter, searchQuery, pabFilter, pabEligibilityByEmail, techFilter, techEligibilityByEmail]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredEmployees.length / PAGE_SIZE));
+  /** Header-driven sort for the Expanded roster table. Sorts the FILTERED
+   *  list, so the CSV export and both views stay in the order on screen.
+   *
+   *  Missing values sink to the bottom in BOTH directions: flipping the arrow
+   *  should reorder the data, not promote a page of blanks to the top. */
+  const sortedEmployees = useMemo(() => {
+    if (!employeeSort) return filteredEmployees;
+    const { key, dir } = employeeSort;
+    const mul = dir === 'asc' ? 1 : -1;
+    const valueOf = (r: OverviewEmployeeRow): string | number | null => {
+      switch (key) {
+        case 'name':
+          return (r.name ?? r.personal_email ?? '').trim().toLowerCase() || null;
+        case 'employee_id':
+          return (r.employee_id ?? '').trim() || null;
+        case 'department':
+          // Sort on what the cell SHOWS ("HSL — Intake Specialist"), not on the
+          // stored `hsl:intake_specialist` key, or the order looks random.
+          return formatDeptLabel(r.department).toLowerCase() || null;
+        case 'start_date': {
+          const t = r.start_date ? Date.parse(r.start_date) : NaN;
+          return Number.isNaN(t) ? null : t;
+        }
+      }
+    };
+    return [...filteredEmployees].sort((a, b) => {
+      const av = valueOf(a);
+      const bv = valueOf(b);
+      if (av === null && bv === null) return 0;
+      if (av === null) return 1;
+      if (bv === null) return -1;
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * mul;
+      return (
+        String(av).localeCompare(String(bv), undefined, { sensitivity: 'base', numeric: true }) * mul
+      );
+    });
+  }, [filteredEmployees, employeeSort]);
+
+  /** asc → desc → off. The third state matters: the Simple view renders the
+   *  same rows and has no header to undo a sort with. */
+  const toggleEmployeeSort = useCallback((key: EmployeeSortKey) => {
+    setEmployeeSort((cur) => {
+      if (!cur || cur.key !== key) return { key, dir: 'asc' };
+      if (cur.dir === 'asc') return { key, dir: 'desc' };
+      return null;
+    });
+  }, []);
+
+  /** The month picker is deliberately NOT a "filter" here — it re-points the
+   *  whole page at another payroll period, so clearing it would silently move
+   *  every figure in the hero. */
+  const employeeFiltersActive =
+    searchQuery.trim() !== '' || departmentFilter !== '' || pabFilter !== 'all' || techFilter !== 'all';
+
+  const clearEmployeeFilters = useCallback(() => {
+    setSearchQuery('');
+    setDepartmentFilter('');
+    setPabFilter('all');
+    setTechFilter('all');
+  }, []);
+
+  const totalPages = Math.max(1, Math.ceil(sortedEmployees.length / pageSize));
   const safePage = Math.min(page, totalPages);
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, departmentFilter, pabFilter, techFilter, monthFilter]);
+  }, [searchQuery, departmentFilter, pabFilter, techFilter, monthFilter, employeeSort, pageSize]);
 
   useEffect(() => {
     setPage((p) => Math.min(p, totalPages));
   }, [totalPages]);
 
   const pageRows = useMemo(() => {
-    const start = (safePage - 1) * PAGE_SIZE;
-    return filteredEmployees.slice(start, start + PAGE_SIZE);
-  }, [filteredEmployees, safePage]);
+    const start = (safePage - 1) * pageSize;
+    return sortedEmployees.slice(start, start + pageSize);
+  }, [sortedEmployees, safePage, pageSize]);
 
   /** Single source of truth for the Master ↔ Hubstaff reconciliation: the
    *  drill-down rows AND every tile count are computed together here so they can
@@ -4182,7 +4313,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     ];
     const n2 = (v: number | null | undefined) =>
       v != null && Number.isFinite(v) ? v.toFixed(2) : '';
-    const rows = filteredEmployees.map((row) => {
+    const rows = sortedEmployees.map((row) => {
       const email = row.work_email ?? row.personal_email ?? '';
       const emailKey = normEmail(email) ?? '';
       const pay = emailKey ? employeePayByEmail[emailKey] : undefined;
@@ -4355,6 +4486,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
               pabMetrics={pabMetrics}
               techBonusEligibility={techBonusEligibility}
               pageRows={pageRows}
+              pageSize={pageSize}
               filteredTotal={filteredEmployees.length}
               totalPages={totalPages}
               safePage={safePage}
@@ -4566,6 +4698,20 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                   </div>
                   {/* PAB + Tech filters — side-by-side, wrap on narrow widths */}
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  {/* order-last keeps this at the tail of the wrapped row while
+                      staying a single insertion point in the markup. The MONTH
+                      picker is deliberately not cleared: it re-points the whole
+                      page at another payroll period. */}
+                  {employeeFiltersActive && (
+                    <button
+                      type="button"
+                      onClick={clearEmployeeFilters}
+                      className="order-last ml-auto inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-medium text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/70 motion-reduce:transition-none dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                    >
+                      <X className="size-3" aria-hidden="true" />
+                      Clear filters
+                    </button>
+                  )}
                   {/* PAB filter */}
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs text-zinc-500 dark:text-zinc-400">PAB:</span>
@@ -4666,7 +4812,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                       const disabled = !email || !onViewRates;
                       return (
                         <div
-                          key={`${row.recordSource}-${row.personal_email ?? ''}-${row.name ?? ''}-${(safePage - 1) * PAGE_SIZE + i}`}
+                          key={`${row.recordSource}-${row.personal_email ?? ''}-${row.name ?? ''}-${(safePage - 1) * pageSize + i}`}
                           className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/40"
                         >
                           <div className="flex flex-wrap items-center gap-1.5">
@@ -4738,172 +4884,240 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                   )}
                 </div>
 
-                {/* Desktop table — hidden on mobile */}
-                <div className="hidden min-h-0 flex-1 overflow-auto rounded-md border border-zinc-200 md:block dark:border-zinc-800">
-                  <Table>
-                    <TableHeader className="sticky top-0 z-10 bg-gradient-to-r from-orange-50/95 to-blue-50/60 backdrop-blur-sm dark:from-blue-950/90 dark:to-blue-950/70">
-                      <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
-                        <TableHead className="text-zinc-600 dark:text-zinc-400">Employee ID</TableHead>
-                        <TableHead className="text-zinc-600 dark:text-zinc-400">Source</TableHead>
-                        <TableHead className="text-zinc-600 dark:text-zinc-400">Department</TableHead>
-                        <TableHead className="text-zinc-600 dark:text-zinc-400">Name</TableHead>
-                        <TableHead className="text-zinc-600 dark:text-zinc-400">Email</TableHead>
-                        <TableHead className="text-right text-zinc-600 dark:text-zinc-400">Start Date</TableHead>
-                        <TableHead className="text-zinc-600 dark:text-zinc-400">PAB</TableHead>
-                        <TableHead className="w-[90px] text-right text-zinc-600 dark:text-zinc-400">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
+                {/* Desktop roster — hidden on mobile.
+                    Hand-rolled rather than the shadcn <Table>: that primitive
+                    wraps itself in its own `overflow-x-auto` div, which becomes
+                    a second scroll container inside this one and steals the
+                    sticky header's containing block. */}
+                <div className="hidden min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-200 md:block dark:border-zinc-800">
+                  <table className="w-full min-w-[1000px] table-fixed border-collapse text-[13px]">
+                    <colgroup>
+                      {/* Name + email take whatever the fixed columns leave. The
+                          others are sized so that remainder lands near 340px at
+                          the card's usual width — wider and the Employee cell
+                          opens a dead gap before the ID. */}
+                      <col />
+                      <col className="w-[104px]" />
+                      <col className="w-[240px]" />
+                      <col className="w-[176px]" />
+                      <col className="w-[112px]" />
+                      <col className="w-[128px]" />
+                      <col className="w-[84px]" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <RosterSortHeader label="Employee" sortKey="name" sort={employeeSort} onSort={toggleEmployeeSort} />
+                        <RosterSortHeader label="ID" sortKey="employee_id" sort={employeeSort} onSort={toggleEmployeeSort} />
+                        <RosterSortHeader label="Department" sortKey="department" sort={employeeSort} onSort={toggleEmployeeSort} />
+                        <th scope="col" className={ROSTER_TH}>Location</th>
+                        <RosterSortHeader label="Started" sortKey="start_date" sort={employeeSort} onSort={toggleEmployeeSort} />
+                        <th scope="col" className={ROSTER_TH}>PAB</th>
+                        <th scope="col" className={cn(ROSTER_TH, 'text-right')}>
+                          <span className="sr-only">Actions</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
                       {payoutLoading || pabMetrics.loading ? (
                         Array.from({ length: 8 }).map((_, i) => (
-                          <TableRow
-                            key={`skel-${i}`}
-                            className="border-zinc-200 dark:border-zinc-800"
-                          >
-                            <TableCell><span className="inline-block h-4 w-20 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></TableCell>
-                            <TableCell><span className="inline-block h-5 w-16 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" /></TableCell>
-                            <TableCell><span className="inline-block h-3 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></TableCell>
-                            <TableCell><span className="inline-block h-3 w-32 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></TableCell>
-                            <TableCell><span className="inline-block h-3 w-40 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></TableCell>
-                            <TableCell className="text-right"><span className="inline-block h-3 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></TableCell>
-                            <TableCell><span className="inline-block h-5 w-20 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" /></TableCell>
-                            <TableCell className="text-right"><span className="inline-block h-7 w-14 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" /></TableCell>
-                          </TableRow>
+                          <tr key={`skel-${i}`} className="border-b border-zinc-100 last:border-0 dark:border-zinc-800/60">
+                            <td className="px-3 py-2">
+                              <span className="block h-3.5 w-40 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                              <span className="mt-1.5 block h-2.5 w-56 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800/60" />
+                            </td>
+                            <td className="px-3 py-2"><span className="inline-block h-5 w-[72px] animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" /></td>
+                            <td className="px-3 py-2"><span className="inline-block h-3 w-32 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></td>
+                            <td className="px-3 py-2"><span className="inline-block h-3 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></td>
+                            <td className="px-3 py-2"><span className="inline-block h-3 w-20 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></td>
+                            <td className="px-3 py-2"><span className="inline-block h-5 w-[88px] animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" /></td>
+                            <td className="px-3 py-2 text-right"><span className="inline-block h-6 w-14 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" /></td>
+                          </tr>
                         ))
                       ) : pageRows.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={8} className="py-8 text-center text-zinc-600 dark:text-zinc-500">
-                            No employees match your search or filter.
-                          </TableCell>
-                        </TableRow>
+                        <tr>
+                          <td colSpan={7} className="px-4 py-14 text-center">
+                            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">No one matches these filters</p>
+                            <p className="mx-auto mt-1 max-w-sm text-xs text-zinc-500 dark:text-zinc-400">
+                              Try a shorter search term, or clear the filters to see all{' '}
+                              <span className="font-mono tabular-nums">{mergedEmployees.length}</span> people.
+                            </p>
+                            {employeeFiltersActive && (
+                              <button
+                                type="button"
+                                onClick={clearEmployeeFilters}
+                                className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/70 motion-reduce:transition-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                              >
+                                <X className="size-3" aria-hidden="true" />
+                                Clear filters
+                              </button>
+                            )}
+                          </td>
+                        </tr>
                       ) : (
-                        pageRows.map((row, i) => (
-                          <TableRow
-                            key={`${row.recordSource}-${row.personal_email ?? ''}-${row.name ?? ''}-${(safePage - 1) * PAGE_SIZE + i}`}
-                            className="border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30"
-                          >
-                            <TableCell>
-                              {row.employee_id ? (
-                                <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2 py-0.5 font-mono text-xs font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
-                                  {row.employee_id}
-                                </span>
-                              ) : (
-                                <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {row.recordSource === 'hubstaff' ? (
-                                <Badge
-                                  variant="outline"
-                                  className="border-sky-300 bg-sky-50 font-mono text-[10px] text-sky-800 dark:border-sky-800/60 dark:bg-sky-950/40 dark:text-sky-300"
+                        pageRows.map((row, i) => {
+                          const rowEmail = row.work_email ?? row.personal_email ?? '';
+                          const shownEmail = row.personal_email ?? row.work_email ?? '';
+                          const location = [row.city, row.province].filter(Boolean).join(', ');
+                          const deptLabel = row.department ? formatDeptLabel(row.department) : '';
+                          const viewDisabled = !rowEmail || !onViewRates;
+                          return (
+                            <tr
+                              key={`${row.recordSource}-${row.personal_email ?? ''}-${row.name ?? ''}-${(safePage - 1) * pageSize + i}`}
+                              className="group/row border-b border-zinc-100 transition-colors last:border-0 hover:bg-[#fafaf8] motion-reduce:transition-none dark:border-zinc-800/60 dark:hover:bg-zinc-900/50"
+                            >
+                              {/* Employee — the row's subject, so it leads. Two lines
+                                  ALWAYS (email falls back to a dash) so row heights
+                                  stay uniform down the page. */}
+                              <td className="px-3 py-2">
+                                <div className="flex min-w-0 items-center gap-1.5">
+                                  <span className="min-w-0 truncate font-medium text-zinc-900 dark:text-zinc-100" title={row.name ?? undefined}>
+                                    {row.name ?? '—'}
+                                  </span>
+                                  {/* Source is an EXCEPTION marker, not a column: every
+                                      row but a handful reads "Master". */}
+                                  {row.recordSource === 'hubstaff' && (
+                                    <span
+                                      title="No master-list record — name and department come from the Hubstaff export"
+                                      className="shrink-0 rounded border border-sky-300 bg-sky-50 px-1.5 py-px font-mono text-[9.5px] font-medium uppercase tracking-wide text-sky-800 dark:border-sky-800/60 dark:bg-sky-950/40 dark:text-sky-300"
+                                    >
+                                      Hubstaff
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400" title={shownEmail || undefined}>
+                                  {shownEmail || '—'}
+                                </div>
+                              </td>
+
+                              <td className="px-3 py-2">
+                                {row.employee_id ? (
+                                  <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
+                                    {row.employee_id}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
+                                )}
+                              </td>
+
+                              {/* `hsl:ssd_medical_records` is a storage key, not a
+                                  department name — formatDeptLabel is the one place
+                                  that turns it into something a human reads. */}
+                              <td className="truncate px-3 py-2 text-zinc-700 dark:text-zinc-300" title={deptLabel || undefined}>
+                                {deptLabel || <span className="text-zinc-400 dark:text-zinc-600">—</span>}
+                              </td>
+
+                              {/* Own column, not a second line under the email: as a
+                                  stacked line it made every row with a city taller
+                                  than every row without one. */}
+                              <td className="truncate px-3 py-2 text-[12px] text-zinc-500 dark:text-zinc-400" title={location || undefined}>
+                                {location || <span className="text-zinc-400 dark:text-zinc-600">—</span>}
+                              </td>
+
+                              <td className="px-3 py-2 text-[12px] tabular-nums text-zinc-600 dark:text-zinc-400">
+                                {formatStartDate(row.start_date)}
+                              </td>
+
+                              <td className="px-3 py-2">
+                                {(() => {
+                                  const emailKey = normEmail(rowEmail) ?? '';
+                                  const elig = emailKey ? pabEligibilityByEmail.get(emailKey) : undefined;
+                                  if (elig === undefined) {
+                                    return <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>;
+                                  }
+                                  const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+                                  const periodEnd = pabMetrics.periodEnd ? new Date(pabMetrics.periodEnd) : null;
+                                  if (periodEnd) periodEnd.setHours(0, 0, 0, 0);
+                                  const inProgress = !!periodEnd && today0.getTime() <= periodEnd.getTime();
+                                  // Mid-month every row reads the same thing. Amber is
+                                  // reserved for warnings here, and 10 stacked amber
+                                  // pills say "problem" about an ordinary Tuesday.
+                                  const tone = inProgress ? 'neutral' : elig === true ? 'green' : 'red';
+                                  const label = inProgress ? 'In progress' : elig === true ? 'Eligible' : 'Not eligible';
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => { if (rowEmail) openPabCalendar(rowEmail, isHslFamilyLabel(row.department)); }}
+                                      disabled={!rowEmail}
+                                      title="Open PAB calendar"
+                                      aria-label={row.name ? `Perfect Attendance: ${label}. Open ${row.name}'s calendar` : `Perfect Attendance: ${label}`}
+                                      className={cn(
+                                        'inline-flex max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors',
+                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/70',
+                                        'disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none',
+                                        tone === 'green' && 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:hover:bg-emerald-900/50',
+                                        tone === 'red' && 'bg-red-100 text-red-800 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/50',
+                                        tone === 'neutral' && 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 hover:text-zinc-900 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700',
+                                      )}
+                                    >
+                                      <span className="truncate">{label}</span>
+                                      <CalendarDays className="size-2.5 shrink-0 opacity-0 transition-opacity group-hover/row:opacity-70 motion-reduce:transition-none" aria-hidden="true" />
+                                    </button>
+                                  );
+                                })()}
+                              </td>
+
+                              {/* Quiet by default, orange on hover — an outlined
+                                  orange button on all 10 rows drew a solid stripe
+                                  down the right edge of the table. */}
+                              <td className="px-3 py-2 text-right">
+                                <button
+                                  type="button"
+                                  disabled={viewDisabled}
+                                  onClick={() => rowEmail && onViewRates?.(rowEmail)}
+                                  aria-label={row.name ? `View ${row.name}'s rates` : 'View rates'}
+                                  className={cn(
+                                    'inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11.5px] font-medium text-zinc-500 transition-colors',
+                                    'hover:bg-orange-50 hover:text-orange-700',
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/70',
+                                    'disabled:pointer-events-none disabled:opacity-40 motion-reduce:transition-none',
+                                    'dark:text-zinc-400 dark:hover:bg-orange-500/10 dark:hover:text-orange-400',
+                                  )}
                                 >
-                                  Hubstaff
-                                </Badge>
-                              ) : (
-                                <Badge
-                                  variant="outline"
-                                  className="border-emerald-300 bg-emerald-50 font-mono text-[10px] text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300"
-                                >
-                                  Master
-                                </Badge>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-zinc-800 dark:text-zinc-200">{row.department ?? '—'}</TableCell>
-                            <TableCell className="font-medium text-zinc-800 dark:text-zinc-200">{row.name ?? '—'}</TableCell>
-                            <TableCell className="font-mono text-xs text-zinc-600 dark:text-zinc-400">
-                              <div>{row.personal_email ?? row.work_email ?? '—'}</div>
-                              {(() => {
-                                const loc = [row.city, row.province].filter(Boolean).join(', ');
-                                return loc ? (
-                                  <div className="mt-0.5 flex items-center gap-1 font-sans text-[11px] text-zinc-400 dark:text-zinc-500">
-                                    <MapPin className="h-3 w-3" />
-                                    {loc}
-                                  </div>
-                                ) : null;
-                              })()}
-                            </TableCell>
-                            <TableCell className="text-right text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
-                              {formatStartDate(row.start_date)}
-                            </TableCell>
-                            <TableCell>
-                              {(() => {
-                                const rowEmail = row.work_email ?? row.personal_email ?? '';
-                                const emailKey = normEmail(rowEmail) ?? '';
-                                const elig = emailKey ? pabEligibilityByEmail.get(emailKey) : undefined;
-                                if (elig === undefined) {
-                                  return <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>;
-                                }
-                                const today0 = new Date(); today0.setHours(0, 0, 0, 0);
-                                const periodEnd = pabMetrics.periodEnd ? new Date(pabMetrics.periodEnd) : null;
-                                if (periodEnd) periodEnd.setHours(0, 0, 0, 0);
-                                const inProgress = !!periodEnd && today0.getTime() <= periodEnd.getTime();
-                                const tone = inProgress ? 'amber' : elig === true ? 'green' : 'red';
-                                const label = inProgress ? 'In Progress' : elig === true ? 'Eligible' : 'Not eligible';
-                                return (
-                                  <button
-                                    type="button"
-                                    onClick={() => { if (rowEmail) openPabCalendar(rowEmail, isHslFamilyLabel(row.department)); }}
-                                    disabled={!rowEmail}
-                                    title="Open PAB calendar"
-                                    className={cn(
-                                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-all hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60',
-                                      tone === 'green' && 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-900/50',
-                                      tone === 'red'   && 'bg-red-100 text-red-800 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50',
-                                      tone === 'amber' && 'bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/50',
-                                    )}
-                                  >
-                                    {label}
-                                    <CalendarDays className="h-2.5 w-2.5 opacity-70" />
-                                  </button>
-                                );
-                              })()}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {(() => {
-                                const email = row.work_email ?? row.personal_email ?? '';
-                                const disabled = !email || !onViewRates;
-                                return (
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={disabled}
-                                    onClick={() => email && onViewRates?.(email)}
-                                    className="h-7 border-orange-300 px-2 text-[11px] text-orange-700 hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-orange-700 dark:text-orange-400"
-                                  >
-                                    <Eye className="mr-1 h-3 w-3" />
-                                    View
-                                  </Button>
-                                );
-                              })()}
-                            </TableCell>
-                          </TableRow>
-                        ))
+                                  <Eye className="size-3.5" aria-hidden="true" />
+                                  View
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
                       )}
-                    </TableBody>
-                  </Table>
+                    </tbody>
+                  </table>
                 </div>
 
                 {/* Pagination */}
                 <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 pt-1">
-                  <p className="text-xs text-zinc-500 dark:text-zinc-500">
-                    {filteredEmployees.length === 0 ? (
-                      'No results'
-                    ) : (
-                      <>
-                        <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">
-                          {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filteredEmployees.length)}
-                        </span>
-                        {' of '}
-                        <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">
-                          {filteredEmployees.length}
-                        </span>
-                        {filteredEmployees.length !== mergedEmployees.length && (
-                          <span className="text-zinc-400 dark:text-zinc-600"> (filtered)</span>
-                        )}
-                      </>
-                    )}
-                  </p>
+                  <div className="flex items-center gap-3">
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                      {sortedEmployees.length === 0 ? (
+                        'No results'
+                      ) : (
+                        <>
+                          <span className="font-mono font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                            {(safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, sortedEmployees.length)}
+                          </span>
+                          {' of '}
+                          <span className="font-mono font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                            {sortedEmployees.length}
+                          </span>
+                          {sortedEmployees.length !== mergedEmployees.length && (
+                            <span className="text-zinc-500 dark:text-zinc-500"> (filtered)</span>
+                          )}
+                        </>
+                      )}
+                    </p>
+                    {/* 1,284 people at 10 a page is 129 pages. */}
+                    <div data-readonly-allow className="hidden items-center gap-1.5 sm:flex">
+                      <span className="text-[11px] text-zinc-500 dark:text-zinc-400">Rows</span>
+                      <SmoothSelect
+                        aria-label="Rows per page"
+                        value={String(pageSize)}
+                        onChange={(v) => setPageSize(Number(v) || DEFAULT_PAGE_SIZE)}
+                        triggerClassName="h-8 w-[74px]"
+                        options={PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n), label: String(n) }))}
+                      />
+                    </div>
+                  </div>
 
                   <div data-readonly-allow className="flex items-center gap-1">
                     {/* First page */}
