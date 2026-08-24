@@ -597,9 +597,9 @@ import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-08-21';
-export const AUDIT_RANGE = '9fe6504c..HEAD';
-export const AUDIT_COMMITS = 83;
+export const PASS_DATE = '2026-08-24';
+export const AUDIT_RANGE = '412af38f..HEAD';
+export const AUDIT_COMMITS = 17;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -628,13 +628,78 @@ export interface PassRow {
 export const ROWS: PassRow[] = [
   {
     name: 'Tickets board notifies the requester on every update — comment emails and status-move emails',
-    status: 'Ready to Start',
-    shas: ['24be42cf'],
+    status: 'Pending Deploy',
+    shas: ['24be42cf', '90fb23fa'],
     basis:
-      "OPENED 2026-08-21 on Kane's request, and NOT STARTED — no code exists for it yet; the sha is the commit that opened the plan row, not an implementation. This is the FIRST task row under HRIS-17, which has carried 20 SP with zero children since the board shipped in July. THE GAP, measured: src/lib/tickets/notify.ts fires exactly three emails — ticket_created (to the board owner), ticket_assigned (to the dev) and ticket_done (to the creator) — so a requester hears NOTHING between filing a ticket and it shipping. Two new n8n hooks close it. RECIPIENT RULES, Kane 2026-08-21: (Q1) a status move emails the TICKET CREATOR only, because the dev is usually the one moving the card; (Q2) a comment emails the COUNTERPARTY — the creator, or the assigned dev when the creator is the one who typed it — which is byte-for-byte the rule the in-app `ticket.replied` leg already implements at app/api/tickets/[id]/comments/route.ts:126-152; (Q3) ANY move is emailed, including a backward Testing -> In Progress bounce, so there is no status allowlist: status changed emails the creator, with `done` still riding the existing notifyTicketDone. SCORED 5, not 8: no new UI surface, no new table, and notifyTicketDone is an exact copyable precedent for both hooks. Not 3 either, because it carries a NEW `ticket.moved` notification type, and a new type is REJECTED by employee_notifications_type_check until the widen DDL runs — the exact footgun that left kpi.scored dead for three days behind a console.warn, which is why the CHECK widen ships as a Node script with an --apply gate and a guard that refuses if the LIVE constraint carries a type the file lacks.",
+      "CORRECTS A STALE STAGED CLAIM. This row was staged 2026-08-21 at 09:08 (e8feba9c) saying it was NOT STARTED with no code written, and it never reached the board because review.mts died on DAILY_LIMIT_EXCEEDED. Hours later 90fb23fa shipped the whole thing: 17 files, 827 insertions — src/lib/tickets/notify.ts gains the two hooks, a new tested recipients.ts implements the counterparty rule, notification-actions and notification-views learn `ticket.moved`, AdminWebhooks and the sample payloads are wired, and BOTH n8n workflow files exist in the repo. So the staged status was already false when it was written down, and writing it now would have put a lie on the board. RECIPIENT RULES as Kane set them 2026-08-21 and as shipped: a status move emails the TICKET CREATOR only, because the dev is usually the one moving the card; a comment emails the COUNTERPARTY — the creator, or the assigned dev when the creator typed it; ANY move is emailed, including a backward Testing to In Progress bounce, with `done` still riding notifyTicketDone. PENDING DEPLOY, not Done: 90fb23fa is an ancestor of origin/main, but the feature is functionally DEAD until two things Kane runs happen, and a new notification type the CHECK rejects fails exactly the way kpi.scored did for three days behind a console.warn.",
     blockers: [
-      'Not started — no code written; the blueprint brief was approved 2026-08-21 but the build has not begun',
-      "Two external steps are Kane's to run, so this row cannot pass Pending Deploy on code alone: the employee_notifications CHECK widen for `ticket.moved`, and importing ticket-replied-email + ticket-moved-email into n8n",
+      'The employee_notifications CHECK widen for `ticket.moved` has not been run — references/sql/2026-08-21_add_ticket_moved_notification_type.sql plus scripts/apply-ticket-moved-notification-type.mjs are in the repo, un-applied',
+      'Neither n8n workflow has been imported — ticket-replied-email.workflow.json and ticket-moved-email.workflow.json exist in references/n8n/ only',
+    ],
+  },
+  {
+    name: 'Hubstaff exempt-department list broke on a rename, reporting 33 untracked freelancers as unexplained gaps',
+    status: 'Pending Deploy',
+    shas: ['7b7e9123'],
+    basis:
+      "HUBSTAFF_EXEMPT_DEPTS matched raw master-list labels exactly, and the dept it excuses was renamed: `Site Building` became `Site Building (US - Freelance)` (20 people, ZERO with Hubstaff hours) and `Site Building (PH - Freelancer)` (13, zero). The list therefore inverted its own meaning, and the Overview Hubstaff-to-Master matches tile and its CEO mirror reported 33 deliberately-untracked freelancers as unexplained reconciliation gaps. The untouched `SMM Freelancer` label kept working, which is how it stayed invisible. Fixed in src/lib/payroll/hubstaff-reconciliation.ts by retrying the match once with a trailing parenthetical qualifier stripped; hubstaff-reconciliation.test.ts pins the negative control (a dept whose base label was never exempt stays tracked however it is qualified) and pins Lead Gen NOT exempt per Kane. Filed as its own 2-SP row rather than folded into the zero-hours feature because it was wrong on its own, on a surface that already shipped, before any of that was added — it was a PREREQUISITE for the feature, not part of it. It shares sha 7b7e9123 with that feature, which is why the two rows cite the same commit. PENDING DEPLOY: 7b7e9123 is an ancestor of origin/main, and nobody has confirmed the corrected tile in production.",
+    blockers: ['Not confirmed live — no one has looked at the corrected Overview reconciliation tile in production'],
+  },
+  {
+    name: 'Accounting is told who logged no Hubstaff hours — one shared no-hours rule, a Readiness tab and an ingest notification',
+    status: 'Pending Deploy',
+    shas: ['7b7e9123', 'b76a8e4b'],
+    basis:
+      "Nobody had offboarded jvincec@ and nothing said so — he sat Active with zero hours from 2026-08-05. The DETECTOR already existed: the Overview reconciliation tile had him in its gap bucket the whole time, approved-leave carve-out included. What was missing was DELIVERY, so this is a noise fix plus two delivery paths, not a new engine. `classifyZeroHours` (src/lib/payroll/zero-hours-gap.ts, 245 lines, 221 of test) is extracted as the ONE rule now shared by that tile, a new Readiness No Hours tab, and a `payroll.hours_gap` notification fired on Hubstaff ingest to accounting role holders only — never to the person with no hours. 18 files, 1,617 insertions, 44 new tests. Scored 5 not 8 because it touches NO money path: no score component, no rate, no dispatch row, deliberately — Lead Gen stays tracked per Kane, which puts ~193 rows on the list every week, so the dimension is LISTED AND NEVER SCORED (a fourth score component would peg readiness near zero weekly and kill the 100% celebration). Not 3: a new notification type with its own CHECK widen, 44 tests, and the exempt-list bug as a prerequisite. UNLIKE the tickets row, this migration IS applied and verified — b76a8e4b records the baseline: 43 types live, all 39 app-mapped types still admitted. PENDING DEPLOY: pushed, but no one has looked in production, and the first real insert stays unproven until the next Hubstaff ingest runs.",
+    blockers: [
+      'Not confirmed live — the Readiness No Hours tab has not been looked at in production',
+      'The first real payroll.hours_gap insert is unproven until the next Hubstaff ingest runs; the DDL is applied but the write path has never fired',
+    ],
+  },
+  {
+    name: 'Pay Structure shows a department’s members, with the HSL sub-teams nested under a retractable parent',
+    status: 'Pending Deploy',
+    shas: ['24d6d0a1', '6cb643b2', '47e84590'],
+    basis:
+      "UNDECLARED UNTIL THIS PASS — no board row existed for any of it. THREE commits, ONE row: all three rewrite the same tested module (src/lib/payment-catalog/dept-rail.ts) and the same screen (BonusCatalog.tsx), so clustering by file overlap makes them one feature built and then hardened the same day, not three. 24d6d0a1 built it — dept-rail.ts (264 lines) with dept-rail.test.ts (269), a 598-line BonusCatalog change, and the rule that the rail is a TREE: a Pay Structure renders under the member PLACEMENT rather than whatever departmentKey it stores, and the bare parent claims NOBODY, which is why the HSL sub-teams nest under a retractable Hogan Smith Law instead of flattening into it. 6cb643b2 then resolved a structure owner by IDENTITY and not by email alone — Baldonebro was being held by the parent because the email matched first. 47e84590 closed an adder guard that could overwrite a live rate from a blank form, plus five more review findings. Scored 5 as the peer of the 5-SP People Bank-changes band row: a new tested module plus one screen, no money path, no new table. Not 8 — it prices nothing and dispatches nothing. Not 3 — 264 lines of new rule, 269 of test, a 598-line screen change and two same-day hardening passes. PENDING DEPLOY: all three shas are ancestors of origin/main, none confirmed live.",
+    blockers: ['Not confirmed live — the Pay Structure members view has not been looked at in production'],
+  },
+  {
+    name: 'Offboarded people drop off the Payment Catalog, behind four guards that all fail toward keeping them',
+    status: 'Pending Deploy',
+    shas: ['1937731f'],
+    basis:
+      "UNDECLARED UNTIL THIS PASS — no board row existed. The Payment Catalog was still listing people who had left. 14 files bring four new tested modules: catalog-roster-visibility.ts (130 lines, 235 of test), offboard-evidence.ts (160), master-date.ts (48, 37 of test) and catalog-offboarded-emails.ts (114), plus a verify script (scripts/verify-catalog-offboarded.mts, 160). Every one of the four guards deliberately fails toward KEEPING a person, because dropping someone still employed is the worse error; evidence is read on WORK emails ONLY. Measured at the time: active_employees carried 0 stamped and 294 gone. 110 lines came OUT of payroll-readiness.ts as the rule was centralised, so this is a consolidation as much as an addition. Not 8: no money path, no new table, no dispatch row. Not 3: four new modules, 272 lines of test, and a behavioural change to who appears on a live Accounting screen. PENDING DEPLOY: 1937731f is an ancestor of origin/main, not confirmed live.",
+    blockers: ['Not confirmed live — nobody has checked in production that leavers have actually dropped off the catalog'],
+  },
+  {
+    name: 'Payroll Wizard manual validation — a named human vouches for one person’s pay, and Mark Paid shows it',
+    status: 'Pending Deploy',
+    shas: ['56390cb9', 'de0fa485'],
+    basis:
+      "UNDECLARED UNTIL THIS PASS — no board row existed. TWO commits, ONE row: de0fa485 only re-animates ValidationFullScreen.tsx, the component 56390cb9 created (git confirms 56390cb9 is that file add-commit), so it is the same feature finishing rather than a second one. A named human vouches for ONE person pay and Lenny sees that vouch at Mark Paid: a new route (app/api/payroll-wizard/manual-validation/route.ts, 181 lines), a tested module (manual-validation.ts 197 plus 198 of test), a hook (useManualValidations.ts), the full-screen overlay and the Mark Paid surfacing — 13 files, ~1,750 lines including the 212-line feature doc. SCORED 5 AND NOT 8 despite the line count, because it RECORDS a human judgement and never prices anything: no rate, no amount and no score component moves, so the money-math risk that earns 8 on this board (mid-week rate proration, the HSL sub-department cutover) is simply absent. The one genuinely novel part is that the validation CANNOT live on payment_dispatches — at step 7 no dispatch row exists yet — so it rides an app_settings blob written compare-and-swap, and Mark Paid keys it on row.id, which is the WORK email. Not 3: a new route, a new persistence pattern, and a money-critical dialog touched. PENDING DEPLOY: both shas are ancestors of origin/main, not confirmed live.",
+    blockers: ['Not confirmed live — no one has vouched for a real person in production and seen it appear at Mark Paid'],
+  },
+  {
+    name: 'Orphanage OT pricing extracted and tested, with below-regular OT refused outright',
+    status: 'Pending Deploy',
+    shas: ['ae947bbc'],
+    basis:
+      "UNDECLARED UNTIL THIS PASS, and deliberately a SECOND row rather than an edit of the Done 2-SP S27 row about orphanage OT pricing at the full 1.5x rate. That row was a seventeen-line price correction; this is the hardening that followed it — 6 files, 1,763 insertions: pricing extracted into src/lib/payroll/orphanage-pay-pricing.ts as the one rule with its own test file, below-regular OT REFUSED outright rather than silently accepted, scripts/audit-orphanage-pay-divergence.mts added for the divergence, and the 2026-08-09 week repaired. It does not REVERSE the earlier row — it makes the same rule unfalsifiable — so both rows stand and neither needs rewriting. Not 2: an extraction, a refusal guard, an audit script and a data repair is more than the fix was. Not 5: one pricing rule, no new surface. STILL OPEN and explicitly NOT closed by this row: erict@ 5,373 pesos remains invisible, and the blob is still last-writer-wins. PENDING DEPLOY: ae947bbc is an ancestor of origin/main, not confirmed live.",
+    blockers: [
+      'Not confirmed live — the corrected orphanage OT pricing has not been checked in production',
+      'Known open, tracked separately: erict@ 5,373 pesos still invisible, and the orphanage blob is still last-writer-wins',
+    ],
+  },
+  {
+    name: 'Hurupay is renamed Kolan everywhere a human reads it, with the stored value left untouched',
+    status: 'In Progress',
+    shas: ['2951167a'],
+    basis:
+      "UNDECLARED UNTIL THIS PASS. Wide and shallow: 48 files, 576 insertions, but LABEL ONLY — the stored value `hurupay` never moves, so no history is rewritten and nothing re-routes; `kolan` is aliased in all three normalisers, which must agree or the rail breaks. Carries a new tested payout-brand module (src/lib/onboarding/payout-brand.ts plus its test) and a migration: references/sql/alter/add_payout_brand_to_onboarding.sql with scripts/apply-payout-brand-column.mjs. Not 5: no logic changed, nothing reprices. Not 2: 48 files, a new column, and three normalisers that fail as one. IN PROGRESS, not Pending Deploy: git merge-base --is-ancestor 2951167a origin/main FAILS — HEAD is 2951167a and origin/main is ef1b4d93, so this is committed locally and not pushed, and Kane pushes. The migration is un-run on top of that, so it cannot reach Done on the push alone.",
+    blockers: [
+      'Not pushed — 2951167a is not an ancestor of origin/main',
+      'The payout_brand column migration has not been run — add_payout_brand_to_onboarding.sql plus scripts/apply-payout-brand-column.mjs are in the repo, un-applied',
     ],
   },
 ];

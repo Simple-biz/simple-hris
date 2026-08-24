@@ -651,6 +651,95 @@ Cost: 1 budget probe + ~2 calls per row, so a 10-row flush is ~21 calls against 
 needs — affordable on a partly-spent budget. It takes the same `.apply.lock`, writes only corrector
 columns, and marks entries flushed **one at a time** so a mid-flush death leaves an accurate ledger.
 
+## Pass 10, 2026-08-24 — "update the board from pending last week"
+
+Eight rows created, 33 SP, all Sprint 27. Approval `cd3cedd008a1`, applied clean, all eight verified
+by re-read. **Zero reached Done**, and that is the honest result: seven are pushed but nobody has
+looked in production, and the eighth is not pushed at all.
+
+### What "pending" turned out to mean
+
+Three rows were staged in the plan on 2026-08-21 and never written, because the daily budget died
+**twice** that day — `e8feba9c` at 13:07Z and `6e9564f9` at 17:33Z, both `retry_in_seconds` landing
+on 00:00Z, the clean UTC bucket for the third and fourth measured time. `pending-sp.json` was empty
+throughout and correctly so: the flush refuses a row that is not on the board yet, and refuses an
+entry with no approval hash, so queueing a NEW row would only have produced guaranteed refusals.
+**Staging the plan is the pending state for a row that does not exist yet; the ledger is for
+corrections to rows that do.** That distinction is now load-bearing and worth keeping straight.
+
+Reading the range then turned up the larger half of the answer: **five shipped features had no board
+row at all.** "Pending" was three staged rows plus five undeclared ones.
+
+### A staged status was already false when it was written down
+
+The tickets row was staged saying "NOT STARTED — no code exists for it yet; the sha is the commit
+that opened the plan row." Hours later `90fb23fa` shipped the entire feature — 17 files, 827
+insertions, `notify.ts` hooks, a tested `recipients.ts`, `ticket.moved` through the notification
+actions and views, and both n8n workflow files. Applying the staged text verbatim would have written
+a lie onto the board on a row that was, by then, code-complete.
+
+**A staged row is a snapshot of a claim, and a claim decays.** The queue-and-flush machinery
+re-derives at flush time for exactly this reason, but a row staged in `pass.mts` rather than in the
+ledger gets no such re-check — nothing re-reads its `basis` prose. So the rule that pays for itself:
+**re-derive every staged row's status from git before proposing it, never carry the staged wording
+forward.** Corrected to Pending Deploy with its two real external blockers.
+
+### Clustering, and where the file lists overruled the messages
+
+- **Three catalog commits, one row.** `24d6d0a1` built `dept-rail.ts` (264 lines + 269 of test, a
+  598-line screen change), then `6cb643b2` and `47e84590` hardened the same module and the same
+  screen the same day — owner-by-identity, then an adder guard that could overwrite a live rate from
+  a blank form. Three commit messages that each read like a separate fix; one feature by file overlap.
+- **MV plus its animation, one row.** `de0fa485` only re-animates `ValidationFullScreen.tsx`, and git
+  confirms `56390cb9` is that file's add-commit — the same feature finishing, not a second one.
+- **The orphanage row is a SECOND row, not an edit.** The Done 2-SP S27 row was a seventeen-line
+  price correction; `ae947bbc` is 1,763 insertions of hardening on top — pricing extracted as one
+  tested rule, below-regular OT refused outright, an audit script, and the 2026-08-09 week repaired.
+  It does not *reverse* the earlier row, it makes the same rule unfalsifiable, so both stand. The
+  "one row must describe the current rule" rule applies to reversals; a hardening pass is new work.
+- **`ef1b4d93` is noise.** One file, `.impeccable/config.json` — design tooling scope, no board row.
+
+### The unpushed commit is why nothing was assumed
+
+`2951167a` (Hurupay → Kolan) is `HEAD`, and `origin/main` is `ef1b4d93`. `git merge-base
+--is-ancestor` fails, so it is **In Progress**, not Pending Deploy — 48 files and 576 insertions of
+shipped-looking work that has not left the machine. It also carries an un-run `payout_brand`
+migration, so it cannot reach Done on the push alone. Scored 3, not 5: wide and shallow, the stored
+`hurupay` value never moves, and nothing reprices.
+
+### Scoring note — line count is not complexity
+
+MV is the second-largest diff of the week (~1,750 lines) and scored **5, not 8**. It records a human
+judgement and never prices anything: no rate, no amount, no score component moves. The 8s on this
+board are money-math (mid-week rate proration, the HSL sub-department cutover), and letting a large
+but narrow-risk diff buy an 8 would make the top of the scale meaningless. Its one novel part is that
+the validation cannot live on `payment_dispatches` — at step 7 no dispatch row exists — so it rides
+an `app_settings` blob written compare-and-swap.
+
+### Budget
+
+Probed alive with one `boardGroups` call before planning anything, which cost 1 call and settled it.
+Full apply (~200 calls) then **eight `verify-one` calls instead of `verify.mts`** — the pass-5 lesson
+applied: a 28-row pass plus a full board page exhausted the day and stranded its own verification.
+Eight single-item re-reads proved the values for every row written, at ~4% of the page cost.
+
+### A concurrent session moved HEAD mid-pass, and the range string is why that is survivable
+
+`HEAD` was `2951167a` when the proposal was minted and applied. By the time the pass was being
+recorded another session had committed `59dc91af` (Kolan/HiGlobe assignable when unrouted), so `HEAD`
+had moved and `AUDIT_RANGE = '412af38f..HEAD'` no longer resolves to the 17 commits it named.
+
+**`pass.mts` is deliberately left exactly as applied.** Its range string is reproduced verbatim in
+every board update it wrote, so editing it now to pin the sha would make the local record disagree
+with the board — a worse defect than a loose range. The rows themselves cite explicit shas, so
+nothing about what was written is ambiguous. Re-checked after the move: `2951167a` is still not an
+ancestor of `origin/main`, so the Kolan row's In Progress is still correct, and `59dc91af` touched no
+Monday file, so there was no collision. **`59dc91af` is the next pass's work, not this one's.**
+
+The concurrency heuristic behaved correctly here for the opposite reason it false-positived in pass 5:
+`proposal.json`, `pass.mts` and `hris-plan.ts` all had mtimes three days old with a clean tree, which
+is residue, not a live session. The other session was working in `src/lib/employee/`, nowhere near.
+
 ## Cross-links
 
 `docs/features/INDEX.md` · memory `monday-hris-board-sync` · pass evidence

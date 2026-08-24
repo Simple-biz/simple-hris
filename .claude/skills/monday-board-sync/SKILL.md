@@ -7,7 +7,7 @@ argument-hint: "[optional — a commit range, sprint, or 'audit only']"
 
 # Monday Board Sync
 
-HRIS work lives on a **shared** Monday board: 2,172 items on Sprint Tasks and 208 on Roadmap &
+HRIS work lives on a **shared** Monday board: 3,133 items on Sprint Tasks and 252 on Roadmap &
 Epics, most of it other teams'. This skill keeps our slice accurate — what shipped, what is queued,
 and what it is worth — without ever becoming a second source of truth.
 
@@ -81,6 +81,19 @@ shipped 2026-08-10 — HSL sub-departments was complete, and paid nobody differe
 | "It's 95% done" | Statuses do not round. |
 | "The whole cluster shipped except one surface" | Split it: Done for the live part, Backlog for the rest. |
 
+**A STAGED row's status decays, and nothing re-checks its prose.** When a pass dies on the budget and
+the work is staged in `hris-plan.ts` / `pass.mts` instead of the ledger, that text is a snapshot of a
+claim, not a standing fact. Proven 2026-08-21: the tickets row was staged saying "NOT STARTED — no
+code exists for it yet", and `90fb23fa` shipped the entire feature hours later — 17 files, 827
+insertions, both n8n workflows. Applying the staged wording next session would have written a lie
+onto a code-complete row. `revalidate()` re-derives *ledger* entries at flush time; a row staged in
+`pass.mts` gets no such check. **Re-derive every staged row's status from git before proposing it,
+and never carry the staged `basis` prose forward.**
+
+And keep the two pending states distinct: **staging the plan is how a row that is not on the board
+yet waits; `pending-sp.json` is only for corrections to rows that already exist.** Queueing a new row
+produces a guaranteed refusal.
+
 **Never invent an Actual SP.** Estimated SP is a forecast and belongs on open rows; Actual SP is a
 record and belongs only on shipped ones.
 
@@ -107,7 +120,7 @@ settled, show it as `UNVERIFIED` and ask; never silently downgrade.
 ## Workflow
 
 ### 1. Read before you write
-`pull-state.mts` dumps our rows only. **Filter by name** — Sprint Tasks is 2,172 items of which 135
+`pull-state.mts` dumps our rows only. **Filter by name** — Sprint Tasks is 3,133 items of which 188
 are ours (`[HRIS] ` prefix), and Roadmap & Epics is 208 of which 37 are ours (`HRIS-<nn>` + TAB).
 
 ### 2. Establish what actually shipped
@@ -224,8 +237,8 @@ One Gridline pass left verification dead for 5.5 hours.
   guard), and that the corrections addressed real ids. It proves nothing about the VALUES written —
   those are acknowledged mutations, not re-reads. Report the two halves separately.
 - Ask only for the columns you read — `column_values(ids: [...])`. Pulling all ~21 columns across
-  2,172 items is the most expensive thing these scripts can do.
-- A full `apply.mts` is ~200 calls: the reconciler patches all 135 tasks and 37 epics every run.
+  3,133 items is the most expensive thing these scripts can do.
+- A full `apply.mts` is ~200 calls: the reconciler patches all 188 tasks and 37 epics every run.
   That is the honest cost of driving the app path. Do not run it repeatedly to poke at one row.
 - **`apply.mts --only-new` is 6 calls** — use it when the pass only ADDS rows and corrects them
   (3 label-gate reads, 1 exact-name lookup, 1 `create_item` carrying every reconciler-owned column,
@@ -358,7 +371,8 @@ re-read afterwards — a flush log is not a board state.
 - **HRIS-22** "Hubstaff Live API Integration" is `Cancelled` on the board but `Shipped` in
   `hris-plan.ts`. The reconciler never overwrites board status, so this drifts until one side is
   corrected. It currently costs 12 SP of SP Completed.
-- **Eight epics carry 208 SP with zero task rows** (HRIS-01, 16, 17, 22, 23, 25, 29, 31). Was nine/220 —
+- **Seven epics carry 188 SP with zero task rows** (HRIS-01, 16, 22, 23, 25, 29, 31). Was eight/208 —
+  HRIS-17 gained its first child in pass 10 (the tickets-notification row), and nine/220 before that —
   HRIS-32 gained its first child in pass 5 (the Gift Tracker roster export). Undecomposed, so their SP is
   an independent rollup answering to nothing; decomposing them is a grooming pass nobody has run.
 - ~~**74 pre-existing Done rows have no Completed Date**~~ **CLOSED — measured 0 on 2026-08-20.** HRIS never

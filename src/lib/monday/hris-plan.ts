@@ -824,4 +824,53 @@ export const PLAN_TASKS: PlanTask[] = [
   // unlike the tickets row above this one is not blocked on a migration — it is blocked only on the
   // push, and the first real insert is unproven until the next ingest.
   { epic: 'HRIS-20', name: 'Accounting is told who logged no Hubstaff hours — one shared no-hours rule, a Readiness tab and an ingest notification', type: 'Feature', sp: 5, done: false, sprint: 'S27' },
+  // ── Sprint 27 · Aug 21-24 · undeclared until the 2026-08-24 pass ─────────────────────────────
+  // 5 SP across THREE commits that all rewrite the same tested module (`dept-rail.ts`) and the same
+  // screen, so they are one row, not three: 24d6d0a1 built it, 6cb643b2 and 47e84590 hardened it the
+  // same day. The rail is a TREE — a Pay Structure renders under the member's PLACEMENT, not under
+  // whatever departmentKey it happens to store, and the bare parent claims NOBODY, which is why the
+  // HSL sub-teams nest under a retractable Hogan Smith Law instead of flattening into it. 6cb643b2
+  // then resolved a structure's owner by IDENTITY rather than by email alone (Baldonebro was being
+  // held by the parent because the email matched first), and 47e84590 closed an adder guard that
+  // could overwrite a live rate from a blank form, plus five more review findings. Peer of the 5-SP
+  // "People → Bank changes band" row: a new tested module plus one screen, no money path, no table.
+  // Not 8 — it prices nothing and dispatches nothing; not 3 — 264 lines of new rule with 269 lines
+  // of test, a 598-line screen change, and two same-day hardening passes on top.
+  { epic: 'HRIS-06', name: 'Pay Structure shows a department’s members, with the HSL sub-teams nested under a retractable parent', type: 'Feature', sp: 5, done: false, sprint: 'S27' },
+  // 5 SP: the Payment Catalog was still listing people who had left. Four new tested modules —
+  // catalog-roster-visibility, offboard-evidence, master-date and catalog-offboarded-emails — and
+  // every one of the four guards deliberately fails toward KEEPING a person, because dropping someone
+  // who is still employed is the worse error. Evidence is read on WORK emails only. Measured at the
+  // time: active_employees carried 0 stamped and 294 gone. 110 lines came OUT of payroll-readiness.ts
+  // as the rule was centralised. Not 8: no money path, no new table, no dispatch row. Not 3: four new
+  // modules, 272 lines of test, and a behavioural change to who appears on a live Accounting screen.
+  { epic: 'HRIS-06', name: 'Offboarded people drop off the Payment Catalog, behind four guards that all fail toward keeping them', type: 'Feature', sp: 5, done: false, sprint: 'S27' },
+  // 5 SP for 56390cb9 + de0fa485, one row: de0fa485 only re-animates ValidationFullScreen.tsx, the
+  // component 56390cb9 created, so it is the same feature finishing rather than a second one. A named
+  // human vouches for ONE person's pay and Lenny sees that vouch at Mark Paid. New route, a tested
+  // manual-validation module, a hook, the full-screen overlay and the Mark Paid surfacing. Scored 5
+  // and NOT 8 despite ~1,750 lines: it RECORDS a human judgement and never prices anything — no rate,
+  // no amount, no score component moves — so the money-math risk that earns 8 (the mid-week rate
+  // proration row, the HSL sub-department cutover) is absent here. The one genuinely novel part is
+  // that the validation cannot live on payment_dispatches, because at step 7 no dispatch row exists
+  // yet, so it rides an app_settings blob written compare-and-swap; Mark Paid keys it on row.id,
+  // which is the WORK email. Not 3: a new route, a new persistence pattern and a money-critical
+  // dialog touched.
+  { epic: 'HRIS-02a', name: 'Payroll Wizard manual validation — a named human vouches for one person’s pay, and Mark Paid shows it', type: 'Feature', sp: 5, done: false, sprint: 'S27' },
+  // 3 SP, and deliberately a SECOND row rather than an edit of the Done 2-SP row
+  // "Orphanage OT prices at the full 1.5× rate, never the 0.5× differential" (S27). That row was a
+  // seventeen-line price correction; this is the hardening that followed it — pricing extracted into
+  // orphanage-pay-pricing.ts as the one rule with its own test file, below-regular OT REFUSED outright
+  // rather than silently accepted, an audit script for the divergence, and the 2026-08-09 week
+  // repaired. It does not reverse the earlier row, it makes the same rule unfalsifiable, so both rows
+  // stand. Not 2: an extraction, a refusal guard, an audit script and a data repair is more than the
+  // fix was. Not 5: one pricing rule, no new surface. OPEN and NOT part of this row: erict@'s ₱5,373
+  // is still invisible, and the blob is still last-writer-wins.
+  { epic: 'HRIS-03c', name: 'Orphanage OT pricing extracted and tested, with below-regular OT refused outright', type: 'Bug', sp: 3, done: false, sprint: 'S27', priority: 'High' },
+  // 3 SP: wide and shallow — 48 files, but LABEL ONLY. The stored value `hurupay` never moves, so no
+  // history is rewritten and no dispatch re-routes; `kolan` is aliased in all three normalisers, which
+  // must agree or the rail breaks. Carries a new payout-brand module with tests and a migration
+  // (add_payout_brand_to_onboarding.sql plus its apply script). Not 5: no logic changed, nothing
+  // reprices. Not 2: 48 files, a new column, and three normalisers that fail as one.
+  { epic: 'HRIS-03a', name: 'Hurupay is renamed Kolan everywhere a human reads it, with the stored value left untouched', type: 'Chore', sp: 3, done: false, sprint: 'S27' },
 ];
