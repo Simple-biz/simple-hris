@@ -4,7 +4,10 @@
  * 1) Verifies the Attestation tiers in src/lib/hsl-bonus/schema.ts reproduce the
  *    manager sheet formula
  *      =IF(Cases>=50,Cases*100,IF(Cases>=35,Cases*75,IF(Cases>=25,Cases*50,0)))
- *    for every case count 0..120 (band boundaries included).
+ *        + (Referral Leads * 250) + (SSA.Gov * 250)
+ *    for every case count 0..120 (band boundaries included), crossed with a
+ *    sample of Referral Leads / SSA.Gov counts (the two additive terms were
+ *    added 2026-08-24; they never lift the case tier).
  * 2) READ-ONLY DB scan: lists saved hsl_bonus_entries rows for dept 'attestation'
  *    whose stored calculated_bonus differs from what the current tiers produce —
  *    i.e. weeks saved under the old 30/40/50 thresholds (25–29 and 35–39 case
@@ -23,16 +26,27 @@ dotenv.config();
 const { HSL_DEPTS, calcBonus } = await import('../src/lib/hsl-bonus/schema');
 
 // ── 1. boundary sweep against the sheet formula ───────────────────────────────
-const sheet = (n: number) => (n >= 50 ? n * 100 : n >= 35 ? n * 75 : n >= 25 ? n * 50 : 0);
+// Whole formula, not just the tiered half (the two additive terms were added
+// 2026-08-24). The tier lands on the CASE COUNT ALONE.
+const sheet = (n: number, leads = 0, ssa = 0) =>
+  (n >= 50 ? n * 100 : n >= 35 ? n * 75 : n >= 25 ? n * 50 : 0) + leads * 250 + ssa * 250;
 let bad = 0;
 for (let n = 0; n <= 120; n++) {
-  const app = calcBonus({ attested_cases: n }, HSL_DEPTS.attestation, false);
-  if (app !== sheet(n)) {
-    bad++;
-    console.log(`MISMATCH n=${n}: app=${app} sheet=${sheet(n)}`);
+  for (const leads of [0, 1, 7]) {
+    for (const ssa of [0, 1, 4]) {
+      const app = calcBonus(
+        { attested_cases: n, referral_leads: leads, ssa_gov: ssa },
+        HSL_DEPTS.attestation,
+        false,
+      );
+      if (app !== sheet(n, leads, ssa)) {
+        bad++;
+        console.log(`MISMATCH n=${n} leads=${leads} ssa=${ssa}: app=${app} sheet=${sheet(n, leads, ssa)}`);
+      }
+    }
   }
 }
-console.log(bad === 0 ? 'OK: attestation calcBonus == sheet formula for 0..120 cases' : `${bad} mismatches`);
+console.log(bad === 0 ? 'OK: attestation calcBonus == sheet formula for 0..120 cases x leads x SSA.Gov' : `${bad} mismatches`);
 
 const fil = HSL_DEPTS.filing_specialist.rules.find((r) => r.type === 'tiered');
 if (fil && fil.type === 'tiered') {

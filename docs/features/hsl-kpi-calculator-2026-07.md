@@ -18,7 +18,7 @@ and employee KPI results all read.
 | `simple_texting` *(new)* | Simple Texting | weekly | Transferred Calls × ₱50 · Sign Ups × ₱250 |
 | `medical_records` *(new)* | Medical Records | weekly | Patient Portal Log Ins × ₱250 · RFC × ₱250 |
 | `hsl_managers` *(new)* | Managers Weekly | weekly | bespoke per-manager checklist (see below) |
-| `attestation` *(new 2026-07-21)* | Attestation | weekly | Attested Cases tiered (25→₱50 · 35→₱75 · 50+→₱100 per case; thresholds corrected 2026-07-27 to match the sheet formula — Filing Specialist still uses 30/40/50) |
+| `attestation` *(new 2026-07-21; rules extended 2026-08-24)* | Attestation | weekly | Attested Cases tiered (25→₱50 · 35→₱75 · 50+→₱100 per case; thresholds corrected 2026-07-27 to match the sheet formula — Filing Specialist still uses 30/40/50) **+ Referral Leads ×₱250 · SSA.Gov ×₱250** (see §Attestation additive terms) |
 | `case_managers` *(new 2026-07-22)* | Case Managers | weekly | Reviews ×₱250 · RFC ×₱250 · PPL ×₱100 · DME ×₱250 · Task ×₱250 · Referral Leads ×₱250 |
 | `post_hearing_prep` *(renamed)* | Pre-Hearing / Post-Hearing Prep | weekly | unchanged (Portal Login ₱100 · 5-Star ₱250, ₱3,500/wk cap) |
 | `case_manager` *(removed 2026-07-17; superseded by `case_managers`)* | — | — | was 6 per-unit KPI rules, ~50 members |
@@ -43,6 +43,50 @@ Notes:
   the older "Church Attendees × ₱50". That drift was left as-is by request — the
   new `callback_team` dept was created as named. Revisit if Medicare signups
   should instead reconcile `care_team`.
+
+## Attestation additive terms *(2026-08-24)*
+
+The manager sheet formula for `attestation` gained two additive terms:
+
+```
+=IF(Cases>=50,Cases*100,IF(Cases>=35,Cases*75,IF(Cases>=25,Cases*50,0)))
+  + (Referral Leads * 250) + (SSA.Gov * 250)
+```
+
+The tiered half was already correct (2026-07-27, commit `1a58c16`) and its bands
+are **byte-identical** after this change. The delta is two `per_unit` rules:
+`referral_leads` → ₱250 and `ssa_gov` ("SSA.Gov") → ₱250. Mixed
+`tiered` + `per_unit` in one dept is not new — `filing_specialist` has shipped
+that shape since the start, and `KpiTable` renders one column per rule generically.
+
+**The tier lands on the case count ALONE.** Referral leads and SSA.Gov never push
+a scorer into a higher band, and they pay in full when cases fall below 25 and the
+tiered term is ₱0. The dept has no `monthlyMax`, so nothing truncates them.
+
+**Not retroactive — this is the part that matters on a money path.**
+`hsl_bonus_entries.calculated_bonus` is frozen at save and the wizard dispatches
+the stored value, so no past week reprices on its own. And a *recompute* of any
+historical row returns the same number too, because rows saved before 2026-08-24
+carry only `attested_cases` in `kpi_data` and `calcBonus` reads an absent key as
+`0`. Measured, not assumed: `scripts/verify-attestation-tiers.mts` scanned all
+**174** saved Attestation rows in the live DB after the change and found **zero**
+divergence. Only weeks scored from 2026-08-24 on can carry the new terms.
+
+Because `attestation` is `cadence: 'weekly'`, it sits inside the wizard's
+unconditional `hslKpiAmounts` auto-pay pass (see *Dispatch wiring*) — the new
+terms reach the emailed paystub with no toggle. **Accounting must not also key
+them into the Adjustment column**; that double-pays.
+
+Schema-only change: no SQL, no column, no roster or grant work (`kpi_data` is
+free-form JSON and the dept already exists). Pinned by `schema.test.ts` — a full
+0..120-case sweep crossed with lead/SSA counts against the sheet expression, plus
+explicit tests that the extras cannot lift the tier and that key-absent rows
+recompute unchanged. `scripts/verify-attestation-tiers.mts` sweeps the whole
+formula now, not just the tiered half.
+
+**OPEN (unchanged):** `filing_specialist` still uses the old 30/40/50 "Attested
+Cases" bands and did **not** receive these two terms. Different dept, different
+pay — Kane has never confirmed the correction applies there.
 
 ## Managers Weekly (`hsl_managers`)
 

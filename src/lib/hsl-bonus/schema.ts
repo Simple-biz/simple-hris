@@ -289,6 +289,13 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     color: '#84cc16',
     headerBg: 'bg-lime-950/40',
     badgeCls: 'bg-lime-900/60 text-lime-300',
+    // Manager sheet formula (2026-08-24 — the two additive terms are NEW; the
+    // tiered bands are byte-identical to the 2026-07-27 correction):
+    //   =IF(Cases>=50,Cases*100,IF(Cases>=35,Cases*75,IF(Cases>=25,Cases*50,0)))
+    //     + (Referral Leads * 250) + (SSA.Gov * 250)
+    // The tier lands on the CASE COUNT ONLY — referral leads and SSA.Gov never
+    // push a scorer into a higher band, and they pay in full even when cases
+    // fall below 25 and the tiered term is ₱0. Pinned by schema.test.ts.
     rules: [
       {
         type: 'tiered',
@@ -302,6 +309,8 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
           { min: 50, max: null, rate: 100 },
         ],
       },
+      { type: 'per_unit', key: 'referral_leads', label: 'Referral Leads', rate: 250 },
+      { type: 'per_unit', key: 'ssa_gov',        label: 'SSA.Gov',        rate: 250 },
     ],
   },
 
