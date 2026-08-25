@@ -18,10 +18,12 @@ import {
   formatWeekHuman,
   parseProrationBlock,
   deriveProrationFields,
+  deriveDepartmentTransfer,
   applyCopEquivalent,
   type PayStubView,
   type ProrationBlockRaw,
 } from "@/lib/payroll/paystub-view";
+import type { DepartmentTransferBlockRaw } from "@/lib/payroll/department-transfer-legs";
 import {
   resolveCountryCurrencyForEmails,
   getUsdToCopRate,
@@ -172,6 +174,10 @@ function buildView(p: {
    *  M-F / Weekend / OT-Differential lines for HSL. Omit/null → the classic
    *  weekend-carve derivation below. */
   hoganSheet?: HoganSheetBlockRaw | null;
+  /** Mid-week department transfer (snapshots since 2026-08-25) — the
+   *  "Lead Gen to HSL" disclosure under the Department line. Omit/null → the
+   *  Department line renders alone. */
+  departmentTransfer?: DepartmentTransferBlockRaw | null;
   pab: number;
   tech: number;
   performanceBonus: number;
@@ -228,6 +234,12 @@ function buildView(p: {
   return {
     name: p.name || "—",
     department: p.department || "—",
+    // Mid-week transfer disclosure — snapshots since 2026-08-25. Absent on
+    // every older snapshot and on the reconstruction path (which predates the
+    // transfer feed entirely), and those weeks render the Department line alone.
+    departmentTransfer: deriveDepartmentTransfer({
+      department_transfer: p.departmentTransfer ?? null,
+    }),
     weekStart: p.weekStart,
     weekEnd: p.weekEnd,
     weekHuman: formatWeekHuman(p.weekStart, p.weekEnd),
@@ -368,6 +380,9 @@ async function reconstructStubForWeek(params: {
       proration: fp.proration ?? null,
       // Hogan sheet-form legs — snapshots since 2026-08-11; older ones render classic.
       hoganSheet: fp.hoganSheet ?? null,
+      // Mid-week transfer disclosure — snapshots since 2026-08-25; older ones
+      // render the Department line alone.
+      departmentTransfer: fp.departmentTransfer ?? null,
       pab: round2(fp.perfectAttendanceBonus as number),
       tech: round2(fp.techBonus as number),
       performanceBonus: round2(fp.otherBonuses as number),

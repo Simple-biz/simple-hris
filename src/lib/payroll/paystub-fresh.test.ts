@@ -607,3 +607,107 @@ test('a sheet-form differential otRate never trips the catalog staleness gate', 
   assert.equal(r.staleRateSnapshot ?? false, false);
   assert.equal(r.refreshed, true);
 });
+
+// ── Mid-week transfer disclosure through the merge (2026-08-25) ──────────────
+//
+// Same tri-state contract as the other three blocks — but this one explains no
+// MONEY, so it can be the ONLY thing that differs between the snapshot and the
+// staged payload. That makes the "transfer-only change fires a refresh" case
+// load-bearing rather than incidental: without it, a transfer released after
+// the lock could never reach an unpaid stub.
+
+const transferBlock = (p: unknown) =>
+  (p as Record<string, unknown>).department_transfer as Record<string, unknown> | null;
+
+const ONE_LEG = { legs: [{ from: 'Lead Gen', to: 'HSL', effective_date: '2026-08-13' }] };
+
+/** The prorated fixture pair minus its proration block: that payload spells out
+ *  EVERY `pay_php` key, so `transferOnly()` really does hold every figure still
+ *  — which is what makes "only the transfer block moved" a real assertion
+ *  rather than an accident of a sparse fixture. */
+function transferBaseRow(): StagedPaystubLike {
+  const row = proratedStagedRow();
+  delete (row.payload as Record<string, unknown>).proration;
+  return row;
+}
+
+function transferStagedRow(): StagedPaystubLike {
+  const row = transferBaseRow();
+  (row.payload as Record<string, unknown>).department_transfer = {
+    legs: [{ from: 'Lead Gen', to: 'HSL', effective_date: '2026-08-13' }],
+  };
+  return row;
+}
+
+/** Snapshot overrides matching `transferBaseRow()` figure-for-figure. The
+ *  explicit `proration: null` matters: the base row carries no block, and the
+ *  snapshot must not invent one while we are testing something else. */
+function transferOnly(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return { ...proratedSnapOverrides(), proration: null, ...over };
+}
+
+test('a snapshot carrying a transfer block replaces the staged one', () => {
+  const staged = transferStagedRow();
+  // A second leg was released after the lock — the round trip is now complete.
+  const nextBlock = {
+    legs: [
+      { from: 'Lead Gen', to: 'HSL', effective_date: '2026-08-11' },
+      { from: 'HSL', to: 'Lead Gen', effective_date: '2026-08-13' },
+    ],
+  };
+  const entry = snapEntry(transferOnly({ departmentTransfer: nextBlock }));
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, true);
+  assert.deepEqual(transferBlock(r.payload), nextBlock);
+});
+
+test('a transfer-ONLY change fires the refresh (not one figure moved)', () => {
+  const staged = transferBaseRow(); // no transfer block at all
+  const entry = snapEntry(transferOnly({ departmentTransfer: ONE_LEG }));
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, true);
+  assert.deepEqual(transferBlock(r.payload), ONE_LEG);
+});
+
+test('an OLD-shape snapshot (no departmentTransfer key) leaves the staged block untouched', () => {
+  const staged = transferStagedRow();
+  const entry = snapEntry(transferOnly({ regularPay: 8300, initial: 9003.13, final: 8903.13 }));
+  delete entry.departmentTransfer; // older snapshots have no such key
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, true);
+  assert.deepEqual(transferBlock(r.payload), ONE_LEG);
+});
+
+test('departmentTransfer: null clears a stale staged block', () => {
+  const staged = transferStagedRow();
+  const entry = snapEntry(transferOnly({ departmentTransfer: null }));
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, true);
+  assert.equal(transferBlock(r.payload), null);
+});
+
+test('an identical transfer block alone does not force a refresh', () => {
+  const staged = transferStagedRow();
+  // jsonb round-trips reorder object keys, and may hand the legs back in any
+  // order — neither may read as a change.
+  const scrambled = { legs: [{ to: 'HSL', effective_date: '2026-08-13', from: 'Lead Gen' }] };
+  const entry = snapEntry(transferOnly({ departmentTransfer: scrambled }));
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, false);
+});
+
+test('an empty leg list and an absent block mean the same thing — no refresh', () => {
+  const staged = transferBaseRow(); // no transfer block
+  const entry = snapEntry(transferOnly({ departmentTransfer: { legs: [] } }));
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, false);
+});
+
+test('an old-shape snapshot over a payload WITHOUT a transfer block never invents the key', () => {
+  const staged = transferBaseRow();
+  const entry = snapEntry(transferOnly({ regularPay: 8300, initial: 9003.13, final: 8903.13 }));
+  delete entry.departmentTransfer;
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, true);
+  assert.equal('department_transfer' in (r.payload as Record<string, unknown>), false);
+});

@@ -18,6 +18,9 @@ Key files:
 - `app/api/accounting/transfers/route.ts` — rate-visible history + Sheet-sync retry.
 - `app/api/cron/apply-scheduled-transfers/route.ts` — daily safety-net applier for due `approved` rows.
 - `app/api/payroll/rate-history-bulk/route.ts` — the rate-history feed the Wizard prorates against.
+- `app/api/payroll/hsl-transfers-bulk/route.ts` — one paginated read of this table, two derived maps:
+  the into-HSL effective dates (weekend premium) and `legsByEmail` (the paystub disclosure).
+- `src/lib/payroll/department-transfer-legs.ts` — `applied`-only legs map + the "Lead Gen to HSL" label.
 - `src/lib/transfers/apply-transfer.ts` — `applyApprovedTransfer` (master + Sheet + notify).
 - `src/lib/transfers/accounting-transfers.ts` — joins each transfer to its dept-to-dept rate change.
 - `src/lib/supabase/department-transfer-requests.ts` — table row type + all read/write helpers.
@@ -122,8 +125,9 @@ was the old "released but nothing changed" limbo. The effective date lives on pu
    master rows require to reach the **goal state** ("exactly one row in `to_department`"):
    - `moved` — flip the source row(s) to the target; if a target-dept row already exists, the
      redundant source duplicates are **deleted** instead of moved (dodging the unique constraint);
-   - `satisfied` — already in the target: nothing to write, and the Sheet write-back is skipped
-     (`sheet_synced=true`, the Sheet already reflects the end state);
+   - `satisfied` — already in the target: nothing to write to the master list. **The Sheet
+     write-back is still attempted** — see the 2026-08-25 fix in step 2; this resolution used to
+     skip it and claim `sheet_synced=true`, which is what drifted 9 Sheet cells;
    - `notFound` — no roster row by any email: an **expected** outcome, not an error — the request is
      **auto-cancelled** with a note ("not on the active roster … off-boarded or email changed")
      instead of stranding in `approved` forever. (A bug where `notFound` returned a non-null error
@@ -136,6 +140,30 @@ was the old "released but nothing changed" limbo. The effective date lives on pu
    `values:batchUpdate`. This is the whole point of v2 — the Sheet is the roster source of truth and
    the `(Work Email, Department)` sync key would otherwise revert or duplicate the move. Failure is
    **non-blocking**: the row still becomes `applied` with `sheet_synced=false` + `sheet_sync_error`.
+
+   > **`sheet_synced` must never be inferred from the master-list result *(fixed 2026-08-25)*.**
+   > The write-back used to be **skipped** whenever the master apply resolved `satisfied`, recording
+   > `sheet_synced=true` without ever reading the Sheet — `alreadyInTarget` is a fact about the
+   > **database** being used to assert something about the **Sheet**. Whenever the DB row already
+   > held the target dept for any other reason (a prior bulk relabel, an earlier transfer, any
+   > sheet-independent write), the Sheet silently kept the **pre-transfer** department forever.
+   >
+   > That is not a cosmetic drift. The master sync keys identity on
+   > `(LOWER("Personal Email"), LOWER("Department"))`, so a drifted cell means the person's row is
+   > never matched and never re-stamped onto the current upload — they fall out of
+   > `active_employees` and go **invisible on every roster surface while still being paid** off
+   > their Hubstaff hours. Measured 2026-08-25: **9 drifted cells, 6 of them invisible people**
+   > (`kimerl@`, `aimei@`, `jesr@`, `markl@`, `shainan@`, `theresaa@`), the oldest frozen on the
+   > **2026-06-11** upload. They surfaced only on Payroll Notes → Offboarded, as `(no date)` rows.
+   >
+   > The write is now **always attempted**, and `updateMasterSheetDepartment` returns three
+   > distinguishable outcomes instead of one boolean — `updated > 0` (a cell was flipped),
+   > `alreadyTarget` (an email-matched row already reads the target, a genuine success), and
+   > everything else (**real drift**, recorded as `sheet_sync_error` so the Accounting tab's
+   > Retry badge can surface it). `planSheetDepartmentUpdate` is the pure, tested core; eight tests
+   > in `update-master-sheet-department.test.ts` pin the three outcomes apart. **Do not collapse
+   > them back into one flag**, and do not "fix" a false Retry badge by treating a no-match as
+   > success. Existing drift is repaired by `scripts/fix-sheet-dept-drift.mts` (dry-run default).
 3. **Record + notify.** `markTransferApplied` sets `status=applied`, `applied_at`; the receiving
    manager and the employee get a `transfer.applied` notification.
 
@@ -288,6 +316,18 @@ history rows (the stint rate eff the in-date, ₱175 eff the out-date) plus a re
 is the same three-rate shape the engine already has a pinned test for. If they say it was
 a mis-transfer that got reversed, both are already correct and nothing needs doing. Do not
 "fix" either one before that answer exists.
+
+**The paystub now DISCLOSES a mid-week transfer** (2026-08-25). A transfer relabels the person
+immediately, so a week whose effective date fell inside it used to print the destination
+department and nothing else. The statement — every surface, Accounting through the Employee
+Dashboard, plus the email and the exports — now carries **"Lead Gen to HSL"** under the
+Department line. It reads `department_transfer_requests` directly, **not** the proration block:
+only a *rate* change prorates, so a same-rate move (raymandc@, janrielr@) has no proration block
+and is exactly what this exists to explain. It counts **`applied` rows only** — an `approved` row
+is one whose apply failed, and its label never moved (6 such rows live, all with a null
+`applied_at`). The legs are STAGED into the payload, so a paid stub is never rewritten and a
+stub already paid never gains the label. See
+[paystub-dispatch.md](./paystub-dispatch.md#mid-week-transfer-disclosure--2026-08-25).
 
 **Transfers INTO HSL also day-scope the Weekend Hours treatment** (2026-07-30): the +₱15/h Sat/Sun
 premium + weekend itemization start on the transfer's effective date — inside the transfer week the

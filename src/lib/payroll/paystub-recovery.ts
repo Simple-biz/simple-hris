@@ -29,6 +29,7 @@
 import { getAppSetting, getAppSettings } from "@/lib/supabase/app-settings";
 import type { ProrationBlockRaw } from "@/lib/payroll/paystub-view";
 import type { HoganSheetBlockRaw } from "@/lib/payroll/hogan-week-pay";
+import type { DepartmentTransferBlockRaw } from "@/lib/payroll/department-transfer-legs";
 import type { WizardSnapshotEntry } from "@/lib/payroll/wizard-dispatch-values";
 
 /** One employee's exact figures from `payroll.wizard.final_pay.<sourceFile>`.
@@ -94,6 +95,17 @@ export interface WizardFinalPayEntry extends WizardSnapshotEntry {
    *  sheet-form row; undefined (older snapshots) = the merge keeps whatever
    *  block the staged payload already carries. */
   hoganSheet?: HoganSheetBlockRaw | null;
+  /** Mid-week department transfer (added 2026-08-25), payload-shaped — the
+   *  "Lead Gen to HSL" disclosure under the statement's Department line.
+   *  Same travel-together contract: null = no move was effective inside this
+   *  pay week; undefined (older snapshots) = the merge keeps whatever block the
+   *  staged payload already carries.
+   *
+   *  Unlike the other three this block explains no MONEY — a transfer is a
+   *  relabel and only a rate change prorates — so it is the one block whose
+   *  presence never implies a figure changed. It still travels with the write
+   *  so a re-lock can correct a week whose transfer was released late. */
+  departmentTransfer?: DepartmentTransferBlockRaw | null;
 }
 
 /** The discretionary overlay recovered for one employee + week. */

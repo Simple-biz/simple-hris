@@ -142,6 +142,38 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
  * sheet-form legs, 2026-08-11) — same jsonb-round-trip and tolerance rules as
  * {@link sameProrationBlock}.
  */
+/**
+ * Field-wise equality for two payload-shaped `department_transfer` blocks (the
+ * mid-week transfer disclosure, 2026-08-25). All three fields are STRINGS, so
+ * there is no tolerance to apply — but the leg ORDER still must not matter:
+ * both sides may be jsonb round-trips, and the block is rebuilt on every
+ * re-stage. Compared as a sorted set of `date|from|to` keys, which makes a
+ * re-lock that produces the identical week a no-op instead of an endless
+ * refresh.
+ */
+function sameTransferBlock(a: unknown, b: unknown): boolean {
+  const legKeys = (v: unknown): string[] | null => {
+    const o = v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+    if (!o) return null;
+    const legs = Array.isArray(o.legs) ? o.legs : [];
+    return legs
+      .map((l) => {
+        const lo = obj(l);
+        const from = typeof lo.from === "string" ? lo.from.trim() : "";
+        const to = typeof lo.to === "string" ? lo.to.trim() : "";
+        const eff = typeof lo.effective_date === "string" ? lo.effective_date.slice(0, 10) : "";
+        return `${eff}|${from}|${to}`;
+      })
+      .sort();
+  };
+  // An empty leg list and an absent block both mean "nothing to disclose", so
+  // they must compare EQUAL — otherwise a snapshot carrying `{ legs: [] }`
+  // would read as a change on every merge and refresh the queue row forever.
+  const ak = legKeys(a) ?? [];
+  const bk = legKeys(b) ?? [];
+  return ak.length === bk.length && ak.every((k, i) => k === bk[i]);
+}
+
 function sameHoganBlock(a: unknown, b: unknown): boolean {
   const ao = a && typeof a === "object" ? (a as Record<string, unknown>) : null;
   const bo = b && typeof b === "object" ? (b as Record<string, unknown>) : null;
@@ -424,6 +456,23 @@ export function mergeSnapshotIntoStaged(
   const nextHogan = !hasHoganField ? oldHogan : (entry.hoganSheet ?? null);
   const hoganChanged = hasHoganField && !sameHoganBlock(oldHogan, entry.hoganSheet ?? null);
 
+  // ── Mid-week department transfer (snapshots since 2026-08-25) ──
+  // The odd one out: this block explains no money — a transfer is a relabel and
+  // only a RATE change prorates — so it can be the ONLY thing that differs
+  // between a snapshot and the staged payload. It still gets the same tri-state
+  // contract (undefined = older snapshot, keep the staged block; null = no move
+  // was effective inside this week, clear a stale one), and it must count into
+  // `changed` on its own, or a transfer released after the lock could never
+  // reach an unpaid stub.
+  const oldTransfer =
+    p.department_transfer && typeof p.department_transfer === "object"
+      ? (p.department_transfer as Record<string, unknown>)
+      : null;
+  const hasTransferField = entry.departmentTransfer !== undefined;
+  const nextTransfer = !hasTransferField ? oldTransfer : (entry.departmentTransfer ?? null);
+  const transferChanged =
+    hasTransferField && !sameTransferBlock(oldTransfer, entry.departmentTransfer ?? null);
+
   // Field-by-field change detection (NOT JSON.stringify — jsonb round-trips
   // reorder keys, which would flag every merge as a change). fx_rate is part of
   // the statement too (the USD line), so an fx-only snapshot update must merge.
@@ -434,6 +483,7 @@ export function mergeSnapshotIntoStaged(
     weekendChanged ||
     prorationChanged ||
     hoganChanged ||
+    transferChanged ||
     (snapFx > 0 && !sameAmount(oldPeriod.fx_rate, snapFx)) ||
     (nextNote ?? null) !== ((typeof p.adjustment_note === "string" ? p.adjustment_note : null) ?? null);
   if (!changed) return base;
@@ -449,6 +499,8 @@ export function mergeSnapshotIntoStaged(
     ...(hasProrationField ? { proration: nextProration } : {}),
     // Same rule for the Hogan sheet-form block (see above).
     ...(hasHoganField ? { hogan_sheet: nextHogan } : {}),
+    // Same rule for the mid-week transfer block (see above).
+    ...(hasTransferField ? { department_transfer: nextTransfer } : {}),
     rates_php: nextRates,
     pay_php: nextPay,
     adjustment_note: nextNote,

@@ -150,7 +150,7 @@ test('classic fields are byte-identical with and without the weekend block', () 
     'mfHours', 'mfOtHours', 'mfRate', 'otRate', 'mfPay', 'otPay',
     'techBonus', 'attendanceBonus', 'performanceBonus', 'adjustment',
     'orphanagePay', 'mesaDisbursement', 'mesaDeduction',
-    'totalPayPhp', 'fxRate', 'totalPayUsd',
+    'totalPayPhp', 'fxRate', 'totalPayUsd', 'departmentTransfer',
   ] as const) {
     assert.deepEqual(withBlock[k], withoutBlock[k], `field ${k} drifted`);
   }
@@ -371,7 +371,7 @@ test('classic fields are byte-identical with and without the proration block', (
     'hasWeekend', 'weekdayHours', 'weekdayOtHours', 'weekdayPay', 'weekdayOtPay',
     'techBonus', 'attendanceBonus', 'performanceBonus', 'adjustment',
     'orphanagePay', 'mesaDisbursement', 'mesaDeduction',
-    'totalPayPhp', 'fxRate', 'totalPayUsd',
+    'totalPayPhp', 'fxRate', 'totalPayUsd', 'departmentTransfer',
   ] as const) {
     assert.deepEqual(withBlock[k], withoutBlock[k], `field ${k} drifted`);
   }
@@ -731,4 +731,70 @@ test('payloads without hogan_sheet keep otIsDifferential false (legacy render)',
   const p = hslPayload();
   delete p.weekend;
   assert.equal(mapPayloadToPayStub(p).otIsDifferential, false);
+});
+
+// ── Mid-week transfer disclosure (2026-08-25) ────────────────────────────────
+//
+// The block is staged only when a move was effective INSIDE the pay week, so
+// the view does no date arithmetic — presence of the block IS the gate.
+
+function transferPayload(legs: unknown): Record<string, unknown> {
+  const p = hslPayload();
+  p.department_name = 'Hogan Smith Law';
+  p.department_transfer = { legs };
+  return p;
+}
+
+test('a staged transfer block becomes the display label + the raw legs', () => {
+  const v = mapPayloadToPayStub(
+    transferPayload([{ from: 'Lead Gen', to: 'HSL', effective_date: '2026-08-13' }]),
+  );
+  assert.equal(v.departmentTransfer?.label, 'Lead Gen to HSL');
+  assert.deepEqual(v.departmentTransfer?.legs, [
+    { from: 'Lead Gen', to: 'HSL', effective_date: '2026-08-13' },
+  ]);
+});
+
+test('a sub-team target never reaches the view as a raw `hsl:` slug', () => {
+  const v = mapPayloadToPayStub(
+    transferPayload([{ from: 'Lead Gen', to: 'hsl:intake_specialist', effective_date: '2026-08-24' }]),
+  );
+  assert.equal(v.departmentTransfer?.label, 'Lead Gen to HSL — Intake Specialist');
+  assert.ok(!v.departmentTransfer?.label.includes('hsl:'));
+});
+
+test('two legs in one week both survive the round-trip into the view', () => {
+  const v = mapPayloadToPayStub(
+    transferPayload([
+      { from: 'HSL', to: 'Lead Gen', effective_date: '2026-08-13' },
+      { from: 'Lead Gen', to: 'HSL', effective_date: '2026-08-11' },
+    ]),
+  );
+  // Order is normalized by effective date on the way in, so the chain reads
+  // the way the week ran regardless of how jsonb handed the array back.
+  assert.equal(v.departmentTransfer?.label, 'Lead Gen to HSL to Lead Gen');
+});
+
+test('absent / null / junk transfer blocks all render the classic Department line', () => {
+  assert.equal(mapPayloadToPayStub(hslPayload()).departmentTransfer, null);
+  assert.equal(mapPayloadToPayStub(transferPayload([])).departmentTransfer, null);
+  const nulled = hslPayload();
+  nulled.department_transfer = null;
+  assert.equal(mapPayloadToPayStub(nulled).departmentTransfer, null);
+  const junk = hslPayload();
+  junk.department_transfer = 'Lead Gen to HSL';
+  assert.equal(mapPayloadToPayStub(junk).departmentTransfer, null);
+  // A leg missing a side is dropped; a block of only-junk legs is no block.
+  assert.equal(
+    mapPayloadToPayStub(transferPayload([{ from: 'Lead Gen', effective_date: '2026-08-13' }]))
+      .departmentTransfer,
+    null,
+  );
+});
+
+test('jsonb string round-trip: a timestamptz-shaped date still parses to the day', () => {
+  const v = mapPayloadToPayStub(
+    transferPayload([{ from: 'Lead Gen', to: 'HSL', effective_date: '2026-08-13T00:00:00+08:00' }]),
+  );
+  assert.equal(v.departmentTransfer?.legs[0].effective_date, '2026-08-13');
 });

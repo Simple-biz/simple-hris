@@ -357,6 +357,16 @@ export function renderPayStubEmailHtml(
         '</tr>'
       : '';
 
+  // Mid-week transfer disclosure under the Department — "Lead Gen to HSL". The
+  // email-safe transcription of PayStubStatement's own line: same copy, same
+  // colour, same 11px scale, inline-styled because email clients have no
+  // stylesheets. Empty string on every week without a transfer, so a statement
+  // that has none is byte-identical to the ones sent before this shipped.
+  const transferLine = view.departmentTransfer
+    ? '<div style="margin-top:3px;font-size:11px;line-height:14px;color:#7c8798;">' +
+      `${esc(view.departmentTransfer.label)}</div>`
+    : '';
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -445,6 +455,7 @@ ${copRow}
 <td class="stack-cell" align="right" style="width:50%;vertical-align:top;text-align:right;padding:8px 0 8px 0;border-bottom:1px solid #e2e8f0;">
 <div style="font-size:10px;line-height:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#556377;">Department</div>
 <div style="font-size:14px;line-height:20px;font-weight:700;color:#102034;margin-top:3px;">${esc(formatDeptLabel(view.department) || '—')}</div>
+${transferLine}
 </td>
 </tr>
 </table>

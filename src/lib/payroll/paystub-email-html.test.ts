@@ -286,3 +286,63 @@ test('renders one complete html document', () => {
   const close = (html.match(/<\/table>/g) ?? []).length;
   assert.equal(open, close, 'every <table> must be closed');
 });
+
+/* ─────────────────── mid-week transfer disclosure (2026-08-25) ─────────────── */
+
+/** `plainPayload()` plus a transfer effective inside its 2026-07-12..18 week. */
+function transferPayload(to = 'HSL'): Record<string, unknown> {
+  const p = plainPayload();
+  p.department_transfer = { legs: [{ from: 'Lead Gen', to, effective_date: '2026-07-15' }] };
+  return p;
+}
+
+test('the emailed statement carries the transfer line under the Department', () => {
+  const html = render(transferPayload());
+  assert.ok(html.includes('Lead Gen to HSL'), 'transfer label missing from the email');
+  // It must sit AFTER the department value, inside the same cell.
+  const dept = html.indexOf('>Lead Gen<');
+  const label = html.indexOf('Lead Gen to HSL');
+  assert.ok(dept > 0 && label > dept, 'the label must follow the Department value');
+});
+
+test('a sub-team transfer never emails a raw `hsl:` slug', () => {
+  const html = render(transferPayload('hsl:intake_specialist'));
+  assert.ok(html.includes('Lead Gen to HSL — Intake Specialist'));
+  assert.ok(!html.includes('hsl:'), 'a storage key reached an employee inbox');
+});
+
+test('a week with no transfer emails no transfer line at all', () => {
+  const html = render(plainPayload());
+  assert.ok(!html.includes(' to HSL'));
+  assert.ok(!html.includes('Lead Gen to '));
+});
+
+test('the transfer label is escaped like every other operator-sourced string', () => {
+  const p = plainPayload();
+  p.department_transfer = {
+    legs: [{ from: '<script>x</script>', to: 'HSL', effective_date: '2026-07-15' }],
+  };
+  const html = render(p);
+  assert.ok(!html.includes('<script>x</script>'));
+  assert.ok(html.includes('&lt;script&gt;'));
+});
+
+test('the transfer line does not unbalance the document', () => {
+  const html = render(transferPayload());
+  assert.ok(html.startsWith('<!DOCTYPE html>'));
+  assert.ok(html.trimEnd().endsWith('</html>'));
+  const open = (html.match(/<table/g) ?? []).length;
+  const close = (html.match(/<\/table>/g) ?? []).length;
+  assert.equal(open, close, 'every <table> must be closed');
+});
+
+test('PARITY: the in-app view and the email agree on the transfer label', () => {
+  // `PayStubStatement.tsx` renders `view.departmentTransfer.label` verbatim and
+  // this renderer is its email-safe transcription — the pair is documented as
+  // lockstep (paystub-dispatch.md) but nothing mechanically enforced it before.
+  // A view-derived label is the enforcement: both surfaces print one string.
+  const view: PayStubView = mapPayloadToPayStub(transferPayload());
+  const label = view.departmentTransfer?.label;
+  assert.equal(label, 'Lead Gen to HSL');
+  assert.ok(renderPayStubEmailHtml(view).includes(label as string));
+});

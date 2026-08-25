@@ -384,6 +384,19 @@ export function PayStubStatement({
               <div className="mt-[3px] break-words text-[14px] font-bold leading-5 text-[#102034]">
                 {formatDeptLabel(view.department) || '—'}
               </div>
+              {/* Mid-week transfer disclosure — "Lead Gen to HSL". The Department
+                  above is where the person ENDED the week (a transfer moves the
+                  label the moment it is released), so without this line a week
+                  they only spent part of in that team reads as though they had
+                  always been there. Both sides are already through
+                  formatDeptLabel inside `formatTransferLabel`; null on every
+                  week without a transfer and on every payload staged before
+                  2026-08-25, which render exactly as they did before. */}
+              {view.departmentTransfer && (
+                <div className="mt-[3px] break-words text-[11px] leading-[14px] text-[#7c8798]">
+                  {view.departmentTransfer.label}
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -214,6 +214,11 @@ const XLSX_COLS: XlsxCol[] = [
   { header: 'Period Ending', width: 22, value: (w) => w.view.weekHuman || '-' },
   { header: 'Week Start', width: 13, value: (w) => w.view.weekStart ?? '' },
   { header: 'Week End', width: 13, value: (w) => w.view.weekEnd ?? '' },
+  // Mid-week department transfer — the same "Lead Gen to HSL" string the
+  // statement prints under its Department line, already through formatDeptLabel
+  // on both sides. Blank on every week without a move. The XLSX keeps its full
+  // fixed column set for ledger use, so this costs the other columns nothing.
+  { header: 'Department Change', width: 30, value: (w) => w.view.departmentTransfer?.label ?? '' },
   { header: 'Regular Hours', width: 13, value: (w) => round2(derive(w).weekdayHours) },
   { header: 'OT Hours', width: 10, value: (w) => round2(derive(w).weekdayOtHours) },
   { header: 'Regular Pay', width: 14, value: (w) => round2(derive(w).weekdayPay), total: (t) => round2(t.regular) },
@@ -366,6 +371,17 @@ const PDF_COL_DEFS: PdfColDef[] = [
     header: 'Period Ending', align: 'left',
     cell: (w) => compactPeriod(w.view),
     total: (_t, n) => `Total (${n})`,
+  },
+  // Mid-week department transfer — optional, so the `visibleDefs` filter drops
+  // it entirely for everyone who never moved and the money table is unchanged
+  // for them. When it IS present it is the only wide left-aligned text column
+  // in a MEASURED table: the layout answers by stepping the body font down
+  // (9.5 -> 6.5pt) and ellipsizing at the floor, so it can shrink the sheet but
+  // can never overlap a money column. Truncating a department name on a pay
+  // record would be the worse trade.
+  {
+    header: 'Department Change', align: 'left', optional: true,
+    cell: (w) => w.view.departmentTransfer?.label || '-',
   },
   {
     header: 'Regular', align: 'right',

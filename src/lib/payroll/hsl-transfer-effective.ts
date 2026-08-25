@@ -2,6 +2,10 @@ import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/l
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { normEmail } from '@/lib/email/norm-email';
+import {
+  buildTransferLegsByEmail,
+  type DepartmentTransferLegRaw,
+} from '@/lib/payroll/department-transfer-legs';
 
 /**
  * Effective dates of department transfers INTO HSL, keyed by employee email —
@@ -56,10 +60,19 @@ export function buildHslTransferEffectiveMap(rows: HslTransferRowLike[]): Map<st
   return out;
 }
 
-/** Fetch + build the map (paginated — never trust the 1000-row default cap). */
-export async function fetchHslTransferEffectiveByEmail(): Promise<Map<string, string>> {
+/**
+ * The ONE paginated read of `department_transfer_requests` both transfer maps
+ * derive from — the into-HSL effective dates (which day-scope the weekend
+ * premium) and the paystub's mid-week transfer disclosure
+ * ({@link buildTransferLegsByEmail}). Sharing the read means the two can never
+ * be built from different snapshots of the table.
+ *
+ * Paginated — never trust the 1000-row default cap (PostgREST truncates even
+ * with `.range()`).
+ */
+export async function fetchDepartmentTransferRows(): Promise<HslTransferRowLike[]> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
-  if (!supabase) return new Map();
+  if (!supabase) return [];
 
   const PAGE = 1000;
   const all: HslTransferRowLike[] = [];
@@ -73,5 +86,20 @@ export async function fetchHslTransferEffectiveByEmail(): Promise<Map<string, st
     all.push(...(data as HslTransferRowLike[]));
     if (data.length < PAGE) break;
   }
-  return buildHslTransferEffectiveMap(all);
+  return all;
+}
+
+/** Fetch + build the map (paginated — never trust the 1000-row default cap). */
+export async function fetchHslTransferEffectiveByEmail(): Promise<Map<string, string>> {
+  return buildHslTransferEffectiveMap(await fetchDepartmentTransferRows());
+}
+
+/**
+ * Fetch + build the paystub disclosure map: every applied/approved move a
+ * person has, keyed by email. The caller narrows it to the pay week
+ * (`transferLegsInWeek`) — a full-history map is what lets a REPLAY of an old
+ * week disclose the transfer that week actually carried.
+ */
+export async function fetchTransferLegsByEmail(): Promise<Map<string, DepartmentTransferLegRaw[]>> {
+  return buildTransferLegsByEmail(await fetchDepartmentTransferRows());
 }

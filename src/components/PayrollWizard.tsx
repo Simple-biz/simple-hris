@@ -124,6 +124,11 @@ import {
   resolveHslWeekScope,
   type HslWeekModel,
 } from '@/lib/payroll/hsl-week-model';
+import {
+  transferBlockForWeek,
+  type DepartmentTransferBlockRaw,
+  type DepartmentTransferLegRaw,
+} from '@/lib/payroll/department-transfer-legs';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { parseCsv } from '@/lib/csv/parse-csv';
 import {
@@ -740,6 +745,20 @@ type DispatchEmployee = {
    * lines then. See `parseProrationBlock` / `deriveProrationFields`.
    */
   proration: ProrationBlockRaw | null;
+  /**
+   * Every department move whose effective date landed INSIDE this pay week —
+   * the statement's "Lead Gen to HSL" line under the Department.
+   *
+   * Deliberately its own block rather than a read off `proration`: a transfer
+   * is a relabel and only a RATE change prorates, so the people who moved
+   * without a rate change (raymandc@, janrielr@ — into HSL and back out inside
+   * the 2026-08-09 week) carry no proration block at all and are exactly the
+   * ones this discloses. Staged, not derived at render time, because a PAID
+   * stub is frozen as-paid: a transfer released next month must not rewrite a
+   * statement already in someone's inbox. Null for a quiet week and for every
+   * payload staged before 2026-08-25 — those render the Department line alone.
+   */
+  department_transfer: DepartmentTransferBlockRaw | null;
   rates_php: { regular: number | null; ot: number | null };
   pay_php: {
     regular: number | null;
@@ -3944,15 +3963,30 @@ export default function PayrollWizard({
   // server compute fetches directly (current-pay.ts), so the wizard and
   // Payment Dispatch can never disagree on who earns the premium on which day.
   const [hslTransferEffectiveRaw, setHslTransferEffectiveRaw] = useState<Record<string, string>>({});
+  // The SECOND map off the same request: every applied/approved move a person
+  // has, from/to + effective date. Narrowed to the pay week at payload-build
+  // time and staged as `department_transfer` — the statement's "Lead Gen to
+  // HSL" disclosure. One fetch, so the week a stub discloses and the week whose
+  // weekend premium it day-scopes can never come from different snapshots.
+  const [transferLegsRaw, setTransferLegsRaw] = useState<Record<string, DepartmentTransferLegRaw[]>>({});
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const res = await fetch('/api/payroll/hsl-transfers-bulk', { cache: 'no-store' });
-        const json = (await res.json()) as { effectiveByEmail?: Record<string, string> };
-        if (!cancelled) setHslTransferEffectiveRaw(json.effectiveByEmail ?? {});
+        const json = (await res.json()) as {
+          effectiveByEmail?: Record<string, string>;
+          legsByEmail?: Record<string, DepartmentTransferLegRaw[]>;
+        };
+        if (!cancelled) {
+          setHslTransferEffectiveRaw(json.effectiveByEmail ?? {});
+          setTransferLegsRaw(json.legsByEmail ?? {});
+        }
       } catch {
-        if (!cancelled) setHslTransferEffectiveRaw({});
+        if (!cancelled) {
+          setHslTransferEffectiveRaw({});
+          setTransferLegsRaw({});
+        }
       }
     })();
     return () => {
@@ -3981,6 +4015,51 @@ export default function PayrollWizard({
     }
     return out;
   }, [hslTransferEffectiveRaw, masterEmployees]);
+
+  // The same alias bridge for the disclosure legs — but a UNION, not a max.
+  // The map above collapses to the LATEST date because one date is all the
+  // weekend-premium scope needs; a person's legs are a LIST and a person can
+  // hold two in one week (raymandc@, janrielr@, rabagow@, markd@, hansc@), so
+  // taking the "latest" here would silently drop the other half of a round trip.
+  const transferLegsByEmail = useMemo(() => {
+    const out = new Map<string, DepartmentTransferLegRaw[]>();
+    // Dedupe on the leg's own identity, so a move reachable under two aliases
+    // lands once no matter how many addresses the master list carries.
+    const merge = (into: Map<string, DepartmentTransferLegRaw>, legs: DepartmentTransferLegRaw[]) => {
+      for (const l of legs) into.set(`${l.effective_date}|${l.from}|${l.to}`, l);
+    };
+    const buckets = new Map<string, Map<string, DepartmentTransferLegRaw>>();
+    const bucket = (em: string) => {
+      let b = buckets.get(em);
+      if (!b) {
+        b = new Map();
+        buckets.set(em, b);
+      }
+      return b;
+    };
+    for (const [k, v] of Object.entries(transferLegsRaw)) merge(bucket(k), v ?? []);
+    for (const e of masterEmployees) {
+      const aliases = [e.work_email, e.personal_email, e.alternate_work_email, e.alternate_work_email_2]
+        .map((x) => normEmail(x))
+        .filter((x): x is string => !!x);
+      const union = new Map<string, DepartmentTransferLegRaw>();
+      for (const a of aliases) merge(union, transferLegsRaw[a] ?? []);
+      if (union.size === 0) continue;
+      for (const a of aliases) merge(bucket(a), [...union.values()]);
+    }
+    for (const [em, b] of buckets) {
+      out.set(
+        em,
+        [...b.values()].sort(
+          (x, y) =>
+            x.effective_date.localeCompare(y.effective_date) ||
+            x.from.localeCompare(y.from) ||
+            x.to.localeCompare(y.to),
+        ),
+      );
+    }
+    return out;
+  }, [transferLegsRaw, masterEmployees]);
 
   // Step 2 needs the rates table. Skip the first call when initialData
   // already shipped it — manual re-load buttons inside step 2 still re-fetch.
@@ -8433,6 +8512,16 @@ export default function PayrollWizard({
           : null,
         hogan_sheet: r.hogan ?? null,
         proration: prorationBlockFromCalcRow(r),
+        // Mid-week transfer disclosure, narrowed to THIS pay week and frozen
+        // into the payload. `employeeDepts` is keyed on the RAW Hubstaff email
+        // and the legs map on the normalized one, so look up both — the same
+        // raw/lowercase pair every other dept read in this file does.
+        department_transfer: transferBlockForWeek(
+          transferLegsByEmail.get(normEmail(r.email) ?? '') ??
+            transferLegsByEmail.get((r.email ?? '').trim().toLowerCase()),
+          week?.start,
+          week?.end,
+        ),
         rates_php: { regular: r.regularRate, ot: r.otRate },
         pay_php: {
           regular: r.regularPay,
@@ -8574,6 +8663,11 @@ export default function PayrollWizard({
     isPabExcluded,
     usdToPhpRate,
     findAdditionsDept,
+    // Same class of bug again, and the reason it is called out here: the
+    // transfer legs arrive from an async fetch AFTER the first render. Without
+    // this dep the memo would stage every payload against the empty pre-fetch
+    // map, and every mid-week transfer would silently lose its disclosure.
+    transferLegsByEmail,
   ]);
 
   /**
@@ -8825,6 +8919,14 @@ export default function PayrollWizard({
       // freshness merge must move them in the same write. Null = non-HSL row;
       // older snapshots omit the field and the staged block stays untouched.
       hoganSheet: HoganSheetBlockRaw | null;
+      // Mid-week transfer disclosure (2026-08-25). The ONE block here that
+      // explains no money — a transfer is a relabel and only a rate change
+      // prorates — so it can be the only field that differs between a snapshot
+      // and the staged payload. It rides the snapshot anyway so a re-lock after
+      // a late-released transfer can still reach an UNPAID stub. Null = no move
+      // was effective inside this pay week; older snapshots omit the field and
+      // the staged block stays untouched.
+      departmentTransfer: DepartmentTransferBlockRaw | null;
     }> = {};
     for (const r of dispatchData.rows) {
       const entry = {
@@ -8856,6 +8958,7 @@ export default function PayrollWizard({
         weekendOtPay: r.weekend ? r.weekend.pay_php.ot : null,
         proration: r.proration,
         hoganSheet: r.hogan_sheet,
+        departmentTransfer: r.department_transfer,
       };
       const we = r.email?.trim().toLowerCase();
       const pe = r.personal_email?.trim().toLowerCase();

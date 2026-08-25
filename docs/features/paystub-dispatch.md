@@ -497,6 +497,141 @@ block kept; `null` → stale block cleared; jsonb key reordering ignored by the 
 **n8n**: superseded — see [Statement rendering moved into the app](#statement-rendering-moved-into-the-app--2026-08-06).
 The chip and the dual-rate detail cell are emitted by `paystub-email-html.ts`; no template vars.
 
+## Mid-week transfer disclosure — 2026-08-25
+
+A department transfer moves the person's **label the moment it is released**; the effective
+date is only the anchor payroll prices by (`department-transfers.md` §2). So a week whose
+effective date fell *inside* it printed the destination department and nothing else — the
+statement read as though the person had been on that team all week. This is the department
+counterpart to the proration chip: the money already explained itself, the department did not.
+
+Under the Department line, a transferred week now reads:
+
+> **Department**  Hogan Smith Law
+> *Lead Gen to HSL*
+
+Scale, measured on `department_transfer_requests` 2026-08-25: **277 of 281** dated transfers
+are effective on a non-Sunday, i.e. mid-week. This is the common case, not an edge case.
+
+### The payload block
+
+`DispatchEmployee.department_transfer` (`PayrollWizard.tsx`), a sibling of `weekend` /
+`proration` / `hogan_sheet`:
+
+```jsonc
+"department_transfer": {
+  "legs": [
+    { "from": "Lead Gen", "to": "hsl:intake_specialist", "effective_date": "2026-08-13" }
+  ]
+}
+```
+
+`from` / `to` are the **raw** transfer cells; the display form is derived, never stored — so a
+sub-team rename cannot strand nine thousand frozen strings. Null for a quiet week and absent on
+every payload staged before 2026-08-25: **those statements render byte-identical**, the same
+contract the proration block carries.
+
+**Not derived from `proration`.** *"A transfer is a relabel, only a rate change prorates"*
+(`department-transfers.md`:280). raymandc@ and janrielr@ moved into HSL and back out inside the
+2026-08-09 week with no rate on either side, so they carry no proration block at all — and they
+are precisely the people this discloses. The source is `department_transfer_requests`.
+
+**Staged, not derived at render time.** A paid stub is frozen as-paid; a transfer released next
+month must not rewrite a statement already sitting in someone's inbox. The consequence is stated
+plainly: **stubs already paid never gain the label**, including the documented 2026-08-09
+round-trip weeks. Backfilling would mutate a legal pay record.
+
+### `applied` only — deliberately narrower than the weekend-premium map
+
+`buildTransferLegsByEmail` (`src/lib/payroll/department-transfer-legs.ts`) counts `applied`
+rows **only**, where `buildHslTransferEffectiveMap` counts `applied` *and* `approved`. The two
+gates answer different questions and must not be unified:
+
+| Map | Question | Gate |
+|---|---|---|
+| `buildHslTransferEffectiveMap` | when did HSL work start? | `applied` + `approved` — the effective date is true whether or not the master row was ever written |
+| `buildTransferLegsByEmail` | why does the Department line say what it says? | `applied` — the label only moves when `applyApprovedTransfer` writes `global_master_list."Department"` |
+
+A row stuck at `approved` is one whose apply **failed**. Measured 2026-08-25: 276 `applied`,
+**6 `approved` with a null `applied_at`** — every one still sitting in its old department.
+Disclosing those would print "Lead Gen to HSL" under a Department line that still reads Lead Gen.
+
+The second difference: this map keeps **every** move, including intra-HSL sub-team reshuffles.
+The premium map skips those because a reshuffle is not an *arrival*; disclosure is a different
+question. (Note the resulting inconsistency-by-construction: the bulk sub-department assignment
+scripts wrote **zero** transfer rows, so those relabels are invisible here and always will be.)
+
+### Where the data comes from
+
+`GET /api/payroll/hsl-transfers-bulk` now does **one** paginated read of
+`department_transfer_requests` (`fetchDepartmentTransferRows`) and returns **two** derived maps —
+`effectiveByEmail` (unchanged) and `legsByEmail`. One read, so the week a stub discloses and the
+week whose weekend premium it day-scopes can never come from different snapshots. The route keeps
+its `requireRateVisibilitySession()` gate, which is also why every employee-facing surface reads
+the label off the **staged payload** rather than fetching it.
+
+The wizard bridges the map across master-list aliases exactly as it does the effective dates —
+but as a **union**, not a latest-wins collapse: a person's legs are a list, and five people-weeks
+in production hold two. The memo is in `dispatchData`'s dependency array; without it every payload
+would stage against the empty pre-fetch map and the disclosure would silently vanish.
+
+### The label
+
+`formatTransferLabel` — both sides through `formatDeptLabel`, per `hsl-subdepartments.md` §12
+(*"the paystub statement, its email and its export"*). A raw `hsl:<key>` can never reach it, and
+that is pinned by test rather than by the source-scan guard, which does not reach this code.
+
+| Week | Prints |
+|---|---|
+| one move | `Lead Gen to HSL` |
+| a round trip (legs chain) | `Lead Gen to HSL to Lead Gen` |
+| legs that do not chain | `Client VA to Lead Gen · HSL — Filing Specialist to Lead Gen` |
+
+Chaining is decided on the **displayed** label, so it can only ever collapse two names a reader
+sees as the same word — `HSL` followed by `HSL — Intake Specialist` stays two legs. hansc@'s
+2026-08-16 week is the real non-chaining case; joining it would invent a move that never happened.
+
+> **OPEN — Kane's call, one line to change either way.** The Department line resolves through
+> `employeeDepts` → `DEPARTMENTS`, which collapses every `hsl:*` cell to the parent name **Hogan
+> Smith Law**. The label's `to` side is the raw transfer cell through `formatDeptLabel`, so it
+> prints **HSL — Intake Specialist**. A transferred HSL person's stub therefore carries two names
+> for one department. Shipped as Kane specified it (*"it should say Lead Gen to HSL"*), which is
+> also the more informative side — the sub-team is the part you cannot see anywhere else on the
+> document. The alternative is to resolve both sides through the same `DEPARTMENTS` path, giving
+> `Lead Gen to Hogan Smith Law` — one vocabulary per document, and intra-HSL reshuffles would
+> then vanish on their own (both sides resolve to the same name).
+
+### Where it shows
+
+All via `PayStubView.departmentTransfer`, which carries the **already-formatted** `label` plus
+the raw `legs`. Putting the derivation on the view is the fix for the failure this area suffered
+twice (weekend rows and the proration chip both shipped in-app while the email stayed stale): the
+component and its email transcription print one string, and a parity test pins it.
+
+- **Shared statement** (`PayStubStatement.tsx`) → Employee Dashboard modal, Employee Profile
+  Pay Stubs tab, the Salary-Paid notification, and Payment Dispatch's Accounting stub viewer.
+- **Emailed statement** (`paystub-email-html.ts`) — escaped, same 11px muted treatment.
+- **Wizard Step-8 preview** — renders `PayStubStatement`, so free.
+- **Employee exports** (`paystub-export.ts`): XLSX gets a fixed **Department Change** column; the
+  PDF gets an `optional` one, which the measured-layout filter drops entirely for anyone who never
+  moved. When present it is the only wide left-aligned text column in a money table — the layout
+  answers by stepping the body font down and ellipsizing at the floor, so it can shrink the sheet
+  but never overlap a column. Truncating a department name on a pay record is the worse trade.
+
+Freshness plumbing mirrors the other blocks: `publishFinalPaySnapshot` writes `departmentTransfer`
+per employee, and `mergeSnapshotIntoStaged` applies the same tri-state (`undefined` = older
+snapshot, keep staged; `null` = no move this week, clear a stale block; object = replace). One
+difference matters: this is the **only** block that explains no money, so it can be the sole thing
+that differs between a snapshot and the staged payload — `transferChanged` counts into `changed`
+on its own, or a transfer released after the lock could never reach an unpaid stub.
+`sameTransferBlock` compares a sorted set of `date|from|to` keys, so neither jsonb key reordering
+nor leg order forces an endless refresh, and an empty leg list compares equal to an absent block.
+
+**Not covered, on purpose:** the employee route's `computeCurrentPay` **reconstruction** path gets
+no label — the same precedent the weekend block set for pre-feature weeks. That path also stamps
+**today's** department onto every reconstructed week, so adding a disclosure on top of an already
+ahistorical Department line would explain the wrong thing.
+
 ## Native COP line for Colombian payees — 2026-07-30
 
 Colombian staff ride the **PHP** rails (no COP Pay Structure exists for them), so their
@@ -698,6 +833,7 @@ an amber "Unlocked — Payment Dispatch stays empty…" note otherwise.
 - Business rules: `Documentation/BUSINESS_LOGIC.md`.
 - Routes: `app/api/paystub-dispatch-queue/route.ts` (+ `arrears/`), `app/api/payment-dispatches/route.ts` (per-employee send on Mark Paid), `app/api/dispatch-paystubs/route.ts` (legacy batch, no callers).
 - Shared send helper: `src/lib/payroll/paystub-dispatch.ts` (`forwardPaystubDispatch`).
+- Mid-week transfer disclosure: `src/lib/payroll/department-transfer-legs.ts` (`buildTransferLegsByEmail`, `transferBlockForWeek`, `formatTransferLabel`) + `src/lib/payroll/hsl-transfer-effective.ts` (`fetchDepartmentTransferRows`).
 - Paystub freshness: `src/lib/payroll/paystub-fresh.ts` (`mergeSnapshotIntoStaged`, `getFreshPaystubEntry`, `refreshPaystubQueuePayload`).
 - Queue data access: `src/lib/supabase/paystub-dispatch-queue.ts` (`upsertPaystubDispatchQueue`, `getPaystubDispatchEntry`, `listExcludedArrears`, `markPaystubSent` / `markPaystubSendError`).
 - Realtime lock hook: `src/hooks/useWizardDispatchLock.ts`.

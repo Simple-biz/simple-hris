@@ -9,9 +9,33 @@
  * in lockstep with the n8n `pay_vars` Set node if the email template changes.
  */
 
+import {
+  parseTransferBlock,
+  formatTransferLabel,
+  type DepartmentTransferLegRaw,
+} from './department-transfer-legs';
+
 export interface PayStubView {
   name: string;
   department: string;
+  /**
+   * Mid-week department transfer — the disclosure that sits UNDER the
+   * Department line: **"Lead Gen to HSL"**.
+   *
+   * A transfer moves the department label the moment it is released, so a week
+   * whose effective date fell inside it otherwise reads as though the person
+   * had been in the destination department all along. Present only when the
+   * payload carries a `department_transfer` block, i.e. when at least one
+   * applied/approved move was effective inside THIS pay week. Null for every
+   * ordinary week and for every payload staged before the block existed —
+   * those statements render byte-identical to before.
+   *
+   * `label` is display-ready and already through `formatDeptLabel` on both
+   * sides (a raw `hsl:<key>` can never reach it); `legs` keeps the raw pairs +
+   * dates for surfaces that want the detail. See `formatTransferLabel` for the
+   * round-trip and non-chaining cases.
+   */
+  departmentTransfer: { label: string; legs: DepartmentTransferLegRaw[] } | null;
   weekStart: string | null;
   weekEnd: string | null;
   /** "Jul 7 – Jul 13, 2026" — the email's `week_human`. */
@@ -602,6 +626,24 @@ export function parseWeekendBlock(payload: Json): WeekendFigures | null {
 }
 
 /**
+ * Parse a payload's `department_transfer` block into the view's display form.
+ *
+ * The block is staged only when a move was effective INSIDE the pay week, so
+ * the presence of the block is the whole gate — no date arithmetic happens
+ * here, and a replayed week discloses exactly what it disclosed when it was
+ * locked. Absent/null → null → the statement's Department line renders alone,
+ * byte-identical to every payload staged before 2026-08-25.
+ */
+export function deriveDepartmentTransfer(
+  payload: Json,
+): { label: string; legs: DepartmentTransferLegRaw[] } | null {
+  const block = parseTransferBlock(obj(payload).department_transfer);
+  if (!block) return null;
+  const label = formatTransferLabel(block);
+  return label ? { label, legs: block.legs } : null;
+}
+
+/**
  * Build the paystub view from a staged payload. `payPeriod` is the queue row's
  * `pay_period` column; the payload also carries its own `pay_period`, so we fall
  * back to whichever resolves the week + fx rate.
@@ -637,6 +679,7 @@ export function mapPayloadToPayStub(payload: Json, payPeriod?: Json): PayStubVie
   return {
     name: str(p.name),
     department: str(p.department_name) || '—',
+    departmentTransfer: deriveDepartmentTransfer(payload),
     weekStart,
     weekEnd,
     weekHuman: formatWeekHuman(weekStart, weekEnd),
