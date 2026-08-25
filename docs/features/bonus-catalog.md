@@ -711,6 +711,60 @@ catalog-covered employees because it reads the `employee_hourly_rates` cache
 table directly and does not apply the overlay. This is intentional / left as-is
 -- the cache is not authoritative for those rows.
 
+### 5.6 The write target is the NATURAL key, not the id *(fixed 2026-08-04, `d9f34ef7`)*
+
+`payment_catalog_pay_structures.id` is **only a surrogate**. The uniqueness the DB
+actually enforces is the natural key:
+
+- one **department**-scoped structure per `department_key`
+- one **employee**-scoped structure per `(department_key, lower(employee_email))`
+
+`upsertPayStructure` used to conflict-target `id` alone. `SetRateDialog` -- used by
+**both** the Payroll Readiness "No Pay Rate" fixer **and** the Payroll Notes
+Offboarded tab -- never loads the structures list, so it mints a fresh `newPayId()`
+every time it opens. For anyone who already had a structure the "upsert" quietly
+degraded to a plain INSERT, tripped the unique index, and dumped raw Postgres text
+into the dialog. **714 employee-scoped structures were affected.** `BonusCatalog.tsx`
+was immune only because it passes `existing?.id ?? newPayId()` -- it has the list in
+hand.
+
+`upsertPayStructure` now resolves the slot's current occupant **server-side** before
+writing, via the pure `resolvePayStructureWriteTargetId(incoming, occupants)` in
+`src/lib/payment-catalog/pay-structure.ts`. So *"set this person's rate"* means the
+same thing from every surface, whether or not the caller knows the existing id.
+
+Three rules that came out of the fix and must not be relaxed:
+
+1. **A failed slot lookup reports plainly** -- `Could not check existing pay
+   structures: …` -- and never falls through to an insert that trips the index with
+   an unreadable message.
+2. **Emails are compared in JS, not with `.ilike()`.** `_` and `%` are LIKE
+   wildcards, so `a_b@x.com` would match `aXb@x.com`. On a pay-rate **write** path
+   that could overwrite the wrong person's rate.
+3. **First match wins**, so the choice stays deterministic even if the unique index
+   were ever missing and real duplicates existed.
+
+The dept-slot read is paged (`loadDeptSlots`) -- one Hogan department alone holds 449
+slots, close enough to the PostgREST 1000-row cap to matter.
+
+> **The Offboarded tab offering "Set rate" on a row badged "Rate OK" is not a bug.**
+> Rate resolution keys on **email only**, so an employee structure resolves fine
+> regardless of the person's department label. That tab is the final-pay rate editor,
+> so it offers the action on every row by design.
+
+### 5.7 OPEN gap -- COP is silently written as PHP
+
+`upsertPayStructure` writes `currency: s.currency === 'USD' ? 'USD' : 'PHP'`. The
+picker offers **COP**, `mapRow` reads it back, and §5 above documents the type as
+`'PHP' | 'USD' | 'COP'` -- but **no COP row has ever been stored**. Live spread as of
+2026-08-04: `{ PHP: 721, USD: 10 }`, zero COP.
+
+The one-line fix alone would make things **worse**: `syncRateHistory` guards on
+`s.currency !== 'USD'`, so a genuine COP structure would start writing COP numbers
+into the PHP-denominated `employee_rate_history`, `employee_hourly_rates`, the Google
+Sheet rates tab and the Hogan Pay Plan sheet -- exactly the corruption §5.3 was
+written to stop. **Both changes ship together or neither does.**
+
 ---
 
 ## 6. System Bonuses (PAB + Technology Bonus + custom currency variants)
