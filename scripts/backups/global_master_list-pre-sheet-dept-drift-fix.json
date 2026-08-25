@@ -1,0 +1,183 @@
+{
+  "takenFor": "fix-sheet-dept-drift",
+  "currentUploadId": "ad9b4a25-6e3b-439c-aaef-ab8cf22ba14c",
+  "repairable": [
+    {
+      "email": "jesr@simple.biz",
+      "sheetDept": "HSL",
+      "dbDepts": [
+        "lead gen"
+      ],
+      "rows": [
+        {
+          "id": "70d12945-1043-4dfd-993f-3ff8b0a78d45",
+          "Name": "Roxas, Jesica \"Jes\"",
+          "Work Email": "jesr@simple.biz",
+          "Personal Email": "roxasjesica07@gmail.com",
+          "Department": "Lead Gen",
+          "off_boarded_at": null,
+          "last_seen_upload_id": "499d7374-7bad-43b8-8ea7-816056bf1505"
+        }
+      ]
+    },
+    {
+      "email": "noreenb@simple.biz",
+      "sheetDept": "Client VA",
+      "dbDepts": [
+        "lead gen"
+      ],
+      "rows": [
+        {
+          "id": "12a1f67f-2f09-4f70-85fe-1da2bd78cd45",
+          "Name": "Blanz, Noreen \"Noreen\"",
+          "Work Email": "noreenb@simple.biz",
+          "Personal Email": "myw0rk3mai7@gmail.com",
+          "Department": "Lead Gen",
+          "off_boarded_at": null,
+          "last_seen_upload_id": "ad9b4a25-6e3b-439c-aaef-ab8cf22ba14c"
+        }
+      ]
+    },
+    {
+      "email": "markl@simple.biz",
+      "sheetDept": "hsl:intake_specialist",
+      "dbDepts": [
+        "lead gen"
+      ],
+      "rows": [
+        {
+          "id": "a982d21a-51d3-4efa-8970-3f0cfc1375f6",
+          "Name": "Lirio, Mark Bryan \"Bryan\"",
+          "Work Email": "markl@simple.biz",
+          "Personal Email": "mlirio07.ml@googlemail.com",
+          "Department": "Lead Gen",
+          "off_boarded_at": null,
+          "last_seen_upload_id": "499d7374-7bad-43b8-8ea7-816056bf1505"
+        }
+      ]
+    },
+    {
+      "email": "aimei@simple.biz",
+      "sheetDept": "HSL",
+      "dbDepts": [
+        "lead gen"
+      ],
+      "rows": [
+        {
+          "id": "191ebac1-392e-45f9-b3fa-b48812b282a6",
+          "Name": " Ignacio, Aime \"Aime\" ",
+          "Work Email": "aimei@simple.biz",
+          "Personal Email": "aimereubal15@gmail.com",
+          "Department": "Lead Gen",
+          "off_boarded_at": null,
+          "last_seen_upload_id": "499d7374-7bad-43b8-8ea7-816056bf1505"
+        }
+      ]
+    },
+    {
+      "email": "kimerl@simple.biz",
+      "sheetDept": "hsl:intake_specialist",
+      "dbDepts": [
+        "lead gen"
+      ],
+      "rows": [
+        {
+          "id": "4feaedb6-360a-41d2-bebf-7daf84de31b8",
+          "Name": "Lauron, Kimer “Kim”",
+          "Work Email": "kimerl@simple.biz",
+          "Personal Email": "krplauron@gmail.com",
+          "Department": "Lead Gen",
+          "off_boarded_at": null,
+          "last_seen_upload_id": "499d7374-7bad-43b8-8ea7-816056bf1505"
+        }
+      ]
+    },
+    {
+      "email": "theresaa@simple.biz",
+      "sheetDept": "HR",
+      "dbDepts": [
+        "lead gen"
+      ],
+      "rows": [
+        {
+          "id": "be49684b-0e31-4459-9bb9-a0d1f63004cf",
+          "Name": "Aguhar, Theresa \"Theresa\"",
+          "Work Email": "theresaa@simple.biz",
+          "Personal Email": "tisay.aguhar@gmail.com",
+          "Department": "Lead Gen",
+          "off_boarded_at": null,
+          "last_seen_upload_id": "356d40ff-36a2-41d3-919e-06b80ba8280f"
+        }
+      ]
+    }
+  ],
+  "escalated": [
+    {
+      "email": "shainan@simple.biz",
+      "why": "DB dept \"HSL\" is not a placeable label (no department base rate) — needs a sub-team assignment first",
+      "sheetDept": "Lead Gen",
+      "dbDepts": [
+        "hsl"
+      ],
+      "rows": [
+        {
+          "id": "ae105a5c-bfcb-42b9-9238-fc52f127a711",
+          "Name": "Narosa, Shaina Blanche \"Shaina\"",
+          "Work Email": "shainan@simple.biz",
+          "Personal Email": "sbnarosa@gmail.com",
+          "Department": "HSL",
+          "off_boarded_at": null,
+          "last_seen_upload_id": "eb4de243-60a6-443e-bf38-39404755b24a"
+        }
+      ]
+    },
+    {
+      "email": "beao@simple.biz",
+      "why": "carries an off_boarded_at stamp — active-vs-offboarded is a business call",
+      "sheetDept": "HSL",
+      "dbDepts": [
+        "lead gen",
+        "client va"
+      ],
+      "rows": [
+        {
+          "id": "c19c0582-98b5-467c-9562-7348bd564af4",
+          "Name": "Olarte, Bea Patricia \"Bea\"",
+          "Work Email": "beao@simple.biz",
+          "Personal Email": "beapatriciaolarte@gmail.com",
+          "Department": "Lead Gen",
+          "off_boarded_at": "2026-05-11T00:00:00+00:00",
+          "last_seen_upload_id": "60c72660-1bd2-438f-9368-907f9cc2fe7b"
+        },
+        {
+          "id": "97e785b5-2d4a-479a-a0da-4852d25012b6",
+          "Name": "Olarte, Bea Patricia  \"Bea\"",
+          "Work Email": "beao@simple.biz",
+          "Personal Email": "beapatriciaolarte@gmail.com",
+          "Department": "Client VA",
+          "off_boarded_at": "2026-05-11T00:00:00+00:00",
+          "last_seen_upload_id": "e43561d3-f55d-40bb-84ef-7b0f1ee28eee"
+        }
+      ]
+    },
+    {
+      "email": "ellainnec@simple.biz",
+      "why": "carries an off_boarded_at stamp — active-vs-offboarded is a business call",
+      "sheetDept": "hsl:intake_specialist",
+      "dbDepts": [
+        "lead gen"
+      ],
+      "rows": [
+        {
+          "id": "61ffa6a1-1744-4a88-be11-73df0b9c5b21",
+          "Name": "Cordova, Ellainne Maria \"Maria\"",
+          "Work Email": "ellainnec@simple.biz",
+          "Personal Email": "ellainnemariacordova3003@gmail.com",
+          "Department": "Lead Gen",
+          "off_boarded_at": "2026-08-21T14:19:33.118+00:00",
+          "last_seen_upload_id": "ad9b4a25-6e3b-439c-aaef-ab8cf22ba14c"
+        }
+      ]
+    }
+  ]
+}

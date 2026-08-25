@@ -34,7 +34,86 @@ export type UpdateMasterSheetDepartmentInput = {
 export type UpdateMasterSheetDepartmentResult = {
   updated: number;
   reason?: string;
+  /** The Sheet already reads `toDepartment` on an email-matched row, so there is
+   *  nothing to flip and the Sheet is genuinely correct. Distinct from `updated:
+   *  0` with no match, which means the Sheet DISAGREES and is real drift. */
+  alreadyTarget?: boolean;
+  /** An email-matched row exists at all. `false` means the person is not on the
+   *  Sheet under either address — the Sheet cannot be reconciled by a cell flip. */
+  matchedEmail?: boolean;
+  /** Departments found on email-matched rows that are neither `from` nor `to` —
+   *  the third-department case, which is drift a retry can never resolve. */
+  otherDepartments?: string[];
 };
+
+/** What a Department write-back would do to a sheet, decided without any I/O.
+ *  Pure so the three outcomes that `sheet_synced` used to conflate — flipped,
+ *  already-correct, and drifted — can be pinned by tests. */
+export type SheetDepartmentPlan = {
+  headerIdx: number;
+  /** A1 ranges of the Department cell on every row sitting in `from`. */
+  cellRanges: string[];
+  alreadyTarget: boolean;
+  matchedEmail: boolean;
+  otherDepartments: string[];
+  reason?: string;
+};
+
+export function planSheetDepartmentUpdate(
+  values: unknown[][],
+  input: { workEmail: string | null; personalEmail: string | null; from: string; to: string; quotedTab: string },
+): SheetDepartmentPlan {
+  const { workEmail: we, personalEmail: pe, quotedTab } = input;
+  const from = norm(input.from);
+  const to = norm(input.to);
+  const empty = { cellRanges: [], alreadyTarget: false, matchedEmail: false, otherDepartments: [] };
+
+  const headerIdx = findHeaderRowIndex(values);
+  if (headerIdx < 0) return { headerIdx, ...empty, reason: 'header row not found in sheet' };
+
+  const headers = (values[headerIdx] ?? []).map((c) => norm(c));
+  const deptCol = headers.findIndex((h) => h === 'department');
+  const workCol = headers.findIndex((h) => h === 'work email' || h === 'workemail');
+  const personalCol = headers.findIndex((h) => h === 'personal email' || h === 'personalemail');
+  if (deptCol < 0) return { headerIdx, ...empty, reason: 'no Department column in sheet' };
+
+  const deptLetter = columnToLetter(deptCol + 1);
+  const cellRanges: string[] = [];
+  const otherDepartments = new Set<string>();
+  let alreadyTarget = false;
+  let matchedEmail = false;
+
+  for (let i = headerIdx + 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    const rowWork = workCol >= 0 ? norm(row[workCol]) : '';
+    const rowPersonal = personalCol >= 0 ? norm(row[personalCol]) : '';
+    const rowDept = norm(row[deptCol]);
+    if (!((we && rowWork === we) || (pe && rowPersonal === pe))) continue;
+    matchedEmail = true;
+    if (rowDept === from) {
+      // Sheet rows are 1-based; `values` is 0-based.
+      cellRanges.push(`${quotedTab}!${deptLetter}${i + 1}`);
+    } else if (rowDept === to) {
+      alreadyTarget = true;
+    } else {
+      otherDepartments.add(rowDept);
+    }
+  }
+
+  return {
+    headerIdx,
+    cellRanges,
+    alreadyTarget,
+    matchedEmail,
+    otherDepartments: [...otherDepartments],
+    reason:
+      cellRanges.length > 0 || alreadyTarget
+        ? undefined
+        : matchedEmail
+          ? `sheet row is in "${[...otherDepartments].join('" / "')}" — neither the source nor the target department`
+          : 'no matching row in source department',
+  };
+}
 
 function norm(v: unknown): string {
   return String(v ?? '').trim().toLowerCase();
@@ -98,34 +177,26 @@ export async function updateMasterSheetDepartment(
   }
 
   const values = Array.isArray(getJson.values) ? getJson.values : [];
-  const headerIdx = findHeaderRowIndex(values);
-  if (headerIdx < 0) {
-    return { updated: 0, reason: 'header row not found in sheet' };
-  }
-
-  const headers = (values[headerIdx] ?? []).map((c) => norm(c));
-  const deptCol = headers.findIndex((h) => h === 'department');
-  const workCol = headers.findIndex((h) => h === 'work email' || h === 'workemail');
-  const personalCol = headers.findIndex((h) => h === 'personal email' || h === 'personalemail');
-  if (deptCol < 0) return { updated: 0, reason: 'no Department column in sheet' };
-
-  // Collect the A1 ranges of the Department cell on every matching source row.
-  const deptLetter = columnToLetter(deptCol + 1);
-  const cellRanges: string[] = [];
-  for (let i = headerIdx + 1; i < values.length; i++) {
-    const row = values[i] ?? [];
-    const rowWork = workCol >= 0 ? norm(row[workCol]) : '';
-    const rowPersonal = personalCol >= 0 ? norm(row[personalCol]) : '';
-    const rowDept = norm(row[deptCol]);
-    const matchEmail = (we && rowWork === we) || (pe && rowPersonal === pe);
-    if (matchEmail && rowDept === from) {
-      // Sheet rows are 1-based; `values` is 0-based.
-      cellRanges.push(`${quotedTab}!${deptLetter}${i + 1}`);
-    }
-  }
+  const plan = planSheetDepartmentUpdate(values, {
+    workEmail: we,
+    personalEmail: pe,
+    from,
+    to,
+    quotedTab,
+  });
+  const { cellRanges, alreadyTarget, matchedEmail, otherDepartments } = plan;
 
   if (cellRanges.length === 0) {
-    return { updated: 0, reason: 'no matching row in source department' };
+    // No source-dept cell to flip. `alreadyTarget` is the only outcome that means
+    // the Sheet is CORRECT; every other zero-write outcome is real drift and must
+    // be reported as such, never as a success (see apply-transfer.ts).
+    return {
+      updated: 0,
+      alreadyTarget,
+      matchedEmail,
+      otherDepartments,
+      ...(plan.reason ? { reason: plan.reason } : {}),
+    };
   }
 
   const batchUrl =
@@ -144,5 +215,5 @@ export async function updateMasterSheetDepartment(
     throw new Error(`Sheets batchUpdate failed (${batchRes.status}): ${txt.slice(0, 300)}`);
   }
 
-  return { updated: cellRanges.length };
+  return { updated: cellRanges.length, alreadyTarget, matchedEmail, otherDepartments };
 }

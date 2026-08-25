@@ -87,29 +87,45 @@ export async function applyApprovedTransfer(
     return { applied: false, sheetSynced: false, sheetError: null, cancelled: true, error: null };
   }
 
+  // A fact about the MASTER LIST only: the DB row already held the target dept.
+  // Drives the notification wording and the API's `already_in_target` flag. It is
+  // deliberately NOT consulted for the Sheet write-back below — that conflation
+  // is the bug fixed on 2026-08-25.
   const alreadyInTarget = master.resolution === 'satisfied';
 
   // 2. Google Sheet write-back (best-effort — the whole point of v2, but a
-  //    transient API error must not strand the transfer). Skip it when the
-  //    employee is already in the target dept: there's no source-dept cell for the
-  //    Sheet updater to flip, and the Sheet already reflects the end state.
+  //    transient API error must not strand the transfer).
+  //
+  //    ALWAYS attempted, including when the master-list apply resolved
+  //    'satisfied'. Until 2026-08-25 that resolution short-circuited to
+  //    `sheetSynced = true`: `alreadyInTarget` is a fact about the DB and was
+  //    being used to assert something about the SHEET. Whenever the DB row
+  //    already held the target dept for any other reason (a prior bulk relabel,
+  //    an earlier transfer, any sheet-independent write) the Sheet was never
+  //    touched and kept the pre-transfer department FOREVER, while the request
+  //    recorded a clean `sheet_synced=true`. Measured 2026-08-25: 9 rows drifted
+  //    that way, 6 of them people who then dropped out of `active_employees`
+  //    entirely — the sync's (Personal Email, Department) identity key stops
+  //    matching, so their `last_seen_upload_id` is never re-stamped — while
+  //    still being paid off their Hubstaff hours.
+  //
+  //    `updated > 0` (a cell was flipped) and `alreadyTarget` (an email-matched
+  //    row already reads the target) are the only two outcomes that mean the
+  //    Sheet is correct. Every other zero-write outcome is real drift and is
+  //    recorded as an error so the Accounting tab's "Retry" badge can surface it.
   let sheetSynced = false;
   let sheetError: string | null = null;
-  if (alreadyInTarget) {
-    sheetSynced = true; // nothing to change — the Sheet is already correct.
-  } else {
-    try {
-      const sheet = await updateMasterSheetDepartment({
-        personalEmail: row.employee_personal_email,
-        workEmail: row.employee_work_email,
-        fromDepartment: row.from_department,
-        toDepartment: row.to_department,
-      });
-      sheetSynced = sheet.updated > 0;
-      if (!sheetSynced) sheetError = sheet.reason ?? 'no matching sheet row updated';
-    } catch (e) {
-      sheetError = e instanceof Error ? e.message : String(e);
-    }
+  try {
+    const sheet = await updateMasterSheetDepartment({
+      personalEmail: row.employee_personal_email,
+      workEmail: row.employee_work_email,
+      fromDepartment: row.from_department,
+      toDepartment: row.to_department,
+    });
+    sheetSynced = sheet.updated > 0 || sheet.alreadyTarget === true;
+    if (!sheetSynced) sheetError = sheet.reason ?? 'no matching sheet row updated';
+  } catch (e) {
+    sheetError = e instanceof Error ? e.message : String(e);
   }
 
   // 3. Record the outcome on the request.
