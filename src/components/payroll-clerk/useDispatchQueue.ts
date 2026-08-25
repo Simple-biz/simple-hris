@@ -529,6 +529,12 @@ async function loadAll(
       bonusTotalPHP: b ? b.bonusTotalPHP : 0,
       pabBonusPHP: b ? b.pabBonusPHP : 0,
       techBonusPHP: b ? b.techBonusPHP : 0,
+      // The two halves of the bonus total that are neither PAB nor Tech. They
+      // travel with the rest of the split, so the worksheet can show WHY the
+      // total moved instead of an unexplained residual — and so a negative Adj.
+      // never reads as a bonus.
+      otherBonusesPHP: b ? b.otherBonusesPHP : 0,
+      adjustmentPHP: b ? b.adjustmentPHP : 0,
       orphanagePayPHP: b ? b.orphanagePayPHP : 0,
       mesaDeductionPHP: b ? b.mesaDeductionPHP : 0,
       mesaDisbursementPHP: b ? b.mesaDisbursementPHP : 0,

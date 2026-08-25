@@ -620,7 +620,11 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
               type="button"
               onClick={() => {
                 if (filtered.length === 0) return;
-                const csv = pendingRowsToCsv(buildPendingRows(filtered));
+                // The same index the TXN column renders from, so the file shows
+                // the reference a `not_paid` / `threshold` retry is carrying.
+                const txnIds: Record<string, string> = {};
+                for (const [email, ref] of txnByEmail) txnIds[email] = ref.id;
+                const csv = pendingRowsToCsv(buildPendingRows(filtered, txnIds));
                 const filename = dispatchClientFilename({
                   prefix: 'pending',
                   processor: processor ?? 'all',

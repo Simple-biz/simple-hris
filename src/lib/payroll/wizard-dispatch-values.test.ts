@@ -173,6 +173,10 @@ describe('resolveWizardRowValues', () => {
     assert.equal(v?.breakdown?.initialPayPHP, 9_000);
     assert.equal(v?.breakdown?.mesaDeductionPHP, 100);
     assert.equal(v?.breakdown?.totalHours, 40);
+    // The bonus total's own parts travel with it, so a worksheet can show WHY
+    // the total is what it is instead of an unexplained residual.
+    assert.equal(v?.breakdown?.otherBonusesPHP, 1_100);
+    assert.equal(v?.breakdown?.adjustmentPHP, 0);
   });
 
   it('flags a snapshot that re-priced the person AFTER the lock', () => {
@@ -197,6 +201,8 @@ describe('resolveWizardRowValues', () => {
     assert.equal(v?.amountUSD, 140);
     assert.equal(v?.breakdown?.bonusTotalPHP, 600);
     assert.equal(v?.breakdown?.totalHours, 38.5);
+    assert.equal(v?.breakdown?.otherBonusesPHP, 600);
+    assert.equal(v?.breakdown?.adjustmentPHP, 0);
     assert.equal(v?.repricedAfterLock, false);
   });
 
@@ -299,6 +305,40 @@ describe('resolveWizardRowValues', () => {
     });
     assert.equal(v?.amountPHP, 6_023.5);
     assert.equal(v?.breakdown?.bonusTotalPHP, -248.56);
+    // And the withholding is nameable on its own, not just visible as a negative
+    // aggregate: ₱0 earned, −₱248.56 adjusted.
+    assert.equal(v?.breakdown?.otherBonusesPHP, 0);
+    assert.equal(v?.breakdown?.adjustmentPHP, -248.56);
+  });
+
+  it('splits the bonus total into its four named parts, from either carrier', () => {
+    const parts = { perfectAttendanceBonus: 5_000, techBonus: 1_850, otherBonuses: 600, adjustment: -250 };
+    const fromSnapshot = resolveWizardRowValues({
+      workEmail: 'a@simple.biz',
+      finals: { 'a@simple.biz': snap({ ...parts, final: 16_200, initial: 9_000, mesaDeduction: 0 }) },
+      snapshotUpdatedAt: NEWER,
+      staged: null,
+    })!.breakdown!;
+    const fromLock = resolveWizardRowValues({
+      workEmail: 'a@simple.biz',
+      finals: null,
+      snapshotUpdatedAt: null,
+      staged: staged({
+        amountPHP: 16_200,
+        payPhp: {
+          regular: 9_000, ot: 0, initial: 9_000,
+          bonuses_total: 7_200,
+          perfect_attendance_bonus: 5_000, tech_bonus: 1_850, other_bonuses: 600, adjustment: -250,
+          orphanage_pay: 0, mesa_deduction: 0, mesa_disbursement: 0, final: 16_200,
+        },
+      }),
+    })!.breakdown!;
+    for (const b of [fromSnapshot, fromLock]) {
+      const split = b.pabBonusPHP + b.techBonusPHP + b.otherBonusesPHP + b.adjustmentPHP;
+      assert.equal(Math.round(split * 100) / 100, b.bonusTotalPHP);
+      assert.equal(b.adjustmentPHP, -250);
+      assert.equal(b.otherBonusesPHP, 600);
+    }
   });
 
   it('reconciles: initial + bonuses + orphanage − mesa + disbursement === total', () => {

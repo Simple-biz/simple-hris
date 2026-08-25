@@ -159,6 +159,9 @@ map built once per load for the *whole cycle*, including everyone already paid
   (`SENT_COLUMNS`); `buildSentRows(records, deptByEmail)` takes the map as a **required**
   argument so a caller can't ship a silently blank column. The standalone clerk app's
   **Sent payments** table is unchanged apart from getting the map for its export.
+  It also carries the **COP Value** and **System Bonus** columns this table shows —
+  they were missing until 2026-08-25, hiding ₱5.5M of frozen bonus across 1,606
+  records ([§4.2.3](#423-what-the-exports-must-carry)).
 
 Click the row to expand the processor-specific contact details (Kolan email, Higlobe email + account name, phone, full address, city, province/state) with copy buttons on each.
 
@@ -476,7 +479,54 @@ Consequences worth knowing:
   writes nothing rather than a ₱0 claim.
 
 The pending **Export CSV** carries the full breakdown plus an **Amount Source**
-column (`Payroll Wizard (published)` / `(locked)` / `RECOMPUTED — not the wizard`).
+column (`Payroll Wizard (published)` / `(locked)` / `RECOMPUTED — not the wizard`)
+— see [§4.2.3](#423-what-the-exports-must-carry) for what "full" means and the two
+identities that pin it.
+
+#### 4.2.3 What the exports must carry (2026-08-25)
+
+The exports are the **HRIS-vs-Google-Sheet validation artifact** (memory:
+`payroll-exports-itemized`), so two properties are load-bearing, and
+[`dispatch-client-csv.test.ts`](../../src/lib/payroll/dispatch-client-csv.test.ts)
+pins both:
+
+**a. Every row reconciles from its own columns, and no signed component hides
+inside an aggregate.** Two identities, the same pair the wizard's own Reports
+export has carried since 2026-08-18 (`payrollExportRowReconciles`):
+
+```
+Regular+OT + Bonus Total + Orphanage − MESA Deduction + MESA Disbursement = Amount (PHP)
+PAB + Tech + Other Bonuses + Adjustment                                   = Bonus Total
+```
+
+Until 2026-08-25 the second identity was **unprovable from the file**: the pending
+CSV had no `Other Bonuses` and no `Adjustment` column, so `Bonus Total − PAB −
+Tech` was a residual mixing earned dept/KPI money with Accounting's signed
+withholding. Neither `WizardBreakdown` nor `QueueRow` carried the two fields at
+all, though **both carriers already held them** (`otherBonuses`/`adjustment` on a
+snapshot entry, `other_bonuses`/`adjustment` in `payload.pay_php`) — they were
+dropped at the breakdown boundary. On the 2026-08-16 cycle that was 694 rows
+carrying ₱1,825,433 of "other" bonuses and 86 carrying an Adjustment, **6 of them
+negative (−₱18,819.49 being withheld)**. `scripts/verify-dispatch-carryover.mts`
+now asserts the second identity against live rows too, and reports those counts
+so the columns can never quietly empty out.
+
+`Adjustment` is SIGNED. It is blanked only at exactly zero — never gated on `> 0`,
+which would print a withholding as no entry at all.
+
+**b. Nothing on a screen vanishes from that screen's own export.** A column a
+clerk can read on the worksheet and cannot find in the file reads as *we didn't
+pay that*. Fixed in the same pass:
+
+| Screen column | Was | Now |
+|---|---|---|
+| Pending · COP Value | absent from the CSV | `COP Value` (whole peso, the screen's own wording — for a PH payee it is the USD-anchored reference, **not** a COP payout, per §12.8) |
+| Pending · TXN ID | absent | `TXN ID` — normally empty, but a `not_paid`/`threshold` retry carries one; fed by the same `buildTxnIndex` the column renders from, passed as a **required** arg for the `buildSentRows` reason |
+| Log views · COP Value | absent | `COP Value`, read straight off `amount_cop` (4,468 records carry one) |
+| Log views · System Bonus | absent | `System Bonus (PHP)` + `System Bonus Detail`, the snapshot Mark Paid froze — **1,606 records, ₱5,519,915**, invisible in every export until now |
+
+A recorded `system_bonus_php` of ₱0 is a real claim and prints; only a
+pre-migration row with no snapshot at all prints blank.
 
 **Helpers exported from `dispatch-bonuses.ts`:**
 
@@ -491,7 +541,7 @@ column (`Payroll Wizard (published)` / `(locked)` / `RECOMPUTED — not the wiza
 | `computePabEligibleEmails({ rows, pabRange, hslAdjustedEnd, hslEmails })` | `Set<email>` — runs the standard / HSL eligibility checks across a merged-by-email row set |
 | `computeEmployeeBonus({ hasRates, isFinalPabWeek, isPabEligible, isTechBonusWeek, hasThirtyDays })` | `{ pabBonusPHP, techBonusPHP, totalPHP }` — combined gate with no-rates suppression |
 
-**CSV export** — the per-processor "Export CSV" in `ProcessorQueue` includes four bonus-related columns (`Regular + OT (PHP)`, `PAB Bonus (PHP)`, `Tech Bonus (PHP)`, `Bonus Total (PHP)`) so the spreadsheet shows the same breakdown as the on-screen chip.
+**CSV export** — the per-processor "Export CSV" in `ProcessorQueue` breaks the bonus total into all four of its named parts (`PAB Bonus (PHP)`, `Tech Bonus (PHP)`, `Other Bonuses (PHP)`, `Adjustment (PHP)`) alongside `Regular + OT (PHP)` and `Bonus Total (PHP)`, so the spreadsheet reconciles rather than merely echoing the on-screen chip. Both identities and the reason the last two columns exist: [§4.2.3](#423-what-the-exports-must-carry).
 
 **On a non-bonus week:** zero visual change — `bonusTotalPHP === 0` for everyone, `amountUSD` equals what it was before, no chips render.
 

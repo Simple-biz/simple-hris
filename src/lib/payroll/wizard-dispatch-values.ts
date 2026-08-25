@@ -127,6 +127,14 @@ export interface WizardBreakdown {
   bonusTotalPHP: number;
   pabBonusPHP: number;
   techBonusPHP: number;
+  /** Department/KPI bonuses — the part of `bonusTotalPHP` that is neither PAB,
+   *  Tech, nor the Adjustment. EARNED, so never negative. */
+  otherBonusesPHP: number;
+  /** The Accounting Adj. — a SIGNED delta, itemized apart from earned bonuses so
+   *  a worksheet can never present money being WITHHELD as a bonus. Same split
+   *  the wizard's own Reports export carries
+   *  (src/lib/payroll-wizard/report-rows.ts). */
+  adjustmentPHP: number;
   orphanagePayPHP: number;
   mesaDeductionPHP: number;
   mesaDisbursementPHP: number;
@@ -262,6 +270,8 @@ function breakdownFromSnapshot(entry: WizardSnapshotEntry): WizardBreakdown {
     bonusTotalPHP: round2(pab + tech + other + adjustment),
     pabBonusPHP: pab,
     techBonusPHP: tech,
+    otherBonusesPHP: other,
+    adjustmentPHP: adjustment,
     orphanagePayPHP: num(entry.orphanagePay),
     mesaDeductionPHP: num(entry.mesaDeduction),
     mesaDisbursementPHP: num(entry.mesaDisbursement),
@@ -282,6 +292,10 @@ function breakdownFromStage(staged: StagedLockedRow): WizardBreakdown | null {
     bonusTotalPHP: total,
     pabBonusPHP: num(p.perfect_attendance_bonus),
     techBonusPHP: num(p.tech_bonus),
+    // Read, never recomposed — the row must show exactly what was locked, even
+    // where the staged `bonuses_total` and its own parts disagree.
+    otherBonusesPHP: num(p.other_bonuses),
+    adjustmentPHP: num(p.adjustment),
     orphanagePayPHP: num(p.orphanage_pay),
     mesaDeductionPHP: num(p.mesa_deduction),
     mesaDisbursementPHP: num(p.mesa_disbursement),

@@ -13,6 +13,12 @@
  *   2. The itemization must travel with the total. A row whose Regular+OT, bonus,
  *      Orphanage and MESA lines don't recompose to the amount being sent is a row
  *      whose worksheet and paystub contradict the payment.
+ *   3. The bonus total must recompose from its four NAMED parts (PAB, Tech, other
+ *      dept/KPI bonuses, and the signed Accounting Adjustment). A residual here
+ *      means the exported worksheet can show a total moving with no column that
+ *      says why — and, worse, can present money being WITHHELD as a bonus. This
+ *      is the same identity the wizard's own Reports export carries
+ *      (`payrollExportRowReconciles`).
  *
  * It also REPORTS (without failing) the two states that are legitimate but must
  * never be invisible: a wizard that re-priced someone after the lock, and a
@@ -109,6 +115,13 @@ const repriced: Array<{ email: string; locked: number | null; shown: number }> =
 const staleRate: string[] = [];
 const noBreakdown: string[] = [];
 const nonReconciling: Array<{ email: string; total: number; recomposed: number }> = [];
+const bonusResidual: Array<{ email: string; total: number; split: number }> = [];
+/** How much of the money rides in the two columns the export used to fold away. */
+let otherBonusRows = 0;
+let otherBonusSum = 0;
+let adjustmentRows = 0;
+let negativeAdjustmentRows = 0;
+let negativeAdjustmentSum = 0;
 
 for (const s of staged) {
   const email = s.recipient_email.trim().toLowerCase();
@@ -152,11 +165,37 @@ for (const s of staged) {
   if (Math.abs(recomposed - values.amountPHP) > 0.02) {
     nonReconciling.push({ email, total: values.amountPHP, recomposed });
   }
+  // The bonus total's own four named parts — the columns the exported worksheet
+  // shows. A residual is a total that moved with nothing saying why.
+  const split = round2(b.pabBonusPHP + b.techBonusPHP + b.otherBonusesPHP + b.adjustmentPHP);
+  if (Math.abs(split - b.bonusTotalPHP) > 0.02) {
+    bonusResidual.push({ email, total: b.bonusTotalPHP, split });
+  }
+  if (Math.abs(b.otherBonusesPHP) > 0.004) {
+    otherBonusRows += 1;
+    otherBonusSum += b.otherBonusesPHP;
+  }
+  if (Math.abs(b.adjustmentPHP) > 0.004) {
+    adjustmentRows += 1;
+    if (b.adjustmentPHP < 0) {
+      negativeAdjustmentRows += 1;
+      negativeAdjustmentSum += b.adjustmentPHP;
+    }
+  }
 }
 
 console.log(`priced from the wizard's published snapshot: ${bySnapshot}`);
 console.log(`priced from the wizard's LOCKED values:      ${byLock}`);
 console.log(`itemization unavailable (no split shown):    ${noBreakdown.length}`);
+console.log(
+  `carrying dept/KPI "other" bonuses:           ${otherBonusRows} (₱${round2(otherBonusSum).toLocaleString()})`,
+);
+console.log(
+  `carrying an Accounting Adjustment:           ${adjustmentRows}` +
+    (negativeAdjustmentRows > 0
+      ? ` — ${negativeAdjustmentRows} NEGATIVE (₱${round2(negativeAdjustmentSum).toLocaleString()} withheld)`
+      : ''),
+);
 console.log('');
 
 if (repriced.length > 0) {
@@ -198,8 +237,21 @@ if (nonReconciling.length > 0) {
   }
 }
 
+if (bonusResidual.length > 0) {
+  failed = true;
+  console.error(
+    `\nFAIL: ${bonusResidual.length} row(s) whose Bonus Total does not recompose from its named parts.\n` +
+      `      PAB + Tech + Other Bonuses + Adjustment must equal Bonus Total, or the exported\n` +
+      `      worksheet shows a total moving with no column that says why.`,
+  );
+  for (const r of bonusResidual.slice(0, 25)) {
+    console.error(`        ${r.email}  bonus total ₱${r.total.toLocaleString()} vs parts ₱${r.split.toLocaleString()}`);
+  }
+}
+
 if (failed) process.exit(1);
 console.log(
-  'OK: every locked-in payee is priced by the Payroll Wizard (snapshot or lock), and every\n' +
-    '    itemized row recomposes to the amount being sent.',
+  'OK: every locked-in payee is priced by the Payroll Wizard (snapshot or lock), every\n' +
+    '    itemized row recomposes to the amount being sent, and every bonus total recomposes\n' +
+    '    from PAB + Tech + Other + Adjustment — the columns the export now carries.',
 );

@@ -36,6 +36,8 @@ function queueRow(over: Partial<QueueRow> = {}): QueueRow {
     initialPayPHP: 6500,
     pabBonusPHP: 0,
     techBonusPHP: 0,
+    otherBonusesPHP: 0,
+    adjustmentPHP: 0,
     bonusTotalPHP: 0,
     orphanagePayPHP: 0,
     mesaDeductionPHP: 0,

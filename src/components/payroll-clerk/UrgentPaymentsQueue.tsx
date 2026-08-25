@@ -213,6 +213,8 @@ function toQueueRow(r: UrgentPaymentRow, processor: ProcessorId): QueueRow {
     // `valuesSource` is deliberately absent.
     pabBonusPHP: 0,
     techBonusPHP: 0,
+    otherBonusesPHP: 0,
+    adjustmentPHP: 0,
     bonusTotalPHP: 0,
     orphanagePayPHP: 0,
     mesaDeductionPHP: 0,
@@ -244,6 +246,8 @@ function toQueueRowOneOff(r: UrgentOneOffRow, processor: ProcessorId): QueueRow 
     // Same as toQueueRow: a one-off is not a payroll row (see above).
     pabBonusPHP: 0,
     techBonusPHP: 0,
+    otherBonusesPHP: 0,
+    adjustmentPHP: 0,
     bonusTotalPHP: 0,
     orphanagePayPHP: 0,
     mesaDeductionPHP: 0,

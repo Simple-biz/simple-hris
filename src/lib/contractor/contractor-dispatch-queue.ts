@@ -543,6 +543,8 @@ export function buildContractorRows(
       initialPayPHP: null,
       pabBonusPHP: 0,
       techBonusPHP: 0,
+      otherBonusesPHP: 0,
+      adjustmentPHP: 0,
       bonusTotalPHP: 0,
       orphanagePayPHP: 0,
       mesaDeductionPHP: 0,

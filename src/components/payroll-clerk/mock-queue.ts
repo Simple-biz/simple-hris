@@ -294,6 +294,19 @@ export interface QueueRow {
    * Anything rendering it must not gate on `> 0`.
    */
   bonusTotalPHP: number;
+  /**
+   * The two halves of {@link bonusTotalPHP} that are neither PAB nor Tech, kept
+   * apart because they mean opposite things to whoever reads a worksheet:
+   * `otherBonusesPHP` is EARNED dept/KPI money, `adjustmentPHP` is Accounting's
+   * SIGNED delta and is frequently money being WITHHELD. Folding them together
+   * is exactly the defect the wizard's own exports fixed in
+   * `src/lib/payroll-wizard/report-rows.ts` (memory: payroll-exports-itemized).
+   *
+   * `bonusTotalPHP = pabBonusPHP + techBonusPHP + otherBonusesPHP + adjustmentPHP`.
+   */
+  otherBonusesPHP: number;
+  /** See {@link otherBonusesPHP}. SIGNED — never gate its display on `> 0`. */
+  adjustmentPHP: number;
   /** Accounting's manual Orphanage add, as the wizard priced it. Its own paystub
    *  line, so it is NOT part of {@link bonusTotalPHP}. */
   orphanagePayPHP: number;
@@ -669,7 +682,10 @@ export function buildQueueFromRates(
       // computeCurrentPay knows nothing of the accounting layer, so these are 0
       // here by definition. `applyWizardValues` in useDispatchQueue replaces the
       // whole set — total AND split together — whenever the wizard can speak for
-      // this row, which is the only way they carry real figures.
+      // this row, which is the only way they carry real figures. 0 keeps the
+      // identity honest for carrier C too: its bonus total IS pab + tech.
+      otherBonusesPHP: 0,
+      adjustmentPHP: 0,
       orphanagePayPHP: 0,
       mesaDeductionPHP: pay?.mesaDeductionPHP ?? 0,
       mesaDisbursementPHP: 0,
@@ -780,6 +796,8 @@ export function buildStagedOnlyPlacement(params: {
         pabBonusPHP: pay?.pabBonusPHP ?? 0,
         techBonusPHP: pay?.techBonusPHP ?? 0,
         bonusTotalPHP: pay?.bonusTotalPHP ?? 0,
+        otherBonusesPHP: 0,
+        adjustmentPHP: 0,
         orphanagePayPHP: 0,
         mesaDeductionPHP: pay?.mesaDeductionPHP ?? 0,
         mesaDisbursementPHP: 0,
