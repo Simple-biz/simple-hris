@@ -78,7 +78,15 @@ Active card is highlighted via Framer Motion's **`layoutId`** glow that physical
 
 #### 3.3.1 Brand logo support
 
-`ProcessorLogo.tsx` takes an explicit `logoSrc` prop and renders that image on a white plate; if it fails to load (`onError`) it falls back to a gradient monogram tile (or icon, for non-brand cards like All / History). **There is no HEAD probe and no `/processors/{id}.svg` convention** — that was never implemented. The live assets are PNGs at the public root (`/kolan.png`, `/higlobe.png`, `/wise.png`, `/jeeves.png`).
+`ProcessorLogo.tsx` takes an explicit `logoSrc` prop and renders that image on a white plate; if it fails to load (`onError`) it falls back to a gradient monogram tile (or icon, for non-brand cards like All / History). **There is no HEAD probe and no `/processors/{id}.svg` convention** — that was never implemented. The live assets sit at the public root: `/kolan.svg` plus PNGs for `/higlobe.png`, `/wise.png`, `/jeeves.png`.
+
+> **`/kolan.png` never existed.** The 2026-08-24 rebrand pointed all three registries at
+> `/kolan.png` without ever adding the file, so Kolan — the highest-volume rail — quietly
+> rendered the orange gradient monogram everywhere until `/kolan.svg` landed on 2026-08-25.
+> The `onError` fallback is what made it survivable and also what made it invisible: a
+> referenced-but-absent asset degrades silently and looks exactly like a card that was
+> never given a logo. **After changing a `logoSrc`, confirm the file exists on disk** —
+> nothing in the build fails when it doesn't.
 
 The path is hardcoded in **three independent registries**, and all three must agree or one rail shows two different marks:
 
@@ -89,6 +97,17 @@ The path is hardcoded in **three independent registries**, and all three must ag
 | `PROCESSOR_VISUALS` in `PayrollDispatch.tsx` | the Payment Dispatch filter cards |
 
 The plate adapts to the artwork: `ProcessorLogo` measures the decoded image and gives a squarish **mark** (aspect < 1.5, e.g. Kolan) vertical padding, while a horizontal **wordmark** (Wise, HiGlobe) fills the plate height. See `public/processors/README.md`.
+
+**Kolan ships as the MARK, not the lockup — this is deliberate.** The official
+`kolan.xyz` asset is a 131×48 lockup whose "Kolan" wordmark is **white**. The plate is
+`bg-white` in both themes by rule (`docs/design/ui-standards.md` §6.4), so the lockup
+would render as a mark beside an invisible word. `/kolan.svg` is the 42×42 eclipse tile
+cropped out of that lockup (same coordinate space — no path was re-drawn), and because
+it is an *opaque* near-black tile with a white corona it is the only processor asset that
+also reads on the bare, un-plated chips in the contractor and employee pickers. It carries
+explicit `width`/`height` so `naturalWidth`/`naturalHeight` are non-zero — the aspect
+probe needs intrinsic dimensions, and an SVG without them measures 0 in some browsers and
+silently downgrades to wordmark treatment.
 
 ### 3.4 The table
 

@@ -267,10 +267,17 @@ export function PreferredPaymentMethodRadios({
                 )}
               >
                 {logoSrc ? (
+                  // No mix-blend (ui-standards.md 6.4): these marks are
+                  // dark-on-transparent and sit correctly on the white tile as-is,
+                  // while `multiply` silently erases anything WHITE in the artwork —
+                  // it flattened the Kolan mark's corona to a featureless black
+                  // square in light mode while `dark:mix-blend-normal` rendered it
+                  // correctly in dark. p-0.5 keeps a square brand MARK off the tile
+                  // edge, mirroring ProcessorLogo's aspect-aware padding.
                   <img
                     src={logoSrc}
                     alt={label}
-                    className="h-full w-full object-contain mix-blend-multiply dark:mix-blend-normal"
+                    className="h-full w-full object-contain p-0.5"
                   />
                 ) : (
                   <Icon className="h-4 w-4" />

@@ -9,7 +9,7 @@ export const PROCESSOR_OPTIONS = [
   // `id` stays 'hurupay' FOREVER — it is the stored value in
   // employee_ids.bank_preferred / preferred_processor and the literal the WIRES
   // lock keys on. Only the human-facing `label` follows the 2026-08-24 rebrand.
-  { id: 'hurupay', label: 'Kolan', blurb: 'Email only', Icon: Wallet, logoSrc: '/kolan.png' },
+  { id: 'hurupay', label: 'Kolan', blurb: 'Email only', Icon: Wallet, logoSrc: '/kolan.svg' },
   { id: 'wepay', label: 'Wepay', blurb: 'Email only', Icon: Wallet },
   { id: 'higlobe', label: 'Higlobe', blurb: 'Email + account holder', Icon: Wallet, logoSrc: '/higlobe.png' },
   { id: 'wise', label: 'Wise', blurb: 'Bank wire details', Icon: Wallet, logoSrc: '/wise.png' },

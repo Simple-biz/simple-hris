@@ -24,7 +24,7 @@ export interface InvoiceProcessorOption {
 
 export const INVOICE_PROCESSOR_OPTIONS: InvoiceProcessorOption[] = [
   // `id` is the stored gateway key and never moves; only the label rebrands.
-  { id: 'hurupay', label: 'Kolan',   blurb: 'Email transfer',        region: 'global', Icon: Wallet,   logoSrc: '/kolan.png' },
+  { id: 'hurupay', label: 'Kolan',   blurb: 'Email transfer',        region: 'global', Icon: Wallet,   logoSrc: '/kolan.svg' },
   { id: 'higlobe', label: 'Higlobe', blurb: 'Email + account holder', region: 'global', Icon: Wallet,   logoSrc: '/higlobe.png' },
   { id: 'wires',   label: 'Wires',   blurb: 'International bank wire',  region: 'global', Icon: Banknote },
   { id: 'ach',     label: 'ACH',     blurb: 'US bank transfer',        region: 'us',     Icon: Landmark },

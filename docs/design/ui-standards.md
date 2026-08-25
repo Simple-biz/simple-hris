@@ -685,7 +685,14 @@ Rules:
   unreadable sliver (the original "white box" bug). The plate is wide
   (`h-11`-ish), not a 44px square.
 - **No `mix-blend`.** Dark-on-transparent logos sit correctly on white as-is;
-  `mix-blend-multiply` was what erased them.
+  `mix-blend-multiply` was what erased them. It also erases anything **white**
+  *inside* the artwork: multiply against a white plate maps white→white, which
+  flattened the Kolan mark's corona to a featureless black square (light mode
+  only — a `dark:mix-blend-normal` companion rendered it correctly, so the bug
+  looked theme-specific rather than blend-specific). This rule binds every
+  `logoSrc` consumer, not just `ProcessorLogo`: the contractor invoice/profile
+  gateway chips and `employee-payout-fields.tsx` render the same registry
+  assets, and the last of them dropped its `mix-blend-multiply` on 2026-08-25.
 - **`onError` → fall back** to the gradient monogram/icon tile (the §6.3 pattern)
   so a missing asset degrades instead of showing an empty plate.
 

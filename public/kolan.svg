@@ -1,0 +1,38 @@
+<svg width="42" height="42" viewBox="0 3 42 42" fill="none" xmlns="http://www.w3.org/2000/svg">
+<!-- Kolan brand MARK (eclipse tile), extracted from the official kolan.xyz lockup
+     `kolan-logo-white.svg` (131x48). The lockup's "Kolan" wordmark is WHITE and is
+     deliberately NOT included: ProcessorLogo renders on a white plate in both themes
+     (docs/design/ui-standards.md 6.4), so a white wordmark would be invisible. The
+     mark is an opaque near-black tile with a white corona, so it reads on the white
+     plate AND on the bare light/dark chips in the contractor + employee pickers.
+     viewBox is the lockup's original coordinate space cropped to the tile (y 3..45)
+     so no path was re-typed. Explicit width/height give the file intrinsic dimensions,
+     which is what ProcessorLogo's naturalWidth/naturalHeight aspect probe reads. -->
+<g clip-path="url(#kolanTileClip)">
+<rect y="3" width="42" height="42" rx="10.5" fill="#0A0601"/>
+<g filter="url(#kolanGlow)">
+<path d="M21.0004 35.7391C27.4838 35.7391 32.7395 30.4833 32.7395 23.9999C32.7395 17.5166 27.4838 12.2608 21.0004 12.2608C14.517 12.2608 9.26123 17.5166 9.26123 23.9999C9.26123 30.4833 14.517 35.7391 21.0004 35.7391Z" fill="#0A0601"/>
+<path d="M21 12C27.6274 12 33 17.3726 33 24C33 30.6274 27.6274 36 21 36C14.3726 36 9 30.6274 9 24C9 17.3726 14.3726 12 21 12Z" fill="#0A0601" stroke="white" stroke-width="0.521739"/>
+</g>
+</g>
+<rect x="0.4375" y="3.4375" width="41.125" height="41.125" rx="10.0625" stroke="white" stroke-opacity="0.22" stroke-width="0.875"/>
+<defs>
+<filter id="kolanGlow" x="-4.82597" y="-1.82612" width="51.6519" height="51.6522" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset/>
+<feGaussianBlur stdDeviation="6.78261"/>
+<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset/>
+<feGaussianBlur stdDeviation="2.08696"/>
+<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0"/>
+<feBlend mode="normal" in2="effect1_dropShadow" result="effect2_dropShadow"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect2_dropShadow" result="shape"/>
+</filter>
+<clipPath id="kolanTileClip">
+<rect y="3" width="42" height="42" rx="10.5" fill="white"/>
+</clipPath>
+</defs>
+</svg>
