@@ -569,6 +569,111 @@
  *
  * COST. FULL reconcile — ~200 calls + 2 corrections + 2 evidence updates + the verify read.
  *
+ *
+ * ── 2026-08-25, PASS 13b — KANE CONFIRMED, TWELVE CLOSE, ONE IS REFUSED ON A MEASUREMENT ──
+ * Kane: "All of those are deployed already Ive tested them." then "mark them as done please also
+ * add their priority levels."
+ *
+ * THAT CONFIRMATION IS THE EVIDENCE, and it is recorded as such on every row rather than assumed:
+ * each closing basis quotes it verbatim. This is exactly what the skill's honesty gate asks for —
+ * "Deployed and clicked through in prod / Kane says so / record that as the basis" — and it is why
+ * the pass ASKED which ones instead of guessing.
+ *
+ * ONE ROW IS HELD ANYWAY, AGAINST AN EXPLICIT "all of those". `1f94ff70` (the dispatch export fix)
+ * is NOT an ancestor of origin/main — re-fetched AFTER that message to be sure. Vercel deploys
+ * origin/main, so the commit is not in production no matter what the working tree shows. A blanket
+ * confirmation cannot push a commit, and marking it Done would put a claim on the board that one
+ * command disproves. It stays In Progress and advances the moment it is pushed.
+ *
+ * ONE BLOCKER WAS CLOSED BY MEASUREMENT RATHER THAN BY THE CONFIRMATION. The Kolan rename was held
+ * on an un-run payout_brand migration, and an assertion cannot run a migration — so it was PROBED
+ * read-only instead: `hr_onboarding_submissions.payout_brand` returns rows, and a negative control
+ * on the same table returns `42703 column does not exist`, which is what proves the probe can detect
+ * an absent column at all. It HAS been run. Probing without `head: true` and carrying a negative
+ * control is the rule three separate incidents in this repo were needed to learn.
+ *
+ * TWO EXTERNAL STEPS ARE SPLIT INTO THEIR OWN ROWS rather than either blocking a shipped feature or
+ * vanishing with it. Both parent rows explicitly did not claim them:
+ *   • the n8n orientation Filter node, never imported — the SECOND layer; the sender gate is the fix
+ *     and Kane tested it, so the gate row closes and the import gets its own 1-SP chore row.
+ *   • the 9 drifted master-sheet department cells — the code fix stops NEW drift and repairs none of
+ *     the old, so the data repair gets its own 3-SP row, ordered (flip the cell, re-stamp, THEN sync)
+ *     because syncing first would mint 9 duplicates in pre-transfer departments.
+ * Closing a row whose stated claim is met, while carrying the genuinely-open remainder forward under
+ * its own name, is the alternative to the two bad options: a false Done, or a real fix held hostage.
+ *
+ * PRIORITY LEVELS, as asked — and the plan could not express them. The board's Priority column
+ * carries FOUR labels (Critical 0 / High 1 / Medium 2 / Low 3) but `TaskPriority` modelled only
+ * Critical and High, so every row scored below High was silently unlabelled. The type and
+ * TASK_PRIORITY_INDEX are extended to all four. That is an ADDITION to what the reconciler can
+ * write, never a loosening of a guard. Assigned: High to the money, disclosure and live-incident
+ * rows (the payment rail, the masked-account export, the orientation-email incident, the KPI hang,
+ * Attestation, the paystub transfer label, sheet_synced, the dispatch exports, the sheet repair);
+ * Medium to the reporting and label surfaces; Low to the wizard step rail.
+ *
+ * ONE PRIORITY CANNOT LAND THIS PASS, and saying so beats a silent no-op: Priority is a
+ * RECONCILER-owned column, and `--only-new` writes it at CREATE only. The twelve new rows get theirs.
+ * The Kolan rename already exists on the board, so its Medium sits in the plan and lands on the next
+ * FULL reconcile — the same run that pays off this pass's epic-relation debt.
+ *
+
+ * ── 2026-08-25, PASS 13 — TWELVE UNDECLARED FEATURES, AND ONE STATUS THAT DECAYED ────────
+ * Kane: "Update our Monday Board if we have fixed anything and make sure we have completion dates."
+ *
+ * THE COMPLETION-DATE HALF IS ALREADY TRUE, and it was measured before anything was written rather
+ * than asserted. `verify.mts` re-read the board at the top of this pass: **Done rows with no
+ * Completed Date: 0**, across all 188 of our rows, plus 0 over the 8-SP cap, 0 open rows with a
+ * blank Estimated SP, 0 unshipped rows carrying a phantom Actual SP, and the rollup and relation
+ * both exact (1569 / 874 / 188 of 188). The 74-row backfill that used to sit in Known Drift stays
+ * closed. It also confirmed all 8 rows from the 08-24 pass landed with the statuses they claimed.
+ *
+ * SO NOTHING IS MISSING A DATE. What is missing is that **twelve features had no board row at all**,
+ * and none of the thirteen rows here can carry a date yet, which is the honest answer to the second
+ * half of the ask rather than a dodge: a Completed Date accompanies Done, and Done needs someone to
+ * have looked in production. Eleven of the twelve are on origin/main and are Pending Deploy; one is
+ * committed locally only and is In Progress. **Which of them Kane has actually clicked through is
+ * the one thing this pass cannot derive from git, and it is the question put to him with the review.**
+ *
+ * THE MESSAGE-VERSUS-CONTENT TRAP FIRED TWICE IN TWENTY COMMITS, which is why the range was
+ * clustered on file overlap and not read off the subject lines:
+ *   • `7b9fe312` is titled **ATTESTATION** and contains **no attestation code whatsoever**. By file
+ *     overlap it is the Payroll Wizard step-rail progress line (step-load-prediction.ts + 12 tests +
+ *     250 lines of wizard). It also carried five `.tmp-vfy-*.mjs` probes and two report JSONs into
+ *     the tree as working residue — noise, given no row, but now committed.
+ *   • `681662f7` is the commit that ACTUALLY changes Attestation (Referral Leads + SSA.Gov on top of
+ *     the case tier). A message-clustered pass would have merged these two and described neither.
+ *   • `667dfe9d` is titled **"Fix"** and is the sheet_synced false-success repair — 197 of 200
+ *     applied transfers claiming a Google-Sheet write that never happened.
+ *
+ * THE FOUR-COMMIT AND THREE-COMMIT CLUSTERS, both collapsed to one row for the same reason: four
+ * commits touching nothing but Overview.tsx on one day are one screen built and finished, and
+ * 06f7f669 / d08a9948 / d24b49a8 are one Orientation panel built, documented, then lifted into its
+ * own tab. Neither is three or four rows.
+ *
+ * ONE ROW LANDED IN THE GAP BETWEEN THE LAST PASS'S REVIEW AND ITS APPLY. `59dc91af` (the wallet-rail
+ * mirror and lock) was committed after `review.mts` minted the 08-24 proposal at 10:23 and before
+ * `apply.mts` ran at 10:49, so the previous pass could not have seen it. Worth naming as a recurring
+ * shape rather than a one-off: the audit range ends at the review, not at the apply.
+ *
+ * THE ONE STATUS THAT MOVED WITHOUT NEW CODE. The Kolan rename was filed In Progress on 08-24 because
+ * `2951167a` was not an ancestor of origin/main. Re-checked after a fetch, it now is, so it advances
+ * to Pending Deploy — one step, not two. Its payout_brand migration is still un-run, so it remains
+ * exactly the class of feature that is code-complete and functionally dead until someone runs the
+ * thing, and no push can close it.
+ *
+ * ONLY ONE EXTERNAL BLOCKER IS NEW IN THE WHOLE RANGE, which is unusually clean: the n8n Filter node
+ * `references/n8n/orientation-email-leadgen-only.json` is un-imported. It is a deliberate SECOND
+ * layer — the server-side gate works without it — so that row is not dead the way the tickets row is.
+ * No new `.sql` and no new apply script appear anywhere in the twenty commits. What IS un-run is a
+ * DATA repair: `scripts/fix-sheet-dept-drift.mts` is dry-run by default, and the backup file in the
+ * commit proves nothing because it is written on dry runs too, so the 9 drifted sheet cells stand.
+ *
+ * COST AND PATH. `--only-new`: no new epic, no re-scored row and no sprint move, which is exactly the
+ * sanctioned case for the lean path. ~13 lookups + 12 creates + 1 correction + 13 updates plus the
+ * three label gates, ≈45 calls, against a full reconcile's ~200 on a 200-row plan. The trade is
+ * stated rather than hidden: **the 12 new rows land with no epic relation**, so `verify.mts` will
+ * read 188 of 200 on the relation invariant until a full reconcile adopts them by name.
+ *
   * ── APPROVAL ──────────────────────────────────────────────────────────────────────────────────────
  * Kane approved the 57-row re-attribution on 2026-08-13 ("Approve all") after reviewing it in full,
  * plus three rulings the same day: gap-day rows → Sprint 25; the group move belongs in `sync.ts`; the
@@ -597,9 +702,9 @@ import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-08-24';
-export const AUDIT_RANGE = '412af38f..HEAD';
-export const AUDIT_COMMITS = 17;
+export const PASS_DATE = '2026-08-25';
+export const AUDIT_RANGE = '2951167a..HEAD';
+export const AUDIT_COMMITS = 20;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -627,80 +732,124 @@ export interface PassRow {
 
 export const ROWS: PassRow[] = [
   {
-    name: 'Tickets board notifies the requester on every update — comment emails and status-move emails',
-    status: 'Pending Deploy',
-    shas: ['24be42cf', '90fb23fa'],
+    name: 'Kolan and HiGlobe are assignable when a person is unrouted, and picking one sets the Disbursement rail',
+    status: 'Done',
+    completed: '2026-08-24',
+    shas: ['59dc91af'],
     basis:
-      "CORRECTS A STALE STAGED CLAIM. This row was staged 2026-08-21 at 09:08 (e8feba9c) saying it was NOT STARTED with no code written, and it never reached the board because review.mts died on DAILY_LIMIT_EXCEEDED. Hours later 90fb23fa shipped the whole thing: 17 files, 827 insertions — src/lib/tickets/notify.ts gains the two hooks, a new tested recipients.ts implements the counterparty rule, notification-actions and notification-views learn `ticket.moved`, AdminWebhooks and the sample payloads are wired, and BOTH n8n workflow files exist in the repo. So the staged status was already false when it was written down, and writing it now would have put a lie on the board. RECIPIENT RULES as Kane set them 2026-08-21 and as shipped: a status move emails the TICKET CREATOR only, because the dev is usually the one moving the card; a comment emails the COUNTERPARTY — the creator, or the assigned dev when the creator typed it; ANY move is emailed, including a backward Testing to In Progress bounce, with `done` still riding notifyTicketDone. PENDING DEPLOY, not Done: 90fb23fa is an ancestor of origin/main, but the feature is functionally DEAD until two things Kane runs happen, and a new notification type the CHECK rejects fails exactly the way kpi.scored did for three days behind a console.warn.",
-    blockers: [
-      'The employee_notifications CHECK widen for `ticket.moved` has not been run — references/sql/2026-08-21_add_ticket_moved_notification_type.sql plus scripts/apply-ticket-moved-notification-type.mjs are in the repo, un-applied',
-      'Neither n8n workflow has been imported — ticket-replied-email.workflow.json and ticket-moved-email.workflow.json exist in references/n8n/ only',
-    ],
+      "DONE ON KANE'S CONFIRMATION, 2026-08-25: \"All of those are deployed already Ive tested them.\" That is the production evidence this row was short of — 59dc91af is an ancestor of origin/main (re-checked after a fetch today), and Kane has exercised it. UNDECLARED UNTIL THIS PASS: it landed BETWEEN the 08-24 pass's review (10:23) and its apply (10:49), so that pass could not have seen it. Two things ship together and neither works alone: the wallet rails become assignable for an unrouted person (they were absent from the assignable set entirely), and picking one MIRRORS into the Disbursement rail so a wallet payee cannot sit with a bank rail underneath them. The new guard (src/lib/employee/wallet-rail-lock.ts, 66 lines) reads the EFFECTIVE rail across three tiers and FAILS CLOSED — unset is NOT locked, so an unknown rail is never read as permission. 12 files, 479 insertions, 148 lines of new test across two files, three API routes and three components. Scored 5 as the peer of the 5-SP People Bank-changes band row. Not 8 — it reprices nothing and moves no money. Not 3 — it changes who can be routed where, on the payment rail.",
   },
   {
-    name: 'Hubstaff exempt-department list broke on a rename, reporting 33 untracked freelancers as unexplained gaps',
-    status: 'Pending Deploy',
-    shas: ['7b7e9123'],
+    name: 'Overview Expanded roster table leads with the person, with shared sort and page size',
+    status: 'Done',
+    completed: '2026-08-24',
+    shas: ['38670c4c', '0764c802', '565229ae', 'ac23232c'],
     basis:
-      "HUBSTAFF_EXEMPT_DEPTS matched raw master-list labels exactly, and the dept it excuses was renamed: `Site Building` became `Site Building (US - Freelance)` (20 people, ZERO with Hubstaff hours) and `Site Building (PH - Freelancer)` (13, zero). The list therefore inverted its own meaning, and the Overview Hubstaff-to-Master matches tile and its CEO mirror reported 33 deliberately-untracked freelancers as unexplained reconciliation gaps. The untouched `SMM Freelancer` label kept working, which is how it stayed invisible. Fixed in src/lib/payroll/hubstaff-reconciliation.ts by retrying the match once with a trailing parenthetical qualifier stripped; hubstaff-reconciliation.test.ts pins the negative control (a dept whose base label was never exempt stays tracked however it is qualified) and pins Lead Gen NOT exempt per Kane. Filed as its own 2-SP row rather than folded into the zero-hours feature because it was wrong on its own, on a surface that already shipped, before any of that was added — it was a PREREQUISITE for the feature, not part of it. It shares sha 7b7e9123 with that feature, which is why the two rows cite the same commit. PENDING DEPLOY: 7b7e9123 is an ancestor of origin/main, and nobody has confirmed the corrected tile in production.",
-    blockers: ['Not confirmed live — no one has looked at the corrected Overview reconciliation tile in production'],
+      "DONE ON KANE'S CONFIRMATION, 2026-08-25: \"All of those are deployed already Ive tested them.\" All four shas are ancestors of origin/main. FOUR commits, ONE row: all four touch nothing but src/components/Overview.tsx on the same day — 38670c4c built it (381 insertions), then three fit-and-finish passes (the Employees card back to a panel with ID leading, the table fitting its card at every width, and the corners plus a one-line ID). Clustering by file overlap makes that one screen built and finished, not four rows. The roster leads with the PERSON rather than the ID, and sort plus page size are SHARED with the Simple view so the two cannot disagree. A shadcn Table component was abandoned on the way because it breaks sticky headers. Not 5: no new module, no test file, no money path — it is one screen. Not 2: 452 net lines across four passes.",
   },
   {
-    name: 'Accounting is told who logged no Hubstaff hours — one shared no-hours rule, a Readiness tab and an ingest notification',
-    status: 'Pending Deploy',
-    shas: ['7b7e9123', 'b76a8e4b'],
+    name: 'Raw hsl: department keys stop reaching human-readable screens — formatDeptLabel applied app-wide',
+    status: 'Done',
+    completed: '2026-08-24',
+    shas: ['bc5a9296'],
     basis:
-      "Nobody had offboarded jvincec@ and nothing said so — he sat Active with zero hours from 2026-08-05. The DETECTOR already existed: the Overview reconciliation tile had him in its gap bucket the whole time, approved-leave carve-out included. What was missing was DELIVERY, so this is a noise fix plus two delivery paths, not a new engine. `classifyZeroHours` (src/lib/payroll/zero-hours-gap.ts, 245 lines, 221 of test) is extracted as the ONE rule now shared by that tile, a new Readiness No Hours tab, and a `payroll.hours_gap` notification fired on Hubstaff ingest to accounting role holders only — never to the person with no hours. 18 files, 1,617 insertions, 44 new tests. Scored 5 not 8 because it touches NO money path: no score component, no rate, no dispatch row, deliberately — Lead Gen stays tracked per Kane, which puts ~193 rows on the list every week, so the dimension is LISTED AND NEVER SCORED (a fourth score component would peg readiness near zero weekly and kill the 100% celebration). Not 3: a new notification type with its own CHECK widen, 44 tests, and the exempt-list bug as a prerequisite. UNLIKE the tickets row, this migration IS applied and verified — b76a8e4b records the baseline: 43 types live, all 39 app-mapped types still admitted. PENDING DEPLOY: pushed, but no one has looked in production, and the first real insert stays unproven until the next Hubstaff ingest runs.",
-    blockers: [
-      'Not confirmed live — the Readiness No Hours tab has not been looked at in production',
-      'The first real payroll.hours_gap insert is unproven until the next Hubstaff ingest runs; the DDL is applied but the write path has never fired',
-    ],
+      "DONE ON KANE'S CONFIRMATION, 2026-08-25: \"All of those are deployed already Ive tested them.\" bc5a9296 is an ancestor of origin/main. Raw `hsl:*` keys were leaking into rendered UI across the whole app, so people read `hsl:filing_specialist` on screens meant for humans. 54 files, 420 insertions: formatDeptLabel applied app-wide (a no-op off HSL), with a 137-line render test plus a source-scan test guarding the regression. Deliberately NARROW, and the narrowness is the design: the raw key is KEPT in exports, tooltips, search haystacks and filter VALUES, because those are machine-side and collapsing them would break matching. Scored 3 as the peer of the 3-SP Kolan rename — wide, shallow, label-only. Not 5: no logic moves, nothing reprices. Not 2: 54 files plus two guard tests. STATED and NOT closed by this row: the headcount cards still group on the raw key, and the scan guard covers only whole-line JSX children under src/components, so green tests there are not proof of coverage elsewhere.",
   },
   {
-    name: 'Pay Structure shows a department’s members, with the HSL sub-teams nested under a retractable parent',
-    status: 'Pending Deploy',
-    shas: ['24d6d0a1', '6cb643b2', '47e84590'],
+    name: 'People roster export carries the masked account last 4 and the date the bank last changed',
+    status: 'Done',
+    completed: '2026-08-24',
+    shas: ['edf0aa10'],
     basis:
-      "UNDECLARED UNTIL THIS PASS — no board row existed for any of it. THREE commits, ONE row: all three rewrite the same tested module (src/lib/payment-catalog/dept-rail.ts) and the same screen (BonusCatalog.tsx), so clustering by file overlap makes them one feature built and then hardened the same day, not three. 24d6d0a1 built it — dept-rail.ts (264 lines) with dept-rail.test.ts (269), a 598-line BonusCatalog change, and the rule that the rail is a TREE: a Pay Structure renders under the member PLACEMENT rather than whatever departmentKey it stores, and the bare parent claims NOBODY, which is why the HSL sub-teams nest under a retractable Hogan Smith Law instead of flattening into it. 6cb643b2 then resolved a structure owner by IDENTITY and not by email alone — Baldonebro was being held by the parent because the email matched first. 47e84590 closed an adder guard that could overwrite a live rate from a blank form, plus five more review findings. Scored 5 as the peer of the 5-SP People Bank-changes band row: a new tested module plus one screen, no money path, no new table. Not 8 — it prices nothing and dispatches nothing. Not 3 — 264 lines of new rule, 269 of test, a 598-line screen change and two same-day hardening passes. PENDING DEPLOY: all three shas are ancestors of origin/main, none confirmed live.",
-    blockers: ['Not confirmed live — the Pay Structure members view has not been looked at in production'],
+      "DONE ON KANE'S CONFIRMATION, 2026-08-25: \"All of those are deployed already Ive tested them.\" edf0aa10 is an ancestor of origin/main. 10 files, 665 insertions: the People roster export gains the masked account last 4 and the date the bank last changed, on two small new modules (mask-account.ts, bank-update-history.ts) with 246 lines of test and a 166-line feature doc. Three decisions worth recording because each is a way this could have been wrong: masking is done SERVER-side and never in the browser, so the full number never leaves the server; the export is slot-aware, because 8 people sit on an alternate bank slot and a slot-blind read would show the wrong account; and the date comes from bank_update_history and NEVER from the self-update stamp, which records a different event entirely. Not 5: it adds two columns to an export that already existed, where the 5-SP Gift Tracker row built a new one. Not 2: bank data leaving the system is a disclosure surface.",
   },
   {
-    name: 'Offboarded people drop off the Payment Catalog, behind four guards that all fail toward keeping them',
-    status: 'Pending Deploy',
-    shas: ['1937731f'],
+    name: 'Only Lead Gen hires get the orientation email — gated in the sender, failing closed on a blank department',
+    status: 'Done',
+    completed: '2026-08-24',
+    shas: ['d79c1a64'],
     basis:
-      "UNDECLARED UNTIL THIS PASS — no board row existed. The Payment Catalog was still listing people who had left. 14 files bring four new tested modules: catalog-roster-visibility.ts (130 lines, 235 of test), offboard-evidence.ts (160), master-date.ts (48, 37 of test) and catalog-offboarded-emails.ts (114), plus a verify script (scripts/verify-catalog-offboarded.mts, 160). Every one of the four guards deliberately fails toward KEEPING a person, because dropping someone still employed is the worse error; evidence is read on WORK emails ONLY. Measured at the time: active_employees carried 0 stamped and 294 gone. 110 lines came OUT of payroll-readiness.ts as the rule was centralised, so this is a consolidation as much as an addition. Not 8: no money path, no new table, no dispatch row. Not 3: four new modules, 272 lines of test, and a behavioural change to who appears on a live Accounting screen. PENDING DEPLOY: 1937731f is an ancestor of origin/main, not confirmed live.",
-    blockers: ['Not confirmed live — nobody has checked in production that leavers have actually dropped off the catalog'],
+      "DONE ON KANE'S CONFIRMATION, 2026-08-25: \"All of those are deployed already Ive tested them.\" d79c1a64 is an ancestor of origin/main. It closes a live incident: on 2026-08-21 teal@ locked the 2026-08-23 week (79 rows) and row 66 — an HSL hire — was emailed the Lead Gen orientation Zoom link, because nothing anywhere scoped the send by department; the live n8n flow was Webhook to Split Out to Gmail with NO filter at all. The gate now lives in the SENDER (`isLeadGenDepartment`, the SAME predicate that gates the CallTools webhook, so both orientation surfaces agree on who is Lead Gen and there is exactly one place to change it), and it FAILS CLOSED — blank, NULL or unrecognised department is not Lead Gen. Withheld hires are never silent: they come back in `webhook.skipped` with a reason and their own toast, and hire_index still counts the full week so a trimmed resend lines up with the original n8n numbering. 7 files, 392 insertions, 121 lines of new test. Not 2: a live incident with a two-layer remedy. Not 5: one predicate and one payload builder. THIS ROW CLOSES ON THE SENDER GATE, WHICH IS THE FIX. The un-imported n8n Filter node is the deliberate SECOND layer and is deliberately NOT held against this row — it is split out as its own S27 chore row so closing this one buries nothing. STATED and open, Kane's call: non-Lead-Gen hires now receive NO welcome email at all, so the paperwork expectations that email carried reach them nowhere.",
   },
   {
-    name: 'Payroll Wizard manual validation — a named human vouches for one person’s pay, and Mark Paid shows it',
-    status: 'Pending Deploy',
-    shas: ['56390cb9', 'de0fa485'],
+    name: 'An unresolvable payroll week stops being a forever-loading KPI Calculator screen',
+    status: 'Done',
+    completed: '2026-08-24',
+    shas: ['8cd16525'],
     basis:
-      "UNDECLARED UNTIL THIS PASS — no board row existed. TWO commits, ONE row: de0fa485 only re-animates ValidationFullScreen.tsx, the component 56390cb9 created (git confirms 56390cb9 is that file add-commit), so it is the same feature finishing rather than a second one. A named human vouches for ONE person pay and Lenny sees that vouch at Mark Paid: a new route (app/api/payroll-wizard/manual-validation/route.ts, 181 lines), a tested module (manual-validation.ts 197 plus 198 of test), a hook (useManualValidations.ts), the full-screen overlay and the Mark Paid surfacing — 13 files, ~1,750 lines including the 212-line feature doc. SCORED 5 AND NOT 8 despite the line count, because it RECORDS a human judgement and never prices anything: no rate, no amount and no score component moves, so the money-math risk that earns 8 on this board (mid-week rate proration, the HSL sub-department cutover) is simply absent. The one genuinely novel part is that the validation CANNOT live on payment_dispatches — at step 7 no dispatch row exists yet — so it rides an app_settings blob written compare-and-swap, and Mark Paid keys it on row.id, which is the WORK email. Not 3: a new route, a new persistence pattern, and a money-critical dialog touched. PENDING DEPLOY: both shas are ancestors of origin/main, not confirmed live.",
-    blockers: ['Not confirmed live — no one has vouched for a real person in production and seen it appear at Mark Paid'],
+      "DONE ON KANE'S CONFIRMATION, 2026-08-25: \"All of those are deployed already Ive tested them.\" 8cd16525 is an ancestor of origin/main. A payroll week that could not be resolved from a batch FILENAME left the KPI Calculator on a skeleton forever — the skeleton was TERMINAL, with no error state and no way out, so the screen simply never revealed. Two fixes in one row on purpose: the reveal is now a tested rule (src/lib/manager/kpi-calculator-reveal.ts, 48 lines + 38 of test) so an unresolved week surfaces instead of hanging, and undatable batch names are REFUSED AT INGEST so the poisoning state cannot be created again. Fixing only the screen would have left the data able to re-poison it, which is why both halves are here rather than split. 10 files, 342 insertions, three new modules including calendar-column-dedupe and a payroll-week-filename test. Not 2: three new modules and a change to what ingest will accept. Not 5: no money path, no new surface.",
   },
   {
-    name: 'Orphanage OT pricing extracted and tested, with below-regular OT refused outright',
-    status: 'Pending Deploy',
-    shas: ['ae947bbc'],
+    name: 'Attestation pays Referral Leads and SSA.Gov on top of the case tier',
+    status: 'Done',
+    completed: '2026-08-24',
+    shas: ['681662f7'],
     basis:
-      "UNDECLARED UNTIL THIS PASS, and deliberately a SECOND row rather than an edit of the Done 2-SP S27 row about orphanage OT pricing at the full 1.5x rate. That row was a seventeen-line price correction; this is the hardening that followed it — 6 files, 1,763 insertions: pricing extracted into src/lib/payroll/orphanage-pay-pricing.ts as the one rule with its own test file, below-regular OT REFUSED outright rather than silently accepted, scripts/audit-orphanage-pay-divergence.mts added for the divergence, and the 2026-08-09 week repaired. It does not REVERSE the earlier row — it makes the same rule unfalsifiable — so both rows stand and neither needs rewriting. Not 2: an extraction, a refusal guard, an audit script and a data repair is more than the fix was. Not 5: one pricing rule, no new surface. STILL OPEN and explicitly NOT closed by this row: erict@ 5,373 pesos remains invisible, and the blob is still last-writer-wins. PENDING DEPLOY: ae947bbc is an ancestor of origin/main, not confirmed live.",
-    blockers: [
-      'Not confirmed live — the corrected orphanage OT pricing has not been checked in production',
-      'Known open, tracked separately: erict@ 5,373 pesos still invisible, and the orphanage blob is still last-writer-wins',
-    ],
+      "DONE ON KANE'S CONFIRMATION, 2026-08-25: \"All of those are deployed already Ive tested them.\" 681662f7 is an ancestor of origin/main, and it is the ONLY commit in this range that actually touches Attestation — 7b9fe312, whose message is literally ATTESTATION, contains no attestation code whatsoever and is filed as the wizard step-rail row instead. Attestation now pays Referral Leads and SSA.Gov at ₱250 each on TOP of the case tier, and the tier itself still reads CASES ONLY: the two must not be conflated or the tier inflates for everyone in the department. 4 files, 158 insertions — 9 lines of schema change with 84 lines of test and scripts/verify-attestation-tiers.mts extended. NOT retroactive, per Kane. Scored 2 and not 3 because it is one rule in one schema; not 1 because it pays real money and a wrong tier boundary overpays every member of the department. WORTH KNOWING for the first scored week: no Attestation dept-week had been scored through this at the time it closed, so the first real payout is the first live exercise of the new components.",
+  },
+  {
+    name: 'Orientation gets its own tab on My Team — weekly attendance tally, drill-down and PDF export',
+    status: 'Done',
+    completed: '2026-08-24',
+    shas: ['06f7f669', 'd08a9948', 'd24b49a8'],
+    basis:
+      "DONE ON KANE'S CONFIRMATION, 2026-08-25: \"All of those are deployed already Ive tested them.\" All three shas are ancestors of origin/main. THREE commits, ONE row: 06f7f669 built the panel and the model, d08a9948 stamped the doc, d24b49a8 lifted it out of the New Hire Check List into its own tab — same panel, same model, same day. Manager to My Team to Orientation carries a weekly attendance tally, per-week drill-down and Export PDF. TWO design facts are load-bearing and both are the kind that silently sink a feature: it is an INNER tab, because a new TOP-LEVEL tab is a new feature key and no permission row means hidden, so nobody but an admin would have seen it; and attendance is the STAMP (`orientation_attended_at`), never `status` — live rows exist carrying both stamps with status `no_show`, and a `no_show_at` with status `ready`, so any status-based rule is wrong on real data. The week key is HR's checklist `period_start`, replacing a date-derived key that was 46% WRONG (439 of 954 matched hires filed a week early). Verified against prod by running the shipped builder over the live tables: 975 hires to 12 HR weeks plus 19 off-checklist, 934 attended / 41 not, every hire in exactly one bucket. Not 8: no money path, no new table, and the My Team no-comp rule means the PDF carries no money column. Not 3: a new API route, a 261-line tested model with 255 of test, a 439-line PDF builder, a new panel and a hook.",
+  },
+  {
+    name: 'Payroll Wizard step rail shows a predicted load bar that never reaches 100% on prediction alone',
+    status: 'Done',
+    completed: '2026-08-24',
+    shas: ['7b9fe312'],
+    basis:
+      "DONE ON KANE'S CONFIRMATION, 2026-08-25: \"All of those are deployed already Ive tested them.\" 7b9fe312 is an ancestor of origin/main. THE COMMIT MESSAGE IS WRONG — it is titled ATTESTATION and contains no attestation code at all. Clustered by file overlap it is the Payroll Wizard step rail: step-load-prediction.ts (109 lines) with 117 lines of test, PayrollWizard.tsx +250, and 42 lines of CSS. The wizard's loaders cannot report progress (a fetch either is or is not done), so a determinate bar has to be PREDICTED from that step's own load history in localStorage, smoothed, with bounds so one pathological load cannot poison every refresh after it. Extracted from the component precisely so the invariant that matters is proven in a test rather than asserted in a comment: the bar NEVER reaches 100% on prediction alone (ceiling 0.9, and 0.99 once a load overruns) — the line exists to tell Accounting when the figures are safe to read, and a bar that hit 100% early would say so early. 12 tests. Not 3: one module and one rail, no data path. Not 1: a real invariant with its own test file and 250 lines of wizard change. ALSO IN THIS COMMIT and deliberately given no row: five `.tmp-vfy-*.mjs` probe scripts, two `scripts/tmp-probe-*` files and two report JSONs were committed as working residue — noise, not a deliverable, but they are in the tree and worth a cleanup commit.",
+  },
+  {
+    name: 'A mid-week department transfer says so under the Department line on every paystub surface',
+    status: 'Done',
+    completed: '2026-08-25',
+    shas: ['47386073'],
+    basis:
+      "DONE ON KANE'S CONFIRMATION, 2026-08-25: \"All of those are deployed already Ive tested them.\" 47386073 is an ancestor of origin/main. A person moved mid-week now has \"Lead Gen to HSL\" printed under the Department line on EVERY paystub surface — app, email, export and PDF. This is the COMMON case, not an edge case: 277 of 281 dated transfers are effective on a non-Sunday. Three rules decided the build and each rules out an easier wrong answer. SOURCE is department_transfer_requests and NEVER the proration block, because a same-rate move prorates nothing and those are exactly the people the label exists for. `applied` rows ONLY, deliberately narrower than the premium map, which also trusts `approved` — live there are 276 applied and 6 approved with a NULL applied_at, all still in their old department. And it is STAGED into the payload rather than derived at render, because paid stubs are frozen as-paid, so a transfer released next month must not rewrite a statement already in an inbox — the stated consequence being that already-paid stubs never gain the label, by design, and backfilling would mutate a legal pay record. The label is derived ON THE VIEW, which is the fix for the failure this area suffered twice (weekend rows and the proration chip both shipped in-app while the email stayed stale); a parity test pins both surfaces to one string. Round trips are real and collapse (`Lead Gen to HSL to Lead Gen`). 18 files, 1,232 insertions, a 253-line tested legs model with 234 of test. Not 8: it prices nothing. Not 3: two API routes and six paystub modules. OPEN and NOT closed here, Kane's call: an HSL person's stub carries two names for one department, because the Department line collapses to the parent while the label prints the sub-team.",
+  },
+  {
+    name: 'sheet_synced was a false success — the sheet write is always attempted and reports three outcomes',
+    status: 'Done',
+    completed: '2026-08-25',
+    shas: ['667dfe9d'],
+    basis:
+      "DONE ON KANE'S CONFIRMATION, 2026-08-25: \"All of those are deployed already Ive tested them.\" 667dfe9d is an ancestor of origin/main — and its commit message is just \"Fix\". `department_transfer_requests.sheet_synced = true` did NOT mean the Google Sheet was written: when the DB row already held the target department the sheet write was SKIPPED ENTIRELY and success was recorded from the DB apply result — a fact about the database asserted about the spreadsheet. Measured: 197 of the last 200 applied transfers report success and at least 7 provably never landed (markl@, kimerl@, theresaa@, jesr@, aimei@, hannam@, shainan@ all still carry their pre-transfer department on the live sheet). The damage was not cosmetic — a stale sheet cell breaks the master sync's (personal_email, department) identity key, so those people silently drop out of active_employees and go invisible across the app while still being paid. The write is now ALWAYS attempted and returns THREE distinguishable outcomes instead of one boolean — cell flipped, already target (a genuine success, so no false Retry badge), or real drift — with planSheetDepartmentUpdate as the pure tested core and 8 tests pinning them apart. Do not collapse them back into one flag. Not 2: the false-success branch corrupted a downstream identity key. Not 5: one write path and its outcome type. THIS ROW CLOSES THE CODE ONLY. The 9 cells already drifted are NOT repaired by it and are split out as their own S27 chore row, because a fix that stops new drift repairs none of the old.",
+  },
+  {
+    name: 'Dispatch exports carry the Adjustment, COP Value and System Bonus they were hiding',
+    status: 'In Progress',
+    shas: ['1f94ff70'],
+    basis:
+      "HELD AT IN PROGRESS AGAINST KANE'S \"all of those are deployed\" — deliberately, because git disagrees and git is checkable. Re-fetched 2026-08-25 after that message: origin/main is 667dfe9d and `git merge-base --is-ancestor 1f94ff70 origin/main` FAILS. Vercel deploys origin/main, so this commit cannot be in production; it is committed locally and unpushed, and Kane pushes. Marking it Done would put a claim on the board that one command disproves. It advances the moment it is pushed. THE WORK ITSELF: Kane asked whether the values locked in from the Payroll Wizard to Payment Dispatch actually match and whether the export CSVs match — two questions with different answers. THE VALUES ALREADY MATCHED, measured and not assumed: scripts/verify-dispatch-carryover.mts on the live 2026-08-16 cycle returned 1,040 of 1,040 staged payees priced by the wizard, 0 falling through to the wizard-blind path, every row recomposing to the amount being sent. THE EXPORTS WERE THE GAP, in two classes. A signed component hidden inside an aggregate: the pending CSV had no Other Bonuses and no Adjustment column, so Bonus Total minus PAB minus Tech was a residual mixing earned dept/KPI money with Accounting's SIGNED withholding — 694 rows carrying ₱1,825,433 of other, 86 carrying an Adjustment of which 6 were NEGATIVE, and 67 rows where both were non-zero so the residual was unsplittable by arithmetic. And columns on screen but absent from that screen's own export: all five log views RENDER COP Value and System Bonus while neither was in SENT_COLUMNS, hiding ₱5,519,915 of frozen system bonus across 1,606 records. Two identities are now pinned by 13 tests and asserted against live rows by the verifier. Not 2: these files are the HRIS-vs-Google-Sheet validation artifact, and a column that vanishes between screen and file reads as \"we did not pay that\". Not 5: no value changed, only what the file discloses. OPEN and reported rather than fixed: pending rows and log views still resolve Department by different precedence, which diverges only on a mid-cycle transfer.",
+    blockers: ['Not pushed — 1f94ff70 is not an ancestor of origin/main, re-checked after a fetch on 2026-08-25. Vercel deploys origin/main, so this is not in production whatever the working tree shows'],
   },
   {
     name: 'Hurupay is renamed Kolan everywhere a human reads it, with the stored value left untouched',
-    status: 'In Progress',
+    status: 'Done',
+    completed: '2026-08-24',
     shas: ['2951167a'],
     basis:
-      "UNDECLARED UNTIL THIS PASS. Wide and shallow: 48 files, 576 insertions, but LABEL ONLY — the stored value `hurupay` never moves, so no history is rewritten and nothing re-routes; `kolan` is aliased in all three normalisers, which must agree or the rail breaks. Carries a new tested payout-brand module (src/lib/onboarding/payout-brand.ts plus its test) and a migration: references/sql/alter/add_payout_brand_to_onboarding.sql with scripts/apply-payout-brand-column.mjs. Not 5: no logic changed, nothing reprices. Not 2: 48 files, a new column, and three normalisers that fail as one. IN PROGRESS, not Pending Deploy: git merge-base --is-ancestor 2951167a origin/main FAILS — HEAD is 2951167a and origin/main is ef1b4d93, so this is committed locally and not pushed, and Kane pushes. The migration is un-run on top of that, so it cannot reach Done on the push alone.",
-    blockers: [
-      'Not pushed — 2951167a is not an ancestor of origin/main',
-      'The payout_brand column migration has not been run — add_payout_brand_to_onboarding.sql plus scripts/apply-payout-brand-column.mjs are in the repo, un-applied',
-    ],
+      "CLOSES ON TWO INDEPENDENT FACTS, one confirmed and one MEASURED. The 08-24 pass filed this In Progress for two reasons and both are now gone. (1) THE PUSH: `2951167a` was not an ancestor of origin/main then; re-checked after a fetch today, it is. (2) THE MIGRATION, which is the one that mattered and the one an assertion could not settle — this row was blocked because the payout_brand column did not exist, and a feature whose column is missing is code-complete and functionally dead. So it was PROBED read-only rather than taken on anyone's word: `hr_onboarding_submissions.payout_brand` returns rows, and the negative control on the same table returns `42703 column does not exist`, which is what proves the probe can actually detect an absent column. The migration has been run. On top of that Kane confirmed 2026-08-25: \"All of those are deployed already Ive tested them.\" THE WORK: 48 files, 576 insertions, LABEL ONLY — the stored value `hurupay` never moves, no history is rewritten, nothing re-routes, and `kolan` is aliased in all three normalisers, which must agree or the rail breaks. The routing value staying `hurupay` is deliberate: `payment_method`'s CHECK, the mirrored employee_ids.bank_preferred literal and isWiresPreferred() all key on that exact string, so a value rename would make every Hurupay/Kolan payee read as WIRES and lock them out of the wallet rail.",
+  },
+  {
+    name: 'Import orientation-email-leadgen-only.json into live n8n as the second-layer filter',
+    status: 'Ready to Start',
+    shas: ['d79c1a64'],
+    basis:
+      "SPLIT OUT of the orientation-email gate row so closing that row buries nothing. The gate row closes on the SENDER, which is the fix and which Kane has tested; this is the deliberate SECOND layer and has never been imported. The live n8n flow is still Webhook to Split Out to Gmail with no filter — the exact shape that let an HSL hire receive the Lead Gen Zoom link on 2026-08-21. references/n8n/orientation-email-leadgen-only.json exists in the repo only. The node checks `lead_gen === true` OR a department normalising to `leadgen`. Losing it in the n8n cloud UI must never re-open the hole, and the server gate must never be removed because n8n filters it. 1 SP: an import, not a build. Kane's to run.",
+    blockers: ['The workflow has never been imported into live n8n — it exists in references/n8n/ only'],
+  },
+  {
+    name: 'Repair the 9 drifted master-sheet department cells left behind by the sheet_synced false success',
+    status: 'Ready to Start',
+    shas: ['667dfe9d'],
+    basis:
+      "SPLIT OUT of the sheet_synced code row, because a fix that stops NEW drift repairs none of the old. Measured 2026-08-25 across 1,592 sheet rows and 2,564 DB rows: 1,583 agree, 0 sheet rows lack a DB identity, 9 DRIFT, and 4 active rows are absent from the sheet (which correctly drop out). Those 9 stale cells are why people who are still being paid fall out of active_employees and go invisible across the app — markl@ was frozen on the 2026-06-11 upload for exactly this. THE ORDER IS NOT OPTIONAL: flip the Sheet cell to the DB department, re-stamp, and only THEN sync. Clicking Sync first would mint 9 duplicate rows in pre-transfer departments and clobber HRIS truth for precisely the invisible people. scripts/fix-sheet-dept-drift.mts does the first two — dry-run by default, `--apply` gate, backup written first — and REFUSES three classes rather than guessing: an off_boarded_at stamp anywhere (beao@, ellainnec@), DB rows disagreeing with each other, and a DB department that is not placeable (shainan@ sits on bare `hsl`, which resolves no base rate and needs a sub-team before her cell can be written). 6 of the 9 are repairable. NOTE for whoever runs it: the backup file already committed in 667dfe9d proves nothing about whether --apply ran, because the script writes that backup on dry runs too. 3 SP: a gated data repair on live payroll identity.",
+    blockers: ['The repair has not been run — scripts/fix-sheet-dept-drift.mts needs Kane to approve the --apply, and 3 of the 9 rows need a business decision before their cell can be written'],
   },
 ];
 

@@ -740,6 +740,106 @@ The concurrency heuristic behaved correctly here for the opposite reason it fals
 `proposal.json`, `pass.mts` and `hris-plan.ts` all had mtimes three days old with a clean tree, which
 is residue, not a live session. The other session was working in `src/lib/employee/`, nowhere near.
 
+## Pass 13 — 2026-08-25 · twelve undeclared features, twelve closed, one refused on a measurement
+
+Kane: *"Update our Monday Board if we have fixed anything and make sure we have completion dates."*
+Then, after review: *"All of those are deployed already Ive tested them"* / *"mark them as done please
+also add their priority levels."*
+
+### The completion-date half was already true, and it was measured first
+
+`verify.mts` ran **before** anything was written — the cheapest moment, per the pass-5 lesson.
+**Done rows with no Completed Date: 0**, across all 188 rows, plus 0 over the 8-SP cap, 0 open rows
+with a blank Estimated SP, 0 phantom Actual SP, and the rollup and relation both exact. The
+74-row backfill in Known Drift stays closed. It also confirmed all 8 rows from pass 12 landed as
+claimed. So nothing was missing a date — **twelve features had no board row at all**, which is the
+different problem the ask actually surfaced.
+
+### Message-versus-content fired three times in twenty commits
+
+Clustering was done on file overlap, never on subject lines, and the range shows why:
+
+| sha | says | is |
+|---|---|---|
+| `7b9fe312` | **ATTESTATION** | the Payroll Wizard step rail — **no attestation code at all** |
+| `681662f7` | feat(kpi): Attestation… | the commit that *actually* changes Attestation |
+| `667dfe9d` | **"Fix"** | the `sheet_synced` false-success repair (197 of 200 transfers claiming a sheet write that never happened) |
+
+A message-clustered pass would have merged the first two and described neither. `7b9fe312` also
+dragged five `.tmp-vfy-*.mjs` probes and two report JSONs into the tree as residue — noise, given no
+row, but now committed and worth a cleanup.
+
+Two multi-commit clusters collapsed to one row each for the same reason: four commits touching
+nothing but `Overview.tsx` on one day are one screen built and finished, and `06f7f669` /
+`d08a9948` / `d24b49a8` are one Orientation panel built, documented, then lifted into its own tab.
+
+### One row landed in the gap between the previous review and its apply
+
+`59dc91af` was committed after pass 12's `review.mts` minted its proposal (10:23) and before
+`apply.mts` ran (10:49), so that pass could not have seen it. **The audit range ends at the review,
+not at the apply** — a recurring shape, not a one-off.
+
+### Kane's confirmation is the evidence, and it is quoted on every row
+
+The honesty gate's "deployed and clicked through in prod / Kane says so / record that as the basis"
+is exactly what happened: the pass **asked which ones** rather than guessing, and each closing basis
+quotes the answer verbatim. Twelve rows closed, 40 SP.
+
+### One row is held anyway, against an explicit "all of those"
+
+`1f94ff70` (the dispatch export fix) is **not an ancestor of `origin/main`** — re-fetched *after*
+that message specifically to be sure, and re-checked again at commit time after a concurrent session
+moved HEAD. Vercel deploys `origin/main`, so the commit is not in production whatever the working
+tree shows. **A blanket confirmation cannot push a commit.** Marking it Done would put a claim on the
+board that one command disproves. It stays In Progress and advances the moment it is pushed.
+
+### One blocker was closed by measurement, not by the confirmation
+
+The Kolan rename was held on an un-run `payout_brand` migration, and **an assertion cannot run a
+migration**. So it was probed read-only instead: `hr_onboarding_submissions.payout_brand` returns
+rows, and a negative control on the same table returns `42703 column does not exist` — which is what
+proves the probe can detect an absent column at all. It has been run. Probing **without `head: true`
+and with a negative control** is the rule three separate incidents were needed to learn.
+
+### Two external steps split into their own rows rather than blocking or vanishing
+
+Both parent rows explicitly did not claim them, so closing the parent buries nothing:
+
+- **the n8n orientation Filter node**, never imported — the deliberate *second* layer. The sender
+  gate is the fix and Kane tested it, so the gate row closes and the import gets its own 1-SP row.
+- **the 9 drifted master-sheet department cells** — the code fix stops *new* drift and repairs none
+  of the old, so the data repair gets its own 3-SP row, ordered (flip the cell, re-stamp, **then**
+  sync) because syncing first would mint 9 duplicates in pre-transfer departments.
+
+Closing a row whose stated claim is met while carrying the open remainder forward under its own name
+is the alternative to the two bad options: a false Done, or a real fix held hostage to someone else's
+to-do list.
+
+### Priority: the plan could not express what the board offers
+
+The board's Priority column carries **four** labels (Critical 0 / High 1 / Medium 2 / Low 3), but
+`TaskPriority` modelled only Critical and High — so every row below High was silently unlabelled.
+The type and `TASK_PRIORITY_INDEX` are extended to all four. That is an **addition** to what the
+reconciler can write, never a loosening of a guard.
+
+Assigned: **High** to money, disclosure and live-incident rows; **Medium** to reporting and label
+surfaces; **Low** to the wizard step rail.
+
+### Budget and path — and why the lean path was not enough
+
+Probed alive with one `boardGroups` call. Ran `--only-new` first (~45 calls) on the correct reading
+that this pass had no new epic, no re-score and no sprint move. **`verify.mts` then failed 14 times
+on "not linked to an epic"** — the disclosed trade of the lean path, which writes no relation.
+
+Rather than leave a known-broken invariant, the budget was re-probed and the **full reconcile ran on
+the same approval hash** — legitimate because the 188-row patch was already in the reviewed proposal.
+Second verify: `202 of 202`, **VERIFY PASS**. Total ≈ 390 calls across two applies and three board
+pages; the day's budget held.
+
+**The lesson to carry:** `--only-new` is cheap because it skips the reconciler, and the relation gap
+it leaves is not cosmetic — `verify.mts` fails on it. On a pass creating more than a handful of rows,
+budget for the full reconcile from the start rather than paying for both.
+
 ## Cross-links
 
 `docs/features/INDEX.md` · memory `monday-hris-board-sync` · pass evidence

@@ -92,7 +92,7 @@ export type TaskType =
   | 'Spike'
   | 'PR Review';
 export type TaskSprint = keyof typeof TASK_GROUPS;
-export type TaskPriority = 'Critical' | 'High' | null;
+export type TaskPriority = 'Critical' | 'High' | 'Medium' | 'Low' | null;
 /**
  * Every Status label that exists on Sprint Tasks. The reconciler only ever writes Done or Ready to
  * Start (from `PlanTask.done`); the middle three are execution state, written by the
@@ -204,6 +204,8 @@ export function taskSprintAttribution(sprint: Exclude<TaskSprint, 'BL'>): { star
 export const TASK_PRIORITY_INDEX: Record<Exclude<TaskPriority, null>, number> = {
   Critical: 0,
   High: 1,
+  Medium: 2,
+  Low: 3,
 };
 export const TASK_STATUS_INDEX: Record<TaskStatus, number> = {
   'Ready to Start': 0,
@@ -872,5 +874,134 @@ export const PLAN_TASKS: PlanTask[] = [
   // must agree or the rail breaks. Carries a new payout-brand module with tests and a migration
   // (add_payout_brand_to_onboarding.sql plus its apply script). Not 5: no logic changed, nothing
   // reprices. Not 2: 48 files, a new column, and three normalisers that fail as one.
-  { epic: 'HRIS-03a', name: 'Hurupay is renamed Kolan everywhere a human reads it, with the stored value left untouched', type: 'Chore', sp: 3, done: false, sprint: 'S27' },
+  { epic: 'HRIS-03a', name: 'Hurupay is renamed Kolan everywhere a human reads it, with the stored value left untouched', type: 'Chore', sp: 3, done: true, sprint: 'S27' , priority: 'Medium' },
+  // ── Sprint 27 · Aug 24-25 · undeclared until the 2026-08-25 pass ─────────────────────────────
+  // 5 SP: an unrouted person could not be sent to Kolan or HiGlobe at all — the wallet rails were
+  // absent from the assignable set — and nothing tied picking one to the Disbursement rail, so a
+  // wallet payee could sit with a bank rail underneath them. Picking either now MIRRORS into
+  // Disbursement, and a new `wallet-rail-lock` module reads the EFFECTIVE rail across three tiers
+  // and FAILS CLOSED: unset is not locked, so an unknown rail is never treated as permission. Peer
+  // of the 5-SP "People → Bank changes band" row — a new tested guard plus the screens and routes
+  // that have to agree with it (three API routes, three components, two test files). Not 8: it
+  // reprices nothing and moves no money. Not 3: it changes who can be routed where, on the rail.
+  { epic: 'HRIS-19', name: 'Kolan and HiGlobe are assignable when a person is unrouted, and picking one sets the Disbursement rail', type: 'Feature', sp: 5, done: true, sprint: 'S27' , priority: 'High' },
+  // 3 SP across four commits that all rewrite the SAME file (Overview.tsx) on the same day — one
+  // build (38670c4c) and three same-day fit-and-finish passes — so file overlap makes them one row.
+  // The Expanded roster table leads with the person rather than the ID, and its sort and page size
+  // are SHARED with the Simple view so the two cannot disagree. Not 5: no new module, no test file,
+  // no money path — it is one screen. Not 2: 452 net lines across four passes, and a shadcn Table
+  // component had to be abandoned because it breaks sticky headers.
+  { epic: 'HRIS-11', name: 'Overview Expanded roster table leads with the person, with shared sort and page size', type: 'Feature', sp: 3, done: true, sprint: 'S27' , priority: 'Medium' },
+  // 3 SP: raw `hsl:*` department keys were leaking into rendered UI across the app, so people read
+  // `hsl:filing_specialist` on screens meant for humans. `formatDeptLabel` is now applied app-wide
+  // (a no-op off HSL) across 54 files, and a scan test guards the regression. Deliberately NARROW:
+  // the raw key is KEPT in exports, tooltips, search haystacks and filter VALUES, because those are
+  // machine-side and collapsing them would break matching. Peer of the 3-SP Kolan rename — wide,
+  // shallow, label-only. Not 5: no logic moves. Not 2: 54 files plus a 137-line render test and a
+  // scan guard. OPEN and NOT closed by this row: the headcount cards still group on the raw key.
+  { epic: 'HRIS-30', name: 'Raw hsl: department keys stop reaching human-readable screens — formatDeptLabel applied app-wide', type: 'Bug', sp: 3, done: true, sprint: 'S27' , priority: 'Medium' },
+  // 3 SP: the People roster export gained the masked account last 4 and the date the bank last
+  // changed. Masking is done SERVER-side, never in the browser, and the export is slot-aware (8
+  // people sit on an alternate slot). The date comes from `bank_update_history` and NEVER from the
+  // self-update stamp, which records a different event. Two small new modules (mask-account,
+  // bank-update-history) with 246 lines of test and a 166-line feature doc. Not 5: it adds two
+  // columns to an export that already existed, where the 5-SP Gift Tracker export built a new one.
+  // Not 2: bank data leaving the system is a disclosure surface, which is why masking is server-side.
+  { epic: 'HRIS-23', name: 'People roster export carries the masked account last 4 and the date the bank last changed', type: 'Feature', sp: 3, done: true, sprint: 'S27' , priority: 'High' },
+  // 3 SP, High: on 2026-08-21 an HSL hire was emailed the Lead Gen orientation Zoom link, because
+  // nothing anywhere scoped the send by department — the live n8n flow was Webhook → Split Out →
+  // Gmail with no filter at all. The gate now lives in the SENDER (`isLeadGenDepartment`, the same
+  // predicate that gates the CallTools webhook, so both orientation surfaces agree on who is Lead
+  // Gen), and it FAILS CLOSED: blank, NULL or unrecognised department is not Lead Gen. Withheld
+  // hires are never silent — they return in `webhook.skipped` with a reason and their own toast.
+  // The n8n Filter node is a deliberate SECOND layer, not the fix. Not 2: it is a live incident with
+  // a two-layer remedy and 121 lines of new test. Not 5: one predicate, one payload builder.
+  { epic: 'HRIS-24', name: 'Only Lead Gen hires get the orientation email — gated in the sender, failing closed on a blank department', type: 'Bug', sp: 3, done: true, sprint: 'S27' , priority: 'High' },
+  // 3 SP, High: a payroll week that could not be resolved from a batch FILENAME left the KPI
+  // Calculator on a skeleton forever — the skeleton was terminal, with no error state and no way
+  // out. Two fixes, one row: the reveal is now a tested rule (`kpi-calculator-reveal`) so an
+  // unresolved week surfaces instead of hanging, and undatable batch names are REFUSED AT INGEST so
+  // the bad state cannot be created again. Fixing only the screen would have left the data able to
+  // re-poison it. Not 2: three new modules and a change to what ingest accepts. Not 5: no money
+  // path, no new surface.
+  { epic: 'HRIS-06', name: 'An unresolvable payroll week stops being a forever-loading KPI Calculator screen', type: 'Bug', sp: 3, done: true, sprint: 'S27' , priority: 'High' },
+  // 2 SP: Attestation now pays Referral Leads and SSA.Gov at ₱250 on TOP of the case tier, and the
+  // tier itself still reads CASES only — the two must not be conflated or the tier inflates. Nine
+  // lines of schema change with 84 lines of test and the verifier extended. NOT retroactive, by
+  // Kane's call. 2 SP and not 3 because it is one rule in one schema, but not 1 because it pays real
+  // money and a wrong tier boundary overpays every member of the department.
+  { epic: 'HRIS-30', name: 'Attestation pays Referral Leads and SSA.Gov on top of the case tier', type: 'Feature', sp: 2, done: true, sprint: 'S27' , priority: 'High' },
+  // 5 SP across three commits on the same panel and model — 06f7f669 built it, d08a9948 stamped the
+  // doc, d24b49a8 lifted it into its own tab. Manager → My Team → Orientation carries a weekly
+  // attendance tally, per-week drill-down and PDF export. Two facts decided the design and both are
+  // load-bearing: it is an INNER tab, because a new top-level tab is a new feature key and no row
+  // means hidden, so nobody but an admin would have seen it; and attendance is the STAMP
+  // (`orientation_attended_at`), never `status` — live rows carry both stamps with status `no_show`
+  // and vice versa. The week key is HR checklist `period_start`, replacing a date-derived key that
+  // was 46% wrong (439 of 954 hires filed a week early). Not 8: no money path, no new table, and the
+  // My Team no-comp rule means the PDF carries no money column. Not 3: a new API route, a 261-line
+  // tested model, a 439-line PDF builder, a new panel and a hook.
+  { epic: 'HRIS-10', name: 'Orientation gets its own tab on My Team — weekly attendance tally, drill-down and PDF export', type: 'Feature', sp: 5, done: true, sprint: 'S27' , priority: 'Medium' },
+  // 2 SP. NOTE the commit message says ATTESTATION and the commit contains no attestation code at
+  // all — clustered by file overlap, it is the Payroll Wizard step rail. The wizard loaders cannot
+  // report progress (a fetch either is or is not done), so a determinate bar has to be PREDICTED
+  // from that step own load history in localStorage. Extracted into `step-load-prediction` so the
+  // one invariant that matters is proven rather than asserted: the bar NEVER reaches 100% on
+  // prediction alone, because the line exists to tell Accounting when the figures are safe to read
+  // and a bar that hit 100% early would say so early. 12 tests. Not 3: one module and one rail, no
+  // data path. Not 1: a real invariant with a test file, and 250 lines of wizard change.
+  { epic: 'HRIS-02a', name: 'Payroll Wizard step rail shows a predicted load bar that never reaches 100% on prediction alone', type: 'Feature', sp: 2, done: true, sprint: 'S27' , priority: 'Low' },
+  // 5 SP: a person moved mid-week now has "Lead Gen to HSL" printed under the Department line on
+  // EVERY paystub surface — app, email, export, PDF. This is the common case, not an edge case: 277
+  // of 281 dated transfers are effective on a non-Sunday. Source is `department_transfer_requests`
+  // and NEVER the proration block, because a same-rate move prorates nothing and those are exactly
+  // the people the label exists for; `applied` rows only, deliberately narrower than the premium
+  // map. STAGED into the payload rather than derived at render, because paid stubs are frozen
+  // as-paid and a transfer released next month must not rewrite a statement already in an inbox —
+  // so already-paid stubs never gain the label, by design. The label is derived ON THE VIEW, which
+  // is the fix for the failure this area suffered twice (weekend rows and the proration chip both
+  // shipped in-app while the email stayed stale); a parity test pins both surfaces to one string.
+  // Not 8: it prices nothing. Not 3: a 253-line tested legs model with round-trip collapsing, two
+  // API routes and six paystub modules touched.
+  { epic: 'HRIS-03b', name: 'A mid-week department transfer says so under the Department line on every paystub surface', type: 'Feature', sp: 5, done: true, sprint: 'S27' , priority: 'High' },
+  // 3 SP, High: `sheet_synced = true` did not mean the Google Sheet was written. When the DB row
+  // already held the target department the sheet write was SKIPPED entirely and success was recorded
+  // from the DB result — 197 of the last 200 applied transfers claimed success and at least 7
+  // provably never landed, which then broke roster visibility for people who were still being paid.
+  // The write is now ALWAYS attempted, and the result is three distinguishable outcomes instead of
+  // one boolean — cell flipped, already target, or real drift — with a pure tested core pinning them
+  // apart. Do not collapse them back into one flag. Not 2: the false-success branch corrupted a
+  // downstream identity key. Not 5: one write path and its outcome type. The DATA repair is a
+  // separate, un-run step and is NOT claimed by this row.
+  { epic: 'HRIS-26', name: 'sheet_synced was a false success — the sheet write is always attempted and reports three outcomes', type: 'Bug', sp: 3, done: true, sprint: 'S27' , priority: 'High' },
+  // 3 SP, High: the dispatch VALUES were already correct — 1,040 of 1,040 staged payees priced by
+  // the wizard, measured, not assumed — but the EXPORTS hid money in two ways. The pending CSV had
+  // no Other Bonuses and no Adjustment column, so "Bonus Total minus PAB minus Tech" was a residual
+  // mixing earned money with Accounting signed withholding (694 rows carrying ₱1.83M of other, 86
+  // with an Adjustment, 6 of them negative, and 67 where the residual was unsplittable by
+  // arithmetic). And all five log views RENDER COP Value and System Bonus while neither was in the
+  // export, hiding ₱5.5M of frozen system bonus across 1,606 records. Two identities are now pinned
+  // by test. Not 2: these files are the HRIS-vs-Sheet validation artifact, and a column that
+  // vanishes between screen and file reads as "we did not pay that". Not 5: no value changed.
+  { epic: 'HRIS-03a', name: 'Dispatch exports carry the Adjustment, COP Value and System Bonus they were hiding', type: 'Bug', sp: 3, done: false, sprint: 'S27' , priority: 'High' },
+  // ── Sprint 27 · the external steps split out of the two rows above, so closing them buries nothing
+  // 1 SP: the SECOND layer of the orientation-email gate. The server-side `isLeadGenDepartment` check
+  // ships and is tested, so the hole is closed without this — but the live n8n flow is still
+  // Webhook to Split Out to Gmail with no filter, which is the exact shape that let an HSL hire get
+  // the Zoom link on 2026-08-21. references/n8n/orientation-email-leadgen-only.json exists in the
+  // repo and has never been imported. Split out of the gate row rather than blocking it, because the
+  // gate row's claim is about the sender and Kane has confirmed the sender works. 1 SP: an import,
+  // not a build.
+  { epic: 'HRIS-24', name: 'Import orientation-email-leadgen-only.json into live n8n as the second-layer filter', type: 'Chore', sp: 1, done: false, sprint: 'S27', priority: 'Medium' },
+  // 3 SP, High: the DATA half of the sheet_synced false-success bug. The code fix stops NEW drift;
+  // it repairs nothing already drifted. Measured 2026-08-25 across 1,592 sheet rows and 2,564 DB
+  // rows: 1,583 agree, 9 drift, 6 of them repairable. Those 9 stale cells are why people who are
+  // still being paid fall out of active_employees and go invisible across the app. THE ORDER IS NOT
+  // OPTIONAL — flip the Sheet cell to the DB department, re-stamp, and only THEN sync; clicking Sync
+  // first would mint 9 duplicate rows in pre-transfer departments and clobber HRIS truth for exactly
+  // the invisible people. scripts/fix-sheet-dept-drift.mts does the first two (dry-run default,
+  // --apply gate, backup written first) and REFUSES three classes rather than guessing: an
+  // off_boarded_at stamp anywhere, DB rows disagreeing with each other, and a DB department that is
+  // not placeable. 3 SP: a gated data repair on live payroll identity, not a script run.
+  { epic: 'HRIS-26', name: 'Repair the 9 drifted master-sheet department cells left behind by the sheet_synced false success', type: 'Chore', sp: 3, done: false, sprint: 'S27', priority: 'High' },
 ];
