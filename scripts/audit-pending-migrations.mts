@@ -7,9 +7,16 @@
  * in docs/ and memory is a claim, never a fact. Several are stale. This script replaces the claim
  * with an observation.
  *
- * READ-ONLY BY CONSTRUCTION — only `select` with `head: true` (no rows, just a count) and plain
- * counting selects. It never inserts, updates, deletes, or issues DDL. `.env.local` holds
- * PRODUCTION service-role credentials, so nothing here may write.
+ * READ-ONLY BY CONSTRUCTION — only `select`. It never inserts, updates, deletes, or issues DDL.
+ * `.env.local` holds PRODUCTION service-role credentials, so nothing here may write.
+ *
+ * EXISTENCE IS NEVER PROBED WITH `head: true`. PostgREST answers a `head: true` select against a
+ * table that does not exist with `error: null` and `count: null` — no `42P01`, no `PGRST205` — so
+ * the old probe reported every table-creating migration that never ran as APPLIED, and a missing
+ * COLUMN (which errors with an empty code AND an empty message) as INCONCLUSIVE. Existence is asked
+ * with a plain `.select(...).limit(1)`, classified by `src/lib/db/probe-verdict.ts`, and a NEGATIVE
+ * CONTROL runs first: if a table and a column that cannot exist are not both reported missing, this
+ * script ABORTS rather than emit a report it has just proved it cannot trust.
  *
  * What each verdict means:
  *   APPLIED       the object exists — the migration ran
@@ -19,6 +26,12 @@
  */
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+
+/**
+ * Dynamic, not static: a `.mts` script pulling NAMED exports out of a `.ts` module hits the same
+ * CJS/ESM interop wall `monday.mts` documents, and every other script here resolves it this way.
+ */
+const { classifyColumnProbe, classifyTableProbe, readCount } = await import('../src/lib/db/probe-verdict');
 
 dotenv.config({ path: '.env.local' });
 dotenv.config();
@@ -41,28 +54,60 @@ const record = (migration: string, target: string, verdict: Verdict, detail: str
   console.log(`  ${mark} ${target.padEnd(52)} ${verdict.padEnd(13)} ${detail}`);
 };
 
-/** Does a table/view exist and how many rows? head:true fetches no rows. */
+/**
+ * Does a table/view exist, and how many rows does it hold?
+ *
+ * TWO queries on purpose. Existence is decided by a plain `.limit(1)`, which errors correctly for a
+ * missing object; the count is asked SEPARATELY and only once existence is settled, so `head: true`
+ * can never be the thing that decides whether the migration ran.
+ */
 async function probeTable(migration: string, table: string) {
-  const { error, count } = await db.from(table).select('*', { head: true, count: 'exact' });
-  if (!error) return record(migration, `table ${table}`, 'APPLIED', `exists, ${count ?? 0} rows`);
-  // 42P01 undefined_table · PGRST205 = not in PostgREST's schema cache (also "missing")
-  if (error.code === '42P01' || error.code === 'PGRST205' || /does not exist|Could not find the table/i.test(error.message)) {
-    return record(migration, `table ${table}`, 'NOT APPLIED', 'table does not exist');
+  const { error } = await db.from(table).select('*').limit(1);
+  const existence = classifyTableProbe(error);
+  if (existence === 'MISSING') return record(migration, `table ${table}`, 'NOT APPLIED', 'table does not exist');
+  if (existence === 'UNKNOWN') {
+    return record(migration, `table ${table}`, 'INCONCLUSIVE', `${error?.code ?? '(no code)'}: ${(error?.message ?? '').slice(0, 70)}`);
   }
-  return record(migration, `table ${table}`, 'INCONCLUSIVE', `${error.code}: ${error.message.slice(0, 70)}`);
+  const { error: countErr, count } = await db.from(table).select('*', { head: true, count: 'exact' });
+  const rows = readCount(countErr, count);
+  return record(migration, `table ${table}`, 'APPLIED', rows === null ? 'exists, row count unavailable' : `exists, ${rows} rows`);
 }
 
-/** Does a column exist on an existing table? */
+/** Does a column exist on a table? A missing PARENT table is reported as NOT APPLIED too. */
 async function probeColumn(migration: string, table: string, column: string) {
-  const { error } = await db.from(table).select(`"${column}"`, { head: true, count: 'exact' });
-  if (!error) return record(migration, `${table}.${column}`, 'APPLIED', 'column exists');
-  if (error.code === '42703' || /column .* does not exist|Could not find the '.*' column/i.test(error.message)) {
-    return record(migration, `${table}.${column}`, 'NOT APPLIED', 'column does not exist');
+  const { error } = await db.from(table).select(`"${column}"`).limit(1);
+  const existence = classifyColumnProbe(error);
+  if (existence === 'PRESENT') return record(migration, `${table}.${column}`, 'APPLIED', 'column exists');
+  if (existence === 'MISSING') {
+    const parentMissing = error?.code === '42P01' || error?.code === 'PGRST205';
+    return record(migration, `${table}.${column}`, 'NOT APPLIED', parentMissing ? `parent table ${table} missing` : 'column does not exist');
   }
-  if (error.code === '42P01' || error.code === 'PGRST205') {
-    return record(migration, `${table}.${column}`, 'NOT APPLIED', `parent table ${table} missing`);
+  return record(migration, `${table}.${column}`, 'INCONCLUSIVE', `${error?.code ?? '(no code)'}: ${(error?.message ?? '').slice(0, 70)}`);
+}
+
+/**
+ * NEGATIVE CONTROL — the precondition for believing anything below.
+ *
+ * A probe that cannot detect absence produces a report indistinguishable from one that found none,
+ * which is exactly how the `head: true` bug survived: it works perfectly for objects that DO exist,
+ * so every passing case looked right. This asks for a table and a column that cannot exist and
+ * requires both to come back missing. It writes no `results` entry — a control is not a finding —
+ * and on failure it EXITS rather than degrade to a warning.
+ */
+async function assertProbesDetectAbsence() {
+  const fakeTable = 'definitely_not_a_table_xyz';
+  const fakeColumn = 'definitely_not_a_column_xyz';
+  const { error: tableErr } = await db.from(fakeTable).select('*').limit(1);
+  const { error: columnErr } = await db.from('employee_notifications').select(`"${fakeColumn}"`).limit(1);
+  const tableVerdict = classifyTableProbe(tableErr);
+  const columnVerdict = classifyColumnProbe(columnErr);
+  console.log(`negative control: table ${fakeTable} -> ${tableVerdict} · employee_notifications.${fakeColumn} -> ${columnVerdict}`);
+  if (tableVerdict !== 'MISSING' || columnVerdict !== 'MISSING') {
+    console.error('\nABORT: the probes cannot detect absence, so every APPLIED below would be unfalsifiable.');
+    console.error(`  table control  ${tableVerdict}  ${tableErr ? `${tableErr.code}: ${tableErr.message}` : '(no error returned)'}`);
+    console.error(`  column control ${columnVerdict}  ${columnErr ? `${columnErr.code}: ${columnErr.message}` : '(no error returned)'}`);
+    process.exit(1);
   }
-  return record(migration, `${table}.${column}`, 'INCONCLUSIVE', `${error.code}: ${error.message.slice(0, 70)}`);
 }
 
 /**
@@ -76,13 +121,19 @@ async function probeNotificationType(migration: string, type: string) {
     .select('id', { head: true, count: 'exact' })
     .eq('type', type);
   if (error) return record(migration, `notification type ${type}`, 'INCONCLUSIVE', `${error.code}: ${error.message.slice(0, 60)}`);
-  if ((count ?? 0) > 0) {
-    return record(migration, `notification type ${type}`, 'APPLIED', `${count} row(s) exist, so the CHECK permits it`);
+  const rows = readCount(error, count);
+  if (rows === null) {
+    return record(migration, `notification type ${type}`, 'INCONCLUSIVE', 'count came back null with no error — unreadable, NOT a zero');
+  }
+  if (rows > 0) {
+    return record(migration, `notification type ${type}`, 'APPLIED', `${rows} row(s) exist, so the CHECK permits it`);
   }
   return record(migration, `notification type ${type}`, 'INCONCLUSIVE', 'no rows use this type — CHECK not readable via PostgREST');
 }
 
 console.log(`probing ${url}\n`);
+await assertProbesDetectAbsence();
+console.log('');
 
 console.log('#1/#2 employee_notifications type CHECK widenings');
 await probeNotificationType('add_bank_preferred_type', 'bank_preferred.decided');
@@ -121,9 +172,13 @@ console.log('\n#10 MESA opt-in request cleanup (one-time DELETE)');
     .from('mesa_requests')
     .select('id', { head: true, count: 'exact' })
     .eq('request_type', 'opt_in');
+  const rows = readCount(error, count);
   if (error) record('delete_mesa_optin_requests', "mesa_requests request_type='opt_in'", 'INCONCLUSIVE', `${error.code}: ${error.message.slice(0, 60)}`);
-  else if ((count ?? 0) === 0) record('delete_mesa_optin_requests', "mesa_requests request_type='opt_in'", 'APPLIED', 'zero opt_in rows remain');
-  else record('delete_mesa_optin_requests', "mesa_requests request_type='opt_in'", 'NOT APPLIED', `${count} legacy opt_in row(s) still present`);
+  // A null count with no error is what a MISSING table returns — reading it as "zero remain" would
+  // have closed this migration on the absence of the table it deletes from.
+  else if (rows === null) record('delete_mesa_optin_requests', "mesa_requests request_type='opt_in'", 'INCONCLUSIVE', 'count null with no error — mesa_requests may not exist');
+  else if (rows === 0) record('delete_mesa_optin_requests', "mesa_requests request_type='opt_in'", 'APPLIED', 'zero opt_in rows remain');
+  else record('delete_mesa_optin_requests', "mesa_requests request_type='opt_in'", 'NOT APPLIED', `${rows} legacy opt_in row(s) still present`);
 }
 
 console.log('\n#11 active_employees definer restore (anon-key visibility)');
@@ -134,10 +189,16 @@ if (!anon) {
     anon.from('active_employees').select('*', { head: true, count: 'exact' }),
     db.from('active_employees').select('*', { head: true, count: 'exact' }),
   ]);
+  const anonRows = readCount(anonErr, anonCount);
+  const svcRows = readCount(null, svcCount);
   if (anonErr) record('restore_active_employees_definer', 'active_employees (anon)', 'INCONCLUSIVE', `${anonErr.code}: ${anonErr.message.slice(0, 60)}`);
-  else if ((anonCount ?? 0) === 0 && (svcCount ?? 0) > 0) {
-    record('restore_active_employees_definer', 'active_employees (anon)', 'NOT APPLIED', `anon sees 0, service-role sees ${svcCount} — still security_invoker`);
-  } else record('restore_active_employees_definer', 'active_employees (anon)', 'APPLIED', `anon sees ${anonCount}, service-role ${svcCount}`);
+  // Only a REAL zero is the security_invoker symptom. A null count is the shape of an unreadable
+  // object, and calling it 0 would blame the view definition for a probe that never resolved.
+  else if (anonRows === null || svcRows === null) {
+    record('restore_active_employees_definer', 'active_employees (anon)', 'INCONCLUSIVE', `count null with no error (anon=${anonCount}, service=${svcCount}) — unreadable, NOT a zero`);
+  } else if (anonRows === 0 && svcRows > 0) {
+    record('restore_active_employees_definer', 'active_employees (anon)', 'NOT APPLIED', `anon sees 0, service-role sees ${svcRows} — still security_invoker`);
+  } else record('restore_active_employees_definer', 'active_employees (anon)', 'APPLIED', `anon sees ${anonRows}, service-role ${svcRows}`);
 }
 
 console.log('\nOther claimed-pending objects');

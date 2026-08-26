@@ -130,28 +130,35 @@ the orientation-email Invalid-To incident happened. `recipients.ts` returns
 | `references/sql/migrate/2026-07-15_tickets_kanban.sql` | Tables: tickets, comments + realtime |
 | `references/sql/migrate/2026-07-16_tickets_archive_history.sql` | `archived_at/by` + `ticket_events` history |
 | `references/sql/migrate/2026-07-16_tickets_dedicated_role_only.sql` | Revokes leaked per-dashboard `tickets` grants (re-grant the Tickets role afterwards to whoever should keep access) |
-| `references/sql/alter/2026-08-21_add_ticket_moved_notification_type.sql` | Widens `employee_notifications_type_check` to allow `ticket.moved`. **PENDING** — run `node scripts/apply-ticket-moved-notification-type.mjs --apply` (verify-only without the flag) |
+| `references/sql/alter/2026-08-21_add_ticket_moved_notification_type.sql` | Widens `employee_notifications_type_check` to allow `ticket.moved`. **APPLIED — measured 2026-08-26** (read-only `pg_get_constraintdef`, negative control `definitely.not.a.type.xyz` correctly rejected). Re-check with `node scripts/apply-ticket-moved-notification-type.mjs` (no flag) |
 
-## Deploy notes — update notifications (2026-08-21)
+## Deploy notes — update notifications (2026-08-21, re-measured 2026-08-26)
 
-Two external steps, both **PENDING** until Kane confirms them. The code is inert
-until both land, and inert *quietly*:
+Two external steps were recorded PENDING on 2026-08-21. **Both were measured on
+2026-08-26 rather than re-asserted, and they came back split: one is done, one is
+not.** That split is the point of this section — the in-app leg is live and the
+email leg is not, so a comment now raises a bell and sends no mail.
 
-1. **The CHECK widen.** Until `2026-08-21_add_ticket_moved_notification_type.sql`
-   runs, every `ticket.moved` insert is rejected by the constraint and the only
-   trace is a `console.warn` in the PATCH route. This is exactly how `kpi.scored`
-   shipped dead for three days in August 2026 — 0 rows written, nobody noticed,
-   found only while auditing something else. The apply script is gated
-   (`--apply`, verify-only by default) and **aborts** if the live constraint
-   allows a type its SQL list is missing, because `ADD CONSTRAINT` restates the
-   full set and a subset would silently break every other type.
-2. **The n8n imports.** `references/n8n/ticket-replied-email.workflow.json` and
-   `ticket-moved-email.workflow.json`, then paste each webhook URL into
-   Admin → Webhooks under `ticket_replied` / `ticket_moved` (or set
-   `N8N_TICKETS_REPLIED_WEBHOOK_URL` / `N8N_TICKETS_MOVED_WEBHOOK_URL`). Until
-   then both hooks no-op by design — no error, no email.
+1. **The CHECK widen — APPLIED.** `ticket.moved` is present in the live
+   `employee_notifications_type_check` (42 permitted types), read straight off
+   `pg_get_constraintdef` with a negative control (`definitely.not.a.type.xyz`)
+   that was correctly rejected — so the read can detect absence and is not merely
+   failing to notice it. A full parity sweep of every notification type the app
+   can insert against that constraint found **zero rejected**, which is the check
+   that would have caught `kpi.scored` shipping dead for three days in August 2026
+   (0 rows written, the only trace a `console.warn`). Re-run it any time with
+   `node scripts/apply-ticket-moved-notification-type.mjs` (no flag: it reads and
+   prints the live definition).
+2. **The n8n imports — STILL OPEN, and measured so.** `webhooks.config` in
+   `app_settings` holds 22 entries; `ticket_created`, `ticket_done` and
+   `ticket_assigned` are configured and active, and **`ticket_replied` and
+   `ticket_moved` are both ABSENT.** So `resolveWebhookUrl` returns `null` and
+   both hooks no-op by design — no error, no email. Closing it needs
+   `references/n8n/ticket-replied-email.workflow.json` and
+   `ticket-moved-email.workflow.json` imported, then each webhook URL pasted into
+   Admin → Webhooks under `ticket_replied` / `ticket_moved` (or
+   `N8N_TICKETS_REPLIED_WEBHOOK_URL` / `N8N_TICKETS_MOVED_WEBHOOK_URL` set).
 
-Neither step can be inferred to have happened. Check the constraint with
-`node scripts/apply-ticket-moved-notification-type.mjs` (no flag: it reads and
-prints the live definition) and check the hooks by sending a test from
-Admin → Webhooks.
+Neither step may be *inferred* to have happened in either direction — 2026-08-21
+recorded both pending and one of them was already done. Read the constraint and
+read `webhooks.config`; do not read a doc, this one included.
