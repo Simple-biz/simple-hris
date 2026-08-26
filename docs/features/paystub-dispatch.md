@@ -617,6 +617,8 @@ component and its email transcription print one string, and a parity test pins i
   moved. When present it is the only wide left-aligned text column in a money table — the layout
   answers by stepping the body font down and ellipsizing at the floor, so it can shrink the sheet
   but never overlap a column. Truncating a department name on a pay record is the worse trade.
+  The export's **header** is a different question and answers it differently — it names the
+  CURRENT department, see [Exported stubs name the CURRENT department](#exported-stubs-name-the-current-department--2026-08-26).
 
 Freshness plumbing mirrors the other blocks: `publishFinalPaySnapshot` writes `departmentTransfer`
 per employee, and `mergeSnapshotIntoStaged` applies the same tri-state (`undefined` = older
@@ -631,6 +633,42 @@ nor leg order forces an endless refresh, and an empty leg list compares equal to
 no label — the same precedent the weekend block set for pre-feature weeks. That path also stamps
 **today's** department onto every reconstructed week, so adding a disclosure on top of an already
 ahistorical Department line would explain the wrong thing.
+
+## Exported stubs name the CURRENT department — 2026-08-26
+
+Kane: *"when someone exports their PDF Paystubs whether approved by accounting or not it should
+have the latest Department."* The document header of the Pay Stubs **PDF and XLSX** now names the
+department the roster holds **today**, on every week the export covers — paid, staged, or
+reconstructed — marked `(current)`:
+
+> Employee: Jean Auditor · HSL — Filing Specialist (current)
+
+**Why this does not contradict "a paid stub is frozen."** What is frozen is the **money** and the
+per-week record — the payload is never rewritten and the per-week rows are untouched. A person's
+department is a fact about *them*, not about that week: a transfer moves the label the moment it is
+released (`department-transfers.md` §2), so an export run today that headed itself with a
+department they left in July would simply be wrong about them now. The in-week moves keep being
+explained where they belong — the per-week **Department Change** column, unchanged.
+
+**One resolution, one place.** `GET /api/employee/paystub` (single-week **and** `?all=1`) and
+`GET /api/accounting/paystub` both return `currentDepartment` off the master record they already
+read (`getEmployeeMasterRecord`, which is active-rows-only and orders by `last_seen_upload_id`, so
+a duplicated identity resolves to the newest upload's row). Every export caller passes **that**:
+`PayStubModal`'s single-week download (which previously passed the week's frozen
+`paystub.department` — the one genuinely stale header), the Pay Stubs tab's PDF + XLSX, and
+`RequestDocumentsTab`'s signing packet. Three call sites, one server-side resolution.
+
+**The fallback is a state, not a mask.** `resolveExportDepartment` (`paystub-export.ts`, pure +
+tested) takes `currentDepartment` first; a **null** one is real — an off-boarded person has no
+active master row at all — and it then falls back to the **newest week's** own department and
+deliberately does **not** print `(current)`. A blank or `—` on either side is not a department.
+Both sides go through `formatDeptLabel`, so a raw `hsl:*` key can never reach a header
+(`hsl-subdepartments.md` §12); a test pins that.
+
+**Deliberately unchanged:** the in-app `PayStubStatement` Department line and the emailed
+statement still show the week's own department. Those are the statement as issued; the export
+header is a document about the person. `?summary=1` gains no field — it drives the list, not an
+export.
 
 ## Native COP line for Colombian payees — 2026-07-30
 

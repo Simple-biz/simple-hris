@@ -54,8 +54,77 @@ function paidColumn(w: PayStubWeek): string {
 
 export interface PayStubExportOptions {
   employeeName: string;
+  /**
+   * The employee's **CURRENT** department — where the roster says they are
+   * TODAY, not the department any one week happened to be paid under. A
+   * transfer moves the label the moment it is released
+   * (`department-transfers.md` §2), so the document header names where the
+   * person is now and the per-week **Department Change** column explains the
+   * moves. Callers pass `currentDepartment` from the paystub API; the export
+   * falls back to the newest week's own department only when the roster has
+   * none (see {@link resolveExportDepartment}).
+   *
+   * Raw cell (`hsl:intake_specialist`) — `formatDeptLabel` runs at render, per
+   * `hsl-subdepartments.md` §12.
+   */
   department?: string | null;
   logoUrl?: string;
+}
+
+/** The department a document header names, and whether it is today's. */
+export interface ExportDepartment {
+  /** Raw department cell — formatted at render, never stored formatted. */
+  raw: string;
+  /** True when this is the roster's CURRENT department for the employee. */
+  current: boolean;
+}
+
+/**
+ * Which department the exported document names.
+ *
+ * `current` (the roster's department today) always wins — including on a PAID
+ * week, which is the whole point: a pay record is frozen in its MONEY, but the
+ * person's department is a fact about them, not about that week, and an
+ * exported statement that names a department they left months ago is simply
+ * wrong about them today (Kane, 2026-08-26: *"whether approved by accounting or
+ * not it should have the latest Department"*).
+ *
+ * The fallback is NOT a mask for a missing lookup: a null `current` is a real
+ * state — an off-boarded person has no active master row at all
+ * (`getEmployeeMasterRecord` filters `off_boarded_at IS NULL`). Their newest
+ * week's own department is then the most truthful thing the document can name,
+ * and it is deliberately NOT marked "(current)".
+ */
+export function resolveExportDepartment(
+  current: string | null | undefined,
+  weeks: readonly PayStubWeek[],
+): ExportDepartment | null {
+  const today = (current ?? '').trim();
+  if (today && today !== '—') return { raw: today, current: true };
+
+  const dept = (w: PayStubWeek) => {
+    const d = (w.view.department ?? '').trim();
+    return d && d !== '—' ? d : '';
+  };
+  const newest = [...weeks]
+    .filter((w) => dept(w))
+    .sort((a, b) =>
+      (b.view.weekEnd ?? b.view.weekStart ?? '').localeCompare(
+        a.view.weekEnd ?? a.view.weekStart ?? '',
+      ),
+    )[0];
+  const fallback = newest ? dept(newest) : '';
+  return fallback ? { raw: fallback, current: false } : null;
+}
+
+/** The header's department text — `" · HSL — Intake Specialist (current)"`. */
+function departmentHeaderText(
+  opts: PayStubExportOptions,
+  weeks: readonly PayStubWeek[],
+): string {
+  const d = resolveExportDepartment(opts.department, weeks);
+  if (!d) return '';
+  return ` · ${formatDeptLabel(d.raw)}${d.current ? ' (current)' : ''}`;
 }
 
 /**
@@ -255,7 +324,7 @@ export function buildPayStubsWorkbook(
 
   const banner: (string | number)[][] = [
     ['Pay Stubs'],
-    [`Employee: ${opts.employeeName}${opts.department ? ` · ${formatDeptLabel(opts.department)}` : ''}`],
+    [`Employee: ${opts.employeeName}${departmentHeaderText(opts, weeks)}`],
     [`Exported ${formatTimestamp(generatedAt)} · ${weeks.length} ${weeks.length === 1 ? 'week' : 'weeks'}`],
     ['Pulled from Simple-HRIS System'],
     [],
@@ -500,7 +569,7 @@ export async function generatePayStubsPdf(
     state.y = top - 46;
     state.page.drawText('Pay Stubs', { x: MARGIN, y: state.y, size: 16, font: bold, color: NAVY });
     state.y -= 15;
-    const sub = `${opts.employeeName}${opts.department ? ` · ${formatDeptLabel(opts.department)}` : ''}   ${String.fromCharCode(0xb7)}   ${weeks.length} paid ${weeks.length === 1 ? 'week' : 'weeks'}`;
+    const sub = `${opts.employeeName}${departmentHeaderText(opts, weeks)}   ${String.fromCharCode(0xb7)}   ${weeks.length} paid ${weeks.length === 1 ? 'week' : 'weeks'}`;
     state.page.drawText(sanitize(sub), { x: MARGIN, y: state.y, size: 9, font, color: MUTED });
     state.y -= 10;
     state.page.drawLine({

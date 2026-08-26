@@ -200,7 +200,11 @@ export default function RequestDocumentsTab({
     setGenerating(true);
     try {
       const res = await fetch('/api/employee/paystub?all=1', { cache: 'no-store' });
-      const json = (await res.json()) as { stubs?: PayStubWeek[]; error?: string };
+      const json = (await res.json()) as {
+        stubs?: PayStubWeek[];
+        currentDepartment?: string | null;
+        error?: string;
+      };
       if (!res.ok) throw new Error(json.error || 'Could not load your pay stubs');
       const all = json.stubs ?? [];
 
@@ -219,7 +223,11 @@ export default function RequestDocumentsTab({
 
       const bytes = await generatePayStubsPdf(
         weeks,
-        { employeeName: employeeName || employeeEmail, department },
+        // Current department from the same response as the weeks (the route's
+        // master-record read), so this packet's header matches the one the Pay
+        // Stubs tab and the single-week download print. The `department` prop
+        // is only the fallback for a response that predates the field.
+        { employeeName: employeeName || employeeEmail, department: json.currentDepartment ?? department },
         new Date(),
       );
       const ab = new ArrayBuffer(bytes.byteLength);

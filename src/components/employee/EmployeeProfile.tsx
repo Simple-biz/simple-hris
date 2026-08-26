@@ -783,6 +783,10 @@ export default function EmployeeProfile({
   // Cache of the FULL statements (with itemized breakdown) — fetched lazily on
   // the first export click, then reused for subsequent exports.
   const payStubsFullRef = useRef<PayStubWeek[] | null>(null);
+  // The department the exported PDF/XLSX header names: the roster's CURRENT
+  // one, straight off the `?all=1` response, NOT any week's frozen
+  // `view.department`. Filled by `ensurePayStubsFull` alongside the weeks.
+  const exportDepartmentRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (activeTab !== 'payStubs' || payStubsRequestedRef.current) return;
@@ -808,10 +812,18 @@ export default function EmployeeProfile({
   const ensurePayStubsFull = async (): Promise<PayStubWeek[]> => {
     if (payStubsFullRef.current) return payStubsFullRef.current;
     const r = await fetch('/api/employee/paystub?all=1', { cache: 'no-store' });
-    const json = (await r.json()) as { stubs?: PayStubWeek[]; error?: string };
+    const json = (await r.json()) as {
+      stubs?: PayStubWeek[];
+      currentDepartment?: string | null;
+      error?: string;
+    };
     if (!r.ok) throw new Error(json.error || 'Could not load your pay stubs.');
     const stubs = json.stubs ?? [];
     payStubsFullRef.current = stubs;
+    // The department the export header names. Taken from the SAME response as
+    // the weeks so the PDF, the XLSX and the single-week download all resolve
+    // it one way (the route's master-record read) instead of three.
+    exportDepartmentRef.current = json.currentDepartment ?? null;
     return stubs;
   };
 
@@ -1197,7 +1209,7 @@ export default function EmployeeProfile({
       const full = await ensurePayStubsFull();
       await downloadPayStubsPdf(full, {
         employeeName: payStubExportName,
-        department: employmentDepartment,
+        department: exportDepartmentRef.current ?? employmentDepartment,
       });
       toast.success('Pay stubs PDF downloaded');
     } catch (e) {
@@ -1214,7 +1226,7 @@ export default function EmployeeProfile({
       const full = await ensurePayStubsFull();
       downloadPayStubsXlsx(full, {
         employeeName: payStubExportName,
-        department: employmentDepartment,
+        department: exportDepartmentRef.current ?? employmentDepartment,
       });
       toast.success('Pay stubs spreadsheet downloaded');
     } catch (e) {

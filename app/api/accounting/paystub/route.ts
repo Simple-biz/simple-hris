@@ -105,8 +105,12 @@ export async function GET(req: NextRequest) {
   // submission is keyed by the hire's personal email, so resolve through the
   // master record's aliases. Best-effort: on any failure the statement simply
   // renders without the COP line.
+  // Resolved once: the COP alias set below AND the export header's current
+  // department both come off this row. Read OUTSIDE the best-effort COP guard —
+  // a missing master row is a value (`null`), not an exception to swallow.
+  const { employee: master } = await getEmployeeMasterRecord(email);
+
   try {
-    const { employee: master } = await getEmployeeMasterRecord(email);
     const payloadEmail =
       staged.payload && typeof staged.payload.email === "string" ? staged.payload.email : null;
     const countryCurrency = await resolveCountryCurrencyForEmails([
@@ -132,6 +136,10 @@ export async function GET(req: NextRequest) {
     paidAt,
     payDate: resolvePayDateIso(paidAt, paystub.weekEnd, processor),
     status: paidAt ? "paid" : "issued",
+    // Same field the employee route returns: the roster's CURRENT department,
+    // which is what a downloaded PDF header names regardless of the week it
+    // covers or whether that week was ever paid.
+    currentDepartment: master?.department ?? null,
     // Accounting-only: the clerk's dispatch notes for this week. The employee
     // route omits this field entirely, so the modal renders the panel for
     // accounting and stays exactly as it was for the self-serve view.

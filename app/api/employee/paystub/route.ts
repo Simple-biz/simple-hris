@@ -632,6 +632,7 @@ export async function GET(req: NextRequest) {
         paidAt,
         payDate: resolvePayDateIso(paidAt, paystub.weekEnd, processor),
         status: paid ? "paid" : "issued",
+        currentDepartment: master?.department ?? null,
       });
     }
 
@@ -653,6 +654,7 @@ export async function GET(req: NextRequest) {
           paidAt,
           payDate: recon.payDate,
           status: paid ? "paid" : "issued",
+          currentDepartment: master?.department ?? null,
         });
       }
     }
@@ -885,7 +887,13 @@ export async function GET(req: NextRequest) {
         rank: uploadRank.get(s.sourceFile),
       }),
     );
-    return NextResponse.json({ stubs });
+    // The department the PDF/XLSX header names — the roster's CURRENT one, not
+    // the department frozen into any single week's payload. A transfer moves
+    // the label the moment it is released (`department-transfers.md` §2), so an
+    // export run today must name where the person is today, on every week it
+    // covers, paid or not. `null` (off-boarded: no active master row) lets the
+    // exporter fall back to the newest week's own department, unmarked.
+    return NextResponse.json({ stubs, currentDepartment: master?.department ?? null });
   }
 
   // ── List mode: which weeks can this employee open? ────────────────────────

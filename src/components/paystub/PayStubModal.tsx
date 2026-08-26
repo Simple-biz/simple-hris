@@ -28,6 +28,14 @@ interface PayStubResponse {
   payDate?: string | null;
   status?: string | null;
   /**
+   * The roster's CURRENT department for this employee — what the downloaded
+   * PDF header names, in place of the department frozen into this week's
+   * payload. Returned by both the employee and the accounting route; `null`
+   * when there is no active master row (off-boarded), which makes the export
+   * fall back to the week's own department.
+   */
+  currentDepartment?: string | null;
+  /**
    * Dispatch attempts logged for this week, with the clerk's notes. Returned
    * ONLY by the accounting route — the employee self-serve route omits the field,
    * so the notes panel below simply never renders for employees.
@@ -105,7 +113,14 @@ export function PayStubModal({
     try {
       await downloadPayStubsPdf(
         [{ sourceFile, paidAt: data.payDate ?? data.paidAt, status: data.status, view: data.paystub }],
-        { employeeName: data.paystub.name || 'Employee', department: data.paystub.department },
+        {
+          employeeName: data.paystub.name || 'Employee',
+          // The CURRENT department, never this week's frozen `paystub.department`:
+          // a transfer moves the label on release, so a stub downloaded today must
+          // name where the person is today — paid week or not. The exporter falls
+          // back to the week's own department when the roster has none.
+          department: data.currentDepartment ?? null,
+        },
       );
     } finally {
       setDownloading(false);
