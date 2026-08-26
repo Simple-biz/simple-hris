@@ -10,6 +10,7 @@ import {
   scheduledDaysPerWeek,
   scheduledHeadcountByWeekday,
   summarizeScheduling,
+  weekdayWeekendLoad,
   type SchedulePeriod,
   type Weekday,
 } from './scheduling';
@@ -199,4 +200,43 @@ test('rest-day summary never renders as an empty string', () => {
   assert.equal(formatRestDays([0, 6]), 'Sun, Sat');
   assert.equal(formatRestDays([6, 0]), 'Sun, Sat', 'order-independent');
   assert.equal(formatRestDays([0, 1, 2, 3, 4, 5, 6] as Weekday[]), 'Every day');
+});
+
+test('weekday/weekend load reports mean AND range, because a mean hides the shape', () => {
+  // 12/12/12/12/12 and 20/20/20/0/0 have the same weekday mean. Only the range
+  // separates them, and the second is the week a manager has to act on.
+  const flat = weekdayWeekendLoad({ 0: 2, 1: 12, 2: 12, 3: 12, 4: 12, 5: 12, 6: 2 });
+  const lumpy = weekdayWeekendLoad({ 0: 2, 1: 20, 2: 20, 3: 20, 4: 0, 5: 0, 6: 2 });
+
+  assert.equal(flat.weekdayMean, lumpy.weekdayMean, 'same mean');
+  assert.deepEqual([flat.weekdayMin, flat.weekdayMax], [12, 12]);
+  assert.deepEqual([lumpy.weekdayMin, lumpy.weekdayMax], [0, 20], 'the range tells them apart');
+});
+
+test('weekend is Sat + Sun only; weekday is the other five', () => {
+  const l = weekdayWeekendLoad({ 0: 3, 1: 10, 2: 10, 3: 10, 4: 10, 5: 10, 6: 1 });
+  assert.equal(l.weekdayMean, 10);
+  assert.equal(l.weekendMean, 2, '(3 + 1) / 2');
+  assert.deepEqual([l.weekendMin, l.weekendMax], [1, 3]);
+});
+
+test('uncovered days are LISTED, not just counted', () => {
+  // A zero-cover day is a specific day someone has to go and fix.
+  const l = weekdayWeekendLoad({ 0: 0, 1: 5, 2: 5, 3: 5, 4: 5, 5: 5, 6: 0 });
+  assert.deepEqual(l.uncoveredDays, [0, 6]);
+
+  const covered = weekdayWeekendLoad({ 0: 1, 1: 5, 2: 5, 3: 5, 4: 5, 5: 5, 6: 1 });
+  assert.deepEqual(covered.uncoveredDays, []);
+});
+
+test('an all-zero week does not produce NaN or Infinity', () => {
+  const l = weekdayWeekendLoad({ 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 });
+  assert.equal(l.weekdayMean, 0);
+  assert.equal(l.weekendMean, 0);
+  assert.equal(l.weekdayMin, 0);
+  assert.equal(l.weekdayMax, 0);
+  assert.equal(l.uncoveredDays.length, 7);
+  for (const v of Object.values(l)) {
+    if (typeof v === 'number') assert.ok(Number.isFinite(v), 'every figure stays finite');
+  }
 });

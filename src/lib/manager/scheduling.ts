@@ -186,6 +186,43 @@ export function findOverlaps(periods: readonly SchedulePeriod[]): Array<[Schedul
   return hits;
 }
 
+/** Mean and range of expected cover, split weekday vs weekend. */
+export interface WeekdayWeekendLoad {
+  weekdayMean: number;
+  weekdayMin: number;
+  weekdayMax: number;
+  weekendMean: number;
+  weekendMin: number;
+  weekendMax: number;
+  /** Days nobody is expected at all. Listed, not just counted — a zero-cover day
+   *  is a specific day a manager has to go and fix, not a statistic. */
+  uncoveredDays: Weekday[];
+}
+
+/**
+ * How thin weekend cover is relative to the working week.
+ *
+ * Mean AND range on purpose: a mean alone hides the shape. Five weekdays averaging
+ * 12 reads the same whether every day is 12 or the week runs 20/20/20/0/0, and the
+ * second is the one a manager needs to see.
+ */
+export function weekdayWeekendLoad(byWeekday: Record<Weekday, number>): WeekdayWeekendLoad {
+  const weekdayVals = WEEKDAYS.filter((d) => !isWeekend(d)).map((d) => byWeekday[d]);
+  const weekendVals = WEEKDAYS.filter((d) => isWeekend(d)).map((d) => byWeekday[d]);
+  const mean = (xs: number[]) =>
+    xs.length === 0 ? 0 : Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10) / 10;
+
+  return {
+    weekdayMean: mean(weekdayVals),
+    weekdayMin: Math.min(...weekdayVals),
+    weekdayMax: Math.max(...weekdayVals),
+    weekendMean: mean(weekendVals),
+    weekendMin: Math.min(...weekendVals),
+    weekendMax: Math.max(...weekendVals),
+    uncoveredDays: WEEKDAYS.filter((d) => byWeekday[d] === 0),
+  };
+}
+
 export interface SchedulingCoverageSummary {
   /** People with at least one period on file. */
   scheduled: number;
