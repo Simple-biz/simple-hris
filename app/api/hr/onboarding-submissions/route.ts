@@ -10,6 +10,7 @@ import {
   requireElevatedSession,
 } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { recruitingIntegrationAuthorized } from "@/lib/auth/recruiting-integration";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +25,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const authz = await requireFeatureEdit('hr', 'onboarding');
+  const authz = recruitingIntegrationAuthorized(req) ?? await requireFeatureEdit('hr', 'onboarding');
   if (!authz.ok) return deniedResponse(authz);
 
   let body: Partial<CreateOnboardingLinkInput>;
