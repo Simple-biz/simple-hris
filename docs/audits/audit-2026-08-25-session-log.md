@@ -211,9 +211,16 @@ One line in `formatTransferLabel` either way.
 ### `python -m geotab_billing` · no commit · —
 > 11:17 · `c918b79c` — interrupted immediately, nothing run.
 
-### Monday board pass · no commit · —
+### Monday board pass · `6768db36` · M
 > *"Update our Monday Board if we have fixed anything and make sure we have completion dates"*
-> 14:38 → 14:39 · `073d458c` — skill loaded, session ended before the review rendered.
+> 14:38 → 15:04 · `073d458c`
+
+> **CORRECTED 2026-08-26.** This entry originally read *"skill loaded, session ended before the
+> review rendered"* — written at 14:53 while `073d458c` was still running in the same checkout.
+> It did not end; it landed `6768db36` eleven minutes later. Full write-up in
+> [audit-2026-08-26-session-log.md](./audit-2026-08-26-session-log.md).
+> **A concurrent session's transcript is a snapshot, not an outcome** — read the tail timestamp
+> against the clock before recording "nothing shipped".
 
 ---
 
