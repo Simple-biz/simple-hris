@@ -655,7 +655,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // update and its own DDL. Measured against production 2026-08-20: employee_notifications holds ZERO
   // kpi.scored rows against 3,694 payroll.available. The CHECK now permits the type (applied 08-20)
   // but nothing has ever been delivered, so the corrector writes Pending Deploy and no Actual SP.
-  { epic: 'HRIS-06', name: 'kpi.scored employee notification — toast plus live update the moment a dept-week is scored', type: 'Feature', sp: 5, done: false, sprint: 'S26', priority: 'High' },
+  { epic: 'HRIS-06', name: 'kpi.scored employee notification — toast plus live update the moment a dept-week is scored', type: 'Feature', sp: 5, done: true, sprint: 'S26', priority: 'High' },
 
   // ── Sprint 27 · Aug 18 ───────────────────────────────────────────────────────────────────────
   // 8 SP, Kane's big-ticket score: this is a payroll RULING, not a UI change. Snap-to-Sunday was the
@@ -720,7 +720,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // wrong differently: a missing column errors with code:undefined and an empty message, matching no
   // branch, so it lands INCONCLUSIVE instead of NOT APPLIED. Consequence: every table-creating
   // migration that never ran was counted APPLIED, and the S27 migrations row was closed Done on it.
-  { epic: 'HRIS-15', name: 'audit-pending-migrations reports a MISSING table as APPLIED — head:true returns no error', type: 'Bug', sp: 3, done: false, sprint: 'S27', priority: 'Critical' },
+  { epic: 'HRIS-15', name: 'audit-pending-migrations reports a MISSING table as APPLIED — head:true returns no error', type: 'Bug', sp: 3, done: true, sprint: 'S27', priority: 'Critical' },
   // 3 SP: hours ride lawangc@ against a stale 175 employee-scope override while the person's real
   // identity sits on another row. The fix script exists (committed inside a commit messaged "ss") and
   // has never been run — it needs Kane's --apply and a SELECT backup first.
@@ -810,7 +810,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // match once with a trailing parenthetical qualifier stripped; a test pins the negative control
   // (a dept whose base label was never exempt stays tracked however it is qualified) and pins
   // Lead Gen NOT exempt per Kane. 2 SP: one predicate and its tests, no new surface.
-  { epic: 'HRIS-14', name: 'Hubstaff exempt-department list broke on a rename, reporting 33 untracked freelancers as unexplained gaps', type: 'Bug', sp: 2, done: false, sprint: 'S27', priority: 'High' },
+  { epic: 'HRIS-14', name: 'Hubstaff exempt-department list broke on a rename, reporting 33 untracked freelancers as unexplained gaps', type: 'Bug', sp: 2, done: true, sprint: 'S27', priority: 'High' },
   // 5 SP: nobody had offboarded jvincec@ and nothing said so — he sat Active with zero hours from
   // 2026-08-05. The DETECTOR already existed (the Overview recon tile had him in its gap bucket the
   // whole time, approved-leave carve-out included); what was missing was delivery, so this is a
@@ -825,7 +825,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // The DDL is APPLIED and verified (43 types live, all 39 app-mapped types still admitted), so
   // unlike the tickets row above this one is not blocked on a migration — it is blocked only on the
   // push, and the first real insert is unproven until the next ingest.
-  { epic: 'HRIS-20', name: 'Accounting is told who logged no Hubstaff hours — one shared no-hours rule, a Readiness tab and an ingest notification', type: 'Feature', sp: 5, done: false, sprint: 'S27' },
+  { epic: 'HRIS-20', name: 'Accounting is told who logged no Hubstaff hours — one shared no-hours rule, a Readiness tab and an ingest notification', type: 'Feature', sp: 5, done: true, sprint: 'S27' },
   // ── Sprint 27 · Aug 21-24 · undeclared until the 2026-08-24 pass ─────────────────────────────
   // 5 SP across THREE commits that all rewrite the same tested module (`dept-rail.ts`) and the same
   // screen, so they are one row, not three: 24d6d0a1 built it, 6cb643b2 and 47e84590 hardened it the
@@ -838,7 +838,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // "People → Bank changes band" row: a new tested module plus one screen, no money path, no table.
   // Not 8 — it prices nothing and dispatches nothing; not 3 — 264 lines of new rule with 269 lines
   // of test, a 598-line screen change, and two same-day hardening passes on top.
-  { epic: 'HRIS-06', name: 'Pay Structure shows a department’s members, with the HSL sub-teams nested under a retractable parent', type: 'Feature', sp: 5, done: false, sprint: 'S27' },
+  { epic: 'HRIS-06', name: 'Pay Structure shows a department’s members, with the HSL sub-teams nested under a retractable parent', type: 'Feature', sp: 5, done: true, sprint: 'S27' },
   // 5 SP: the Payment Catalog was still listing people who had left. Four new tested modules —
   // catalog-roster-visibility, offboard-evidence, master-date and catalog-offboarded-emails — and
   // every one of the four guards deliberately fails toward KEEPING a person, because dropping someone
@@ -846,7 +846,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // time: active_employees carried 0 stamped and 294 gone. 110 lines came OUT of payroll-readiness.ts
   // as the rule was centralised. Not 8: no money path, no new table, no dispatch row. Not 3: four new
   // modules, 272 lines of test, and a behavioural change to who appears on a live Accounting screen.
-  { epic: 'HRIS-06', name: 'Offboarded people drop off the Payment Catalog, behind four guards that all fail toward keeping them', type: 'Feature', sp: 5, done: false, sprint: 'S27' },
+  { epic: 'HRIS-06', name: 'Offboarded people drop off the Payment Catalog, behind four guards that all fail toward keeping them', type: 'Feature', sp: 5, done: true, sprint: 'S27' },
   // 5 SP for 56390cb9 + de0fa485, one row: de0fa485 only re-animates ValidationFullScreen.tsx, the
   // component 56390cb9 created, so it is the same feature finishing rather than a second one. A named
   // human vouches for ONE person's pay and Lenny sees that vouch at Mark Paid. New route, a tested
@@ -858,7 +858,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // yet, so it rides an app_settings blob written compare-and-swap; Mark Paid keys it on row.id,
   // which is the WORK email. Not 3: a new route, a new persistence pattern and a money-critical
   // dialog touched.
-  { epic: 'HRIS-02a', name: 'Payroll Wizard manual validation — a named human vouches for one person’s pay, and Mark Paid shows it', type: 'Feature', sp: 5, done: false, sprint: 'S27' },
+  { epic: 'HRIS-02a', name: 'Payroll Wizard manual validation — a named human vouches for one person’s pay, and Mark Paid shows it', type: 'Feature', sp: 5, done: true, sprint: 'S27' },
   // 3 SP, and deliberately a SECOND row rather than an edit of the Done 2-SP row
   // "Orphanage OT prices at the full 1.5× rate, never the 0.5× differential" (S27). That row was a
   // seventeen-line price correction; this is the hardening that followed it — pricing extracted into
@@ -868,7 +868,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // stand. Not 2: an extraction, a refusal guard, an audit script and a data repair is more than the
   // fix was. Not 5: one pricing rule, no new surface. OPEN and NOT part of this row: erict@'s ₱5,373
   // is still invisible, and the blob is still last-writer-wins.
-  { epic: 'HRIS-03c', name: 'Orphanage OT pricing extracted and tested, with below-regular OT refused outright', type: 'Bug', sp: 3, done: false, sprint: 'S27', priority: 'High' },
+  { epic: 'HRIS-03c', name: 'Orphanage OT pricing extracted and tested, with below-regular OT refused outright', type: 'Bug', sp: 3, done: true, sprint: 'S27', priority: 'High' },
   // 3 SP: wide and shallow — 48 files, but LABEL ONLY. The stored value `hurupay` never moves, so no
   // history is rewritten and no dispatch re-routes; `kolan` is aliased in all three normalisers, which
   // must agree or the rail breaks. Carries a new payout-brand module with tests and a migration
@@ -983,7 +983,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // export, hiding ₱5.5M of frozen system bonus across 1,606 records. Two identities are now pinned
   // by test. Not 2: these files are the HRIS-vs-Sheet validation artifact, and a column that
   // vanishes between screen and file reads as "we did not pay that". Not 5: no value changed.
-  { epic: 'HRIS-03a', name: 'Dispatch exports carry the Adjustment, COP Value and System Bonus they were hiding', type: 'Bug', sp: 3, done: false, sprint: 'S27' , priority: 'High' },
+  { epic: 'HRIS-03a', name: 'Dispatch exports carry the Adjustment, COP Value and System Bonus they were hiding', type: 'Bug', sp: 3, done: true, sprint: 'S27' , priority: 'High' },
   // ── Sprint 27 · the external steps split out of the two rows above, so closing them buries nothing
   // 1 SP: the SECOND layer of the orientation-email gate. The server-side `isLeadGenDepartment` check
   // ships and is tested, so the hole is closed without this — but the live n8n flow is still
@@ -1004,4 +1004,76 @@ export const PLAN_TASKS: PlanTask[] = [
   // off_boarded_at stamp anywhere, DB rows disagreeing with each other, and a DB department that is
   // not placeable. 3 SP: a gated data repair on live payroll identity, not a script run.
   { epic: 'HRIS-26', name: 'Repair the 9 drifted master-sheet department cells left behind by the sheet_synced false success', type: 'Chore', sp: 3, done: false, sprint: 'S27', priority: 'High' },
+  // ── Pass 14 · 2026-08-26 · the three commits the 08-25 pass could not have covered ────────────
+  // All three are on LOCAL main only (origin/main is at 667dfe9d), so all three are In Progress and
+  // none carries an Actual SP. That is the honesty gate doing its job, not a scoring opinion.
+  //
+  // 2 SP: the 08-24 rebrand pointed all three processor registries at /kolan.png and never added the
+  // asset, so Kolan — the highest-volume rail — rendered the fallback orange monogram on every screen
+  // for a day with nothing erroring. ProcessorLogo's onError fallback is what made that survivable
+  // and also what made it invisible: a referenced-but-absent logo looks exactly like a card that was
+  // never given one. Deliberately its OWN row rather than folded into the Done rename row — that row
+  // claims shipped-and-proven, and this is the surface it shipped broken. Scored 2, not 1: logoSrc
+  // turned out to have six consumers, one of them carrying a mix-blend-multiply banned by
+  // ui-standards 6.4 that flattened the new mark to a black square in light mode only; and it added
+  // processor-logo-assets.test.ts, which pins what the docs asserted and nothing enforced (every
+  // logoSrc resolves to a real file), all three assertions confirmed failing before being left green.
+  { epic: 'HRIS-03a', name: 'Kolan showed a fallback monogram for a day because /kolan.png was referenced and never existed', type: 'Bug', sp: 2, done: true, sprint: 'S27', priority: 'Medium' },
+  // 3 SP: the 08-25 board pass itself. Asked to fix completion dates, it MEASURED first and found
+  // that half already true — 0 Done rows without a date across all 188 — and found the real gap
+  // elsewhere: twelve shipped features had no row at all. 14 rows created, 12 Done, 40 SP, VERIFY
+  // PASS 202/202. Two closures were refused on evidence rather than on a blanket confirmation, and
+  // both refusals are the reusable part: a confirmation cannot push a commit (1f94ff70 was still not
+  // an ancestor of origin/main, re-fetched twice), and an assertion cannot run a migration (the Kolan
+  // rename was probed read-only instead — payout_brand returns rows, a negative control on the same
+  // table returns 42703, which is what proves the probe can detect absence). Tooling half: TaskPriority
+  // modelled two labels while the board carries four, so every row below High was silently unlabelled
+  // — extended to Critical/High/Medium/Low, an ADDITION to what the reconciler can write.
+  { epic: 'HRIS-15', name: 'Board sync closed twelve undeclared features and refused one closure a measurement disproved', type: 'Chore', sp: 3, done: true, sprint: 'S27', priority: 'Medium' },
+  // 3 SP: two documentation passes, 08-25 and 08-26, collapsed into one row on file overlap — both
+  // are session logs plus the doc gaps reading them exposed. The 08-25 pass wrote the 15-session log
+  // and closed two undocumented surfaces (the wizard step-load rail; the pay-structure natural-key
+  // upsert, 714 structures). The 08-26 pass logged what that one missed, corrected an entry it got
+  // wrong — it recorded a CONCURRENT session as having ended when that session was eleven minutes
+  // from committing 40 SP of board work — and fixed two indexes that were silently dropping entries:
+  // MEMORY.md had passed its ~24.4KB load cap and was being TRUNCATED, so entries below the cut were
+  // invisible to every session (47 hooks rewritten, all 193 entries kept, 0 broken links, 0 orphans),
+  // and docs/README.md had drifted 22 feature docs behind docs/features/, including the board-sync
+  // doc that shipped the day before. Not a feature, and logged anyway: the governing docs are what
+  // hardening and blueprint read at step 1, so an index that drops entries is a gap in every later
+  // decision.
+  { epic: 'HRIS-15', name: 'Two documentation passes, and the two indexes that were silently dropping entries', type: 'Chore', sp: 3, done: true, sprint: 'S27', priority: 'Medium' },
+  // ── Pass 15 · 2026-08-26 · three features that landed AFTER pass 14 was staged ────────────────
+  // Pass 14 was staged at 09:18 with AUDIT_RANGE 1f94ff70..HEAD and 4 commits. Three more landed the
+  // same day, two of them after that snapshot, so they were undeclared for the same reason the last
+  // twelve were: nothing re-reads a staged range.
+  //
+  // 5 SP: the HR half of orientation attendance. The MANAGER tab shipped earlier at 5 SP and this is
+  // its peer, not its echo — 13 files, 1,820 insertions, a new route, a new tested module
+  // (orientation-week-stats.ts, 236 lines, 337 of test) and a 570-line panel. The load-bearing
+  // distinction it encodes is that LISTED is not STAGED: the roster names who was expected, the rate
+  // is computed against who was actually STAGED, and a week where nothing was marked renders as a
+  // NOTE rather than 0% — a 0% that means "nobody recorded it" is a lie about attendance. Week
+  // buckets follow the HR period_start, not the manager tab's own week, and one cached fetch serves
+  // every week. Not 8: no money path, no rate, no dispatch row. Not 3: a new route, a new tested
+  // module and a new inner tab on a live HR screen.
+  { epic: 'HRIS-24', name: 'Orientation gets its own tab on the HR New Hire Checklist — listed vs attended, per week', type: 'Feature', sp: 5, done: true, sprint: 'S27', priority: 'Medium' },
+  // 2 SP: 833 pending dispatch rows exported with NO payout destination. The exporter's detailFields
+  // covered some rails and silently omitted Kolan and HiGlobe, so a clerk received a file naming who
+  // to pay and not where — the worst shape for an export, because it looks complete. The fix is small
+  // (35 lines) and the guard is the point: detailFields coverage is now a TEST, so a rail added
+  // without a destination fails at build rather than at the bank. Not 3: no pricing, no new surface,
+  // one exporter. Not 1: it is a money-adjacent omission on a live Accounting artefact.
+  { epic: 'HRIS-03a', name: 'Dispatch exports carried 833 pending rows with no payout destination', type: 'Bug', sp: 2, done: true, sprint: 'S27', priority: 'High' },
+  // 3 SP: exported pay stubs head themselves with the department the roster holds TODAY, marked
+  // "(current)", on every week the export covers — paid, staged or reconstructed. Does NOT contradict
+  // "a paid stub is frozen": the money and the per-week record are untouched, and the in-week moves
+  // keep being explained by the per-week Department Change column. One server-side resolution
+  // (getEmployeeMasterRecord) feeds all three export call sites, and the fallback is a STATE not a
+  // mask — a null current department is real (an off-boarded person has no active master row), so it
+  // falls back to the newest week's own department and deliberately omits "(current)". Both sides go
+  // through formatDeptLabel so a raw hsl:* key can never reach a header; a test pins it. Not 5: one
+  // pure function and three call sites, no money path. Not 2: 164 lines of test and a deliberate
+  // ruling about what freezing does and does not cover.
+  { epic: 'HRIS-03b', name: 'Exported pay stubs name the CURRENT department, paid or not', type: 'Feature', sp: 3, done: true, sprint: 'S27', priority: 'Medium' },
 ];
