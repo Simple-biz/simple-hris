@@ -167,6 +167,22 @@ family — same navy/orange palette, masthead and footer.
 > exports, which already build from `visibleActive + visibleNoShow`. That is the fix
 > landing, not a regression.
 
+## The motion is decoration, and Refresh keeps the numbers on screen
+
+Added 2026-08-26 alongside the HR twin
+([hr-orientation-attendance.md](./hr-orientation-attendance.md)):
+
+- `useOrientationHistory` separates **first-load `loading`** from **`refreshing`**. Refresh
+  spins the button icon in place; it no longer swaps the whole panel for a spinner card and
+  back. `NewlyHiredPanel` never read `loading`, so nothing changed for it.
+- Week expand / collapse animates height and opacity; KPI tiles and week cards stagger in.
+
+> **Nothing about the tally may depend on the animation.** Animated wrappers render their
+> children unconditionally, the one `AnimatePresence` guards a section that was already
+> conditional on `open`, and `useReducedMotion` collapses every animation to a plain opacity
+> step. If a count, a gate, or an error branch ever needs a motion wrapper to have finished,
+> that is the bug — not the fix.
+
 ## Deploy notes
 
 **No migration.** No new column, no new table, no DDL, no webhook, no n8n import, no cron,
@@ -183,3 +199,6 @@ as ATTENDED and AWAITING respectively.
 - [manager-my-team.md](./manager-my-team.md) — the surrounding tab, and the no-comp rule.
 - [new-hire-checklist.md](./new-hire-checklist.md) — where `period_start` comes from.
 - [offboarding-automation.md](./offboarding-automation.md) — what "Did not attend" fires.
+- [hr-orientation-attendance.md](./hr-orientation-attendance.md) — the HR-side, week-scoped
+  twin. It shares this model and imports this rate, so a change to `attendanceRate` or to
+  the bucketing moves both surfaces at once.

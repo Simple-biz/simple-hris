@@ -1,12 +1,14 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AlertTriangle,
   CalendarCheck,
   ChevronRight,
   FileText,
   Loader2,
+  RefreshCw,
   RotateCcw,
   Users,
 } from 'lucide-react';
@@ -43,6 +45,11 @@ import {
  * **No pay figures anywhere.** Managers see attendance and profile data only
  * (docs/features/manager-my-team.md); the route strips rates before they leave
  * the server and nothing here would render them.
+ *
+ * The motion here is decoration and nothing else: every animated wrapper renders
+ * its children unconditionally (an `AnimatePresence` only guards a section that
+ * is already conditional on `open`), and `useReducedMotion` collapses all of it
+ * to a plain opacity step. No number, gate, or error branch depends on it.
  */
 
 interface OrientationAttendancePanelProps {
@@ -145,7 +152,8 @@ function HireLine({ h }: { h: OrientationHire }) {
 }
 
 export default function OrientationAttendancePanel({ teamGate }: OrientationAttendancePanelProps) {
-  const { summary, loading, error, refresh } = useOrientationHistory();
+  const { summary, loading, refreshing, error, refresh } = useOrientationHistory();
+  const reduceMotion = useReducedMotion() ?? false;
   const [pdfBusy, setPdfBusy] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   /** Show every hire in an expanded week, or only the ones who missed. */
@@ -182,6 +190,16 @@ export default function OrientationAttendancePanel({ teamGate }: OrientationAtte
       setPdfBusy(false);
     }
   }
+
+  // A shared entrance: a small fade-and-rise, collapsed to a plain fade when the
+  // viewer asks for reduced motion.
+  const rise = reduceMotion
+    ? { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.12 } }
+    : {
+        initial: { opacity: 0, y: 6 },
+        animate: { opacity: 1, y: 0 },
+        transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] as const },
+      };
 
   if (loading) {
     return (
@@ -234,7 +252,7 @@ export default function OrientationAttendancePanel({ teamGate }: OrientationAtte
   const overallRate = attendanceRate(t);
 
   return (
-    <div className="flex flex-col gap-3">
+    <motion.div className="flex flex-col gap-3" {...rise}>
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
         How many hires turned up for orientation each week, and who didn&apos;t. Weeks are{' '}
         <strong>HR&apos;s New Hire Checklist weeks</strong>. <strong>Did not attend</strong> means
@@ -246,17 +264,40 @@ export default function OrientationAttendancePanel({ teamGate }: OrientationAtte
       </p>
 
       {/* Headline numbers for the whole scope. */}
-      <div className="flex flex-wrap gap-2">
-        <KpiTile label="Hires" value={String(t.total)} tone="text-zinc-800 dark:text-zinc-100" hint={`${allWeeks.length} week${allWeeks.length === 1 ? '' : 's'}`} />
-        <KpiTile label="Attended" value={String(t.attended)} tone="text-emerald-700 dark:text-emerald-300" />
-        <KpiTile
-          label="Did not attend"
-          value={String(t.notAttended)}
-          tone={t.notAttended > 0 ? 'text-rose-700 dark:text-rose-300' : 'text-zinc-400 dark:text-zinc-600'}
-          hint={`${t.noShow} no-show · ${t.stillOpen} awaiting`}
-        />
-        <KpiTile label="Attendance rate" value={overallRate == null ? '—' : `${overallRate}%`} tone={rateTone(overallRate)} />
-      </div>
+      <motion.div
+        className="flex flex-wrap gap-2"
+        initial="hidden"
+        animate="shown"
+        variants={{
+          hidden: {},
+          shown: { transition: { staggerChildren: reduceMotion ? 0 : 0.05 } },
+        }}
+      >
+        {[
+          <KpiTile key="hires" label="Hires" value={String(t.total)} tone="text-zinc-800 dark:text-zinc-100" hint={`${allWeeks.length} week${allWeeks.length === 1 ? '' : 's'}`} />,
+          <KpiTile key="attended" label="Attended" value={String(t.attended)} tone="text-emerald-700 dark:text-emerald-300" />,
+          <KpiTile
+            key="missed"
+            label="Did not attend"
+            value={String(t.notAttended)}
+            tone={t.notAttended > 0 ? 'text-rose-700 dark:text-rose-300' : 'text-zinc-400 dark:text-zinc-600'}
+            hint={`${t.noShow} no-show · ${t.stillOpen} awaiting`}
+          />,
+          <KpiTile key="rate" label="Attendance rate" value={overallRate == null ? '—' : `${overallRate}%`} tone={rateTone(overallRate)} />,
+        ].map((tile, i) => (
+          <motion.div
+            key={i}
+            className="flex min-w-[7.5rem] flex-1"
+            variants={{
+              hidden: reduceMotion ? { opacity: 0 } : { opacity: 0, y: 8 },
+              shown: reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 },
+            }}
+            transition={{ duration: reduceMotion ? 0.12 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {tile}
+          </motion.div>
+        ))}
+      </motion.div>
 
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">
@@ -269,15 +310,18 @@ export default function OrientationAttendancePanel({ teamGate }: OrientationAtte
           Show everyone in an opened week
         </label>
         <div className="ml-auto flex items-center gap-1.5">
+          {/* Refreshing no longer swaps the panel for a spinner card — the
+              numbers stay put and the icon spins in place. */}
           <Button
             type="button"
             variant="outline"
             size="sm"
             className="h-9 gap-1.5 text-xs"
             onClick={() => void refresh()}
+            disabled={refreshing}
             title="Reload orientation attendance"
           >
-            <RotateCcw className="h-3.5 w-3.5" /> Refresh
+            <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} /> Refresh
           </Button>
           <Button
             type="button"
@@ -295,7 +339,7 @@ export default function OrientationAttendancePanel({ teamGate }: OrientationAtte
 
       {/* One card per week. Click a week to see the people behind its counts. */}
       <div className="flex flex-col gap-1.5">
-        {allWeeks.map((w) => {
+        {allWeeks.map((w, i) => {
           const key = `${w.onChecklist ? 'hr' : 'off'}:${w.weekStart}`;
           const open = expanded.has(key);
           const pct = attendanceRate(w);
@@ -303,8 +347,19 @@ export default function OrientationAttendancePanel({ teamGate }: OrientationAtte
           const shown = showAll ? w.hires : missed;
 
           return (
-            <Card
+            <motion.div
               key={key}
+              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 8 }}
+              animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+              transition={{
+                duration: reduceMotion ? 0.12 : 0.26,
+                // Cheap stagger without a variant tree: the first handful of
+                // weeks cascade, the rest land together rather than trickling in.
+                delay: reduceMotion ? 0 : Math.min(i, 6) * 0.035,
+                ease: [0.22, 1, 0.36, 1],
+              }}
+            >
+            <Card
               className={cn(
                 'overflow-hidden border ring-1 transition-colors',
                 w.notAttended > 0
@@ -321,7 +376,7 @@ export default function OrientationAttendancePanel({ teamGate }: OrientationAtte
                 >
                   <ChevronRight
                     className={cn(
-                      'h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform',
+                      'h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform duration-200 ease-out',
                       open && 'rotate-90',
                     )}
                   />
@@ -358,8 +413,16 @@ export default function OrientationAttendancePanel({ teamGate }: OrientationAtte
                   </span>
                 </button>
 
-                {open && (
-                  <div className="border-t border-zinc-100 bg-zinc-50/40 dark:border-zinc-900 dark:bg-zinc-950/40">
+                <AnimatePresence initial={false}>
+                  {open && (
+                  <motion.div
+                    key="week-body"
+                    initial={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
+                    animate={reduceMotion ? { opacity: 1 } : { height: 'auto', opacity: 1 }}
+                    exit={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
+                    transition={{ duration: reduceMotion ? 0.12 : 0.26, ease: [0.22, 1, 0.36, 1] }}
+                    className="overflow-hidden border-t border-zinc-100 bg-zinc-50/40 dark:border-zinc-900 dark:bg-zinc-950/40"
+                  >
                     {shown.length === 0 ? (
                       <p className="px-4 py-3 text-xs text-emerald-700 dark:text-emerald-300">
                         Everyone in this week attended orientation.
@@ -372,10 +435,12 @@ export default function OrientationAttendancePanel({ teamGate }: OrientationAtte
                         {shown.map((h) => <HireLine key={h.id} h={h} />)}
                       </>
                     )}
-                  </div>
-                )}
+                  </motion.div>
+                  )}
+                </AnimatePresence>
               </CardContent>
             </Card>
+            </motion.div>
           );
         })}
       </div>
@@ -388,6 +453,6 @@ export default function OrientationAttendancePanel({ teamGate }: OrientationAtte
           than folded into an HR week.
         </p>
       )}
-    </div>
+    </motion.div>
   );
 }

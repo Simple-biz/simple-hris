@@ -28,7 +28,12 @@ export interface OrientationHistoryState {
   hires: OrientationHire[];
   checklistWeeks: Map<string, string[]>;
   summary: OrientationSummary;
+  /** First load only. A manual Refresh sets `refreshing`, not this — so the
+   *  panel keeps rendering the numbers it already has instead of collapsing to
+   *  a spinner and back. */
   loading: boolean;
+  /** A Refresh over data that is already on screen. */
+  refreshing: boolean;
   /** Non-null means the tally and the PDF must refuse to render. */
   error: string | null;
   refresh: () => Promise<void>;
@@ -38,10 +43,13 @@ export function useOrientationHistory(enabled = true): OrientationHistoryState {
   const [hires, setHires] = useState<OrientationHire[]>([]);
   const [checklistWeeks, setChecklistWeeks] = useState<Map<string, string[]>>(new Map());
   const [loading, setLoading] = useState(enabled);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (isRefresh: boolean) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     setError(null);
     try {
       const res = await fetch('/api/manager/orientation-history', { cache: 'no-store' });
@@ -53,6 +61,7 @@ export function useOrientationHistory(enabled = true): OrientationHistoryState {
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
       setHires(json.rows ?? []);
       setChecklistWeeks(new Map(Object.entries(json.checklistWeeks ?? {})));
+      setLoadedOnce(true);
     } catch (e) {
       // Cleared, never left stale. There is no safe degradation: falling back to
       // the hire's own dates is exactly the 46%-wrong week key this replaced,
@@ -60,20 +69,24 @@ export function useOrientationHistory(enabled = true): OrientationHistoryState {
       setError(e instanceof Error ? e.message : 'Failed to load orientation history');
       setHires([]);
       setChecklistWeeks(new Map());
+      setLoadedOnce(false);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
+  const refresh = useCallback(() => load(true), [load]);
+
   useEffect(() => {
-    if (!enabled) return;
-    void refresh();
-  }, [enabled, refresh]);
+    if (!enabled || loadedOnce) return;
+    void load(false);
+  }, [enabled, loadedOnce, load]);
 
   const summary = useMemo(
     () => buildOrientationWeeks({ hires, checklistWeeksByEmail: checklistWeeks }),
     [hires, checklistWeeks],
   );
 
-  return { hires, checklistWeeks, summary, loading, error, refresh };
+  return { hires, checklistWeeks, summary, loading, refreshing, error, refresh };
 }

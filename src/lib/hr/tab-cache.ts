@@ -41,6 +41,9 @@ export const HR_TAB_CACHE_KEYS = {
   pendingEmployees: 'hr:pending-employees',
   onboardingSubmissions: 'hr:onboarding-submissions',
   newHireChecklist: 'hr:new-hire-checklist',
+  /** Company-wide orientation attendance — one fetch serves every week the
+   *  New Hire Checklist selector can land on, so switching weeks never refetches. */
+  orientationAttendance: 'hr:orientation-attendance',
   overviewRoster: 'hr:overview-roster',
   overviewOffboard: 'hr:overview-offboard',
   overviewOnboardingCounts: 'hr:overview-onboarding-counts',

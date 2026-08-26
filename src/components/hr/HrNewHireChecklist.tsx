@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { motion, useReducedMotion } from 'motion/react';
 import {
   Building2,
+  CalendarCheck,
   CalendarDays,
   Check,
   ChevronDown,
@@ -39,6 +40,8 @@ import { BASE_SOURCE_OPTIONS, isReferralSource } from '@/lib/hr/referral-source'
 import { useChecklistRoom } from '@/hooks/useChecklistRoom';
 import NewHireChecklistLockDialog, { type LockDialogMode } from './NewHireChecklistLockDialog';
 import NewHireQuickAddDialog, { type QuickAddValues } from './NewHireQuickAddDialog';
+import HrOrientationAttendancePanel from './HrOrientationAttendancePanel';
+import type { HrChecklistListedRow } from '@/lib/hr/orientation-week-stats';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 /** Grid columns, in display order. Keys match the DB / API field names 1:1. */
@@ -231,6 +234,17 @@ export default function HrNewHireChecklist({
   // so reading the cache / `new Date()` in initializers is hydration-safe.
   const cached = getHrTabCache<CacheVal>(CACHE_KEY);
   const [currentSunday] = useState(() => sundayIso(new Date()));
+  /**
+   * Inner tab: the intake grid, or the selected week's orientation attendance.
+   *
+   * An INNER tab on purpose — it inherits this tab's `hr`/`new_hire_checklist`
+   * grant, whereas a new top-level HR tab is a new feature key and `no row ==
+   * hidden`, so nobody would see it until it was granted person by person
+   * (docs/features/rbac-feature-permissions.md, and the same call as the
+   * manager Orientation tab). Both tabs read the ONE `period` below, so the
+   * week selector in the header governs both and there is no second one.
+   */
+  const [innerTab, setInnerTab] = useState<'checklist' | 'orientation'>('checklist');
   const [period, setPeriod] = useState<string>(() => cached?.period ?? sundayIso(new Date()));
   const [rows, setRows] = useState<GridRow[]>(() => cached?.rows ?? []);
   const [locked, setLocked] = useState<boolean>(() => cached?.locked ?? false);
@@ -858,6 +872,22 @@ export default function HrNewHireChecklist({
 
   const hireCount = rows.length;
 
+  /**
+   * What the Orientation tab measures as "hires listed" — literally the grid's
+   * rows for the selected week, so the two tabs cannot report different
+   * numbers for the same week, and adding a hire updates both with no refetch.
+   */
+  const listedRows = useMemo<HrChecklistListedRow[]>(
+    () =>
+      rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        personal_email: r.personal_email,
+        department: r.department,
+      })),
+    [rows],
+  );
+
   // ── Filters: distinct Department / Country / Hired By values present this week
   // (sorted, blanks dropped), used to populate the filter-bar dropdowns. ──
   const filterOptions = useMemo(() => {
@@ -1083,6 +1113,10 @@ export default function HrNewHireChecklist({
               )}
             </div>
 
+            {/* Refresh / Export / Lock act on the GRID, so they follow the grid.
+                The week selector above stays: it governs both inner tabs. */}
+            {innerTab === 'checklist' && (
+              <>
             <Button
               type="button"
               variant="outline"
@@ -1165,11 +1199,67 @@ export default function HrNewHireChecklist({
                 Lock in
               </Button>
             )}
+              </>
+            )}
           </div>
+        </div>
+
+        {/* Inner tabs. Both read the ONE `period` selected above — the
+            Orientation tab deliberately has no week control of its own. */}
+        <div
+          role="tablist"
+          aria-label="New Hire Checklist views"
+          className="mt-3 flex w-fit items-center gap-0.5 rounded-lg border border-emerald-100/80 bg-emerald-50/60 p-0.5 dark:border-emerald-950/60 dark:bg-emerald-950/20"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={innerTab === 'checklist'}
+            onClick={() => setInnerTab('checklist')}
+            className={cn(
+              'flex items-center gap-1.5 rounded-[5px] px-3 py-1.5 text-xs font-semibold transition-colors',
+              innerTab === 'checklist'
+                ? 'bg-white text-emerald-700 shadow-sm dark:bg-zinc-950 dark:text-emerald-300'
+                : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+            )}
+          >
+            <ClipboardList className="h-3.5 w-3.5" />
+            Checklist
+            {hireCount > 0 && (
+              <span className="rounded bg-zinc-200 px-1 text-[10px] font-medium tabular-nums text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                {hireCount}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={innerTab === 'orientation'}
+            onClick={() => setInnerTab('orientation')}
+            title="How many of this week's hires turned up for orientation"
+            className={cn(
+              'flex items-center gap-1.5 rounded-[5px] px-3 py-1.5 text-xs font-semibold transition-colors',
+              innerTab === 'orientation'
+                ? 'bg-white text-emerald-700 shadow-sm dark:bg-zinc-950 dark:text-emerald-300'
+                : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+            )}
+          >
+            <CalendarCheck className="h-3.5 w-3.5" />
+            Orientation
+          </button>
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
+        {/* The Orientation tab replaces the grid but keeps the header — same
+            week selector, same header, one tab's worth of body. */}
+        {innerTab === 'orientation' ? (
+          <HrOrientationAttendancePanel
+            period={period}
+            listedRows={listedRows}
+            listedLoading={loading}
+          />
+        ) : (
         <div className="flex h-full min-h-0 flex-col gap-3">
           {/* Locked banner */}
           {locked && !loading && !error && (
@@ -1654,6 +1744,7 @@ export default function HrNewHireChecklist({
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* Per-cell edit-history popover (fixed portal, anchored to the clicked
