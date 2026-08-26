@@ -48,6 +48,7 @@ import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import { cn } from '@/lib/utils';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import ManagerSidebar, { type ManagerTab } from './ManagerSidebar';
+import SchedulingPanel from './SchedulingPanel';
 import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
 import type { LeaveRequestRow } from '@/lib/supabase/leave-requests';
 import AnnouncementWall from '@/components/announcements/AnnouncementWall';
@@ -449,6 +450,13 @@ export default function ManagerApp() {
                   viewerEmail={viewerEmail}
                   focusEmail={teamFocusEmail}
                   onFocusConsumed={clearTeamFocus}
+                />
+              )}
+              {activeTab === 'scheduling' && (
+                <SchedulingPanel
+                  myDepartments={
+                    teamGate.kind === 'department' ? teamGate.departments : undefined
+                  }
                 />
               )}
               {activeTab === 'transfers' && (

@@ -17,6 +17,7 @@ import {
   Moon,
   MoreHorizontal,
   Newspaper,
+  CalendarCog,
   Sun,
   Users,
 } from 'lucide-react';
@@ -34,7 +35,7 @@ import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
 
-export type ManagerTab = 'overview' | 'time-adjustments' | 'leaves' | 'team' | 'transfers' | 'announcements' | 's-wall' | 'hsl-bonus' | 'bonus-history' | 'notifications';
+export type ManagerTab = 'overview' | 'time-adjustments' | 'leaves' | 'team' | 'scheduling' | 'transfers' | 'announcements' | 's-wall' | 'hsl-bonus' | 'bonus-history' | 'notifications';
 
 interface ManagerSidebarProps {
   activeTab: ManagerTab;
@@ -169,6 +170,7 @@ export default function ManagerSidebar({
               countBadge(pendingLeaves, activeTab === 'leaves'),
             )}
             {can('team') && navBtn('team', 'My team', Users)}
+            {can('scheduling') && navBtn('scheduling', 'Scheduling', CalendarCog)}
             {can('transfers') && navBtn('transfers', 'Transfers', ArrowRightLeft)}
             {can('announcements') && navBtn('announcements', 'Announcements', Megaphone)}
             {can('s-wall') && <button
