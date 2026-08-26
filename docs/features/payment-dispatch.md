@@ -547,6 +547,40 @@ pay that*. Fixed in the same pass:
 A recorded `system_bonus_php` of ₱0 is a real claim and prints; only a
 pre-migration row with no snapshot at all prints blank.
 
+**c. The pending worksheet must carry every field the expanded row reveals
+(2026-08-26).** The 08-25 pass closed property (b) on the *money* half and left it
+open on the *banking* half. `ProcessorQueue` reveals `PROCESSORS[].detailFields`
+when the clerk expands a row — that is **where the money goes** — and three of
+those keys had no column:
+
+| Screen field | Rail | Was | Now |
+|---|---|---|---|
+| `hurupay_email` | **Kolan — "Email only"** | absent | `Kolan Email` |
+| `higlobe_email`, `higlobe_account_name` | **Higlobe — "Email + account holder name"** | absent | `Higlobe Email`, `Higlobe Account Name` |
+| `city`, `province_state` | Wires | absent | `City`, `Province / State` |
+
+Kolan and Higlobe are **email-only rails: the email IS the destination.**
+`Account Number / Wallet` reads `employee_ids.account_number` — a *bank* account —
+which **656 of 730 Kolan** and **177 of 221 Higlobe** payees do not have, so
+**833 pending rows exported with no destination at all** and could not be paid from
+the file. On Wires, 315 rows carry a City/Province and 10 of those cities are not
+already inside `Full Address`.
+
+The closure is **structural, not a column list**:
+`dispatch-client-csv.test.ts` asserts every `PROCESSORS[].detailFields` key is a
+`PENDING_COLUMNS` key, so a processor that gains a field it needs to pay someone
+fails the test instead of shipping a blind column. Column *keys* stay the stored
+names (`hurupay_email`); only the header follows the Hurupay → Kolan rebrand, the
+same way `PROCESSORS[].label` does (§4.1, migration alias note). A rail field is blank for a payee on
+another rail — the file never substitutes the work email for a missing wallet.
+
+Still true and deliberate: a **contractor invoice** row has `initialPayPHP: null`
+and no wizard carrier, so its breakdown columns and `Amount Source` are all blank
+and `Amount (PHP)` does not recompose — `Payee Type` and `Invoice #` say why. The
+sub-₱7k **Wires → Wise** reroute reaches the file only as `Processor = Wise` beside
+`Bank Preferred (raw) = wires`; the screen's explicit "under ₱7k" note has no
+column of its own (§12.3.1).
+
 **Helpers exported from `dispatch-bonuses.ts`:**
 
 | Export | Purpose |

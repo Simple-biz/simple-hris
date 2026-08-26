@@ -32,7 +32,21 @@ import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 
 type CsvRow = Record<string, string>;
 
-const PENDING_COLUMNS: { key: string; header: string }[] = [
+/**
+ * Pending worksheet columns.
+ *
+ * The banking block MUST cover every `PROCESSORS[].detailFields` key — those are
+ * the fields `ProcessorQueue` reveals when the clerk expands a row, i.e. where the
+ * money actually goes. Kolan (`hurupay`) and Higlobe are **email-only rails**: the
+ * payout address IS the email, and `Account Number / Wallet` reads
+ * `employee_ids.account_number` (a BANK account), which 656 Kolan and 177 Higlobe
+ * payees simply do not have. Until 2026-08-26 those three keys were absent, so 833
+ * pending rows exported with no destination at all — property (b) failing on the
+ * banking half of the worksheet exactly as it had on the money half. The coverage
+ * is a structural assertion in `dispatch-client-csv.test.ts`, so a new processor
+ * with a new detail field cannot ship a blind column again.
+ */
+export const PENDING_COLUMNS: { key: string; header: string }[] = [
   { key: 'name',            header: 'Name' },
   { key: 'email',           header: 'Email' },
   { key: 'payee_type',      header: 'Payee Type' },
@@ -74,11 +88,25 @@ const PENDING_COLUMNS: { key: string; header: string }[] = [
   // attempt's reference travels with them, exactly as the worksheet shows it.
   { key: 'transaction_id',  header: 'TXN ID' },
   { key: 'bank_preferred',  header: 'Bank Preferred (raw)' },
+  // The two EMAIL-ONLY rails. For a Kolan or Higlobe payee this cell is the whole
+  // destination — there is no account number to fall back to — so it is the one
+  // column that makes their row payable. Keys stay the STORED names
+  // (`employee_ids.hurupay_email`); only the header follows the 2026-08-24
+  // Hurupay -> Kolan rebrand, exactly as `PROCESSORS[].label` does
+  // (memory: hurupay-kolan-rebrand).
+  { key: 'hurupay_email',   header: 'Kolan Email' },
+  { key: 'higlobe_email',   header: 'Higlobe Email' },
+  { key: 'higlobe_account_name', header: 'Higlobe Account Name' },
   { key: 'account_holder',  header: 'Account Holder' },
   { key: 'account_number',  header: 'Account Number / Wallet' },
   { key: 'swift_code',      header: 'SWIFT Code' },
   { key: 'phone_number',    header: 'Phone Number' },
   { key: 'full_address',    header: 'Full Address' },
+  // Wires shows these two beside the address when the clerk expands the row; on
+  // 10 live payees the city is NOT already inside Full Address, so the file was
+  // dropping part of a manual wire's destination.
+  { key: 'city',            header: 'City' },
+  { key: 'province_state',  header: 'Province / State' },
 ];
 
 const SENT_COLUMNS: { key: string; header: string }[] = [
@@ -203,11 +231,16 @@ export function buildPendingRows(
     ot_hours: fmtHours(r.otHours),
     transaction_id: txnByEmail[r.email.trim().toLowerCase()] ?? txnByEmail[r.id.trim().toLowerCase()] ?? '',
     bank_preferred: r.bankPreferredRaw ?? '',
+    hurupay_email: r.details.hurupay_email ?? '',
+    higlobe_email: r.details.higlobe_email ?? '',
+    higlobe_account_name: r.details.higlobe_account_name ?? '',
     account_holder: r.details.account_holder_name ?? '',
     account_number: r.details.account_number ?? '',
     swift_code: r.details.swift_code ?? '',
     phone_number: r.details.phone_number ?? '',
     full_address: r.details.full_address ?? '',
+    city: r.details.city ?? '',
+    province_state: r.details.province_state ?? '',
   }));
 }
 

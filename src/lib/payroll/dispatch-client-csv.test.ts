@@ -5,7 +5,9 @@ import {
   buildSentRows,
   pendingRowsToCsv,
   sentRowsToCsv,
+  PENDING_COLUMNS,
 } from './dispatch-client-csv';
+import { PROCESSORS } from '@/components/payroll-clerk/mock-queue';
 import type { QueueRow } from '@/components/payroll-clerk/mock-queue';
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 
@@ -240,6 +242,85 @@ describe('pending worksheet CSV', () => {
       buildPendingRows([row()], { 'a@simple.biz': 'TXN-RETRY-9' }),
     );
     assert.equal(cell(csv, 'TXN ID'), 'TXN-RETRY-9');
+  });
+
+  /**
+   * Property (b) on the BANKING half of the worksheet. The structural assertion is
+   * the guard: `detailFields` is what `ProcessorQueue` reveals when a row is
+   * expanded, so any processor gaining a field it needs to pay someone fails here
+   * rather than shipping a file with no destination in it.
+   */
+  it('carries every detail field the expanded row reveals, for every processor', () => {
+    const exported = new Set(PENDING_COLUMNS.map((c) => c.key));
+    for (const p of PROCESSORS) {
+      for (const field of p.detailFields) {
+        assert.ok(
+          exported.has(field),
+          `${p.label} shows "${field}" on screen but the pending CSV has no column for it`,
+        );
+      }
+    }
+  });
+
+  it('exports a destination for a Kolan payee who has no bank account at all', () => {
+    // 656 live Kolan payees look exactly like this: an email-only rail, so
+    // `account_number` is legitimately empty and the email IS where the money goes.
+    const csv = pendingRowsToCsv(
+      buildPendingRows(
+        [row({ processor: 'hurupay', details: { hurupay_email: 'payee@gmail.com' } })],
+        {},
+      ),
+    );
+    assert.equal(cell(csv, 'Account Number / Wallet'), '');
+    assert.equal(cell(csv, 'Kolan Email'), 'payee@gmail.com');
+  });
+
+  it('exports both destination fields for a Higlobe payee', () => {
+    const csv = pendingRowsToCsv(
+      buildPendingRows(
+        [
+          row({
+            processor: 'higlobe',
+            details: { higlobe_email: 'hg@gmail.com', higlobe_account_name: 'A Person' },
+          }),
+        ],
+        {},
+      ),
+    );
+    assert.equal(cell(csv, 'Higlobe Email'), 'hg@gmail.com');
+    assert.equal(cell(csv, 'Higlobe Account Name'), 'A Person');
+  });
+
+  it('carries the city and province a manual wire is addressed to', () => {
+    const csv = pendingRowsToCsv(
+      buildPendingRows(
+        [
+          row({
+            processor: 'wires',
+            details: {
+              full_address: '92 Mabini Street, Barangay Zone 4',
+              city: 'Koronadal City',
+              province_state: 'South Cotabato',
+            },
+          }),
+        ],
+        {},
+      ),
+    );
+    assert.equal(cell(csv, 'Full Address'), '92 Mabini Street, Barangay Zone 4');
+    assert.equal(cell(csv, 'City'), 'Koronadal City');
+    assert.equal(cell(csv, 'Province / State'), 'South Cotabato');
+  });
+
+  it('leaves a rail field blank rather than borrowing another rail\'s destination', () => {
+    // A Wires payee has no Kolan/Higlobe address, and the file must not invent one
+    // by falling back to the work email.
+    const csv = pendingRowsToCsv(
+      buildPendingRows([row({ processor: 'wires', details: { account_number: '1234567890' } })], {}),
+    );
+    assert.equal(cell(csv, 'Kolan Email'), '');
+    assert.equal(cell(csv, 'Higlobe Email'), '');
+    assert.equal(cell(csv, 'Account Number / Wallet'), '1234567890');
   });
 });
 
