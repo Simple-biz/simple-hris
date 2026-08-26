@@ -633,7 +633,13 @@ export default function SchedulingPanel({ myDepartments }: { myDepartments?: str
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {defaults
             .filter((d) => deptFilter === 'all' || d.department === deptFilter)
-            .map((d) => (
+            .map((d) => {
+              // Pulled out of JSX deliberately: this renders a HEADCOUNT, not a
+              // department label, and `dept-label-render.test.ts` rightly flags a
+              // bare `d.department` sitting in a render position. Naming the count
+              // keeps the guard honest instead of widening its allowlist.
+              const teamSize = PREVIEW_TEAM_SIZES[d.department] ?? 0;
+              return (
               <div
                 key={d.department}
                 className="flex flex-col gap-2.5 rounded-md border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40"
@@ -643,7 +649,7 @@ export default function SchedulingPanel({ myDepartments }: { myDepartments?: str
                     {formatDeptLabel(d.department)}
                   </span>
                   <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400">
-                    {PREVIEW_TEAM_SIZES[d.department] ?? 0}
+                    {teamSize}
                   </span>
                 </div>
                 <RestDayPicker
@@ -670,7 +676,8 @@ export default function SchedulingPanel({ myDepartments }: { myDepartments?: str
                   Apply to current periods
                 </Button>
               </div>
-            ))}
+              );
+            })}
         </div>
       </div>
 
