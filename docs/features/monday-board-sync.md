@@ -915,6 +915,90 @@ file overlap they are one row, not three. They are **out of scope for a flush** 
 for corrections to rows that already exist, and queueing a new row produces a guaranteed refusal.
 They need a `review.mts` pass and their own approval hash.
 
+## Pass 17 — 2026-08-27 · the auditor declares itself · 2 rows, 8 SP, VERIFY PASS
+
+Kane: *"add this skill to our Monday board."* HRIS-15 already carried a 3-SP Chore row for every
+board-sync **pass** and one for the approval-gate fix — but the machine those sixteen passes all ran
+through had **no row**. Sixteen passes credited; the tooling uncredited.
+
+Found while flagging undeclared work at the end of the same morning's flush. That is worth naming:
+the last three passes each found undeclared work in the **product**, and this one found it in the
+**auditor**. Nothing in the skill checks whether the skill is on the board.
+
+### Two rows, clustered on file overlap and not on the commit stream
+
+Sixteen days and 33 commits separate them, which would tempt a single "the skill" row. `520a7755` and
+`7e39a599` share almost no files, and the second adds a module the first deliberately did not have —
+so they are two.
+
+| Row | SP | Sprint | Completed | Evidence |
+|---|---|---|---|---|
+| The Monday board gets a writer that cannot lie | 5 | S26 | 2026-08-11 | `520a7755` — 15 files, 1,837 insertions |
+| A dead API budget owes the SP instead of losing it | 3 | S27 | 2026-08-21 | `7e39a599` — 8 files, 634 insertions |
+
+**Scoring, against neighbours rather than line count.** The build is the exact peer of the 5-SP
+Payroll Wizard manual-validation row (13 files, ~1,750 lines, a new route plus a tested module).
+**Not 8** — all seven 8-SP rows on this board move a rate, a dispatch row or a score component, and
+this moves none; it is dev tooling. **Not 3** — the existing board-sync Chore rows at 3 SP are single
+passes, and this is what they run on. The ledger is 3: two modules and a hook, no new surface, no
+money path, but the seven refusal conditions are the substance and a deferred write with no gate is
+worse than a lost one.
+
+### Done, without pretending the gate maps
+
+Neither row closes on an assertion, and neither claims a click-through. This is tooling with **no
+deployed surface**, so the honesty gate's "deployed and clicked through in prod" does not apply — and
+saying so is better than stretching it. What replaces it is stronger in both cases:
+
+- the **build** has had sixteen passes run through it against the live board, results confirmed by
+  re-read rather than by write log;
+- the **ledger** was exercised in production *that same morning* — 9 owed rows, 33 SP, 0 refused,
+  9/9 confirmed by re-read.
+
+Completed Dates are the shas' commit dates, **not** the declaration day, which is what files the
+build in S26 and the ledger in S27 — the sprints the work actually finished in. Declaring work late
+does not re-date it.
+
+### A slice bug nearly deleted a live row, and the numstat caught it
+
+Staging the plan entries, a Python splice used `old[:-2].rstrip('\n')[:-0]`. **`-0 == 0`, so `[:-0]`
+is `[:0]` — the empty string**, and the replacement silently dropped the preceding
+`Exported pay stubs name the CURRENT department` plan row. That row is **live on the board**
+(`12904913559`, Done, 3 SP, written by the flush hours earlier); item names are set at CREATE only,
+so a plan row that vanishes orphans its board row permanently and name parity breaks in the
+board→plan direction.
+
+Caught by `git diff --numstat` on the edited file: the expected shape of a pure addition is
+`N 0`, and any non-zero deletion count on a plan edit means a row was lost. After the restore:
+**36 insertions, 0 deletions**. `review.mts` then independently confirmed it — *orphan rows on the
+board, not in the plan: 0*.
+
+**Carry this:** after any scripted edit to `hris-plan.ts`, assert `git diff --numstat` shows **zero
+deletions** unless a deletion was the intent. The plan is append-mostly, and the reconciler cannot
+tell a dropped row from a row that never existed.
+
+### The full path, chosen deliberately
+
+`--only-new` would have been ~6 calls against ~200. It writes **no relation**, so both rows would
+have landed unlinked from HRIS-15 and `verify.mts` fails on exactly that — the trade that cost pass
+13 two applies. With ~37 calls spent on the morning flush and the budget otherwise intact, the full
+reconcile was the cheaper end state.
+
+Applied on `f26aa6b3ebf4` (source verified `dc5b7adfe7ae`): 2 created, 37 epics + 208 tasks patched,
+2 corrections. **`verify.mts`: VERIFY PASS** — 210/210 name parity, 0 orphans, 0 rows over the 8-SP
+cap, 0 blank Estimated SP, 0 phantom Actual SP, 0 Done rows without a date, relation 210 of 210.
+
+The rollup did **not** move (Total 1569, Completed 874) and that is correct, not a miss: Epic SP here
+is an independent rollup, not a sum of children, so adding two task rows under an already-Shipped
+HRIS-15 changes neither figure.
+
+### Still undeclared after this pass
+
+`blueprint` and `hardening` (both `2026-08-10`, referenced only in plan **comments**), and the
+Manager Scheduling tab (`d81ffecc` + `23c45325` + `850fdf22`, one row by file overlap). Same class of
+gap, left out because the ask was singular and deictic. Recorded here so the next pass does not have
+to rediscover them.
+
 ## Cross-links
 
 `docs/features/INDEX.md` · memory `monday-hris-board-sync` · pass evidence

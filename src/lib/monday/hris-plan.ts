@@ -1075,5 +1075,41 @@ export const PLAN_TASKS: PlanTask[] = [
   // through formatDeptLabel so a raw hsl:* key can never reach a header; a test pins it. Not 5: one
   // pure function and three call sites, no money path. Not 2: 164 lines of test and a deliberate
   // ruling about what freezing does and does not cover.
+
   { epic: 'HRIS-03b', name: 'Exported pay stubs name the CURRENT department, paid or not', type: 'Feature', sp: 3, done: true, sprint: 'S27', priority: 'Medium' },
+  // ── Pass 16 · 2026-08-27 · the tool that declares the board was never declared ON it ─────────────
+  // Kane: "add this skill to our Monday board". HRIS-15 already carries a 3-SP Chore row for each
+  // board-sync PASS and one for the approval-gate fix, but the SKILL ITSELF — the thing every one of
+  // those passes ran through — has no row. Sixteen passes have been credited and the tooling has
+  // not. Found while flagging undeclared work at the end of the 08-27 flush, which is the same class
+  // of gap the last three passes each found in the product.
+  //
+  // TWO rows, clustered on FILE OVERLAP and not on the sixteen-day commit stream between them: the
+  // build (520a7755) and the ledger (7e39a599) share almost no files, are ten days apart, and the
+  // second is a capability the first deliberately did not have.
+  //
+  // 5 SP: the build. 15 files, 1,837 insertions — SKILL.md, eight scripts, the governing doc, and
+  // the hook into this file. Scored as the exact peer of the 5-SP Payroll Wizard manual-validation
+  // row (13 files, ~1,750 lines, a new route plus a tested module): comparable mass, comparable
+  // novelty, no money path. Not 8 — every 8-SP row on this board moves a rate, a dispatch row or a
+  // score component, and this moves none; it is dev tooling. Not 3 — the three existing board-sync
+  // Chore rows at 3 SP are single PASSES, and this is the machine they all run on. What it actually
+  // encodes: items match BYTE-EXACT so a normalised name orphans a row forever, the reconciler and
+  // the corrector own DISJOINT column sets with a runtime assertion proving it, and no write happens
+  // without an approval hash bound to the proposal Kane was shown.
+  { epic: 'HRIS-15', name: 'The Monday board gets a writer that cannot lie — the board-sync skill, its approval gate and the two-writer column split', type: 'Chore', sp: 5, done: true, sprint: 'S26', priority: 'Medium' },
+  // 3 SP: the ledger. 8 files, 634 insertions, two new modules (pending-sp.mts 251, flush-pending.mts
+  // 169). Before it, a pass that exhausted the daily API budget mid-corrections silently DROPPED its
+  // tail — the run ended, the rows were never written, and the SP was recoverable only by re-deriving
+  // the whole pass from git. Now the budget death queues what it could not write, and a later flush
+  // completes it on the SAME approval hash, which is the entire justification for a one-command
+  // flush not being a hole in the approval gate. What a delay can invalidate is re-checked at flush
+  // time by revalidate(), which refuses on any of seven conditions — no hash, re-scored since
+  // queueing, name no longer byte-exact in the plan, Done with no date or an open blocker, a
+  // Completed Date that no longer matches its last sha, or a sha git cannot resolve or that has left
+  // origin/main. Not 5: two modules and a hook, no new surface and no money path. Not 2: the seven
+  // refusals were each verified against a synthetic entry, and the gate is what keeps a deferred
+  // write honest. PROVEN IN PRODUCTION 2026-08-27, hours before this row was written: it flushed
+  // 9 owed rows / 33 SP under hash 7378e56e5902, 0 refused, and all 9 were confirmed by re-read.
+  { epic: 'HRIS-15', name: 'A dead API budget owes the SP instead of losing it — the pending-SP ledger and its seven refusals', type: 'Chore', sp: 3, done: true, sprint: 'S27', priority: 'Medium' },
 ];
