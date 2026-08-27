@@ -18,8 +18,8 @@
         "basis": "KANE'S CONFIRMATION, ASKED FOR AND RECORDED: asked in the 2026-08-26 board-sync review which Pending Deploy rows he had actually looked at in production, he answered 'All of them - I've tested everything'. That answer is the evidence for Done on this row, and it is written here rather than assumed, because a blanket confirmation that is not recorded is indistinguishable from a guess six weeks later. It was NOT applied blanket: the Tickets row is held at Pending Deploy in this same pass, because an assertion cannot import an n8n workflow and the two webhook slugs are measurably absent. UNDECLARED UNTIL THIS PASS, and it landed DURING this pass - committed by a CONCURRENT SESSION in the same checkout at 13:41, after the audit range had already been re-derived once. Declared here rather than left for that session because an undeclared shipped feature is the exact gap the previous pass found twelve of; the byte-exact plan name is what stops a duplicate row if that session files it too. THE WORK: exported pay stubs head themselves with the department the roster holds TODAY, marked `(current)`, on every week the export covers - paid, staged or reconstructed. It does NOT contradict 'a paid stub is frozen', and the doc argues the distinction rather than asserting it: the money and the per-week record are untouched, a person's department is a fact about THEM and not about that week, and the in-week moves keep being explained by the per-week Department Change column. ONE server-side resolution (`getEmployeeMasterRecord`, active-rows-only, ordered by `last_seen_upload_id` so a duplicated identity resolves to the newest row) feeds all three export call sites, replacing `PayStubModal`'s use of the week's own frozen department - the one genuinely stale header. The fallback is a STATE, not a mask: a null current department is REAL (an off-boarded person has no active master row), so it falls back to the newest week's own department and deliberately omits `(current)`. Both sides go through `formatDeptLabel`, so a raw `hsl:*` key can never reach a header; a test pins that. Scored 3: one pure tested function and three call sites, no money path - not 5, and not 2 given 164 lines of test and an explicit ruling about what freezing does and does not cover. PENDING DEPLOY: on `origin/main`, not confirmed live."
       },
       "planSp": 3,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-08-27T11:05:39.675Z",
+      "flushNote": "flushed 2026-08-27T11:05:39.675Z (approval 7378e56e5902)"
     },
     {
       "queuedAt": "2026-08-26T18:04:11.876Z",
@@ -40,8 +40,8 @@
         ]
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-08-27T11:05:39.675Z",
+      "flushNote": "flushed 2026-08-27T11:05:39.675Z (approval 7378e56e5902)"
     },
     {
       "queuedAt": "2026-08-26T18:04:11.876Z",
@@ -60,8 +60,8 @@
         "basis": "KANE'S CONFIRMATION, ASKED FOR AND RECORDED: asked in the 2026-08-26 board-sync review which Pending Deploy rows he had actually looked at in production, he answered 'All of them - I've tested everything'. That answer is the evidence for Done on this row, and it is written here rather than assumed, because a blanket confirmation that is not recorded is indistinguishable from a guess six weeks later. It was NOT applied blanket: the Tickets row is held at Pending Deploy in this same pass, because an assertion cannot import an n8n workflow and the two webhook slugs are measurably absent. AND THE ROW'S OWN BLOCKER IS NOW MEASURABLY FALSE, WHICH MATTERS MORE THAN THE CONFIRMATION. It was held on 'No kpi.scored notification has ever been delivered' - measured 2026-08-20 as ZERO rows against 3,694 payroll.available, the feature having shipped dead for three days because the type CHECK rejected every insert and all four call sites swallow a failed notify into console.warn. Re-measured 2026-08-26: employee_notifications holds 702 kpi.scored rows, most recent 2026-08-25T00:11Z, with a negative control (definitely.not.a.type.xyz) returning 0 in the same run so the count can distinguish absence from a failed query. The feature has demonstrably been delivered 702 times. Completed Date is 31b11050's commit date, 2026-08-17, which sits inside S26's Aug 4-17 attribution (S26 absorbs the Aug 16-17 gap days) - the work finished when it was committed; the delivery is what unblocked Done, not what re-dated it. Two follow-up rows remain open against it and are tracked separately: the months-old-week floor, and making swallowed notify failures observable."
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-08-27T11:05:39.675Z",
+      "flushNote": "flushed 2026-08-27T11:05:39.675Z (approval 7378e56e5902)"
     },
     {
       "queuedAt": "2026-08-26T18:04:11.876Z",
@@ -81,8 +81,8 @@
         "basis": "KANE'S CONFIRMATION, ASKED FOR AND RECORDED: asked in the 2026-08-26 board-sync review which Pending Deploy rows he had actually looked at in production, he answered 'All of them - I've tested everything'. That answer is the evidence for Done on this row, and it is written here rather than assumed, because a blanket confirmation that is not recorded is indistinguishable from a guess six weeks later. It was NOT applied blanket: the Tickets row is held at Pending Deploy in this same pass, because an assertion cannot import an n8n workflow and the two webhook slugs are measurably absent. AND ITS SECOND BLOCKER IS CLOSED ON EVIDENCE, NOT ON THE CONFIRMATION. The row carried 'the first real payroll.hours_gap insert is unproven until the next Hubstaff ingest runs; the DDL is applied but the write path has never fired' - which no assertion could settle, because a confirmation cannot make an insert that never happened have happened. Measured 2026-08-26: employee_notifications holds 20 payroll.hours_gap rows, so the write path HAS fired, with a negative control returning 0 in the same run. THE WORK: nobody had offboarded jvincec@ and nothing said so - he sat Active with zero hours from 2026-08-05. The DETECTOR already existed; what was missing was DELIVERY. classifyZeroHours (245 lines, 221 of test) is the ONE rule now shared by the Overview tile, a new Readiness No Hours tab, and a payroll.hours_gap notification fired on ingest to accounting role holders only - never to the person with no hours. 18 files, 1,617 insertions, 44 new tests. Scored 5 because it touches NO money path, deliberately: Lead Gen stays tracked per Kane, which puts ~193 rows on the list every week, so the dimension is LISTED AND NEVER SCORED."
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-08-27T11:05:39.675Z",
+      "flushNote": "flushed 2026-08-27T11:05:39.675Z (approval 7378e56e5902)"
     },
     {
       "queuedAt": "2026-08-26T18:04:11.876Z",
@@ -101,8 +101,8 @@
         "basis": "KANE'S CONFIRMATION, ASKED FOR AND RECORDED: asked in the 2026-08-26 board-sync review which Pending Deploy rows he had actually looked at in production, he answered 'All of them - I've tested everything'. That answer is the evidence for Done on this row, and it is written here rather than assumed, because a blanket confirmation that is not recorded is indistinguishable from a guess six weeks later. It was NOT applied blanket: the Tickets row is held at Pending Deploy in this same pass, because an assertion cannot import an n8n workflow and the two webhook slugs are measurably absent. HUBSTAFF_EXEMPT_DEPTS matched raw master-list labels exactly, and the dept it excuses was renamed: 'Site Building' became 'Site Building (US - Freelance)' (20 people, ZERO with Hubstaff hours) and 'Site Building (PH - Freelancer)' (13, zero). The list therefore inverted its own meaning, and the Overview Hubstaff-to-Master tile and its CEO mirror reported 33 deliberately-untracked freelancers as unexplained reconciliation gaps. The untouched 'SMM Freelancer' label kept working, which is how it stayed invisible. Fixed by retrying the match once with a trailing parenthetical qualifier stripped; the test pins the negative control (a dept whose base label was never exempt stays tracked however it is qualified) and pins Lead Gen NOT exempt per Kane. Filed as its own 2-SP row rather than folded into the zero-hours feature because it was wrong on its own, on a surface that already shipped, before any of that was added - a PREREQUISITE, not a part. It shares sha 7b7e9123 with that feature, which is why the two rows cite the same commit."
       },
       "planSp": 2,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-08-27T11:05:39.675Z",
+      "flushNote": "flushed 2026-08-27T11:05:39.675Z (approval 7378e56e5902)"
     },
     {
       "queuedAt": "2026-08-26T18:04:11.876Z",
@@ -123,8 +123,8 @@
         "basis": "KANE'S CONFIRMATION, ASKED FOR AND RECORDED: asked in the 2026-08-26 board-sync review which Pending Deploy rows he had actually looked at in production, he answered 'All of them - I've tested everything'. That answer is the evidence for Done on this row, and it is written here rather than assumed, because a blanket confirmation that is not recorded is indistinguishable from a guess six weeks later. It was NOT applied blanket: the Tickets row is held at Pending Deploy in this same pass, because an assertion cannot import an n8n workflow and the two webhook slugs are measurably absent. THREE commits, ONE row: all three rewrite the same tested module (dept-rail.ts) and the same screen (BonusCatalog.tsx), so clustering on FILE OVERLAP makes them one feature built and then hardened the same day, not three. 24d6d0a1 built it - dept-rail.ts (264 lines) with 269 of test, a 598-line screen change, and the rule that the rail is a TREE: a Pay Structure renders under the member PLACEMENT rather than whatever departmentKey it stores, and the bare parent claims NOBODY, which is why the HSL sub-teams nest under a retractable Hogan Smith Law instead of flattening into it. 6cb643b2 then resolved a structure owner by IDENTITY and not by email alone - Baldonebro was being held by the parent because the email matched first. 47e84590 closed an adder guard that could overwrite a live rate from a blank form, plus five more review findings. Scored 5 as the peer of the 5-SP People Bank-changes band row: a new tested module plus one screen, no money path, no new table."
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-08-27T11:05:39.675Z",
+      "flushNote": "flushed 2026-08-27T11:05:39.675Z (approval 7378e56e5902)"
     },
     {
       "queuedAt": "2026-08-26T18:04:11.876Z",
@@ -143,8 +143,8 @@
         "basis": "KANE'S CONFIRMATION, ASKED FOR AND RECORDED: asked in the 2026-08-26 board-sync review which Pending Deploy rows he had actually looked at in production, he answered 'All of them - I've tested everything'. That answer is the evidence for Done on this row, and it is written here rather than assumed, because a blanket confirmation that is not recorded is indistinguishable from a guess six weeks later. It was NOT applied blanket: the Tickets row is held at Pending Deploy in this same pass, because an assertion cannot import an n8n workflow and the two webhook slugs are measurably absent. The Payment Catalog was still listing people who had left. 14 files bring four new tested modules - catalog-roster-visibility.ts (130 lines, 235 of test), offboard-evidence.ts (160), master-date.ts (48, 37 of test) and catalog-offboarded-emails.ts (114) - plus a verify script. Every one of the four guards deliberately fails toward KEEPING a person, because dropping someone still employed is the worse error; evidence is read on WORK emails ONLY, since a shared personal inbox imports someone else's departure. Measured at the time: active_employees carried 0 stamped and 294 gone. 110 lines came OUT of payroll-readiness.ts as the rule was centralised, so this is a consolidation as much as an addition. Not 8: no money path, no new table, no dispatch row. Not 3: four new modules, 272 lines of test, and a behavioural change to who appears on a live Accounting screen."
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-08-27T11:05:39.675Z",
+      "flushNote": "flushed 2026-08-27T11:05:39.675Z (approval 7378e56e5902)"
     },
     {
       "queuedAt": "2026-08-26T18:04:11.876Z",
@@ -164,8 +164,8 @@
         "basis": "KANE'S CONFIRMATION, ASKED FOR AND RECORDED: asked in the 2026-08-26 board-sync review which Pending Deploy rows he had actually looked at in production, he answered 'All of them - I've tested everything'. That answer is the evidence for Done on this row, and it is written here rather than assumed, because a blanket confirmation that is not recorded is indistinguishable from a guess six weeks later. It was NOT applied blanket: the Tickets row is held at Pending Deploy in this same pass, because an assertion cannot import an n8n workflow and the two webhook slugs are measurably absent. TWO commits, ONE row: de0fa485 only re-animates ValidationFullScreen.tsx, the component 56390cb9 created, so it is the same feature finishing rather than a second one. A named human vouches for ONE person's pay and Lenny sees that vouch at Mark Paid: a new route (181 lines), a tested module (197 plus 198 of test), a hook, the full-screen overlay and the Mark Paid surfacing - 13 files, ~1,750 lines including the 212-line feature doc. SCORED 5 AND NOT 8 despite the line count, because it RECORDS a human judgement and never prices anything: no rate, no amount and no score component moves. The one genuinely novel part is that the validation CANNOT live on payment_dispatches - at step 7 no dispatch row exists yet - so it rides an app_settings blob written compare-and-swap, and Mark Paid keys it on the WORK email, never the payout address, which is shared and recycled in the master list."
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-08-27T11:05:39.675Z",
+      "flushNote": "flushed 2026-08-27T11:05:39.675Z (approval 7378e56e5902)"
     },
     {
       "queuedAt": "2026-08-26T18:04:11.876Z",
@@ -184,8 +184,8 @@
         "basis": "KANE'S CONFIRMATION, ASKED FOR AND RECORDED: asked in the 2026-08-26 board-sync review which Pending Deploy rows he had actually looked at in production, he answered 'All of them - I've tested everything'. That answer is the evidence for Done on this row, and it is written here rather than assumed, because a blanket confirmation that is not recorded is indistinguishable from a guess six weeks later. It was NOT applied blanket: the Tickets row is held at Pending Deploy in this same pass, because an assertion cannot import an n8n workflow and the two webhook slugs are measurably absent. Deliberately a SECOND row rather than an edit of the Done 2-SP row about orphanage OT pricing at the full 1.5x rate. That row was a seventeen-line price correction; this is the hardening that followed it - 6 files, 1,763 insertions: pricing extracted into orphanage-pay-pricing.ts as the one rule shared by the paste tool and the Re-price action, below-regular OT REFUSED outright rather than silently accepted (below-regular is the shape of a differential, and quietly deriving would hide bad rate data), an audit script for the divergence, and the 2026-08-09 week repaired. It does not REVERSE the earlier row - it makes the same rule unfalsifiable - so both rows stand. STILL OPEN AND EXPLICITLY NOT CLOSED BY THIS ROW, tracked separately rather than carried as a blocker on it: erict@ 5,373 pesos remains invisible, 9 people are still underpaid 27,550.20 on the 2026-08-09 week, and the additions blob is still last-writer-wins on the whole object. Those are their own work, not this row's remainder."
       },
       "planSp": 3,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-08-27T11:05:39.675Z",
+      "flushNote": "flushed 2026-08-27T11:05:39.675Z (approval 7378e56e5902)"
     }
   ]
 }

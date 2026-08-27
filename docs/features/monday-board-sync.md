@@ -840,6 +840,81 @@ pages; the day's budget held.
 it leaves is not cosmetic — `verify.mts` fails on it. On a pass creating more than a handful of rows,
 budget for the full reconcile from the start rather than paying for both.
 
+## Pass 16 — 2026-08-27 · the flush: 9 owed rows land, 33 SP, all re-read
+
+The first flush that ran the ledger to **zero**, and the first end-to-end proof that a dead budget
+now *defers* SP rather than losing it.
+
+Pass 15 (2026-08-26) died at correction 7 of 16 and queued **9 rows** under approval hash
+`7378e56e5902`. Kane: *"All withheld SP — update the board now."* That is the flush trigger, and it
+needed no new approval: every queued entry carries the hash it was born under, so writing it
+**completes an already-approved write the budget interrupted** rather than inventing one.
+
+### The gates that ran before anything was written
+
+- **Concurrency.** `proposal.json` / `pass.mts` / `pending-sp.json` all had mtimes ~21h old — but
+  mtime alone was the thing that false-positived on 2026-08-20, so the tree was checked too:
+  `git status` clean under `.claude/skills/monday-board-sync/` and `src/lib/monday/`, and `baa43bda`
+  already contains that residue and is an ancestor of `origin/main`. **Landed pass, not a live one.**
+- **Budget.** One `boardGroups` probe: OK. The `retry_in_seconds: 21347` observed at 18:04:11Z on
+  the 26th predicted a 00:00Z reset, and the budget was indeed back — the UTC-day bucket confirmed a
+  **fifth** time, now by prediction rather than observation.
+- **`revalidate()` on all 9: 0 refused.** Every entry re-derived against the *current* repo and plan —
+  no re-score, name still byte-exact in `PLAN_TASKS`, every Done row carrying a Completed Date equal
+  to its last sha's commit date **now**, every sha still resolvable and still an ancestor of
+  `origin/main`, no Done row carrying an open blocker.
+
+### 33 SP written, not 38 — and the gap is the point
+
+The nine entries total **38** plan SP. Only **33** were written as Actual SP, because the Tickets
+notification row is `Pending Deploy` and a non-Done row gets **no Actual SP and no Completed Date**.
+`correctionValues()` enforces that, so the 5 SP is not lost — it is *not yet earned*, and it stays
+visible as Estimated SP on an open row. A flush that had written 38 would have been the invented
+Actual SP the skill forbids.
+
+| Row | Status | SP | Completed |
+|---|---|---|---|
+| Exported pay stubs name the CURRENT department | Done | 3 | 2026-08-26 |
+| Tickets board notifies the requester on every update | **Pending Deploy** | — | — |
+| `kpi.scored` employee notification | Done | 5 | 2026-08-17 |
+| Accounting is told who logged no Hubstaff hours | Done | 5 | 2026-08-21 |
+| Hubstaff exempt-department list broke on a rename | Done | 2 | 2026-08-21 |
+| Pay Structure shows a department's members | Done | 5 | 2026-08-21 |
+| Offboarded people drop off the Payment Catalog | Done | 5 | 2026-08-21 |
+| Payroll Wizard manual validation | Done | 5 | 2026-08-21 |
+| Orphanage OT pricing extracted and tested | Done | 3 | 2026-08-21 |
+
+The held row is held on a **measured** blocker, not an asserted one: `ticket_replied` and
+`ticket_moved` are absent from `webhooks.config`, so the email leg no-ops. A delay cannot close that
+— only the n8n import can. Note the direction of the risk: if the import had happened overnight the
+row would now be *under*-stated, which is the fail-closed side and the correct one to err on.
+
+### Completed Dates stayed put, and one row proves why that matters
+
+None moved to the flush day. `kpi.scored` kept **2026-08-17**, which is what filed it under
+**Sprint 26** (Aug 4–17 with the gap days) while the other eight sit in Sprint 27 — verified on the
+board, not assumed. Had the flush stamped 08-27, that row would have been re-filed into the wrong
+sprint and inflated S27's velocity with S26's work. The lag is recorded in `flushFootnote()` on each
+item update instead: queue date, original approval hash, and the delay.
+
+### Verified by re-reading, in full
+
+`verify-one.mts` on all nine item ids — 9 calls, chosen over `verify.mts` because the flush changed
+no structure and `verify.mts` pages the whole 3,133-item board. Every one matched: status, Actual SP,
+Completed Date, sprint label, group, and epic relation intact (the flush writes no relation, and the
+re-read confirms it erased none). **Nine of nine, VERIFY PASS.** Ledger now reads `total 9 · unflushed 0`.
+
+Total cost ≈ 37 calls (1 probe + 9 dry-run lookups + 18 write + 9 verify) against a budget a full
+reconcile would have spent outright — which is the whole argument for the flush path.
+
+### Still undeclared, deliberately not folded in
+
+Three commits landed after the pass commit and are **not in `hris-plan.ts`**: `d81ffecc` Manager
+Scheduling tab (UI only, no backend) plus its two follow-ups `23c45325` and `850fdf22`. Clustered by
+file overlap they are one row, not three. They are **out of scope for a flush** — the ledger is only
+for corrections to rows that already exist, and queueing a new row produces a guaranteed refusal.
+They need a `review.mts` pass and their own approval hash.
+
 ## Cross-links
 
 `docs/features/INDEX.md` · memory `monday-hris-board-sync` · pass evidence
