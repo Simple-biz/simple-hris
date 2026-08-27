@@ -45,8 +45,13 @@ import {
 } from '@/lib/payment-catalog/system-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
+import {
+  HSL_WEEK_MODEL_CUTOVER_KEY,
+  resolveHslWeekModelWithDefault,
+} from '@/lib/payroll/hsl-week-model';
 import { downloadPaySnapshotPdf, type PaySnapshotPdfRow } from '@/lib/payroll/pay-snapshot-pdf';
 import {
+  getHslAdjustedEnd,
   isFinalPabWeek as gateIsFinalPabWeek,
   listTechBonusWeekOptions,
   owningMondayOf,
@@ -78,7 +83,8 @@ import {
   parseColDate,
   parseDateRangeFromFilename,
   payWeekFromUploadStart,
-  buildPabCalendarWeeks,
+  buildPabCalendarWeeksFullWeek,
+  buildPabCalendarWeeksSunSatDisplay,
   pabDateKey,
   resolveCanonicalColumnsToIso,
   resolveCanonicalColumnsToPayWeek,
@@ -697,6 +703,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   const [liveHours, setLiveHours] = useState<{ days: Record<string, number>; asOf: string } | null>(null);
   // Holiday map: ISO "YYYY-MM-DD" -> holiday name (only enabled holidays when master toggle is on)
   const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
+  /** Raw `hsl.week_model_cutover` — null means "unset", which the resolver reads
+   *  as the live code default, NOT as "no cutover". */
+  const [hslCutoverSetting, setHslCutoverSetting] = useState<string | null>(null);
   const [holidayModal, setHolidayModal] = useState<{ name: string; date: string } | null>(null);
   /** Mobile: PAB rules, bonus status, and pay numbers live in this sheet (charts stay on the main view). */
   const [mobileHelpOpen, setMobileHelpOpen] = useState(false);
@@ -891,7 +900,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           fetch(`/api/employee-hourly-rates?email=${encodeURIComponent(email)}`, { cache: 'no-store' }),
           fetch('/api/app-settings?keys=usd_to_php_rate,usd_to_cop_rate', { cache: 'no-store' }),
           fetch(`/api/hubstaff-hours?source_files=1&_=${Date.now()}`, { cache: 'no-store' }),
-          fetch('/api/app-settings?keys=us_holidays_enabled,us_holidays_list', { cache: 'no-store' }),
+          fetch(`/api/app-settings?keys=us_holidays_enabled,us_holidays_list,${encodeURIComponent(HSL_WEEK_MODEL_CUTOVER_KEY)}`, { cache: 'no-store' }),
           fetch('/api/payment-catalog/system-bonuses', { cache: 'no-store' }),
         ]);
 
@@ -916,6 +925,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         const holidayList = parseUsHolidaysList(hVals['us_holidays_list'] ?? null);
         const holidayEnabled = (hVals['us_holidays_enabled'] ?? 'false') === 'true';
         setUsHolidayDates(getEnabledHolidayMap(holidayList, holidayEnabled));
+        setHslCutoverSetting(hVals[HSL_WEEK_MODEL_CUTOVER_KEY] ?? null);
 
         setUsdToPhpRate(usdToPhp);
 
@@ -1517,6 +1527,31 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   const pabCalendar = useMemo<PabCalendarDay[][] | null>(() => {
     if (!pabMonthRange) return null;
     const useSelected = !!selectedFile && selectedFile !== '__all__';
+
+    /**
+     * One builder for both call sites below, so the placeholder grid and the
+     * real grid can never disagree on week shape.
+     *
+     * HSL runs 7-day weeks on the resolved model (Sun→Sat post-cutover, Mon→Sun
+     * before it) with every cell scoring — weekends genuinely earn a qualifying
+     * day. Everyone else gets the Sun–Sat DISPLAY grid: the same Mon–Fri scoring
+     * cells as before, laid out in 7 columns, with weekends marked
+     * `scoring: false`. That is why every verdict derived from this calendar
+     * filters on `scoring` — before 2026-08-27 this strip was Mon–Fri for
+     * everyone, HSL included.
+     */
+    const buildWeeks = (hours: Map<string, number>): PabCalendarDay[][] => {
+      if (!isHsl) {
+        return buildPabCalendarWeeksSunSatDisplay(pabMonthRange.start, pabMonthRange.end, hours);
+      }
+      const model = resolveHslWeekModelWithDefault(pabMonthRange.start, hslCutoverSetting);
+      return buildPabCalendarWeeksFullWeek(
+        pabMonthRange.start,
+        getHslAdjustedEnd(pabMonthRange.end, model),
+        hours,
+        model,
+      );
+    };
     // Always use merged data for hours lookup so every week in the derived
     // PAB period is populated, regardless of which file drives the period.
     const pabRow = pabMergedRow ?? row;
@@ -1538,7 +1573,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     // When we have a month range but no row/cols yet, still render empty weeks
     // (placeholders with 0h) instead of looping the skeleton forever.
     if (!pabRow || !pabCols.length) {
-      const empty = buildPabCalendarWeeks(pabMonthRange.start, pabMonthRange.end, liveMap);
+      const empty = buildWeeks(liveMap);
       if (empty.length === 0) return null;
       if (liveMap.size === 0) return [empty[0]];
       // Live data exists — show every week that has started, mirroring the trim below.
@@ -1611,12 +1646,13 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       holidayKeySet.add(`${y}-${m}-${d}`);
     }
 
-    const rawWeeks = buildPabCalendarWeeks(pabMonthRange.start, pabMonthRange.end, hoursByDateKey);
+    const rawWeeks = buildWeeks(hoursByDateKey);
     // Apply holiday forgiveness: preserve actual seconds but force passes=true.
+    // Never on a non-scoring cell — a display-only weekend must not read as a pass.
     const weeks = rawWeeks.map(week =>
       week.map(day => {
         const key = pabDateKey(day.date);
-        if (!holidayKeySet.has(key)) return day;
+        if (!day.scoring || !holidayKeySet.has(key)) return day;
         return { ...day, passes: true };
       }),
     );
@@ -1645,11 +1681,25 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       return weekStart.getTime() <= cutoff.getTime();
     });
     return trimmed.length > 0 ? trimmed : weeks.slice(0, 1);
-  }, [pabMonthRange, pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect, myDisputes, usHolidayDates, liveHours]);
+  }, [pabMonthRange, pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect, myDisputes, usHolidayDates, liveHours, isHsl, hslCutoverSetting]);
 
   /** PAB: every expected weekday in the PAB period must be ≥ 7 h. */
   const pabWeekdayHours = pabDailyHours.filter((d) => d.weekday);
-  const allPabDays = pabCalendar?.flat() ?? [];
+  /** SCORING cells only. The grid is Sun–Sat since 2026-08-27, and for non-HSL its
+   *  weekend cells are chrome — counting them would fail everyone every month. */
+  const allPabDays = (pabCalendar?.flat() ?? []).filter((d) => d.scoring);
+
+  /**
+   * Column headers, derived from the calendar's OWN first cell rather than from
+   * the model a second time — so the header can never label a column the grid
+   * didn't build (Sun-anchored for everyone except pre-cutover HSL, which stays
+   * Mon-anchored).
+   */
+  const pabGridDayLabels = useMemo(() => {
+    const initials = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+    const firstDow = pabCalendar?.[0]?.[0]?.date.getDay() ?? 0;
+    return Array.from({ length: 7 }, (_, i) => initials[(firstDow + i) % 7]);
+  }, [pabCalendar]);
 
   /**
    * TEMPORARY orphanage → PAB coverage (AUTO mode, see orphanage-pab-coverage.ts):
@@ -1663,7 +1713,10 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     const covered = new Set<string>();
     if (!orphanageHoursIndex.size || !pabCalendar) return covered;
     const secByKey = new Map<string, number>();
-    for (const d of pabCalendar.flat()) secByKey.set(pabDateKey(d.date), d.seconds);
+    // Scoring cells only — orphanage hours forgive weekdays, never display cells.
+    for (const d of pabCalendar.flat()) {
+      if (d.scoring) secByKey.set(pabDateKey(d.date), d.seconds);
+    }
     for (const [isoDate, orphHours] of orphanageHoursByCoveredDate(orphanageHoursIndex, email)) {
       const [y, m, dd] = isoDate.split('-').map(Number);
       if (!y || !m || !dd) continue;
@@ -1749,6 +1802,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     const today = new Date();
     const todayT = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
     return days.filter((d) => {
+      if (!d.scoring) return false; // display-only weekend cell — never a violation
       const dT = new Date(d.date.getFullYear(), d.date.getMonth(), d.date.getDate()).getTime();
       return dT < todayT && d.hasData && !d.passes;
     });
@@ -1763,7 +1817,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     'eligible' | 'not_eligible' | 'pending' | 'unknown'
   >(() => {
     if (!row && !pabMergedRow) return 'unknown';
-    const days = pabCalendar?.flat();
+    const days = pabCalendar?.flat().filter((d) => d.scoring);
     if (!days || days.length === 0) return 'unknown';
     // Any elapsed sub-7h weekday disqualifies the whole month immediately,
     // even while the period is still in progress.
@@ -2420,22 +2474,22 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
               <div className="h-6 w-6 shrink-0 animate-pulse rounded-md bg-indigo-100/70 dark:bg-indigo-950/40" />
             </div>
             <div className="flex flex-1 flex-col gap-0">
-              <div className="mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] gap-0.5">
+              <div className="mb-0.5 grid grid-cols-[1.25rem_repeat(7,1fr)] gap-0.5">
                 <div />
-                {Array.from({ length: 5 }, (_, i) => (
+                {Array.from({ length: 7 }, (_, i) => (
                   <div key={i} className="mx-auto h-2 w-2.5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
                 ))}
               </div>
               {Array.from({ length: 5 }, (_, wi) => (
-                <div key={wi} className="mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] items-stretch gap-0.5">
+                <div key={wi} className="mb-0.5 grid grid-cols-[1.25rem_repeat(7,1fr)] items-stretch gap-0.5">
                   <div className="flex items-center justify-end">
                     <div className="h-2 w-1.5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
                   </div>
-                  {Array.from({ length: 5 }, (_, di) => (
+                  {Array.from({ length: 7 }, (_, di) => (
                     <div
                       key={di}
                       className="h-10 animate-pulse rounded-md border border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900/30"
-                      style={{ animationDelay: `${(wi * 5 + di) * 35}ms` }}
+                      style={{ animationDelay: `${(wi * 7 + di) * 35}ms` }}
                     />
                   ))}
                 </div>
@@ -3335,23 +3389,23 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                   <div className="flex min-h-0 flex-1 flex-col gap-0">
                     <div className="min-h-0 flex-1 overflow-hidden pr-1 [scrollbar-gutter:stable]">
                       {/* Day-of-week headers row */}
-                      <div className="sticky top-0 z-10 mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] gap-0.5 bg-white/95 pb-0.5 dark:bg-[#0d1117]/95">
+                      <div className="sticky top-0 z-10 mb-0.5 grid grid-cols-[1.25rem_repeat(7,1fr)] gap-0.5 bg-white/95 pb-0.5 dark:bg-[#0d1117]/95">
                         <div />
-                        {Array.from({ length: 5 }, (_, i) => (
+                        {Array.from({ length: 7 }, (_, i) => (
                           <div key={i} className="mx-auto h-2 w-2.5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
                         ))}
                       </div>
                       {/* Week rows */}
                       {Array.from({ length: 5 }, (_, wi) => (
-                        <div key={wi} className="mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] items-stretch gap-0.5">
+                        <div key={wi} className="mb-0.5 grid grid-cols-[1.25rem_repeat(7,1fr)] items-stretch gap-0.5">
                           <div className="flex items-center justify-end">
                             <div className="h-2 w-1.5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
                           </div>
-                          {Array.from({ length: 5 }, (_, di) => (
+                          {Array.from({ length: 7 }, (_, di) => (
                             <div
                               key={di}
                               className="h-10 animate-pulse rounded-lg border border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900/30"
-                              style={{ animationDelay: `${(wi * 5 + di) * 40}ms` }}
+                              style={{ animationDelay: `${(wi * 7 + di) * 40}ms` }}
                             />
                           ))}
                         </div>
@@ -3367,9 +3421,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                   <div className="flex min-h-0 flex-1 flex-col gap-0">
                     <div className="flex flex-1 flex-col overflow-x-clip pr-1">
                       {/* Column headers */}
-                      <div className="sticky top-0 z-10 mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] gap-0.5 bg-white/95 pb-0.5 dark:bg-[#0d1117]/95">
+                      <div className="sticky top-0 z-10 mb-0.5 grid grid-cols-[1.25rem_repeat(7,1fr)] gap-0.5 bg-white/95 pb-0.5 dark:bg-[#0d1117]/95">
                         <div />
-                        {['M', 'T', 'W', 'T', 'F'].map((d, i) => (
+                        {pabGridDayLabels.map((d, i) => (
                           <div key={i} className="text-center text-[8px] font-semibold text-zinc-400 dark:text-zinc-500">
                             {d}
                           </div>
@@ -3379,14 +3433,14 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                       {pabCalendar.map((week, wi) => (
                         <div
                           key={wi}
-                          className="mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] items-stretch gap-0.5 lg:min-h-0 lg:flex-1 lg:grid-rows-1"
+                          className="mb-0.5 grid grid-cols-[1.25rem_repeat(7,1fr)] items-stretch gap-0.5 lg:min-h-0 lg:flex-1 lg:grid-rows-1"
                           style={{ animation: `pab-row-in 0.35s ease-out ${wi * 80}ms both` }}
                         >
                           <div className="flex items-center justify-end text-[8px] font-medium text-zinc-400 dark:text-zinc-500">
                             {wi + 1}
                           </div>
-                          {Array.from({ length: 5 }, (_, di) => {
-                            // Latest in-progress (past, no-data) M–F day in this
+                          {Array.from({ length: 7 }, (_, di) => {
+                            // Latest in-progress (past, no-data) day in this
                             // week — only that one gets the animated hourglass.
                             const _now = new Date();
                             const _todayMid = new Date(_now.getFullYear(), _now.getMonth(), _now.getDate());
@@ -3397,8 +3451,13 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                               if (d.hasData && d.seconds > 0) continue;
                               if (cm.getTime() > latestInProgressTime) latestInProgressTime = cm.getTime();
                             }
+                            // Column → weekday, derived from the row's OWN first
+                            // cell so this works under both anchors (Sun-first
+                            // for everyone post-cutover, Mon-first for legacy HSL)
+                            // and still tolerates a short row at a period edge.
+                            const rowFirstDow = week[0]?.date.getDay() ?? 0;
                             const day: PabCalendarDay | undefined = week.find(
-                              d => d.date.getDay() === di + 1,
+                              d => d.date.getDay() === (rowFirstDow + di) % 7,
                             );
                             if (!day) {
                               return (
@@ -3469,7 +3528,13 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                             const effectivelyPasses = day.passes || forgiven;
 
                             let cellBorder: string;
-                            if (isHoliday) {
+                            if (!day.scoring) {
+                              // Display-only weekend cell (non-HSL). It shows real
+                              // tracked time but decides nothing, so it must never
+                              // render green OR red — either would misstate PAB.
+                              cellBorder =
+                                'border-zinc-200/70 bg-zinc-50/60 dark:border-zinc-800/70 dark:bg-zinc-900/25';
+                            } else if (isHoliday) {
                               cellBorder =
                                 'border-sky-400 bg-sky-50 ring-1 ring-sky-400/40 dark:border-sky-600/70 dark:bg-sky-950/40';
                             } else if (effectivelyPasses) {
@@ -3512,7 +3577,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                               <div
                                 key={di}
                                 className={`group relative flex h-10 flex-col overflow-hidden rounded-lg border transition-[transform,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:z-10 hover:shadow-md motion-safe:hover:scale-[1.04] motion-reduce:transition-none lg:h-full lg:min-h-[2.5rem] ${cellBorder} ${cellClickable ? `cursor-pointer ${isHoliday ? 'hover:ring-2 hover:ring-sky-400/50' : 'hover:ring-2 hover:ring-orange-300/50'}` : ''}`}
-                                title={`${day.dayLabel} ${day.dateStr}${holidayName ? ` · ${holidayName} (holiday — click for details)` : ''}: ${secondsToDisplay(day.seconds)}${day.passes ? ' ✓' : orphanageForgiven ? ' ✓ Forgiven by Accounting — orphanage hours recorded in payroll' : disputeForgiven ? ' ✓ Forgiven by Accounting' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h' : ' — no data'}${rateTooltipSuffix}`}
+                                title={`${day.dayLabel} ${day.dateStr}${holidayName ? ` · ${holidayName} (holiday — click for details)` : ''}: ${secondsToDisplay(day.seconds)}${!day.scoring ? ' — weekend (does not count toward PAB)' : day.passes ? ' ✓' : orphanageForgiven ? ' ✓ Forgiven by Accounting — orphanage hours recorded in payroll' : disputeForgiven ? ' ✓ Forgiven by Accounting' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h' : ' — no data'}${rateTooltipSuffix}`}
                                 style={{
                                   // `backwards` (not `both`): hold the hidden start-state during the
                                   // stagger delay, but release the transform once the entrance ends so

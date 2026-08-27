@@ -17,6 +17,10 @@ import {
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import { cn } from '@/lib/utils';
 import {
+  HSL_WEEK_MODEL_CUTOVER_KEY,
+  resolveHslWeekModelWithDefault,
+} from '@/lib/payroll/hsl-week-model';
+import {
   getEnabledHolidayMap,
   parseUsHolidaysList,
   US_HOLIDAYS_ENABLED_KEY,
@@ -160,6 +164,10 @@ export default function ManagerMemberHoursMini({
   const [mergedRow, setMergedRow] = useState<Record<string, unknown> | null>(null);
   const [mergedColumns, setMergedColumns] = useState<string[]>([]);
   const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
+  /** Raw `hsl.week_model_cutover` app-setting — resolves the HSL week anchor
+   *  (Mon→Sun legacy vs Sun→Sat post-cutover) exactly like the Payroll Wizard.
+   *  null is not "no cutover": the resolver falls back to the live code default. */
+  const [hslCutoverSetting, setHslCutoverSetting] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -254,7 +262,7 @@ export default function ManagerMemberHoursMini({
     void (async () => {
       try {
         const res = await fetch(
-          `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY].join(','))}`,
+          `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY, HSL_WEEK_MODEL_CUTOVER_KEY].join(','))}`,
           { cache: 'no-store' },
         );
         const json = (await res.json()) as { values?: Record<string, string | null> };
@@ -267,6 +275,7 @@ export default function ManagerMemberHoursMini({
         setUsHolidayDates(
           getEnabledHolidayMap(parseUsHolidaysList(values[US_HOLIDAYS_LIST_KEY] ?? null), enabled),
         );
+        setHslCutoverSetting(values[HSL_WEEK_MODEL_CUTOVER_KEY] ?? null);
       } catch {
         if (!cancelled) setUsHolidayDates(new Map());
       }
@@ -313,10 +322,28 @@ export default function ManagerMemberHoursMini({
   // Family-aware — an `hsl:<sub>` sub-team label is still HSL.
   const isHslMember = isHslFamilyLabel(department);
 
+  /**
+   * Sun–Sat unless this is an HSL member on a PRE-cutover month, which keeps the
+   * legacy Mon→Sun anchor so historical grids still match what was dispatched.
+   * Non-HSL is always Sun–Sat: this grid marks weekends non-scoring, so the layout
+   * moves and the verdict does not.
+   */
+  const startOnSunday = useMemo(
+    () =>
+      !isHslMember ||
+      resolveHslWeekModelWithDefault(monthStart, hslCutoverSetting) === 'sun_sat',
+    [isHslMember, monthStart, hslCutoverSetting],
+  );
+
   const calendarWeeks = useMemo<PabCalendarDay[][] | null>(() => {
-    const w = buildCalendarMonthWeeksIncludingWeekends(monthStart, monthEnd, hoursByDateKey);
+    const w = buildCalendarMonthWeeksIncludingWeekends(
+      monthStart,
+      monthEnd,
+      hoursByDateKey,
+      startOnSunday,
+    );
     return w.length > 0 ? w : null;
-  }, [hoursByDateKey, monthStart, monthEnd]);
+  }, [hoursByDateKey, monthStart, monthEnd, startOnSunday]);
 
   const monthAllDaysTotalSeconds = useMemo(() => {
     let s = 0;
@@ -433,6 +460,7 @@ export default function ManagerMemberHoursMini({
                 viewMonth={viewMonth}
                 usHolidayDates={usHolidayDates}
                 isHsl={isHslMember}
+                startOnSunday={startOnSunday}
                 hoursByDateKey={hoursByDateKey}
               />
             )}
@@ -482,6 +510,7 @@ function CalendarBody({
   viewMonth,
   usHolidayDates,
   isHsl,
+  startOnSunday,
   hoursByDateKey,
 }: {
   weeks: PabCalendarDay[][];
@@ -489,6 +518,8 @@ function CalendarBody({
   viewMonth: number;
   usHolidayDates: Map<string, string>;
   isHsl: boolean;
+  /** Must match what built `weeks`, or the header labels the wrong columns. */
+  startOnSunday: boolean;
   hoursByDateKey: Map<string, number>;
 }) {
   // Cache today midnight once — reading Date inside every cell is wasteful.
@@ -500,7 +531,10 @@ function CalendarBody({
   return (
     <div>
       <div className="mb-1 grid grid-cols-7 gap-1">
-        {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
+        {(startOnSunday
+          ? ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+          : ['M', 'T', 'W', 'T', 'F', 'S', 'S']
+        ).map((d, i) => (
           <div
             key={i}
             className="text-center text-[8px] font-semibold text-zinc-400 dark:text-zinc-500"

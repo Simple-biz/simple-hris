@@ -597,6 +597,8 @@ export default function EmployeePabCalendar({
           seconds,
           passes: seconds >= 7 * 3600,
           hasData: hours.has(key),
+          // HSL grid: weekends genuinely earn a qualifying day, so every cell scores.
+          scoring: true,
         });
         if (week.length === 7) {
           weeks.push(week);

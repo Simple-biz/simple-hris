@@ -226,11 +226,14 @@ export function computePabEligibleEmails(args: {
   orphanageHoursByEmailIso?: Map<string, Map<string, number>>;
   /**
    * HSL week model for the period. 'sun_sat' (post-cutover) walks the ≥5/7
-   * eligibility over Sun→Sat weeks; 'mon_sun' (default/legacy) over Mon→Sun.
+   * eligibility over Sun→Sat weeks; 'mon_sun' (legacy) over Mon→Sun.
    * Only affects HSL employees. The caller must compute `hslAdjustedEnd` with
    * the matching model (see getHslAdjustedEnd).
+   *
+   * REQUIRED as of 2026-08-27 — an optional week model is a silent
+   * pre-cutover fallback wearing a question mark.
    */
-  weekModel?: 'mon_sun' | 'sun_sat';
+  weekModel: 'mon_sun' | 'sun_sat';
 }): Set<string> {
   const { rows, pabRange, hslAdjustedEnd, hslEmails } = args;
   const nonHslRange = args.pabRangeSunSat ?? pabRange;
@@ -264,11 +267,14 @@ export function computePabEligibleEmails(args: {
         pabRange.start,
         hslAdjustedEnd,
         hoursByDateKey,
-        args.weekModel ?? 'mon_sun',
+        args.weekModel,
       );
     } else {
+      // Mon–Fri scoring cells only. buildPabCalendarWeeks emits nothing else, but
+      // the `scoring` filter states the contract so a future Sun–Sat display
+      // builder swapped in here cannot silently fail everyone on weekend cells.
       const weeks = buildPabCalendarWeeks(nonHslRange.start, nonHslRange.end, hoursByDateKey);
-      const flat = weeks.flat();
+      const flat = weeks.flat().filter((d) => d.scoring);
       passes = flat.length > 0 && flat.every((d) => d.passes);
     }
 
@@ -285,8 +291,13 @@ export function computePabEligibleEmails(args: {
 export function getHslAdjustedEnd(
   pabEnd: Date,
   /** 'mon_sun' (legacy) snaps to the closing SUNDAY; 'sun_sat' (post-cutover)
-   *  snaps to the closing SATURDAY. Defaults to 'mon_sun'. */
-  weekModel: 'mon_sun' | 'sun_sat' = 'mon_sun',
+   *  snaps to the closing SATURDAY.
+   *
+   *  REQUIRED as of 2026-08-27 — the old 'mon_sun' default let
+   *  member-monthly-pay.ts extend the period to the wrong day for three months
+   *  after the cutover without any error. Resolve the model from the cutover
+   *  setting and pass it explicitly. */
+  weekModel: 'mon_sun' | 'sun_sat',
 ): Date {
   const d = new Date(pabEnd.getFullYear(), pabEnd.getMonth(), pabEnd.getDate());
   const dow = d.getDay(); // Sun=0 … Sat=6

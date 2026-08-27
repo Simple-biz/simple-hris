@@ -38,11 +38,15 @@ import {
 } from '@/components/ui/dialog';
 import { normEmail } from '@/lib/email/norm-email';
 import {
-  buildPabCalendarWeeksMonSun,
+  buildPabCalendarWeeksFullWeek,
   getCurrentPabMonth,
   getPabMonthRange,
   type PabCalendarDay,
 } from '@/lib/hubstaff/calendar-column-dedupe';
+import {
+  HSL_WEEK_MODEL_CUTOVER_KEY,
+  resolveHslWeekModelWithDefault,
+} from '@/lib/payroll/hsl-week-model';
 import {
   fetchHoursByEmployee,
   type HubstaffHoursByEmployee,
@@ -156,6 +160,28 @@ export default function CreateOrphanageStyleDisputeDialog({
   const [internalDisputesLoading, setInternalDisputesLoading] = useState(false);
   const disputesByEmployee = externalDisputesByEmployee ?? internalDisputesByEmployee;
   const disputesLoading = externalDisputesLoading ?? internalDisputesLoading;
+
+  /** Raw `hsl.week_model_cutover`. null → the resolver's live code default. */
+  const [hslCutoverSetting, setHslCutoverSetting] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/app-settings?keys=${encodeURIComponent(HSL_WEEK_MODEL_CUTOVER_KEY)}`,
+          { cache: 'no-store' },
+        );
+        const json = (await res.json()) as { values?: Record<string, string | null> };
+        if (cancelled) return;
+        setHslCutoverSetting(json.values?.[HSL_WEEK_MODEL_CUTOVER_KEY] ?? null);
+      } catch {
+        // Leave null — the resolver falls back to the live default cutover, which
+        // is the correct Sun–Sat answer for every current month.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open]);
 
   // Reset form each time the dialog re-opens.
   useEffect(() => {
@@ -352,17 +378,31 @@ export default function CreateOrphanageStyleDisputeDialog({
   /** PAB month range (first Mon on/after the 1st → Friday of last in-month week — same as EmployeePabCalendar). */
   const pabRange = useMemo(() => getPabMonthRange(viewYear, viewMonth), [viewYear, viewMonth]);
 
+  /**
+   * Week anchor for the picker grid. Resolved per VIEWED MONTH, not per person:
+   * the cutover is a date rule, and by the time it bites (June 2026 onward) every
+   * department runs Sun–Sat, so one anchor is correct for everyone. Browsing back
+   * to a pre-cutover month keeps the Mon→Sun layout those months were worked on.
+   *
+   * Only the layout moves — every cell here stays forgivable, weekends included.
+   */
+  const pickerWeekModel = useMemo(
+    () => resolveHslWeekModelWithDefault(pabRange.start, hslCutoverSetting),
+    [pabRange, hslCutoverSetting],
+  );
+
   const calendar = useMemo<PabCalendarDay[][] | null>(() => {
-    // Extend the PAB end (a Friday) to the following Sunday so each week shows its
-    // full Mon→Sun span — weekend days are forgivable in the orphanage flow.
-    const monSunEnd = new Date(
-      pabRange.end.getFullYear(),
-      pabRange.end.getMonth(),
-      pabRange.end.getDate() + 2,
+    // The builder anchors the opening week and extends the end to the day that
+    // closes the final week (Saturday for sun_sat, Sunday for mon_sun), so the
+    // last week's weekend cells are always present and clickable.
+    const weeks = buildPabCalendarWeeksFullWeek(
+      pabRange.start,
+      pabRange.end,
+      activePersonHoursByDateKey,
+      pickerWeekModel,
     );
-    const weeks = buildPabCalendarWeeksMonSun(pabRange.start, monSunEnd, activePersonHoursByDateKey);
     return weeks.length > 0 ? weeks : null;
-  }, [pabRange, activePersonHoursByDateKey]);
+  }, [pabRange, activePersonHoursByDateKey, pickerWeekModel]);
 
   const goPrevMonth = useCallback(() => {
     setViewMonth((m) => {
@@ -695,10 +735,13 @@ export default function CreateOrphanageStyleDisputeDialog({
                 </button>
               </div>
 
-              {/* Day headers — Mon–Sun (weekend days are forgivable here) */}
+              {/* Day headers — follows the picker's anchor (weekend days are forgivable here) */}
               <div className="mb-1 grid grid-cols-[1.5rem_repeat(7,1fr)] gap-1">
                 <div />
-                {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
+                {(pickerWeekModel === 'sun_sat'
+                  ? ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+                  : ['M', 'T', 'W', 'T', 'F', 'S', 'S']
+                ).map((d, i) => (
                   <div key={i} className="text-center text-[8px] font-semibold text-zinc-400 dark:text-zinc-500">
                     {d}
                   </div>

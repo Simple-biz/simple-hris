@@ -26,6 +26,10 @@ import {
 } from '@/lib/fx/usd-php';
 import { phpHourlyPayFromSeconds } from '@/lib/payroll/money-php';
 import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
+import {
+  HSL_WEEK_MODEL_CUTOVER_KEY,
+  resolveHslWeekModelWithDefault,
+} from '@/lib/payroll/hsl-week-model';
 import type { MemberMonthlyPay } from '@/lib/payroll/member-monthly-pay';
 import {
   buildOrphanageHoursIndex,
@@ -35,6 +39,7 @@ import {
 } from '@/lib/payroll/orphanage-pab-coverage';
 import {
   buildCalendarMonthWeeksIncludingWeekends,
+  checkHslPabEligibility,
   columnsAreAllCanonical,
   getCurrentPabMonth,
   groupDateColumnsByCalendarDay,
@@ -60,6 +65,7 @@ import {
   getEnabledHolidayMap,
 } from '@/lib/us-holidays';
 import {
+  getHslAdjustedEnd,
   listTechBonusWeekOptions,
   parseTechBonusWeekOverrides,
   TECH_BONUS_WEEK_OVERRIDES_KEY,
@@ -576,6 +582,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   // default `getPabMonthRange()` window. Keeps My Hours' PAB evaluation in lockstep
   // with the wizard + Employee Dashboard.
   const [pabOverrides, setPabOverrides] = useState<PabOverridesMap>(new Map());
+  /** Raw `hsl.week_model_cutover` — null falls back to the live code default,
+   *  it does NOT mean "no cutover". Mirrors EmployeePabCalendar. */
+  const [hslCutoverSetting, setHslCutoverSetting] = useState<string | null>(null);
   // Per-month Tech Bonus payout-week picks from the wizard's System Bonus modal
   // (`tech_bonus_week_overrides`). Empty map → the automatic 3rd-week rule.
   const [techWeekOverrides, setTechWeekOverrides] = useState<TechWeekOverridesMap>(new Map());
@@ -948,7 +957,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     void (async () => {
       try {
         const res = await fetch(
-          `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY, PAB_PERIOD_OVERRIDES_KEY, TECH_BONUS_WEEK_OVERRIDES_KEY].join(','))}`,
+          `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY, PAB_PERIOD_OVERRIDES_KEY, TECH_BONUS_WEEK_OVERRIDES_KEY, HSL_WEEK_MODEL_CUTOVER_KEY].join(','))}`,
           { cache: 'no-store' },
         );
         const json = (await res.json()) as { values?: Record<string, string | null> };
@@ -959,6 +968,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
         setUsHolidayDates(getEnabledHolidayMap(parseUsHolidaysList(values[US_HOLIDAYS_LIST_KEY] ?? null), enabled));
         setPabOverrides(parsePabPeriodOverrides(values[PAB_PERIOD_OVERRIDES_KEY] ?? null));
         setTechWeekOverrides(parseTechBonusWeekOverrides(values[TECH_BONUS_WEEK_OVERRIDES_KEY] ?? null));
+        setHslCutoverSetting(values[HSL_WEEK_MODEL_CUTOVER_KEY] ?? null);
       } catch {
         if (!cancelled) {
           setUsHolidayDates(new Map());
@@ -1141,10 +1151,27 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     return set;
   }, [isHsl, mergedHoursByDateKey]);
 
+  /**
+   * Sun–Sat unless this is an HSL member viewing a PRE-cutover month, which keeps
+   * the legacy Mon→Sun anchor so an old month still reads the way it was paid.
+   * Non-HSL is always Sun–Sat: the weekend cells here are non-scoring, so the
+   * layout moves and no verdict does.
+   */
+  const startOnSunday = useMemo(
+    () =>
+      !isHsl || resolveHslWeekModelWithDefault(monthStart, hslCutoverSetting) === 'sun_sat',
+    [isHsl, monthStart, hslCutoverSetting],
+  );
+
   const hoursCalendar = useMemo<PabCalendarDay[][] | null>(() => {
-    const weeks = buildCalendarMonthWeeksIncludingWeekends(monthStart, monthEnd, mergedHoursByDateKey);
+    const weeks = buildCalendarMonthWeeksIncludingWeekends(
+      monthStart,
+      monthEnd,
+      mergedHoursByDateKey,
+      startOnSunday,
+    );
     return weeks.length > 0 ? weeks : null;
-  }, [mergedHoursByDateKey, monthStart, monthEnd]);
+  }, [mergedHoursByDateKey, monthStart, monthEnd, startOnSunday]);
 
   const monthTotalSeconds = useMemo(() => {
     const days = hoursCalendar?.flat() ?? [];
@@ -1271,10 +1298,48 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   const isPAEligible = useMemo(() => {
     const toIso = (date: Date) =>
       `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-    // Walk every Mon–Fri in the PAB period (not the raw calendar month) so the
-    // status matches the wizard's window. A day passes on ≥7h, a US holiday, an
-    // approved forgiving dispute, or (HSL) an overnight-qualifying pairing —
-    // identical to the per-cell `effectivelyPasses` logic below.
+    /** A weekday is forgiven by a US holiday, an approved dispute, or orphanage
+     *  coverage — the same three sources the per-cell `effectivelyPasses` uses. */
+    const isForgiven = (d: Date) => {
+      const iso = toIso(d);
+      const dispute = disputesByDate.get(iso);
+      return (
+        usHolidayDates.has(iso) ||
+        (!!dispute && disputeGrantsPabForgiveness(dispute)) ||
+        orphanageCoveredKeys.has(pabDateKey(d)) // TEMP orphanage coverage
+      );
+    };
+
+    if (isHsl) {
+      // HSL is ≥5-of-7 over whole weeks — NOT "every weekday passes". Walking
+      // Mon–Fri here (what this did until 2026-08-27) both ignored the weekend
+      // credit that rescues a short weekday and used the pre-cutover anchor, so
+      // My Hours could contradict the wizard and dispatch in either direction.
+      const model = resolveHslWeekModelWithDefault(pabRange.start, hslCutoverSetting);
+      const hslEnd = getHslAdjustedEnd(pabRange.end, model);
+      // Bump forgiven WEEKDAYS to a full 7 h, mirroring applyPabAdjustments.
+      // Weekend cells keep raw hours — under HSL they earn credit on their own
+      // merit, and gifting them 7 h would hand out the 5-of-7 quota.
+      const effectiveHours = new Map(mergedHoursByDateKey);
+      const walk = new Date(
+        pabRange.start.getFullYear(),
+        pabRange.start.getMonth(),
+        pabRange.start.getDate(),
+      );
+      while (walk.getTime() <= hslEnd.getTime()) {
+        const dow = walk.getDay();
+        if (dow >= 1 && dow <= 5 && isForgiven(walk)) {
+          effectiveHours.set(pabDateKey(walk), 7 * 3600);
+        }
+        walk.setDate(walk.getDate() + 1);
+      }
+      // Overnight pairing is handled inside checkHslPabEligibility itself, so
+      // hslOvernightIsos is deliberately not pre-applied here.
+      return checkHslPabEligibility(pabRange.start, hslEnd, effectiveHours, model);
+    }
+
+    // Non-HSL: every Mon–Fri in the PAB period must pass. The grid now reads
+    // Sun–Sat but the scoring set is unchanged — weekends are display only.
     const cur = new Date(pabRange.start.getFullYear(), pabRange.start.getMonth(), pabRange.start.getDate());
     const end = pabRange.end.getTime();
     let anyWeekday = false;
@@ -1282,20 +1347,13 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
       const dow = cur.getDay();
       if (dow >= 1 && dow <= 5) {
         anyWeekday = true;
-        const iso = toIso(cur);
         const sec = mergedHoursByDateKey.get(pabDateKey(cur)) ?? 0;
-        const dispute = disputesByDate.get(iso);
-        const forgiven = !!dispute && disputeGrantsPabForgiveness(dispute);
-        const hslOvernight = isHsl && hslOvernightIsos.has(iso);
-        const passes =
-          sec >= 7 * 3600 || usHolidayDates.has(iso) || forgiven || hslOvernight ||
-          orphanageCoveredKeys.has(pabDateKey(cur)); // TEMP orphanage coverage
-        if (!passes) return false;
+        if (!(sec >= 7 * 3600 || isForgiven(cur))) return false;
       }
       cur.setDate(cur.getDate() + 1);
     }
     return anyWeekday;
-  }, [pabRange, mergedHoursByDateKey, usHolidayDates, disputesByDate, isHsl, hslOvernightIsos, orphanageCoveredKeys]);
+  }, [pabRange, mergedHoursByDateKey, usHolidayDates, disputesByDate, isHsl, orphanageCoveredKeys, hslCutoverSetting]);
 
   /** Hourly rates loaded — gates both PAB and Tech bonus visibility. */
   const hasRates = useMemo(() => {
@@ -1565,7 +1623,10 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                 <div className="min-h-0 flex-1 overflow-x-auto overflow-y-scroll [scrollbar-gutter:stable]">
                   <div className="sticky top-0 z-10 mb-1 grid min-w-[280px] grid-cols-[1.25rem_repeat(7,minmax(0,1fr))] gap-0.5 bg-white/95 pb-0.5 dark:bg-[#0d1117]/95 sm:min-w-0 sm:grid-cols-[1.5rem_repeat(7,minmax(0,1fr))] sm:gap-1">
                     <div />
-                    {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
+                    {(startOnSunday
+                      ? ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+                      : ['M', 'T', 'W', 'T', 'F', 'S', 'S']
+                    ).map((d, i) => (
                       <div key={i} className="text-center text-[7px] font-semibold text-zinc-400 dark:text-zinc-500 sm:text-[8px]">
                         {d}
                       </div>

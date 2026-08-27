@@ -54,6 +54,11 @@ import { getDepartmentRegistry } from '@/lib/departments/registry-db';
 import { resolveDeptKeyWithRegistry } from '@/lib/departments/registry';
 import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import {
+  HSL_WEEK_MODEL_CUTOVER_KEY,
+  resolveHslWeekModelWithDefault,
+  type HslWeekModel,
+} from '@/lib/payroll/hsl-week-model';
+import {
   buildPabCalendarWeeks,
   checkHslPabEligibility,
   columnsAreAllCanonical,
@@ -484,13 +489,17 @@ export async function computeMemberMonthlyPay(args: {
 
   // Step 1: Fetch master + rates + PAB overrides in parallel. We need the master
   // row first to know this employee's alias emails before querying Hubstaff.
-  const [masterMin, rates, pabOverridesValue, pabExclusionsValue, techWeekOverridesValue, rateHistory, holidaySettings, fxValues, payStructuresResult, systemBonusesResult, deptRegistry] =
+  const [masterMin, rates, pabOverridesValue, pabExclusionsValue, techWeekOverridesValue, hslWeekModelCutoverValue, rateHistory, holidaySettings, fxValues, payStructuresResult, systemBonusesResult, deptRegistry] =
     await Promise.all([
       fetchMasterRowsForEmail(new Set([emailNorm])),
       getEmployeeHourlyRatesRows(),
       getAppSetting(PAB_PERIOD_OVERRIDES_KEY),
       getAppSetting(PAB_PERIOD_EXCLUSIONS_KEY),
       getAppSetting(TECH_BONUS_WEEK_OVERRIDES_KEY),
+      // HSL week model. Without this read every HSL PAB verdict on this route
+      // scored Mon→Sun while dispatch (current-pay.ts) paid Sun→Sat — the
+      // divergence behind Aliviah's 2026-08-27 ticket.
+      getAppSetting(HSL_WEEK_MODEL_CUTOVER_KEY),
       fetchAllRateHistory(),
       getAppSettings([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY]),
       getAppSettings(['usd_to_php_rate', USD_TO_COP_SETTINGS_KEY]),
@@ -667,14 +676,28 @@ export async function computeMemberMonthlyPay(args: {
     const pabRange = overrideEntry
       ? { start: overrideEntry.start, end: overrideEntry.end }
       : getPabMonthRange(year, month);
-    const hslAdjustedEnd = getHslAdjustedEnd(pabRange.end);
+    // Anchor on the PAB-month start — the wizard's resolution, and a STABLE date
+    // (never week-shape dependent). Pre-cutover months keep Mon→Sun so historical
+    // verdicts stay identical to what was dispatched; June 2026 onward is Sun→Sat.
+    const hslWeekModel: HslWeekModel = resolveHslWeekModelWithDefault(
+      pabRange.start,
+      hslWeekModelCutoverValue,
+    );
+    const hslAdjustedEnd = getHslAdjustedEnd(pabRange.end, hslWeekModel);
 
     let passes: boolean;
     if (isHsl) {
-      passes = checkHslPabEligibility(pabRange.start, hslAdjustedEnd, eligibilityHours);
+      passes = checkHslPabEligibility(
+        pabRange.start,
+        hslAdjustedEnd,
+        eligibilityHours,
+        hslWeekModel,
+      );
     } else {
+      // Mon–Fri scoring cells only — the non-HSL scoring set did not move when
+      // the grids went Sun–Sat (2026-08-27 ruling).
       const weeks = buildPabCalendarWeeks(pabRange.start, pabRange.end, eligibilityHours);
-      const flat = weeks.flat();
+      const flat = weeks.flat().filter((d) => d.scoring);
       passes = flat.length > 0 && flat.every((d) => d.passes);
     }
     pabEligByMonthKey.set(key, passes);

@@ -98,8 +98,12 @@ test('checkHslPabEligibility: anchor determines the 7-day grouping', () => {
     checkHslPabEligibility(start, new Date(2026, 5, 6), hours, 'sun_sat'),
     true,
   );
-  // Default arg = legacy mon_sun.
-  assert.equal(checkHslPabEligibility(start, new Date(2026, 5, 7), hours), false);
+  // There is NO default arg any more (2026-08-27). The week model is required, so
+  // a caller cannot silently inherit the legacy Mon→Sun week the way
+  // member-monthly-pay.ts did for three months after the cutover. This is a
+  // type-level guarantee, so the test asserts the compile error exists.
+  // @ts-expect-error - weekModel is a required argument
+  void (() => checkHslPabEligibility(start, new Date(2026, 5, 7), hours));
 });
 
 // ── Integration: the exact current-pay.ts / wizard resolution at the cutover ──

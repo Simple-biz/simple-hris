@@ -381,6 +381,18 @@ export interface PabCalendarDay {
   passes: boolean;
   /** Whether we found data for this date */
   hasData: boolean;
+  /**
+   * Whether this cell participates in the PAB verdict. `false` marks a
+   * DISPLAY-ONLY cell — rendered so the grid can read Sun–Sat, but never
+   * counted by an eligibility walk.
+   *
+   * Non-HSL PAB is scored over Mon–Fri and the 2026-08-27 Sun–Sat display
+   * change deliberately did NOT move that scoring set (Kane's ruling on
+   * Aliviah's ticket: the grid reads Sun–Sat, the money does not move). Any
+   * consumer deriving a verdict from these cells MUST filter on `scoring`
+   * first, or it will fail every employee on two blank weekend cells.
+   */
+  scoring: boolean;
 }
 
 /**
@@ -414,6 +426,7 @@ export function buildPabCalendarWeeks(
         seconds,
         passes: seconds >= 7 * 3600,
         hasData: hoursByDateKey.has(key),
+        scoring: true, // Mon–Fri only: every cell this builder emits is scored.
       });
       if (dow === 5) {
         weeks.push(currentWeek);
@@ -427,21 +440,29 @@ export function buildPabCalendarWeeks(
 }
 
 /**
- * Like {@link buildPabCalendarWeeks} but each week runs the full Mon→Sun (7 days,
- * closing on Sunday) instead of Mon→Fri. Saturday and Sunday are included as
- * ordinary cells carrying real {@link hoursByDateKey} totals and the same ≥ 7 h
- * `passes` rule — used by the orphanage "Forgiven days" picker so weekend days
- * can be forgiven too.
+ * DISPLAY-ONLY Sun–Sat grid for NON-HSL employees.
  *
- * `pabEnd` is typically the Friday returned by {@link getPabMonthRange}; the walk
- * continues to the following Sunday so the final week's weekend cells appear. Pass
- * an end that already lands on/after that Sunday to include it.
+ * Emits the same Mon–Fri scoring cells as {@link buildPabCalendarWeeks} — byte
+ * for byte, same `passes` rule — but lays them out in 7-column weeks anchored on
+ * Sunday, with Saturday and Sunday added as `scoring: false` cells.
  *
- * @param pabStart  First Monday of the PAB period
- * @param pabEnd    Sunday closing the last week (Friday is auto-extended by callers)
+ * This exists because of Aliviah's 2026-08-27 ticket ("all PAB calendars need to
+ * be Sunday–Saturday"). Kane's ruling was that the GRID moves and the MONEY does
+ * not: non-HSL PAB is still won or lost on Mon–Fri, and the documented
+ * Monday-based PAB-month ownership invariant is untouched
+ * (docs/notes/hsl-week-model-cutover-2026-05-31.md, Invariants §1).
+ *
+ * So this function must NEVER feed an eligibility walk. The weekend cells it
+ * emits carry `passes: false` and `scoring: false`; a caller that flattens these
+ * and runs `.every(d => d.passes)` will fail every single employee on two blank
+ * cells. Verdicts keep calling {@link buildPabCalendarWeeks} directly.
+ *
+ * @param pabStart  First Monday of the PAB period (the walk anchors back to the
+ *                  Sunday on/before it so the opening week is a full row)
+ * @param pabEnd    Last Friday of the PAB period (extended forward to Saturday)
  * @param hoursByDateKey  Map of `"YYYY-M-D"` → seconds worked (use {@link pabDateKey})
  */
-export function buildPabCalendarWeeksMonSun(
+export function buildPabCalendarWeeksSunSatDisplay(
   pabStart: Date,
   pabEnd: Date,
   hoursByDateKey: Map<string, number>,
@@ -449,8 +470,92 @@ export function buildPabCalendarWeeksMonSun(
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const weeks: PabCalendarDay[][] = [];
   let currentWeek: PabCalendarDay[] = [];
+
+  // Anchor back to the Sunday on/before the period start, and forward to the
+  // Saturday on/after the period end, so every row is a full 7 cells.
   const cur = new Date(pabStart.getFullYear(), pabStart.getMonth(), pabStart.getDate());
-  const endTime = pabEnd.getTime();
+  cur.setDate(cur.getDate() - cur.getDay());
+  const gridEnd = new Date(pabEnd.getFullYear(), pabEnd.getMonth(), pabEnd.getDate());
+  gridEnd.setDate(gridEnd.getDate() + ((6 - gridEnd.getDay() + 7) % 7));
+  const endTime = gridEnd.getTime();
+
+  // The scoring window is unchanged: only Mon–Fri INSIDE [pabStart, pabEnd].
+  const scoreLo = new Date(pabStart.getFullYear(), pabStart.getMonth(), pabStart.getDate()).getTime();
+  const scoreHi = new Date(pabEnd.getFullYear(), pabEnd.getMonth(), pabEnd.getDate()).getTime();
+
+  while (cur.getTime() <= endTime) {
+    const dow = cur.getDay();
+    const key = pabDateKey(cur);
+    const seconds = hoursByDateKey.get(key) ?? 0;
+    const t = cur.getTime();
+    const scoring = dow >= 1 && dow <= 5 && t >= scoreLo && t <= scoreHi;
+    currentWeek.push({
+      date: new Date(cur),
+      dateStr: `${cur.getMonth() + 1}/${cur.getDate()}`,
+      dayLabel: dayNames[dow],
+      seconds,
+      // A non-scoring cell can never read as a pass — it is chrome, not a verdict.
+      passes: scoring && seconds >= 7 * 3600,
+      hasData: hoursByDateKey.has(key),
+      scoring,
+    });
+    if (dow === 6) {
+      // Saturday closes the Sun→Sat week
+      weeks.push(currentWeek);
+      currentWeek = [];
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+  if (currentWeek.length > 0) weeks.push(currentWeek);
+  return weeks;
+}
+
+/**
+ * Like {@link buildPabCalendarWeeks} but each week runs the full 7 days instead of
+ * Mon–Fri. Saturday and Sunday are included as ordinary SCORING cells carrying real
+ * {@link hoursByDateKey} totals and the same ≥ 7 h `passes` rule — used by the
+ * orphanage "Forgiven days" picker so weekend days can be forgiven too.
+ *
+ * `weekModel` picks the anchor: `'mon_sun'` opens rows on Monday and closes them on
+ * Sunday (legacy), `'sun_sat'` anchors back to the Sunday on/before `pabStart` and
+ * closes on Saturday. It is REQUIRED — a caller that inherited a default would
+ * silently render the pre-cutover week, which is exactly the class of bug Aliviah's
+ * 2026-08-27 ticket surfaced across five surfaces.
+ *
+ * `pabEnd` is typically the Friday returned by {@link getPabMonthRange}; the walk is
+ * extended to the day that closes the final week so its weekend cells appear.
+ *
+ * @param pabStart  First Monday of the PAB period
+ * @param pabEnd    Last Friday of the PAB period (auto-extended to the week close)
+ * @param hoursByDateKey  Map of `"YYYY-M-D"` → seconds worked (use {@link pabDateKey})
+ * @param weekModel  Week anchor — REQUIRED, never defaulted
+ */
+export function buildPabCalendarWeeksFullWeek(
+  pabStart: Date,
+  pabEnd: Date,
+  hoursByDateKey: Map<string, number>,
+  weekModel: 'mon_sun' | 'sun_sat',
+): PabCalendarDay[][] {
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const sunSat = weekModel === 'sun_sat';
+  const weeks: PabCalendarDay[][] = [];
+  let currentWeek: PabCalendarDay[] = [];
+
+  const cur = new Date(pabStart.getFullYear(), pabStart.getMonth(), pabStart.getDate());
+  // sun_sat anchors BACK to the opening Sunday; mon_sun starts where it is told.
+  if (sunSat) cur.setDate(cur.getDate() - cur.getDay());
+
+  // Extend to the day that closes the last week: Sunday for mon_sun, Saturday
+  // for sun_sat. Mirrors getHslAdjustedEnd so the picker and the engine agree.
+  const gridEnd = new Date(pabEnd.getFullYear(), pabEnd.getMonth(), pabEnd.getDate());
+  const endDow = gridEnd.getDay();
+  if (sunSat) {
+    if (endDow !== 6) gridEnd.setDate(gridEnd.getDate() + ((6 - endDow + 7) % 7));
+  } else if (endDow !== 0) {
+    gridEnd.setDate(gridEnd.getDate() + (7 - endDow));
+  }
+  const endTime = gridEnd.getTime();
+  const weekEndDow = sunSat ? 6 : 0;
 
   while (cur.getTime() <= endTime) {
     const dow = cur.getDay();
@@ -463,9 +568,10 @@ export function buildPabCalendarWeeksMonSun(
       seconds,
       passes: seconds >= 7 * 3600,
       hasData: hoursByDateKey.has(key),
+      // Weekends ARE forgivable in the orphanage flow, so every cell scores.
+      scoring: true,
     });
-    if (dow === 0) {
-      // Sunday closes the Mon→Sun week
+    if (dow === weekEndDow) {
       weeks.push(currentWeek);
       currentWeek = [];
     }
@@ -476,16 +582,23 @@ export function buildPabCalendarWeeksMonSun(
 }
 
 /**
- * Calendar month grid Mon–Sun (7 columns), one row per week. Includes leading/trailing
+ * Calendar month grid (7 columns), one row per week. Includes leading/trailing
  * days from adjacent months; those cells still show {@link hoursByDateKey} when present
  * so split weeks display real Hubstaff totals on every day (My Hours only).
+ *
+ * `startOnSunday` is REQUIRED. It used to default to `false` (Mon–Sun) with the
+ * comment "Default false = Mon–Sun (HSL)" — true before the 2026-05-31 cutover and
+ * wrong after it. Both callers took the default and both therefore kept rendering
+ * HSL members a Monday-first week for three months after the flip; that is half of
+ * what Aliviah's 2026-08-27 ticket reported. Resolve the model and pass it.
  */
 export function buildCalendarMonthWeeksIncludingWeekends(
   monthStart: Date,
   monthEnd: Date,
   hoursByDateKey: Map<string, number>,
-  /** When true, weeks run Sun–Sat (non-HSL). Default false = Mon–Sun (HSL). */
-  startOnSunday = false,
+  /** True → weeks run Sun–Sat; false → Mon–Sun (legacy, pre-cutover HSL only).
+   *  REQUIRED — see the note above; a default here silently outlives a cutover. */
+  startOnSunday: boolean,
 ): PabCalendarDay[][] {
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const ms = new Date(monthStart.getFullYear(), monthStart.getMonth(), monthStart.getDate());
@@ -538,6 +651,9 @@ export function buildCalendarMonthWeeksIncludingWeekends(
       seconds,
       passes,
       hasData,
+      // Out-of-month and weekend cells are chrome here — they auto-pass above
+      // rather than being evaluated, so they must never count toward a verdict.
+      scoring: inMonth && !weekend,
     });
     if (dow === weekEndDow) {
       weeks.push(currentWeek);
@@ -585,10 +701,16 @@ export function checkHslPabEligibility(
   /** Week anchor: 'mon_sun' (legacy) walks Mon→Sun 7-day blocks; 'sun_sat'
    *  (post-cutover) walks Sun→Sat blocks. The ≥5-of-7 quota, weekend credit and
    *  overnight forward/backward logic are IDENTICAL in both — only the 7-day
-   *  grouping anchor moves. Defaults to 'mon_sun'. Callers must pass the matching
-   *  period end (closing Sunday for mon_sun, closing Saturday for sun_sat — see
-   *  getHslAdjustedEnd). */
-  weekModel: 'mon_sun' | 'sun_sat' = 'mon_sun',
+   *  grouping anchor moves. Callers must pass the matching period end (closing
+   *  Sunday for mon_sun, closing Saturday for sun_sat — see getHslAdjustedEnd).
+   *
+   *  REQUIRED as of 2026-08-27. This used to default to 'mon_sun', and
+   *  member-monthly-pay.ts simply never passed it — so the employee- and
+   *  manager-facing PAB verdict was scored on the pre-cutover week while
+   *  dispatch paid on the post-cutover one, for three months. Resolve it with
+   *  resolveHslWeekModelWithDefault and pass it; there is no safe default,
+   *  because the safe answer changes on a date. */
+  weekModel: 'mon_sun' | 'sun_sat',
 ): boolean {
   const endTime = new Date(pabEnd.getFullYear(), pabEnd.getMonth(), pabEnd.getDate()).getTime();
 
