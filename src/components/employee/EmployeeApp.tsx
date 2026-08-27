@@ -15,6 +15,7 @@ import EmployeeTeam from './EmployeeTeam';
 import EmployeeMesa from './EmployeeMesa';
 import EmployeeMyHours from './EmployeeMyHours';
 import EmployeeKpiResults from './EmployeeKpiResults';
+import EmployeeSecondApprovals from './EmployeeSecondApprovals';
 import SWall from '@/components/swall/SWall';
 import CeoChatBubble from '@/components/ceo/CeoChatBubble';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
@@ -159,6 +160,27 @@ export default function EmployeeApp() {
   // indicator, and one-time toast notifications when the state flips.
   const { state: lockState, loading: lockLoading } = useDispatchLock();
   const unreadNotifications = useEmployeeNotificationsUnread(employeeEmail, 'employee');
+
+  // Time adjustments naming this person as second approver and still owing their
+  // signature. Almost always 0, and 0 removes the Approvals tab entirely — the seat
+  // exists only while a manager has actually routed work to them. Asked WITHOUT
+  // `evidence=1` so the shell does not pay for Storage signing it will not render.
+  const [secondApprovalCount, setSecondApprovalCount] = useState(0);
+  useEffect(() => {
+    if (!employeeEmail) {
+      setSecondApprovalCount(0);
+      return;
+    }
+    let cancelled = false;
+    fetch('/api/time-adjustments/second-approvals', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((json: { pendingCount?: number }) => {
+        if (!cancelled) setSecondApprovalCount(json.pendingCount ?? 0);
+      })
+      // A failed count must HIDE the tab, not guess one into existence.
+      .catch(() => { if (!cancelled) setSecondApprovalCount(0); });
+    return () => { cancelled = true; };
+  }, [employeeEmail]);
   // Live bell + toast for new employee-view notifications (KPI bonus scored,
   // salary ready, paid, …). Scoped to 'employee' per notification-alerts.md —
   // every useNotificationChime mount passes a view. Keyed on employeeEmail
@@ -468,6 +490,8 @@ export default function EmployeeApp() {
         );
       case 'kpi':
         return <EmployeeKpiResults employeeEmail={employeeEmail} />;
+      case 'approvals':
+        return <EmployeeSecondApprovals />;
       case 'leaves':
         return (
           <EmployeeLeaves
@@ -537,6 +561,7 @@ export default function EmployeeApp() {
       />
       <EmployeeSidebar
         activeTab={activeTab}
+        secondApprovalCount={secondApprovalCount}
         setActiveTab={navigate}
         mobileOpen={mobileNavOpen}
         employeeName={employeeName || employeeEmail?.split('@')[0]?.replace(/\./g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || 'Employee'}

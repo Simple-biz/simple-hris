@@ -4,6 +4,8 @@ import { canActOnDisputes, resolveUserRole } from './pab-day-disputes';
 import { normEmail } from '@/lib/email/norm-email';
 import { overrideDeptLabel } from '@/lib/departments/dept-email-overrides';
 import { listDepartmentsForManager } from './department-managers';
+import { getEmployeesForAuthorizedServerRoute } from './employees';
+import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
 
 /**
  * Time Adjustment Requests — employee-initiated, evidence-backed requests for Accounting
@@ -274,6 +276,38 @@ export async function listTimeAdjustments(opts?: {
   return { rows: (data ?? []) as TimeAdjustmentRow[], error: error?.message ?? null };
 }
 
+/**
+ * Every request that names `approverEmail` as its second approver — the entire feed
+ * behind the employee portal's Time Adjustment Approvals tab.
+ *
+ * This is the READ half of "the assignment IS the authorization". It is scoped by the
+ * assignment and nothing else: no department filter, no role check, no status filter.
+ * A person who has never been named gets an empty list, which is what keeps the tab
+ * hidden for the whole company.
+ *
+ * Deliberately NOT filtered to undecided rows — Kane's 2026-08-27 scope is "submitted
+ * time adjustments AND time adjustment history", so a row they already signed stays
+ * visible to them afterwards.
+ */
+export async function listSecondApprovalsForApprover(approverEmail: string): Promise<{
+  rows: TimeAdjustmentRow[];
+  error: string | null;
+}> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { rows: [], error: 'Supabase not configured' };
+
+  const email = normEmail(approverEmail) ?? approverEmail.trim().toLowerCase();
+  if (!email) return { rows: [], error: 'Not signed in' };
+
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select('*')
+    .ilike('second_approver_email', email)
+    .order('created_at', { ascending: false });
+
+  return { rows: (data ?? []) as TimeAdjustmentRow[], error: error?.message ?? null };
+}
+
 export async function getTimeAdjustmentById(id: string): Promise<{
   row: TimeAdjustmentRow | null;
   error: string | null;
@@ -407,26 +441,81 @@ async function authorizeManagerOverAdjustment(
   }
   const managedDepts = deptAssigns.map((a) => a.department.trim().toLowerCase());
 
-  // Look up the employee's department from global_master_list.
-  const { data: masterData } = await supabase
+  const empDept = await resolveAdjustmentDepartment(supabase, workEmail);
+  if (!empDept || !managedDepts.includes(empDept.toLowerCase())) {
+    return { error: 'Not authorized — employee is not in your managed departments' };
+  }
+  return { error: null };
+}
+
+/**
+ * The EFFECTIVE department of the employee a request belongs to — "the respective
+ * team" for both the manager's scope check and the second-approver candidate pool.
+ *
+ * ONE implementation on purpose: if the pool resolved the team differently from the
+ * authorization check, a manager could be offered a candidate the guard then refuses
+ * (or worse, the reverse). `overrideDeptLabel` applies the Sales / Sales-Assistant
+ * email split, so a Sales-Assistant request offers Sales Assistants, not Sales.
+ *
+ * Returns null when the employee has no resolvable department — the callers treat
+ * that as a REFUSAL, never as "any department will do".
+ */
+async function resolveAdjustmentDepartment(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
+  workEmail: string,
+): Promise<string | null> {
+  const { data } = await supabase
     .from('active_employees')
     .select('"Department"')
     .ilike('"Work Email"', workEmail)
     .maybeSingle();
-  // Effective department (Sales/Sales-Assistant email split) so the right
-  // department's manager is authorized over the request.
-  const empDept = (
+  const dept = (
     overrideDeptLabel(
-      (masterData as Record<string, unknown> | null)?.['Department'] as string | null,
+      (data as Record<string, unknown> | null)?.['Department'] as string | null,
       workEmail,
     ) ?? ''
-  )
-    .trim()
-    .toLowerCase();
-  if (!empDept || !managedDepts.includes(empDept)) {
-    return { error: 'Not authorized — employee is not in your managed departments' };
+  ).trim();
+  return dept || null;
+}
+
+/**
+ * The candidate pool for ONE request, with the manager's authorization checked first.
+ *
+ * The route layer never chooses the department — it names a request, and this resolves
+ * the team from that row. That is what stops a manager from enumerating another team's
+ * roster by passing a department string of their own choosing.
+ *
+ * Returns the resolved department alongside the emails so the picker can say WHICH team
+ * it is showing (and say so honestly when the list comes back empty).
+ */
+export async function listSecondApproverCandidatesForRequest(
+  id: string,
+  managerEmail: string,
+): Promise<{ emails: string[]; department: string | null; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { emails: [], department: null, error: 'Supabase not configured' };
+
+  const { row, error: fetchErr } = await getTimeAdjustmentById(id);
+  if (fetchErr) return { emails: [], department: null, error: fetchErr };
+  if (!row) return { emails: [], department: null, error: 'Request not found' };
+
+  const authErr = await authorizeManagerOverAdjustment(
+    supabase,
+    managerEmail.trim().toLowerCase(),
+    row.work_email,
+  );
+  if (authErr.error) return { emails: [], department: null, error: authErr.error };
+
+  const department = await resolveAdjustmentDepartment(supabase, row.work_email);
+  if (!department) {
+    return { emails: [], department: null, error: 'Could not resolve the department for this request' };
   }
-  return { error: null };
+
+  const { emails, error } = await listSecondApproverCandidates({
+    department,
+    exclude: [row.work_email, managerEmail],
+  });
+  return { emails, department, error };
 }
 
 /**
@@ -471,11 +560,21 @@ export async function assignSecondApprover(
   // The named person must actually be able to reach and act on the queue, or the
   // request would be parked forever waiting on someone who can never sign off.
   // Fails CLOSED: an unreadable eligibility list rejects rather than admits.
-  const eligible = await listSecondApproverCandidates();
+  // The approver must be on the REQUEST's team. Re-resolved here rather than trusted
+  // from the picker: the dropdown is a convenience, this is the guard. A cross-team
+  // name — including one the client hand-crafts — is refused.
+  const department = await resolveAdjustmentDepartment(supabase, row.work_email);
+  if (!department) {
+    return { error: "Could not resolve this employee's department — no second approver can be named" };
+  }
+  const eligible = await listSecondApproverCandidates({
+    department,
+    exclude: [row.work_email, managerLower],
+  });
   if (eligible.error) return { error: `Could not verify second approver eligibility: ${eligible.error}` };
   if (!eligible.emails.includes(approver)) {
     return {
-      error: 'That person cannot approve time adjustments — an admin must grant them Manager access first',
+      error: `That person is not an active member of ${department} — the second approver must be on the same team as the employee`,
     };
   }
 
@@ -690,55 +789,89 @@ export async function secondDecideTimeAdjustment(
 }
 
 /**
- * Everyone who may be named as a second approver: people who ALREADY hold Manager
- * dashboard access. Deliberately NOT "any employee" — naming someone confers no access
- * (granting access stays admin-only, `rbac-feature-permissions.md:66`), so the pool can
- * only contain people an admin already provisioned.
+ * Everyone the manager may name as second approver on ONE request: every ACTIVE member
+ * of that request's own team.
  *
- * Eligible = an active `admin` role (bypasses feature gating everywhere), OR an active
- * `manager` role AND an `edit` grant on manager/time_adjustments. `edit` specifically,
- * because `view` cannot mutate — naming a view-only person would park the request
- * forever on someone who can never sign off.
+ * Kane's ruling 2026-08-27 replaced the original pool (anyone, any department, who
+ * already held Manager access). Two things changed and each has a reason:
+ *
+ * - **Team-scoped.** "The respective team" is the department of the employee who filed
+ *   the request — resolved by {@link resolveAdjustmentDepartment}, the same call the
+ *   manager's own authorization uses, so the pool and the guard cannot disagree. A
+ *   manager of two departments gets the REQUEST's team, not the union of theirs.
+ * - **No Manager access required.** Being named is now itself the authorization to
+ *   countersign (and only to countersign — see `time-adjustment-requests.md`). The pool
+ *   is therefore the roster, not the role table.
+ *
+ * The department is matched with {@link departmentMatchesManagedAssignments}, the same
+ * matcher the My Team roster uses, so HSL sub-teams and "Accounting" vs "Accounting
+ * Team" resolve identically here and there.
+ *
+ * Excluded, always: the employee whose hours are being corrected (they cannot approve
+ * their own request) and the manager doing the naming (two signatures need two people).
+ * Both are re-checked in {@link assignSecondApprover} — the pool is a convenience for
+ * the dropdown, never the guard.
  */
-export async function listSecondApproverCandidates(): Promise<{
+export async function listSecondApproverCandidates(params: {
+  /** The request's team. Callers resolve it server-side — never from client input. */
+  department: string;
+  /** Roster emails to leave out (the filer, the naming manager). */
+  exclude?: readonly string[];
+}): Promise<{
   emails: string[];
   error: string | null;
 }> {
-  const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) return { emails: [], error: 'Supabase not configured' };
-
-  const { data: roleRows, error: roleErr } = await supabase
-    .from('employee_roles')
-    .select('work_email, role')
-    .is('revoked_at', null)
-    .in('role', ['manager', 'admin']);
-  if (roleErr) return { emails: [], error: roleErr.message };
-
-  const admins = new Set<string>();
-  const managers = new Set<string>();
-  for (const r of (roleRows ?? []) as Array<{ work_email: string; role: string }>) {
-    const em = (r.work_email ?? '').trim().toLowerCase();
-    if (!em) continue;
-    if (r.role === 'admin') admins.add(em);
-    else if (r.role === 'manager') managers.add(em);
+  const department = params.department.trim();
+  if (!department) {
+    // No resolvable team means no pool. Returning "everyone" here would silently
+    // undo the team scope for exactly the rows whose department data is broken.
+    return { emails: [], error: 'Could not resolve the department for this request' };
   }
 
-  const { data: permRows, error: permErr } = await supabase
-    .from('employee_feature_permissions')
-    .select('work_email, access')
-    .eq('view_key', 'manager')
-    .eq('feature', 'time_adjustments')
-    .eq('access', 'edit')
-    .is('revoked_at', null);
-  if (permErr) return { emails: [], error: permErr.message };
+  const { employees, error } = await getEmployeesForAuthorizedServerRoute();
+  if (error) return { emails: [], error };
 
-  const out = new Set<string>(admins);
-  for (const p of (permRows ?? []) as Array<{ work_email: string }>) {
-    const em = (p.work_email ?? '').trim().toLowerCase();
-    if (em && managers.has(em)) out.add(em);
+  return {
+    emails: selectTeamApproverCandidates(employees, { department, exclude: params.exclude }),
+    error: null,
+  };
+}
+
+/**
+ * The pure half of the pool: given roster rows, who is on this team and eligible?
+ *
+ * Split out so the team rule is testable without Supabase — the fetch above is the only
+ * part that needs a database, and this is the part that decides who can sign off on a
+ * change to somebody's pay.
+ */
+export function selectTeamApproverCandidates(
+  rows: readonly {
+    department: string | null;
+    work_email?: string | null;
+  }[],
+  params: { department: string; exclude?: readonly string[] },
+): string[] {
+  const department = params.department.trim();
+  // An empty team is not "everyone" — it is nobody. Guarded here as well as at the
+  // caller so the rule holds no matter who calls it.
+  if (!department) return [];
+
+  const excluded = new Set(
+    (params.exclude ?? []).map((e) => (normEmail(e) ?? e.trim().toLowerCase())).filter(Boolean),
+  );
+
+  const out = new Set<string>();
+  for (const row of rows) {
+    // Effective department, so a Sales-Assistant roster row does not land in the
+    // Sales pool (and vice versa) just because the stored label says "Sales".
+    const rowDept = overrideDeptLabel(row.department, row.work_email ?? null) ?? row.department;
+    if (!departmentMatchesManagedAssignments(rowDept, [department])) continue;
+    const email = normEmail(row.work_email ?? null);
+    if (!email || excluded.has(email)) continue;
+    out.add(email);
   }
 
-  return { emails: [...out].sort(), error: null };
+  return [...out].sort();
 }
 
 /**

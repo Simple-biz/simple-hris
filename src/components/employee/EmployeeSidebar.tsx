@@ -21,6 +21,7 @@ import {
   Users,
   HeartHandshake,
   Trophy,
+  ShieldCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDeptLabel, collapseHslFamilyLabel } from '@/lib/departments/hsl-subdept';
@@ -60,6 +61,11 @@ interface EmployeeSidebarProps {
   unreadNotifications?: number;
   /** New MESA contributions since the member last opened MESA — badges that tab. */
   mesaNewCount?: number;
+  /**
+   * How many time adjustments name this person as second approver and still owe their
+   * signature. Zero (the case for almost everybody) removes the Approvals tab entirely.
+   */
+  secondApprovalCount?: number;
   /** Tab ids an admin hid in Pages settings — removed from the menu. */
   hiddenTabs?: readonly string[];
   /** Tab ids an admin marked "under construction" — shown with a badge. */
@@ -75,6 +81,10 @@ const navItems = [
   // { id: 'disputes', label: 'My Disputes', icon: FileText }, // hidden — disputes now go through Orphanage Manager → Accounting flow (no employee submission)
   { id: 'mesa', label: 'MESA', icon: HeartHandshake },
   { id: 'team', label: 'My Team', icon: Users },
+  // Second-approver seat. Rendered ONLY for people a manager has actually named on a
+  // time adjustment (`secondApprovalCount`), so it stays invisible to everyone else —
+  // that conditional IS the feature's visibility rule, not a cosmetic tidy-up.
+  { id: 'approvals', label: 'Approvals', icon: ShieldCheck },
   { id: 'notifications', label: 'Notifications', icon: Bell },
 ];
 
@@ -95,6 +105,7 @@ export default function EmployeeSidebar({
   bankInfoNudge = false,
   unreadNotifications = 0,
   mesaNewCount = 0,
+  secondApprovalCount = 0,
   hiddenTabs = [],
   constructionTabs = [],
 }: EmployeeSidebarProps) {
@@ -151,7 +162,13 @@ export default function EmployeeSidebar({
 
         <ScrollArea className="-mx-2 min-h-0 flex-1">
           <nav className="space-y-1 px-2">
-            {navItems.filter((item) => !isHidden(item.id)).map((item, index) => (
+            {navItems
+              .filter((item) => !isHidden(item.id))
+              // The Approvals tab exists only for named second approvers. Everyone else
+              // never sees it — the count is the gate, and the API behind the tab is
+              // scoped to the caller's own assignments regardless.
+              .filter((item) => item.id !== 'approvals' || secondApprovalCount > 0)
+              .map((item, index) => (
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}

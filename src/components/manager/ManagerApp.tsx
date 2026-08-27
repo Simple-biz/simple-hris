@@ -1566,6 +1566,20 @@ const TA_STATUS_PILL: Record<string, string> = {
 type ApproverCandidate = { email: string; name: string; department: string };
 
 /**
+ * The candidate pool for ONE request. Per-request, not global: since 2026-08-27 the pool
+ * is the requesting employee's own team, so a manager of two departments gets a
+ * different list per row and the server resolves which from the request id.
+ */
+type ApproverPool = {
+  list: ApproverCandidate[];
+  /** The team the list came from — named in the UI so an empty list can say which. */
+  department: string | null;
+  loading: boolean;
+};
+
+const EMPTY_POOL: ApproverPool = { list: [], department: null, loading: true };
+
+/**
  * Rows this viewer still owes a MANAGER decision on. `managedIds` comes from the server
  * (department scope) — a row reaching the viewer only because it names them as second
  * approver must never show the manager's controls.
@@ -1595,7 +1609,7 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   const [viewerEmail, setViewerEmail] = useState<string>('');
   const [managedIds, setManagedIds] = useState<Set<string>>(new Set());
-  const [candidates, setCandidates] = useState<ApproverCandidate[]>([]);
+  const [poolByRow, setPoolByRow] = useState<Record<string, ApproverPool>>({});
   const [approverDraft, setApproverDraft] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [decidingId, setDecidingId] = useState<string | null>(null);
@@ -1633,18 +1647,68 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
       .finally(() => setLoading(false));
   }, [onCountChange]);
 
-  // The pool a manager may name as second approver. Fetched once — the list changes
-  // only when an admin grants/revokes Manager access, not while this tab is open.
+  // Ids the viewer owes a MANAGER decision on — the only rows that render a picker, so
+  // the only rows worth a pool fetch. Sorted so the effect key is stable across refetches
+  // that return the same set in a different order.
+  const pendingIds = useMemo(
+    () =>
+      rows
+        .filter((r) => taNeedsMyManagerDecision(r, managedIds))
+        .map((r) => r.id)
+        .sort(),
+    [rows, managedIds],
+  );
+
+  // The pool a manager may name as second approver, fetched PER REQUEST.
+  //
+  // It used to be one company-wide list fetched once. Since 2026-08-27 the pool is the
+  // requesting employee's own team, so it differs row by row for a manager who runs more
+  // than one department — and the server resolves the team from the request id rather
+  // than trusting a department from here.
+  const pendingIdsKey = pendingIds.join(',');
   useEffect(() => {
+    if (!pendingIdsKey) return;
     let cancelled = false;
-    fetch('/api/manager/approver-candidates', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((json: { candidates?: ApproverCandidate[] }) => {
-        if (!cancelled) setCandidates(json.candidates ?? []);
-      })
-      .catch(() => { if (!cancelled) setCandidates([]); });
+    const ids = pendingIdsKey.split(',');
+    // Mark them loading first so the picker says "Loading…" rather than rendering an
+    // empty dropdown that reads as "nobody is eligible".
+    setPoolByRow((prev) => {
+      const next = { ...prev };
+      for (const id of ids) if (!next[id]) next[id] = EMPTY_POOL;
+      return next;
+    });
+    void Promise.all(
+      ids.map(async (id) => {
+        try {
+          const res = await fetch(
+            `/api/manager/approver-candidates?requestId=${encodeURIComponent(id)}`,
+            { cache: 'no-store' },
+          );
+          const json = (await res.json()) as {
+            candidates?: ApproverCandidate[];
+            department?: string | null;
+          };
+          const pool: ApproverPool = {
+            list: json.candidates ?? [],
+            department: json.department ?? null,
+            loading: false,
+          };
+          return [id, pool] as [string, ApproverPool];
+        } catch {
+          const pool: ApproverPool = { list: [], department: null, loading: false };
+          return [id, pool] as [string, ApproverPool];
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      setPoolByRow((prev) => {
+        const next = { ...prev };
+        for (const [id, pool] of entries) next[id] = pool;
+        return next;
+      });
+    });
     return () => { cancelled = true; };
-  }, []);
+  }, [pendingIdsKey]);
 
   useEffect(() => { fetchRows(); }, [fetchRows]);
 
@@ -1844,7 +1908,7 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
                     decidingId={decidingId}
                     note={notesDraft[row.id] ?? ''}
                     onNoteChange={(v) => setNotesDraft((p) => ({ ...p, [row.id]: v }))}
-                    candidates={candidates}
+                    pool={poolByRow[row.id] ?? EMPTY_POOL}
                     selectedApprover={approverDraft[row.id] ?? row.second_approver_email ?? ''}
                     onApproverChange={(v) => setApproverDraft((p) => ({ ...p, [row.id]: v }))}
                     onDecide={decide}
@@ -1872,7 +1936,7 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
                     decidingId={decidingId}
                     note={notesDraft[row.id] ?? ''}
                     onNoteChange={(v) => setNotesDraft((p) => ({ ...p, [row.id]: v }))}
-                    candidates={candidates}
+                    pool={EMPTY_POOL}
                     selectedApprover=""
                     onApproverChange={() => {}}
                     onDecide={decide}
@@ -2033,7 +2097,7 @@ function ManagerAdjustmentCard({
   note,
   onNoteChange,
   mode,
-  candidates,
+  pool,
   selectedApprover,
   onApproverChange,
   onDecide,
@@ -2049,7 +2113,8 @@ function ManagerAdjustmentCard({
    * picker and forwards the request; `second` countersigns one already routed to them.
    */
   mode: 'manager' | 'second';
-  candidates: ApproverCandidate[];
+  /** Candidate pool for THIS request's team (manager mode only). */
+  pool: ApproverPool;
   selectedApprover: string;
   onApproverChange: (v: string) => void;
   onDecide: (
@@ -2060,6 +2125,9 @@ function ManagerAdjustmentCard({
 }) {
   const isDeciding = decidingId === row.id;
   const isManagerMode = mode === 'manager';
+  // The team the pool was drawn from, shown so the manager can see WHICH roster the
+  // dropdown is offering — and so an empty one names the team it found nobody on.
+  const teamLabel = pool.department ? formatDeptLabel(pool.department) : '';
   // Dual approval: the manager cannot forward without naming who countersigns.
   const approveDisabled = isDeciding || (isManagerMode && !selectedApprover);
   const [active, setActive] = useState(0);
@@ -2200,7 +2268,10 @@ function ManagerAdjustmentCard({
                 htmlFor={`second-approver-${row.id}`}
                 className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500"
               >
-                Second approver <span className="normal-case font-normal">(required to approve)</span>
+                Second approver{' '}
+                <span className="normal-case font-normal">
+                  (required to approve){teamLabel ? ` — ${teamLabel}` : ''}
+                </span>
               </label>
               <select
                 id={`second-approver-${row.id}`}
@@ -2209,24 +2280,28 @@ function ManagerAdjustmentCard({
                 className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-900 transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
               >
                 <option value="">Select who else must approve…</option>
-                {candidates.map((c) => (
+                {pool.list.map((c) => (
                   <option key={c.email} value={c.email}>
                     {c.name}
-                    {c.department ? ` — ${formatDeptLabel(c.department)}` : ''}
                   </option>
                 ))}
               </select>
-              {candidates.length === 0 ? (
-                // Naming someone grants them nothing — an admin provisions Manager
-                // access. Say so, rather than showing an empty dropdown with no reason.
+              {pool.loading ? (
+                <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Loading the team…</p>
+              ) : pool.list.length === 0 ? (
+                // An empty pool means the team has nobody else on it — not that somebody
+                // needs provisioning. Since 2026-08-27 no grant is required to be named,
+                // so the old "ask an admin" copy would send the manager on a dead errand.
                 <p className="text-[11px] text-amber-700 dark:text-amber-400">
-                  Nobody is eligible yet. An admin must grant Manager access with the Time
-                  Adjustments tab before they can be picked.
+                  Nobody else is active on
+                  {teamLabel ? ` ${teamLabel}` : ' this team'}, so there is no one to
+                  countersign. Ask HR to confirm the roster.
                 </p>
               ) : (
                 <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                  They can be from any team. Both of you must approve before Accounting
-                  sees this.
+                  Anyone active on{teamLabel ? ` ${teamLabel}` : ' this team'}. Both of you
+                  must approve before Accounting sees this. They will review it from their
+                  own employee portal — this grants them nothing else.
                 </p>
               )}
             </div>

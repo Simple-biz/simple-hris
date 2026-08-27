@@ -19,6 +19,7 @@ import {
   adjustmentIsAwaitingAccounting,
   adjustmentIsFinallyDecided,
   sanitizeAdjustmentSegments,
+  selectTeamApproverCandidates,
   adjustmentSegmentsTotalHours,
   type ApprovalDecision,
   type TimeAdjustmentStatus,
@@ -234,4 +235,84 @@ test('segment hours sum the missed ranges', () => {
     ]),
     2.5,
   );
+});
+
+// ─── Team-scoped second-approver pool (Kane's ruling 2026-08-27) ─────────────
+//
+// The pool WAS "anyone in the company who already holds Manager access". It is now
+// "every active member of the request's own team", and holding Manager access is no
+// longer required — being named is itself the authorization to countersign.
+// These pin the failure classes that change opens up.
+
+const ROSTER = [
+  { department: 'Edit', work_email: 'warren@simple.biz' },
+  { department: 'Edit', work_email: 'ana@simple.biz' },
+  { department: 'Edit', work_email: 'mark@simple.biz' },
+  { department: 'Design', work_email: 'dana@simple.biz' },
+  { department: 'Sales', work_email: 'sam@simple.biz' },
+];
+
+test('pool is the request team only — another department never appears', () => {
+  const pool = selectTeamApproverCandidates(ROSTER, { department: 'Edit' });
+  assert.deepEqual(pool, ['ana@simple.biz', 'mark@simple.biz', 'warren@simple.biz']);
+  assert.ok(!pool.includes('dana@simple.biz'), 'Design must not be offered on an Edit request');
+});
+
+test('a manager of two teams gets the REQUEST team, not the union', () => {
+  // Warren managing Edit AND Design still sees only Edit on an Edit request.
+  const pool = selectTeamApproverCandidates(ROSTER, { department: 'Edit' });
+  assert.ok(!pool.some((e) => e === 'dana@simple.biz'));
+});
+
+test('the employee who filed and the naming manager are both excluded', () => {
+  const pool = selectTeamApproverCandidates(ROSTER, {
+    department: 'Edit',
+    exclude: ['mark@simple.biz', 'warren@simple.biz'],
+  });
+  assert.deepEqual(pool, ['ana@simple.biz']);
+});
+
+test('exclusions are email-normalized, not string-compared', () => {
+  const pool = selectTeamApproverCandidates(ROSTER, {
+    department: 'Edit',
+    exclude: ['  MARK@simple.biz '],
+  });
+  assert.ok(!pool.includes('mark@simple.biz'), 'a differently-cased filer must still be excluded');
+});
+
+test('an unresolvable department yields NOBODY, never everybody', () => {
+  // The fail-open shape this guards against: a blank team quietly matching all rows
+  // would hand every request a company-wide pool exactly when the data is broken.
+  assert.deepEqual(selectTeamApproverCandidates(ROSTER, { department: '' }), []);
+  assert.deepEqual(selectTeamApproverCandidates(ROSTER, { department: '   ' }), []);
+});
+
+test('a roster row with no work email is skipped, not emitted blank', () => {
+  const pool = selectTeamApproverCandidates(
+    [...ROSTER, { department: 'Edit', work_email: null }],
+    { department: 'Edit' },
+  );
+  assert.ok(!pool.includes(''));
+  assert.equal(pool.length, 3);
+});
+
+test('department naming variants resolve to the same team', () => {
+  // "Accounting" vs "Accounting Team" — same matcher the My Team roster uses.
+  const pool = selectTeamApproverCandidates(
+    [{ department: 'Accounting Team', work_email: 'acc@simple.biz' }],
+    { department: 'Accounting' },
+  );
+  assert.deepEqual(pool, ['acc@simple.biz']);
+});
+
+test('duplicate roster rows for one person collapse to a single candidate', () => {
+  // Dual-department people carry one roster row per department.
+  const pool = selectTeamApproverCandidates(
+    [
+      { department: 'Edit', work_email: 'ana@simple.biz' },
+      { department: 'Edit', work_email: 'ANA@simple.biz' },
+    ],
+    { department: 'Edit' },
+  );
+  assert.deepEqual(pool, ['ana@simple.biz']);
 });

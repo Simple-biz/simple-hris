@@ -65,6 +65,18 @@ under (`admin` deliberately has no entry -- it bypasses gating everywhere).
 - Assign / revoke a role (`POST` / `DELETE /api/employee-roles`). **Granting and
   revoking are admin-only** -- the route rejects non-admin callers (the keystone
   anti-escalation guard).
+
+  > **The one documented capability an admin does not hand out (2026-08-27).** A manager
+  > may name any active member of a team as the second approver on a time adjustment, and
+  > that person can then approve or decline **that request**. It does not breach the rule
+  > above, because **no role and no feature permission is written**: the capability is
+  > derived live from the assignment on the row, is scoped to that row, is exercised in
+  > the employee portal (never this dashboard), and disappears when the assignment does.
+  > Every other tab stays default-denied for them. If you are adding something similar,
+  > the shape to copy is "derive it from the record", NOT "auto-grant a role" -- granting
+  > a role auto-provisions **every** tab of that dashboard to `edit` (see
+  > `provisionDashboardTabs` below) and force-logs-out the target. See
+  > `time-adjustment-requests.md`.
 - For each *granted* role with a feature catalog, a **Hidden / View / Edit grid**
   renders one row per tab (`FeaturePermissionGrid`). Admin shows no grid (it
   bypasses gating). The grid pre-fills from `provisionDashboardTabs` having set

@@ -1,7 +1,9 @@
 # Time Adjustment Requests
 
 > **Status:** Implemented 2026-06-02. Manager approval stage added 2026-06-02 (same session).
-> **Dual approval (manager + a named second approver) added 2026-08-19** — migration PENDING, see [Prerequisites](#prerequisites).
+> **Dual approval (manager + a named second approver) added 2026-08-19** — migration APPLIED and
+> verified 2026-08-20 (see `docs/features/INDEX.md` "Migrations & deploy state").
+> **Second approver opened to the whole team, 2026-08-27** — see [Dual approval](#dual-approval).
 > Requires four manual Supabase steps before use — see [Prerequisites](#prerequisites).
 
 A distinct, evidence-backed mechanism for employees to ask Accounting to correct the tracked hours for any past day. Designed to handle cases where work happened but Hubstaff did not record it (forgot to start the tracker, tracker crashed, worked offline or in a meeting, etc.).
@@ -64,17 +66,39 @@ Added 2026-08-19. Stage 1 requires **two** sign-offs before Accounting sees anyt
   second approver is chosen, and the server refuses `manager_approve` on a row with no
   `second_approver_email`. A request can never sit approved-but-uncountersigned.
 - **Order-independent.** Either party may act first.
-- **Naming someone confers NO access.** The picker lists only people who *already* hold
-  Manager access — an active `manager` role **plus** an `edit` grant on
-  `manager/time_adjustments`, or `admin`. Granting access stays admin-only
-  (`rbac-feature-permissions.md:66`, the keystone anti-escalation guard). A manager routes
-  work to people an admin already provisioned; they cannot create an approver. An empty
-  dropdown says exactly that instead of failing silently.
-- **The second approver may be outside the employee's department** — that is the
-  "external approver" case. Authorization for their decision is the **on-row assignment**,
-  which is **additive to** the manager's department check, never a replacement: the
-  manager path still requires department scope, and `secondDecideTimeAdjustment` refuses
-  anyone who is not the named person.
+- **The pool is the employee's own team** (changed 2026-08-27; it was previously anyone
+  in the company who already held Manager access). "The respective team" means the
+  department of the employee **who filed the request** — not the union of the manager's
+  departments. A manager running Edit *and* Design gets Edit people on an Edit request.
+  The team is resolved server-side from the request id by
+  `listSecondApproverCandidatesForRequest`; the route will not accept a department from
+  the client, which would otherwise turn the picker into a roster-enumeration endpoint
+  for teams the caller does not manage.
+  > One resolver, `resolveAdjustmentDepartment`, feeds **both** the pool and the manager's
+  > own authorization check. If they resolved the team differently, the dropdown could
+  > offer a candidate the guard then refuses — or the reverse.
+- **Naming someone now GRANTS them access — to this one surface and nothing else**
+  (changed 2026-08-27; Kane's ruling, superseding the 2026-08-19 ruling that the picker
+  could only list already-provisioned people). Being named is itself the authorization to
+  countersign. The named approver needs no `manager` role and no feature grant.
+  **How that stays narrow — by construction, not by hiding things:**
+  - They review the request in the **employee portal**, on an Approvals tab that appears
+    only while they have an assignment. They never load the Manager dashboard at all.
+  - **No role is written.** Nothing is added to `employee_roles` or
+    `employee_feature_permissions`, so `rbac-feature-permissions.md`'s admin-only grant
+    rule is untouched for every other tab, and nobody is force-logged-out by being named
+    (granting a role invalidates the target's JWT — see `employee-roles/route.ts`).
+  - Leaves, transfers, offboarding, resignation, team roster, medals, notes and HSL bonus
+    are gated on `manager:leaves` / `manager:team` / `manager:hsl_bonus` grants this
+    person does not hold; suspension (`temp-pause`) additionally 403s on
+    `departments.length === 0`. Default-deny (`no row == hidden`) closes the rest.
+  - The seat is **derived, never stored**: it exists exactly as long as a row names them.
+    Recall clears the assignment, and the tab goes with it. There is no grant to revoke
+    and no stale seat to leak.
+- **Authorization for their decision is the on-row assignment**, which remains
+  **additive to** the manager's department check, never a replacement: the manager path
+  still requires department scope, and `secondDecideTimeAdjustment` refuses anyone who is
+  not the named person — a manager holding every grant in the system included.
 - **Two signatures need two people.** A manager cannot name themselves, and neither
   reviewer may be the employee who filed the request.
 - **Re-pointing is blocked once the second approver has decided** — recall instead, which
@@ -204,7 +228,7 @@ The tab renders **three** sections, because one viewer can wear two hats at once
 - Employee email, adjust date, reason, requested hours, period label.
 - Explanation paragraph.
 - Evidence thumbnails (signed URLs).
-- **Second approver dropdown** (required) — fed by `GET /api/manager/approver-candidates`; lists people from **any** department who already hold Manager access. Empty-state copy names the reason (an admin must grant access) rather than showing a bare empty list.
+- **Second approver dropdown** (required) — fed by `GET /api/manager/approver-candidates?requestId=…`, **one fetch per request** because the pool is that request's own team and a manager of two departments gets a different list per row. Lists every ACTIVE member of the team, minus the filer and the manager themselves. The label names the team it is showing; an empty list says *nobody else is active on that team*, which since 2026-08-27 is the only way it can be empty — there is no longer an access grant to go and ask an admin for.
 - Optional manager note field.
 - **Approve & send to second approver** → `PATCH .../[id]` with `action: manager_approve` **and `second_approver_email`** in the same body, so the row can never land approved-but-uncountersigned. Disabled until someone is picked.
 - **Decline** → `action: manager_deny`.
@@ -232,7 +256,19 @@ The tab renders **three** sections, because one viewer can wear two hats at once
 2. They must not have decided already, and the row must still be `pending` or `awaiting_second_approval`.
 3. Records `second_decision` and re-derives `status`.
 
-This is what lets a lead from another team countersign. It widens nothing else: the manager's own path still requires department scope, and `GET /api/manager/time-adjustments` widens the **read** by exactly the same rule (`manages the department` **OR** `is the named second approver`) so read and write can never disagree. The response also returns `managedIds`, the subset the caller may act on *as the manager*, so a row reaching them only as second approver never renders the manager's controls.
+This is what lets an ordinary teammate countersign without any Manager access. It widens nothing else: the manager's own path still requires department scope, and `GET /api/manager/time-adjustments` widens the **read** by exactly the same rule (`manages the department` **OR** `is the named second approver`) so read and write can never disagree. The response also returns `managedIds`, the subset the caller may act on *as the manager*, so a row reaching them only as second approver never renders the manager's controls.
+
+**The route-level gate changed with it (2026-08-27).** `second_approve` / `second_deny` are the only two actions in `PATCH /api/time-adjustments/[id]` that no longer require the `manager:time_adjustments` edit grant — they are authorized by the on-row assignment alone. That is a **narrowing**, not a relaxation: it replaces "holds a company-wide tab grant" with "is the exact person named on this exact row", so every manager who previously qualified but was not named is refused exactly as before. Naming the approver (`assign_second_approver`) stays a manager action, so a named approver cannot re-point a request at somebody else.
+
+### Employee-portal surface
+
+**File:** `src/components/employee/EmployeeSecondApprovals.tsx` — the Approvals tab, fed by `GET /api/time-adjustments/second-approvals`.
+
+Two sections, matching the scope Kane set ("ONLY submitted time adjustments and time adjustment history"): **Awaiting your approval** (rows still owed their signature — keyed on `second_decision`, not status, so they can act before the manager does) and **History** (rows they were named on and already signed). Evidence images come back as signed URLs for these rows only; a reviewer who cannot see the proof cannot judge the request.
+
+The tab is **absent** unless the portal shell's count comes back non-zero, and a failed count hides it rather than guessing one into existence. The shell asks without `?evidence=1` so it does not pay for Storage signing it will not render.
+
+The endpoint takes **no email parameter**. There is nothing to authorize beyond "who are you", because the query itself is the authorization — it can only ever return rows naming the caller.
 
 ---
 
@@ -344,8 +380,9 @@ Private. Object path: `{sanitized_email}/{requestKey}/{idx}-{timestamp}.{ext}`. 
 | List department requests (manager) | `manager` or `admin` role + scoped to `department_managers` assignments |
 | Manager approve / deny | `manager:time_adjustments` **edit** grant + caller manages the employee's department |
 | Name / re-name the second approver | same as manager approve; blocked once the second approver has decided |
-| Second approver approve / deny | `manager:time_adjustments` **edit** grant + the row must name the caller in `second_approver_email`. **No department check** — the assignment is the authorization |
-| Appear in the second-approver picker | active `manager` role + `edit` on `manager/time_adjustments`, or `admin`. Provisioned by an admin only |
+| Second approver approve / deny | The row must name the caller in `second_approver_email`. **No role, no feature grant, no department check** — the assignment IS the authorization (2026-08-27) |
+| Read own second-approver queue | Signed in. `GET /api/time-adjustments/second-approvals` is scoped to the caller's own assignments and takes no email parameter |
+| Appear in the second-approver picker | ACTIVE roster member of the request's own department, excluding the filer and the naming manager. **No role required** (2026-08-27) |
 | Recall | same as manager approve; allowed from `manager_approved` **or** `awaiting_second_approval` |
 | Accounting approve / deny | Accounting role (`canActOnDisputes`) + row must be `manager_approved` |
 | Accounting delete | Accounting role (`canActOnDisputes`) + row must be `denied` or `manager_denied` |
@@ -386,3 +423,18 @@ Private. Object path: `{sanitized_email}/{requestKey}/{idx}-{timestamp}.{ext}`. 
 | `src/components/employee/TimeAdjustmentDialog.tsx` | **Edited** — status label + style for the new status |
 | `src/components/payroll/TimeAdjustmentReviewPanel.tsx` | **Edited** — "Awaiting manager" includes `awaiting_second_approval` |
 | `src/components/PayrollWizard.tsx` | **Edited** — status added to the review fetch; dept rail badge counts it |
+
+### 2026-08-27 — team-scoped pool, and naming grants the seat
+
+| Path | Change |
+|---|---|
+| `src/lib/supabase/time-adjustments.ts` | **Edited** — `listSecondApproverCandidates` is now team-scoped and role-free; pure `selectTeamApproverCandidates` split out for tests; `listSecondApproverCandidatesForRequest` (resolves the team from the request, manager-authorized); `listSecondApprovalsForApprover` (the portal feed); shared `resolveAdjustmentDepartment` extracted so the pool and the manager scope check cannot drift |
+| `src/lib/supabase/time-adjustments.test.ts` | **Edited** — 8 new tests pinning the team rule: cross-team refused, union refused, filer + manager excluded, exclusions email-normalized, blank department yields NOBODY, blank work email skipped, naming variants collapse, duplicate rows collapse |
+| `app/api/manager/approver-candidates/route.ts` | **Rewritten** — `requestId` is REQUIRED and the department is resolved server-side; returns the team label alongside the candidates |
+| `app/api/time-adjustments/second-approvals/route.ts` | **New** — the approver's own queue for the employee portal; `?evidence=1` opts into signed URLs; returns `pendingCount` |
+| `app/api/time-adjustments/[id]/route.ts` | **Edited** — `second_approve` / `second_deny` authorize on the on-row assignment instead of the `manager:time_adjustments` grant; every other action's gate is unchanged |
+| `src/components/employee/EmployeeSecondApprovals.tsx` | **New** — the Approvals tab (awaiting + history, evidence lightbox) |
+| `src/components/employee/EmployeeApp.tsx` | **Edited** — `approvals` render case + the shell's `pendingCount` fetch |
+| `src/components/employee/EmployeeSidebar.tsx` | **Edited** — Approvals nav item, rendered only when `secondApprovalCount > 0` |
+| `src/lib/pages/visibility.ts` | **Edited** — `approvals` added to the employee page registry |
+| `src/components/manager/ManagerApp.tsx` | **Edited** — per-request candidate pools (`poolByRow`) replacing the single global list; picker names the team; empty-state copy no longer sends the manager to an admin |

@@ -88,29 +88,53 @@ export async function PATCH(
       );
     }
 
-    // Per-tab edit gate: every manager-stage action (including the second approver's,
-    // who is eligible precisely BECAUSE they hold this grant) needs
-    // manager:time_adjustments; accounting-stage actions need accounting:payroll_wizard.
-    // Row-level authorization is enforced separately below — the department check for
-    // the manager, the on-row assignment for the second approver.
+    // Three authorization tiers, one per stage.
+    //
+    // MANAGER stage (approve / deny / recall / naming the second approver) needs the
+    // manager:time_adjustments edit grant AND department scope over the employee.
+    // ACCOUNTING stage needs accounting:payroll_wizard.
+    //
+    // SECOND-APPROVER stage is authorized by the ON-ROW ASSIGNMENT alone (Kane's ruling
+    // 2026-08-27). This is NOT a relaxation: it replaces a company-wide tab grant with
+    // "you must BE the person named on this exact row", which is strictly narrower for
+    // everyone who previously qualified — a manager holding the grant but not named is
+    // refused, as they always were. What it adds is the ordinary team member the manager
+    // named, who by design holds no Manager access at all and reviews the request from
+    // their own employee portal. `secondDecideTimeAdjustment` enforces the identity
+    // match; the session check below is what it matches against.
+    //
+    // Deliberately narrow: this branch covers second_approve / second_deny ONLY. Naming
+    // the approver stays a manager action, so a named approver cannot re-point a request
+    // at somebody else, and it confers nothing outside this one row.
+    const isSecondApproverStage =
+      body.action === 'second_approve' || body.action === 'second_deny';
     const isManagerStage =
       body.action === 'manager_approve' ||
       body.action === 'manager_deny' ||
       body.action === 'recall' ||
-      body.action === 'assign_second_approver' ||
-      body.action === 'second_approve' ||
-      body.action === 'second_deny';
-    const authz = isManagerStage
-      ? await requireFeatureEdit('manager', 'time_adjustments')
-      : await requireFeatureEdit('accounting', 'payroll_wizard');
-    if (!authz.ok) return deniedResponse(authz);
+      body.action === 'assign_second_approver';
 
-    const session = await getServerSession(authOptions);
-    const sessionEmail = ((session?.user as { email?: string | null } | undefined)?.email ?? '')
-      .toString()
-      .trim()
-      .toLowerCase();
-    if (!sessionEmail) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+    let sessionEmail = '';
+    if (isSecondApproverStage) {
+      const session = await getServerSession(authOptions);
+      sessionEmail = ((session?.user as { email?: string | null } | undefined)?.email ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+      if (!sessionEmail) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+    } else {
+      const authz = isManagerStage
+        ? await requireFeatureEdit('manager', 'time_adjustments')
+        : await requireFeatureEdit('accounting', 'payroll_wizard');
+      if (!authz.ok) return deniedResponse(authz);
+
+      const session = await getServerSession(authOptions);
+      sessionEmail = ((session?.user as { email?: string | null } | undefined)?.email ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+      if (!sessionEmail) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+    }
 
     // Manager recall path — pull a forwarded request back into the manager's queue.
     if (body.action === 'recall') {

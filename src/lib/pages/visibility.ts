@@ -150,6 +150,7 @@ export const DASHBOARD_PAGES: DashboardPages[] = [
       { key: 'leaves', label: 'Leave' },
       { key: 'mesa', label: 'MESA' },
       { key: 'team', label: 'My Team' },
+      { key: 'approvals', label: 'Approvals' },
       { key: 'notifications', label: 'Notifications' },
       { key: 's-wall', label: 'S-Wall' },
     ],
