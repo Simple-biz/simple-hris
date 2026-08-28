@@ -113,6 +113,34 @@ under-count the opening week relative to the engine. Widening it would change
 any row that resolves to severity 0 rather than showing a Forgive button with nothing to
 forgive.
 
+## People are named, never emailed — and the name has three sources
+
+The Employee column shows the **master quoted nickname** and nothing else. The email is the
+join key every write is addressed to; it is never rendered, and it is not in the search
+haystack either.
+
+Resolution order, and why it needs three tiers:
+
+1. `masterIndex` (`master.name`) — the same field `calcResults` uses, so the nickname on this
+   step is identical to the one on every other wizard surface. `byWorkEmail` already indexes
+   both alternate work emails, so an aliased Hubstaff row still resolves.
+2. `calcResults` — this week's file.
+3. The Hubstaff row's own `Member` name.
+
+Tier 3 is not belt-and-braces. **Measured 2026-08-28 against live data:** the PAB month spans
+2,086 emails with hours, but `/api/employees` serves `active_employees`, which resolves only
+**1,200** of them — the month includes people who have since left the active roster. The full
+`global_master_list` would reach 1,831. Every Hubstaff row carries a `Member` name, so tier 3
+closes the remaining 886 with a real name.
+
+Resolving off `calcResults` alone — the first version — missed nearly everyone, because
+`effectivePabStatus` spans the whole PAB month while `calcResults` holds only the current
+week's file. The fallback was the raw email, so the column rendered addresses.
+
+If all three miss, the row still renders, as an explicit *"Unknown — not on the master list"*
+with the address in a `title` tooltip only. **Do not drop the row** — that is the all-clear
+that hides someone, and **do not fall back to the email** as a display name.
+
 ## An empty list has three causes and they are NOT interchangeable
 
 The first version of this step rendered "Nobody is ineligible for August 2026 — every

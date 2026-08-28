@@ -38,7 +38,9 @@ export type PabIneligibleRow = {
    *  personal address, and the master quoted nickname is what people are called
    *  here (`calcResults.name`, the one fix point for wizard display names). */
   email: string;
-  name: string;
+  /** Master quoted nickname. `null` when the person is on no master record — the
+   *  table says so explicitly rather than falling back to their email address. */
+  name: string | null;
   /** RAW department key. Formatted at the render site, never before — an
    *  `hsl:*` slug must not reach a human (docs/features/hsl-subdepartments.md). */
   departmentKey: string | null;
@@ -114,7 +116,7 @@ export default function PabIneligibleTable({
     if (!q) return rows;
     return rows.filter(
       (r) =>
-        r.name.toLowerCase().includes(q) ||
+        (r.name ?? '').toLowerCase().includes(q) ||
         formatDeptLabel(r.departmentKey).toLowerCase().includes(q),
     );
   }, [rows, query]);
@@ -220,7 +222,18 @@ export default function PabIneligibleTable({
               return (
                 <tr key={row.email} className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40">
                   <td className="px-4 py-2.5">
-                    <div className="font-medium text-zinc-900 dark:text-zinc-100">{row.name}</div>
+                    {row.name ? (
+                      <div className="font-medium text-zinc-900 dark:text-zinc-100">{row.name}</div>
+                    ) : (
+                      // The address goes in `title` only — identifiable on hover,
+                      // never rendered into the table.
+                      <div
+                        title={row.email}
+                        className="font-medium italic text-amber-700 dark:text-amber-400"
+                      >
+                        Unknown — not on the master list
+                      </div>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
                     {formatDeptLabel(row.departmentKey) || '—'}

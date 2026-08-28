@@ -7417,6 +7417,29 @@ export default function PayrollWizard({
    * anything yet, and listing them as ineligible would invite forgiveness for days
    * that may still be worked.
    */
+  /**
+   * email → the name Hubstaff itself carries on the row (`Member`).
+   *
+   * The last-resort display name for step 6. Measured 2026-08-28: the master
+   * roster (`active_employees`, what `/api/employees` serves) resolves only
+   * 1,200 of the 2,086 emails with hours in the PAB month, because the month
+   * spans people who have since left the active roster — but EVERY Hubstaff row
+   * has a Member name, so this closes the remaining 886. It is a name, never an
+   * address, which is the whole point: an unresolved person must not be
+   * identified by their email on screen.
+   */
+  const pabMemberNames = useMemo<Map<string, string>>(() => {
+    const map = new Map<string, string>();
+    for (const row of hubstaffRowsForPab ?? []) {
+      const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
+      const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
+      if (!email || map.has(email)) continue;
+      const member = String(row['Member'] ?? '').trim();
+      if (member) map.set(email, member);
+    }
+    return map;
+  }, [hubstaffRowsForPab]);
+
   const pabIneligibleRows = useMemo<PabIneligibleRow[]>(() => {
     if (!pabMonthRange) return [];
     const rows: PabIneligibleRow[] = [];
@@ -7464,12 +7487,31 @@ export default function PayrollWizard({
       // with a fabricated day.
       if (severity === 0) continue;
 
-      const calcRow = calcResults.find(
-        (e) => e.email === email || (normEmail(e.email) ?? e.email.toLowerCase()) === email,
-      );
+      // Name resolution, in the order that actually covers this list. The MASTER
+      // record comes first because `effectivePabStatus` spans the whole PAB month
+      // (~2,000 people across every uploaded week) while `calcResults` only holds
+      // THIS week's file — resolving off calcResults alone missed most of the list
+      // and fell through to the raw email as a display name, which is both wrong
+      // and a personal address on screen. `byWorkEmail` already indexes the two
+      // alternate work emails, so a Hubstaff row keyed on an alias still resolves.
+      // `master.name` is the same field calcResults uses, so the quoted nickname
+      // is identical on both surfaces.
+      const master =
+        masterIndex.byWorkEmail.get(email) ?? masterIndex.byPersonalEmail.get(email) ?? null;
+      const calcRow = master
+        ? null
+        : calcResults.find(
+            (e) => e.email === email || (normEmail(e.email) ?? e.email.toLowerCase()) === email,
+          );
       rows.push({
         email,
-        name: calcRow?.name || email,
+        // null, never the email — an unresolvable person is rendered as an explicit
+        // unknown so the row still shows (dropping it would be the all-clear that
+        // hides someone), without putting an address in the table.
+        // Master nickname → this week's calc row → the Hubstaff Member name.
+        // Never the email: an address is not a name, and this list spans people
+        // the active roster no longer carries.
+        name: master?.name?.trim() || calcRow?.name?.trim() || pabMemberNames.get(email) || null,
         departmentKey: deptKey,
         isHsl,
         severity,
@@ -7479,11 +7521,12 @@ export default function PayrollWizard({
     }
     // Worst first, then alphabetical — the 1-and-2-day cohort the step exists for
     // sits together at the bottom rather than scattered.
-    rows.sort((a, b) => b.severity - a.severity || a.name.localeCompare(b.name));
+    rows.sort((a, b) => b.severity - a.severity || (a.name ?? '￿').localeCompare(b.name ?? '￿'));
     return rows;
   }, [
     effectivePabStatus, employeeDepts, employeeAllDaysHours, employeeWeekdayHours,
-    pabMonthRange, hslWeekModel, hslAdjustedPabEnd, calcResults, isPabExcluded,
+    pabMonthRange, hslWeekModel, hslAdjustedPabEnd, calcResults, isPabExcluded, masterIndex,
+    pabMemberNames,
   ]);
 
   // Re-key any override/note saved under a lowercased email to the wizard's raw
@@ -17033,7 +17076,7 @@ export default function PayrollWizard({
           if (pabForgivingEmail) return;
           const dayCount = row.failedDays.length;
           const ok = window.confirm(
-            `Forgive all ${dayCount} missed day${dayCount === 1 ? '' : 's'} for ${row.name} ` +
+            `Forgive all ${dayCount} missed day${dayCount === 1 ? '' : 's'} for ${row.name ?? 'this person'} ` +
             `in ${monthLabelPab}?\n\nThis restores their Perfect Attendance Bonus and is ` +
             `visible on their own dashboard.`,
           );
