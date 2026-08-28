@@ -968,6 +968,14 @@ Canonical references in `src/components/hr/`:
 | `SubTabPill` (Onboarding Form / Pending Hires) | `HrOnboarding.tsx` | `hr-onboarding-subtab` |
 | `TabPill` (Awaiting / Ready / Failed / Promoted / …) | `HrOnboarding.tsx` | `hr-pending-tab` |
 | `FilterPill` (Awaiting submission / Submitted / Archived / All) | `HrOnboardingForm.tsx` | `hr-onboarding-filter` |
+| Section strip (Departments / HSL) — **underline variant** | `PayrollWizard.tsx` (Additions step) | `additions-section-indicator` |
+
+The **underline variant** is the same mechanism with a different indicator: a 2px
+bar (`absolute inset-x-0 bottom-0 h-0.5`) instead of a filled pill, for a strip that
+must outrank the pill row beneath it without competing with it. Same shared
+`layoutId`, same 0.28s / `[0.22, 1, 0.36, 1]`, same `useReducedMotion()` gate. Each
+tab keeps its own tone (the HSL tab is violet, Departments indigo), so the bar
+changes colour as it arrives — the danger-pill rule one tier out.
 
 Anatomy (only the active pill renders the indicator; every pill shares the same
 `layoutId`, so Framer animates the single element across positions):

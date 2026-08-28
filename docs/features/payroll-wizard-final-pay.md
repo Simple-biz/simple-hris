@@ -78,6 +78,16 @@ now step **7**. Nothing was loosened to make the renumbering fit — every step 
 in the code, the readiness checklist's `stepNo` strings, the tutorial guide and these
 docs was corrected in the same commit.
 
+**The switch is animated, and the animation is part of the contract.** The strip
+carries ONE underline that glides between the tabs on a shared `layoutId`; the
+workspace does a directional crossfade + 20px slide (`mode="wait"`, so two pay
+tables never cross-dissolve into each other), wrapped in `overflow-x-clip` — never
+`-hidden`, which would make it a scroll container and break the tables' sticky
+headers. Every duration is gated behind `useReducedMotion()`. The department panel
+inside the Departments section lost its `blur(2px)` legs in the same pass: filtering
+a several-hundred-row pay table on every tab change was the one thing here that
+dropped frames. Pattern and constants: `docs/design/ui-standards.md` §11.1.
+
 **The step's load line waits on BOTH sections.** `isStepDataLoading(4)` now counts the
 all-weeks PAB merge **and** the HSL KPI amounts / HSL bonus entries, and the HSL fetch
 stays gated on **step** entry — never on `activeAdditionsSection === 'hsl'`. Gating it

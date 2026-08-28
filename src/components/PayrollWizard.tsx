@@ -1937,6 +1937,19 @@ const ADDITIONS_SECTIONS = [
 
 type AdditionsSectionKey = (typeof ADDITIONS_SECTIONS)[number]['key'];
 
+/**
+ * Section swap: a directional crossfade + slide, following the house sub-tab
+ * pattern (`docs/design/ui-standards.md` §11.1). The panel travels the way the
+ * operator moved along the strip, so the two workspaces read as neighbours
+ * rather than as one screen blinking into another. Distance is deliberately
+ * short (20px) — this is a state change in a task, not a page transition.
+ */
+const ADDITIONS_SECTION_VARIANTS = {
+  enter: (dir: number) => ({ opacity: 0, x: dir >= 0 ? 20 : -20 }),
+  center: { opacity: 1, x: 0 },
+  exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -20 : 20 }),
+};
+
 export default function PayrollWizard({
   sessionEmail,
   sessionRole,
@@ -2420,6 +2433,12 @@ export default function PayrollWizard({
    * section it knows nothing about.
    */
   const [additionsSection, setAdditionsSection] = useState<AdditionsSectionKey>('departments');
+  /**
+   * Which way the panel should travel on the next section swap: +1 rightward
+   * (Departments → HSL), −1 back. Held in state rather than derived so the
+   * exiting panel and the entering one agree on the direction mid-flight.
+   */
+  const [additionsSectionDir, setAdditionsSectionDir] = useState(1);
   const [accountingDeptModalOpen, setAccountingDeptModalOpen] = useState(false);
   const [ticketsModalEmail, setTicketsModalEmail] = useState<string | null>(null);
   const [sitesModalEmail, setSitesModalEmail] = useState<string | null>(null);
@@ -10565,7 +10584,7 @@ export default function PayrollWizard({
                           <motion.span
                             layoutId="hsl-dept-active-bg"
                             className="absolute inset-0 rounded-[7px] bg-violet-600/10 dark:bg-violet-500/15"
-                            transition={{ type: 'spring', stiffness: 400, damping: 34 }}
+                            transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 400, damping: 34 }}
                           />
                         )}
                         <span className="relative truncate">{item.name}</span>
@@ -14641,22 +14660,47 @@ export default function PayrollWizard({
                     type="button"
                     role="tab"
                     aria-selected={isActive}
-                    onClick={() => { setAdditionsSection(sec.key); setAdditionsSearch(''); }}
+                    onClick={() => {
+                      if (isActive) return;
+                      // The panel travels the way the operator moved along the strip.
+                      // Both indices come from ADDITIONS_SECTIONS (the canonical order),
+                      // never from the filtered array — a dropped tab must not be able to
+                      // reverse the direction of a swap.
+                      const from = ADDITIONS_SECTIONS.findIndex(x => x.key === activeAdditionsSection);
+                      const to = ADDITIONS_SECTIONS.findIndex(x => x.key === sec.key);
+                      setAdditionsSectionDir(to >= from ? 1 : -1);
+                      setAdditionsSection(sec.key);
+                      setAdditionsSearch('');
+                    }}
                     className={cn(
-                      'relative -mb-px flex items-center gap-2 border-b-2 px-3.5 py-2 text-sm font-semibold transition-colors',
+                      'relative -mb-px flex items-center gap-2 px-3.5 py-2 text-sm font-semibold transition-colors duration-200',
                       isActive
                         ? sec.key === 'hsl'
-                          ? 'border-violet-600 text-violet-700 dark:border-violet-400 dark:text-violet-300'
-                          : 'border-indigo-600 text-indigo-700 dark:border-indigo-400 dark:text-indigo-300'
-                        : 'border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:text-zinc-200',
+                          ? 'text-violet-700 dark:text-violet-300'
+                          : 'text-indigo-700 dark:text-indigo-300'
+                        : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
                     )}
                   >
-                    <sec.icon className="h-3.5 w-3.5 shrink-0" />
-                    <span>{sec.label}</span>
+                    {/* ONE underline that physically glides between the tabs (shared
+                        `layoutId`), never two borders toggling — ui-standards §11.1.
+                        It is the only moving part in the strip, so the eye follows the
+                        selection instead of re-finding it. */}
+                    {isActive && (
+                      <motion.span
+                        layoutId="additions-section-indicator"
+                        className={cn(
+                          'absolute inset-x-0 bottom-0 h-0.5 rounded-full',
+                          sec.key === 'hsl' ? 'bg-violet-600 dark:bg-violet-400' : 'bg-indigo-600 dark:bg-indigo-400',
+                        )}
+                        transition={{ duration: reduceMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+                      />
+                    )}
+                    <sec.icon className="relative h-3.5 w-3.5 shrink-0" />
+                    <span className="relative">{sec.label}</span>
                     {count > 0 && (
                       <span
                         className={cn(
-                          'rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none',
+                          'relative rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none transition-colors duration-200',
                           isActive
                             ? sec.key === 'hsl'
                               ? 'bg-violet-600 text-white'
@@ -14672,6 +14716,22 @@ export default function PayrollWizard({
               })}
             </div>
 
+            {/* The section swap. `overflow-x-clip` (never `-hidden`) keeps the slide from
+                spawning a page scrollbar without turning this into a scroll container,
+                which would break the tables' sticky headers below. `mode="wait"` so the
+                two workspaces never overlap mid-swap — they are different tables of the
+                same money, and a cross-dissolve of two pay tables reads as a glitch. */}
+            <div className="overflow-x-clip">
+              <AnimatePresence mode="wait" initial={false} custom={additionsSectionDir}>
+                <motion.div
+                  key={activeAdditionsSection}
+                  custom={additionsSectionDir}
+                  variants={ADDITIONS_SECTION_VARIANTS}
+                  initial="enter"
+                  animate="center"
+                  exit="exit"
+                  transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                >
             {/* Department workspace: vertical rail (left) + content (right). On mobile the
                 rail collapses to a horizontal scroller above the content. */}
             {activeAdditionsSection === 'hsl' ? renderHslWorkspace() : (
@@ -14708,7 +14768,7 @@ export default function PayrollWizard({
                         <motion.span
                           layoutId="additions-dept-active-bg"
                           className="absolute inset-0 rounded-[7px] bg-indigo-600/10 dark:bg-indigo-500/15"
-                          transition={{ type: 'spring', stiffness: 400, damping: 34 }}
+                          transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 400, damping: 34 }}
                         />
                       )}
                       <span className="relative truncate">{dept.name}</span>
@@ -14741,13 +14801,20 @@ export default function PayrollWizard({
 
               {/* Content: review panel + employee table */}
               <div className="min-w-0 flex-1">
+                {/* Department swap. Two deliberate changes from the original cut, both in
+                    service of it actually feeling smooth: the `blur(2px)` legs are gone
+                    (this subtree is a pay table that can run to hundreds of rows, and
+                    filtering it on every tab change is the one thing here that drops
+                    frames), and the duration is reduce-motion gated like the rest of the
+                    step. Vertical, not horizontal: the rail beside it is vertical, so the
+                    content follows the rail's axis rather than the section strip's. */}
                 <AnimatePresence mode="wait" initial={false}>
                   <motion.div
                     key={activeDeptTab}
-                    initial={{ opacity: 0, y: 8, filter: 'blur(2px)' }}
-                    animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                    exit={{ opacity: 0, y: -6, filter: 'blur(2px)' }}
-                    transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: reduceMotion ? 0 : 0.18, ease: [0.22, 1, 0.36, 1] }}
                     className="space-y-4"
                   >
                 <TimeAdjustmentReviewPanel
@@ -16057,6 +16124,9 @@ export default function PayrollWizard({
               </div>{/* content: review panel + table */}
             </div>
             )}{/* /department workspace — HSL section renders instead of it */}
+                </motion.div>
+              </AnimatePresence>
+            </div>
           </div>
         );
       }
@@ -17180,7 +17250,7 @@ export default function PayrollWizard({
                             <motion.span
                               layoutId="validation-dept-active-bg"
                               className="absolute inset-0 rounded-[7px] bg-indigo-600/10 dark:bg-indigo-500/15"
-                              transition={{ type: 'spring', stiffness: 400, damping: 34 }}
+                              transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 400, damping: 34 }}
                             />
                           )}
                           <span className="relative truncate">{g.name}</span>
