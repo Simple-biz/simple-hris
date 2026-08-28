@@ -309,6 +309,7 @@ import {
   type BreakdownInput,
 } from '@/lib/payroll/validation-breakdown';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { buildCatalogDeptNameMap } from '@/lib/departments/dept-identity';
 import { computePabIneligibility, pabSeverityBand, type PabDayEntry } from '@/lib/payroll/pab-ineligibility';
 import PabIneligibleTable, { type PabIneligibleRow } from '@/components/payroll/PabIneligibleTable';
 
@@ -7439,6 +7440,14 @@ export default function PayrollWizard({
     }
     return map;
   }, [hubstaffRowsForPab]);
+
+  /** Payment Catalog display names, so step 6 never shows a raw `lead_gen` slug.
+   *  Built from the in-app registry; anything not registered falls back to the
+   *  built-in DEPARTMENTS list, then to a humanized slug (catalogDeptNameFrom). */
+  const catalogDeptNames = useMemo(
+    () => buildCatalogDeptNameMap(customDepartments),
+    [customDepartments],
+  );
 
   const pabIneligibleRows = useMemo<PabIneligibleRow[]>(() => {
     if (!pabMonthRange) return [];
@@ -17144,6 +17153,7 @@ export default function PayrollWizard({
               <CardContent className="p-4">
                 <PabIneligibleTable
                   rows={pabIneligibleRows}
+                  deptNames={catalogDeptNames}
                   monthLabel={monthLabelPab}
                   onOpenCalendar={setPabCalendarModalEmail}
                   onForgiveMonth={forgiveMonth}

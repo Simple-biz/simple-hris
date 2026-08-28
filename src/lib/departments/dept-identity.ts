@@ -58,3 +58,58 @@ export function humanizeDeptKey(key: string): string {
 export function catalogDeptName(key: string): string {
   return DEPARTMENTS.find((d) => d.key === key)?.name ?? humanizeDeptKey(key);
 }
+
+/**
+ * The Payment Catalog's name for a department key, including departments that
+ * exist ONLY in the catalog's in-app registry.
+ *
+ * `catalogDeptName` alone knows the built-in `DEPARTMENTS` list and humanizes
+ * everything else, which is wrong twice for catalog departments: a registry
+ * entry has a real display name that humanizing the slug may not reproduce
+ * (`medical_billing` → "Medical Billing" only by luck), and a NAMESPACED
+ * sub-department key is mangled outright — `medical_billing:intake_team`
+ * humanizes to "Medical billing:intake Team".
+ *
+ * So: registry sub-key → registry parent → built-in → humanized slug. HSL keeps
+ * its own path inside `humanizeDeptKey`, which routes `hsl:*` through
+ * `formatDeptLabel` (hsl-subdepartments.md §12 — the slug never reaches a human).
+ *
+ * @param names `key → display name` for BOTH parents and `parent:sub` keys.
+ *              Build it with {@link buildCatalogDeptNameMap}.
+ */
+export function catalogDeptNameFrom(
+  key: string | null | undefined,
+  names?: ReadonlyMap<string, string> | null,
+): string {
+  const k = (key ?? '').trim();
+  if (!k) return '';
+  const registered = names?.get(k);
+  if (registered) return registered;
+  // A namespaced key whose parent is registered but whose sub is not: name the
+  // parent rather than humanizing the whole slug into nonsense.
+  const sep = k.indexOf(':');
+  if (sep > 0) {
+    const parent = names?.get(k.slice(0, sep));
+    if (parent) return parent;
+  }
+  return catalogDeptName(k);
+}
+
+/** `key → name` for every Payment Catalog department, parents and sub-units. */
+export function buildCatalogDeptNameMap(
+  entries: ReadonlyArray<{ key: string; name: string; subDepartments?: ReadonlyArray<{ key: string; name: string }> }>,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const e of entries) {
+    const parent = (e.name ?? '').trim();
+    const pk = (e.key ?? '').trim();
+    if (!pk || !parent) continue;
+    map.set(pk, parent);
+    for (const sub of e.subDepartments ?? []) {
+      const sk = (sub.key ?? '').trim();
+      const sn = (sub.name ?? '').trim();
+      if (sk && sn) map.set(`${pk}:${sk}`, `${parent} — ${sn}`);
+    }
+  }
+  return map;
+}

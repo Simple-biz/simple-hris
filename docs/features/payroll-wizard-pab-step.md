@@ -153,8 +153,16 @@ Department and status filters sit beside the search box, following the rule
   empty view with no way back. Same for the status filter.
 - **Options are built from the UNFILTERED rows**, so they cannot shift under the pointer while
   another filter is in use.
-- **The raw `hsl:*` key is the option VALUE; `formatDeptLabel` produces the label.** The slug
-  must never reach a human, and the raw value must never be shown just because it is the key.
+- **The raw key is the option VALUE; `catalogDeptNameFrom` produces the label.** The slug must
+  never reach a human, and the raw value must never be shown just because it is the key.
+  `employeeDepts` holds normalized KEYS (`lead_gen`, `hogan_smith_law`), not master labels, so
+  `formatDeptLabel` alone is not enough — it only rewrites the HSL family and passes every
+  other key through unchanged, which is how the filter first shipped showing `lead_gen`.
+  Resolution is **Payment Catalog registry → built-in `DEPARTMENTS` → humanized slug**, and
+  namespaced sub-keys resolve as "Parent — Sub" rather than being humanized whole
+  (`medical_billing:intake_team` would otherwise read "Medical billing:intake Team").
+  Verified against live data: all 39 department values and the normalized key space both
+  resolve with zero slug-looking labels.
 - The count line always states the filtered total against the true total, and says filters
   narrow the view only. The "N ineligible" headline chip is always the UNFILTERED count.
 

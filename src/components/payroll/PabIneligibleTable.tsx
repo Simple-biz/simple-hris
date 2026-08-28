@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { pabSeverityBand, type PabFailedDay, type PabSeverityBand } from '@/lib/payroll/pab-ineligibility';
-import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { catalogDeptNameFrom } from '@/lib/departments/dept-identity';
 
 /**
  * The Payroll Wizard's step-6 PAB review table.
@@ -89,6 +89,7 @@ function formatDay(iso: string): string {
 
 export default function PabIneligibleTable({
   rows,
+  deptNames,
   monthLabel,
   onOpenCalendar,
   onForgiveMonth,
@@ -99,6 +100,9 @@ export default function PabIneligibleTable({
 }: {
   /** The step's array, verbatim. */
   rows: PabIneligibleRow[];
+  /** Payment Catalog `key → display name`, parents and sub-units. Without it a
+   *  catalog-only department renders as its raw slug. */
+  deptNames: ReadonlyMap<string, string>;
   monthLabel: string;
   onOpenCalendar: (email: string) => void;
   onForgiveMonth: (row: PabIneligibleRow) => void;
@@ -125,7 +129,7 @@ export default function PabIneligibleTable({
     const byKey = new Map<string, string>();
     let hasNone = false;
     for (const r of rows) {
-      if (r.departmentKey) byKey.set(r.departmentKey, formatDeptLabel(r.departmentKey) || r.departmentKey);
+      if (r.departmentKey) byKey.set(r.departmentKey, catalogDeptNameFrom(r.departmentKey, deptNames));
       else hasNone = true;
     }
     const opts = [
@@ -138,7 +142,7 @@ export default function PabIneligibleTable({
     // dropping out of every view — a filter never hides a row.
     if (hasNone) opts.push({ value: NO_DEPT, label: 'No department' });
     return opts;
-  }, [rows]);
+  }, [rows, deptNames]);
 
   const bandOptions = useMemo(() => {
     const present = new Set(rows.map((r) => pabSeverityBand(r.severity)));
@@ -175,11 +179,11 @@ export default function PabIneligibleTable({
       list = list.filter(
         (r) =>
           (r.name ?? '').toLowerCase().includes(q) ||
-          formatDeptLabel(r.departmentKey).toLowerCase().includes(q),
+          catalogDeptNameFrom(r.departmentKey, deptNames).toLowerCase().includes(q),
       );
     }
     return list;
-  }, [rows, query, deptFilter, bandFilter]);
+  }, [rows, query, deptFilter, bandFilter, deptNames]);
 
   // Page follows the filter: narrowing the search on page 4 of an unfiltered list
   // would otherwise land on an empty page that looks like "no matches".
@@ -322,7 +326,7 @@ export default function PabIneligibleTable({
                     )}
                   </td>
                   <td className="px-3 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
-                    {formatDeptLabel(row.departmentKey) || '—'}
+                    {catalogDeptNameFrom(row.departmentKey, deptNames) || '—'}
                     {row.isHsl && (
                       <span className="ml-1.5 rounded border border-violet-300/70 bg-violet-50 px-1 py-px text-[10px] font-semibold text-violet-700 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-300">
                         HSL
