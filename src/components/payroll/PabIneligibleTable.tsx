@@ -45,6 +45,10 @@ export type PabIneligibleRow = {
   /** Master `employee_id` (`YYMM-NNNN`). Null when the active roster has no row
    *  for them. Safe to show — an internal id, not a contact address. */
   employeeId: string | null;
+  /** Company work address. Never the personal email. */
+  workEmail: string | null;
+  /** Resolvable to a master-list row — the population the KPI cards count. */
+  onMasterList: boolean;
   /** RAW department key. Formatted at the render site, never before — an
    *  `hsl:*` slug must not reach a human (docs/features/hsl-subdepartments.md). */
   departmentKey: string | null;
@@ -183,6 +187,7 @@ export default function PabIneligibleTable({
         (r) =>
           (r.name ?? '').toLowerCase().includes(q) ||
           (r.employeeId ?? '').toLowerCase().includes(q) ||
+          (r.workEmail ?? '').toLowerCase().includes(q) ||
           catalogDeptNameFrom(r.departmentKey, deptNames).toLowerCase().includes(q),
       );
     }
@@ -296,7 +301,7 @@ export default function PabIneligibleTable({
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search name, ID or department"
+              placeholder="Search name, ID, email or department"
               className="h-8 pl-8 text-xs"
             />
           </div>
@@ -315,10 +320,12 @@ export default function PabIneligibleTable({
       </div>
 
       <div className="min-w-0 overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-        <table className="w-full min-w-[760px] text-sm">
+        <table className="w-full min-w-[1040px] text-sm">
           <thead className="bg-zinc-50 text-[11px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
             <tr>
-              <th className="px-4 py-2.5 text-left font-semibold">Employee</th>
+              <th className="px-4 py-2.5 text-left font-semibold">Employee ID</th>
+              <th className="px-3 py-2.5 text-left font-semibold">Employee</th>
+              <th className="px-3 py-2.5 text-left font-semibold">Work Email</th>
               <th className="px-3 py-2.5 text-left font-semibold">Department</th>
               <th className="px-3 py-2.5 text-left font-semibold">Status</th>
               {/* Failed days sits immediately left of the buttons: the count and the
@@ -338,8 +345,14 @@ export default function PabIneligibleTable({
               return (
                 <tr key={row.email} className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40">
                   <td className="px-4 py-2.5">
-                    {/* The id sits where the email used to — an internal
-                        identifier is safe to show, a personal address is not. */}
+                    {/* Blank when the ACTIVE roster has no row for them. Never
+                        synthesised — a made-up id on a payroll screen is worse
+                        than an honest dash. */}
+                    <span className="font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
+                      {row.employeeId ?? '—'}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5">
                     {row.name ? (
                       <div className="font-medium text-zinc-900 dark:text-zinc-100">{row.name}</div>
                     ) : (
@@ -352,9 +365,11 @@ export default function PabIneligibleTable({
                         Unknown — not on the master list
                       </div>
                     )}
-                    <div className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
-                      {row.employeeId ?? '—'}
-                    </div>
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <span className="font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
+                      {row.workEmail ?? '—'}
+                    </span>
                   </td>
                   <td className="px-3 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
                     {catalogDeptNameFrom(row.departmentKey, deptNames) || '—'}

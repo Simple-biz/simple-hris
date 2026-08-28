@@ -148,6 +148,37 @@ people whose name falls through to the Hubstaff `Member` tier: measured 2026-08-
 1,329 roster rows carry an id and all 1,200 hubstaff emails that resolve to a roster row have
 one — the other 886 have no roster row at all. **Never synthesise an id to fill that dash.**
 
+## The KPI strip is MASTER-LIST scoped, and it reports THREE buckets
+
+The step's header is a four-card strip, not prose (Kane 2026-08-28). Every figure counts only
+people who resolve to a master-list row through `masterIndex` (work, both alternate work, or
+personal email).
+
+**Why scoped.** `effectivePabStatus` spans every Hubstaff email across every uploaded week of
+the period — ~2,086 in 2026-08 — and **886 of them (42%) have no roster row at all**. Counting
+those would make "Eligible / Ineligible" describe a population nobody manages.
+
+**Why three verdict cards, not two.** `effectivePabStatus` is tri-state. An Eligible/Ineligible
+pair silently loses everyone mid-period — including *every* HSL person, who is parked
+`in_progress` until the period closes. **Eligible + Ineligible + In progress must equal
+Evaluated**, or the strip lies by omission. Measured 2026-08-28: 0 / 329 / 871 over 1,200
+evaluated — and Eligible is 0 *by construction* until the period ends, which is why that card
+carries the reason on its face rather than a bare zero.
+
+**The off-roster remainder is disclosed, never dropped** — an amber line under the strip names
+how many had hours but are not on the master list, following the `mesa.md` idiom. They still
+appear in the table below and can still be forgiven; they are simply not counted above.
+
+**Two guards, same failure class the table already carries.** While `!pabMergeLoaded` the strip
+shows a counting state, never four zeros — a KPI card reading "0 Ineligible" during the
+wizard's slowest fetch is the all-clear-that-hides-people bug wearing more authority than the
+sentence it replaced. And when `masterRosterUnavailable`, every GML-scoped number is 0 by
+construction, so the strip says the roster failed instead of showing the zeros.
+
+**The `step6-pab-review` tutorial anchor moved onto the strip's wrapper, verbatim.** Deleting
+the node would orphan `guide.ts`'s step-6 target, and nothing tests that link — step 7's
+`step7-validation-table` is already dead exactly that way (the DOM says `step6-validation-table`).
+
 ## Filters narrow the view; they never remove anyone
 
 Department and status filters sit beside the search box, following the rule

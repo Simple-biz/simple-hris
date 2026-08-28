@@ -312,6 +312,7 @@ import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { buildCatalogDeptNameMap } from '@/lib/departments/dept-identity';
 import { computePabIneligibility, pabSeverityBand, type PabDayEntry } from '@/lib/payroll/pab-ineligibility';
 import PabIneligibleTable, { type PabIneligibleRow } from '@/components/payroll/PabIneligibleTable';
+import { TransferKpiCard } from '@/components/transfers/TransferToolbar';
 
 function findHeaderColumn(header: string[], ...labels: string[]): number {
   const norm = header.map((h) => h.trim().toLowerCase());
@@ -7449,6 +7450,43 @@ export default function PayrollWizard({
     [customDepartments],
   );
 
+  /**
+   * Step 6's KPI strip — every figure scoped to people who resolve to a MASTER-LIST
+   * row, because that is the only population these numbers can honestly describe.
+   * The PAB month spans every Hubstaff email across every uploaded week (~2,000),
+   * and roughly 42% of those have no roster row: leavers still inside the month,
+   * people whose master row went stale, and alias identities. Counting them here
+   * would make "Eligible / Ineligible" describe a population nobody manages.
+   *
+   * The three verdict buckets are reported TOGETHER on purpose. `effectivePabStatus`
+   * is tri-state, and an Eligible/Ineligible pair alone silently loses everyone
+   * mid-period — including every HSL person, who is parked `in_progress` until the
+   * period closes (see the doc's OPEN section). Eligible + Ineligible + In progress
+   * must equal Evaluated, or the strip is lying by omission.
+   */
+  const pabGmlCounts = useMemo(() => {
+    let eligible = 0, ineligible = 0, inProgress = 0, offRoster = 0;
+    for (const [email, status] of effectivePabStatus.entries()) {
+      const onMaster =
+        masterIndex.byWorkEmail.has(email) || masterIndex.byPersonalEmail.has(email);
+      if (!onMaster) { offRoster += 1; continue; }
+      if (status === 'eligible') eligible += 1;
+      else if (status === 'ineligible') ineligible += 1;
+      else inProgress += 1;
+    }
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const periodEnded = pabMonthRange
+      ? today.getTime() > new Date(
+          pabMonthRange.end.getFullYear(), pabMonthRange.end.getMonth(), pabMonthRange.end.getDate(),
+        ).getTime()
+      : false;
+    return {
+      eligible, ineligible, inProgress, offRoster,
+      evaluated: eligible + ineligible + inProgress,
+      periodEnded,
+    };
+  }, [effectivePabStatus, masterIndex, pabMonthRange]);
+
   const pabIneligibleRows = useMemo<PabIneligibleRow[]>(() => {
     if (!pabMonthRange) return [];
     const rows: PabIneligibleRow[] = [];
@@ -7525,6 +7563,16 @@ export default function PayrollWizard({
         // roster does not carry — the PAB month spans people who have since left
         // it, and inventing an id for them would be worse than showing none.
         employeeId: master?.employee_id?.trim() || null,
+        // The COMPANY address, never the personal one. Prefer the master's work
+        // email; fall back to the Hubstaff key only when that key is not the
+        // person's personal address (masterIndex can match on either).
+        workEmail:
+          master?.work_email?.trim()
+          || (normEmail(master?.personal_email ?? null) === email ? null : email),
+        // Explicit, NOT `employeeId != null` — employee_id is also null for an
+        // unparseable start_date, so the two failure modes would be
+        // indistinguishable and the KPI cards would undercount.
+        onMasterList: !!master,
         departmentKey: deptKey,
         isHsl,
         severity,
@@ -7541,6 +7589,13 @@ export default function PayrollWizard({
     pabMonthRange, hslWeekModel, hslAdjustedPabEnd, calcResults, isPabExcluded, masterIndex,
     pabMemberNames,
   ]);
+
+  /** The 1–2-day cohort, MASTER-LIST scoped so it matches the KPI strip's
+   *  "Ineligible" card rather than the table's unfiltered headline pill. */
+  const pabReviewBandCount = useMemo(
+    () => pabIneligibleRows.filter((r) => r.onMasterList && pabSeverityBand(r.severity) === 'review').length,
+    [pabIneligibleRows],
+  );
 
   // Re-key any override/note saved under a lowercased email to the wizard's raw
   // calc-result casing. Overrides bridged in from the Payroll Notes board before
@@ -17117,22 +17172,69 @@ export default function PayrollWizard({
 
         return (
           <div className="flex min-w-0 flex-col gap-5">
-            <div
-              data-tutorial-target="step6-pab-review"
-              className="flex flex-col gap-1 rounded-2xl border border-indigo-200/70 bg-gradient-to-br from-indigo-50 via-white to-violet-50/40 p-5 shadow-sm dark:border-indigo-900/40 dark:from-indigo-950/30 dark:via-zinc-950 dark:to-violet-950/15"
-            >
+            {/* KPI strip replaces the old prose banner (Kane 2026-08-28). It KEEPS the
+                `step6-pab-review` tutorial anchor — deleting the node would orphan
+                `guide.ts`'s target for step 6, and nothing tests that link (step 7's
+                `step7-validation-table` is already dead that way).
+
+                Every number is scoped to people resolvable to a MASTER-LIST row, which
+                is what Kane asked for and is also the only population these figures can
+                honestly describe: the PAB month spans ~2,000 Hubstaff emails, ~42% of
+                which have no roster row. The off-roster remainder is disclosed under the
+                strip rather than silently dropped (the `mesa.md` idiom). */}
+            <div data-tutorial-target="step6-pab-review" className="flex flex-col gap-3">
               <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-700 dark:text-indigo-300">
                 <CalendarCheck className="h-3.5 w-3.5" /> PAB · {monthLabelPab}
               </div>
-              <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
-                Who missed Perfect Attendance this period
-              </h2>
-              <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                One or two missed days is usually a shifting schedule rather than absence —
-                open the calendar to see where it went wrong before the month&rsquo;s bonus is
-                lost. Forgiving here restores the whole month and shows on the employee&rsquo;s
-                own dashboard. To forgive a single day instead, use the PAB calendar.
-              </p>
+              {!pabMergeLoaded ? (
+                <div className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-zinc-50/60 px-4 py-6 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-400">
+                  <Loader2 className="h-4 w-4 animate-spin text-indigo-500" />
+                  Counting {monthLabelPab} — merging every uploaded Hubstaff week.
+                </div>
+              ) : masterRosterUnavailable ? (
+                <div className="flex items-center gap-2 rounded-xl border border-amber-300/70 bg-amber-50/60 px-4 py-6 text-xs text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/20 dark:text-amber-300">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  The master list did not load, so these counts would all read 0. Reload
+                  before judging this period.
+                </div>
+              ) : (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <TransferKpiCard
+                      label="Eligible"
+                      value={pabGmlCounts.eligible}
+                      tone="emerald"
+                      hint={pabGmlCounts.periodEnded ? 'cleared every required day' : 'no verdict is final until the period closes'}
+                    />
+                    <TransferKpiCard
+                      label="Ineligible"
+                      value={pabGmlCounts.ineligible}
+                      tone="rose"
+                      hint={`${pabReviewBandCount} missed only 1–2 days`}
+                    />
+                    <TransferKpiCard
+                      label="Still in progress"
+                      value={pabGmlCounts.inProgress}
+                      tone="zinc"
+                      hint="HSL is judged only when the period closes"
+                    />
+                    <TransferKpiCard
+                      label="On the master list"
+                      value={pabGmlCounts.evaluated}
+                      tone="blue"
+                      hint={`scored this period, of ${masterEmployees.length.toLocaleString()} on the roster`}
+                    />
+                  </div>
+                  {pabGmlCounts.offRoster > 0 && (
+                    <p className="flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+                      <AlertCircle className="mt-px h-3 w-3 shrink-0" />
+                      {pabGmlCounts.offRoster.toLocaleString()} more had hours this period but are
+                      not on the Global Master List — they are listed below and can be forgiven,
+                      but they are not counted above.
+                    </p>
+                  )}
+                </>
+              )}
             </div>
 
             <Card>
