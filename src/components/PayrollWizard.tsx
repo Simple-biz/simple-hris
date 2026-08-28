@@ -5682,13 +5682,13 @@ export default function PayrollWizard({
    * Per-employee weekday breakdown for the PAB period (merged month). Used in the PA cell.
    */
   const employeeWeekdayHours = useMemo<
-    Map<string, { col: string; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>
+    Map<string, { col: string; iso: string | null; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>
   >(() => {
     const rows = hubstaffRowsForPab;
     if (!rows || rows.length === 0) return new Map();
     if (weekdayColumnGroups.length === 0) return new Map();
 
-    const map = new Map<string, { col: string; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>();
+    const map = new Map<string, { col: string; iso: string | null; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>();
     for (const row of rows) {
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
@@ -5712,6 +5712,11 @@ export default function PayrollWizard({
           const holidayForgiven = isHoliday && seconds < 7 * 3600;
           return {
             col,
+            // The group's resolved ISO date. `col` is only a LABEL: for a week
+            // whose upload carried no day-prefixed header, pickPreferredHubstaffColumn
+            // returns the canonical `monday`…`sunday` name, which parseColDate cannot
+            // read. Anything needing the DATE must use this, never re-parse `col`.
+            iso: groupDate,
             seconds,
             passes: seconds >= 7 * 3600 || disputeForgiven || isHoliday,
             forgivenByDispute: disputeForgiven && !holidayForgiven,
@@ -5729,13 +5734,13 @@ export default function PayrollWizard({
    * employeeWeekdayHours but uses allDaysColumnGroups so Sat/Sun are included.
    */
   const employeeAllDaysHours = useMemo<
-    Map<string, { col: string; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>
+    Map<string, { col: string; iso: string | null; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>
   >(() => {
     const rows = hubstaffRowsForPab;
     if (!rows || rows.length === 0) return new Map();
     if (allDaysColumnGroups.length === 0) return new Map();
 
-    const map = new Map<string, { col: string; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>();
+    const map = new Map<string, { col: string; iso: string | null; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>();
     for (const row of rows) {
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
@@ -5755,6 +5760,11 @@ export default function PayrollWizard({
           const holidayForgiven = isHoliday && seconds < 7 * 3600;
           return {
             col,
+            // The group's resolved ISO date. `col` is only a LABEL: for a week
+            // whose upload carried no day-prefixed header, pickPreferredHubstaffColumn
+            // returns the canonical `monday`…`sunday` name, which parseColDate cannot
+            // read. Anything needing the DATE must use this, never re-parse `col`.
+            iso: groupDate,
             seconds,
             passes: seconds >= 7 * 3600 || disputeForgiven || isHoliday,
             forgivenByDispute: disputeForgiven && !holidayForgiven,
@@ -7422,10 +7432,14 @@ export default function PayrollWizard({
 
       const entries: PabDayEntry[] = [];
       for (const b of breakdown) {
-        const d = parseColDate(b.col);
-        if (!d) continue;
+        // Use the breakdown's RESOLVED iso, never parseColDate(b.col). `col` is a
+        // display label and is the canonical `monday`…`sunday` name whenever the
+        // week's upload carried no day-prefixed header — parseColDate returns null
+        // for those, which silently emptied `entries` and made every ineligible
+        // person read severity 0. That is exactly how this list shipped empty.
+        if (!b.iso) continue;
         entries.push({
-          iso: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+          iso: b.iso,
           seconds: b.seconds,
           passes: b.passes,
           forgivenByDispute: b.forgivenByDispute,
@@ -17092,6 +17106,12 @@ export default function PayrollWizard({
                   onForgiveMonth={forgiveMonth}
                   forgivingEmail={pabForgivingEmail}
                   readOnly={isReplay}
+                  // `pabMergeLoaded` is the one signal that the month's hours are
+                  // actually in. Without it an empty list renders as "nobody is
+                  // ineligible", which is the all-clear that hides the people this
+                  // step exists to surface.
+                  loading={!pabMergeLoaded}
+                  evaluatedCount={effectivePabStatus.size}
                 />
               </CardContent>
             </Card>

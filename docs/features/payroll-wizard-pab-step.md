@@ -113,6 +113,35 @@ under-count the opening week relative to the engine. Widening it would change
 any row that resolves to severity 0 rather than showing a Forgive button with nothing to
 forgive.
 
+## An empty list has three causes and they are NOT interchangeable
+
+The first version of this step rendered "Nobody is ineligible for August 2026 — every
+evaluated person cleared the attendance rule" whenever the row array was empty. That is the
+worst failure this surface can have: **the all-clear that hides the exact people the step
+exists to surface.** It shipped that way and was caught immediately against live data, where
+the same period actually has ~1,557 ineligible people.
+
+The table now separates:
+
+| State | Condition | What it says |
+| --- | --- | --- |
+| Loading | `!pabMergeLoaded` | "Loading attendance for \<month\>" — the all-weeks merge is the slowest fetch in the wizard (one request per archived upload) |
+| Not evaluated | merge done, `effectivePabStatus.size === 0` | amber — "could not be evaluated… this is **not** an all-clear" |
+| Genuinely clear | merge done, verdicts exist, none ineligible | emerald, and it names the evaluated headcount |
+
+**Never collapse these back into one branch.** An empty array is not evidence that nobody
+failed; it is evidence that nobody failed *or* that nothing was measured, and only
+`pabMergeLoaded` plus a non-zero verdict count can tell them apart.
+
+## `col` is a label; `iso` is the date
+
+Breakdown entries carry both. `col` is `pickPreferredHubstaffColumn(group)`, which returns
+the canonical `monday`…`sunday` name for any week whose upload had no day-prefixed header —
+and `parseColDate` cannot read those. Anything that needs the DATE must use the resolved
+`iso` the breakdown now exposes, never re-parse `col`. Today's live columns happen to be
+plain ISO dates, so re-parsing `col` works by luck; it stops working the moment a canonical
+week is merged in.
+
 ## The batch is all-or-nothing, and re-reads before it reports
 
 A half-forgiven month is worse than none: the operator sees success, the employee stays

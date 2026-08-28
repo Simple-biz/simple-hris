@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { AlertTriangle, CalendarDays, Check, Loader2, ShieldCheck, Search } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight, Loader2, ShieldCheck, Search } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,6 +34,9 @@ import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
  */
 
 export type PabIneligibleRow = {
+  /** Join key and the value every write is addressed to. NEVER rendered — it is a
+   *  personal address, and the master quoted nickname is what people are called
+   *  here (`calcResults.name`, the one fix point for wizard display names). */
   email: string;
   name: string;
   /** RAW department key. Formatted at the render site, never before — an
@@ -70,6 +73,8 @@ function formatShortfall(sec: number): string {
   return `${m}m`;
 }
 
+const PAGE_SIZE = 25;
+
 function formatDay(iso: string): string {
   const [y, m, d] = iso.split('-').map(Number);
   if (!y || !m || !d) return iso;
@@ -83,6 +88,8 @@ export default function PabIneligibleTable({
   onForgiveMonth,
   forgivingEmail,
   readOnly,
+  loading,
+  evaluatedCount,
 }: {
   /** The step's array, verbatim. */
   rows: PabIneligibleRow[];
@@ -93,8 +100,14 @@ export default function PabIneligibleTable({
   forgivingEmail: string | null;
   /** Replay of a past week — the figures are history, so no writes. */
   readOnly: boolean;
+  /** The all-weeks PAB merge is still in flight. */
+  loading: boolean;
+  /** How many people the wizard has a PAB verdict for. Zero with `loading` false
+   *  means the month could not be evaluated — NOT that everyone passed. */
+  evaluatedCount: number;
 }) {
   const [query, setQuery] = useState('');
+  const [page, setPage] = useState(1);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -102,14 +115,53 @@ export default function PabIneligibleTable({
     return rows.filter(
       (r) =>
         r.name.toLowerCase().includes(q) ||
-        r.email.toLowerCase().includes(q) ||
         formatDeptLabel(r.departmentKey).toLowerCase().includes(q),
     );
   }, [rows, query]);
 
+  // Page follows the filter: narrowing the search on page 4 of an unfiltered list
+  // would otherwise land on an empty page that looks like "no matches".
+  useEffect(() => { setPage(1); }, [query, rows]);
+  const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const paged = visible.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
   const reviewCount = rows.filter((r) => pabSeverityBand(r.severity) === 'review').length;
 
+  // An empty list has THREE causes and they are not interchangeable. Claiming
+  // "nobody is ineligible" while the month has not been evaluated is the worst
+  // possible failure for this surface: it is the all-clear that hides the very
+  // people the step exists to surface. Only assert it when the data is in.
   if (rows.length === 0) {
+    if (loading) {
+      return (
+        <div className="flex flex-col items-center gap-2 rounded-2xl border border-zinc-200 bg-zinc-50/60 px-6 py-10 text-center dark:border-zinc-800 dark:bg-zinc-900/30">
+          <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
+          <p className="text-sm font-semibold text-zinc-900 dark:text-white">
+            Loading attendance for {monthLabel}
+          </p>
+          <p className="text-xs text-zinc-600 dark:text-zinc-400">
+            Merging every uploaded Hubstaff week in the PAB period — this is the slowest
+            fetch in the wizard.
+          </p>
+        </div>
+      );
+    }
+    if (evaluatedCount === 0) {
+      return (
+        <div className="flex flex-col items-center gap-2 rounded-2xl border border-amber-300/70 bg-amber-50/60 px-6 py-10 text-center dark:border-amber-800/50 dark:bg-amber-950/20">
+          <AlertTriangle className="h-6 w-6 text-amber-600 dark:text-amber-400" />
+          <p className="text-sm font-semibold text-zinc-900 dark:text-white">
+            {monthLabel} could not be evaluated
+          </p>
+          <p className="text-xs text-zinc-600 dark:text-zinc-400">
+            No PAB verdicts were produced for this period, so this is <strong>not</strong> an
+            all-clear. Check that the month&rsquo;s Hubstaff weeks are uploaded on Step 1 and
+            that the PAB period is set in System Bonus.
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="flex flex-col items-center gap-2 rounded-2xl border border-emerald-200/70 bg-emerald-50/50 px-6 py-10 text-center dark:border-emerald-900/40 dark:bg-emerald-950/20">
         <ShieldCheck className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
@@ -117,7 +169,8 @@ export default function PabIneligibleTable({
           Nobody is ineligible for {monthLabel}
         </p>
         <p className="text-xs text-zinc-600 dark:text-zinc-400">
-          Every evaluated person cleared the attendance rule for this PAB period.
+          All {evaluatedCount.toLocaleString()} evaluated people cleared the attendance rule
+          for this PAB period.
         </p>
       </div>
     );
@@ -141,14 +194,14 @@ export default function PabIneligibleTable({
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search name, email or department"
+            placeholder="Search name or department"
             className="h-8 pl-8 text-xs"
           />
         </div>
       </div>
 
       <div className="min-w-0 overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-        <table className="w-full min-w-[880px] text-sm">
+        <table className="w-full min-w-[820px] text-sm">
           <thead className="bg-zinc-50 text-[11px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
             <tr>
               <th className="px-4 py-2.5 text-left font-semibold">Employee</th>
@@ -160,7 +213,7 @@ export default function PabIneligibleTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/70">
-            {visible.map((row) => {
+            {paged.map((row) => {
               const band = pabSeverityBand(row.severity);
               const style = BAND_STYLES[band];
               const busy = forgivingEmail === row.email;
@@ -168,7 +221,6 @@ export default function PabIneligibleTable({
                 <tr key={row.email} className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40">
                   <td className="px-4 py-2.5">
                     <div className="font-medium text-zinc-900 dark:text-zinc-100">{row.name}</div>
-                    <div className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{row.email}</div>
                   </td>
                   <td className="px-3 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
                     {formatDeptLabel(row.departmentKey) || '—'}
@@ -248,12 +300,38 @@ export default function PabIneligibleTable({
         </table>
       </div>
 
-      {visible.length !== rows.length && (
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-          <AlertTriangle className="h-3 w-3" />
-          Showing {visible.length} of {rows.length} — the search filters this view only.
+          {visible.length !== rows.length && <AlertTriangle className="h-3 w-3" />}
+          {visible.length === 0
+            ? 'No one matches this search'
+            : `Showing ${(safePage - 1) * PAGE_SIZE + 1}–${Math.min(safePage * PAGE_SIZE, visible.length)} of ${visible.length}`}
+          {visible.length !== rows.length && ` (filtered from ${rows.length} — the search narrows this view only)`}
         </p>
-      )}
+        {pageCount > 1 && (
+          <div className="flex items-center gap-1">
+            <Button
+              type="button" variant="outline" size="sm"
+              className="h-7 px-2 text-[11px] disabled:opacity-40"
+              disabled={safePage <= 1}
+              onClick={() => setPage((n) => Math.max(1, n - 1))}
+            >
+              <ChevronLeft className="h-3 w-3" /> Prev
+            </Button>
+            <span className="px-1 font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+              {safePage} / {pageCount}
+            </span>
+            <Button
+              type="button" variant="outline" size="sm"
+              className="h-7 px-2 text-[11px] disabled:opacity-40"
+              disabled={safePage >= pageCount}
+              onClick={() => setPage((n) => Math.min(pageCount, n + 1))}
+            >
+              Next <ChevronRight className="h-3 w-3" />
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
