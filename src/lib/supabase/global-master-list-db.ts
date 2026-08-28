@@ -1237,7 +1237,13 @@ export async function listActiveMasterListPeople(): Promise<{
  * `offboarded_sheet` from it) — was removed 2026-08-07: offboarding no longer
  * depends on the Google Sheet. `offboarded_sheet` is an HRIS-owned ledger,
  * written by /api/hr/offboard and maintained by the reonboard/delete flows.
- * See app/api/cron/sync-offboarded-from-sheet/route.ts (tombstoned 410). */
+ * See app/api/cron/sync-offboarded-from-sheet/route.ts (tombstoned 410).
+ *
+ * Neither function comes back. The one-off backfill that landed sheet-era rows
+ * on 2026-08-28 (scripts/import-offboarded-from-json.mjs, `origin='google_sheet'`)
+ * is deliberately a script and not a library function: it is INSERT-ONLY and
+ * manually gated, and giving the app an importable "load the sheet" helper is
+ * how a one-off becomes a scheduled job again. */
 
 
 /** Read all rows from the offboarded_sheet table — newest off-board first.
@@ -1259,6 +1265,13 @@ export async function listOffboardedSheetRows(): Promise<{
   off_boarded_reason: string | null;
   off_boarded_note: string | null;
   off_boarded_by: string | null;
+  /** How the record was authored — the HR Offboarding tab shows it as a column.
+   *  `'hris'` = written by /api/hr/offboard; `'google_sheet'` = came off the
+   *  master sheet's Offboarded tab (the 2026-06-09 snapshot the retired sync
+   *  left, plus the 2026-08-28 one-off JSON import). NOT a live-sync flag —
+   *  nothing polls the spreadsheet. Stored, never re-derived: it used to be
+   *  guessable from `off_boarded_by IS NULL`, and the import broke that. */
+  origin: 'hris' | 'google_sheet';
   synced_at: string;
 }[]> {
   const supabase = requireServiceRole();

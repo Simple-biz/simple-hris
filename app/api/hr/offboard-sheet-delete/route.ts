@@ -17,9 +17,11 @@ export const runtime = "nodejs";
  * Removes the person from the Google Sheet so they stop reappearing in the HR
  * Offboarded list. Three deletes, each best-effort and independent:
  *
- *   1. Offboarded tab        -- the tab that feeds the offboarded_sheet snapshot.
- *      Deleting here is what stops the next sync-offboarded-from-sheet cron from
- *      re-adding them to the Offboarded list. (THE fix for "stays offboarded".)
+ *   1. Offboarded tab        -- the spreadsheet mirror of this ledger. This used
+ *      to be the load-bearing delete: it stopped the sync-offboarded-from-sheet
+ *      cron re-adding them. That cron is a 410 tombstone as of 2026-08-07 and
+ *      nothing reads the tab anymore, so this delete now only keeps the mirror
+ *      honest. Delete #3 is what actually prevents a comeback.
  *   2. offboarded_sheet DB   -- the snapshot the HR Offboarded tab reads from.
  *      Deleting here makes the row disappear immediately, without waiting for a
  *      sync. Matched on work_email OR personal_email.
@@ -50,7 +52,8 @@ export async function POST(req: Request) {
     );
   }
 
-  // 1. Offboarded sheet tab -- the load-bearing delete for this feature.
+  // 1. Offboarded sheet tab -- keeps the spreadsheet mirror in step (see above:
+  //    no longer load-bearing now that the Offboarded intake is retired).
   let offboardedTab = { deleted: 0, reason: undefined as string | undefined, error: null as string | null };
   try {
     const r = await deleteOffboardedSheetRowsByEmail(personal_email, work_email);

@@ -20,9 +20,28 @@ export const runtime = 'nodejs';
  *
  * `offboarded_sheet` is now an HRIS-owned ledger:
  *   · written by /api/hr/offboard (and maintained by reonboard / delete flows),
- *   · never bulk-replaced from the spreadsheet.
+ *   · never bulk-replaced from the spreadsheet,
+ *   · never RE-read from it on a schedule — this route stays dead.
  * Writes TO the Google Sheet (append-offboarded-sheet, backfill, row deletes)
  * are unaffected — the sheet remains a convenience mirror, not a source.
+ *
+ * AMENDED 2026-08-28 (Kane's call). Sheet-authored rows may be BACKFILLED into
+ * the ledger by a one-off, INSERT-ONLY script — scripts/import-offboarded-from-json.mjs
+ * — which landed 165 historical leavers the snapshot had missed, tagged
+ * `origin='google_sheet'`. This does not weaken anything above, because the two
+ * properties that made the old sync dangerous are the two the import does not
+ * have:
+ *
+ *   RECURRING → it is a manual script with an --apply gate. Nothing schedules it.
+ *   REPLACING → it never UPDATEs and never DELETEs. A person already on the
+ *               ledger is skipped, so a hand-correction can no longer be
+ *               clobbered by re-running the intake.
+ *
+ * The second one is not theoretical: the JSON export used for that import STILL
+ * carries franm@simple.biz's `4/20/2027` typo — the exact cell this route was
+ * retired over — while the DB row (id 45266) holds the corrected 2026-04-20.
+ * The import skipped her, and prints that outcome by name on every run. If a
+ * sheet intake is ever rebuilt, insert-only is the property to keep.
  *
  * Tombstoned as 410 rather than deleted so a stale scheduler or an old admin
  * button logs an explanation instead of a bare 404.

@@ -46,7 +46,54 @@ type HistoryRow = {
   off_boarded_reason: string | null;
   off_boarded_by: string | null;
   off_boarded_note: string | null;
+  /** Where the record came from. Stored server-side, never inferred here — see
+   *  {@link OFFBOARD_ORIGINS}. A legacy row that predates the column would read
+   *  as undefined, which renders as "Unknown" rather than as a guess. */
+  origin: OffboardOrigin | null;
 };
+
+/**
+ * The two ways a person lands on the off-boarded list.
+ *
+ * Until 2026-08-28 these were two SEPARATE tabs ("Offboarded by HRIS" reading
+ * completed `offboarding_queue` rows, "Offboarded" reading `offboarded_sheet`),
+ * which read as two populations but never were: `/api/hr/offboard` writes both
+ * tables, so all 488 completed queue rows already existed in the ledger and the
+ * HRIS tab contributed exactly zero additional people. One list with an Origin
+ * column says the true thing — everyone who has left, and how we know.
+ *
+ * `google_sheet` is HISTORY, not a live feed. The spreadsheet intake was retired
+ * 2026-08-07 (`/api/cron/sync-offboarded-from-sheet` is a 410 tombstone); these
+ * rows are the snapshot it left behind plus a one-off JSON import. Nothing polls
+ * the sheet, so this label can only ever stop growing.
+ */
+type OffboardOrigin = 'hris' | 'google_sheet';
+
+const OFFBOARD_ORIGINS: Record<OffboardOrigin, { label: string; chip: string }> = {
+  hris: {
+    label: 'HRIS',
+    // Emerald reads as "this system did it" against the rose the table uses for
+    // departure itself; the two never compete for the same meaning.
+    chip: 'bg-emerald-100 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-900/30 dark:text-emerald-300 dark:ring-emerald-400/20',
+  },
+  google_sheet: {
+    label: 'Google Sheet',
+    chip: 'bg-zinc-100 text-zinc-600 ring-zinc-500/20 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-400/20',
+  },
+};
+
+/** Origin as the table should render it. An absent value is shown as unknown —
+ *  never silently folded into either origin, because "which of our two systems
+ *  recorded this departure" is exactly the question the column exists to answer
+ *  and a confident wrong answer is worse than an honest blank. */
+function originChip(origin: OffboardOrigin | null): { label: string; chip: string } {
+  return (
+    (origin && OFFBOARD_ORIGINS[origin]) ?? {
+      label: 'Unknown',
+      chip: 'bg-amber-100 text-amber-700 ring-amber-600/20 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-400/20',
+    }
+  );
+}
 
 const REASON_LABELS: Record<string, string> = {
   // Canonical (dashboard-set) reason keys.
@@ -106,7 +153,12 @@ function PaginationBar({
   );
 }
 
-type OffboardTab = 'overview' | 'queue' | 'hris' | 'offboarded';
+/** `'hris'` was a fourth tab until 2026-08-28; it is now the Origin FILTER on
+ *  the merged Offboarded tab, because it was never a separate population. */
+type OffboardTab = 'overview' | 'queue' | 'offboarded';
+
+/** The merged tab's origin filter — `'all'` plus the two real origins. */
+type OriginFilter = 'all' | OffboardOrigin;
 
 export default function HrOffboarding() {
   const [activeTab, setActiveTab] = useState<OffboardTab>('overview');
@@ -130,9 +182,8 @@ export default function HrOffboarding() {
   const [queueLoading, setQueueLoading] = useState(() => !hasHrTabCache(HR_TAB_CACHE_KEYS.offboardQueue));
   const [queueSearch, setQueueSearch] = useState('');
   const [queuePage, setQueuePage] = useState(0);
-  // ── "Offboarded by HRIS": completed queue rows, split out of the Queue tab ──
-  const [hrisSearch, setHrisSearch] = useState('');
-  const [hrisPage, setHrisPage] = useState(0);
+  // ── Origin filter on the merged Offboarded tab (was the "Offboarded by HRIS" tab) ──
+  const [historyOrigin, setHistoryOrigin] = useState<OriginFilter>('all');
   // Rows fed to the 1-by-1 processor (bulk = all pending, or a single row).
   const [processTargets, setProcessTargets] = useState<OffboardingQueueRow[] | null>(null);
   // Multi-select for batch off-boarding a chosen subset of the pending queue.
@@ -232,7 +283,10 @@ export default function HrOffboarding() {
       const removedFromList = (json.snapshotDeleted ?? 0) > 0 || (json.deleted ?? 0) > 0;
       if (removedFromList) {
         toast.success(`${row.Name ?? email} removed from the Offboarded sheet`, {
-          description: "They won't reappear in this list on the next sync.",
+          // Not "won't reappear on the next sync" — there is no sync. The
+          // Offboarded intake was retired 2026-08-07; what this still prevents
+          // is the MASTER sheet sync re-activating them.
+          description: "Removed from this list and from the Google Sheet's Offboarded and Master List tabs.",
         });
       } else {
         toast.info(`${row.Name ?? email} was not found in the sheet`, {
@@ -261,13 +315,29 @@ export default function HrOffboarding() {
     setHistoryPage(0);
     const q = historySearch.trim().toLowerCase();
     return history.filter((r) => {
+      if (historyOrigin !== 'all' && r.origin !== historyOrigin) return false;
       if (historyDept && (r.Department ?? '').trim() !== historyDept) return false;
       if (!q) return true;
       return [r.Name, r['Work Email'], r.Department, r.off_boarded_reason, r.off_boarded_by]
         .filter(Boolean)
         .some((s) => s!.toLowerCase().includes(q));
     });
-  }, [history, historySearch, historyDept]);
+  }, [history, historySearch, historyDept, historyOrigin]);
+
+  // Counts for the origin filter chips. Computed over the WHOLE list, never the
+  // filtered one — a chip labelled "HRIS 491" has to keep saying 491 while
+  // "Google Sheet" is selected, or the control cannot be used to compare the two.
+  const originCounts = useMemo(() => {
+    let hris = 0;
+    let sheet = 0;
+    let unknown = 0;
+    for (const r of history) {
+      if (r.origin === 'hris') hris++;
+      else if (r.origin === 'google_sheet') sheet++;
+      else unknown++;
+    }
+    return { hris, sheet, unknown };
+  }, [history]);
 
   const historyTotalPages = Math.max(1, Math.ceil(filteredHistory.length / PAGE_SIZE));
   const safeHistoryPage = Math.min(historyPage, historyTotalPages - 1);
@@ -333,24 +403,29 @@ export default function HrOffboarding() {
     clearSelection();
   };
 
-  // People offboarded through the HRIS queue processor (status === 'completed').
-  const hrisOffboarded = useMemo(
-    () => queue.filter((r) => r.status === 'completed'),
-    [queue],
-  );
-  const filteredHris = useMemo(() => {
-    setHrisPage(0);
-    const q = hrisSearch.trim().toLowerCase();
-    return hrisOffboarded.filter((r) => {
-      if (!q) return true;
-      return [r.employee_name, r.employee_work_email, r.employee_personal_email, r.employee_email, r.department, r.processed_by, r.offboard_reason ?? r.reason]
-        .filter(Boolean)
-        .some((s) => s!.toLowerCase().includes(q));
-    });
-  }, [hrisOffboarded, hrisSearch]);
-  const hrisTotalPages = Math.max(1, Math.ceil(filteredHris.length / PAGE_SIZE));
-  const safeHrisPage = Math.min(hrisPage, hrisTotalPages - 1);
-  const hrisPageRows = filteredHris.slice(safeHrisPage * PAGE_SIZE, (safeHrisPage + 1) * PAGE_SIZE);
+  // The completed queue REQUEST behind a merged row, when there is one.
+  //
+  // The merged tab lists `offboarded_sheet`, which is the superset — every
+  // completed queue row's person is already in it, so the queue adds nobody.
+  // What it still owns is the request record itself, and the only place HR
+  // could ever delete one was the old "Offboarded by HRIS" tab (the Queue tab
+  // filters completed rows out). Merging must not quietly take that away, so
+  // the action rides along on the row it belongs to.
+  //
+  // Keyed on the WORK email. `offboarding_queue.employee_email` holds the
+  // PERSONAL address on every completed row, and personal inboxes are shared
+  // across duplicate master identities — matching on one would offer HR a
+  // button that deletes somebody else's request.
+  const completedRequestByWorkEmail = useMemo(() => {
+    const m = new Map<string, OffboardingQueueRow>();
+    for (const r of queue) {
+      if (r.status !== 'completed') continue;
+      const k = (r.employee_work_email ?? '').trim().toLowerCase();
+      if (!k || m.has(k)) continue;
+      m.set(k, r);
+    }
+    return m;
+  }, [queue]);
 
   // Dedupe by Personal Email so the tab badge / subline reflect unique people,
   // not raw rows. global_master_list keys on (personal_email, department), so
@@ -389,8 +464,9 @@ export default function HrOffboarding() {
           <p className="max-w-2xl text-sm leading-relaxed text-emerald-100/85">
             Managers send people here from <span className="font-semibold">My Team</span>.
             Click <span className="font-semibold">Process</span> to work through each
-            request. Records are retained for reporting; people drop from payroll and
-            manager dashboards immediately.
+            request; everyone who has left lands on <span className="font-semibold">Offboarded</span>,
+            labelled with where the record came from. Records are retained for reporting;
+            people drop from payroll and manager dashboards immediately.
           </p>
         </div>
       </header>
@@ -451,31 +527,9 @@ export default function HrOffboarding() {
                   )}
                 </span>
               </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeTab === 'hris'}
-                onClick={() => setActiveTab('hris')}
-                className={cn(
-                  'relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-                  activeTab === 'hris' ? 'text-white' : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
-                )}
-              >
-                {activeTab === 'hris' && (
-                  <motion.span
-                    layoutId="offboardTabPill"
-                    className="absolute inset-0 rounded-md bg-gradient-to-r from-rose-500 to-rose-700 shadow-sm"
-                    transition={{ type: 'spring', stiffness: 400, damping: 32 }}
-                  />
-                )}
-                <span className="relative flex items-center gap-1.5">
-                  <UserX className="h-3.5 w-3.5" />
-                  Offboarded by HRIS
-                  <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] tabular-nums', activeTab === 'hris' ? 'bg-white/20' : 'bg-zinc-200/80 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300')}>
-                    {hrisOffboarded.length}
-                  </span>
-                </span>
-              </button>
+              {/* ONE Offboarded tab. "Offboarded by HRIS" used to sit beside
+                  this one, but it was never a second population — it is now the
+                  Origin filter inside this list. */}
               <button
                 type="button"
                 role="tab"
@@ -494,7 +548,7 @@ export default function HrOffboarding() {
                   />
                 )}
                 <span className="relative flex items-center gap-1.5">
-                  <Clock className="h-3.5 w-3.5" />
+                  <UserX className="h-3.5 w-3.5" />
                   Offboarded
                   <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] tabular-nums', activeTab === 'offboarded' ? 'bg-white/20' : 'bg-zinc-200/80 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300')}>
                     {historyUniqueTotal}
@@ -555,16 +609,6 @@ export default function HrOffboarding() {
                       <RefreshCw className={cn('h-3.5 w-3.5', queueLoading && 'animate-spin')} />
                     </Button>
                   </>
-                ) : activeTab === 'hris' ? (
-                  <>
-                    <div className="relative w-full sm:w-64">
-                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-                      <Input value={hrisSearch} onChange={(e) => setHrisSearch(e.target.value)} placeholder="Search name, email…" className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900" />
-                    </div>
-                    <Button variant="outline" size="sm" onClick={() => void fetchQueue()} disabled={queueLoading} className="shrink-0">
-                      <RefreshCw className={cn('h-3.5 w-3.5', queueLoading && 'animate-spin')} />
-                    </Button>
-                  </>
                 ) : (
                   <>
                     <div className="relative w-full sm:w-56">
@@ -572,8 +616,17 @@ export default function HrOffboarding() {
                       <Input value={historySearch} onChange={(e) => setHistorySearch(e.target.value)} placeholder="Search name, reason…" className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900" />
                     </div>
                     <DeptFilter rows={history} getDept={(r) => r.Department} value={historyDept} onChange={setHistoryDept} />
-                    <Button variant="outline" size="sm" onClick={() => void fetchHistory()} disabled={historyLoading} className="shrink-0">
-                      <RefreshCw className={cn('h-3.5 w-3.5', historyLoading && 'animate-spin')} />
+                    {/* Refreshes BOTH sources: the list is the ledger, but the
+                        per-row "delete the request" action reads the queue, so
+                        pulling only one leaves a stale button behind. */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => { void fetchHistory(); void fetchQueue(); }}
+                      disabled={historyLoading || queueLoading}
+                      className="shrink-0"
+                    >
+                      <RefreshCw className={cn('h-3.5 w-3.5', (historyLoading || queueLoading) && 'animate-spin')} />
                     </Button>
                   </>
                 )}
@@ -587,10 +640,46 @@ export default function HrOffboarding() {
             <p className="text-xs text-muted-foreground">
               {activeTab === 'queue'
                 ? queueLoading ? 'Loading queue…' : `${pendingCount} pending · ${queueOpenTotal} open request${queueOpenTotal === 1 ? '' : 's'} from managers`
-                : activeTab === 'hris'
-                ? queueLoading ? 'Loading…' : `${filteredHris.length} of ${hrisOffboarded.length} offboarded through HRIS`
                 : historyLoading ? 'Loading…' : `${historyUniqueFiltered} of ${historyUniqueTotal} off-boarded`}
             </p>
+          )}
+
+          {/* ── Origin filter (the merged "Offboarded by HRIS" tab) ──
+              Counts are of the whole list, not the filtered view, so the chips
+              stay comparable while one of them is selected. */}
+          {activeTab === 'offboarded' && !historyLoading && history.length > 0 && (
+            <div role="group" aria-label="Filter by origin" className="flex flex-wrap items-center gap-1.5">
+              {([
+                ['all', 'All', history.length],
+                ['hris', OFFBOARD_ORIGINS.hris.label, originCounts.hris],
+                ['google_sheet', OFFBOARD_ORIGINS.google_sheet.label, originCounts.sheet],
+              ] as const).map(([value, label, count]) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={historyOrigin === value}
+                  onClick={() => setHistoryOrigin(value)}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 transition-colors',
+                    historyOrigin === value
+                      ? 'bg-rose-600 text-white ring-rose-600'
+                      : 'bg-white text-zinc-600 ring-zinc-200 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-700 dark:hover:bg-zinc-800',
+                  )}
+                >
+                  {label}
+                  <span className={cn('tabular-nums', historyOrigin === value ? 'text-white/75' : 'text-zinc-400')}>
+                    {count}
+                  </span>
+                </button>
+              ))}
+              {/* Only surfaced when it is non-zero: a permanent "Unknown 0" chip
+                  would imply the classification is unreliable when it is not. */}
+              {originCounts.unknown > 0 && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700 ring-1 ring-amber-600/20 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-400/20">
+                  {originCounts.unknown} unclassified
+                </span>
+              )}
+            </div>
           )}
         </CardHeader>
 
@@ -737,78 +826,6 @@ export default function HrOffboarding() {
                 <PaginationBar page={safeQueuePage} totalPages={queueTotalPages} setPage={setQueuePage} total={queueOpenTotal} filtered={filteredQueue.length} pageSize={QUEUE_PAGE_SIZE} />
               </div>
             )
-          ) : activeTab === 'hris' ? (
-            /* ── Offboarded by HRIS (completed queue rows) ── */
-            queueLoading ? (
-              <div className="flex items-center justify-center py-10 text-zinc-500">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
-              </div>
-            ) : filteredHris.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-rose-200/80 bg-white/70 py-10 text-center dark:border-rose-900/50 dark:bg-zinc-950/40">
-                <UserX className="h-8 w-8 text-rose-300 dark:text-rose-700" />
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  {hrisOffboarded.length === 0 ? 'No one has been offboarded through the queue yet.' : 'No rows match your search.'}
-                </p>
-                <p className="max-w-md text-xs text-zinc-400">
-                  People you <span className="font-medium">Process</span> from the Queue land here once offboarded.
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto rounded-xl border border-rose-100/90 ring-1 ring-rose-500/10 dark:border-rose-900/60 dark:ring-rose-400/10">
-                <table className="w-full text-left text-sm sm:min-w-[900px]">
-                  <thead className="sticky top-0 z-[1] bg-gradient-to-r from-rose-50 via-white to-rose-50/80 text-xs text-zinc-600 dark:from-rose-950/40 dark:via-zinc-950 dark:to-rose-950/30 dark:text-zinc-400">
-                    <tr>
-                      <th className="px-4 py-3 font-semibold">Employee</th>
-                      <th className="px-4 py-3 font-semibold">Personal email</th>
-                      <th className="px-4 py-3 font-semibold">Department</th>
-                      <th className="px-4 py-3 font-semibold">Reason</th>
-                      <th className="px-4 py-3 font-semibold">Offboarded</th>
-                      <th className="px-4 py-3 font-semibold">By</th>
-                      <th className="px-4 py-3 font-semibold text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-rose-100/70 bg-white/85 dark:divide-rose-900/35 dark:bg-zinc-950/40">
-                    {hrisPageRows.map((r) => {
-                      const reasonKey = r.offboard_reason ?? r.reason;
-                      return (
-                        <tr key={r.id} className="align-middle hover:bg-rose-50/30 dark:hover:bg-rose-950/20">
-                          <td data-label="Employee" className="px-4 py-4">
-                            <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.employee_name ?? '—'}</div>
-                            <div className="break-all font-mono text-[11px] text-zinc-500">{r.employee_work_email ?? r.employee_email}</div>
-                          </td>
-                          <td data-label="Personal email" className="break-all px-4 py-4 font-mono text-[11px] text-zinc-500">{r.employee_personal_email ?? '—'}</td>
-                          <td data-label="Department" className="px-4 py-4 text-xs text-zinc-700 dark:text-zinc-300" title={r.department ?? undefined}>{formatDeptLabel(r.department) || '—'}</td>
-                          <td data-label="Reason" className="px-4 py-4">
-                            {reasonKey ? (
-                              <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
-                                {REASON_LABELS[reasonKey] ?? reasonKey}
-                              </span>
-                            ) : '—'}
-                            {r.processed_note && (
-                              <p className="mt-0.5 max-w-[200px] truncate text-[11px] text-zinc-500" title={r.processed_note}>{r.processed_note}</p>
-                            )}
-                          </td>
-                          <td data-label="Offboarded" className="px-4 py-4 text-xs text-zinc-600 dark:text-zinc-400">
-                            {r.decided_at ? new Date(r.decided_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '—'}
-                          </td>
-                          <td data-label="By" className="px-4 py-4 font-mono text-xs text-zinc-500 dark:text-zinc-500">{r.processed_by ?? '—'}</td>
-                          <td data-label="Action" className="px-4 py-4">
-                            <div className="flex items-center justify-end gap-1.5">
-                              <Button size="sm" variant="outline" onClick={() => setDeleteTarget(r)}
-                                title="Permanently remove this record from the queue"
-                                className="h-7 gap-1 border-rose-300 text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/30">
-                                <Trash2 className="h-3 w-3" /> Delete
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                <PaginationBar page={safeHrisPage} totalPages={hrisTotalPages} setPage={setHrisPage} total={hrisOffboarded.length} filtered={filteredHris.length} />
-              </div>
-            )
           ) : (
             /* ── Offboarded ── */
             historyLoading ? (
@@ -821,6 +838,18 @@ export default function HrOffboarding() {
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
                   {history.length === 0 ? 'No off-boarded employees yet.' : 'No rows match your search.'}
                 </p>
+                {/* An origin filter that empties the list has to say so — otherwise
+                    "no rows match your search" sends HR hunting through a search
+                    box that is not what excluded them. */}
+                {history.length > 0 && historyOrigin !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => setHistoryOrigin('all')}
+                    className="text-xs font-medium text-rose-600 underline-offset-2 hover:underline dark:text-rose-400"
+                  >
+                    Showing {OFFBOARD_ORIGINS[historyOrigin].label} only — show all origins
+                  </button>
+                )}
               </div>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-emerald-100/90 ring-1 ring-emerald-500/10 dark:border-emerald-900/60 dark:ring-emerald-400/10">
@@ -831,6 +860,7 @@ export default function HrOffboarding() {
                       <th className="px-4 py-3 font-semibold">Work email</th>
                       <th className="px-4 py-3 font-semibold">Department</th>
                       <th className="px-4 py-3 font-semibold">Reason</th>
+                      <th className="px-4 py-3 font-semibold">Origin</th>
                       <th className="px-4 py-3 font-semibold">Off-boarded</th>
                       <th className="px-4 py-3 font-semibold">By</th>
                       <th className="px-4 py-3 font-semibold text-right">Action</th>
@@ -842,6 +872,13 @@ export default function HrOffboarding() {
                       const isRestoring = restoring === email;
                       const isRemovingFromSheet = removingFromSheet === email;
                       const anyBusy = isRestoring || isRemovingFromSheet;
+                      const origin = originChip(r.origin);
+                      // The manager request this offboard came from, if any. Only
+                      // HRIS-origin rows can have one — a sheet-era record was
+                      // never a request — so the delete-the-request action simply
+                      // does not render on the rest, rather than rendering
+                      // disabled and implying something is missing.
+                      const request = email ? completedRequestByWorkEmail.get(email.toLowerCase()) : undefined;
                       return (
                         <tr key={r.id} className="align-middle hover:bg-zinc-50/60 dark:hover:bg-zinc-900/30">
                           <td data-label="Name" className="px-4 py-2.5 font-medium text-zinc-900 dark:text-zinc-100">{r.Name ?? '—'}</td>
@@ -857,6 +894,20 @@ export default function HrOffboarding() {
                               <p className="mt-0.5 max-w-[180px] truncate text-[11px] text-zinc-500" title={r.off_boarded_note}>{r.off_boarded_note}</p>
                             )}
                           </td>
+                          <td data-label="Origin" className="px-4 py-2.5">
+                            <span
+                              className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1', origin.chip)}
+                              title={
+                                r.origin === 'hris'
+                                  ? 'Off-boarded through the HRIS — a manager request processed by HR.'
+                                  : r.origin === 'google_sheet'
+                                  ? "Recorded on the master sheet's Offboarded tab. History only — the sheet has not been an offboarding source since 2026-08-07."
+                                  : 'This record predates origin tracking, so where it came from is not known.'
+                              }
+                            >
+                              {origin.label}
+                            </span>
+                          </td>
                           <td data-label="Off-boarded" className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
                             {r.off_boarded_at ? new Date(r.off_boarded_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '—'}
                           </td>
@@ -869,11 +920,18 @@ export default function HrOffboarding() {
                                 Restore
                               </Button>
                               <Button size="sm" variant="outline" onClick={() => void handleRemoveFromSheet(r)} disabled={anyBusy || !email}
-                                title="Delete from the Google Sheet Offboarded tab so the next sync won't re-add them to this list"
+                                title="Remove this record from the list and from the Google Sheet's Offboarded and Master List tabs, so the master sync can't re-activate them"
                                 className="h-7 gap-1 border-orange-300 text-orange-700 hover:bg-orange-50 hover:text-orange-800 disabled:opacity-50 dark:border-orange-700/50 dark:text-orange-300 dark:hover:bg-orange-950/30">
                                 {isRemovingFromSheet ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileX className="h-3 w-3" />}
                                 Remove from Sheet
                               </Button>
+                              {request && (
+                                <Button size="sm" variant="outline" onClick={() => setDeleteTarget(request)} disabled={anyBusy}
+                                  title="Permanently remove the manager request behind this offboard from the queue. Does not un-offboard anyone."
+                                  className="h-7 gap-1 border-rose-300 text-rose-700 hover:bg-rose-50 hover:text-rose-800 disabled:opacity-50 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/30">
+                                  <Trash2 className="h-3 w-3" /> Delete request
+                                </Button>
+                              )}
                             </div>
                           </td>
                         </tr>

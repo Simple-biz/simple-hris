@@ -323,12 +323,97 @@ reuses the same `fieldForHeader` / `formatOffboardDate` helpers. A real run writ
 
 ---
 
+## The merged Offboarded tab + `origin` (2026-08-28)
+
+HR → Offboarding had **four** tabs: Overview, Queue, *Offboarded by HRIS*, *Offboarded*. The last two
+now sit in one list with an **Origin** column, plus an origin filter — `All` / `HRIS` / `Google Sheet`.
+
+**They were never two populations.** "Offboarded by HRIS" read completed `offboarding_queue` rows;
+"Offboarded" read the `offboarded_sheet` ledger. But `/api/hr/offboard` writes **both**, so every one
+of the 488 completed queue rows already existed in the ledger — measured 2026-08-28, the overlap is
+488/488. The HRIS tab contributed **zero** additional people; the split was presentational. So the
+merge is a **rename and a column**, not a union: the tab lists `offboarded_sheet` (the superset) and
+consults the queue for one thing only — see *what the queue still owns* below.
+
+### Where `origin` comes from
+
+A stored column, `offboarded_sheet.origin`, `NOT NULL DEFAULT 'hris'`, CHECK-constrained to
+`('hris','google_sheet')` — migration `references/sql/migrate/2026-08-28_offboarded_sheet_origin.sql`,
+applied by `scripts/apply-offboarded-origin-migration.mjs` (`--dry` rehearses in a transaction it
+rolls back; `--verify` re-checks). Backfilled from the split the live data already implied:
+
+| | rows | `synced_at` |
+|---|---|---|
+| `off_boarded_by IS NOT NULL` → `hris` | 491 | all 2026-07 / 2026-08 |
+| `off_boarded_by IS NULL` → `google_sheet` | 3,354 | all 2026-06 |
+
+Two independent signals agreeing perfectly, because the sheet intake was retired 2026-08-07: every
+row written since carries the HR actor who pressed the button, every row before it is the last
+snapshot the sync took (2026-06-09).
+
+**It had to be stored, not derived.** Both signals are accidents of that history — `off_boarded_by`
+is nullable, and `synced_at` says when a row was *written*, never where it came from. The JSON import
+below breaks the heuristic by construction: an imported row is written today with no actor, which the
+old rule reads as "modern HRIS row with a missing actor". Provenance was captured once, while the
+accident still told the truth.
+
+An origin the column cannot answer renders as an amber **Unknown** chip and is counted separately —
+never folded into either side, because a confident wrong answer to "which system recorded this
+departure" is worse than an honest blank.
+
+### What the queue still owns
+
+Deleting a completed manager *request* was only ever reachable from the "Offboarded by HRIS" tab (the
+Queue tab filters completed rows out). Merging must not silently drop a capability, so **Delete
+request** rides along on the row it belongs to, keyed on the **work** email —
+`offboarding_queue.employee_email` holds the PERSONAL address on all 488 completed rows, and personal
+inboxes are shared across duplicate master identities, so matching on one would offer HR a button
+that deletes somebody else's request. Rows with no matching request don't render the button at all.
+
+### The one-off JSON backfill
+
+`scripts/import-offboarded-from-json.mjs` (dry-run by default, `--apply` to write) landed **165**
+sheet-era leavers the 2026-06-09 snapshot had missed, from
+`references/data/Global Master List (PH) - Offboarded.json` (3,882 rows; 3,695 already on the ledger).
+Ledger after: **4,010** rows — 3,519 `google_sheet` · 491 `hris`.
+
+This does **not** reopen the spreadsheet as a source. The retired sync was dangerous because it was
+RECURRING and REPLACING; this is neither, and both are enforced rather than intended:
+
+- **INSERT-ONLY.** Never UPDATEs, never DELETEs. A person already on the ledger is skipped. That is
+  what keeps hand-corrections durable — the export **still** carries `franm@simple.biz`'s `4/20/2027`
+  typo (the cell the sync was retired over) while the DB holds the corrected `2026-04-20`. The script
+  prints her outcome by name every run and **exits non-zero** if she would ever be inserted.
+- **Dates sanitized, never guessed.** Parsing mirrors `normalizeMasterDate` and the future-date check
+  mirrors `sanitizeOffboardDay`; anything failing either lands NULL. (The source has 301 unparseable
+  cells — `6//3/2026`, `July 9, 2026` — all on already-present rows, so 0 of the 165 needed nulling.)
+- **Reason stored VERBATIM**, `off_boarded_by` left NULL. The column is free text by design and every
+  consumer that matters reads it through an allowlist of canonical departures, so an unrecognised
+  sheet label keeps the person visible. Inventing an actor would fabricate an audit trail.
+- **Work-email collisions are skipped, not merged.** 22 incoming rows named a work email already on
+  the ledger under a *different* personal email — recycled emails, a documented hazard here. A second
+  off-board record on a live work email becomes off-board **evidence** against whoever holds it now,
+  so skipping is the only safe read. They are listed in the run report. **OPEN:** those 22 people are
+  therefore still absent from the list.
+
+### Money-surface consequence (decided, not incidental)
+
+`offboarded_sheet` is evidence source #2 in `src/lib/roster/offboard-evidence.ts`, so these 165 rows
+are visible to the Payment Catalog filter, Payroll Readiness and the final-pay overlay. Four of them
+name someone on the **active** roster (`joyp@`, `mackp@`, `shanninp@`, `cathyp@`) — the import prints
+every one for review. They are safe by existing design, not by luck: the catalog filter requires the
+record to post-date the person's own Start Date, requires no hours in the current cycle, and matches
+its reason against an allowlist that deliberately **excludes `temporary_pause`** (a suspension is not
+a departure — which is exactly `cathyp@`'s row). All four guards resolve toward KEEPING the person.
+
+---
+
 ## Weekly Pulse KPI cards (HR → Offboarding)
 
 Added 2026-07-17 (Teal's request, commit `87053fb`):
 `src/components/hr/OffboardingWeeklyPulse.tsx`, mounted in `HrOffboarding.tsx`
-between the hero header and the tabbed Queue/HRIS/Offboarded card — Offboarding
-section only.
+between the hero header and the tabbed Queue/Offboarded card — Offboarding
+section only. (It was Queue/HRIS/Offboarded until the 2026-08-28 merge above.)
 
 - **Own week selector** — a rose-recolored twin of the HR-dashboard picker
   (All time / By week toggle, prev/next chevrons, week-label pill with

@@ -347,6 +347,11 @@ async function offboardOnePerson(
         off_boarded_reason: sheetInput.offBoardedReason,
         off_boarded_note: sheetInput.offBoardedNote,
         off_boarded_by: sheetInput.offBoardedBy,
+        // Provenance for the merged HR Offboarding tab. The column DEFAULTs to
+        // 'hris' so omitting it would still be correct — named anyway, because
+        // this route is the definition of an HRIS-authored offboard and a
+        // reader should not have to know the default to know that.
+        origin: "hris",
       });
     } catch (e) {
       console.error("[offboard] offboarded_sheet insert failed:", e);
