@@ -8,6 +8,19 @@ import {
   requireElevatedSession,
 } from '@/lib/auth/authorize-email';
 import { countMesaReceipts } from '@/lib/mesa/receipts';
+import { mesaEmailAliasesFor } from '@/lib/mesa/email-aliases';
+import {
+  MESA_LEDGER_SELECT,
+  mesaEventDate,
+  summarizeMember,
+  summarizeMemberAccount,
+  type MesaLedgerEvent,
+} from '@/lib/mesa/ledger';
+import {
+  checkDisbursementAmount,
+  sumOutstandingDisbursements,
+  type OutstandingDisbursement,
+} from '@/lib/mesa/disbursement-guard';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -40,6 +53,82 @@ export interface MesaRequestRow {
   /** Newest receipt's upload time — what the 14-day submission rule is judged
    *  against. Null when nothing is attached. */
   receipt_last_uploaded_at?: string | null;
+}
+
+/**
+ * What this member may actually draw right now: their OPEN account's ledger
+ * balance, minus draws already in flight.
+ *
+ * FAILS CLOSED. Every read error returns `ok: false` and the caller refuses the
+ * request. That is the opposite of the Wizard's opt-out suppression, which
+ * deliberately fails open so it can never re-introduce a deduction — there,
+ * open is the safe direction. Here a guard that falls back to "allow" is a
+ * guard that silently is not there, which is exactly the behaviour being fixed.
+ *
+ * Note this does NOT use `getOpenMesaAccount()`: that helper returns null on a
+ * query error, which is indistinguishable from "has no open account" and would
+ * quietly widen the balance to the member's full history.
+ */
+async function resolveDisbursementAvailability(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
+  email: string,
+): Promise<
+  { ok: true; balance: number; outstanding: number } | { ok: false; error: string }
+> {
+  // Match every address the member's history could sit under (current + pre-drift
+  // aliases), exactly as /api/mesa-ledger does — a narrower match would compute
+  // the balance from a subset of their events and under-report it.
+  const aliases = mesaEmailAliasesFor(email);
+  const orFilter = aliases.map((e) => `email.ilike.${e}`).join(',');
+
+  const acct = await supabase
+    .from('mesa_accounts')
+    .select('account_number, opened_on')
+    .or(orFilter)
+    .is('closed_on', null)
+    .limit(1)
+    .maybeSingle();
+  if (acct.error) return { ok: false, error: `account lookup failed: ${acct.error.message}` };
+
+  const events: MesaLedgerEvent[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('mesa_ledger')
+      .select(MESA_LEDGER_SELECT)
+      .or(orFilter)
+      .range(from, from + PAGE - 1);
+    if (error) return { ok: false, error: `ledger read failed: ${error.message}` };
+    const batch = (data ?? []) as MesaLedgerEvent[];
+    events.push(...batch);
+    if (batch.length < PAGE) break;
+  }
+
+  const account = acct.data as { account_number: string; opened_on: string } | null;
+  // Balance is computed by the SAME functions the Active Members tab and the
+  // Review modal use, so the guard can never refuse a draw the UI called
+  // affordable (or vice versa).
+  const summary = account
+    ? summarizeMemberAccount(events, account)
+    : events.length
+      ? summarizeMember(events)
+      : null;
+  const balance = summary?.balance ?? 0;
+
+  const openedOn = account?.opened_on ?? null;
+  const reqs = await supabase
+    .from(TABLE)
+    .select('request_type, status, amount_needed, dispatched_at, created_at')
+    .or(aliases.map((e) => `work_email.ilike.${e}`).join(','));
+  if (reqs.error) return { ok: false, error: `outstanding lookup failed: ${reqs.error.message}` };
+
+  // Only draws belonging to the CURRENT stint compete for these funds — an
+  // older account was settled to zero at opt-out, so a stale request against it
+  // must not shrink the new account's balance.
+  const rows = ((reqs.data ?? []) as (OutstandingDisbursement & { created_at?: string | null })[])
+    .filter((r) => !openedOn || !r.created_at || String(r.created_at).slice(0, 10) >= openedOn);
+
+  return { ok: true, balance, outstanding: sumOutstandingDisbursements(rows) };
 }
 
 // GET /api/mesa-requests
@@ -152,6 +241,43 @@ export async function POST(request: Request) {
     const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
     if (!supabase) return NextResponse.json({ error: 'DB unavailable' }, { status: 500 });
 
+    // ── The balance guard ────────────────────────────────────────────────
+    // A disbursement is a draw against the member's own funds, so it cannot
+    // exceed them. Enforced HERE, on the server: the form's copy of this check
+    // is a courtesy, and this endpoint is callable directly.
+    let amount_needed: number | null = body.amount_needed ?? null;
+    if (request_type === 'disbursement') {
+      const avail = await resolveDisbursementAvailability(supabase, authz.effectiveEmail);
+      if (!avail.ok) {
+        // Refuse rather than guess. A draw can be retried; an unguarded
+        // overdraw has already left the fund by the time anyone notices.
+        return NextResponse.json(
+          { error: `Could not verify your MESA balance, so this request was not submitted. Please try again. (${avail.error})` },
+          { status: 503 },
+        );
+      }
+      const check = checkDisbursementAmount({
+        requested: body.amount_needed,
+        balance: avail.balance,
+        outstanding: avail.outstanding,
+      });
+      if (!check.ok) {
+        return NextResponse.json(
+          {
+            error: check.message,
+            reason: check.reason,
+            requested: check.requested,
+            balance: check.balance,
+            outstanding: check.outstanding,
+            available: check.available,
+            shortfall: check.shortfall,
+          },
+          { status: 400 },
+        );
+      }
+      amount_needed = check.requested;
+    }
+
     const row: Omit<MesaRequestRow, 'id' | 'created_at' | 'status' | 'review_notes' | 'reviewed_by' | 'reviewed_at'> = {
       work_email: authz.effectiveEmail,
       full_name,
@@ -161,7 +287,7 @@ export async function POST(request: Request) {
       effective_date: request_type === 'opt_out' ? effective_date : null,
       disbursement_reason: body.disbursement_reason ?? null,
       explanation: body.explanation ?? null,
-      amount_needed: body.amount_needed ?? null,
+      amount_needed,
     };
 
     const { data, error } = await supabase.from(TABLE).insert(row).select('id').single();

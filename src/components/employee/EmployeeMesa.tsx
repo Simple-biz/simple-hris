@@ -34,6 +34,10 @@ import { DatePicker, toIso } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { MesaLedgerEvent, MesaMemberSummary } from '@/lib/mesa/ledger';
+import {
+  checkDisbursementAmount,
+  sumOutstandingDisbursements,
+} from '@/lib/mesa/disbursement-guard';
 import MesaReceiptDialog from './MesaReceiptDialog';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
@@ -896,6 +900,9 @@ interface MesaRequestRow {
   receipt_count?: number;
   /** Newest receipt's upload time — the 14-day submission rule is judged on it. */
   receipt_last_uploaded_at?: string | null;
+  /** Set once the money has been sent. A dispatched draw is already in the
+   *  ledger, so it must NOT be counted again as an outstanding commitment. */
+  dispatched_at?: string | null;
 }
 
 // The date <input> needs a strict YYYY-MM-DD value. mesa_member_since already
@@ -949,6 +956,11 @@ function MesaRequestForm({
   const [explanation, setExplanation] = React.useState('');
   const [amountNeeded, setAmountNeeded] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
+  /** The member's drawable balance. `null` = not loaded yet or unavailable —
+   *  the form then stays permissive and lets the SERVER decide, because the
+   *  server is the guard and it fails closed. Blocking here on an unknown
+   *  balance would refuse legitimate draws over a transient fetch error. */
+  const [mesaBalance, setMesaBalance] = React.useState<number | null>(null);
   const [pastRequests, setPastRequests] = React.useState<MesaRequestRow[]>([]);
   const [loadingHistory, setLoadingHistory] = React.useState(true);
   /** The disbursement whose receipts are open in the upload dialog. */
@@ -978,6 +990,27 @@ function MesaRequestForm({
 
   const amountValue = parseFloat(amountNeeded);
   const hasAmount = amountNeeded !== '' && Number.isFinite(amountValue) && amountValue > 0;
+
+  // A draw cannot exceed the member's own funds. Computed with the very
+  // function the API enforces (src/lib/mesa/disbursement-guard.ts), so what
+  // this form promises is exactly what the server will allow — two copies of
+  // the arithmetic would eventually disagree and refuse a draw the screen had
+  // just offered. Requests already pending or approved-but-unpaid are
+  // subtracted: they have not left the fund yet, so the ledger cannot see them.
+  const outstandingDraws = React.useMemo(
+    () => sumOutstandingDisbursements(pastRequests),
+    [pastRequests],
+  );
+  const balanceCheck =
+    mesaBalance == null
+      ? null
+      : checkDisbursementAmount({
+          requested: hasAmount ? amountValue : 1,
+          balance: mesaBalance,
+          outstanding: outstandingDraws,
+        });
+  const availableToDraw = balanceCheck?.available ?? null;
+  const overBalance = Boolean(hasAmount && balanceCheck && !balanceCheck.ok);
   const explanationAtLimit = explanation.length >= EXPLANATION_MAX;
 
   React.useEffect(() => {
@@ -990,6 +1023,19 @@ function MesaRequestForm({
       })
       .catch(() => {})
       .finally(() => { if (!cancelled) setLoadingHistory(false); });
+    return () => { cancelled = true; };
+  }, [employeeEmail]);
+
+  // Drawable balance, scoped to the member's open account by the API. Left null
+  // on any failure — the server still enforces the limit.
+  React.useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/mesa-ledger?email=${encodeURIComponent(employeeEmail)}&events=0`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : { summary: null }))
+      .then((j: { summary?: MesaMemberSummary | null }) => {
+        if (!cancelled) setMesaBalance(j.summary?.balance ?? null);
+      })
+      .catch(() => { if (!cancelled) setMesaBalance(null); });
     return () => { cancelled = true; };
   }, [employeeEmail]);
 
@@ -1341,11 +1387,20 @@ function MesaRequestForm({
                       <p
                         id="mesa-amount-hint"
                         aria-live="polite"
-                        className="text-[11px] text-zinc-500 dark:text-zinc-400"
+                        className={cn(
+                          'text-[11px]',
+                          overBalance
+                            ? 'font-medium text-rose-600 dark:text-rose-400'
+                            : 'text-zinc-500 dark:text-zinc-400',
+                        )}
                       >
-                        {hasAmount
-                          ? `You are requesting ${formatPesoAmount(amountValue)}.`
-                          : 'Philippine pesos. Numbers only, for example 5000 or 5000.50.'}
+                        {overBalance && balanceCheck
+                          ? balanceCheck.message
+                          : hasAmount
+                            ? `You are requesting ${formatPesoAmount(amountValue)}.`
+                            : availableToDraw != null
+                              ? `Philippine pesos. You can draw up to ${formatPesoAmount(availableToDraw)}.`
+                              : 'Philippine pesos. Numbers only, for example 5000 or 5000.50.'}
                       </p>
                     </div>
 
@@ -1474,7 +1529,7 @@ function MesaRequestForm({
             <div className="space-y-2 border-t border-zinc-200/80 pt-4 dark:border-zinc-800">
               <Button
                 type="submit"
-                disabled={submitting || !requestType || identityIncomplete}
+                disabled={submitting || !requestType || identityIncomplete || overBalance}
                 className="w-full bg-orange-500 text-white shadow-sm hover:bg-orange-600 focus-visible:ring-orange-500/40 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400"
               >
                 {submitting ? (

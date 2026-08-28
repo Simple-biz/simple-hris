@@ -2,6 +2,7 @@ import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/l
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { invalidateRateProfilesCache } from '@/lib/supabase/employee-rate-profiles';
 import { closeMesaAccounts, openMesaAccount } from '@/lib/supabase/mesa-accounts';
+import { releaseMesaBalanceOnClose } from '@/lib/mesa/release-balance';
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -66,10 +67,35 @@ export async function POST(req: Request) {
     const accountEmail = (workEmail || personalEmail)!.trim().toLowerCase();
     let accountNumber: string | null = null;
     let closedAccounts: string[] = [];
+    /** The payout raised for a departing member's balance, when there was one. */
+    let releasedPayout: { amount_php: number; due_week_end: string } | null = null;
     if (mesaMember) {
       const account = await openMesaAccount(accountEmail, name ?? null, sinceIso);
       accountNumber = account?.account_number ?? null;
     } else {
+      // RELEASE BEFORE CLOSING. Closing the account "zeroes" it — every balance
+      // in the app aggregates events on/after the OPEN account's opened_on — so
+      // if we close first and the release then fails, the money is invisible
+      // and nothing records that it was owed. That is exactly the bug being
+      // fixed: an approved opt-out used to close the account and move nothing.
+      //
+      // Fails CLOSED: if the balance cannot be read, or the obligation cannot
+      // be written, we do NOT close. The member stays enrolled (recoverable,
+      // and the ₱100 keeps running for a week at worst) rather than losing a
+      // balance with no trace. Aliviah's rule, 2026-08-28: whoever leaves, for
+      // whatever reason, is owed what they put in plus the match.
+      const release = await releaseMesaBalanceOnClose(supabase, accountEmail, manilaToday);
+      if (!release.ok) {
+        return NextResponse.json(
+          {
+            error:
+              `Could not release this member's MESA balance, so they were NOT opted out. ` +
+              `Nothing was changed. (${release.error})`,
+          },
+          { status: 503 },
+        );
+      }
+      releasedPayout = release.released;
       closedAccounts = await closeMesaAccounts(accountEmail, manilaToday);
     }
 
@@ -109,10 +135,18 @@ export async function POST(req: Request) {
         mesa_member_since: mesaMember ? sinceIso : null,
         mesa_account_number: mesaMember ? accountNumber : null,
         mesa_accounts_closed: mesaMember ? null : closedAccounts,
+        mesa_balance_released_php: releasedPayout?.amount_php ?? null,
+        mesa_payout_due_week_end: releasedPayout?.due_week_end ?? null,
       },
     });
 
-    return NextResponse.json({ success: true, accountNumber: mesaMember ? accountNumber : null });
+    return NextResponse.json({
+      success: true,
+      accountNumber: mesaMember ? accountNumber : null,
+      // So the caller can tell Accounting what was just promised to this person
+      // instead of the balance appearing to vanish.
+      releasedPayout,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });

@@ -24,6 +24,7 @@ Shipped **2026-08-21**. Source: `src/lib/payroll/manual-validation.ts`,
 | Full-screen mirror | `src/components/payroll/ValidationFullScreen.tsx` |
 | Dispatch-side read (one impl, two call sites) | `src/components/payroll/useManualValidations.ts` |
 | Mark Paid banner (display-only prop) | `src/components/payroll-clerk/MarkPaidDialog.tsx` |
+| View Paystub band (display-only prop) | `src/components/paystub/PayStubModal.tsx` |
 | Wizard wiring (state, load, toggle, full-screen) | `src/components/PayrollWizard.tsx` |
 
 ## It is NOT a column on `payment_dispatches`
@@ -149,10 +150,37 @@ correct; showing someone else's vouch is not.
 Both Mark Paid surfaces read through the one `useManualValidations` hook. They are not given
 their own fetches because they **already** disagree about what they POST (the standalone
 `/payroll-clerk` app omits `amount_cop` and `system_bonus_*`), and one display string is not
-worth a third place to diverge.
+worth a third place to diverge. The View Paystub band added later reads the **same** hook
+instance already mounted in `PayrollDispatch` — a display site, not a third fetch.
 
 Urgent one-off payouts pass **nothing**: they have no wizard cycle behind them (`cycle_id` is
 null) and so cannot have been validated in one.
+
+## View Paystub shows it too (2026-08-27)
+
+Payment Dispatch's **View** opens `PayStubModal`, and the vouch now rides in there
+alongside the dispatch log, in a right-hand accounting rail: MV band on top ("who signed
+off on this figure"), the log underneath ("what then happened to it"). Same emerald band,
+same copy, same display-only contract as Mark Paid — `PayStubModal` takes an optional
+`validation` prop, never fetches, and has no control that could write one.
+
+The rail is `xl:absolute xl:left-full`, out of flow, so the statement keeps the full 560px
+shell and stays centred in the viewport; below `xl` there is no room beside a centred
+statement and the rail stacks underneath. It renders **nothing** when it would be empty, so
+an employee-facing mount of the same modal is byte-identical to before.
+
+`PayrollDispatch` carries `workEmail` (`row.id`) on its `viewPaystub` state **separately
+from** `email` (the payout address the statement is fetched by) — the modal is opened by
+one and the MV is keyed by the other, and collapsing them into one field is the alias bug
+in §"The lookup key is `row.id`". Both View handlers (the Pending worksheet and the
+Excluded tab) set it; the hook is scoped to `period.sourceFile`, the same week the
+statement opens on, so the vouch always belongs to the cycle on screen.
+
+**`PaidRecordsPanel`'s View is deliberately excluded.** Its rows are `payment_dispatches`
+records, which carry only `recipient_email` — the payout address. Rule 1 forbids keying MV
+on it and forbids a fallback, so that surface shows nothing rather than a vouch that might
+belong to someone else. It would also need the record's own `cycle_source_file`, not the
+tab's current week. Giving it MV means resolving a work email per record first.
 
 ## Adjustment is read-only, and now always shown
 

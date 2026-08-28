@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import type { PayStubView } from '@/lib/payroll/paystub-view';
 import type { PayStubDispatchEntry } from '@/lib/payroll/paystub-dispatch-log';
+import type { ManualValidation } from '@/lib/payroll/manual-validation';
 import type { PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
 import { downloadPayStubsPdf } from '@/lib/payroll/paystub-export';
 import { parseDateOnlyLocal } from '@/lib/date-only';
@@ -61,6 +62,7 @@ export function PayStubModal({
   sourceFile,
   onClose,
   email,
+  validation,
 }: {
   open: boolean;
   sourceFile: string | null;
@@ -68,6 +70,20 @@ export function PayStubModal({
   /** When set, fetch the ACCOUNTING route for THIS employee's stub (any employee).
    *  Omit for the self-serve employee view (session-scoped to the caller). */
   email?: string | null;
+  /**
+   * The MV vouch recorded against THIS person for THIS cycle in the Payroll
+   * Wizard's Validation step. DISPLAY-ONLY: nothing here writes it, and there is
+   * no fetch — the caller looks it up through the one `useManualValidations`
+   * hook so dispatch keeps a single read implementation
+   * (`payroll-wizard-manual-validation.md`).
+   *
+   * The caller MUST key it on the WORK email (`QueueRow.id`), never the payout
+   * address: personal addresses are shared and recycled in the master list, so
+   * an alias match could surface a validation belonging to a different person.
+   * Omitted on every employee-facing mount — a vouch is an internal remark, the
+   * same rule the dispatch log follows.
+   */
+  validation?: ManualValidation | null;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -217,17 +233,18 @@ export function PayStubModal({
                 <p className="text-sm font-medium text-zinc-700">{error}</p>
               </div>
             ) : data?.paystub && data.available ? (
-              <>
+              <div className="relative w-full">
                 <PayStubStatement
                   view={data.paystub}
                   paidAt={data.payDate ?? data.paidAt}
                   status={data.status}
                 />
-                {/* Accounting-only: why this week did (or didn't) go out. */}
-                <DispatchNotes entries={data.dispatches} />
-              </>
+                {/* Accounting-only: who vouched for this week, and why it did
+                    (or didn't) go out. */}
+                <AccountingRail validation={validation} entries={data.dispatches} />
+              </div>
             ) : (
-              <>
+              <div className="relative w-full">
                 <div className="flex min-h-[240px] w-full max-w-[560px] flex-col items-center justify-center gap-3 rounded-[17px] bg-white px-8 text-center shadow-2xl">
                   <FileWarning className="h-8 w-8 text-zinc-400" />
                   <p className="text-sm font-medium text-zinc-700">
@@ -239,14 +256,98 @@ export function PayStubModal({
                 </div>
                 {/* A week can be dispatched (or held) with no statement staged —
                     the log still explains what happened. */}
-                <DispatchNotes entries={data?.dispatches} />
-              </>
+                <AccountingRail validation={validation} entries={data?.dispatches} />
+              </div>
             )}
           </motion.div>
         </motion.div>
       )}
     </AnimatePresence>,
     document.body,
+  );
+}
+
+/* ─────────────────── accounting rail ─────────────────── */
+
+/**
+ * The accounting-only column beside the statement: the MV vouch on top, then
+ * this week's dispatch log. Both answer "who touched this and what did they
+ * say", which is why they share one rail rather than each finding their own
+ * corner.
+ *
+ * It hangs off the RIGHT edge of the statement, positioned out of flow so it
+ * takes no width from it — the statement keeps the full 560px shell and stays
+ * centred in the viewport. Below `xl` there is no room beside a centred
+ * statement, so the rail stacks underneath instead.
+ *
+ * Renders NOTHING when it would be empty, so an employee-facing mount (which
+ * passes neither) and a week nobody has touched both leave the modal exactly as
+ * it was before this rail existed.
+ */
+function AccountingRail({
+  validation,
+  entries,
+}: {
+  validation?: ManualValidation | null;
+  entries?: PayStubDispatchEntry[];
+}) {
+  const hasLog = !!entries && entries.length > 0;
+  if (!validation && !hasLog) return null;
+  return (
+    <div className="mt-3 flex w-full max-w-[560px] flex-col gap-3 xl:absolute xl:left-full xl:top-0 xl:ml-4 xl:mt-0 xl:max-h-[78vh] xl:w-[300px] xl:max-w-none xl:overflow-y-auto">
+      <ManualValidationBand validation={validation} />
+      <DispatchNotes entries={entries} />
+    </div>
+  );
+}
+
+/**
+ * "Manually validated by <someone>" — the vouch a named human recorded against
+ * this person's pay for this cycle on the Payroll Wizard's Validation step.
+ *
+ * Deliberately has NO "not validated" state: MV is a spot-check, not a required
+ * step, so rendering its absence would put a band on nearly every statement and
+ * train the reader to ignore it. Emerald, never amber — amber is this app's
+ * warning colour and a completed check is not a warning
+ * (`payroll-wizard-manual-validation.md`). Same copy as the Mark Paid banner, so
+ * the vouch reads identically wherever accounting meets it.
+ *
+ * Display-only. There is no control here and no write path: MV is recorded in
+ * the wizard and nowhere else.
+ */
+function ManualValidationBand({ validation }: { validation?: ManualValidation | null }) {
+  if (!validation) return null;
+  // Mirrors the Mark Paid banner's format (`MarkPaidDialog.tsx`); an unparseable
+  // instant falls back to the raw string rather than rendering "Invalid Date".
+  const at = new Date(validation.at);
+  const when = Number.isNaN(at.getTime())
+    ? validation.at
+    : at.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+  return (
+    <div
+      className="flex w-full items-start gap-2 overflow-hidden rounded-[14px] bg-emerald-50 px-4 py-3 shadow-2xl ring-1 ring-emerald-200/70"
+      style={{ colorScheme: 'light' }}
+    >
+      <CheckCircle2 className="mt-px h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+      <div className="min-w-0 text-[11px] leading-snug">
+        <p className="font-medium text-emerald-800">
+          Manually validated by {validation.by}
+          <span className="font-normal text-emerald-700/80">
+            {' · '}
+            {when}
+          </span>
+        </p>
+        {validation.note && (
+          <p className="mt-0.5 break-words text-emerald-700">“{validation.note}”</p>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -290,10 +391,12 @@ function formatLogDate(iso: string | null): string | null {
 }
 
 /**
- * The dispatch log for this pay week, under the statement — every outcome the
- * clerk logged (Paid / Not paid / Threshold / Problem) with the note attached to
- * it. So opening "View" on a held row answers *why* it's held instead of showing
- * a statement that looks merely unpaid.
+ * The dispatch log for this pay week — every outcome the clerk logged (Paid /
+ * Not paid / Threshold / Problem) with the note attached to it. So opening
+ * "View" on a held row answers *why* it's held instead of showing a statement
+ * that looks merely unpaid.
+ *
+ * One card in {@link AccountingRail}, which owns where it sits.
  *
  * Renders nothing when `entries` is absent (the employee self-serve route never
  * sends it — these are internal remarks) or empty (nothing logged yet).
@@ -302,7 +405,7 @@ function DispatchNotes({ entries }: { entries?: PayStubDispatchEntry[] }) {
   if (!entries || entries.length === 0) return null;
   return (
     <div
-      className="mt-3 w-full max-w-[560px] overflow-hidden rounded-[14px] bg-white shadow-2xl ring-1 ring-black/5"
+      className="w-full overflow-hidden rounded-[14px] bg-white shadow-2xl ring-1 ring-black/5"
       style={{ colorScheme: 'light' }}
     >
       <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-4 py-2.5">

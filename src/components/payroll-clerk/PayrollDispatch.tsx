@@ -284,7 +284,16 @@ export default function PayrollDispatch() {
   const [urgentDispatchedCount, setUrgentDispatchedCount] = useState<number | null>(null);
   // Which employee's pay statement is open in the read-only viewer modal (accounting
   // can open any payee's stub without downloading). null = closed.
-  const [viewPaystub, setViewPaystub] = useState<{ sourceFile: string; email: string } | null>(null);
+  // `workEmail` is carried separately from `email` on purpose: `email` is the
+  // payout address the statement is fetched by, while the manual-validation
+  // ("MV") lookup may ONLY key on the work email — personal addresses are shared
+  // and recycled in the master list, so an alias match could show a vouch that
+  // belongs to a different person. No fallback between the two.
+  const [viewPaystub, setViewPaystub] = useState<{
+    sourceFile: string;
+    email: string;
+    workEmail: string;
+  } | null>(null);
   // Contractor rows open their INVOICE instead — see `handleViewPaystub`. null = closed.
   const [viewInvoice, setViewInvoice] = useState<{
     invoiceId: string;
@@ -840,7 +849,7 @@ export default function PayrollDispatch() {
         });
         return;
       }
-      setViewPaystub({ sourceFile: period.sourceFile, email: row.email });
+      setViewPaystub({ sourceFile: period.sourceFile, email: row.email, workEmail: row.id });
     },
     [period.sourceFile],
   );
@@ -859,7 +868,7 @@ export default function PayrollDispatch() {
         });
         return;
       }
-      setViewPaystub({ sourceFile: period.sourceFile, email: row.email });
+      setViewPaystub({ sourceFile: period.sourceFile, email: row.email, workEmail: row.id });
     },
     [period.sourceFile],
   );
@@ -1975,6 +1984,11 @@ export default function PayrollDispatch() {
         sourceFile={viewPaystub?.sourceFile ?? null}
         email={viewPaystub?.email ?? null}
         onClose={() => setViewPaystub(null)}
+        // Same rule as Mark Paid above: keyed on the WORK email, never `email`,
+        // and with no fallback. Both read the one `useManualValidations` hook,
+        // which is scoped to `period.sourceFile` — the same week the statement
+        // is opened on, so the vouch shown always belongs to the cycle shown.
+        validation={viewPaystub ? manualValidationFor(viewPaystub.workEmail) : null}
       />
       {/* Contractor rows settle an invoice, so their "View" opens the invoice. */}
       <ContractorInvoiceDialog

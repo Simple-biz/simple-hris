@@ -6,6 +6,11 @@ import {
   getEmployeeHourlyRatesRows,
   indexHourlyRatesByEmail,
 } from "@/lib/supabase/employee-hourly-rates";
+import {
+  mesaDepositDateFor,
+  mesaDepositDatesToReverse,
+  mesaWeekStartFor,
+} from "@/lib/mesa/deposit-date";
 
 // Weekly MESA contribution — ₱100 from the employee, matched 3× (₱300) by
 // Simple.biz for a ₱400 total deposit. Mirrors the Payroll Wizard's ₱100 MESA
@@ -23,13 +28,6 @@ function parseWeekEnd(filename: string | null | undefined): string | null {
   if (!filename) return null;
   const m = /(\d{4}-\d{2}-\d{2})_to_(\d{4}-\d{2}-\d{2})/.exec(filename);
   return m ? m[2] : null;
-}
-
-/** ISO date `days` before `iso` (UTC math — dates only, no TZ drift). */
-function isoMinusDays(iso: string, days: number): string {
-  return new Date(Date.parse(`${iso}T00:00:00Z`) - days * 86_400_000)
-    .toISOString()
-    .slice(0, 10);
 }
 
 /**
@@ -125,13 +123,14 @@ export async function recordMesaWeeklyContributions(opts: {
   if (members.size === 0) return { ...zero, weekEnd };
 
   // ── 3. Skip members already credited for this WEEK (idempotent) ─────────────
-  // Dedup on the whole Sun→Sat window, NOT the exact weekEnd date: the original
+  // Dedup on the whole Sun→Sat window, NOT the exact deposit date: the original
   // tracker backfill dates its weekly deposits mid-week (e.g. a Thursday), so a
-  // week can already be covered by a deposit whose date ≠ weekEnd. Matching by
-  // exact date would miss that and write a duplicate for the same week. Re-uploads
-  // are covered too — a prior run's own weekEnd-dated deposit is inside the window.
+  // week can already be covered by a deposit on some other day. Matching by exact
+  // date would miss that and write a duplicate for the same week. Re-uploads are
+  // covered too — mesaDepositDateFor always lands inside this window (locked by
+  // deposit-date.test.ts), so a prior run's own deposit is always seen here.
   // Paginated: PostgREST silently caps an unbounded select at 1000 rows.
-  const weekStart = isoMinusDays(weekEnd, 6);
+  const weekStart = mesaWeekStartFor(weekEnd);
   const alreadyThisWeek = new Set<string>();
   {
     const PAGE = 1000;
@@ -182,7 +181,9 @@ export async function recordMesaWeeklyContributions(opts: {
       name: m.name,
       department: m.department,
       status: null,
-      deposit_date: weekEnd,
+      // The FRIDAY of this pay week — one shared rule with the reversal below,
+      // so the two can never drift apart. See src/lib/mesa/deposit-date.ts.
+      deposit_date: mesaDepositDateFor(weekEnd),
       worker_contribution_php: WORKER_CONTRIB,
       simple_match_php: COMPANY_MATCH,
       total_daily_deposit_php: WEEKLY_TOTAL,
@@ -214,11 +215,18 @@ export async function recordMesaWeeklyContributions(opts: {
  * remaining upload still covers the same week — a corrected re-upload under a
  * different filename — the deposits stay and we report `weekStillCovered`.
  *
- * Only rows this app wrote are eligible: dated exactly on the week end with the
+ * Only rows this app wrote are eligible: dated on one of the dates the recorder
+ * could have used for this week (`mesaDepositDatesToReverse` — the week's FRIDAY,
+ * plus the pre-cutover week end so older deposits stay reversible), with the
  * standard ₱100/₱300 amounts and NO tracker provenance (`status`,
  * `opt_in_number`, `fpu_completion_date` all null — every sheet-backfilled row
- * carries opt-in tracker fields, and mid-week-dated backfill deposits never
- * match the week-end date). Disbursement rows are excluded outright.
+ * carries opt-in tracker fields, and mid-week-dated backfill deposits match
+ * neither date). Disbursement rows are excluded outright.
+ *
+ * The date comes from the SAME module the recorder writes with, so this filter
+ * cannot fall out of step with what was written. It used to be an independent
+ * copy of the expression, and a filtered DELETE that matches nothing reports
+ * success — see src/lib/mesa/deposit-date.ts for why that mattered.
  */
 export async function deleteMesaWeeklyContributions(opts: {
   sourceFile: string;
@@ -242,7 +250,10 @@ export async function deleteMesaWeeklyContributions(opts: {
   const { count, error } = await supabase
     .from(LEDGER_TABLE)
     .delete({ count: "exact" })
-    .eq("deposit_date", weekEnd)
+    // The SAME rule the recorder wrote with — not a second copy of it. Includes
+    // the pre-cutover week-end date so deposits written before the Friday move
+    // are still reversible. See src/lib/mesa/deposit-date.ts.
+    .in("deposit_date", mesaDepositDatesToReverse(weekEnd))
     .eq("worker_contribution_php", WORKER_CONTRIB)
     .eq("simple_match_php", COMPANY_MATCH)
     .is("status", null)
