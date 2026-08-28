@@ -203,14 +203,18 @@ export default function PabIneligibleTable({
       </div>
 
       <div className="min-w-0 overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-        <table className="w-full min-w-[820px] text-sm">
+        <table className="w-full min-w-[760px] text-sm">
           <thead className="bg-zinc-50 text-[11px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
             <tr>
               <th className="px-4 py-2.5 text-left font-semibold">Employee</th>
               <th className="px-3 py-2.5 text-left font-semibold">Department</th>
-              <th className="px-3 py-2.5 text-center font-semibold">Days missed</th>
               <th className="px-3 py-2.5 text-left font-semibold">Status</th>
-              <th className="px-3 py-2.5 text-left font-semibold">Which days</th>
+              {/* Failed days sits immediately left of the buttons: the count and the
+                  dates are what the Forgive decision is made on, so they belong beside
+                  it rather than a column away. Merging the old "Days missed" number
+                  into this cell also drops a column, which is what keeps Actions on
+                  screen without horizontal scrolling. */}
+              <th className="px-3 py-2.5 text-left font-semibold">Failed days</th>
               <th className="px-3 py-2.5 text-right font-semibold">Actions</th>
             </tr>
           </thead>
@@ -243,11 +247,6 @@ export default function PabIneligibleTable({
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2.5 text-center">
-                    <span className="font-mono text-base font-bold text-rose-700 dark:text-rose-300">
-                      {row.severity}
-                    </span>
-                  </td>
                   <td className="px-3 py-2.5">
                     <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-medium', style.chip)}>
                       {style.label}
@@ -259,25 +258,38 @@ export default function PabIneligibleTable({
                     )}
                   </td>
                   <td className="px-3 py-2.5">
-                    <div className="flex flex-wrap gap-1">
-                      {row.failedDays.slice(0, 4).map((d) => (
-                        <span
-                          key={d.iso}
-                          title={`${formatShortfall(d.shortfallSec)} short of 7h`}
-                          className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-px font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
-                        >
-                          {formatDay(d.iso)}
-                        </span>
-                      ))}
-                      {row.failedDays.length > 4 && (
-                        <span className="px-1 text-[10px] text-zinc-400">
-                          +{row.failedDays.length - 4} more
-                        </span>
-                      )}
+                    <div className="flex items-center gap-2">
+                      <span
+                        title={`${row.severity} day${row.severity === 1 ? '' : 's'} under 7 hours`}
+                        className="shrink-0 font-mono text-base font-bold leading-none text-rose-700 dark:text-rose-300"
+                      >
+                        {row.severity}
+                      </span>
+                      <div className="flex flex-wrap gap-1">
+                        {row.failedDays.slice(0, 3).map((d) => (
+                          <span
+                            key={d.iso}
+                            title={`${formatShortfall(d.shortfallSec)} short of 7h`}
+                            className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-px font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
+                          >
+                            {formatDay(d.iso)}
+                          </span>
+                        ))}
+                        {row.failedDays.length > 3 && (
+                          <span
+                            // Every date stays reachable on hover — the cap is a
+                            // layout limit, never a claim that the rest do not exist.
+                            title={row.failedDays.map((d) => formatDay(d.iso)).join(', ')}
+                            className="px-1 text-[10px] text-zinc-400"
+                          >
+                            +{row.failedDays.length - 3} more
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </td>
                   <td className="px-3 py-2.5">
-                    <div className="flex items-center justify-end gap-1.5">
+                    <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
                       <Button
                         type="button"
                         variant="outline"
