@@ -5,6 +5,7 @@ import { AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight, Loader2,
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { pabSeverityBand, type PabFailedDay, type PabSeverityBand } from '@/lib/payroll/pab-ineligibility';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
@@ -77,6 +78,9 @@ function formatShortfall(sec: number): string {
 
 const PAGE_SIZE = 25;
 
+/** '' = every department; this = rows whose department could not be resolved. */
+const NO_DEPT = '__none__';
+
 function formatDay(iso: string): string {
   const [y, m, d] = iso.split('-').map(Number);
   if (!y || !m || !d) return iso;
@@ -109,21 +113,77 @@ export default function PabIneligibleTable({
   evaluatedCount: number;
 }) {
   const [query, setQuery] = useState('');
+  const [deptFilter, setDeptFilter] = useState('');
+  const [bandFilter, setBandFilter] = useState('');
   const [page, setPage] = useState(1);
 
+  // Departments present in THESE rows. Built off the unfiltered list so the
+  // options cannot shift under the pointer while another filter is being used.
+  // The raw key is the VALUE and the formatted label is what is shown — an
+  // `hsl:*` slug must never reach a human (docs/features/hsl-subdepartments.md).
+  const deptOptions = useMemo(() => {
+    const byKey = new Map<string, string>();
+    let hasNone = false;
+    for (const r of rows) {
+      if (r.departmentKey) byKey.set(r.departmentKey, formatDeptLabel(r.departmentKey) || r.departmentKey);
+      else hasNone = true;
+    }
+    const opts = [
+      { value: '', label: 'All departments' },
+      ...[...byKey.entries()]
+        .sort((a, b) => a[1].localeCompare(b[1]))
+        .map(([value, label]) => ({ value, label })),
+    ];
+    // Unresolvable people stay reachable under their own bucket rather than
+    // dropping out of every view — a filter never hides a row.
+    if (hasNone) opts.push({ value: NO_DEPT, label: 'No department' });
+    return opts;
+  }, [rows]);
+
+  const bandOptions = useMemo(() => {
+    const present = new Set(rows.map((r) => pabSeverityBand(r.severity)));
+    const opts = [{ value: '', label: 'All statuses' }];
+    if (present.has('review')) opts.push({ value: 'review', label: 'Review (1–2 days)' });
+    if (present.has('high')) opts.push({ value: 'high', label: 'Repeated (3+ days)' });
+    if (rows.some((r) => r.excluded)) opts.push({ value: 'excluded', label: 'Excluded from PAB' });
+    return opts;
+  }, [rows]);
+
+  // A value that leaves the data must not strand the table on an empty view with
+  // no way back — drop the selection instead of leaving it dangling.
+  useEffect(() => {
+    if (deptFilter && !deptOptions.some((o) => o.value === deptFilter)) setDeptFilter('');
+  }, [deptOptions, deptFilter]);
+  useEffect(() => {
+    if (bandFilter && !bandOptions.some((o) => o.value === bandFilter)) setBandFilter('');
+  }, [bandOptions, bandFilter]);
+
   const visible = useMemo(() => {
+    let list = rows;
+    if (deptFilter) {
+      list = deptFilter === NO_DEPT
+        ? list.filter((r) => !r.departmentKey)
+        : list.filter((r) => r.departmentKey === deptFilter);
+    }
+    if (bandFilter) {
+      list = bandFilter === 'excluded'
+        ? list.filter((r) => r.excluded)
+        : list.filter((r) => pabSeverityBand(r.severity) === bandFilter);
+    }
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
-      (r) =>
-        (r.name ?? '').toLowerCase().includes(q) ||
-        formatDeptLabel(r.departmentKey).toLowerCase().includes(q),
-    );
-  }, [rows, query]);
+    if (q) {
+      list = list.filter(
+        (r) =>
+          (r.name ?? '').toLowerCase().includes(q) ||
+          formatDeptLabel(r.departmentKey).toLowerCase().includes(q),
+      );
+    }
+    return list;
+  }, [rows, query, deptFilter, bandFilter]);
 
   // Page follows the filter: narrowing the search on page 4 of an unfiltered list
   // would otherwise land on an empty page that looks like "no matches".
-  useEffect(() => { setPage(1); }, [query, rows]);
+  useEffect(() => { setPage(1); }, [query, deptFilter, bandFilter, rows]);
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
   const paged = visible.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
@@ -191,14 +251,36 @@ export default function PabIneligibleTable({
             </span>
           )}
         </div>
-        <div className="relative w-full max-w-xs">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search name or department"
-            className="h-8 pl-8 text-xs"
-          />
+        <div className="flex flex-wrap items-center gap-2">
+          {deptOptions.length > 1 && (
+            <SmoothSelect
+              aria-label="Filter by department"
+              value={deptFilter}
+              onChange={setDeptFilter}
+              triggerClassName="h-8 w-[13rem] text-[11px]"
+              searchable={deptOptions.length > 8}
+              searchPlaceholder="Search departments…"
+              options={deptOptions}
+            />
+          )}
+          {bandOptions.length > 1 && (
+            <SmoothSelect
+              aria-label="Filter by status"
+              value={bandFilter}
+              onChange={setBandFilter}
+              triggerClassName="h-8 w-[11rem] text-[11px]"
+              options={bandOptions}
+            />
+          )}
+          <div className="relative w-[15rem]">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name or department"
+              className="h-8 pl-8 text-xs"
+            />
+          </div>
         </div>
       </div>
 
@@ -329,9 +411,9 @@ export default function PabIneligibleTable({
         <p className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
           {visible.length !== rows.length && <AlertTriangle className="h-3 w-3" />}
           {visible.length === 0
-            ? 'No one matches this search'
+            ? 'No one matches these filters'
             : `Showing ${(safePage - 1) * PAGE_SIZE + 1}–${Math.min(safePage * PAGE_SIZE, visible.length)} of ${visible.length}`}
-          {visible.length !== rows.length && ` (filtered from ${rows.length} — the search narrows this view only)`}
+          {visible.length !== rows.length && ` (filtered from ${rows.length} — filters narrow this view only, nothing is removed)`}
         </p>
         {pageCount > 1 && (
           <div className="flex items-center gap-1">

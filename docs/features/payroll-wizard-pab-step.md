@@ -141,6 +141,26 @@ If all three miss, the row still renders, as an explicit *"Unknown — not on th
 with the address in a `title` tooltip only. **Do not drop the row** — that is the all-clear
 that hides someone, and **do not fall back to the email** as a display name.
 
+## Filters narrow the view; they never remove anyone
+
+Department and status filters sit beside the search box, following the rule
+`dispatch-log-department-filter.md` set for the Payment Dispatch log views:
+
+- **A filter never hides a row.** A person whose department cannot be resolved lives under an
+  explicit **"No department"** bucket rather than dropping out of every view.
+- **A selection that leaves the data resets itself.** If the last row of a department is
+  forgiven, the filter falls back to "All departments" instead of stranding the table on an
+  empty view with no way back. Same for the status filter.
+- **Options are built from the UNFILTERED rows**, so they cannot shift under the pointer while
+  another filter is in use.
+- **The raw `hsl:*` key is the option VALUE; `formatDeptLabel` produces the label.** The slug
+  must never reach a human, and the raw value must never be shown just because it is the key.
+- The count line always states the filtered total against the true total, and says filters
+  narrow the view only. The "N ineligible" headline chip is always the UNFILTERED count.
+
+Status options are the severity bands (**Review** 1–2 days, **Repeated** 3+) plus **Excluded
+from PAB**, and each appears only when some row is actually in it.
+
 ## The PAB Calendar modal is two columns, not a tower
 
 The modal (`PayrollWizard.tsx`, the `pabCalendarModalEmail` block) is `max-w-6xl` and lays the
