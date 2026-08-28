@@ -141,6 +141,26 @@ If all three miss, the row still renders, as an explicit *"Unknown — not on th
 with the address in a `title` tooltip only. **Do not drop the row** — that is the all-clear
 that hides someone, and **do not fall back to the email** as a display name.
 
+## The PAB Calendar modal is two columns, not a tower
+
+The modal (`PayrollWizard.tsx`, the `pabCalendarModalEmail` block) is `max-w-6xl` and lays the
+calendar LEFT with the verdict, failed days and forgiven days in a right rail.
+
+Stacked — how it shipped — a 15-day failure list put every Forgive button below the fold, so
+acting on the list meant scrolling past the thing you were acting on. Side by side the modal's
+height is `max(calendar, verdict)` rather than their sum.
+
+Rules for anyone touching it:
+
+- The rail carries its own scroll (`lg:max-h-[74vh] lg:overflow-y-auto`) and the failed-days
+  list caps at `max-h-[46vh]`, so neither can drive the modal's height.
+- It collapses to ONE column below `lg` — a two-column grid at laptop width squeezes the
+  calendar into unreadability.
+- The verdict card keeps `mt-3` for the stacked case and drops it (`lg:mt-0`) as the rail's
+  first child.
+- The header names the person through the same chain as the step-6 list (master → calc row →
+  Hubstaff `Member`), falling back to an explicit unknown. It used to render the raw email.
+
 ## An empty list has three causes and they are NOT interchangeable
 
 The first version of this step rendered "Nobody is ineligible for August 2026 — every

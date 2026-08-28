@@ -20893,7 +20893,7 @@ export default function PayrollWizard({
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.97, y: 6 }}
                 transition={{ type: 'spring', stiffness: 340, damping: 28, mass: 0.6 }}
-                className="flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+                className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* Header — compact, doesn't scroll */}
@@ -20927,7 +20927,11 @@ export default function PayrollWizard({
                       </motion.span>
                     </div>
                     <p className="mt-0.5 truncate text-xs font-medium text-zinc-800 dark:text-zinc-200">
-                      {emp?.name || pabCalendarModalEmail}
+                      {emp?.name
+                        || masterIndex.byWorkEmail.get(normEmpEmail)?.name
+                        || masterIndex.byPersonalEmail.get(normEmpEmail)?.name
+                        || pabMemberNames.get(normEmpEmail)
+                        || 'Unknown — not on the master list'}
                     </p>
                     {pabMonthRange && (
                       <p className="truncate text-[10px] text-indigo-700 dark:text-indigo-300">
@@ -20957,6 +20961,13 @@ export default function PayrollWizard({
                     </div>
                   ) : (
                     <>
+                    {/* Calendar LEFT, verdict + failed days RIGHT. Stacked they made a
+                        tower — a 15-day failure list pushed every Forgive button below
+                        the fold, so acting on the list meant scrolling past the thing
+                        you were acting on. Single column below `lg` keeps it usable on
+                        a laptop. */}
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)] lg:items-start">
+                      <div className="min-w-0">
                       {/* No-data diagnostic — shown when the employee is in the roster but Hubstaff has no rows for them */}
                       {breakdown.length === 0 && (
                         <motion.div
@@ -21217,13 +21228,20 @@ export default function PayrollWizard({
                         </span>
                       </motion.div>
 
+                      </div>
+
+                      {/* Right rail: the verdict and the days it rests on. Its own
+                          scroll on `lg` so a long failure list never drives the
+                          modal's height. */}
+                      <div className="min-w-0 lg:sticky lg:top-0 lg:max-h-[74vh] lg:overflow-y-auto lg:pr-1">
                       {/* Verdict — clear pass/fail/in-progress explanation */}
                       <motion.div
                         initial={{ opacity: 0, y: 6 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.14 + cells.length * 0.008, duration: 0.3 }}
                         className={cn(
-                          'mt-3 rounded-xl border p-3',
+                          // mt-3 only while stacked; in the right rail it is the first child.
+                          'mt-3 rounded-xl border p-3 lg:mt-0',
                           paStatus === 'eligible'
                             ? 'border-emerald-300/60 bg-emerald-50/80 dark:border-emerald-800/50 dark:bg-emerald-950/30'
                             : paStatus === 'ineligible'
@@ -21296,7 +21314,7 @@ export default function PayrollWizard({
                               <span>Failed days ({failedDetails.length})</span>
                               <span className="font-normal normal-case text-red-500/70 dark:text-red-400/60">— click a day to forgive</span>
                             </div>
-                            <div className="space-y-1">
+                            <div className="max-h-[46vh] space-y-1 overflow-y-auto pr-0.5">
                               {failedDetails.map((f, i) => {
                                 const isExpanded = pabForgiveActiveIso === f.iso;
                                 const isLoading = pabForgiveLoadingIso === f.iso;
@@ -21512,6 +21530,8 @@ export default function PayrollWizard({
                           </div>
                         </motion.div>
                       )}
+                      </div>
+                    </div>
                     </>
                   )}
                 </div>
