@@ -616,9 +616,11 @@ Additions and Deductions are kept in **separate columns** (not a combined net-ad
 
 **Purpose**: Review and finalize pay for Hogan Smith Law employees — a separate calculation path from the main Additions tab.
 
-**Header banner**: Shows department name, active PAB month, employee count, total initial pay, total KPI bonuses, and count of ready/locked KPI periods.
+**Header banner**: REMOVED 2026-08-28 (Kane). It restated the employee count, the total initial pay and the total KPI bonuses — all three of which the table's sticky `tfoot` already carries — so the section now opens on the sub-department rail and the table.
 
-**KPI Bonus Periods summary**: Cards per HSL sub-department (Blue, Green, Yellow, etc.) showing the period type (weekly/monthly), employee count, total bonus amount, and status badge (ready / locked). Data comes from manager submissions via the HSL Bonus Calculator.
+**Monthly bonus cards**: Cards for the HSL sub-departments on a **monthly** cadence only — SSD Medical Records, Collections, Healthcare Team Lead. Each shows the month, employee count, total bonus amount, a `manual · Adjustment` badge and a status badge (ready / locked). Data comes from manager submissions via the HSL Bonus Calculator.
+
+The **weekly** period cards were removed in the same pass: a weekly dept's bonus already reaches the row's KPI Bonus column, the `tfoot` total and dispatch, so the card restated a number that pays itself. Monthly bonuses are **not** auto-dispatched — Accounting keys them into the Adjustment column by hand, and this card is the only place in the wizard that states the amount, so it stays (see [payroll-wizard-week-replay.md](../features/payroll-wizard-week-replay.md#hsl-kpi-bonus-period-cards-step-4--monthly-depts-ignored-the-selector)). A period counts as monthly if **either** its own `period_type` **or** its dept's configured cadence says so — the OR is deliberate, so drift in one field cannot delete a hand-applied bonus from the only screen showing it. The "none yet" placeholder now renders only for a monthly dept with nothing submitted, where the absence is the actionable fact.
 
 **Employee table**: Paginated (50 rows), searchable by name or email. Columns:
 

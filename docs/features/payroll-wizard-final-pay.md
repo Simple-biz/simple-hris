@@ -35,7 +35,8 @@ money change.
 
 - **Departments** — the vertical department rail plus the shared additions table.
 - **HSL** — the Hogan surface, replacing the workspace entirely: its own sub-department
-  rail, KPI Bonus Period cards and Total Pay table.
+  rail, monthly-bonus cards and Total Pay table. (The header banner and the weekly
+  period cards were removed 2026-08-28 — see `components.md` §Step 4.)
 
 Selecting HSL does not change *which department the table shows*; it changes *which table
 there is*. That is why it is a section rather than a rail entry, and it is also what keeps

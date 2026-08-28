@@ -25,7 +25,6 @@ export type TutorialTargetKey =
   | 'step2-fx-cop'
   | 'step2-fx-cop-cta'
   | 'step3-paste-data'
-  | 'step4-hsl-review'
   | 'step4-hsl-table'
   | 'step4-col-pab'
   | 'step4-col-tech'

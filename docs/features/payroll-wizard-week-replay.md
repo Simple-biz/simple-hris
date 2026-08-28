@@ -130,9 +130,29 @@ It affected **SSD Medical Records, Collections and Healthcare Team Lead**
 together.
 
 These cards carry a `manual · Adjustment` badge — monthly HSL bonuses are **not**
-auto-dispatched, Accounting applies them by hand from the Adjustment column. So
-the wrong month is an actionable wrong number, even though nothing auto-flows
+auto-dispatched, Accounting applies them by hand from the Adjustment column. So the
+wrong month is an actionable wrong number, even though nothing auto-flows
 from it (the money path, `hslKpiAmounts`, is weekly-only and was already pinned).
+
+**These are now the ONLY period cards on the step (2026-08-28).** Kane asked for the
+KPI Bonus Period block and the HSL header banner to go; the banner and every
+**weekly** dept's card did, because a weekly bonus already reaches the row's KPI
+Bonus column, the `tfoot` total and dispatch — the card restated a number that pays
+itself. The monthly cards were kept precisely on the rule above: they are the only
+place in the wizard that states an amount nothing else will pay. So the
+week-scoping fix below still guards a live surface, not a dead one, and the
+month it picks is still an actionable number.
+
+Two consequences of the narrowing, both deliberate:
+
+- **A period is monthly if EITHER `period_type` OR the dept's configured cadence
+  says so** (`isManualMonthlyPeriod`). The two agree today; the OR fails toward
+  *keeping* the card, so drift in one field cannot silently delete a hand-applied
+  bonus from the only screen that shows it.
+- **The sub-department rail's "has a ready/locked period" leg is now monthly-scoped
+  too.** It previously admitted any dept with a period even when nobody was on the
+  roster that cycle; with the weekly cards gone, such a tab would have opened on an
+  empty workspace.
 
 **The rule now** (`relateMonthlyPeriodToWeek` in
 [`bonus-cadence.ts`](../../src/lib/payroll/bonus-cadence.ts)):

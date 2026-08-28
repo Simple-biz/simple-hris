@@ -1931,7 +1931,7 @@ const steps = [
 /**
  * The Additions step (4) holds TWO workspaces, switched by a tab strip of its own —
  * not by the department rail. `departments` is the shared rail + additions table;
- * `hsl` is the Hogan Smith Law surface (own sub-department rail, KPI Bonus Period
+ * `hsl` is the Hogan Smith Law surface (own sub-department rail, monthly-bonus
  * cards, Total Pay table).
  *
  * HSL earns a section instead of a rail entry because picking it does not change
@@ -10607,18 +10607,10 @@ export default function PayrollWizard({
         const pabColShownHsl = isDeptEligible(sysBonusCfg.pab, 'hogan_smith_law');
         const techColShownHsl = isDeptEligible(sysBonusCfg.tech, 'hogan_smith_law');
 
-        const totalHslInitialPay = hslCalcRows.reduce((s, r) => s + (r.initialPay ?? 0), 0);
-        // Scope the header total to THIS run's HSL rows with a pay rate, so it
-        // equals the sum of the KPI column below (not every scorer in the DB).
-        const totalHslKpiBonuses = hslCalcRows.reduce((s, r) => {
-          const em = (r.email ?? '').toLowerCase();
-          const hasRates = r.regularRate != null || r.otRate != null;
-          return s + (hasRates ? (hslKpiAmounts[em] ?? 0) : 0);
-        }, 0);
-
-        const monthLabelHsl = pabMonthRange
-          ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
-          : 'Active PAB month';
+        // The header banner that carried the employee count, the initial-pay total and
+        // the KPI-bonus total was removed (Kane, 2026-08-28). The table's sticky tfoot
+        // already states all three, so the banner was a second place to keep in step;
+        // nothing else derived those totals or the PAB month label.
 
         const fmtPeriod = (p: { period_type: string; period_start: string }) => {
           if (p.period_type === 'monthly') {
@@ -10632,8 +10624,8 @@ export default function PayrollWizard({
         // Each Hogan employee is mapped to an HSL sub-department via the
         // hsl_team_members roster (hslDeptByEmail); rows with no roster match fall
         // into an "Unassigned" bucket. The rail drives BOTH the employee table and
-        // the KPI Bonus Period cards — selecting a department shows only its people
-        // and only its KPI period card.
+        // the monthly-bonus cards — selecting a department shows only its people
+        // and only its own monthly card.
         const hslKeySet = new Set<string>(HSL_DEPT_KEYS);
         const hslDeptOfRow = (email: string): string => {
           const k = hslDeptByEmail[(email ?? '').toLowerCase()];
@@ -10644,7 +10636,24 @@ export default function PayrollWizard({
           const d = hslDeptOfRow(r.email);
           hslDeptCounts.set(d, (hslDeptCounts.get(d) ?? 0) + 1);
         }
-        const hslPeriodDeptSet = new Set(hslStepPeriods.map(p => p.department));
+        // ── Monthly bonus periods only ────────────────────────────────────────────
+        // The weekly period cards were removed (Kane, 2026-08-28): a weekly dept's
+        // bonus already reaches the row's KPI Bonus column, the tfoot total and
+        // dispatch, so the card restated a number that pays itself. MONTHLY periods
+        // are NOT auto-dispatched (docs/features/payroll-wizard-week-replay.md
+        // "HSL KPI Bonus Period cards") — Accounting types them into the Adjustment
+        // column by hand, and this card is the only place in the wizard that states
+        // the amount. So the monthly cards stay.
+        //
+        // A period counts as monthly if EITHER its own `period_type` or its dept's
+        // configured cadence says so. The two agree in practice; the OR is
+        // deliberate so a drifting `period_type` on a monthly dept cannot silently
+        // delete a hand-applied bonus from the only screen that shows it.
+        const isManualMonthlyPeriod = (p: { department: string; period_type: string }) =>
+          p.period_type === 'monthly' ||
+          (HSL_DEPTS as Record<string, { cadence?: string }>)[p.department]?.cadence === 'monthly';
+        const hslMonthlyPeriods = hslStepPeriods.filter(isManualMonthlyPeriod);
+        const hslPeriodDeptSet = new Set(hslMonthlyPeriods.map(p => p.department));
         // Rail lists depts alphabetically by display name ("All HSL" pinned first,
         // "Unassigned" last); a dept appears if it has people this cycle OR a
         // ready/locked KPI period.
@@ -10664,9 +10673,16 @@ export default function PayrollWizard({
         const visibleHslRows = activeHslDeptSafe === 'all'
           ? hslCalcRows
           : hslCalcRows.filter(r => hslDeptOfRow(r.email) === activeHslDeptSafe);
+        // Whether the current rail selection could produce a monthly card at all.
+        // Drives the spinner and the "none yet" placeholder, so a weekly dept no
+        // longer shows either — but a MONTHLY dept with nothing submitted still
+        // says so out loud, because there the absence is the actionable fact.
+        const hslMonthlySelection =
+          activeHslDeptSafe === 'all' ||
+          (HSL_DEPTS as Record<string, { cadence?: string }>)[activeHslDeptSafe]?.cadence === 'monthly';
         const visibleHslPeriods = activeHslDeptSafe === 'all'
-          ? hslStepPeriods
-          : hslStepPeriods.filter(p => p.department === activeHslDeptSafe);
+          ? hslMonthlyPeriods
+          : hslMonthlyPeriods.filter(p => p.department === activeHslDeptSafe);
         const activeHslDeptName = activeHslDeptSafe === 'all'
           ? 'All HSL Departments'
           : activeHslDeptSafe === 'unassigned'
@@ -10676,43 +10692,9 @@ export default function PayrollWizard({
         return (
           <div className="flex min-w-0 flex-col gap-5">
 
-            {/* Header banner */}
-            <div
-              data-tutorial-target="step4-hsl-review"
-              className="flex flex-col gap-1 rounded-2xl border border-violet-200/70 bg-gradient-to-br from-violet-50 via-white to-indigo-50/40 p-5 shadow-sm dark:border-violet-900/40 dark:from-violet-950/30 dark:via-zinc-950 dark:to-indigo-950/15"
-            >
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-700 dark:text-violet-300">
-                <Building2 className="h-3.5 w-3.5" /> Hogan Smith Law &middot; {monthLabelHsl}
-              </div>
-              <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
-                HSL Payroll &mdash; Initial Pay + KPI Bonuses
-              </h2>
-              <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                HSL runs Mon&ndash;Sun weeks (&ge;5 days at &ge;7 h). KPI bonuses are pulled from the manager KPI Calculator.
-                PAB ({formatPHP(pabAmountForDept('hogan_smith_law'))}) and Tech Bonus ({formatPHP(techAmountForDept('hogan_smith_law'))}) are shown per-row and included in Total Pay.
-                Use the Adjustment column to adjust any employee&apos;s bonus before dispatch.
-              </p>
-              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
-                <span className="rounded-full border border-violet-300/70 bg-violet-50 px-2.5 py-0.5 font-medium text-violet-800 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-200">
-                  {hslCalcRows.length} employees
-                </span>
-                <span className="rounded-full border border-zinc-200 bg-white px-2.5 py-0.5 font-medium text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
-                  Initial pay: {formatPHP(totalHslInitialPay)}
-                </span>
-                <span className="rounded-full border border-emerald-300/70 bg-emerald-50 px-2.5 py-0.5 font-medium text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200">
-                  KPI bonuses: +{formatPHP(totalHslKpiBonuses)}
-                </span>
-                {hslStepPeriods.length > 0 && (
-                  <span className="text-zinc-500 dark:text-zinc-400">
-                    {hslStepPeriods.length} dept period{hslStepPeriods.length !== 1 ? 's' : ''} ready
-                  </span>
-                )}
-              </div>
-            </div>
-
             {/* Department workspace: HSL sub-dept rail (left) + content (right).
-                Mirrors the Additions tab. The rail filters BOTH the KPI Bonus
-                Period cards and the employee table to the selected department. */}
+                Mirrors the Additions tab. The rail filters BOTH the monthly-bonus
+                cards and the employee table to the selected department. */}
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
               {/* HSL department rail */}
               <div role="tablist" aria-label="HSL departments" className="flex gap-1.5 overflow-x-auto pb-1 xl:w-48 xl:shrink-0 xl:flex-col xl:gap-1 xl:overflow-visible xl:pb-0 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
@@ -10776,7 +10758,7 @@ export default function PayrollWizard({
                 })()}
               </div>
 
-              {/* Content: KPI cards + employee table (filtered to the active dept) */}
+              {/* Content: monthly bonus cards + employee table (filtered to the active dept) */}
               <div className="min-w-0 flex-1">
                 <AnimatePresence mode="wait" initial={false}>
                   <motion.div
@@ -10788,11 +10770,13 @@ export default function PayrollWizard({
                     className="flex flex-col gap-5"
                   >
 
-            {/* KPI Bonus summary per department */}
-            {hslStepLoading ? (
+            {/* Monthly bonus summary per department — the hand-applied ones only.
+                Weekly periods pay themselves through the KPI Bonus column, so they
+                have no card; these do not, and Accounting keys them into Adjustment. */}
+            {hslStepLoading && hslMonthlySelection ? (
               <div className="flex items-center justify-center gap-2 rounded-xl border border-violet-100 bg-violet-50/50 py-8 dark:border-violet-900/30 dark:bg-violet-950/20">
                 <Loader2 className="h-4 w-4 animate-spin text-violet-500" />
-                <span className="text-sm text-violet-700 dark:text-violet-300">Loading KPI bonus data&hellip;</span>
+                <span className="text-sm text-violet-700 dark:text-violet-300">Loading monthly bonus data&hellip;</span>
               </div>
             ) : hslStepError ? (
               <p className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700 dark:border-rose-800/50 dark:bg-rose-950/20 dark:text-rose-400">
@@ -10802,8 +10786,8 @@ export default function PayrollWizard({
               <div className="flex flex-col gap-2">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                   {activeHslDeptSafe === 'all'
-                    ? 'KPI Bonus Periods (from manager submissions)'
-                    : `${activeHslDeptName} — KPI Bonus Period`}
+                    ? 'Monthly bonuses — apply via the Adjustment column'
+                    : `${activeHslDeptName} — monthly bonus`}
                 </p>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {visibleHslPeriods.map(p => {
@@ -10821,7 +10805,7 @@ export default function PayrollWizard({
                           </div>
                           <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-zinc-500 dark:text-zinc-400">
                             <span>{fmtPeriod(p)} &middot; {p.entries.length} employee{p.entries.length !== 1 ? 's' : ''}</span>
-                            {p.period_type === 'monthly' && (
+                            {isManualMonthlyPeriod(p) && (
                               <span
                                 className="rounded bg-zinc-200 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
                                 title="Monthly bonus — NOT auto-dispatched. Apply this amount via the Adjustment column."
@@ -10849,13 +10833,11 @@ export default function PayrollWizard({
                   })}
                 </div>
               </div>
-            ) : (
+            ) : hslMonthlySelection && activeHslDeptSafe !== 'all' ? (
               <div className="rounded-xl border border-dashed border-violet-200 bg-violet-50/30 px-4 py-6 text-center text-xs text-violet-600 dark:border-violet-800/40 dark:bg-violet-950/10 dark:text-violet-400">
-                {activeHslDeptSafe === 'all'
-                  ? 'No ready or locked KPI periods found. Managers submit bonuses via the HSL Bonus Calculator.'
-                  : `No ready or locked KPI period for ${activeHslDeptName} yet.`}
+                {`No ready or locked monthly bonus for ${activeHslDeptName} yet. Managers submit it via the HSL Bonus Calculator.`}
               </div>
-            )}
+            ) : null}
 
             {/* Employee table: initial pay + KPI bonus + override */}
             {visibleHslRows.length === 0 ? (
