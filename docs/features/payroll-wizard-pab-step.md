@@ -148,6 +148,31 @@ people whose name falls through to the Hubstaff `Member` tier: measured 2026-08-
 1,329 roster rows carry an id and all 1,200 hubstaff emails that resolve to a roster row have
 one — the other 886 have no roster row at all. **Never synthesise an id to fill that dash.**
 
+## The population: ACTIVE on the Global Master List, WITH hours
+
+**Kane's rule, 2026-08-28.** PAB covers people who are active on the Global Master List and who
+actually have hours in the period. Nothing else belongs on this step.
+
+Both exclusions are applied in one place — `pabIneligibleRows` — against one shared set,
+`pabScoredEmails`, which the KPI strip also counts from, so the list and the cards can never
+describe different populations.
+
+Measured 2026-08-28, over the 2,086 emails the month's merge carries:
+
+| | Count |
+| --- | --- |
+| Excluded — not active on the Global Master List | 886 |
+| Excluded — no hours in the period | 194 |
+| **Listed** — active, with hours, and failed a day | **476** |
+| …of which 1–2 day cases | **176** |
+
+Before the rule the list was 1,203 rows, 874 of them off-roster. The 1–2-day cohort the step
+exists for was buried under leavers who had not worked since May.
+
+**Neither exclusion is silent.** The KPI strip carries a line naming both counts, so a list that
+suddenly shrinks is always explained. Losing that line would turn a scoping rule back into the
+all-clear-that-hides-people.
+
 ## "No hours recorded" is not a severity — it is missing evidence
 
 A person with **no tracked time on any scoring day** did not miss every day; they were never
@@ -162,10 +187,9 @@ above every genuine 1–2-day case the step exists to surface. Measured 2026-08-
 attendance in the company buried the real cohort and offered a Forgive button for a bonus the
 person cannot earn.
 
-They are **banded, never dropped** — a roster/coverage problem is still worth seeing (that is
-how you find a stale master row or a leaver still in the file), it just is not an attendance
-verdict. The status filter carries a "No hours recorded" option so they can be isolated or
-skipped.
+Since the population rule above now excludes them from the list outright, the `no-hours` band is
+a **defensive guard rather than a state you will normally see** — it exists so that relaxing the
+population rule can never silently re-rank a never-scored person as the worst attender. Keep it.
 
 ## The KPI strip is MASTER-LIST scoped, and it reports THREE buckets
 

@@ -7451,6 +7451,28 @@ export default function PayrollWizard({
   );
 
   /**
+   * Emails with ANY tracked time on a scoring day of this PAB period.
+   *
+   * Shared by the step-6 list and its KPI strip so the two can never describe
+   * different populations. Zero tracked time means the person was never scored —
+   * not that they missed every day — and a leaver whose last worked week is months
+   * behind the period would otherwise rank as the worst attendance in the company
+   * (Aaron Taguas, resigned 2026-06-02, scored 15/15 for August).
+   */
+  const pabScoredEmails = useMemo<Set<string>>(() => {
+    const scored = new Set<string>();
+    const scan = (map: Map<string, { seconds: number }[]>) => {
+      for (const [email, breakdown] of map.entries()) {
+        if (scored.has(email)) continue;
+        if (breakdown.some((b) => b.seconds > 0)) scored.add(email);
+      }
+    };
+    scan(employeeWeekdayHours);
+    scan(employeeAllDaysHours);
+    return scored;
+  }, [employeeWeekdayHours, employeeAllDaysHours]);
+
+  /**
    * Step 6's KPI strip — every figure scoped to people who resolve to a MASTER-LIST
    * row, because that is the only population these numbers can honestly describe.
    * The PAB month spans every Hubstaff email across every uploaded week (~2,000),
@@ -7465,11 +7487,15 @@ export default function PayrollWizard({
    * must equal Evaluated, or the strip is lying by omission.
    */
   const pabGmlCounts = useMemo(() => {
-    let eligible = 0, ineligible = 0, inProgress = 0, offRoster = 0;
+    let eligible = 0, ineligible = 0, inProgress = 0, offRoster = 0, noHours = 0;
     for (const [email, status] of effectivePabStatus.entries()) {
       const onMaster =
         masterIndex.byWorkEmail.has(email) || masterIndex.byPersonalEmail.has(email);
+      // Kane's rule (2026-08-28): PAB covers people ACTIVE on the Global Master
+      // List who actually have hours. Both exclusions are counted and disclosed
+      // under the strip — never silently dropped.
       if (!onMaster) { offRoster += 1; continue; }
+      if (!pabScoredEmails.has(email)) { noHours += 1; continue; }
       if (status === 'eligible') eligible += 1;
       else if (status === 'ineligible') ineligible += 1;
       else inProgress += 1;
@@ -7481,17 +7507,23 @@ export default function PayrollWizard({
         ).getTime()
       : false;
     return {
-      eligible, ineligible, inProgress, offRoster,
+      eligible, ineligible, inProgress, offRoster, noHours,
       evaluated: eligible + ineligible + inProgress,
       periodEnded,
     };
-  }, [effectivePabStatus, masterIndex, pabMonthRange]);
+  }, [effectivePabStatus, masterIndex, pabMonthRange, pabScoredEmails]);
 
   const pabIneligibleRows = useMemo<PabIneligibleRow[]>(() => {
     if (!pabMonthRange) return [];
     const rows: PabIneligibleRow[] = [];
     for (const [email, status] of effectivePabStatus.entries()) {
       if (status !== 'ineligible') continue;
+      // PAB covers people ACTIVE on the Global Master List who have hours (Kane,
+      // 2026-08-28). Off-roster leavers and never-scored people are counted and
+      // disclosed on the KPI strip instead of being ranked as attendance failures.
+      const onRoster =
+        masterIndex.byWorkEmail.has(email) || masterIndex.byPersonalEmail.has(email);
+      if (!onRoster || !pabScoredEmails.has(email)) continue;
 
       const deptKey = employeeDepts[email] ?? employeeDepts[email.toLowerCase()] ?? null;
       const isHsl = deptKey === 'hogan_smith_law';
@@ -7517,9 +7549,7 @@ export default function PayrollWizard({
         });
       }
 
-      // Any tracked time at all on a scoring day. Without this, a leaver whose
-      // last worked week is months before the period reads as "missed every day".
-      const hasHours = entries.some((e) => e.seconds > 0);
+      const hasHours = true; // guaranteed by the pabScoredEmails gate above
 
       const { severity, failedDays } = computePabIneligibility({
         entries,
@@ -7597,7 +7627,7 @@ export default function PayrollWizard({
   }, [
     effectivePabStatus, employeeDepts, employeeAllDaysHours, employeeWeekdayHours,
     pabMonthRange, hslWeekModel, hslAdjustedPabEnd, calcResults, isPabExcluded, masterIndex,
-    pabMemberNames,
+    pabMemberNames, pabScoredEmails,
   ]);
 
   /** The 1–2-day cohort, MASTER-LIST scoped so it matches the KPI strip's
@@ -17235,12 +17265,27 @@ export default function PayrollWizard({
                       hint={`scored this period, of ${masterEmployees.length.toLocaleString()} on the roster`}
                     />
                   </div>
-                  {pabGmlCounts.offRoster > 0 && (
-                    <p className="flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+                  {(pabGmlCounts.offRoster > 0 || pabGmlCounts.noHours > 0) && (
+                    <p className="flex items-start gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
                       <AlertCircle className="mt-px h-3 w-3 shrink-0" />
-                      {pabGmlCounts.offRoster.toLocaleString()} more had hours this period but are
-                      not on the Global Master List — they are listed below and can be forgiven,
-                      but they are not counted above.
+                      {/* Disclosed, never silent. PAB covers active master-list people
+                          WITH hours; everyone the rule excludes is named here so a
+                          shrinking list is always explained. */}
+                      Not covered by PAB this period:{' '}
+                      {pabGmlCounts.offRoster > 0 && (
+                        <>
+                          <strong>{pabGmlCounts.offRoster.toLocaleString()}</strong> not active on the
+                          Global Master List
+                        </>
+                      )}
+                      {pabGmlCounts.offRoster > 0 && pabGmlCounts.noHours > 0 && ' · '}
+                      {pabGmlCounts.noHours > 0 && (
+                        <>
+                          <strong>{pabGmlCounts.noHours.toLocaleString()}</strong> with no hours in
+                          the period
+                        </>
+                      )}
+                      .
                     </p>
                   )}
                 </>
