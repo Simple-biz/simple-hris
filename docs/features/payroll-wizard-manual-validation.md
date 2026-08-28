@@ -31,7 +31,8 @@ Shipped **2026-08-21**. Source: `src/lib/payroll/manual-validation.ts`,
 The obvious home is wrong, and measurement is why. `payment_dispatches` is an **outcome
 ledger**: on 2026-08-21 all **6,932** rows were terminal (`paid` 6,880 · `threshold` 44 ·
 `problem` 8) and **not one lacked a `sent_date`**, because a row is inserted only when money
-has already moved. MV is ticked at Step 7, *before* dispatch — so at tick time **there is no
+has already moved. MV is ticked on the **Validation** step (id 6 since HSL and Additions merged
+2026-08-28; 7 before), *before* dispatch — so at tick time **there is no
 row to write to**. A column there could only be filled after the fact, which inverts the
 whole point: the clerk needs to see the vouch *before* she pays.
 
@@ -158,7 +159,7 @@ null) and so cannot have been validated in one.
 The Validation table has carried an **Adj** column all along, and it is live — 290 people had a
 non-zero adjustment in the 2026-08-09 cycle, 1,009 across all snapshots. It is sourced from the
 staged dispatch payload, which the **Payroll Notes** board feeds via the adjustment bridge
-(`payroll-wizard-notes.md`). Step 7 **displays** it; the Notes board is where it is set.
+(`payroll-wizard-notes.md`). The Validation step **displays** it; the Notes board is where it is set.
 
 What changed: the expanded row used to list Adjustment **only when non-zero**, so for the ~710
 people at ₱0 the line was simply missing. It is now listed **unconditionally** — labelled

@@ -316,15 +316,20 @@ backing query is reported into `degraded[]` (same convention as the rest of
 readiness) and that row alone reads `pending` with a "couldn't read…" detail
 — never a false done or blocked.
 
+The **#** column is the wizard step the fix lives on, not a row index — two rows share
+step 4 since HSL and Additions merged into it (2026-08-28), which also shifted
+Contractors to 5 and Dispatch to 7. `stepNo` in `wizard-setup-steps.ts` is the source
+of these labels and moves with the rail.
+
 | # | Row | Done when | Otherwise |
 | - | --- | --- | --- |
 | 1 | Hubstaff CSV | an upload's filename parses to the checklist's expected week (see Week resolution, above) | **`blocked`** (rose — the only row that can read blocked); an unparseable newest-upload filename reads `attention` instead ("can't tell") |
 | 2 | USD rate confirmed | this cycle's per-upload FX record (`payroll.wizard.fx.<sourceFile>`, keyed to the MATCHED upload) has both `php` and `cop` non-zero | `attention` in every other case: record absent or both legs 0 → "Rates at 0 — set on Step 2"; exactly one leg 0 → "PHP still 0 — Step 2" / "COP still 0 — Step 2"; no upload has matched the expected week yet → "Waiting for this week's CSV" (not a zero complaint) |
 | 3 | Orphanage hours | `orphanage_pay` rows exist for the matched upload, OR `payroll.wizard.orphanage_confirmed.<weekStart>` exists | `attention` — "Paste hours or confirm none on Step 3". Real rows always outrank the confirm-none marker |
-| 4–5 | KPI bonuses | every due department — reusing the KPI rows already computed above, no duplicate queries — is ready/locked/no_bonus | `attention` listing up to 3 pending depts; `pending` (neutral) when no department is due this week |
-| 5 | Notes adjustments | zero strict-parseable Adjustment rows for the week, OR every noted worker's normalized email has a finite Adj. override in the cycle's `payroll.wizard.additions.<sourceFile>` blob | `attention` — "N of M not yet in wizard". Existence-based, not equality-based: the bridge has no per-note "applied" column, and hand-tweaked overrides after a pull are legitimate |
-| 6 | Contractor invoices | zero pending (non-stranded) invoices riding this cycle (reuses the dispatch queue's window/stranded rules) | `attention` — "N awaiting approval" |
-| 8 | Sent to dispatch | `payroll.dispatch_lock.<matchedSourceFile>` is locked | `pending` (sky/neutral) — it's the end state, not a warning |
+| 4 | KPI bonuses | every due department — reusing the KPI rows already computed above, no duplicate queries — is ready/locked/no_bonus | `attention` listing up to 3 pending depts; `pending` (neutral) when no department is due this week |
+| 4 | Notes adjustments | zero strict-parseable Adjustment rows for the week, OR every noted worker's normalized email has a finite Adj. override in the cycle's `payroll.wizard.additions.<sourceFile>` blob | `attention` — "N of M not yet in wizard". Existence-based, not equality-based: the bridge has no per-note "applied" column, and hand-tweaked overrides after a pull are legitimate |
+| 5 | Contractor invoices | zero pending (non-stranded) invoices riding this cycle (reuses the dispatch queue's window/stranded rules) | `attention` — "N awaiting approval" |
+| 7 | Sent to dispatch | `payroll.dispatch_lock.<matchedSourceFile>` is locked | `pending` (sky/neutral) — it's the end state, not a warning |
 
 ### USD rate — per-cycle zero-placeholder record (2026-08-03, same-day follow-up)
 
@@ -383,17 +388,18 @@ weekly confirmation:
   reads them any more (same precedent as every other retired per-week key in
   this codebase).
 
-**Dispatch hard gate (Step 7 / Step 8).** A deliberate, explicit exception to
+**Dispatch hard gate (Validation / Dispatch — steps 6 and 7 since the
+2026-08-28 HSL+Additions merge).** A deliberate, explicit exception to
 this checklist's own "never a new gate, never affects the score" design (row
 2 above still only ever reads `attention`, never `blocked`) — Kane's call,
 because a zero cycle rate makes every USD/COP figure in the dispatch payload
-garbage. Independent of both row 2 and the dispatch-LOCK row 8: Step 8's
+garbage. Independent of both row 2 and the dispatch-LOCK row: the Dispatch step's
 "Lock in Values & Send to Payment Dispatch" button is `disabled` whenever
 `usdToPhpRate <= 0 || usdToCopRate <= 0`, its label swaps to "Set Step 2
 rates first", a defensive check inside the click handler re-toasts "Cycle FX
 rates not set" (belt and braces), and a line under the button reads "Set
 this cycle's USD → PHP and USD → COP rates on Step 2 first — dispatch is
-blocked while either is 0." Step 7's Validation Checks panel renders the
+blocked while either is 0." The Validation step's Checks panel renders the
 same condition one step earlier, as a "Cycle FX Rates Set (USD→PHP &
 USD→COP)" / "Cycle FX Rates at 0 — set on Step 2 (dispatch is blocked)"
 pass/warn line. Separately, `publishFinalPaySnapshot` falls back to the

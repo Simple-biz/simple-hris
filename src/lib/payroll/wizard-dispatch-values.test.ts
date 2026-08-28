@@ -274,7 +274,7 @@ describe('resolveWizardRowValues', () => {
   });
 
   it('reports an unavailable breakdown rather than inventing one', () => {
-    // A step-7 held row is staged with a total but `payload: null`.
+    // A step-6 (Validation) held row is staged with a total but `payload: null`.
     const v = resolveWizardRowValues({
       ...base,
       snapshotUpdatedAt: OLDER,

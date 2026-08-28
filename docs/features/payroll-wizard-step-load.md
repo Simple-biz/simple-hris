@@ -2,10 +2,14 @@
 
 **Shipped** 2026-08-24 (inside the catch-all commit `7b9fe312`). **Documented** 2026-08-25.
 
-Accounting kept reading a half-loaded wizard as a *wrong* wizard — glancing at step 5 before
-the PAB merge landed and concluding the numbers were broken. Every step from **Initialize
-Payroll Data (1)** through **Dispatch (8)** now carries a determinate progress line along its
-bottom edge while **its own** data is in flight, completing in green when that data lands.
+Accounting kept reading a half-loaded wizard as a *wrong* wizard — glancing at the Additions
+step before the PAB merge landed and concluding the numbers were broken. Every step from
+**Initialize Payroll Data (1)** through **Dispatch (7)** now carries a determinate progress
+line along its bottom edge while **its own** data is in flight, completing in green when that
+data lands.
+
+> **Step ids shifted down by one on 2026-08-28** when HSL and Additions merged into a single
+> step 4 (`payroll-wizard-final-pay.md`). Every number on this page is the post-merge id.
 
 > A tab going green is a statement that **its figures can now be judged**, not that the page
 > finished mounting. That is the entire contract, and everything below exists to keep it true.
@@ -25,11 +29,12 @@ part and is not tapered by the rounded corners.
 | hold | green holds `STEP_PROGRESS_HOLD_MS` = **1700 ms**, then returns to `idle` |
 
 Steps go green in a **wave**, and the ordering is the useful part — it tells Accounting *which*
-tab is still cooking rather than just "something is". Step 1 first; then 2/3; then 4/6; 5 and
-7/8 last, because the all-weeks PAB merge fires one request per archived upload and is
-reliably the straggler.
+tab is still cooking rather than just "something is". Step 1 first; then 2/3; then 5; then 4
+and 6/7 last, because the all-weeks PAB merge fires one request per archived upload and is
+reliably the straggler — and since the merge, step 4 waits on that merge **and** the HSL
+amounts.
 
-**Reports (step 9) is outside the range** — it is a post-dispatch summary, not a figure anyone
+**Reports (step 8) is outside the range** — it is a post-dispatch summary, not a figure anyone
 judges mid-load.
 
 ---
@@ -41,7 +46,7 @@ judges mid-load.
 | `src/lib/payroll/step-load-prediction.ts` | pure prediction + the localStorage EMA. **The invariant lives here so it can be tested.** |
 | `src/lib/payroll/step-load-prediction.test.ts` | 12 tests, incl. the never-reaches-100% proof |
 | `src/components/PayrollWizard.tsx` `StepDataProgress` (~1796) | the component: rAF loop, grace window, settle timers |
-| `src/components/PayrollWizard.tsx` `isStepDataLoading` (~5024) | the per-step data mapping |
+| `src/components/PayrollWizard.tsx` `isStepDataLoading` (~5030) | the per-step data mapping |
 | `src/index.css` `.wizard-step-progress` / `-bar` (~1451) | track, fill, done colour |
 
 ---
@@ -102,11 +107,18 @@ fetches its numbers depend on (`isStepDataLoading`):
 | 1 Initialize | upload list + Hubstaff preview table |
 | 2 Initial Calculation | + week hours, `employee_hourly_rates` |
 | 3 Orphanage | same as 2 — orphanage pay is priced from those hours × rates |
-| 4 HSL | + HSL KPI amounts, HSL bonus entries (step-scoped) |
-| 5 Additions | + the all-weeks PAB merge |
-| 6 Contractors | upload list + invoices (step-scoped) |
-| 7 Validation · 8 Dispatch | everything — these are the steps where a premature reading costs money |
-| 9 Reports | nothing — outside the range |
+| 4 Additions (department table + HSL tab) | + the all-weeks PAB merge, HSL KPI amounts, HSL bonus entries (step-scoped) |
+| 5 Contractors | upload list + invoices (step-scoped) |
+| 6 Validation · 7 Dispatch | everything — these are the steps where a premature reading costs money |
+| 8 Reports | nothing — outside the range |
+
+**Step 4 waits on both halves of the old 4+5 pair, and it must.** The step owns two surfaces
+that never coexist in the DOM — the shared department table and the HSL tab — but green is a
+claim about *the step*, and the operator can switch tabs without reloading anything. So the
+HSL fetch is gated on `currentStep === 4`, **never** on `activeDeptTab === 'hogan_smith_law'`:
+tab-gating it would let the line go green while nothing had ever been fetched for the tab the
+operator is about to open. Same rule as the exclusions below — if it can be judged there, it
+is waited on here.
 
 **Every flag used here settles in a `finally`**, so a stalled fetch that rejects still ends the
 animation. The line cannot become the forever-spinner a terminal skeleton once was
@@ -124,9 +136,10 @@ animation. The line cannot become the forever-spinner a terminal skeleton once w
 
 ### Step-scoped fetches
 
-`hslStepLoading` (4) and `contractorInvoicesLoading` (6) are gated on `currentStep`, because
+`hslStepLoading` (4) and `contractorInvoicesLoading` (5) are gated on `currentStep`, because
 their effects only run while Accounting is standing on the step — which is also the only time
-their absence would be misleading.
+their absence would be misleading. Step-scoped is as narrow as this may get: **not**
+tab-scoped (see above).
 
 ---
 

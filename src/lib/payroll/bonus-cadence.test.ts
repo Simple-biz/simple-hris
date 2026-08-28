@@ -131,7 +131,7 @@ test('a Saturday-anchored month period is still placed in its own month', () => 
 
 // ── the picking rule the wizard's HSL step applies ────────────────────────────
 //
-// Mirrors the tiebreak in PayrollWizard's step-4 loader so the ordering is
+// Mirrors the tiebreak in PayrollWizard's HSL loader (step 4) so the ordering is
 // pinned somewhere runnable: 'after' is never a candidate, an exact month
 // outranks an earlier one, and otherwise the later period_start wins with
 // locked beating ready on a tie.

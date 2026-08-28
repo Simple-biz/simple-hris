@@ -127,23 +127,26 @@ export default function TutorialGuide({
   );
   const activeStatus = activeDef ? statuses.get(activeDef.stepId) : undefined;
 
-  // ── HSL column rotation (step 4 only) ──────────────────────────────────────
+  // ── HSL column rotation (step 4's HSL tab only) ────────────────────────────
   // The ring takes turns across PAB / Tech Bonus / MESA / Adjustment /
-  // Orphanage. Only step 4 rotates, so the timer exists only while it's open.
+  // Orphanage. Since HSL and Additions merged, step 4 only shows that table on
+  // its HSL tab — so the timer runs while THAT tab is open, not for the whole
+  // step. Rotating over the shared department table would name columns the
+  // operator cannot see.
+  const hslTabOpen = currentStep === 4 && mergedSignals.additionsHslTabActive;
   const [rotationTick, setRotationTick] = useState(0);
-  const rotates = currentStep === 4 && !persisted.dismissed && !persisted.collapsed;
+  const rotates = hslTabOpen && !persisted.dismissed && !persisted.collapsed;
   useEffect(() => {
     if (!rotates) return;
     const id = window.setInterval(() => setRotationTick((t) => t + 1), HSL_ROTATION_MS);
     return () => window.clearInterval(id);
   }, [rotates]);
-  // Restart the rotation from the first column whenever step 4 is re-entered.
+  // Restart the rotation from the first column whenever the HSL tab is re-entered.
   useEffect(() => {
-    if (currentStep === 4) setRotationTick(0);
-  }, [currentStep]);
+    if (hslTabOpen) setRotationTick(0);
+  }, [hslTabOpen]);
 
-  const rotatingLabel =
-    currentStep === 4 ? activeHslColumnLabel(mergedSignals, rotationTick) : null;
+  const rotatingLabel = hslTabOpen ? activeHslColumnLabel(mergedSignals, rotationTick) : null;
   // `collapsed` = balloon closed, head only. The head is always reachable.
   const balloonOpen = !persisted.collapsed;
 
@@ -157,8 +160,8 @@ export default function TutorialGuide({
     }
     const next: SpotRect[] = [];
     // Targets are resolved per render, not read off the static def: step 2 rings
-    // only the FX legs still unset, step 4 rotates columns, step 5 moves inside
-    // the System Bonus modal once it opens.
+    // only the FX legs still unset; step 4 rotates the HSL columns on its HSL tab and
+    // otherwise moves inside the System Bonus modal once it opens.
     for (const key of resolveStepTargets(activeDef.stepId, mergedSignals, rotationTick)) {
       const el = document.querySelector<HTMLElement>(`[data-tutorial-target="${key}"]`);
       if (!el) continue;

@@ -1,11 +1,11 @@
 # Payroll Wizard — Initial Calculation & Final Pay
 
 How the Payroll Wizard turns Hubstaff hours into each employee's final pay, and the
-accounting-editable adjustments layered on top. Covers the **Initial Calculation** (step 2),
-the **Additions** table (step 3), and the **HSL** table (step 5).
+accounting-editable adjustments layered on top. Covers the **Initial Calculation** (step 2)
+and the **Additions** step (step 4) — both its shared department table and its **HSL** tab.
 
 Source: [`src/components/PayrollWizard.tsx`](../../src/components/PayrollWizard.tsx).
-Last substantive update: **2026-08-18**.
+Last substantive update: **2026-08-28**.
 
 > **Replaying a past week is a different contract.** Everything below describes
 > the live cycle. What the header's pay-period selector is allowed to show for a
@@ -15,6 +15,61 @@ Last substantive update: **2026-08-18**.
 > [payroll-wizard-week-replay.md](./payroll-wizard-week-replay.md).
 
 ---
+
+## 2026-08-28 — HSL and Additions are ONE step, and HSL is a TAB of it
+
+Kane: *"HSL and Additions should be merged, however for HSL it should be in another tab,
+not merged with the other departments."* Both halves are load-bearing.
+
+**One step.** The old step 4 (HSL) and step 5 (Additions) are now a single step 4,
+"Additions". Its render lives in one `case 4:`; the HSL workspace was lifted out
+verbatim into `renderHslWorkspace()` and is called from inside it. No figure, column,
+total, handler or stored value changed in the move — `bonusOverrides`,
+`orphanageAmounts` and the `payroll.wizard.additions.<sourceFile>` blob were **already
+shared** by both tables, which is what made the merge a render change rather than a
+money change.
+
+**HSL is a tab, never a row in the shared department table.** It is pinned first on the
+department rail, wears violet, and swaps the whole workspace — its own sub-department
+rail, KPI Bonus Period cards and Total Pay table. It has to stay separate: HSL prices
+**Mon–Sun** weeks with a **+₱15/h weekend premium** and takes its bonuses from HSL KPI
+periods, so its rows do not fit the other departments' columns. The rail's generic map
+still excludes `hogan_smith_law` for exactly that reason. **Paused in the Configuration
+tab ⇒ the HSL tab leaves the rail**, like any other excluded department
+([payroll-wizard-configuration-tab.md](./payroll-wizard-configuration-tab.md)).
+
+**Every later step shifted down by one, and that was forced.** The rail's progress bar is
+`currentStep / steps.length` and completion is `currentStep >= steps.length`, so leaving
+a hole in the ids would read past 100% and mark Reports complete while standing on
+Dispatch. The shipped rail is now:
+
+| # | Step | Was |
+|---|---|---|
+| 1 | Initialize Payroll Data | 1 |
+| 2 | Initial Calculation | 2 |
+| 3 | Orphanage | 3 |
+| 4 | **Additions** (department table + HSL tab) | 4 (HSL) + 5 (Additions) |
+| 5 | Contractors | 6 |
+| 6 | Validation | 7 |
+| 7 | Dispatch | 8 |
+| 8 | Reports | 9 |
+
+**The two real gates moved with their numbers** and are unchanged in substance: the
+red-flag confirm on Continue is now step **6**, and the per-cycle FX-zero hard block is
+now step **7**. Nothing was loosened to make the renumbering fit — every step reference
+in the code, the readiness checklist's `stepNo` strings, the tutorial guide and these
+docs was corrected in the same commit.
+
+**The step's load line waits on BOTH halves.** `isStepDataLoading(4)` now counts the
+all-weeks PAB merge **and** the HSL KPI amounts / HSL bonus entries, and the HSL fetch
+stays gated on **step** entry — never on `activeDeptTab === 'hogan_smith_law'`. Gating it
+on the tab would let the line go green while nothing had ever been fetched for HSL,
+which is the one thing that line is not allowed to do
+([payroll-wizard-step-load.md](./payroll-wizard-step-load.md)).
+
+**One behaviour deliberately NOT added:** the HSL tab still shows no time-adjustment
+review panel. HSL adjustments were never reviewed on the old HSL step either, and
+surfacing them here would be a new approval surface, not a merge.
 
 ## 2026-08-18 — the per-cycle FX rate has no source of truth (**OPEN**)
 
@@ -42,14 +97,15 @@ system can be shown wrong about**, and it is not evidence of a defect on either 
   the previous cycle, the NPD sheet's `AW` cell, or any market feed — and **no alarm on a
   week-over-week move** (this one was +1.00%). Every earlier week matched because a human
   copied the sheet, not because anything enforced it.
-- The only gate is the **Step-8 zero gate** (memory `per-cycle-fx-zero-placeholder`):
+- The only gate is the **Dispatch-step zero gate** (step 7 since the 2026-08-28 merge;
+  memory `per-cycle-fx-zero-placeholder`):
   zero is a real state that hard-blocks publish. A *wrong but non-zero* rate is
   indistinguishable from a right one and publishes normally.
 - **The no-rate fallback is ₱1.00 = $1.** `OFFICIAL_USD_TO_PHP_RATE` is
   `100_000 / 10⁵` = **1** ([`usd-php.ts:8`](../../src/lib/fx/usd-php.ts#L8)), and
   `effectiveUsdToPhpRateFromStored` returns it whenever the stored value is missing,
   blank, unparseable or ≤ 0. So a lost or corrupted FX key does not fail loudly — every
-  USD figure downstream comes out **≈61× too large**. The Step-8 gate catches a typed
+  USD figure downstream comes out **≈61× too large**. That zero gate catches a typed
   zero, not this path.
 - The tutorial guide reads the *previous* cycle's record for advisory copy only and must
   never prefill this cycle's input — see
@@ -187,7 +243,7 @@ The tri-state pill (`PayrollWizard.tsx:9316`) collapses the raw `in_progress` st
 for display: `status = rawStatus === 'in_progress' ? 'eligible' : rawStatus`. This is
 **display-only** — actual payout is still gated by the `perfect_attendance` toggle plus dept
 eligibility (`isPabDeptEligible`), and only a genuinely failed weekday locks the pill to
-✗ Ineligible. The HSL step (id 4/5) tab is unchanged.
+✗ Ineligible. The HSL tab (step 4 since the 2026-08-28 merge) is unchanged.
 
 ### Last-synced timestamps on Initialize
 
@@ -222,8 +278,8 @@ priced at the employee's PHP `Regular Rate` / `OT Rate`. HSL employees also get 
 weekend premium** for Saturday/Sunday hours (baked into Initial Pay).
 
 The same formula is used in three places and they must agree:
-- the **Additions** table row Final (step 3, non-HSL),
-- the **HSL** table Total Pay (step 5),
+- the **Additions** table row Final (step 4, the shared department table — non-HSL),
+- the **HSL** table Total Pay (step 4's HSL tab),
 - the **dispatch payload** (`dispatchData`) `pay_php.final`, which is what actually gets paid.
 
 > **Per-department performance bonuses moved to the KPI Calculator (2026-06-10).** The old violet
@@ -260,7 +316,7 @@ Persistence: saved in the Additions draft (`app_settings` key
 ## 3. Orphanage column — positive add, own paystub line
 
 Added **2026-06-10**. A manual per-employee orphanage pay amount, **distinct** from the
-auto-computed orphanage-visit wages shown in the Orphanage step (id 4).
+auto-computed orphanage-visit wages shown in the Orphanage step (id 3).
 
 - State: `orphanageAmounts: Record<email, number>`; updater `updateOrphanageAmount(email, value|null)`
   (audited as `wizard.addition_edited` / field `orphanage_pay_php`).
@@ -414,7 +470,8 @@ table (the opt-in/opt-out/disbursement workflow). Handle that separately if need
 
 ## 7. Contractors step — Actions column gating
 
-Step 6 (`Contractors`) lists pending contractor invoices to review before dispatch. Each row's
+Step 5 (`Contractors`, id 6 before the 2026-08-28 merge) lists pending contractor
+invoices to review before dispatch. Each row's
 **Actions** column renders state-dependent buttons; the on-click handler is `updateInvoiceStatus`
 (`PayrollWizard.tsx:9852`), which PATCHes `/api/contractor/invoices/{id}` with the new status.
 

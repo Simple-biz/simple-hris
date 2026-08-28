@@ -4,8 +4,11 @@
  * Seven prerequisites must be true before a cycle can go to Payment Dispatch:
  * this week's Hubstaff CSV (step 1), the USD→PHP rate confirmed for the week
  * (step 2), orphanage hours entered or confirmed-none (step 3), KPI bonuses
- * ready (steps 4–5), notes adjustments pulled (step 5), contractor invoices
- * reviewed (step 6), and finally the dispatch lock itself (step 8).
+ * ready (step 4, including its HSL tab), notes adjustments pulled (step 4),
+ * contractor invoices reviewed (step 5), and finally the dispatch lock itself
+ * (step 7). Every number below shifted down by one on 2026-08-28, when HSL and
+ * Additions merged into a single step 4 — these strings are the operator's map
+ * to the rail, so they move with it.
  *
  * This module is PURE (no I/O, no server-only) so node:test can exercise every
  * status branch; the reads live in payroll-readiness.ts `buildWizardSetup`.
@@ -262,13 +265,13 @@ export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
 
   // 4–5 · KPI bonuses.
   if (degraded('kpi')) {
-    steps.push({ key: 'kpi', stepNo: '4–5', label: 'KPI bonuses', status: 'pending', detail: "Couldn't read KPI statuses" });
+    steps.push({ key: 'kpi', stepNo: '4', label: 'KPI bonuses', status: 'pending', detail: "Couldn't read KPI statuses" });
   } else if (input.kpi.due === 0) {
-    steps.push({ key: 'kpi', stepNo: '4–5', label: 'KPI bonuses', status: 'pending', detail: 'No departments due this week' });
+    steps.push({ key: 'kpi', stepNo: '4', label: 'KPI bonuses', status: 'pending', detail: 'No departments due this week' });
   } else if (input.kpi.submitted >= input.kpi.due) {
     steps.push({
       key: 'kpi',
-      stepNo: '4–5',
+      stepNo: '4',
       label: 'KPI bonuses',
       status: 'done',
       detail: `${input.kpi.due}/${input.kpi.due} departments ready`,
@@ -278,7 +281,7 @@ export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
     const extra = input.kpi.pendingDepts.length > 3 ? ` +${input.kpi.pendingDepts.length - 3} more` : '';
     steps.push({
       key: 'kpi',
-      stepNo: '4–5',
+      stepNo: '4',
       label: 'KPI bonuses',
       status: 'attention',
       detail: `${input.kpi.submitted}/${input.kpi.due} ready${listed ? ` · ${listed}${extra}` : ''}`,
@@ -287,13 +290,13 @@ export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
 
   // 5 · Notes adjustments.
   if (degraded('notes')) {
-    steps.push({ key: 'notes', stepNo: '5', label: 'Notes adjustments', status: 'pending', detail: "Couldn't read the notes board" });
+    steps.push({ key: 'notes', stepNo: '4', label: 'Notes adjustments', status: 'pending', detail: "Couldn't read the notes board" });
   } else if (input.notes.total === 0) {
-    steps.push({ key: 'notes', stepNo: '5', label: 'Notes adjustments', status: 'done', detail: 'None this week' });
+    steps.push({ key: 'notes', stepNo: '4', label: 'Notes adjustments', status: 'done', detail: 'None this week' });
   } else if (input.notes.applied >= input.notes.total) {
     steps.push({
       key: 'notes',
-      stepNo: '5',
+      stepNo: '4',
       label: 'Notes adjustments',
       status: 'done',
       detail: `${input.notes.total} applied in the wizard`,
@@ -301,7 +304,7 @@ export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
   } else {
     steps.push({
       key: 'notes',
-      stepNo: '5',
+      stepNo: '4',
       label: 'Notes adjustments',
       status: 'attention',
       detail: `${input.notes.total - input.notes.applied} of ${input.notes.total} not yet in wizard`,
@@ -310,13 +313,13 @@ export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
 
   // 6 · Contractor invoices.
   if (degraded('contractors')) {
-    steps.push({ key: 'contractors', stepNo: '6', label: 'Contractor invoices', status: 'pending', detail: "Couldn't read invoices" });
+    steps.push({ key: 'contractors', stepNo: '5', label: 'Contractor invoices', status: 'pending', detail: "Couldn't read invoices" });
   } else if (input.contractorsPending === 0) {
-    steps.push({ key: 'contractors', stepNo: '6', label: 'Contractor invoices', status: 'done', detail: 'None pending' });
+    steps.push({ key: 'contractors', stepNo: '5', label: 'Contractor invoices', status: 'done', detail: 'None pending' });
   } else {
     steps.push({
       key: 'contractors',
-      stepNo: '6',
+      stepNo: '5',
       label: 'Contractor invoices',
       status: 'attention',
       detail: `${input.contractorsPending} awaiting approval`,
@@ -325,18 +328,18 @@ export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
 
   // 8 · Sent to dispatch — the end-state; never a warning while unfinished.
   if (degraded('dispatch')) {
-    steps.push({ key: 'dispatch', stepNo: '8', label: 'Sent to dispatch', status: 'pending', detail: "Couldn't read the cycle lock" });
+    steps.push({ key: 'dispatch', stepNo: '7', label: 'Sent to dispatch', status: 'pending', detail: "Couldn't read the cycle lock" });
   } else if (input.dispatchLock.locked) {
     const stamp = manilaStampLabel(input.dispatchLock.lockedAt);
     steps.push({
       key: 'dispatch',
-      stepNo: '8',
+      stepNo: '7',
       label: 'Sent to dispatch',
       status: 'done',
       detail: `Locked${input.dispatchLock.lockedBy ? ` by ${input.dispatchLock.lockedBy}` : ''}${stamp ? ` · ${stamp}` : ''}`,
     });
   } else {
-    steps.push({ key: 'dispatch', stepNo: '8', label: 'Sent to dispatch', status: 'pending', detail: 'Not sent yet' });
+    steps.push({ key: 'dispatch', stepNo: '7', label: 'Sent to dispatch', status: 'pending', detail: 'Not sent yet' });
   }
 
   return {

@@ -70,7 +70,7 @@ Both the start day and the tail day earn independent passing-day credits. Exampl
 |---------|----------|
 | PAB month range, Mon–Fri counts, column dedupe | [src/lib/hubstaff/calendar-column-dedupe.ts](src/lib/hubstaff/calendar-column-dedupe.ts) — e.g. `getPabMonthRange`, `filterColumnGroupsByPabRange`, `groupDateColumnsByCalendarDay` |
 | Merged month data for PAB, eligibility set, auto-toggle | [src/components/PayrollWizard.tsx](src/components/PayrollWizard.tsx) — `pabAllRows`, `perfectAttendanceEligible`, `weekdayColumnGroups`, `pabMonthColumnCoverageComplete` |
-| **Step 5 — HSL Payroll: per-row PAB + Tech Bonus display and total** | `PayrollWizard.tsx` case 5 — `pabStatusByEmail.get(em)` (tri-state pill, ₱5,000 when eligible), `techBonusEligible.has(r.email)` (₱1,850); both included in row-level `totalPay` and footer grand total. PAB pill is clickable → PAB Calendar modal. |
+| **Step 4, HSL tab — HSL Payroll: per-row PAB + Tech Bonus display and total** | `PayrollWizard.tsx` `renderHslWorkspace()` (was `case 4` until HSL merged into the Additions step, 2026-08-28) — `pabStatusByEmail.get(em)` (tri-state pill, ₱5,000 when eligible), `techBonusEligible.has(r.email)` (₱1,850); both included in row-level `totalPay` and footer grand total. PAB pill is clickable → PAB Calendar modal. |
 | Dispatch: PAB final week, Tech week + 30 days, payload | `PayrollWizard.tsx` — `dispatchData` / `isFinalPabWeek`, `isTechBonusWeek`, `hasThirtyDaysByWeek`, `pay_php.perfect_attendance_bonus`, `pay_php.tech_bonus` |
 | Employee-facing calendar / pending state | [src/components/employee/EmployeeDashboard.tsx](src/components/employee/EmployeeDashboard.tsx) |
 | Aggregated metrics | [src/components/Overview.tsx](src/components/Overview.tsx) |
@@ -84,15 +84,15 @@ Bonus amounts are still duplicated in code (`COMMON_BONUSES` in PayrollWizard vs
 What is **already** integrated:
 
 - **Step 1 — Upload:** Hubstaff CSVs feed merged rows/columns used for PAB.
-- **Step 3 — Additions:** Common bonuses include **Perfect Attendance** and **Technology**; PAB eligibility is computed from merged data and reflected in toggles and per-day UI.
-- **Step 5 — HSL Payroll:** PAB (tri-state pill, ₱5,000 when eligible) and Tech Bonus (₱1,850) are shown per HSL employee and **included in Total Pay**. Same eligibility sets (`pabStatusByEmail`, `techBonusEligible`) as regular employees; PAB uses Mon–Sun week logic for HSL.
-- **Step 6 — Dispatch:** Bonuses are **recomposed** so weekly paystubs get **gated** PAB/Tech amounts; payload includes `pab_evaluation` range and pay lines.
+- **Step 4 — Additions:** Common bonuses include **Perfect Attendance** and **Technology**; PAB eligibility is computed from merged data and reflected in toggles and per-day UI.
+- **Step 4's HSL tab — HSL Payroll:** PAB (tri-state pill, ₱5,000 when eligible) and Tech Bonus (₱1,850) are shown per HSL employee and **included in Total Pay**. Same eligibility sets (`pabStatusByEmail`, `techBonusEligible`) as regular employees; PAB uses Mon–Sun week logic for HSL.
+- **Step 7 — Dispatch:** Bonuses are **recomposed** so weekly paystubs get **gated** PAB/Tech amounts; payload includes `pab_evaluation` range and pay lines.
 
 Recommended **next steps** (if you want parity with a spreadsheet or clearer ops):
 
 1. **Version the reference `.xlsx`** in `references/` and fill the **Paste zone** at the top of this doc with the exact “How to Use This Sheet” text. Reconcile any difference between Excel and `BUSINESS_LOGIC.md`.
 2. **Single source of truth for amounts** — apply the **Pending code change** below (or run the same refactor in Agent mode if Plan mode blocks edits).
-3. **Optional wizard UX** — add a short **“How bonuses are calculated”** collapsible in Step 3 linking to this file or in-app bullets (PAB 7h × Mon–Fri, final week only; Tech = 3rd week salary date + 30 days).
+3. **Optional wizard UX** — add a short **“How bonuses are calculated”** collapsible in Step 4 linking to this file or in-app bullets (PAB 7h × Mon–Fri, final week only; Tech = 3rd week salary date + 30 days).
 4. **QA checklist** — for a given month, compare spreadsheet output vs wizard eligibility for 2–3 sample employees before go-live.
 
 ### Pending code change — `src/lib/payroll/constants.ts`

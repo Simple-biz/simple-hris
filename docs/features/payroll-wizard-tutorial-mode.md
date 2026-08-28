@@ -2,8 +2,9 @@
 
 When Payroll Processing is started (the dispatch lock flips on), the lock **driver** gets a
 floating **chat head** (a small messenger-style bubble, bottom-right — explicitly NOT a panel
-or modal, Kane 2026-08-17) that walks the shipped wizard steps 1→9. Tapping the head toggles a
-compact speech balloon with the current step's hint, advisory note, and nine status dots; the
+or modal, Kane 2026-08-17) that walks the shipped wizard steps 1→8 (1→9 until HSL and Additions
+merged into one step 4 on 2026-08-28). Tapping the head toggles a
+compact speech balloon with the current step's hint, advisory note, and one status dot per step; the
 teaching itself is done by spotlight rings drawn over each step's key indicators. The Reports step additionally
 gains a **Processing Narrative**: a templated, plain-English retelling of the calendar week's
 audit events — every Start/Stop toggle and what happened around them. Shipped 2026-08-17.
@@ -26,8 +27,8 @@ is `pointer-events-none`; the statuses (`pending` / `attention` / `done`) are ba
 `guide.ts` and grant or deny **nothing**; every step is skippable; the balloon tucks away into
 the head and "Hide for this cycle" removes the whole thing until the next cycle. The head is
 UI-shaped like a chat head on purpose — a later redesign must not grow it back into a panel or
-modal. The wizard's real gates (FX-zero hard-gating Step 8, the Step-7 red-flag confirm) live
-where they always lived — do not move a gate into the guide, and do not "fix" a wrong badge by
+modal. The wizard's real gates (FX-zero hard-gating the Dispatch step, the Validation step's
+red-flag confirm — 7 and 6 since the 2026-08-28 merge) live where they always lived — do not move a gate into the guide, and do not "fix" a wrong badge by
 blocking navigation. It looks like a missing feature that "Next" works while a step shows
 `attention`; it is the feature.
 
@@ -86,21 +87,29 @@ the FAB's own dialogs, so an open Notes pane correctly covers it.
 
 `resolveStepTargets(stepId, signals, tick)` decides what gets ringed, so the spotlight tracks
 live state instead of a fixed list (`TutorialStepDef.targets` is only the default for the
-static steps). Three steps are dynamic:
+static steps). Two steps are dynamic:
 
 - **Step 2** rings only the FX legs still **unset** — the box *and* that box's own CTA
   (`step2-fx-php` + `step2-fx-php-cta`, same for `cop`). Entering one rate stops the ring on
   that box while the other keeps it. Both set → falls back to `step2-review`. Kane 2026-08-17:
   ringing the step header was wrong; it is the box and the CTA per box.
-- **Step 4** rings the HSL table permanently and **takes turns** across its money columns —
-  PAB → Tech Bonus → MESA → Adjustment → Orphanage, one every 2.6s, wrapping. `PAB` and
-  `Tech Bonus` are conditional columns, so the rotation filters to what this cycle actually
-  renders (`hslPabColumnShown` / `hslTechColumnShown`); rotating onto a column that isn't in
-  the DOM would silently show no ring.
-- **Step 5** follows the operator **into** the System Bonus modal: closed → the trigger; open →
-  the month pill plus the Tech-week picker; **and a month whose PAB period is already set gets
-  no ring at all** (Kane: "if PAB is set already for that period this shouldn't bother"). Only
-  the month being edited carries `step5-pab-month`, so exactly one pill is ever ringed.
+- **Step 4 has two faces**, because HSL and Additions are one step whose department rail
+  decides which surface is mounted (2026-08-28). Which face the guide shows is driven by the
+  `additionsHslTabActive` signal — the same reason the FX legs are resolved per render:
+  **the guide may only ring an anchor that exists.**
+  - **On the HSL tab** it rings the HSL table permanently and **takes turns** across its money
+    columns — PAB → Tech Bonus → MESA → Adjustment → Orphanage, one every 2.6s, wrapping.
+    `PAB` and `Tech Bonus` are conditional columns, so the rotation filters to what this cycle
+    actually renders (`hslPabColumnShown` / `hslTechColumnShown`); rotating onto a column that
+    isn't in the DOM would silently show no ring. The 2.6s timer itself only runs while that
+    tab is open, and restarts from the first column each time it is re-entered.
+  - **On any other department tab** it follows the operator **into** the System Bonus modal:
+    closed → the trigger; open → the month pill plus the Tech-week picker; **and a month whose
+    PAB period is already set gets no ring at all** (Kane: "if PAB is set already for that
+    period this shouldn't bother"). Only the month being edited carries `step4-pab-month`, so
+    exactly one pill is ever ringed.
+  A test pins both directions: HSL columns are never resolved off the HSL tab, and the
+  System-Bonus anchors are never resolved on it.
 
 ## FX staleness is displayed, never adopted
 

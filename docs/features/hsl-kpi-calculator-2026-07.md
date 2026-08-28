@@ -258,7 +258,7 @@ reuse the existing columns; the feature is client + `schema.ts` only.
 ## Dispatch wiring (auto-pay all weekly HSL KPI bonuses)
 
 Previously dispatch auto-paid HSL KPI from **SSD only** (`ssdKpiAmounts` via the
-`KPI_BONUS_ID` toggle); every other HSL dept showed in the step-4 review total but
+`KPI_BONUS_ID` toggle); every other HSL dept showed in the HSL review total but
 never reached the paystub unless Accounting keyed it into the Adjustment column.
 
 Now (`src/components/PayrollWizard.tsx`):
@@ -274,10 +274,11 @@ Now (`src/components/PayrollWizard.tsx`):
   month** (`isFinalPayrollWeekOfMonth`), matching how PAB/catalog monthly bonuses pay.
 - The amount is **auto-applied unconditionally** in `bonusTotals` (a dedicated
   `hogan_smith_law` pass, rate-gated exactly like dispatch) — **not** behind a
-  toggle. So the emailed paystub equals the step-4 review Total Pay by construction,
+  toggle. So the emailed paystub equals the HSL tab review Total Pay by construction,
   with no toggle that can fall out of sync. The Additions "KPI Bonus" column shows
   the amount as read-only ("auto-applied").
-- The step-4 review reads the same `hslKpiAmounts` (rate-gated), and its per-dept
+- The HSL review (step 4's HSL tab since the 2026-08-28 Additions merge; step 4 as its
+  own step before that) reads the same `hslKpiAmounts` (rate-gated), and its per-dept
   cards pin weekly depts to the processed week — so review == dispatch.
 
 **Process change — important:** with auto-pay on, **stop keying HSL KPI amounts into

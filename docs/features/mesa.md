@@ -141,7 +141,7 @@ Wizard now mirrors that tab exactly so a flag-drifted ex-member is never charged
 - The Wizard fetches `GET /api/mesa-ledger` → `members[].lastEventOptedOut` into
   `mesaOptedOutEmails`, and a shared `isMesaOptedOut(rowEmail, rateRow)` predicate
   suppresses the ₱100 at **all 7 deduction sites** (main compute; Additions
-  per-row + department summary; HSL per-row + footer; Step-7 final rows).
+  per-row + department summary; HSL per-row + footer; Validation-step final rows).
 - **Rule:** deduct only when `mesa_member === true && !isMesaOptedOut`.
 - **Fail-safe:** if the ledger is unavailable, `mesaOptedOutEmails` is empty and it
   falls back to flag-only behavior — it never *re-introduces* a deduction.

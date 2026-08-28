@@ -15,7 +15,7 @@ export const runtime = 'nodejs';
  *
  * Returns every audit event tied to the cycle — wizard.opened, edits,
  * contractor decisions, orphanage approvals, dispatches, lock toggles —
- * ordered oldest-first for the Step 9 Reports timeline.
+ * ordered oldest-first for the Step 8 Reports timeline.
  */
 export async function GET(req: NextRequest) {
   // Cycle payout data (amounts, and in the CSV exports full bank account

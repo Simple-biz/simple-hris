@@ -37,7 +37,7 @@ type Props = {
   /** Emails with an MV write in flight, so the cell can show it is saving. */
   savingValidations?: ReadonlySet<string>;
   /**
-   * Fill the parent instead of capping at ~62vh. The inline step-7 table sits in
+   * Fill the parent instead of capping at ~62vh. The inline step-6 validation table sits in
    * a page that scrolls, so it caps its own height; the full-screen mirror is
    * already inside a `min-h-0 flex-1` box and must fill it, or the viewport
    * shows a short table with dead space under it.

@@ -101,7 +101,7 @@ export interface StagedHours {
 
 /** The locked stage for one (cycle, payee) — carrier A. */
 export interface StagedLockedRow {
-  /** The locked total. NULL is possible on a step-7 held row staged with no
+  /** The locked total. NULL is possible on a step-6 (Validation) held row staged with no
    *  payload; such a row carries no usable locked figure. */
   amountPHP: number | null;
   amountUSD: number | null;

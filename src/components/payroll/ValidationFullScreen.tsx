@@ -28,7 +28,7 @@ type Props = {
   onSelectDept: (key: string) => void;
 
   /**
-   * The rows to render — the SAME array the inline step-7 table receives, not a
+   * The rows to render — the SAME array the inline step-6 validation table receives, not a
    * re-filtered copy. That is what makes this a mirror rather than a second
    * implementation: there is no predicate here that could drift from the one
    * upstairs.

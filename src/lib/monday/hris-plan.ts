@@ -854,7 +854,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // and NOT 8 despite ~1,750 lines: it RECORDS a human judgement and never prices anything — no rate,
   // no amount, no score component moves — so the money-math risk that earns 8 (the mid-week rate
   // proration row, the HSL sub-department cutover) is absent here. The one genuinely novel part is
-  // that the validation cannot live on payment_dispatches, because at step 7 no dispatch row exists
+  // that the validation cannot live on payment_dispatches, because at Validation (step 6) no dispatch row exists
   // yet, so it rides an app_settings blob written compare-and-swap; Mark Paid keys it on row.id,
   // which is the WORK email. Not 3: a new route, a new persistence pattern and a money-critical
   // dialog touched.

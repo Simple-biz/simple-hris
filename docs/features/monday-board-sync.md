@@ -713,7 +713,7 @@ MV is the second-largest diff of the week (~1,750 lines) and scored **5, not 8**
 judgement and never prices anything: no rate, no amount, no score component moves. The 8s on this
 board are money-math (mid-week rate proration, the HSL sub-department cutover), and letting a large
 but narrow-risk diff buy an 8 would make the top of the scale meaningless. Its one novel part is that
-the validation cannot live on `payment_dispatches` — at step 7 no dispatch row exists — so it rides
+the validation cannot live on `payment_dispatches` — at the Validation step no dispatch row exists — so it rides
 an `app_settings` blob written compare-and-swap.
 
 ### Budget

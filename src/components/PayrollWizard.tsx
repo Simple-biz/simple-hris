@@ -1907,12 +1907,16 @@ const steps = [
   },
   { id: 2, label: 'Initial Calculation', icon: DollarSign, description: 'Hubstaff hours × employee_hourly_rates → Initial Pay' },
   { id: 3, label: 'Orphanage', icon: Heart, description: 'Approved orphanage visits and the hours/wages they cover' },
-  { id: 4, label: 'HSL', icon: Building2, description: 'Hogan Smith Law — initial pay, KPI bonuses, and accounting overrides' },
-  { id: 5, label: 'Additions', icon: Calculator, description: 'Apply bonuses and adjustments' },
-  { id: 6, label: 'Contractors', icon: HardHat, description: 'Pending contractor invoices — review and approve before dispatch' },
-  { id: 7, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
-  { id: 8, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
-  { id: 9, label: 'Reports', icon: BarChart3, description: 'Dispatch summary — salaries, budget requests, and gift payments' },
+  // HSL and Additions merged into this one step 2026-08-28 (Kane). HSL keeps its own
+  // workspace as the rail's HSL **tab** — its rows never join the shared department
+  // table. Renumbering the rest is forced, not cosmetic: the progress bar is
+  // `currentStep / steps.length` and completion is `currentStep >= steps.length`, so a
+  // gap in the ids would read past 100% and mark Reports complete at Dispatch.
+  { id: 4, label: 'Additions', icon: Calculator, description: 'Bonuses and adjustments — every department plus the HSL tab' },
+  { id: 5, label: 'Contractors', icon: HardHat, description: 'Pending contractor invoices — review and approve before dispatch' },
+  { id: 6, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
+  { id: 7, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
+  { id: 8, label: 'Reports', icon: BarChart3, description: 'Dispatch summary — salaries, budget requests, and gift payments' },
 ];
 
 export default function PayrollWizard({
@@ -4860,7 +4864,11 @@ export default function PayrollWizard({
     return () => { void supabase.removeChannel(channel); };
   }, [currentStep]);
 
-  // ── HSL step (4): load all dept KPI bonus entries when accounting enters the step
+  // ── HSL (the Additions step's HSL tab): load all dept KPI bonus entries on step entry.
+  // Gated on the STEP, deliberately not on `activeDeptTab === 'hogan_smith_law'`. The
+  // step's load line goes green when the step's data lands, and `isStepDataLoading(4)`
+  // counts this fetch — gating it on the tab would let the line claim HSL figures were
+  // judgeable while nothing had ever been fetched for them.
   useEffect(() => {
     if (currentStep !== 4) return;
     let cancelled = false;
@@ -4971,9 +4979,9 @@ export default function PayrollWizard({
     // included, stayed on the previously-viewed week until the step was re-entered.
   }, [currentStep, hslRefreshKey, hubstaffWeekStart]);
 
-  // Fetch all contractor invoices when on step 6 (Contractors)
+  // Fetch all contractor invoices when on step 5 (Contractors)
   useEffect(() => {
-    if (currentStep !== 6) return;
+    if (currentStep !== 5) return;
     let cancelled = false;
     setContractorInvoicesLoading(true);
     fetch('/api/contractor/invoices', { cache: 'no-store' })
@@ -5034,28 +5042,30 @@ export default function PayrollWizard({
         // Orphanage pay is priced from the same hours and rates.
         case 3:
           return loadingUploadList || loadingWeekHours || loadingRates;
-        // Initial pay + KPI bonuses. `hslStepLoading` is only ever true while
-        // Accounting is standing on the step (its effect is gated on
-        // currentStep), which is also the only time its absence is misleading.
+        // Bonuses and adjustments for every department INCLUDING the HSL tab, so
+        // this one step waits on both halves of the old 4+5 pair: the all-weeks PAB
+        // merge AND the HSL KPI amounts / HSL bonus entries. Green here claims that
+        // both tabs' figures can be judged, so leaving either out would let it lie
+        // about whichever tab the operator happens to open. `hslStepLoading` is only
+        // ever true while Accounting is standing on this step (its effect is gated on
+        // currentStep — NOT on the active tab, so opening the step loads HSL whether
+        // or not its tab is selected), which is also the only time its absence would
+        // be misleading.
         case 4:
-          return loadingUploadList || loadingWeekHours || loadingRates || loadingHslKpi
-            || (currentStep === 4 && hslStepLoading);
-        // Bonuses and adjustments: needs the PAB merge and the HSL amounts on
-        // top of the base pay.
-        case 5:
-          return loadingUploadList || loadingWeekHours || loadingRates || loadingPabMerge || loadingHslKpi;
+          return loadingUploadList || loadingWeekHours || loadingRates || loadingPabMerge
+            || loadingHslKpi || (currentStep === 4 && hslStepLoading);
         // Contractor invoices are independent of hours, but the period they're
         // scoped to comes from the active week. Same step-scoped caveat as 4.
-        case 6:
-          return loadingUploadList || (currentStep === 6 && contractorInvoicesLoading);
+        case 5:
+          return loadingUploadList || (currentStep === 5 && contractorInvoicesLoading);
         // Validation and Dispatch read the finished numbers, so they wait on
         // everything and are the last two to go green. That is the point: these
         // are the steps where a premature reading actually costs money.
+        case 6:
         case 7:
-        case 8:
           return loadingUploadList || loadingPreview || loadingWeekHours || loadingRates
             || loadingPabMerge || loadingHslKpi;
-        // Reports (9) is a post-dispatch summary — outside the range.
+        // Reports (8) is a post-dispatch summary — outside the range.
         default:
           return false;
       }
@@ -5273,7 +5283,7 @@ export default function PayrollWizard({
   }, []);
 
   useEffect(() => {
-    if (currentStep !== 5) return;
+    if (currentStep !== 4) return;
     fetchTimeAdjustmentReview();
   }, [currentStep, fetchTimeAdjustmentReview]);
 
@@ -5498,7 +5508,7 @@ export default function PayrollWizard({
   );
 
   useEffect(() => {
-    if (currentStep !== 5 || !pabMonthRange) return;
+    if (currentStep !== 4 || !pabMonthRange) return;
     const s = pabMonthRange.start;
     const e = pabMonthRange.end;
     const from = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
@@ -7349,8 +7359,9 @@ export default function PayrollWizard({
   }, [calcResults, isReplay, additionsHydratedFor]);
 
   // Pull board adjustments when the clerk lands on a step that shows the
-  // Adjustment column (HSL = 4, Additions = 5) — or one that shows the FINAL
-  // numbers built from it (Validation = 7, Dispatch = 8). The stepper allows
+  // Adjustment column (Additions = 4, both its department table and its HSL tab)
+  // — or one that shows the FINAL numbers built from it (Validation = 6,
+  // Dispatch = 7). The stepper allows
   // jumping straight to Validation, so without the 7/8 pull a clerk who skips
   // the Additions step would review pay stubs (and stage Payment Dispatch)
   // without the board's amounts. Merge-only: an override already typed or
@@ -7364,7 +7375,7 @@ export default function PayrollWizard({
   useEffect(() => {
     if (isReplay || !calcSourceFile || !hasCalcRows) return;
     if (dispatchValuesLock.loading || dispatchValuesLock.state.locked) return;
-    if (currentStep === 4 || currentStep === 5 || currentStep === 7 || currentStep === 8) {
+    if (currentStep === 4 || currentStep === 6 || currentStep === 7) {
       void pullNotesAdjustments();
     }
   }, [currentStep, isReplay, calcSourceFile, hasCalcRows, pullNotesAdjustments, dispatchValuesLock.loading, dispatchValuesLock.state.locked]);
@@ -8788,6 +8799,9 @@ export default function PayrollWizard({
       isTechBonusWeek: techBonusWeekInfo.isTechBonusWeek,
       hslPabColumnShown: isDeptEligible(sysBonusCfg.pab, 'hogan_smith_law'),
       hslTechColumnShown: isDeptEligible(sysBonusCfg.tech, 'hogan_smith_law'),
+      // Which of step 4's two surfaces is mounted — the guide may only ring anchors
+      // that exist, and the HSL table and the shared department table never coexist.
+      additionsHslTabActive: activeDeptTab === 'hogan_smith_law',
       systemBonusModalOpen: pabSettingsOpen,
       pabSetForActiveMonth: pabPeriodSettings.overrides.has(editMonthKey),
       // Self-contained label — the modal's MONTH_NAMES is local to its render.
@@ -8812,6 +8826,7 @@ export default function PayrollWizard({
     techBonusWeekInfo.isTechBonusWeek,
     sysBonusCfg.pab,
     sysBonusCfg.tech,
+    activeDeptTab,
     pabSettingsOpen,
     pabPeriodSettings.overrides,
     editMonthKey,
@@ -10321,6 +10336,796 @@ export default function PayrollWizard({
       if (succeeded) setTimeout(() => setHslSyncPct(null), 1500);
       else setHslSyncPct(null);
     }
+  };
+
+  /**
+   * The HSL (Hogan Smith Law) workspace: its own sub-department rail, KPI Bonus
+   * Period cards and Total Pay table.
+   *
+   * Was wizard step 4 until 2026-08-28, when HSL and Additions merged into ONE
+   * step. It is now rendered as the **HSL tab** of that step's department rail --
+   * a tab, never a row in the shared department table: HSL prices Mon-Sun weeks
+   * with a weekend premium and takes its bonuses from HSL KPI periods, so its
+   * rows cannot share the other departments' columns (see
+   * docs/features/payroll-wizard-final-pay.md).
+   *
+   * Extracted verbatim from the old case -- no figure, column, total or handler
+   * changed in the move.
+   */
+  const renderHslWorkspace = () => {
+        // ── HSL (Hogan Smith Law) ─────────────────────────────────────────────
+        const hslCalcRows = effectiveCalcResults.filter(
+          r => employeeDepts[r.email] === 'hogan_smith_law',
+        ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+        // Hide the PAB / Tech columns when HSL is not assigned the bonus (or it's disabled).
+        const pabColShownHsl = isDeptEligible(sysBonusCfg.pab, 'hogan_smith_law');
+        const techColShownHsl = isDeptEligible(sysBonusCfg.tech, 'hogan_smith_law');
+
+        const totalHslInitialPay = hslCalcRows.reduce((s, r) => s + (r.initialPay ?? 0), 0);
+        // Scope the header total to THIS run's HSL rows with a pay rate, so it
+        // equals the sum of the KPI column below (not every scorer in the DB).
+        const totalHslKpiBonuses = hslCalcRows.reduce((s, r) => {
+          const em = (r.email ?? '').toLowerCase();
+          const hasRates = r.regularRate != null || r.otRate != null;
+          return s + (hasRates ? (hslKpiAmounts[em] ?? 0) : 0);
+        }, 0);
+
+        const monthLabelHsl = pabMonthRange
+          ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
+          : 'Active PAB month';
+
+        const fmtPeriod = (p: { period_type: string; period_start: string }) => {
+          if (p.period_type === 'monthly') {
+            const d = new Date(`${p.period_start}T12:00:00`);
+            return d.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
+          }
+          return `Wk of ${p.period_start}`;
+        };
+
+        // ── HSL sub-department grouping (mirrors the Additions dept rail) ──────────
+        // Each Hogan employee is mapped to an HSL sub-department via the
+        // hsl_team_members roster (hslDeptByEmail); rows with no roster match fall
+        // into an "Unassigned" bucket. The rail drives BOTH the employee table and
+        // the KPI Bonus Period cards — selecting a department shows only its people
+        // and only its KPI period card.
+        const hslKeySet = new Set<string>(HSL_DEPT_KEYS);
+        const hslDeptOfRow = (email: string): string => {
+          const k = hslDeptByEmail[(email ?? '').toLowerCase()];
+          return k && hslKeySet.has(k) ? k : 'unassigned';
+        };
+        const hslDeptCounts = new Map<string, number>();
+        for (const r of hslCalcRows) {
+          const d = hslDeptOfRow(r.email);
+          hslDeptCounts.set(d, (hslDeptCounts.get(d) ?? 0) + 1);
+        }
+        const hslPeriodDeptSet = new Set(hslStepPeriods.map(p => p.department));
+        // Rail lists depts alphabetically by display name ("All HSL" pinned first,
+        // "Unassigned" last); a dept appears if it has people this cycle OR a
+        // ready/locked KPI period.
+        const hslDeptName = (k: string) =>
+          (HSL_DEPTS as Record<string, { name?: string }>)[k]?.name ?? k;
+        const hslRailDeptKeys = HSL_DEPT_KEYS.filter(
+          k => (hslDeptCounts.get(k) ?? 0) > 0 || hslPeriodDeptSet.has(k),
+        ).sort((a, b) => hslDeptName(a).localeCompare(hslDeptName(b), undefined, { sensitivity: 'base' }));
+        const hslHasUnassigned = (hslDeptCounts.get('unassigned') ?? 0) > 0;
+        const hslValidDeptKeys = new Set<string>([
+          'all',
+          ...hslRailDeptKeys,
+          ...(hslHasUnassigned ? ['unassigned'] : []),
+        ]);
+        // Guard against a stale selection (dept emptied out between refreshes).
+        const activeHslDeptSafe = hslValidDeptKeys.has(activeHslDept) ? activeHslDept : 'all';
+        const visibleHslRows = activeHslDeptSafe === 'all'
+          ? hslCalcRows
+          : hslCalcRows.filter(r => hslDeptOfRow(r.email) === activeHslDeptSafe);
+        const visibleHslPeriods = activeHslDeptSafe === 'all'
+          ? hslStepPeriods
+          : hslStepPeriods.filter(p => p.department === activeHslDeptSafe);
+        const activeHslDeptName = activeHslDeptSafe === 'all'
+          ? 'All HSL Departments'
+          : activeHslDeptSafe === 'unassigned'
+            ? 'Unassigned'
+            : (HSL_DEPTS as Record<string, { name: string }>)[activeHslDeptSafe]?.name ?? activeHslDeptSafe;
+
+        return (
+          <div className="flex min-w-0 flex-col gap-5">
+
+            {/* Header banner */}
+            <div
+              data-tutorial-target="step4-hsl-review"
+              className="flex flex-col gap-1 rounded-2xl border border-violet-200/70 bg-gradient-to-br from-violet-50 via-white to-indigo-50/40 p-5 shadow-sm dark:border-violet-900/40 dark:from-violet-950/30 dark:via-zinc-950 dark:to-indigo-950/15"
+            >
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-700 dark:text-violet-300">
+                <Building2 className="h-3.5 w-3.5" /> Hogan Smith Law &middot; {monthLabelHsl}
+              </div>
+              <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
+                HSL Payroll &mdash; Initial Pay + KPI Bonuses
+              </h2>
+              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                HSL runs Mon&ndash;Sun weeks (&ge;5 days at &ge;7 h). KPI bonuses are pulled from the manager KPI Calculator.
+                PAB ({formatPHP(pabAmountForDept('hogan_smith_law'))}) and Tech Bonus ({formatPHP(techAmountForDept('hogan_smith_law'))}) are shown per-row and included in Total Pay.
+                Use the Adjustment column to adjust any employee&apos;s bonus before dispatch.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+                <span className="rounded-full border border-violet-300/70 bg-violet-50 px-2.5 py-0.5 font-medium text-violet-800 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-200">
+                  {hslCalcRows.length} employees
+                </span>
+                <span className="rounded-full border border-zinc-200 bg-white px-2.5 py-0.5 font-medium text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                  Initial pay: {formatPHP(totalHslInitialPay)}
+                </span>
+                <span className="rounded-full border border-emerald-300/70 bg-emerald-50 px-2.5 py-0.5 font-medium text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+                  KPI bonuses: +{formatPHP(totalHslKpiBonuses)}
+                </span>
+                {hslStepPeriods.length > 0 && (
+                  <span className="text-zinc-500 dark:text-zinc-400">
+                    {hslStepPeriods.length} dept period{hslStepPeriods.length !== 1 ? 's' : ''} ready
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Department workspace: HSL sub-dept rail (left) + content (right).
+                Mirrors the Additions tab. The rail filters BOTH the KPI Bonus
+                Period cards and the employee table to the selected department. */}
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
+              {/* HSL department rail */}
+              <div role="tablist" aria-label="HSL departments" className="flex gap-1.5 overflow-x-auto pb-1 xl:w-48 xl:shrink-0 xl:flex-col xl:gap-1 xl:overflow-visible xl:pb-0 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
+                <p className="hidden px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 xl:block dark:text-zinc-500">
+                  HSL Departments
+                </p>
+                {(() => {
+                  const railItems: { key: string; name: string; count: number; color?: string }[] = [
+                    { key: 'all', name: 'All HSL', count: hslCalcRows.length },
+                    ...hslRailDeptKeys.map(k => ({
+                      key: k as string,
+                      name: (HSL_DEPTS as Record<string, { name: string; color?: string }>)[k]?.name ?? k,
+                      count: hslDeptCounts.get(k) ?? 0,
+                      color: (HSL_DEPTS as Record<string, { name: string; color?: string }>)[k]?.color,
+                    })),
+                    ...(hslHasUnassigned
+                      ? [{ key: 'unassigned', name: 'Unassigned', count: hslDeptCounts.get('unassigned') ?? 0 }]
+                      : []),
+                  ];
+                  return railItems.map(item => {
+                    const isActive = activeHslDeptSafe === item.key;
+                    return (
+                      <motion.button
+                        key={item.key}
+                        type="button"
+                        role="tab"
+                        aria-selected={isActive}
+                        onClick={() => { setActiveHslDept(item.key); setHslSearch(''); setHslPage(1); }}
+                        whileTap={{ scale: 0.97 }}
+                        className={cn(
+                          'relative flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium xl:w-full xl:justify-between',
+                          isActive
+                            ? 'border-violet-500/50 text-violet-700 dark:text-violet-300'
+                            : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/50',
+                        )}
+                        style={!isActive && item.color ? { borderLeftColor: item.color, borderLeftWidth: 3 } : undefined}
+                      >
+                        {isActive && (
+                          <motion.span
+                            layoutId="hsl-dept-active-bg"
+                            className="absolute inset-0 rounded-[7px] bg-violet-600/10 dark:bg-violet-500/15"
+                            transition={{ type: 'spring', stiffness: 400, damping: 34 }}
+                          />
+                        )}
+                        <span className="relative truncate">{item.name}</span>
+                        {item.count > 0 && (
+                          <span
+                            className={cn(
+                              'relative shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none',
+                              isActive
+                                ? 'bg-violet-600 text-white'
+                                : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400',
+                            )}
+                          >
+                            {item.count}
+                          </span>
+                        )}
+                      </motion.button>
+                    );
+                  });
+                })()}
+              </div>
+
+              {/* Content: KPI cards + employee table (filtered to the active dept) */}
+              <div className="min-w-0 flex-1">
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={activeHslDeptSafe}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15, ease: 'easeOut' }}
+                    className="flex flex-col gap-5"
+                  >
+
+            {/* KPI Bonus summary per department */}
+            {hslStepLoading ? (
+              <div className="flex items-center justify-center gap-2 rounded-xl border border-violet-100 bg-violet-50/50 py-8 dark:border-violet-900/30 dark:bg-violet-950/20">
+                <Loader2 className="h-4 w-4 animate-spin text-violet-500" />
+                <span className="text-sm text-violet-700 dark:text-violet-300">Loading KPI bonus data&hellip;</span>
+              </div>
+            ) : hslStepError ? (
+              <p className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700 dark:border-rose-800/50 dark:bg-rose-950/20 dark:text-rose-400">
+                {hslStepError}
+              </p>
+            ) : visibleHslPeriods.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                  {activeHslDeptSafe === 'all'
+                    ? 'KPI Bonus Periods (from manager submissions)'
+                    : `${activeHslDeptName} — KPI Bonus Period`}
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {visibleHslPeriods.map(p => {
+                    const cfg = (HSL_DEPTS as Record<string, { name: string; color?: string }>)[p.department];
+                    const deptColor = cfg?.color ?? '#6d28d9';
+                    return (
+                      <div
+                        key={p.department}
+                        className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-950/60"
+                        style={{ borderLeftColor: deptColor, borderLeftWidth: 3 }}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+                            {cfg?.name ?? p.department}
+                          </div>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+                            <span>{fmtPeriod(p)} &middot; {p.entries.length} employee{p.entries.length !== 1 ? 's' : ''}</span>
+                            {p.period_type === 'monthly' && (
+                              <span
+                                className="rounded bg-zinc-200 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                                title="Monthly bonus — NOT auto-dispatched. Apply this amount via the Adjustment column."
+                              >
+                                manual · Adjustment
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <div className="font-mono text-sm font-bold text-emerald-700 dark:text-emerald-400">
+                            {formatPHP(p.total_bonus)}
+                          </div>
+                          <span className={cn(
+                            'inline-block rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide',
+                            p.status === 'locked'
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                              : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
+                          )}>
+                            {p.status}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-violet-200 bg-violet-50/30 px-4 py-6 text-center text-xs text-violet-600 dark:border-violet-800/40 dark:bg-violet-950/10 dark:text-violet-400">
+                {activeHslDeptSafe === 'all'
+                  ? 'No ready or locked KPI periods found. Managers submit bonuses via the HSL Bonus Calculator.'
+                  : `No ready or locked KPI period for ${activeHslDeptName} yet.`}
+              </div>
+            )}
+
+            {/* Employee table: initial pay + KPI bonus + override */}
+            {visibleHslRows.length === 0 ? (
+              <div className="flex flex-col items-center gap-3 py-16 text-center text-zinc-500 dark:text-zinc-400">
+                <Building2 className="h-10 w-10 opacity-25" />
+                <p className="text-sm">
+                  {activeHslDeptSafe === 'all'
+                    ? 'No HSL employees found in this payroll cycle.'
+                    : `No employees in ${activeHslDeptName} for this cycle.`}
+                </p>
+              </div>
+            ) : (() => {
+              const needle = hslSearch.toLowerCase().trim();
+              const filteredHsl = needle
+                ? visibleHslRows.filter(r =>
+                    (r.name ?? '').toLowerCase().includes(needle) ||
+                    (r.email ?? '').toLowerCase().includes(needle),
+                  )
+                : visibleHslRows;
+              const totalHslPages = Math.max(1, Math.ceil(filteredHsl.length / HSL_PAGE_SIZE));
+              const safePage = Math.min(hslPage, totalHslPages);
+              const pagedHsl = filteredHsl.slice((safePage - 1) * HSL_PAGE_SIZE, safePage * HSL_PAGE_SIZE);
+
+              return (
+                <div className="flex flex-col gap-0">
+                  {/* Search box + horizontal navigation scrollbar are frozen together
+                      at the top of the page (see ScrollableTable) so both scrollbars
+                      stay usable no matter where the page is scrolled; the header +
+                      totals freeze in place and the rows scroll vertically. */}
+                  <ScrollableTable
+                    toolbar={
+                      <div className="flex items-start gap-2 px-3 py-2.5">
+                        <div className="min-w-0 flex-1">
+                          <div className="relative">
+                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
+                            <Input
+                              type="search"
+                              placeholder="Search by name or email..."
+                              value={hslSearch}
+                              onChange={e => { setHslSearch(e.target.value); setHslPage(1); }}
+                              className="h-8 w-full pl-8 text-xs"
+                            />
+                            {hslSearch && (
+                              <button
+                                type="button"
+                                onClick={() => { setHslSearch(''); setHslPage(1); }}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
+                          {needle && (
+                            <p className="mt-1.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+                              {filteredHsl.length} of {visibleHslRows.length} employees
+                            </p>
+                          )}
+                        </div>
+                        {/* Show / hide the KPI Bonus column (display-only — the amount
+                            still folds into Total Pay and dispatch). */}
+                        <Select
+                          value={hslKpiColShown ? 'show' : 'hide'}
+                          onValueChange={v => setHslKpiColShown(v === 'show')}
+                        >
+                          <SelectTrigger
+                            title="Show or hide the KPI Bonus column"
+                            className="h-8 shrink-0 gap-1.5 text-xs"
+                          >
+                            <BarChart3 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                            <span className="text-zinc-500 dark:text-zinc-400">KPI Bonus:</span>
+                            <span className="font-medium text-zinc-700 dark:text-zinc-200">{hslKpiColShown ? 'Shown' : 'Hidden'}</span>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="show">Show</SelectItem>
+                            <SelectItem value="hide">Hide</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    }
+                  >
+                    {filteredHsl.length === 0 ? (
+                      <p className="py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                        No employees match &ldquo;{hslSearch}&rdquo;.
+                      </p>
+                    ) : (
+                      <table data-tutorial-target="step4-hsl-table" className="w-full min-w-[1180px] text-xs">
+                        <thead className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 shadow-[0_1px_0_0_rgb(228_228_231)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:shadow-[0_1px_0_0_rgb(39_39_42)]">
+                          <tr>
+                            <th className="px-4 py-2.5 text-left">Employee</th>
+                            <th className="px-3 py-2.5 text-right">Hours</th>
+                            <th className="px-3 py-2.5 text-right" title="+15 PHP/h for Saturday and Sunday hours (included in Initial Pay)">Wknd +</th>
+                            <th className="px-3 py-2.5 text-right">Initial Pay</th>
+                            {hslKpiColShown && <th className="px-3 py-2.5 text-right">KPI Bonus</th>}
+                            {pabColShownHsl && <th data-tutorial-target="step4-col-pab" className="px-3 py-2.5 text-center">PAB</th>}
+                            {techColShownHsl && <th data-tutorial-target="step4-col-tech" className="px-3 py-2.5 text-center">Tech Bonus</th>}
+                            <th data-tutorial-target="step4-col-mesa" className="px-3 py-2.5 text-right" title="MESA — ₱100/paycheck deduction for enrolled members, plus any accounting-approved disbursement (paid out this run). Both fold into Total Pay.">MESA</th>
+                            <th data-tutorial-target="step4-col-adjustment" className="px-3 py-2.5 text-right">Adjustment</th>
+                            <th data-tutorial-target="step4-col-orphanage" className="px-3 py-2.5 text-right" title="Orphanage pay — a manual amount added on top of total pay; appears as its own paystub line.">Orphanage</th>
+                            <th className="px-3 py-2.5 text-right">Total Pay</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-100 bg-white dark:divide-zinc-800/60 dark:bg-zinc-950/40">
+                          {pagedHsl.map(r => {
+                            const em = (r.email ?? '').toLowerCase();
+                            // Match dispatch: bonuses are zeroed for rows without a
+                            // pay rate, so gate the KPI the same way here.
+                            const hasRates = r.regularRate != null || r.otRate != null;
+                            const kpiBonus = hasRates ? (hslKpiAmounts[em] ?? 0) : 0;
+                            // Same key resolution as the Additions column — an override
+                            // sitting under the lowercased twin still shows here.
+                            const adjKey = overrideKeyFor(r.email);
+                            const override = bonusOverrides[adjKey] ?? null;
+                            // Adj. is a signed delta added on top of the KPI bonus, never a replacement.
+                            const effectiveBonus = kpiBonus + (override ?? 0);
+                            const paStatus = effectivePabStatus.get(em) ?? 'in_progress';
+                            const pabExcluded = isPabExcluded(r.email);
+                            const pabDeptOk = isPabDeptEligible(r.email);
+                            const techDeptOk = isTechDeptEligible(r.email);
+                            const pabAmt = paStatus === 'eligible' && pabDeptOk && !pabExcluded ? pabAmountForEmail(r.email) : 0;
+                            const techOn = techBonusEligible.has(r.email) && techDeptOk;
+                            const techAmt = techOn ? techAmountForEmail(r.email) : 0;
+                            // Orphanage pay — manual positive amount added on top of total pay.
+                            const hasOrphanage = orphanageAmounts[r.email] !== undefined;
+                            const orphanagePay = orphanageAmounts[r.email] ?? 0;
+                            // MESA — ₱100/paycheck deduction for enrolled members ONLY, plus any
+                            // accounting-approved disbursement paid out this run. A disbursement
+                            // never forces the deduction (an opted-out ex-member can still be paid
+                            // out a balance). Mirrors the Additions tab + the final-pay compute so
+                            // Total Pay matches the paystub.
+                            const hslMesaEmail = normEmail(r.email) ?? '';
+                            const hslRateRow = ratesByEmail.get(hslMesaEmail);
+                            const empMesaDisbursement = mesaDisbursements.get(hslMesaEmail) ?? 0;
+                            const empMesaDeduction =
+                              (r.initialPay != null && hslRateRow?.mesa_member && !isMesaOptedOut(r.email, hslRateRow)) ? 100 : 0;
+                            const totalPay = (r.initialPay ?? 0) + effectiveBonus + pabAmt + techAmt + orphanagePay - empMesaDeduction + empMesaDisbursement;
+
+                            return (
+                              <tr key={r.email} className="transition-colors hover:bg-violet-50/30 dark:hover:bg-violet-950/10">
+                                <td className="px-4 py-3">
+                                  <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.name}</div>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <span className="font-mono text-[9px] text-zinc-400 dark:text-zinc-500">{r.email}</span>
+                                  </div>
+                                </td>
+                                <td className="px-3 py-3 text-right font-mono text-[11px] text-zinc-600 tabular-nums dark:text-zinc-400">
+                                  {r.totalHours != null ? r.totalHours.toFixed(2) : '—'}
+                                </td>
+                                {(() => {
+                                  // Sheet form: the premium is ₱15 on ALL weekend hours (2026-08-11).
+                                  const wkndTotal = r.hogan
+                                    ? Math.round(r.hogan.we_hours * 15 * 100) / 100
+                                    : 0;
+                                  return (
+                                    <td className="px-3 py-3 text-right font-mono text-[11px] tabular-nums" title="+15 PHP/h for Sat/Sun hours">
+                                      {wkndTotal > 0 ? (
+                                        <span className="font-semibold text-amber-600 dark:text-amber-400">+{formatPHP(wkndTotal)}</span>
+                                      ) : (
+                                        <span className="text-zinc-300 dark:text-zinc-600">—</span>
+                                      )}
+                                    </td>
+                                  );
+                                })()}
+                                <td className="px-3 py-3 text-right font-mono text-[11px] font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {r.initialPay != null ? formatPHP(r.initialPay) : '—'}
+                                </td>
+                                {hslKpiColShown && (
+                                <td className="px-3 py-3 text-right font-mono text-[11px] tabular-nums">
+                                  {kpiBonus > 0 ? (
+                                    <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+                                      +{formatPHP(kpiBonus)}
+                                    </span>
+                                  ) : (
+                                    <span className="text-zinc-400 dark:text-zinc-600">—</span>
+                                  )}
+                                </td>
+                                )}
+                                {/* PAB — tri-state pill, click opens calendar modal */}
+                                {pabColShownHsl && (
+                                <td className="px-3 py-3 text-center">
+                                  {pabExcluded ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setPabSettingsOpen(true)}
+                                      title="Excluded from PAB this month by Accounting — earns ₱0 PAB. Click to manage exclusions."
+                                      className={cn(
+                                        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none transition-all duration-200',
+                                        'hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-1 dark:focus:ring-offset-zinc-900',
+                                        'bg-rose-100 text-rose-700 ring-1 ring-rose-400/40 hover:bg-rose-200 focus:ring-rose-400 dark:bg-rose-950/40 dark:text-rose-300 dark:ring-rose-500/30 dark:hover:bg-rose-950/60',
+                                      )}
+                                    >
+                                      <UserX className="h-3 w-3" />
+                                      Excluded
+                                    </button>
+                                  ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setPabCalendarModalEmail(r.email)}
+                                    title={
+                                      paStatus === 'eligible' ? 'Passed all Mon–Sun weeks in the PAB period — click to see the calendar.'
+                                      : paStatus === 'ineligible' ? 'Already failed at least one week — locked for this period. Click to see which day.'
+                                      : 'PAB period is still running. Click to see the calendar.'
+                                    }
+                                    className={cn(
+                                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none transition-all duration-200',
+                                      'hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-1 dark:focus:ring-offset-zinc-900',
+                                      paStatus === 'eligible'
+                                        ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-400/40 hover:bg-emerald-200 focus:ring-emerald-400 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-500/30 dark:hover:bg-emerald-900/60'
+                                        : paStatus === 'ineligible'
+                                          ? 'bg-red-100 text-red-600 ring-1 ring-red-400/40 hover:bg-red-200 focus:ring-red-400 dark:bg-red-900/30 dark:text-red-300 dark:ring-red-500/30 dark:hover:bg-red-900/50'
+                                          : 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-400/40 hover:bg-indigo-200 focus:ring-indigo-400 dark:bg-indigo-900/40 dark:text-indigo-300 dark:ring-indigo-500/30 dark:hover:bg-indigo-900/60',
+                                    )}
+                                  >
+                                    {paStatus === 'eligible' ? (pabDeptOk ? `+${formatPHP(pabAmountForEmail(r.email))}` : '✓ Eligible') : paStatus === 'ineligible' ? '✗ Ineligible' : '⏳ In Progress'}
+                                  </button>
+                                  )}
+                                </td>
+                                )}
+                                {/* Tech Bonus — auto-detected; accounting can manually grant */}
+                                {techColShownHsl && (
+                                <td className="px-3 py-3 text-center">
+                                  {techOn ? (
+                                    <span
+                                      title={techBonusManualGrants.has(r.email) ? 'Manually granted by Accounting this session.' : techBonusWeekInfo.isOverridden ? 'Auto-applied: this is the Technology Bonus payout week picked in System Bonus settings.' : 'Auto-applied: salary date lands in the 3rd full Mon–Sun week.'}
+                                      className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold leading-none text-sky-700 ring-1 ring-sky-400/40 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-500/30"
+                                    >
+                                      +{formatPHP(techAmountForEmail(r.email))}
+                                    </span>
+                                  ) : (
+                                    <span
+                                      title="Not the Tech Bonus week or tenure/rate requirements not met — released automatically on the Tech Bonus week."
+                                      className="inline-flex items-center justify-center text-[10px] font-semibold leading-none text-zinc-300 dark:text-zinc-700"
+                                    >
+                                      —
+                                    </span>
+                                  )}
+                                </td>
+                                )}
+                                {/* MESA — automatic -₱100 contribution for members, plus any
+                                    accounting-approved disbursement (paid out this run). Both fold into Total Pay. */}
+                                <td
+                                  className={cn(
+                                    'px-3 py-3 text-right font-mono text-[11px] tabular-nums',
+                                    empMesaDisbursement > 0
+                                      ? 'font-semibold text-emerald-600 dark:text-emerald-400'
+                                      : empMesaDeduction > 0
+                                        ? 'font-semibold text-rose-600 dark:text-rose-400'
+                                        : 'text-zinc-300 dark:text-zinc-700',
+                                  )}
+                                  title={[
+                                    empMesaDisbursement > 0 ? `Approved disbursement +${formatPHP(empMesaDisbursement)} (added to Total Pay)` : null,
+                                    empMesaDeduction > 0 ? `MESA member — ${formatPHP(empMesaDeduction)} contribution deducted` : null,
+                                  ].filter(Boolean).join(' · ') || 'Not enrolled in MESA'}
+                                >
+                                  {empMesaDisbursement > 0 ? (
+                                    <div className="flex flex-col items-end leading-tight">
+                                      <span>+{formatPHP(empMesaDisbursement)}</span>
+                                      {empMesaDeduction > 0 && (
+                                        <span className="text-[9px] text-rose-500 dark:text-rose-400">-{formatPHP(empMesaDeduction)}</span>
+                                      )}
+                                    </div>
+                                  ) : empMesaDeduction > 0 ? (
+                                    `-${formatPHP(empMesaDeduction)}`
+                                  ) : (
+                                    '—'
+                                  )}
+                                </td>
+                                <td className="px-3 py-3 text-right text-[11px]">
+                                  {override !== null ? (
+                                    <div className="flex items-center justify-end gap-1">
+                                      <SignedAmountInput
+                                        value={override}
+                                        emptyValue={0}
+                                        // Empty keeps the override OPEN at 0 (the X button clears
+                                        // it) — only a real number or a negative commits a delta.
+                                        onCommit={(v) => updateBonusOverride(adjKey, v)}
+                                        title={`Signed adjustment added on top of the KPI bonus (${formatPHP(kpiBonus)}). Use a negative value to deduct.`}
+                                        className="h-6 w-[88px] rounded border border-amber-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-700 focus:outline-none focus:ring-1 focus:ring-amber-400 dark:border-amber-700/60 dark:bg-zinc-900 dark:text-amber-300"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => updateBonusOverride(adjKey, null)}
+                                        title={`Clear adjustment (KPI bonus: ${formatPHP(kpiBonus)})`}
+                                        className="text-zinc-400 hover:text-red-500"
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      title={`KPI bonus: ${formatPHP(kpiBonus)} — click to add a signed adjustment`}
+                                      onClick={() => updateBonusOverride(adjKey, 0)}
+                                      className="text-zinc-300 hover:text-amber-600 dark:text-zinc-700 dark:hover:text-amber-400"
+                                    >
+                                      —
+                                    </button>
+                                  )}
+                                </td>
+                                {/* Orphanage pay — manual positive amount added to total pay; own paystub line */}
+                                <td className="px-3 py-3 text-right text-[11px]">
+                                  {hasOrphanage ? (
+                                    <div className="flex items-center justify-end gap-1">
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        step="0.01"
+                                        min={0}
+                                        value={orphanageAmounts[r.email] ?? ''}
+                                        onChange={e => {
+                                          const raw = e.target.value;
+                                          const next = raw === '' ? 0 : Number(raw);
+                                          if (!Number.isFinite(next) || next < 0) return;
+                                          updateOrphanageAmount(r.email, next);
+                                        }}
+                                        title="Orphanage pay (PHP) added on top of total pay"
+                                        className="h-6 w-[88px] rounded border border-pink-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-pink-700 focus:outline-none focus:ring-1 focus:ring-pink-400 dark:border-pink-700/60 dark:bg-zinc-900 dark:text-pink-300"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => updateOrphanageAmount(r.email, null)}
+                                        title="Clear orphanage pay"
+                                        className="text-zinc-400 hover:text-red-500"
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      title="Click to add orphanage pay"
+                                      onClick={() => updateOrphanageAmount(r.email, 0)}
+                                      className="text-zinc-300 hover:text-pink-600 dark:text-zinc-700 dark:hover:text-pink-400"
+                                    >
+                                      —
+                                    </button>
+                                  )}
+                                </td>
+                                <td className="px-3 py-3 text-right">
+                                  <PhpWithUsd
+                                    php={totalPay}
+                                    usdToPhp={usdToPhpRate}
+                                    phpClassName="font-mono text-[11px] font-bold tabular-nums text-zinc-900 dark:text-zinc-100"
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot className="sticky bottom-0 z-20 border-t-2 border-zinc-200 bg-zinc-50 shadow-[0_-1px_0_0_rgb(228_228_231)] dark:border-zinc-800 dark:bg-zinc-900 dark:shadow-[0_-1px_0_0_rgb(39_39_42)]">
+                          {(() => {
+                            let totalInitialPay = 0, totalPab = 0, totalTech = 0, totalKpi = 0, totalAdj = 0, totalOrphanage = 0, totalWkndPremium = 0, totalMesaDeduction = 0, totalMesaDisbursement = 0;
+                            for (const r of visibleHslRows) {
+                              const em = (r.email ?? '').toLowerCase();
+                              totalInitialPay += r.initialPay ?? 0;
+                              totalKpi += (r.regularRate != null || r.otRate != null) ? (hslKpiAmounts[em] ?? 0) : 0;
+                              totalAdj += bonusOverrides[overrideKeyFor(r.email)] ?? 0;
+                              totalOrphanage += orphanageAmounts[r.email] ?? 0;
+                              const st = effectivePabStatus.get(em) ?? 'in_progress';
+                              if (st === 'eligible' && isPabDeptEligible(r.email) && !isPabExcluded(r.email)) totalPab += pabAmountForEmail(r.email);
+                              if (techBonusEligible.has(r.email) && isTechDeptEligible(r.email)) totalTech += techAmountForEmail(r.email);
+                              if (r.hogan) totalWkndPremium += r.hogan.we_hours * 15;
+                              const memail = normEmail(r.email) ?? '';
+                              const memailRateRow = ratesByEmail.get(memail);
+                              const disb = mesaDisbursements.get(memail) ?? 0;
+                              // Deduction gates on membership alone — a disbursement (which an
+                              // opted-out ex-member can still receive) never forces the ₱100 charge.
+                              // A ledger opt-out also suppresses it even if the flag drifted true.
+                              const ded =
+                                (r.initialPay != null && memailRateRow?.mesa_member && !isMesaOptedOut(r.email, memailRateRow)) ? 100 : 0;
+                              totalMesaDisbursement += disb;
+                              totalMesaDeduction += ded;
+                            }
+                            return (
+                              <tr>
+                                <td colSpan={2} className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                  Totals ({visibleHslRows.length} employees)
+                                </td>
+                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-600 dark:text-amber-400">
+                                  {totalWkndPremium > 0 ? `+${formatPHP(Math.round(totalWkndPremium * 100) / 100)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
+                                </td>
+                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums text-zinc-700 dark:text-zinc-300">
+                                  {formatPHP(totalInitialPay)}
+                                </td>
+                                {hslKpiColShown && (
+                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                                  {totalKpi > 0 ? `+${formatPHP(totalKpi)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
+                                </td>
+                                )}
+                                {pabColShownHsl && (
+                                <td className="px-3 py-2.5 text-center font-mono text-[11px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                                  {totalPab > 0 ? `+${formatPHP(totalPab)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
+                                </td>
+                                )}
+                                {techColShownHsl && (
+                                <td className="px-3 py-2.5 text-center font-mono text-[11px] font-bold tabular-nums text-sky-700 dark:text-sky-400">
+                                  {totalTech > 0 ? `+${formatPHP(totalTech)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
+                                </td>
+                                )}
+                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums">
+                                  {totalMesaDisbursement > 0 ? (
+                                    <div className="flex flex-col items-end leading-tight">
+                                      <span className="text-emerald-600 dark:text-emerald-400">+{formatPHP(totalMesaDisbursement)}</span>
+                                      {totalMesaDeduction > 0 && (
+                                        <span className="text-[10px] text-rose-500 dark:text-rose-400">-{formatPHP(totalMesaDeduction)}</span>
+                                      )}
+                                    </div>
+                                  ) : totalMesaDeduction > 0 ? (
+                                    <span className="text-rose-600 dark:text-rose-400">-{formatPHP(totalMesaDeduction)}</span>
+                                  ) : (
+                                    <span className="text-zinc-400 dark:text-zinc-600">—</span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-600 dark:text-amber-400">
+                                  {totalAdj !== 0 ? `${totalAdj > 0 ? '+' : ''}${formatPHP(totalAdj)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
+                                </td>
+                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums text-pink-600 dark:text-pink-400">
+                                  {totalOrphanage > 0 ? `+${formatPHP(totalOrphanage)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
+                                </td>
+                                <td className="px-3 py-2.5 text-right">
+                                  <PhpWithUsd
+                                    php={totalInitialPay + totalKpi + totalAdj + totalOrphanage + totalPab + totalTech - totalMesaDeduction + totalMesaDisbursement}
+                                    usdToPhp={usdToPhpRate}
+                                    phpClassName="font-mono text-[11px] font-bold tabular-nums text-zinc-900 dark:text-zinc-100"
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })()}
+                        </tfoot>
+                      </table>
+                    )}
+                  </ScrollableTable>
+
+                  {/* Pagination */}
+                  {totalHslPages > 1 && (
+                    <div data-readonly-allow className="flex items-center justify-between border border-t-0 border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950/60">
+                      <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                        Page {safePage} of {totalHslPages} &middot; {filteredHsl.length} employee{filteredHsl.length !== 1 ? 's' : ''}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2 text-xs disabled:opacity-40"
+                          disabled={safePage <= 1}
+                          onClick={() => setHslPage(1)}
+                        >
+                          <ChevronLeft className="h-3 w-3" /><ChevronLeft className="h-3 w-3 -ml-1.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2 text-xs disabled:opacity-40"
+                          disabled={safePage <= 1}
+                          onClick={() => setHslPage(p => Math.max(1, p - 1))}
+                        >
+                          <ChevronLeft className="h-3 w-3" />
+                        </Button>
+                        {Array.from({ length: totalHslPages }, (_, i) => i + 1)
+                          .filter(p => Math.abs(p - safePage) <= 2 || p === 1 || p === totalHslPages)
+                          .reduce<(number | 'gap')[]>((acc, p, i, arr) => {
+                            if (i > 0 && p - (arr[i - 1] as number) > 1) acc.push('gap');
+                            acc.push(p);
+                            return acc;
+                          }, [])
+                          .map((p, i) =>
+                            p === 'gap' ? (
+                              <span key={`gap-${i}`} className="px-1 text-xs text-zinc-400">…</span>
+                            ) : (
+                              <Button
+                                key={p}
+                                type="button"
+                                variant={p === safePage ? 'default' : 'outline'}
+                                size="sm"
+                                className={cn('h-7 min-w-[28px] px-2 text-xs', p === safePage && 'bg-violet-600 hover:bg-violet-700 border-violet-600')}
+                                onClick={() => setHslPage(p as number)}
+                              >
+                                {p}
+                              </Button>
+                            ),
+                          )}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2 text-xs disabled:opacity-40"
+                          disabled={safePage >= totalHslPages}
+                          onClick={() => setHslPage(p => Math.min(totalHslPages, p + 1))}
+                        >
+                          <ChevronRight className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2 text-xs disabled:opacity-40"
+                          disabled={safePage >= totalHslPages}
+                          onClick={() => setHslPage(totalHslPages)}
+                        >
+                          <ChevronRight className="h-3 w-3" /><ChevronRight className="h-3 w-3 -ml-1.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+            </div>
+          </div>
+        );
   };
 
   const renderStepContent = () => {
@@ -12541,9 +13346,11 @@ export default function PayrollWizard({
           </div>
         );
       }
-      case 5: {
-        // ──────────── Additions step ────────────
-        // (Defined here after the Orphanage block; Orphanage = step 3, HSL = step 4, Additions = step 5.)
+      case 4: {
+        // ──────────── Additions step (HSL + every other department) ────────────
+        // (Defined here after the Orphanage block; Orphanage = step 3, Additions = step 4.)
+        // HSL is the rail's own tab and renders `renderHslWorkspace()` instead of the
+        // shared department table — see the branch inside the content column below.
         // Last resort covers "every department excluded in Configuration" —
         // the rail is empty, so render a harmless placeholder instead of crashing.
         const activeDept = findAdditionsDept(activeDeptTab) ?? additionsDepartments[0]
@@ -12760,7 +13567,7 @@ export default function PayrollWizard({
                 const activeHasOverride = pabPeriodSettings.overrides.has(effectiveMonthKey);
                 return (
                   <div
-                    data-tutorial-target="step5-system-bonus"
+                    data-tutorial-target="step4-system-bonus"
                     className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-white/60 px-3 py-2 dark:border-indigo-900/50 dark:bg-zinc-900/40"
                   >
                     <button
@@ -13015,7 +13822,7 @@ export default function PayrollWizard({
                             /* [WIZARD-TUTORIAL] Only the month being edited carries
                                the anchor, so the guide rings one pill (and only
                                while that month's PAB period is still unset). */
-                            data-tutorial-target={isActive ? 'step5-pab-month' : undefined}
+                            data-tutorial-target={isActive ? 'step4-pab-month' : undefined}
                             disabled={!selectable || pabSaveState === 'saving'}
                             onClick={() => { if (selectable) void selectPabMonth(pabPickerYear, m); }}
                             title={
@@ -13159,7 +13966,7 @@ export default function PayrollWizard({
                         engine through resolveIsTechBonusWeek — no more guessing the
                         "3rd week". No pick = the automatic 3rd-week rule. */}
                     <div
-                      data-tutorial-target="step5-tech-week"
+                      data-tutorial-target="step4-tech-week"
                       className="mt-3 border-t border-sky-200/60 pt-3 dark:border-sky-900/40"
                     >
                       {(() => {
@@ -13769,6 +14576,71 @@ export default function PayrollWizard({
                 <p className="hidden px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 xl:block dark:text-zinc-500">
                   Departments
                 </p>
+                {/* HSL is pinned first and wears violet, because it is not one more
+                    department in this list: picking it swaps the entire workspace for
+                    the HSL surface (Mon–Sun weeks, weekend premium, KPI-period cards).
+                    It stays OUT of the generic map below so its rows can never end up
+                    in the shared department table. */}
+                {/* Paused in Configuration ⇒ the tab leaves the rail, exactly like any
+                    other excluded department (payroll-wizard-configuration-tab.md:58).
+                    Leaving it up would hand back a workspace whose rows were already
+                    filtered out of `effectiveCalcResults` — an empty bucket — and the
+                    paused-tab snap below would bounce the operator straight off it. */}
+                {!pausedDeptKeys.has('hogan_smith_law') && (() => {
+                  const hslCount = effectiveCalcResults.filter(r => employeeDepts[r.email] === 'hogan_smith_law').length;
+                  const hslPendingAdj = pendingAdjustmentCountByDept.get('hogan_smith_law') ?? 0;
+                  const isActive = activeDeptTab === 'hogan_smith_law';
+                  return (
+                    <motion.button
+                      type="button"
+                      role="tab"
+                      aria-selected={isActive}
+                      onClick={() => { setActiveDeptTab('hogan_smith_law'); setAdditionsSearch(''); }}
+                      whileTap={{ scale: 0.97 }}
+                      title="Hogan Smith Law — initial pay, KPI bonuses and accounting overrides"
+                      className={cn(
+                        'relative flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold xl:w-full xl:justify-between',
+                        isActive
+                          ? 'border-violet-500/60 text-violet-700 dark:text-violet-300'
+                          : 'border-violet-200 bg-white text-violet-700/80 hover:border-violet-300 hover:bg-violet-50/60 dark:border-violet-900/50 dark:bg-zinc-900 dark:text-violet-300/80 dark:hover:border-violet-800 dark:hover:bg-violet-950/30',
+                      )}
+                    >
+                      {isActive && (
+                        <motion.span
+                          layoutId="additions-dept-active-bg"
+                          className="absolute inset-0 rounded-[7px] bg-violet-600/10 dark:bg-violet-500/15"
+                          transition={{ type: 'spring', stiffness: 400, damping: 34 }}
+                        />
+                      )}
+                      <span className="relative flex min-w-0 items-center gap-1.5">
+                        <Building2 className="h-3 w-3 shrink-0" />
+                        <span className="truncate">HSL</span>
+                      </span>
+                      <span className="relative flex shrink-0 items-center gap-1">
+                        {hslPendingAdj > 0 && (
+                          <span
+                            className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
+                            title={`${hslPendingAdj} pending time adjustment${hslPendingAdj === 1 ? '' : 's'}`}
+                          >
+                            {hslPendingAdj}
+                          </span>
+                        )}
+                        {hslCount > 0 && (
+                          <span
+                            className={cn(
+                              'rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none',
+                              isActive
+                                ? 'bg-violet-600 text-white'
+                                : 'bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300',
+                            )}
+                          >
+                            {hslCount}
+                          </span>
+                        )}
+                      </span>
+                    </motion.button>
+                  );
+                })()}
                 {additionsDepartments.filter(dept => dept.key !== 'hogan_smith_law').map(dept => {
                   const count = effectiveCalcResults.filter(r => employeeDepts[r.email] === dept.key).length;
                   const pendingAdj = pendingAdjustmentCountByDept.get(dept.key) ?? 0;
@@ -13834,6 +14706,12 @@ export default function PayrollWizard({
                     transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
                     className="space-y-4"
                   >
+                {/* HSL is a TAB of this step, never a row in the shared department
+                    table: selecting it swaps the whole workspace for the HSL surface.
+                    Everything above the rail (System Bonus settings, the PAB month,
+                    "Lock in additions") is step-level and stays put across both tabs. */}
+                {activeDeptTab === 'hogan_smith_law' ? renderHslWorkspace() : (
+                  <>
                 <TimeAdjustmentReviewPanel
                   deptName={activeDept.name}
                   adjustments={deptAdjustments}
@@ -15136,6 +16014,8 @@ export default function PayrollWizard({
                   </div>
                 )}
               </div>
+                  </>
+                )}
                   </motion.div>
                 </AnimatePresence>
               </div>{/* content: review panel + table */}
@@ -15726,782 +16606,7 @@ export default function PayrollWizard({
           </div>
         );
       }
-      case 4: {
-        // ── HSL (Hogan Smith Law) ─────────────────────────────────────────────
-        const hslCalcRows = effectiveCalcResults.filter(
-          r => employeeDepts[r.email] === 'hogan_smith_law',
-        ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-
-        // Hide the PAB / Tech columns when HSL is not assigned the bonus (or it's disabled).
-        const pabColShownHsl = isDeptEligible(sysBonusCfg.pab, 'hogan_smith_law');
-        const techColShownHsl = isDeptEligible(sysBonusCfg.tech, 'hogan_smith_law');
-
-        const totalHslInitialPay = hslCalcRows.reduce((s, r) => s + (r.initialPay ?? 0), 0);
-        // Scope the header total to THIS run's HSL rows with a pay rate, so it
-        // equals the sum of the KPI column below (not every scorer in the DB).
-        const totalHslKpiBonuses = hslCalcRows.reduce((s, r) => {
-          const em = (r.email ?? '').toLowerCase();
-          const hasRates = r.regularRate != null || r.otRate != null;
-          return s + (hasRates ? (hslKpiAmounts[em] ?? 0) : 0);
-        }, 0);
-
-        const monthLabelHsl = pabMonthRange
-          ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
-          : 'Active PAB month';
-
-        const fmtPeriod = (p: { period_type: string; period_start: string }) => {
-          if (p.period_type === 'monthly') {
-            const d = new Date(`${p.period_start}T12:00:00`);
-            return d.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
-          }
-          return `Wk of ${p.period_start}`;
-        };
-
-        // ── HSL sub-department grouping (mirrors the Additions dept rail) ──────────
-        // Each Hogan employee is mapped to an HSL sub-department via the
-        // hsl_team_members roster (hslDeptByEmail); rows with no roster match fall
-        // into an "Unassigned" bucket. The rail drives BOTH the employee table and
-        // the KPI Bonus Period cards — selecting a department shows only its people
-        // and only its KPI period card.
-        const hslKeySet = new Set<string>(HSL_DEPT_KEYS);
-        const hslDeptOfRow = (email: string): string => {
-          const k = hslDeptByEmail[(email ?? '').toLowerCase()];
-          return k && hslKeySet.has(k) ? k : 'unassigned';
-        };
-        const hslDeptCounts = new Map<string, number>();
-        for (const r of hslCalcRows) {
-          const d = hslDeptOfRow(r.email);
-          hslDeptCounts.set(d, (hslDeptCounts.get(d) ?? 0) + 1);
-        }
-        const hslPeriodDeptSet = new Set(hslStepPeriods.map(p => p.department));
-        // Rail lists depts alphabetically by display name ("All HSL" pinned first,
-        // "Unassigned" last); a dept appears if it has people this cycle OR a
-        // ready/locked KPI period.
-        const hslDeptName = (k: string) =>
-          (HSL_DEPTS as Record<string, { name?: string }>)[k]?.name ?? k;
-        const hslRailDeptKeys = HSL_DEPT_KEYS.filter(
-          k => (hslDeptCounts.get(k) ?? 0) > 0 || hslPeriodDeptSet.has(k),
-        ).sort((a, b) => hslDeptName(a).localeCompare(hslDeptName(b), undefined, { sensitivity: 'base' }));
-        const hslHasUnassigned = (hslDeptCounts.get('unassigned') ?? 0) > 0;
-        const hslValidDeptKeys = new Set<string>([
-          'all',
-          ...hslRailDeptKeys,
-          ...(hslHasUnassigned ? ['unassigned'] : []),
-        ]);
-        // Guard against a stale selection (dept emptied out between refreshes).
-        const activeHslDeptSafe = hslValidDeptKeys.has(activeHslDept) ? activeHslDept : 'all';
-        const visibleHslRows = activeHslDeptSafe === 'all'
-          ? hslCalcRows
-          : hslCalcRows.filter(r => hslDeptOfRow(r.email) === activeHslDeptSafe);
-        const visibleHslPeriods = activeHslDeptSafe === 'all'
-          ? hslStepPeriods
-          : hslStepPeriods.filter(p => p.department === activeHslDeptSafe);
-        const activeHslDeptName = activeHslDeptSafe === 'all'
-          ? 'All HSL Departments'
-          : activeHslDeptSafe === 'unassigned'
-            ? 'Unassigned'
-            : (HSL_DEPTS as Record<string, { name: string }>)[activeHslDeptSafe]?.name ?? activeHslDeptSafe;
-
-        return (
-          <div className="flex min-w-0 flex-col gap-5">
-
-            {/* Header banner */}
-            <div
-              data-tutorial-target="step4-hsl-review"
-              className="flex flex-col gap-1 rounded-2xl border border-violet-200/70 bg-gradient-to-br from-violet-50 via-white to-indigo-50/40 p-5 shadow-sm dark:border-violet-900/40 dark:from-violet-950/30 dark:via-zinc-950 dark:to-indigo-950/15"
-            >
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-700 dark:text-violet-300">
-                <Building2 className="h-3.5 w-3.5" /> Hogan Smith Law &middot; {monthLabelHsl}
-              </div>
-              <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
-                HSL Payroll &mdash; Initial Pay + KPI Bonuses
-              </h2>
-              <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                HSL runs Mon&ndash;Sun weeks (&ge;5 days at &ge;7 h). KPI bonuses are pulled from the manager KPI Calculator.
-                PAB ({formatPHP(pabAmountForDept('hogan_smith_law'))}) and Tech Bonus ({formatPHP(techAmountForDept('hogan_smith_law'))}) are shown per-row and included in Total Pay.
-                Use the Adjustment column to adjust any employee&apos;s bonus before dispatch.
-              </p>
-              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
-                <span className="rounded-full border border-violet-300/70 bg-violet-50 px-2.5 py-0.5 font-medium text-violet-800 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-200">
-                  {hslCalcRows.length} employees
-                </span>
-                <span className="rounded-full border border-zinc-200 bg-white px-2.5 py-0.5 font-medium text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
-                  Initial pay: {formatPHP(totalHslInitialPay)}
-                </span>
-                <span className="rounded-full border border-emerald-300/70 bg-emerald-50 px-2.5 py-0.5 font-medium text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200">
-                  KPI bonuses: +{formatPHP(totalHslKpiBonuses)}
-                </span>
-                {hslStepPeriods.length > 0 && (
-                  <span className="text-zinc-500 dark:text-zinc-400">
-                    {hslStepPeriods.length} dept period{hslStepPeriods.length !== 1 ? 's' : ''} ready
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Department workspace: HSL sub-dept rail (left) + content (right).
-                Mirrors the Additions tab. The rail filters BOTH the KPI Bonus
-                Period cards and the employee table to the selected department. */}
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
-              {/* HSL department rail */}
-              <div role="tablist" aria-label="HSL departments" className="flex gap-1.5 overflow-x-auto pb-1 xl:w-48 xl:shrink-0 xl:flex-col xl:gap-1 xl:overflow-visible xl:pb-0 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
-                <p className="hidden px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 xl:block dark:text-zinc-500">
-                  HSL Departments
-                </p>
-                {(() => {
-                  const railItems: { key: string; name: string; count: number; color?: string }[] = [
-                    { key: 'all', name: 'All HSL', count: hslCalcRows.length },
-                    ...hslRailDeptKeys.map(k => ({
-                      key: k as string,
-                      name: (HSL_DEPTS as Record<string, { name: string; color?: string }>)[k]?.name ?? k,
-                      count: hslDeptCounts.get(k) ?? 0,
-                      color: (HSL_DEPTS as Record<string, { name: string; color?: string }>)[k]?.color,
-                    })),
-                    ...(hslHasUnassigned
-                      ? [{ key: 'unassigned', name: 'Unassigned', count: hslDeptCounts.get('unassigned') ?? 0 }]
-                      : []),
-                  ];
-                  return railItems.map(item => {
-                    const isActive = activeHslDeptSafe === item.key;
-                    return (
-                      <motion.button
-                        key={item.key}
-                        type="button"
-                        role="tab"
-                        aria-selected={isActive}
-                        onClick={() => { setActiveHslDept(item.key); setHslSearch(''); setHslPage(1); }}
-                        whileTap={{ scale: 0.97 }}
-                        className={cn(
-                          'relative flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium xl:w-full xl:justify-between',
-                          isActive
-                            ? 'border-violet-500/50 text-violet-700 dark:text-violet-300'
-                            : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/50',
-                        )}
-                        style={!isActive && item.color ? { borderLeftColor: item.color, borderLeftWidth: 3 } : undefined}
-                      >
-                        {isActive && (
-                          <motion.span
-                            layoutId="hsl-dept-active-bg"
-                            className="absolute inset-0 rounded-[7px] bg-violet-600/10 dark:bg-violet-500/15"
-                            transition={{ type: 'spring', stiffness: 400, damping: 34 }}
-                          />
-                        )}
-                        <span className="relative truncate">{item.name}</span>
-                        {item.count > 0 && (
-                          <span
-                            className={cn(
-                              'relative shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none',
-                              isActive
-                                ? 'bg-violet-600 text-white'
-                                : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400',
-                            )}
-                          >
-                            {item.count}
-                          </span>
-                        )}
-                      </motion.button>
-                    );
-                  });
-                })()}
-              </div>
-
-              {/* Content: KPI cards + employee table (filtered to the active dept) */}
-              <div className="min-w-0 flex-1">
-                <AnimatePresence mode="wait" initial={false}>
-                  <motion.div
-                    key={activeHslDeptSafe}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.15, ease: 'easeOut' }}
-                    className="flex flex-col gap-5"
-                  >
-
-            {/* KPI Bonus summary per department */}
-            {hslStepLoading ? (
-              <div className="flex items-center justify-center gap-2 rounded-xl border border-violet-100 bg-violet-50/50 py-8 dark:border-violet-900/30 dark:bg-violet-950/20">
-                <Loader2 className="h-4 w-4 animate-spin text-violet-500" />
-                <span className="text-sm text-violet-700 dark:text-violet-300">Loading KPI bonus data&hellip;</span>
-              </div>
-            ) : hslStepError ? (
-              <p className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700 dark:border-rose-800/50 dark:bg-rose-950/20 dark:text-rose-400">
-                {hslStepError}
-              </p>
-            ) : visibleHslPeriods.length > 0 ? (
-              <div className="flex flex-col gap-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                  {activeHslDeptSafe === 'all'
-                    ? 'KPI Bonus Periods (from manager submissions)'
-                    : `${activeHslDeptName} — KPI Bonus Period`}
-                </p>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {visibleHslPeriods.map(p => {
-                    const cfg = (HSL_DEPTS as Record<string, { name: string; color?: string }>)[p.department];
-                    const deptColor = cfg?.color ?? '#6d28d9';
-                    return (
-                      <div
-                        key={p.department}
-                        className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-950/60"
-                        style={{ borderLeftColor: deptColor, borderLeftWidth: 3 }}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-xs font-semibold text-zinc-800 dark:text-zinc-200">
-                            {cfg?.name ?? p.department}
-                          </div>
-                          <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-zinc-500 dark:text-zinc-400">
-                            <span>{fmtPeriod(p)} &middot; {p.entries.length} employee{p.entries.length !== 1 ? 's' : ''}</span>
-                            {p.period_type === 'monthly' && (
-                              <span
-                                className="rounded bg-zinc-200 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
-                                title="Monthly bonus — NOT auto-dispatched. Apply this amount via the Adjustment column."
-                              >
-                                manual · Adjustment
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="shrink-0 text-right">
-                          <div className="font-mono text-sm font-bold text-emerald-700 dark:text-emerald-400">
-                            {formatPHP(p.total_bonus)}
-                          </div>
-                          <span className={cn(
-                            'inline-block rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide',
-                            p.status === 'locked'
-                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                              : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
-                          )}>
-                            {p.status}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-xl border border-dashed border-violet-200 bg-violet-50/30 px-4 py-6 text-center text-xs text-violet-600 dark:border-violet-800/40 dark:bg-violet-950/10 dark:text-violet-400">
-                {activeHslDeptSafe === 'all'
-                  ? 'No ready or locked KPI periods found. Managers submit bonuses via the HSL Bonus Calculator.'
-                  : `No ready or locked KPI period for ${activeHslDeptName} yet.`}
-              </div>
-            )}
-
-            {/* Employee table: initial pay + KPI bonus + override */}
-            {visibleHslRows.length === 0 ? (
-              <div className="flex flex-col items-center gap-3 py-16 text-center text-zinc-500 dark:text-zinc-400">
-                <Building2 className="h-10 w-10 opacity-25" />
-                <p className="text-sm">
-                  {activeHslDeptSafe === 'all'
-                    ? 'No HSL employees found in this payroll cycle.'
-                    : `No employees in ${activeHslDeptName} for this cycle.`}
-                </p>
-              </div>
-            ) : (() => {
-              const needle = hslSearch.toLowerCase().trim();
-              const filteredHsl = needle
-                ? visibleHslRows.filter(r =>
-                    (r.name ?? '').toLowerCase().includes(needle) ||
-                    (r.email ?? '').toLowerCase().includes(needle),
-                  )
-                : visibleHslRows;
-              const totalHslPages = Math.max(1, Math.ceil(filteredHsl.length / HSL_PAGE_SIZE));
-              const safePage = Math.min(hslPage, totalHslPages);
-              const pagedHsl = filteredHsl.slice((safePage - 1) * HSL_PAGE_SIZE, safePage * HSL_PAGE_SIZE);
-
-              return (
-                <div className="flex flex-col gap-0">
-                  {/* Search box + horizontal navigation scrollbar are frozen together
-                      at the top of the page (see ScrollableTable) so both scrollbars
-                      stay usable no matter where the page is scrolled; the header +
-                      totals freeze in place and the rows scroll vertically. */}
-                  <ScrollableTable
-                    toolbar={
-                      <div className="flex items-start gap-2 px-3 py-2.5">
-                        <div className="min-w-0 flex-1">
-                          <div className="relative">
-                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
-                            <Input
-                              type="search"
-                              placeholder="Search by name or email..."
-                              value={hslSearch}
-                              onChange={e => { setHslSearch(e.target.value); setHslPage(1); }}
-                              className="h-8 w-full pl-8 text-xs"
-                            />
-                            {hslSearch && (
-                              <button
-                                type="button"
-                                onClick={() => { setHslSearch(''); setHslPage(1); }}
-                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </button>
-                            )}
-                          </div>
-                          {needle && (
-                            <p className="mt-1.5 text-[10px] text-zinc-500 dark:text-zinc-400">
-                              {filteredHsl.length} of {visibleHslRows.length} employees
-                            </p>
-                          )}
-                        </div>
-                        {/* Show / hide the KPI Bonus column (display-only — the amount
-                            still folds into Total Pay and dispatch). */}
-                        <Select
-                          value={hslKpiColShown ? 'show' : 'hide'}
-                          onValueChange={v => setHslKpiColShown(v === 'show')}
-                        >
-                          <SelectTrigger
-                            title="Show or hide the KPI Bonus column"
-                            className="h-8 shrink-0 gap-1.5 text-xs"
-                          >
-                            <BarChart3 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                            <span className="text-zinc-500 dark:text-zinc-400">KPI Bonus:</span>
-                            <span className="font-medium text-zinc-700 dark:text-zinc-200">{hslKpiColShown ? 'Shown' : 'Hidden'}</span>
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="show">Show</SelectItem>
-                            <SelectItem value="hide">Hide</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    }
-                  >
-                    {filteredHsl.length === 0 ? (
-                      <p className="py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
-                        No employees match &ldquo;{hslSearch}&rdquo;.
-                      </p>
-                    ) : (
-                      <table data-tutorial-target="step4-hsl-table" className="w-full min-w-[1180px] text-xs">
-                        <thead className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 shadow-[0_1px_0_0_rgb(228_228_231)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:shadow-[0_1px_0_0_rgb(39_39_42)]">
-                          <tr>
-                            <th className="px-4 py-2.5 text-left">Employee</th>
-                            <th className="px-3 py-2.5 text-right">Hours</th>
-                            <th className="px-3 py-2.5 text-right" title="+15 PHP/h for Saturday and Sunday hours (included in Initial Pay)">Wknd +</th>
-                            <th className="px-3 py-2.5 text-right">Initial Pay</th>
-                            {hslKpiColShown && <th className="px-3 py-2.5 text-right">KPI Bonus</th>}
-                            {pabColShownHsl && <th data-tutorial-target="step4-col-pab" className="px-3 py-2.5 text-center">PAB</th>}
-                            {techColShownHsl && <th data-tutorial-target="step4-col-tech" className="px-3 py-2.5 text-center">Tech Bonus</th>}
-                            <th data-tutorial-target="step4-col-mesa" className="px-3 py-2.5 text-right" title="MESA — ₱100/paycheck deduction for enrolled members, plus any accounting-approved disbursement (paid out this run). Both fold into Total Pay.">MESA</th>
-                            <th data-tutorial-target="step4-col-adjustment" className="px-3 py-2.5 text-right">Adjustment</th>
-                            <th data-tutorial-target="step4-col-orphanage" className="px-3 py-2.5 text-right" title="Orphanage pay — a manual amount added on top of total pay; appears as its own paystub line.">Orphanage</th>
-                            <th className="px-3 py-2.5 text-right">Total Pay</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-100 bg-white dark:divide-zinc-800/60 dark:bg-zinc-950/40">
-                          {pagedHsl.map(r => {
-                            const em = (r.email ?? '').toLowerCase();
-                            // Match dispatch: bonuses are zeroed for rows without a
-                            // pay rate, so gate the KPI the same way here.
-                            const hasRates = r.regularRate != null || r.otRate != null;
-                            const kpiBonus = hasRates ? (hslKpiAmounts[em] ?? 0) : 0;
-                            // Same key resolution as the Additions column — an override
-                            // sitting under the lowercased twin still shows here.
-                            const adjKey = overrideKeyFor(r.email);
-                            const override = bonusOverrides[adjKey] ?? null;
-                            // Adj. is a signed delta added on top of the KPI bonus, never a replacement.
-                            const effectiveBonus = kpiBonus + (override ?? 0);
-                            const paStatus = effectivePabStatus.get(em) ?? 'in_progress';
-                            const pabExcluded = isPabExcluded(r.email);
-                            const pabDeptOk = isPabDeptEligible(r.email);
-                            const techDeptOk = isTechDeptEligible(r.email);
-                            const pabAmt = paStatus === 'eligible' && pabDeptOk && !pabExcluded ? pabAmountForEmail(r.email) : 0;
-                            const techOn = techBonusEligible.has(r.email) && techDeptOk;
-                            const techAmt = techOn ? techAmountForEmail(r.email) : 0;
-                            // Orphanage pay — manual positive amount added on top of total pay.
-                            const hasOrphanage = orphanageAmounts[r.email] !== undefined;
-                            const orphanagePay = orphanageAmounts[r.email] ?? 0;
-                            // MESA — ₱100/paycheck deduction for enrolled members ONLY, plus any
-                            // accounting-approved disbursement paid out this run. A disbursement
-                            // never forces the deduction (an opted-out ex-member can still be paid
-                            // out a balance). Mirrors the Additions tab + the final-pay compute so
-                            // Total Pay matches the paystub.
-                            const hslMesaEmail = normEmail(r.email) ?? '';
-                            const hslRateRow = ratesByEmail.get(hslMesaEmail);
-                            const empMesaDisbursement = mesaDisbursements.get(hslMesaEmail) ?? 0;
-                            const empMesaDeduction =
-                              (r.initialPay != null && hslRateRow?.mesa_member && !isMesaOptedOut(r.email, hslRateRow)) ? 100 : 0;
-                            const totalPay = (r.initialPay ?? 0) + effectiveBonus + pabAmt + techAmt + orphanagePay - empMesaDeduction + empMesaDisbursement;
-
-                            return (
-                              <tr key={r.email} className="transition-colors hover:bg-violet-50/30 dark:hover:bg-violet-950/10">
-                                <td className="px-4 py-3">
-                                  <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.name}</div>
-                                  <div className="flex items-center gap-2 mt-0.5">
-                                    <span className="font-mono text-[9px] text-zinc-400 dark:text-zinc-500">{r.email}</span>
-                                  </div>
-                                </td>
-                                <td className="px-3 py-3 text-right font-mono text-[11px] text-zinc-600 tabular-nums dark:text-zinc-400">
-                                  {r.totalHours != null ? r.totalHours.toFixed(2) : '—'}
-                                </td>
-                                {(() => {
-                                  // Sheet form: the premium is ₱15 on ALL weekend hours (2026-08-11).
-                                  const wkndTotal = r.hogan
-                                    ? Math.round(r.hogan.we_hours * 15 * 100) / 100
-                                    : 0;
-                                  return (
-                                    <td className="px-3 py-3 text-right font-mono text-[11px] tabular-nums" title="+15 PHP/h for Sat/Sun hours">
-                                      {wkndTotal > 0 ? (
-                                        <span className="font-semibold text-amber-600 dark:text-amber-400">+{formatPHP(wkndTotal)}</span>
-                                      ) : (
-                                        <span className="text-zinc-300 dark:text-zinc-600">—</span>
-                                      )}
-                                    </td>
-                                  );
-                                })()}
-                                <td className="px-3 py-3 text-right font-mono text-[11px] font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">
-                                  {r.initialPay != null ? formatPHP(r.initialPay) : '—'}
-                                </td>
-                                {hslKpiColShown && (
-                                <td className="px-3 py-3 text-right font-mono text-[11px] tabular-nums">
-                                  {kpiBonus > 0 ? (
-                                    <span className="font-semibold text-emerald-700 dark:text-emerald-400">
-                                      +{formatPHP(kpiBonus)}
-                                    </span>
-                                  ) : (
-                                    <span className="text-zinc-400 dark:text-zinc-600">—</span>
-                                  )}
-                                </td>
-                                )}
-                                {/* PAB — tri-state pill, click opens calendar modal */}
-                                {pabColShownHsl && (
-                                <td className="px-3 py-3 text-center">
-                                  {pabExcluded ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => setPabSettingsOpen(true)}
-                                      title="Excluded from PAB this month by Accounting — earns ₱0 PAB. Click to manage exclusions."
-                                      className={cn(
-                                        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none transition-all duration-200',
-                                        'hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-1 dark:focus:ring-offset-zinc-900',
-                                        'bg-rose-100 text-rose-700 ring-1 ring-rose-400/40 hover:bg-rose-200 focus:ring-rose-400 dark:bg-rose-950/40 dark:text-rose-300 dark:ring-rose-500/30 dark:hover:bg-rose-950/60',
-                                      )}
-                                    >
-                                      <UserX className="h-3 w-3" />
-                                      Excluded
-                                    </button>
-                                  ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => setPabCalendarModalEmail(r.email)}
-                                    title={
-                                      paStatus === 'eligible' ? 'Passed all Mon–Sun weeks in the PAB period — click to see the calendar.'
-                                      : paStatus === 'ineligible' ? 'Already failed at least one week — locked for this period. Click to see which day.'
-                                      : 'PAB period is still running. Click to see the calendar.'
-                                    }
-                                    className={cn(
-                                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none transition-all duration-200',
-                                      'hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-1 dark:focus:ring-offset-zinc-900',
-                                      paStatus === 'eligible'
-                                        ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-400/40 hover:bg-emerald-200 focus:ring-emerald-400 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-500/30 dark:hover:bg-emerald-900/60'
-                                        : paStatus === 'ineligible'
-                                          ? 'bg-red-100 text-red-600 ring-1 ring-red-400/40 hover:bg-red-200 focus:ring-red-400 dark:bg-red-900/30 dark:text-red-300 dark:ring-red-500/30 dark:hover:bg-red-900/50'
-                                          : 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-400/40 hover:bg-indigo-200 focus:ring-indigo-400 dark:bg-indigo-900/40 dark:text-indigo-300 dark:ring-indigo-500/30 dark:hover:bg-indigo-900/60',
-                                    )}
-                                  >
-                                    {paStatus === 'eligible' ? (pabDeptOk ? `+${formatPHP(pabAmountForEmail(r.email))}` : '✓ Eligible') : paStatus === 'ineligible' ? '✗ Ineligible' : '⏳ In Progress'}
-                                  </button>
-                                  )}
-                                </td>
-                                )}
-                                {/* Tech Bonus — auto-detected; accounting can manually grant */}
-                                {techColShownHsl && (
-                                <td className="px-3 py-3 text-center">
-                                  {techOn ? (
-                                    <span
-                                      title={techBonusManualGrants.has(r.email) ? 'Manually granted by Accounting this session.' : techBonusWeekInfo.isOverridden ? 'Auto-applied: this is the Technology Bonus payout week picked in System Bonus settings.' : 'Auto-applied: salary date lands in the 3rd full Mon–Sun week.'}
-                                      className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold leading-none text-sky-700 ring-1 ring-sky-400/40 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-500/30"
-                                    >
-                                      +{formatPHP(techAmountForEmail(r.email))}
-                                    </span>
-                                  ) : (
-                                    <span
-                                      title="Not the Tech Bonus week or tenure/rate requirements not met — released automatically on the Tech Bonus week."
-                                      className="inline-flex items-center justify-center text-[10px] font-semibold leading-none text-zinc-300 dark:text-zinc-700"
-                                    >
-                                      —
-                                    </span>
-                                  )}
-                                </td>
-                                )}
-                                {/* MESA — automatic -₱100 contribution for members, plus any
-                                    accounting-approved disbursement (paid out this run). Both fold into Total Pay. */}
-                                <td
-                                  className={cn(
-                                    'px-3 py-3 text-right font-mono text-[11px] tabular-nums',
-                                    empMesaDisbursement > 0
-                                      ? 'font-semibold text-emerald-600 dark:text-emerald-400'
-                                      : empMesaDeduction > 0
-                                        ? 'font-semibold text-rose-600 dark:text-rose-400'
-                                        : 'text-zinc-300 dark:text-zinc-700',
-                                  )}
-                                  title={[
-                                    empMesaDisbursement > 0 ? `Approved disbursement +${formatPHP(empMesaDisbursement)} (added to Total Pay)` : null,
-                                    empMesaDeduction > 0 ? `MESA member — ${formatPHP(empMesaDeduction)} contribution deducted` : null,
-                                  ].filter(Boolean).join(' · ') || 'Not enrolled in MESA'}
-                                >
-                                  {empMesaDisbursement > 0 ? (
-                                    <div className="flex flex-col items-end leading-tight">
-                                      <span>+{formatPHP(empMesaDisbursement)}</span>
-                                      {empMesaDeduction > 0 && (
-                                        <span className="text-[9px] text-rose-500 dark:text-rose-400">-{formatPHP(empMesaDeduction)}</span>
-                                      )}
-                                    </div>
-                                  ) : empMesaDeduction > 0 ? (
-                                    `-${formatPHP(empMesaDeduction)}`
-                                  ) : (
-                                    '—'
-                                  )}
-                                </td>
-                                <td className="px-3 py-3 text-right text-[11px]">
-                                  {override !== null ? (
-                                    <div className="flex items-center justify-end gap-1">
-                                      <SignedAmountInput
-                                        value={override}
-                                        emptyValue={0}
-                                        // Empty keeps the override OPEN at 0 (the X button clears
-                                        // it) — only a real number or a negative commits a delta.
-                                        onCommit={(v) => updateBonusOverride(adjKey, v)}
-                                        title={`Signed adjustment added on top of the KPI bonus (${formatPHP(kpiBonus)}). Use a negative value to deduct.`}
-                                        className="h-6 w-[88px] rounded border border-amber-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-700 focus:outline-none focus:ring-1 focus:ring-amber-400 dark:border-amber-700/60 dark:bg-zinc-900 dark:text-amber-300"
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={() => updateBonusOverride(adjKey, null)}
-                                        title={`Clear adjustment (KPI bonus: ${formatPHP(kpiBonus)})`}
-                                        className="text-zinc-400 hover:text-red-500"
-                                      >
-                                        <X className="h-3 w-3" />
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      title={`KPI bonus: ${formatPHP(kpiBonus)} — click to add a signed adjustment`}
-                                      onClick={() => updateBonusOverride(adjKey, 0)}
-                                      className="text-zinc-300 hover:text-amber-600 dark:text-zinc-700 dark:hover:text-amber-400"
-                                    >
-                                      —
-                                    </button>
-                                  )}
-                                </td>
-                                {/* Orphanage pay — manual positive amount added to total pay; own paystub line */}
-                                <td className="px-3 py-3 text-right text-[11px]">
-                                  {hasOrphanage ? (
-                                    <div className="flex items-center justify-end gap-1">
-                                      <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        step="0.01"
-                                        min={0}
-                                        value={orphanageAmounts[r.email] ?? ''}
-                                        onChange={e => {
-                                          const raw = e.target.value;
-                                          const next = raw === '' ? 0 : Number(raw);
-                                          if (!Number.isFinite(next) || next < 0) return;
-                                          updateOrphanageAmount(r.email, next);
-                                        }}
-                                        title="Orphanage pay (PHP) added on top of total pay"
-                                        className="h-6 w-[88px] rounded border border-pink-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-pink-700 focus:outline-none focus:ring-1 focus:ring-pink-400 dark:border-pink-700/60 dark:bg-zinc-900 dark:text-pink-300"
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={() => updateOrphanageAmount(r.email, null)}
-                                        title="Clear orphanage pay"
-                                        className="text-zinc-400 hover:text-red-500"
-                                      >
-                                        <X className="h-3 w-3" />
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      title="Click to add orphanage pay"
-                                      onClick={() => updateOrphanageAmount(r.email, 0)}
-                                      className="text-zinc-300 hover:text-pink-600 dark:text-zinc-700 dark:hover:text-pink-400"
-                                    >
-                                      —
-                                    </button>
-                                  )}
-                                </td>
-                                <td className="px-3 py-3 text-right">
-                                  <PhpWithUsd
-                                    php={totalPay}
-                                    usdToPhp={usdToPhpRate}
-                                    phpClassName="font-mono text-[11px] font-bold tabular-nums text-zinc-900 dark:text-zinc-100"
-                                  />
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                        <tfoot className="sticky bottom-0 z-20 border-t-2 border-zinc-200 bg-zinc-50 shadow-[0_-1px_0_0_rgb(228_228_231)] dark:border-zinc-800 dark:bg-zinc-900 dark:shadow-[0_-1px_0_0_rgb(39_39_42)]">
-                          {(() => {
-                            let totalInitialPay = 0, totalPab = 0, totalTech = 0, totalKpi = 0, totalAdj = 0, totalOrphanage = 0, totalWkndPremium = 0, totalMesaDeduction = 0, totalMesaDisbursement = 0;
-                            for (const r of visibleHslRows) {
-                              const em = (r.email ?? '').toLowerCase();
-                              totalInitialPay += r.initialPay ?? 0;
-                              totalKpi += (r.regularRate != null || r.otRate != null) ? (hslKpiAmounts[em] ?? 0) : 0;
-                              totalAdj += bonusOverrides[overrideKeyFor(r.email)] ?? 0;
-                              totalOrphanage += orphanageAmounts[r.email] ?? 0;
-                              const st = effectivePabStatus.get(em) ?? 'in_progress';
-                              if (st === 'eligible' && isPabDeptEligible(r.email) && !isPabExcluded(r.email)) totalPab += pabAmountForEmail(r.email);
-                              if (techBonusEligible.has(r.email) && isTechDeptEligible(r.email)) totalTech += techAmountForEmail(r.email);
-                              if (r.hogan) totalWkndPremium += r.hogan.we_hours * 15;
-                              const memail = normEmail(r.email) ?? '';
-                              const memailRateRow = ratesByEmail.get(memail);
-                              const disb = mesaDisbursements.get(memail) ?? 0;
-                              // Deduction gates on membership alone — a disbursement (which an
-                              // opted-out ex-member can still receive) never forces the ₱100 charge.
-                              // A ledger opt-out also suppresses it even if the flag drifted true.
-                              const ded =
-                                (r.initialPay != null && memailRateRow?.mesa_member && !isMesaOptedOut(r.email, memailRateRow)) ? 100 : 0;
-                              totalMesaDisbursement += disb;
-                              totalMesaDeduction += ded;
-                            }
-                            return (
-                              <tr>
-                                <td colSpan={2} className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                                  Totals ({visibleHslRows.length} employees)
-                                </td>
-                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-600 dark:text-amber-400">
-                                  {totalWkndPremium > 0 ? `+${formatPHP(Math.round(totalWkndPremium * 100) / 100)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
-                                </td>
-                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums text-zinc-700 dark:text-zinc-300">
-                                  {formatPHP(totalInitialPay)}
-                                </td>
-                                {hslKpiColShown && (
-                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
-                                  {totalKpi > 0 ? `+${formatPHP(totalKpi)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
-                                </td>
-                                )}
-                                {pabColShownHsl && (
-                                <td className="px-3 py-2.5 text-center font-mono text-[11px] font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
-                                  {totalPab > 0 ? `+${formatPHP(totalPab)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
-                                </td>
-                                )}
-                                {techColShownHsl && (
-                                <td className="px-3 py-2.5 text-center font-mono text-[11px] font-bold tabular-nums text-sky-700 dark:text-sky-400">
-                                  {totalTech > 0 ? `+${formatPHP(totalTech)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
-                                </td>
-                                )}
-                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums">
-                                  {totalMesaDisbursement > 0 ? (
-                                    <div className="flex flex-col items-end leading-tight">
-                                      <span className="text-emerald-600 dark:text-emerald-400">+{formatPHP(totalMesaDisbursement)}</span>
-                                      {totalMesaDeduction > 0 && (
-                                        <span className="text-[10px] text-rose-500 dark:text-rose-400">-{formatPHP(totalMesaDeduction)}</span>
-                                      )}
-                                    </div>
-                                  ) : totalMesaDeduction > 0 ? (
-                                    <span className="text-rose-600 dark:text-rose-400">-{formatPHP(totalMesaDeduction)}</span>
-                                  ) : (
-                                    <span className="text-zinc-400 dark:text-zinc-600">—</span>
-                                  )}
-                                </td>
-                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-600 dark:text-amber-400">
-                                  {totalAdj !== 0 ? `${totalAdj > 0 ? '+' : ''}${formatPHP(totalAdj)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
-                                </td>
-                                <td className="px-3 py-2.5 text-right font-mono text-[11px] font-bold tabular-nums text-pink-600 dark:text-pink-400">
-                                  {totalOrphanage > 0 ? `+${formatPHP(totalOrphanage)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
-                                </td>
-                                <td className="px-3 py-2.5 text-right">
-                                  <PhpWithUsd
-                                    php={totalInitialPay + totalKpi + totalAdj + totalOrphanage + totalPab + totalTech - totalMesaDeduction + totalMesaDisbursement}
-                                    usdToPhp={usdToPhpRate}
-                                    phpClassName="font-mono text-[11px] font-bold tabular-nums text-zinc-900 dark:text-zinc-100"
-                                  />
-                                </td>
-                              </tr>
-                            );
-                          })()}
-                        </tfoot>
-                      </table>
-                    )}
-                  </ScrollableTable>
-
-                  {/* Pagination */}
-                  {totalHslPages > 1 && (
-                    <div data-readonly-allow className="flex items-center justify-between border border-t-0 border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950/60">
-                      <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                        Page {safePage} of {totalHslPages} &middot; {filteredHsl.length} employee{filteredHsl.length !== 1 ? 's' : ''}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 px-2 text-xs disabled:opacity-40"
-                          disabled={safePage <= 1}
-                          onClick={() => setHslPage(1)}
-                        >
-                          <ChevronLeft className="h-3 w-3" /><ChevronLeft className="h-3 w-3 -ml-1.5" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 px-2 text-xs disabled:opacity-40"
-                          disabled={safePage <= 1}
-                          onClick={() => setHslPage(p => Math.max(1, p - 1))}
-                        >
-                          <ChevronLeft className="h-3 w-3" />
-                        </Button>
-                        {Array.from({ length: totalHslPages }, (_, i) => i + 1)
-                          .filter(p => Math.abs(p - safePage) <= 2 || p === 1 || p === totalHslPages)
-                          .reduce<(number | 'gap')[]>((acc, p, i, arr) => {
-                            if (i > 0 && p - (arr[i - 1] as number) > 1) acc.push('gap');
-                            acc.push(p);
-                            return acc;
-                          }, [])
-                          .map((p, i) =>
-                            p === 'gap' ? (
-                              <span key={`gap-${i}`} className="px-1 text-xs text-zinc-400">…</span>
-                            ) : (
-                              <Button
-                                key={p}
-                                type="button"
-                                variant={p === safePage ? 'default' : 'outline'}
-                                size="sm"
-                                className={cn('h-7 min-w-[28px] px-2 text-xs', p === safePage && 'bg-violet-600 hover:bg-violet-700 border-violet-600')}
-                                onClick={() => setHslPage(p as number)}
-                              >
-                                {p}
-                              </Button>
-                            ),
-                          )}
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 px-2 text-xs disabled:opacity-40"
-                          disabled={safePage >= totalHslPages}
-                          onClick={() => setHslPage(p => Math.min(totalHslPages, p + 1))}
-                        >
-                          <ChevronRight className="h-3 w-3" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 px-2 text-xs disabled:opacity-40"
-                          disabled={safePage >= totalHslPages}
-                          onClick={() => setHslPage(totalHslPages)}
-                        >
-                          <ChevronRight className="h-3 w-3" /><ChevronRight className="h-3 w-3 -ml-1.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-                  </motion.div>
-                </AnimatePresence>
-              </div>
-            </div>
-          </div>
-        );
-      }
-      case 6: {
+      case 5: {
         // ── Contractors ────────────────────────────────────────────────────────
         const updateInvoiceStatus = async (id: string, status: 'approved' | 'rejected' | 'pending') => {
           setContractorInvoicesUpdating(id);
@@ -16539,7 +16644,7 @@ export default function PayrollWizard({
           <div className="flex min-w-0 flex-col gap-5">
             {/* Header banner */}
             <div
-              data-tutorial-target="step6-pending-invoices"
+              data-tutorial-target="step5-pending-invoices"
               className="flex flex-col gap-1 rounded-2xl border border-emerald-200/70 bg-gradient-to-br from-emerald-50 via-white to-teal-50/40 p-5 shadow-sm dark:border-emerald-900/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-emerald-950/15"
             >
               <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">
@@ -16689,7 +16794,7 @@ export default function PayrollWizard({
           </div>
         );
       }
-      case 7: {
+      case 6: {
         // Sourced from the component-scope `validationBreakdowns` (built once,
         // shared with the Continue-button confirm below) rather than recomputed
         // here from `effectiveCalcResults` directly — see that useMemo for why
@@ -16722,7 +16827,7 @@ export default function PayrollWizard({
           <div className="flex min-w-0 flex-col gap-5">
             {/* Header */}
             <div
-              data-tutorial-target="step7-validation-table"
+              data-tutorial-target="step6-validation-table"
               className="rounded-xl border border-zinc-200/90 bg-gradient-to-br from-white via-zinc-50/80 to-emerald-50/25 p-4 shadow-sm sm:p-5 dark:border-zinc-800 dark:from-zinc-950/50 dark:via-zinc-900/40 dark:to-emerald-950/15"
             >
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -17231,10 +17336,10 @@ export default function PayrollWizard({
           </div>
         );
       }
-      case 8:
+      case 7:
         return (
           <div
-            data-tutorial-target="step8-lock-in"
+            data-tutorial-target="step7-lock-in"
             className={cn(
               'relative flex flex-col items-center justify-center py-12 space-y-6 text-center rounded-2xl',
               isDispatching && 'dispatch-running-light',
@@ -17540,7 +17645,7 @@ export default function PayrollWizard({
                       usdToPhpRate,
                     });
                     setReportsTab('salaries');
-                    setCurrentStep(9);
+                    setCurrentStep(8); // Reports (was 9 before HSL+Additions merged)
                   } catch (err) {
                     toast.error('Send to Payment Dispatch failed', {
                       description: err instanceof Error ? err.message : String(err),
@@ -17596,7 +17701,7 @@ export default function PayrollWizard({
             )}
           </div>
         );
-      case 9: {
+      case 8: {
         // Replaying a past period: reconstruct the report from that period's recomputed
         // data (hours, additions, monthly sections all follow the selected file) and
         // overlay the dispatched per-employee finals saved in the snapshot so salary
@@ -17937,7 +18042,7 @@ export default function PayrollWizard({
                 around them, running until the next week begins even when
                 processing is off. Render-only over audit_log; the cycle
                 close-out stays the only per-cycle record. */}
-            <div data-tutorial-target="step9-audit-trail">
+            <div data-tutorial-target="step8-audit-trail">
               <ProcessingNarrative />
             </div>
 
@@ -19013,7 +19118,7 @@ export default function PayrollWizard({
               <span className="text-xs text-zinc-500 font-mono">Step {currentStep} of {steps.length}</span>
               <Button
                 onClick={() => {
-                  if (currentStep === 7 && validationRedFlagCount > 0) {
+                  if (currentStep === 6 && validationRedFlagCount > 0) {
                     const ok = window.confirm(
                       `${validationRedFlagCount} row${validationRedFlagCount !== 1 ? 's' : ''} cannot be paid as calculated. ` +
                       `Continue to dispatch anyway?`,
