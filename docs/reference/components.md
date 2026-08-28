@@ -612,7 +612,7 @@ Additions and Deductions are kept in **separate columns** (not a combined net-ad
 
 ---
 
-### Step 5 — HSL Payroll
+### Step 4 — Additions (department table + HSL tab)
 
 **Purpose**: Review and finalize pay for Hogan Smith Law employees — a separate calculation path from the main Additions tab.
 
@@ -641,7 +641,7 @@ Additions and Deductions are kept in **separate columns** (not a combined net-ad
 
 ---
 
-### Step 6 — Dispatch
+### Step 8 — Dispatch
 
 **Purpose**: Confirm and send payroll.
 

@@ -8,6 +8,7 @@ import {
   Check,
   Upload,
   Calculator,
+  CalendarCheck,
   ShieldCheck,
   Send,
   AlertCircle,
@@ -308,6 +309,8 @@ import {
   type BreakdownInput,
 } from '@/lib/payroll/validation-breakdown';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { computePabIneligibility, pabSeverityBand, type PabDayEntry } from '@/lib/payroll/pab-ineligibility';
+import PabIneligibleTable, { type PabIneligibleRow } from '@/components/payroll/PabIneligibleTable';
 
 function findHeaderColumn(header: string[], ...labels: string[]): number {
   const norm = header.map((h) => h.trim().toLowerCase());
@@ -1914,9 +1917,14 @@ const steps = [
   // gap in the ids would read past 100% and mark Reports complete at Dispatch.
   { id: 4, label: 'Additions', icon: Calculator, description: 'Bonuses and adjustments — every department plus the HSL tab' },
   { id: 5, label: 'Contractors', icon: HardHat, description: 'Pending contractor invoices — review and approve before dispatch' },
-  { id: 6, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
-  { id: 7, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
-  { id: 8, label: 'Reports', icon: BarChart3, description: 'Dispatch summary — salaries, budget requests, and gift payments' },
+  // PAB review inserted 2026-08-28 (Kane). It sits AFTER Contractors and BEFORE
+  // Validation on purpose: forgiving a month changes what Validation is checking,
+  // so reviewing attendance after the numbers are final but before they are
+  // judged is the only position where the decision still costs nothing.
+  { id: 6, label: 'PAB', icon: CalendarCheck, description: 'Who missed Perfect Attendance this period — review and forgive' },
+  { id: 7, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
+  { id: 8, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
+  { id: 9, label: 'Reports', icon: BarChart3, description: 'Dispatch summary — salaries, budget requests, and gift payments' },
 ];
 
 /**
@@ -2447,6 +2455,8 @@ export default function PayrollWizard({
   const [qcModalEmail, setQcModalEmail] = useState<string | null>(null);
   const [hrModalEmail, setHrModalEmail] = useState<string | null>(null);
   const [pabCalendarModalEmail, setPabCalendarModalEmail] = useState<string | null>(null);
+  /** Email mid-forgive on step 6, so only that row's button spins. */
+  const [pabForgivingEmail, setPabForgivingEmail] = useState<string | null>(null);
   const [pabForgiveActiveIso, setPabForgiveActiveIso] = useState<string | null>(null);
   const [pabForgiveNote, setPabForgiveNote] = useState('');
   const [pabForgiveLoadingIso, setPabForgiveLoadingIso] = useState<string | null>(null);
@@ -4435,7 +4445,7 @@ export default function PayrollWizard({
     }
   }, [calcSourceFile, loadCalcSourceFileData]);
 
-  // PAB eligibility (Additions / Step 3) merges **every** archived Hubstaff upload so the
+  // PAB eligibility (Additions / Step 4) merges **every** archived Hubstaff upload so the
   // full PAB month has data, not just the latest weekly CSV. Matches the Employee Dashboard.
   useEffect(() => {
     if (sourceFilesLoading) return;
@@ -4715,7 +4725,7 @@ export default function PayrollWizard({
   }, [offboardedRoster]);
 
   /** Every email the final-pay overlay knows a leaver by. Used to recognise a
-   *  calc row as a FINAL check — see the pay-pause safety net at Step 7. */
+   *  calc row as a FINAL check — see the pay-pause safety net at Step 8. */
   const finalPayEmails = useMemo(() => {
     const s = new Set<string>();
     for (const r of offboardedRoster) {
@@ -5107,14 +5117,21 @@ export default function PayrollWizard({
         // scoped to comes from the active week. Same step-scoped caveat as 4.
         case 5:
           return loadingUploadList || (currentStep === 5 && contractorInvoicesLoading);
+        // PAB review. Its list is derived from the all-weeks PAB merge, so it
+        // waits on exactly that plus the hours underneath it. Green here claims
+        // the ineligible list is complete — and an incomplete one is worse than
+        // no list, because a name that has not loaded looks like a name that
+        // passed.
+        case 6:
+          return loadingUploadList || loadingWeekHours || loadingPabMerge;
         // Validation and Dispatch read the finished numbers, so they wait on
         // everything and are the last two to go green. That is the point: these
         // are the steps where a premature reading actually costs money.
-        case 6:
         case 7:
+        case 8:
           return loadingUploadList || loadingPreview || loadingWeekHours || loadingRates
             || loadingPabMerge || loadingHslKpi;
-        // Reports (8) is a post-dispatch summary — outside the range.
+        // Reports (9) is a post-dispatch summary — outside the range.
         default:
           return false;
       }
@@ -5852,6 +5869,7 @@ export default function PayrollWizard({
     }
     return snap;
   }, [lockedPabSnapshot, pabStatusByEmail, pabMonthRange]);
+
 
   const saveAdditionsProgress = React.useCallback(async (opts?: {
     orphanageAmounts?: Record<string, number>;
@@ -7374,6 +7392,86 @@ export default function PayrollWizard({
     calcResultsRef.current = calcResults;
   }, [calcResults]);
 
+  /**
+   * Step 6's list: everyone the wizard has already judged INELIGIBLE for this PAB
+   * period, with the days that cost them the bonus.
+   *
+   * Membership comes from `effectivePabStatus` — the same verdict the Additions
+   * pill, the staged toggle and the dispatch row read — NOT from a second
+   * eligibility walk. `computePabIneligibility` only EXPLAINS that verdict by
+   * naming the failed days. A review surface that re-decides who failed is a
+   * second implementation of a money rule, and this codebase already carries
+   * eight of those.
+   *
+   * `in_progress` people are deliberately absent: mid-period they have not failed
+   * anything yet, and listing them as ineligible would invite forgiveness for days
+   * that may still be worked.
+   */
+  const pabIneligibleRows = useMemo<PabIneligibleRow[]>(() => {
+    if (!pabMonthRange) return [];
+    const rows: PabIneligibleRow[] = [];
+    for (const [email, status] of effectivePabStatus.entries()) {
+      if (status !== 'ineligible') continue;
+
+      const deptKey = employeeDepts[email] ?? employeeDepts[email.toLowerCase()] ?? null;
+      const isHsl = deptKey === 'hogan_smith_law';
+      const breakdown = isHsl
+        ? (employeeAllDaysHours.get(email) ?? [])
+        : (employeeWeekdayHours.get(email) ?? []);
+      if (breakdown.length === 0) continue;
+
+      const entries: PabDayEntry[] = [];
+      for (const b of breakdown) {
+        const d = parseColDate(b.col);
+        if (!d) continue;
+        entries.push({
+          iso: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+          seconds: b.seconds,
+          passes: b.passes,
+          forgivenByDispute: b.forgivenByDispute,
+          forgivenByHoliday: b.forgivenByHoliday,
+        });
+      }
+
+      const { severity, failedDays } = computePabIneligibility({
+        entries,
+        isHsl,
+        hslSunSat: hslWeekModel === 'sun_sat',
+        periodStart: pabMonthRange.start,
+        periodEnd: isHsl ? (hslAdjustedPabEnd ?? pabMonthRange.end) : pabMonthRange.end,
+      });
+
+      // A verdict of ineligible with no nameable failed day means the two views
+      // disagree — the known case is an HSL period opening mid-week, where the
+      // engine scores the anchor Sunday but `allDaysColumnGroups` starts at the
+      // period start and does not supply it. Showing a row with "0 days" would
+      // offer a Forgive button with nothing to forgive, so it is dropped here and
+      // the divergence is recorded in the feature doc rather than papered over
+      // with a fabricated day.
+      if (severity === 0) continue;
+
+      const calcRow = calcResults.find(
+        (e) => e.email === email || (normEmail(e.email) ?? e.email.toLowerCase()) === email,
+      );
+      rows.push({
+        email,
+        name: calcRow?.name || email,
+        departmentKey: deptKey,
+        isHsl,
+        severity,
+        failedDays,
+        excluded: isPabExcluded(email),
+      });
+    }
+    // Worst first, then alphabetical — the 1-and-2-day cohort the step exists for
+    // sits together at the bottom rather than scattered.
+    rows.sort((a, b) => b.severity - a.severity || a.name.localeCompare(b.name));
+    return rows;
+  }, [
+    effectivePabStatus, employeeDepts, employeeAllDaysHours, employeeWeekdayHours,
+    pabMonthRange, hslWeekModel, hslAdjustedPabEnd, calcResults, isPabExcluded,
+  ]);
+
   // Re-key any override/note saved under a lowercased email to the wizard's raw
   // calc-result casing. Overrides bridged in from the Payroll Notes board before
   // the casing fix were keyed lowercased, so the Adj. column, the running
@@ -7424,7 +7522,7 @@ export default function PayrollWizard({
   useEffect(() => {
     if (isReplay || !calcSourceFile || !hasCalcRows) return;
     if (dispatchValuesLock.loading || dispatchValuesLock.state.locked) return;
-    if (currentStep === 4 || currentStep === 6 || currentStep === 7) {
+    if (currentStep === 4 || currentStep === 7 || currentStep === 8) {
       void pullNotesAdjustments();
     }
   }, [currentStep, isReplay, calcSourceFile, hasCalcRows, pullNotesAdjustments, dispatchValuesLock.loading, dispatchValuesLock.state.locked]);
@@ -8885,6 +8983,8 @@ export default function PayrollWizard({
         { month: 'long', year: 'numeric' },
       ),
       pendingContractorCount: contractorInvoicesInPeriod.filter((i) => i.status === 'pending').length,
+      pabIneligibleCount: pabIneligibleRows.length,
+      pabReviewCount: pabIneligibleRows.filter((r) => pabSeverityBand(r.severity) === 'review').length,
       validationRedFlagCount,
       excludedCount: dispatchData.excludedRows.length,
       payableCount: dispatchData.rows.length,
@@ -16902,6 +17002,103 @@ export default function PayrollWizard({
         );
       }
       case 6: {
+        // ── PAB review ─────────────────────────────────────────────────────────
+        const monthLabelPab = pabMonthRange
+          ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
+          : 'the active PAB month';
+
+        /**
+         * Forgive every failed day in the period for one person, in ONE request.
+         *
+         * The route is all-or-nothing on purpose: a half-forgiven month leaves the
+         * operator believing the bonus is restored while the employee stays
+         * ineligible, and nobody can see which days are missing. So a partial
+         * result surfaces as an error here rather than a success toast.
+         */
+        const forgiveMonth = async (row: PabIneligibleRow) => {
+          if (pabForgivingEmail) return;
+          const dayCount = row.failedDays.length;
+          const ok = window.confirm(
+            `Forgive all ${dayCount} missed day${dayCount === 1 ? '' : 's'} for ${row.name} ` +
+            `in ${monthLabelPab}?\n\nThis restores their Perfect Attendance Bonus and is ` +
+            `visible on their own dashboard.`,
+          );
+          if (!ok) return;
+
+          setPabForgivingEmail(row.email);
+          try {
+            const res = await fetch('/api/payroll-wizard/pab-forgive-month', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email: row.email,
+                monthKey: pabMonthRange
+                  ? `${pabMonthRange.year}-${String(pabMonthRange.month + 1).padStart(2, '0')}`
+                  : '',
+                days: row.failedDays.map((d) => d.iso),
+              }),
+            });
+            const json = await res.json();
+            if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+
+            // Patch the local forgiveness map rather than refetching: this is the
+            // same map `effectiveOverridesForPab` feeds, so the verdict, the pill
+            // and this row all move on the next render from one write.
+            setApprovedDisputeDates((prev) => {
+              const next = new Map(prev);
+              const existing = new Map(next.get(row.email) ?? new Map<string, number | null>());
+              for (const iso of json.forgiven ?? []) existing.set(iso, 7);
+              next.set(row.email, existing);
+              return next;
+            });
+            toast.success(`${row.name} — PAB restored for ${monthLabelPab}`, {
+              description: `${dayCount} day${dayCount === 1 ? '' : 's'} forgiven.`,
+            });
+          } catch (err) {
+            toast.error('Forgive failed — the month is NOT forgiven', {
+              description: err instanceof Error ? err.message : String(err),
+            });
+          } finally {
+            setPabForgivingEmail(null);
+          }
+        };
+
+        return (
+          <div className="flex min-w-0 flex-col gap-5">
+            <div
+              data-tutorial-target="step6-pab-review"
+              className="flex flex-col gap-1 rounded-2xl border border-indigo-200/70 bg-gradient-to-br from-indigo-50 via-white to-violet-50/40 p-5 shadow-sm dark:border-indigo-900/40 dark:from-indigo-950/30 dark:via-zinc-950 dark:to-violet-950/15"
+            >
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-700 dark:text-indigo-300">
+                <CalendarCheck className="h-3.5 w-3.5" /> PAB · {monthLabelPab}
+              </div>
+              <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
+                Who missed Perfect Attendance this period
+              </h2>
+              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                One or two missed days is usually a shifting schedule rather than absence —
+                open the calendar to see where it went wrong before the month&rsquo;s bonus is
+                lost. Forgiving here restores the whole month and shows on the employee&rsquo;s
+                own dashboard. To forgive a single day instead, use the PAB calendar.
+              </p>
+            </div>
+
+            <Card>
+              <CardContent className="p-4">
+                <PabIneligibleTable
+                  rows={pabIneligibleRows}
+                  monthLabel={monthLabelPab}
+                  onOpenCalendar={setPabCalendarModalEmail}
+                  onForgiveMonth={forgiveMonth}
+                  forgivingEmail={pabForgivingEmail}
+                  readOnly={isReplay}
+                />
+              </CardContent>
+            </Card>
+          </div>
+        );
+      }
+      case 7: {
         // Sourced from the component-scope `validationBreakdowns` (built once,
         // shared with the Continue-button confirm below) rather than recomputed
         // here from `effectiveCalcResults` directly — see that useMemo for why
@@ -17443,10 +17640,10 @@ export default function PayrollWizard({
           </div>
         );
       }
-      case 7:
+      case 8:
         return (
           <div
-            data-tutorial-target="step7-lock-in"
+            data-tutorial-target="step8-lock-in"
             className={cn(
               'relative flex flex-col items-center justify-center py-12 space-y-6 text-center rounded-2xl',
               isDispatching && 'dispatch-running-light',
@@ -17752,7 +17949,7 @@ export default function PayrollWizard({
                       usdToPhpRate,
                     });
                     setReportsTab('salaries');
-                    setCurrentStep(8); // Reports (was 9 before HSL+Additions merged)
+                    setCurrentStep(9); // Reports (9 since the PAB step landed 2026-08-28)
                   } catch (err) {
                     toast.error('Send to Payment Dispatch failed', {
                       description: err instanceof Error ? err.message : String(err),
@@ -17808,7 +18005,7 @@ export default function PayrollWizard({
             )}
           </div>
         );
-      case 8: {
+      case 9: {
         // Replaying a past period: reconstruct the report from that period's recomputed
         // data (hours, additions, monthly sections all follow the selected file) and
         // overlay the dispatched per-employee finals saved in the snapshot so salary
@@ -19225,7 +19422,7 @@ export default function PayrollWizard({
               <span className="text-xs text-zinc-500 font-mono">Step {currentStep} of {steps.length}</span>
               <Button
                 onClick={() => {
-                  if (currentStep === 6 && validationRedFlagCount > 0) {
+                  if (currentStep === 7 && validationRedFlagCount > 0) {
                     const ok = window.confirm(
                       `${validationRedFlagCount} row${validationRedFlagCount !== 1 ? 's' : ''} cannot be paid as calculated. ` +
                       `Continue to dispatch anyway?`,
@@ -20567,9 +20764,19 @@ export default function PayrollWizard({
               });
               const createData = await createRes.json();
               if (!createRes.ok || !createData.id) throw new Error(createData.error ?? 'Failed to create issue');
-              // For days with < 4h raw hours the 4h floor inside disputeForgiven would reject a null
-              // override, so we set a 5h credit to ensure the amber "forgiven" state activates.
-              const overrideHours = rawSeconds < 4 * 3600 ? 5 : null;
+              // A flat 7h SET, matching the step-6 "Forgive month" batch so the two
+              // forgive paths write indistinguishable rows.
+              //
+              // Server-side this is identical to the old `null` / 5h pair —
+              // applyPabAdjustments bumps any forgiven day with ≥4h effective to a
+              // full 7h regardless. What changes is the EMPLOYEE's view:
+              // EmployeeDashboard applies override_hours as a plain SET and skips
+              // null entirely, so null (and 5h) left the day under the 7h bar,
+              // pabViolations kept counting it, and a forgiven person was still told
+              // "No longer Eligible for PAB — violated on <the forgiven days>" while
+              // being paid the bonus. 7 is the value that makes the dashboard agree.
+              const overrideHours = 7;
+              void rawSeconds;
               const approveRes = await fetch(`/api/pab-disputes/${createData.id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },

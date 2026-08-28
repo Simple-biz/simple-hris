@@ -207,7 +207,7 @@ function deriveFlags(
   }
 
   // ── Amber: the number is defensible but its SOURCE disagrees with another store.
-  // Never blocking. Shown here rather than only on Step 7 (Dispatch) because acting on it after
+  // Never blocking. Shown here rather than only on Step 8 (Dispatch) because acting on it after
   // the lock means unlocking the cycle.
 
   // A permanent regression net for the reg+15 corruption fixed 2026-08-04, where the

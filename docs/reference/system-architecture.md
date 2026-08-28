@@ -451,7 +451,7 @@ After a Hubstaff CSV is ingested (upload or live API sync), `finalizeHubstaffIng
 
 `hubstaffDisplayColumns` / `hubstaffDisplayRows` are set exclusively from fetch responses. PAB itself reads `hubstaffColsForPab` / `hubstaffRowsForPab`, which merge every uploaded source file (`pabAllColumns` / `pabAllRows`) and only fall back to the display state when no `source_file`-tracked uploads exist. The `dailyDataMissing` flag fires when weekday columns exist but every value is empty, and renders a warning banner.
 
-PA/PAB lives on **Step 5 (Additions)**. The 9-step wizard order is: 1 Initialize Payroll Data, 2 Initial Calculation, 3 Orphanage, 4 HSL, 5 Additions, 6 Contractors, 7 Validation, 8 Dispatch, 9 Reports.
+PA/PAB lives on **Step 4 (Additions)** — its pill and toggles — and on **Step 6 (PAB)**, the review list of everyone ineligible for the period (`payroll-wizard-pab-step.md`). The 9-step wizard order is: 1 Initialize Payroll Data, 2 Initial Calculation, 3 Orphanage, 4 Additions (department table + HSL tab), 5 Contractors, 6 PAB, 7 Validation, 8 Dispatch, 9 Reports. HSL stopped being its own step on 2026-08-28 (merged into 4); the PAB review took the freed slot at 6 the same day.
 
 **10. NextAuth (Google SSO) + role-based access control**
 Authentication is Google SSO restricted to the `simple.biz` Workspace, via NextAuth with JWT sessions (`src/lib/auth/auth-options.ts`).

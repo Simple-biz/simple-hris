@@ -213,7 +213,7 @@ export default function TutorialGuide({
         >
           <div className="flex items-start justify-between gap-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">
-              Step {activeDef.stepId} of 9 · {activeDef.kind === 'review' ? 'Review' : 'Action'}
+              Step {activeDef.stepId} of {TUTORIAL_STEPS.length} · {activeDef.kind === 'review' ? 'Review' : 'Action'}
             </p>
             <button
               type="button"
@@ -283,8 +283,8 @@ export default function TutorialGuide({
               </button>
               <button
                 type="button"
-                disabled={currentStep >= 9}
-                onClick={() => onGoToStep(Math.min(9, currentStep + 1))}
+                disabled={currentStep >= TUTORIAL_STEPS.length}
+                onClick={() => onGoToStep(Math.min(TUTORIAL_STEPS.length, currentStep + 1))}
                 className="rounded-md bg-indigo-600 p-1 text-white transition hover:bg-indigo-700 disabled:opacity-35"
                 title={activeStatus?.status === 'done' ? 'Next step' : 'Skip ahead — nothing is ever required'}
               >

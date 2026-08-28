@@ -86,7 +86,7 @@ What is **already** integrated:
 - **Step 1 — Upload:** Hubstaff CSVs feed merged rows/columns used for PAB.
 - **Step 4 — Additions:** Common bonuses include **Perfect Attendance** and **Technology**; PAB eligibility is computed from merged data and reflected in toggles and per-day UI.
 - **Step 4's HSL tab — HSL Payroll:** PAB (tri-state pill, ₱5,000 when eligible) and Tech Bonus (₱1,850) are shown per HSL employee and **included in Total Pay**. Same eligibility sets (`pabStatusByEmail`, `techBonusEligible`) as regular employees; PAB uses Mon–Sun week logic for HSL.
-- **Step 7 — Dispatch:** Bonuses are **recomposed** so weekly paystubs get **gated** PAB/Tech amounts; payload includes `pab_evaluation` range and pay lines.
+- **Step 8 — Dispatch:** Bonuses are **recomposed** so weekly paystubs get **gated** PAB/Tech amounts; payload includes `pab_evaluation` range and pay lines.
 
 Recommended **next steps** (if you want parity with a spreadsheet or clearer ops):
 

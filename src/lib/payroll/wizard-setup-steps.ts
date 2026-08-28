@@ -6,9 +6,9 @@
  * (step 2), orphanage hours entered or confirmed-none (step 3), KPI bonuses
  * ready (step 4, including its HSL tab), notes adjustments pulled (step 4),
  * contractor invoices reviewed (step 5), and finally the dispatch lock itself
- * (step 7). Every number below shifted down by one on 2026-08-28, when HSL and
- * Additions merged into a single step 4 — these strings are the operator's map
- * to the rail, so they move with it.
+ * (step 8). These strings are the operator's map to the rail, so they move with
+ * it — twice on 2026-08-28 alone: down one when HSL and Additions merged into a
+ * single step 4, then back up one for Dispatch when the PAB review landed at 6.
  *
  * This module is PURE (no I/O, no server-only) so node:test can exercise every
  * status branch; the reads live in payroll-readiness.ts `buildWizardSetup`.
@@ -29,7 +29,7 @@ export type WizardSetupStepKey =
 
 export interface WizardSetupStep {
   key: WizardSetupStepKey;
-  /** Wizard step number(s) the fix lives on — "1", "2", "3", "4–5", "5", "6", "8". */
+  /** Wizard step number(s) the fix lives on — "1", "2", "3", "4", "5", "8". */
   stepNo: string;
   label: string;
   /** done = green · attention = amber (actionable) · blocked = rose (CSV missing
@@ -328,18 +328,18 @@ export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
 
   // 8 · Sent to dispatch — the end-state; never a warning while unfinished.
   if (degraded('dispatch')) {
-    steps.push({ key: 'dispatch', stepNo: '7', label: 'Sent to dispatch', status: 'pending', detail: "Couldn't read the cycle lock" });
+    steps.push({ key: 'dispatch', stepNo: '8', label: 'Sent to dispatch', status: 'pending', detail: "Couldn't read the cycle lock" });
   } else if (input.dispatchLock.locked) {
     const stamp = manilaStampLabel(input.dispatchLock.lockedAt);
     steps.push({
       key: 'dispatch',
-      stepNo: '7',
+      stepNo: '8',
       label: 'Sent to dispatch',
       status: 'done',
       detail: `Locked${input.dispatchLock.lockedBy ? ` by ${input.dispatchLock.lockedBy}` : ''}${stamp ? ` · ${stamp}` : ''}`,
     });
   } else {
-    steps.push({ key: 'dispatch', stepNo: '7', label: 'Sent to dispatch', status: 'pending', detail: 'Not sent yet' });
+    steps.push({ key: 'dispatch', stepNo: '8', label: 'Sent to dispatch', status: 'pending', detail: 'Not sent yet' });
   }
 
   return {

@@ -68,12 +68,13 @@ Dispatch. The shipped rail is now:
 | 3 | Orphanage | 3 |
 | 4 | **Additions** (department table + HSL tab) | 4 (HSL) + 5 (Additions) |
 | 5 | Contractors | 6 |
-| 6 | Validation | 7 |
-| 7 | Dispatch | 8 |
-| 8 | Reports | 9 |
+| 6 | **PAB** (review + Forgive month) | — new 2026-08-28 |
+| 7 | Validation | 7 |
+| 8 | Dispatch | 8 |
+| 9 | Reports | 9 |
 
 **The two real gates moved with their numbers** and are unchanged in substance: the
-red-flag confirm on Continue is now step **6**, and the per-cycle FX-zero hard block is
+red-flag confirm on Continue is now step **7**, and the per-cycle FX-zero hard block is
 now step **7**. Nothing was loosened to make the renumbering fit — every step reference
 in the code, the readiness checklist's `stepNo` strings, the tutorial guide and these
 docs was corrected in the same commit.
@@ -125,7 +126,7 @@ system can be shown wrong about**, and it is not evidence of a defect on either 
   the previous cycle, the NPD sheet's `AW` cell, or any market feed — and **no alarm on a
   week-over-week move** (this one was +1.00%). Every earlier week matched because a human
   copied the sheet, not because anything enforced it.
-- The only gate is the **Dispatch-step zero gate** (step 7 since the 2026-08-28 merge;
+- The only gate is the **Dispatch-step zero gate** (step 8 since the PAB step landed 2026-08-28;
   memory `per-cycle-fx-zero-placeholder`):
   zero is a real state that hard-blocks publish. A *wrong but non-zero* rate is
   indistinguishable from a right one and publishes normally.

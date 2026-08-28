@@ -40,9 +40,10 @@ export type TutorialTargetKey =
   | 'step4-pab-month'
   | 'step4-tech-week'
   | 'step5-pending-invoices'
-  | 'step6-validation-table'
-  | 'step7-lock-in'
-  | 'step8-audit-trail';
+  | 'step6-pab-review'
+  | 'step7-validation-table'
+  | 'step8-lock-in'
+  | 'step9-audit-trail';
 
 /**
  * Step 4's spotlight takes turns across the HSL table's money columns rather
@@ -59,7 +60,7 @@ export const HSL_COLUMN_ROTATION: { target: TutorialTargetKey; label: string }[]
 ];
 
 export type TutorialStepDef = {
-  /** Wizard step id (1–8), matching the `steps` array in PayrollWizard.tsx. */
+  /** Wizard step id (1–9), matching the `steps` array in PayrollWizard.tsx. */
   stepId: number;
   title: string;
   /** What the operator should do (or look at) on this step. */
@@ -113,27 +114,35 @@ export const TUTORIAL_STEPS: TutorialStepDef[] = [
   },
   {
     stepId: 6,
+    title: 'PAB',
+    hint:
+      'Check who lost Perfect Attendance this period. One or two missed days is usually a shifting schedule — open the calendar before the month’s bonus is written off.',
+    kind: 'review',
+    targets: ['step6-pab-review'],
+  },
+  {
+    stepId: 7,
     title: 'Validation',
     hint:
       'Go through the validation columns one by one and decide whether anyone needs to be excluded from this pay run.',
     kind: 'review',
-    targets: ['step6-validation-table'],
+    targets: ['step7-validation-table'],
   },
   {
-    stepId: 7,
+    stepId: 8,
     title: 'Dispatch',
     hint:
       'Once every rate is right, lock in the values and send the cycle to Payment Dispatch.',
     kind: 'action',
-    targets: ['step7-lock-in'],
+    targets: ['step8-lock-in'],
   },
   {
-    stepId: 8,
+    stepId: 9,
     title: 'Reports & audit trail',
     hint:
       'Read the Processing Narrative for this week — every start/stop and every change since processing began — and the full per-cycle audit trail below it.',
     kind: 'review',
-    targets: ['step8-audit-trail'],
+    targets: ['step9-audit-trail'],
   },
 ];
 
@@ -195,6 +204,10 @@ export type TutorialSignals = {
   /** The month the System Bonus modal is editing, e.g. "August 2026". */
   pabActiveMonthLabel: string | null;
   pendingContractorCount: number;
+  /** Step 6: how many people are ineligible for the active PAB period. */
+  pabIneligibleCount: number;
+  /** Of those, how many missed only 1–2 days — the cohort worth a look. */
+  pabReviewCount: number;
   validationRedFlagCount: number;
   excludedCount: number;
   payableCount: number;
@@ -402,7 +415,21 @@ export function deriveStepStatus(
       }
       return { status: 'done', note: 'No pending contractor invoices for this period.' };
     }
+    // PAB review. The count is advisory like every other badge here — the guide
+    // never gates, and nobody is required to forgive anyone.
     case 6: {
+      if (s.pabIneligibleCount > 0) {
+        const review = s.pabReviewCount > 0 ? ` ${s.pabReviewCount} missed only 1–2 days.` : '';
+        return {
+          status: 'attention',
+          note: `${s.pabIneligibleCount} person(s) ineligible for this PAB period.${review}`,
+        };
+      }
+      return visited
+        ? { status: 'done', note: 'Nobody lost Perfect Attendance this period.' }
+        : { status: 'pending', note: 'Nobody ineligible so far.' };
+    }
+    case 7: {
       if (s.validationRedFlagCount > 0) {
         return {
           status: 'attention',
@@ -414,14 +441,14 @@ export function deriveStepStatus(
         ? { status: 'done', note: `No red flags.${excl}` }
         : { status: 'pending', note: `No red flags so far.${excl}` };
     }
-    case 7: {
+    case 8: {
       if (s.dispatched) return { status: 'done', note: 'Cycle dispatched.' };
       return {
         status: 'pending',
         note: `${s.payableCount} payable${s.excludedCount > 0 ? ` · ${s.excludedCount} excluded` : ''}. Lock in when every rate is final.`,
       };
     }
-    case 8:
+    case 9:
       return visited
         ? { status: 'done', note: null }
         : { status: 'pending', note: null };
@@ -463,7 +490,7 @@ export function parseTutorialState(raw: string | null): TutorialPersistedState {
       dismissed: v.dismissed === true,
       collapsed: v.collapsed === true,
       visitedSteps: Array.isArray(v.visitedSteps)
-        ? v.visitedSteps.filter((n): n is number => typeof n === 'number' && n >= 1 && n <= 8)
+        ? v.visitedSteps.filter((n): n is number => typeof n === 'number' && n >= 1 && n <= 9)
         : [],
     };
   } catch {

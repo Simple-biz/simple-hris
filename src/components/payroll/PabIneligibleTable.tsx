@@ -1,0 +1,259 @@
+'use client';
+
+import { useMemo, useState } from 'react';
+import { AlertTriangle, CalendarDays, Check, Loader2, ShieldCheck, Search } from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
+import { pabSeverityBand, type PabFailedDay, type PabSeverityBand } from '@/lib/payroll/pab-ineligibility';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+
+/**
+ * The Payroll Wizard's step-6 PAB review table.
+ *
+ * ## The one rule this component exists to obey
+ *
+ * It renders THE SAME rows the step computed — it never re-filters, re-sorts by a
+ * different predicate, or re-derives a verdict. That is the contract
+ * `ValidationFullScreen` states for the step-7 validation mirror, and it is what
+ * keeps this from becoming yet another independent PAB implementation in a codebase
+ * that already has eight of them. The search box filters what is DISPLAYED and the
+ * count line says so; nothing here decides who is eligible.
+ *
+ * ## Severity
+ *
+ * `severity` is how many days actually cost the person the bonus — for HSL that
+ * already excludes weekends, overnight-split shifts and weeks that reconciled, so a
+ * low number is meaningful rather than an artefact of a shifting schedule. One or
+ * two is the band worth a human look, which is the entire reason the column exists.
+ * It is a prompt, never a gate.
+ *
+ * Amber is used ONLY for the review band. It is the wizard's warning colour and must
+ * not be borrowed for an OK state (see the step-2 header cards ruling).
+ */
+
+export type PabIneligibleRow = {
+  email: string;
+  name: string;
+  /** RAW department key. Formatted at the render site, never before — an
+   *  `hsl:*` slug must not reach a human (docs/features/hsl-subdepartments.md). */
+  departmentKey: string | null;
+  isHsl: boolean;
+  severity: number;
+  failedDays: PabFailedDay[];
+  /** Already zeroed for the month by an accountant — a forgive here would be undone. */
+  excluded: boolean;
+};
+
+const BAND_STYLES: Record<PabSeverityBand, { chip: string; label: string }> = {
+  eligible: {
+    chip: 'border-emerald-300/70 bg-emerald-50 text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200',
+    label: 'Eligible',
+  },
+  review: {
+    chip: 'border-amber-300/70 bg-amber-50 text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200',
+    label: 'Review',
+  },
+  high: {
+    chip: 'border-rose-300/70 bg-rose-50 text-rose-800 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-200',
+    label: 'Repeated',
+  },
+};
+
+function formatShortfall(sec: number): string {
+  if (sec <= 0) return '0m';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
+}
+
+function formatDay(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return iso;
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+export default function PabIneligibleTable({
+  rows,
+  monthLabel,
+  onOpenCalendar,
+  onForgiveMonth,
+  forgivingEmail,
+  readOnly,
+}: {
+  /** The step's array, verbatim. */
+  rows: PabIneligibleRow[];
+  monthLabel: string;
+  onOpenCalendar: (email: string) => void;
+  onForgiveMonth: (row: PabIneligibleRow) => void;
+  /** Email currently mid-forgive, or null. */
+  forgivingEmail: string | null;
+  /** Replay of a past week — the figures are history, so no writes. */
+  readOnly: boolean;
+}) {
+  const [query, setQuery] = useState('');
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (r) =>
+        r.name.toLowerCase().includes(q) ||
+        r.email.toLowerCase().includes(q) ||
+        formatDeptLabel(r.departmentKey).toLowerCase().includes(q),
+    );
+  }, [rows, query]);
+
+  const reviewCount = rows.filter((r) => pabSeverityBand(r.severity) === 'review').length;
+
+  if (rows.length === 0) {
+    return (
+      <div className="flex flex-col items-center gap-2 rounded-2xl border border-emerald-200/70 bg-emerald-50/50 px-6 py-10 text-center dark:border-emerald-900/40 dark:bg-emerald-950/20">
+        <ShieldCheck className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
+        <p className="text-sm font-semibold text-zinc-900 dark:text-white">
+          Nobody is ineligible for {monthLabel}
+        </p>
+        <p className="text-xs text-zinc-600 dark:text-zinc-400">
+          Every evaluated person cleared the attendance rule for this PAB period.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-w-0 flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="rounded-full border border-rose-300/70 bg-rose-50 px-2.5 py-0.5 font-medium text-rose-800 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-200">
+            {rows.length} ineligible
+          </span>
+          {reviewCount > 0 && (
+            <span className="rounded-full border border-amber-300/70 bg-amber-50 px-2.5 py-0.5 font-medium text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
+              {reviewCount} worth a look (1–2 days)
+            </span>
+          )}
+        </div>
+        <div className="relative w-full max-w-xs">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search name, email or department"
+            className="h-8 pl-8 text-xs"
+          />
+        </div>
+      </div>
+
+      <div className="min-w-0 overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+        <table className="w-full min-w-[880px] text-sm">
+          <thead className="bg-zinc-50 text-[11px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
+            <tr>
+              <th className="px-4 py-2.5 text-left font-semibold">Employee</th>
+              <th className="px-3 py-2.5 text-left font-semibold">Department</th>
+              <th className="px-3 py-2.5 text-center font-semibold">Days missed</th>
+              <th className="px-3 py-2.5 text-left font-semibold">Status</th>
+              <th className="px-3 py-2.5 text-left font-semibold">Which days</th>
+              <th className="px-3 py-2.5 text-right font-semibold">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/70">
+            {visible.map((row) => {
+              const band = pabSeverityBand(row.severity);
+              const style = BAND_STYLES[band];
+              const busy = forgivingEmail === row.email;
+              return (
+                <tr key={row.email} className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40">
+                  <td className="px-4 py-2.5">
+                    <div className="font-medium text-zinc-900 dark:text-zinc-100">{row.name}</div>
+                    <div className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{row.email}</div>
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
+                    {formatDeptLabel(row.departmentKey) || '—'}
+                    {row.isHsl && (
+                      <span className="ml-1.5 rounded border border-violet-300/70 bg-violet-50 px-1 py-px text-[10px] font-semibold text-violet-700 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-300">
+                        HSL
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2.5 text-center">
+                    <span className="font-mono text-base font-bold text-rose-700 dark:text-rose-300">
+                      {row.severity}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-medium', style.chip)}>
+                      {style.label}
+                    </span>
+                    {row.excluded && (
+                      <span className="ml-1.5 rounded-full border border-zinc-300 bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                        Excluded
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <div className="flex flex-wrap gap-1">
+                      {row.failedDays.slice(0, 4).map((d) => (
+                        <span
+                          key={d.iso}
+                          title={`${formatShortfall(d.shortfallSec)} short of 7h`}
+                          className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-px font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
+                        >
+                          {formatDay(d.iso)}
+                        </span>
+                      ))}
+                      {row.failedDays.length > 4 && (
+                        <span className="px-1 text-[10px] text-zinc-400">
+                          +{row.failedDays.length - 4} more
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 gap-1 px-2 text-[11px]"
+                        onClick={() => onOpenCalendar(row.email)}
+                      >
+                        <CalendarDays className="h-3 w-3" /> PAB Calendar
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-7 gap-1 bg-emerald-600 px-2 text-[11px] text-white hover:bg-emerald-700 disabled:opacity-40"
+                        disabled={readOnly || busy || row.excluded}
+                        title={
+                          readOnly
+                            ? 'Replaying a past week — forgiveness is disabled'
+                            : row.excluded
+                              ? 'This person is excluded from PAB for the month; lift the exclusion first'
+                              : `Forgive all ${row.severity} day${row.severity === 1 ? '' : 's'} for ${monthLabel}`
+                        }
+                        onClick={() => onForgiveMonth(row)}
+                      >
+                        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                        Forgive month
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {visible.length !== rows.length && (
+        <p className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+          <AlertTriangle className="h-3 w-3" />
+          Showing {visible.length} of {rows.length} — the search filters this view only.
+        </p>
+      )}
+    </div>
+  );
+}

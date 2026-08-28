@@ -514,7 +514,7 @@ Toggle-based (no metric input):
 - Case Resolution Bonus: ₱3,000
 - Compliance & Accuracy Bonus: ₱2,500
 
-**Step 5 — HSL Payroll** (dedicated wizard step, separate calculation path):
+**Step 4 — Additions, HSL tab** (merged 2026-08-28; separate calculation path):
 
 HSL employees have their own payroll step that shows Initial Pay + KPI Bonus (from manager submissions via the HSL Bonus Calculator) + **PAB** + **Tech Bonus**, with an override column and a Total Pay column.
 

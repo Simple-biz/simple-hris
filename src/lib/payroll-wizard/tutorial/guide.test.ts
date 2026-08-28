@@ -13,7 +13,7 @@ import {
 
 // [WIZARD-TUTORIAL] The guide is ADVISORY by contract: no derivation may gate
 // anything — these tests pin the shape (statuses + notes), and pin that every
-// wizard step 1–8 has exactly one guide entry in shipped step order.
+// wizard step 1–9 has exactly one guide entry in shipped step order.
 
 const BASE: TutorialSignals = {
   todayIso: '2026-08-17',
@@ -33,6 +33,8 @@ const BASE: TutorialSignals = {
   pabSetForActiveMonth: false,
   pabActiveMonthLabel: 'August 2026',
   pendingContractorCount: 0,
+  pabIneligibleCount: 0,
+  pabReviewCount: 0,
   validationRedFlagCount: 0,
   excludedCount: 0,
   payableCount: 120,
@@ -40,12 +42,13 @@ const BASE: TutorialSignals = {
   visitedSteps: [],
 };
 
-test('guide covers wizard steps 1–8 exactly once, in shipped order', () => {
-  // Eight since HSL and Additions merged into step 4 (2026-08-28); the ids must
-  // stay contiguous — the wizard's progress bar divides by steps.length.
+test('guide covers wizard steps 1–9 exactly once, in shipped order', () => {
+  // Nine since the PAB review landed after Contractors (2026-08-28). The ids must
+  // stay contiguous — the wizard's progress bar divides by steps.length, so a gap
+  // reads past 100% and marks Reports complete while standing on Dispatch.
   assert.deepEqual(
     TUTORIAL_STEPS.map((s) => s.stepId),
-    [1, 2, 3, 4, 5, 6, 7, 8],
+    [1, 2, 3, 4, 5, 6, 7, 8, 9],
   );
 });
 
@@ -159,6 +162,17 @@ test('step 4 rotation skips columns the cycle does not render', () => {
   assert.equal(activeHslColumnLabel(noBonusCols, 0), 'MESA');
 });
 
+test('step 6 flags an ineligible cohort but never gates', () => {
+  // Advisory by contract: the worst this may do is turn a badge amber.
+  assert.equal(deriveStepStatus(6, BASE).status, 'pending');
+  const some = deriveStepStatus(6, { ...BASE, pabIneligibleCount: 4, pabReviewCount: 2 });
+  assert.equal(some.status, 'attention');
+  assert.match(some.note ?? '', /4 person\(s\) ineligible/);
+  assert.match(some.note ?? '', /2 missed only 1–2 days/);
+  // Visited with nobody ineligible reads done, not attention.
+  assert.equal(deriveStepStatus(6, { ...BASE, visitedSteps: [6] }).status, 'done');
+});
+
 test('step 4 follows the operator into the System Bonus modal', () => {
   // Closed → ring the trigger.
   assert.deepEqual(resolveStepTargets(4, BASE), ['step4-system-bonus']);
@@ -196,17 +210,17 @@ test('step 5: pending invoices demand attention, none is done', () => {
   assert.equal(deriveStepStatus(5, BASE).status, 'done');
 });
 
-test('step 6: red flags demand attention and count appears in the note', () => {
-  const flagged = deriveStepStatus(6, { ...BASE, validationRedFlagCount: 2 });
+test('step 7: red flags demand attention and count appears in the note', () => {
+  const flagged = deriveStepStatus(7, { ...BASE, validationRedFlagCount: 2 });
   assert.equal(flagged.status, 'attention');
   assert.match(flagged.note ?? '', /2 validation flag/);
-  assert.equal(deriveStepStatus(6, { ...BASE, visitedSteps: [6] }).status, 'done');
+  assert.equal(deriveStepStatus(7, { ...BASE, visitedSteps: [7] }).status, 'done');
 });
 
-test('step 7: never attention — advisory pending until dispatched', () => {
-  const before = deriveStepStatus(7, { ...BASE, validationRedFlagCount: 5 });
+test('step 8: never attention — advisory pending until dispatched', () => {
+  const before = deriveStepStatus(8, { ...BASE, validationRedFlagCount: 5 });
   assert.equal(before.status, 'pending');
-  assert.equal(deriveStepStatus(7, { ...BASE, dispatched: true }).status, 'done');
+  assert.equal(deriveStepStatus(8, { ...BASE, dispatched: true }).status, 'done');
 });
 
 test('step 4 only rings what is mounted: HSL columns need the HSL tab', () => {

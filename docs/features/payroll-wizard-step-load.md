@@ -4,7 +4,7 @@
 
 Accounting kept reading a half-loaded wizard as a *wrong* wizard — glancing at the Additions
 step before the PAB merge landed and concluding the numbers were broken. Every step from
-**Initialize Payroll Data (1)** through **Dispatch (7)** now carries a determinate progress
+**Initialize Payroll Data (1)** through **Dispatch (8)** now carries a determinate progress
 line along its bottom edge while **its own** data is in flight, completing in green when that
 data lands.
 
@@ -34,7 +34,7 @@ and 6/7 last, because the all-weeks PAB merge fires one request per archived upl
 reliably the straggler — and since the merge, step 4 waits on that merge **and** the HSL
 amounts.
 
-**Reports (step 8) is outside the range** — it is a post-dispatch summary, not a figure anyone
+**Reports (step 9) is outside the range** — it is a post-dispatch summary, not a figure anyone
 judges mid-load.
 
 ---

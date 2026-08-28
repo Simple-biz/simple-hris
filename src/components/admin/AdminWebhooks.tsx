@@ -47,7 +47,7 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
   {
     slug: 'paystub_dispatch',
     label: 'Paystub Dispatch (n8n)',
-    description: 'Used by Payroll Wizard Step 7 (Dispatch) to dispatch paystubs.',
+    description: 'Used by Payroll Wizard Step 8 (Dispatch) to dispatch paystubs.',
   },
   {
     slug: 'create_workspace_account',
