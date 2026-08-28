@@ -999,6 +999,109 @@ Manager Scheduling tab (`d81ffecc` + `23c45325` + `850fdf22`, one row by file ov
 gap, left out because the ask was singular and deictic. Recorded here so the next pass does not have
 to rediscover them.
 
+## Pass 18 — 2026-08-28 · the undeclared fortnight · 10 rows, 45 SP, VERIFY PASS
+
+Kane: *"Update our Monday board with all our withheld and Undeclared SP right now!"* — then, mid-pass,
+the instruction that changed the result: *"check previous claude sessions it has data also make sure
+git commits."*
+
+### Reading the transcripts alongside the commits found a row the commits alone could not
+
+The last three passes each clustered on file overlap and each caught a lying commit message. This one
+caught a commit whose message was not merely wrong but **actively empty of its own contents**:
+`cd681cf8` is titled **"Offboarded"** and contains **no offboarding code at all**. It carries the MESA
+rebuild *and* — swept up from a different session hours earlier — the View Paystub accounting rail.
+
+File overlap alone would have flagged the mixture; the **session transcript for `1eb1435a` named the
+work**, which is what made the split confident rather than a guess. Two rows, 8 SP and 2 SP, out of one
+commit. A message-clustered pass files one row there and silently loses 2 SP.
+
+**Carry this:** the commit stream is the evidence, but `~/.claude/projects/<project>/*.jsonl` is the
+*intent*. When a commit's file list is wider than its message, the transcript for that day says which
+session wrote what. It is the only source that distinguishes "one feature, badly described" from "two
+features, one commit".
+
+### Ten rows, clustered on file overlap
+
+| Row | Epic | SP | Sprint | Completed | Evidence |
+|---|---|---|---|---|---|
+| Manager Scheduling tab — UI first, no backend | HRIS-10 | 5 | S27 | 2026-08-26 | `d81ffecc`+`23c45325`+`850fdf22` |
+| View Paystub accounting rail — log right, MV vouch joins it | HRIS-03a | 2 | S27 | 2026-08-28 | `cd681cf8` (half) |
+| Second approver = the request's own team, derived seat | HRIS-04 | 5 | S27 | 2026-08-27 | `a9901284` |
+| Every PAB calendar reads Sun–Sat, week model required | HRIS-02b | 5 | S27 | 2026-08-27 | `a73948a1` |
+| Kolan's plated card takes the dark lockup | HRIS-03a | 2 | S27 | 2026-08-28 | `c229a2b8` |
+| Offboarded is ONE tab, origin stored, backfill insert-only | HRIS-01a | 5 | S27 | 2026-08-28 | `a366c067` |
+| Wizard: HSL + Additions one step, rail renumbered 1–8 | HRIS-02a | 5 | S27 | 2026-08-28 | `9a42f5f2`…`4b8f7177` |
+| A signature can be TYPED, and the pointer lands on the ink | HRIS-18 | 5 | S27 | 2026-08-28 | `3fb27b1d` |
+| MESA rebuilt from the CSV + disbursement guard | HRIS-07 | 8 | S27 | 2026-08-28 | `cd681cf8` (half) |
+| `blueprint` + `hardening` — the two skills CLAUDE.md routes through | HRIS-15 | 3 | S26 | 2026-08-10 | `5120398d`…`606cd61e` |
+
+Two clusters merge four shas into one row each, because **a row describes the current rule, not the
+iterations that reached it**: the four wizard commits are all `PayrollWizard.tsx` plus wizard docs, and
+the three Aug-10 skill commits all touch `CLAUDE.md` and `INDEX.md` — blueprint and hardening are a
+single governing rule ("new → blueprint, existing → hardening") that only makes sense whole.
+
+### The Done gate was asked, not assumed — and the difference from 08-26 is measurable
+
+Asked which of the nine product rows he had looked at in production, Kane answered **"All nine — I've
+tested everything."** Recorded on every row as the basis.
+
+That blanket was applied to **all nine here**, where on 2026-08-26 the same blanket was deliberately
+**not** applied to the Tickets row. The distinction is not judgement, it is measurement: **every
+migration these rows depend on was probed APPLIED first**, with a passing negative control.
+
+- `2026-08-28_offboarded_sheet_origin.sql` — `offboarded_sheet.origin` exists, **492 `hris` / 3,519
+  `google_sheet`, 4,011 rows**, which is the pre-import 3,846 plus the 165 the backfill inserted. Both
+  the migration *and* the backfill have run.
+- `2026-08-27_mesa_receipt_shortfall_and_payouts.sql` — `amount_php` and `mesa_payroll_obligations`
+  both present, `mesa_ledger` **9,883**, `mesa_accounts` **280**, matching the independent verify
+  script exactly.
+
+Probed **without `head: true`**, per the trap that made the old auditor report missing tables as
+APPLIED. The negative control (a table and a column that cannot exist) reported both missing before
+any real probe was believed.
+
+### The withheld side: the ledger owes nothing, and one row is still correctly held
+
+`pending-sp.json` reads **9 entries / 0 unflushed** — the 08-27 flush cleared all 33 SP. Nothing is
+withheld there, and this pass queued nothing new (the apply finished without a budget death).
+
+**The one genuinely withheld row stays withheld.** Tickets board notifications, 5 SP, Pending Deploy.
+Re-measured today against the live `webhooks.config`: **22 slugs configured, `ticket_created` /
+`ticket_assigned` / `ticket_done` all present and active, `ticket_replied` and `ticket_moved`
+ABSENT.** The email leg still no-ops. A delay cannot close that — only the n8n import can, and an
+assertion cannot import a workflow. Note the direction of the risk: it is the fail-closed side.
+
+### Applied and verified
+
+Applied on `74130e0cdeed` (source verified `846d3912d95b`) via the **full path** — 10 rows needing
+epic relations, and `--only-new` writes none. 10 created, 37 epics + 210 tasks patched, 10 corrections.
+
+Verified in two stages, cheapest first, per the budget rule: **`verify-one.mts` on all ten ids**
+(10 calls) confirmed status, both SP columns, Completed Date, sprint label, group and epic relation on
+every row — *then* the full `verify.mts`. **VERIFY PASS**: 220/220 name parity, 0 orphans, 0 over the
+8-SP cap, 0 blank Estimated SP, 0 phantom Actual SP, 0 Done rows without a date, relation 220 of 220.
+
+The plan edit went in at **157 insertions, 0 deletions** — the numstat guard from pass 17 — and
+`review.mts` independently confirmed *orphans: 0*.
+
+**The rollup did not move (Total 1569 / Completed 874) and that is correct**, not a miss: Epic SP is an
+independent rollup, not a sum of children. The 45 SP lands as Actual SP on the rows and in the
+sprints' velocity — **42 SP in Sprint 27, 3 SP in Sprint 26**.
+
+### Still undeclared after this pass — deliberately
+
+Two bodies of work are **in flight, not shipped**, and neither gets a row:
+
+- **Payroll Wizard step "PAB"** (session `55e68129`) — a blueprint brief exists, revised twice against
+  adversarial passes, but **no code**. A brief is not a commit.
+- **Scheduling on the Admin dashboard** (session `fef33e68`) — went through blueprint into a discovery
+  conversation with Carla about rest-day rotation and produced a *correction* (HSL overnight PAB is
+  already handled, and better than the ticket asked), not a build.
+
+Also unlogged, and not a board matter: **no session-log audit exists for 08-27 or 08-28**. The last is
+`audit-2026-08-26-session-log.md`. Two days of sessions are undocumented.
+
 ## Cross-links
 
 `docs/features/INDEX.md` · memory `monday-hris-board-sync` · pass evidence

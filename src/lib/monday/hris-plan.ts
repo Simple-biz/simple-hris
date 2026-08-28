@@ -1112,4 +1112,161 @@ export const PLAN_TASKS: PlanTask[] = [
   // write honest. PROVEN IN PRODUCTION 2026-08-27, hours before this row was written: it flushed
   // 9 owed rows / 33 SP under hash 7378e56e5902, 0 refused, and all 9 were confirmed by re-read.
   { epic: 'HRIS-15', name: 'A dead API budget owes the SP instead of losing it — the pending-SP ledger and its seven refusals', type: 'Chore', sp: 3, done: true, sprint: 'S27', priority: 'Medium' },
+
+  // ── PASS 18 · 2026-08-28 — the undeclared fortnight, 10 rows / 45 SP ────────────────────────────
+  // Kane: "Update our Monday board with all our withheld and Undeclared SP right now!", then, mid-pass,
+  // "check previous claude sessions it has data also make sure git commits". That second instruction is
+  // what makes this pass different from the last three: the SESSION TRANSCRIPTS were read alongside the
+  // commits, and it is the only reason rows 2 and 9 below are two rows instead of one.
+  //
+  // WITHHELD: pending-sp.json reads 9 entries / 0 unflushed — the 2026-08-27 flush cleared all 33 SP it
+  // owed, so nothing is withheld in the ledger. The one genuinely withheld row is the 5-SP Tickets
+  // notification row, still Pending Deploy on a blocker RE-MEASURED TODAY against the live
+  // webhooks.config: 22 slugs configured, ticket_created / ticket_assigned / ticket_done all present and
+  // active, ticket_replied and ticket_moved ABSENT. The email leg still no-ops, so it stays held.
+  //
+  // DONE ON A RECORDED CONFIRMATION. Asked in this pass's review which of the nine product rows he had
+  // looked at in production, Kane answered "All nine — I've tested everything". That answer is the
+  // evidence and it is written here rather than assumed. Applying it across all nine is safe in a way
+  // the same blanket was NOT on 2026-08-26 — when the Tickets row was held back from it — because every
+  // migration these rows depend on was PROBED APPLIED first, with a passing negative control. No row
+  // here closes over an open external step that an assertion could not have closed.
+
+  // 5 SP. d81ffecc + 23c45325 + 850fdf22, one row on file overlap: all three touch SchedulingPanel and
+  // the two lib modules. 11 files, 1,880 insertions, 24 tests across two pure modules. UI ONLY, on
+  // Kane's explicit instruction — no route, no table, no migration; edits live in React state and a
+  // permanent banner says so. Peer of the 5-SP "Orientation gets its own tab on My Team": same class of
+  // surface, more pure logic, no real data behind it. Not 8 — nothing here feeds pay, and wiring a
+  // schedule into a pay rule is deliberately left undone. Not 3 — both modules exist to close named
+  // failure classes: the unit is a PERIOD and never a field on a person, isScheduledDay returns
+  // boolean|null because "no schedule on file" is not "scheduled to rest", and parseShiftWindow REFUSES
+  // a half-qualified time rather than inferring one.
+  { epic: 'HRIS-10', name: 'Manager Scheduling tab — schedule periods with a rest-day model, UI first and no backend', type: 'Feature', sp: 5, done: true, sprint: 'S27', priority: 'Medium' },
+  // 2 SP. Lives inside cd681cf8, whose commit message is the single word "Offboarded" and which contains
+  // NO offboarding code at all — it carries the MESA rebuild below AND this, written in a different
+  // session. Split on file overlap: this row owns PayStubModal.tsx, PayrollDispatch.tsx and
+  // payroll-wizard-manual-validation.md; MESA owns src/lib/mesa/* and the migration. ~177 real lines.
+  // The dispatch log leaves the bottom of the statement for a right-hand accounting rail, the statement
+  // centres, and the manual-validation vouch joins that rail — keyed on the WORK email (QueueRow.id)
+  // with NO fallback to the payout address, because personal addresses are shared and recycled in the
+  // master list and an alias match would surface a vouch belonging to a different person. Display-only,
+  // omitted on every employee-facing mount, reading the one useManualValidations hook. Peer of the 2-SP
+  // Kolan monogram row: one surface, no money path, a single correctness rule worth pinning.
+  { epic: 'HRIS-03a', name: 'View Paystub gets an accounting rail — the dispatch log moves right and the manual-validation vouch joins it', type: 'Feature', sp: 2, done: true, sprint: 'S27', priority: 'Medium' },
+  // 5 SP. a9901284, 13 files, 1,006 insertions. NOT a re-assertion of the 5-SP "Time adjustments need
+  // two sign-offs" row from 08-19 — this is Kane REOPENING both of that build's rulings on 08-27. The
+  // approver pool is now the department of whoever FILED the request, not the union of the manager's
+  // departments, and resolveAdjustmentDepartment feeds both the pool and the manager's authorization
+  // check, so the picker can never offer someone the guard would then refuse. Naming an approver grants
+  // a seat that is DERIVED, never stored: no employee_roles write, no employee_feature_permissions row,
+  // no bumpForceLogoutFor — the approver reviews from a new employee-portal Approvals tab (349 lines)
+  // and never loads the Manager dashboard, so every excluded manager power is unreachable rather than
+  // merely hidden, and a recall makes the seat vanish with nothing to revoke. second_approve and
+  // second_deny dropped the manager:time_adjustments grant and authorize on the on-row assignment alone,
+  // which is a NARROWING. Peer of the 5-SP manual-validation and mid-week-transfer rows: a new route, a
+  // new surface, a tested module, no money moved.
+  { epic: 'HRIS-04', name: 'The second approver comes from the request’s own team, and naming one grants a derived portal-only seat', type: 'Feature', sp: 5, done: true, sprint: 'S27', priority: 'High' },
+  // 5 SP. a73948a1, 12 files, 668 insertions. A money-path divergence, not a display bug:
+  // member-monthly-pay scored HSL PAB Mon→Sun while dispatch PAID Sun→Sat, so
+  // /api/manager/member-monthly-pay contradicted what actually paid. Root cause was two helpers with a
+  // legacy default and five callers that never passed it — checkHslPabEligibility and getHslAdjustedEnd
+  // defaulted weekModel to 'mon_sun', and buildCalendarMonthWeeksIncludingWeekends defaulted
+  // startOnSunday to false under a comment that was true when written and inverted by the 2026-05-31
+  // cutover. All three are now REQUIRED parameters, pinned by a @ts-expect-error case: there is no safe
+  // default for a value whose correct answer changes on a date. The grid moved and the money did not —
+  // non-HSL PAB is still won Mon–Fri, the new weekend cells are scoring:false, and an identity test
+  // asserts the Sun–Sat grid's scoring cells are EXACTLY the old builder's, so a failure there means
+  // non-HSL PAB money has moved. Peer of the 5-SP HSL OT-rate arrears row. Not 8 — no rate moved and no
+  // arrears were owed; the contradiction was caught before it priced a cycle.
+  { epic: 'HRIS-02b', name: 'Every PAB calendar reads Sun–Sat — the week model becomes a required argument, not a default', type: 'Bug', sp: 5, done: true, sprint: 'S27', priority: 'High' },
+  // 2 SP. c229a2b8, 6 files, 385 insertions of which 304 are the test. payment-dispatch.md 3.3.1 had
+  // banned the Kolan lockup outright because the official asset's wordmark is white on a plate that is
+  // bg-white in both themes — a real hazard, but a property of that FILE, not of lockups. So the
+  // prohibition became a MEASUREMENT rather than being dropped: this asset is 96.5% of its opaque ink
+  // below luminance 128, and processor-logo-assets.test.ts decodes the PNG with node's own zlib (no new
+  // dependency — sharp is only a transitive Next package) and rejects ink under 90% dark, canvas aspect
+  // under 1.5, or ink-to-canvas width under 80%. Proven to bite, not merely asserted: a synthetically
+  // inverted copy measures 3.5% dark and an over-padded canvas 30% ink width. The one general rule
+  // added: every logoSrc must match the on-disk filename CASE-EXACTLY, because Windows and macOS both
+  // resolve the wrong case and Linux static serving does not — a case slip renders locally and 404s in
+  // production, which is the 2026-08-24 phantom-/kolan.png failure exactly. Peer of that 2-SP row.
+  { epic: 'HRIS-03a', name: 'Kolan’s plated dispatch card takes the dark lockup, with the mark-only rule retired on a measurement', type: 'Feature', sp: 2, done: true, sprint: 'S27', priority: 'Medium' },
+  // 5 SP. a366c067, 12 files. The 63k insertion count is the source JSON; the real change is ~1,200
+  // lines. "Offboarded by HRIS" and "Offboarded" were never two populations — /api/hr/offboard writes
+  // BOTH offboarding_queue and offboarded_sheet, so all 488/488 completed queue rows already sat in the
+  // ledger and the HRIS tab contributed ZERO people. It is now the Origin filter on one list. Origin is
+  // a STORED column (NOT NULL DEFAULT 'hris', CHECK, index) and had to be: the old tell —
+  // off_boarded_by IS NULL — was an accident of the 08-07 retirement that the import below breaks by
+  // construction, since an imported row is written today with no actor. MIGRATION PROBED APPLIED
+  // 2026-08-28 with a passing negative control: offboarded_sheet.origin exists, 492 hris / 3,519
+  // google_sheet, 4,011 rows total — so the 165-row backfill landed too. That backfill does not reopen
+  // the spreadsheet: the retired sync was dangerous for being RECURRING and REPLACING, and this is
+  // neither, enforced not intended — manual --apply gate, INSERT-ONLY, skips anyone already on the
+  // ledger, and exits non-zero if franm@ (the exact cell the sync was retired over) would ever be
+  // re-inserted over her hand-correction. Peer of the 5-SP Payroll Notes Offboarded tab. Not 8 — no
+  // money moved, and the four keep-toward catalog guards that see these rows were left untouched.
+  { epic: 'HRIS-01a', name: 'HR Offboarding is one Offboarded tab with a stored origin column and an insert-only JSON backfill', type: 'Feature', sp: 5, done: true, sprint: 'S27', priority: 'Medium' },
+  // 5 SP. 9a42f5f2 + bb4b2311 + 1b262488 + 4b8f7177, one row on file overlap — all four are
+  // PayrollWizard.tsx plus the wizard docs, and one row must describe the CURRENT rule rather than the
+  // iterations that reached it. HSL and Additions are now a single step 4; the HSL case body moved
+  // VERBATIM into renderHslWorkspace (773 lines, proven byte-identical) and HSL is a TAB inside
+  // Additions, never a row in the shared department table — it prices Mon–Sun weeks with a weekend
+  // premium and takes its bonuses from HSL KPI periods, so its rows do not fit the other departments'
+  // columns. RENUMBERING WAS FORCED, not cosmetic: the rail's progress is currentStep / steps.length and
+  // completion is currentStep >= steps.length, so an id gap would read past 100% and mark Reports
+  // complete while standing on Dispatch. Both real gates moved with their numbers, unchanged in
+  // substance — the red-flag confirm at 6 and the FX-zero dispatch block at 7. Nothing was loosened to
+  // fit. No figure, column, total, handler or stored value changed, which is what makes this a render
+  // change and not a money change. Peer of the 5-SP wizard rows; not 8 — the 8-SP Tutorial Mode row
+  // built a new surface, and this restructures an existing one.
+  { epic: 'HRIS-02a', name: 'Payroll Wizard: HSL and Additions become one step, HSL keeps its own tab, and the rail renumbers 1-8', type: 'Feature', sp: 5, done: true, sprint: 'S27', priority: 'Medium' },
+  // 5 SP. 3fb27b1d, 29 files, 1,832 insertions, four pure tested modules. Draw stays the default and
+  // Type sits beside it, and the result is the SAME artifact drawing produces — a trimmed transparent
+  // PNG into the same document_signatures.image_data_url. Zero backend: no migration, no route change,
+  // nothing downstream can tell the two apart. The pointer bug was the DIALOG, not the pad: SignaturePad
+  // sized its bitmap from getBoundingClientRect() on mount inside a dialog animating in with
+  // zoom-in-[0.94], so it measured a TRANSFORMED box and ink landed ~6% of the pad width off at the
+  // right edge while being exact at the left. ResizeObserver cannot catch it — a CSS transform does not
+  // change the layout box it observes. Three guards, each because the failure it prevents is SILENT:
+  // faces are self-hosted and gated on document.fonts.load() AND check(), because Canvas 2D does not
+  // report a missing font and a CDN miss would save a signature that simply is not cursive; coverage is
+  // checked per face, so Homemade Apple refuses rather than printing .notdef on a bank document; and the
+  // raster is sized against the PDF, not the screen, because both renderers scale-to-fit and never
+  // upscale. Found en route: the COE one-page tests embedded a 1x1 PNG rendering 1pt tall — 45pt of
+  // slack production never has, on the element that decides the page count. Not 3 (the Documents queue
+  // rebuild) — this adds a capture mode AND root-causes a rendering bug. Not 8 — no money, no backend.
+  { epic: 'HRIS-18', name: 'A signature can be typed as well as drawn, and the pointer finally lands on the ink', type: 'Feature', sp: 5, done: true, sprint: 'S27', priority: 'Medium' },
+  // 8 SP, and the only 8 in this pass. The other half of cd681cf8 (see the accounting-rail row above for
+  // the split): 17 files, src/lib/mesa/* plus the migration, the CSV and three scripts. It qualifies on
+  // the board's own 8-SP profile — every 8-SP row here moves a rate, a dispatch row or a score component
+  // — because it rebuilt a LIVE ledger: 9,883 rows and 280 accounts written to production, 143 stale
+  // mesa_member flags cleared, 1,738 rate rows stamped. PROBED TODAY: mesa_ledger 9,883, mesa_accounts
+  // 280, mesa_request_receipts.amount_php and mesa_payroll_obligations both present — migration APPLIED,
+  // every figure matching the independent verify script, which recomputes from the CSV rather than
+  // trusting the writer's helpers. The ruling underneath is Kane's and decides every balance: a
+  // withdrawal is SPENT, not a loan — receipts worth at least the amount requested mean nothing is owed,
+  // and only a shortfall returns. Reading the CSV's Payback columns as loan repayments instead would
+  // have swung open balances by ₱788,383. The first apply wrote 9,915 rows with 36 discrepancies from
+  // two deposit-bounds bugs, so the invariant that every deposit falls inside [opened_on, closed_on] is
+  // now enforced in pre-flight, and the writer refuses to write on ANY validation problem after an
+  // earlier run deleted before validating and left the ledger half-built. Also ships the server-enforced
+  // disbursement guard (16 tests) that fails CLOSED with 503 on a ledger read error and subtracts
+  // pending draws, so two withdrawals that each fit cannot together overdraw.
+  { epic: 'HRIS-07', name: 'MESA rebuilt from the CSV on the receipt-shortfall ruling, with a server-enforced disbursement guard', type: 'Feature', sp: 8, done: true, sprint: 'S27', priority: 'High' },
+  // 3 SP. 5120398d + 00eefbd8 + 606cd61e, one row on file overlap — all three touch CLAUDE.md and
+  // docs/features/INDEX.md, they landed the same day, and the pair is a SINGLE governing rule that only
+  // makes sense whole: before writing code, use blueprint if the thing does not exist yet and hardening
+  // if it does. ~300 lines of SKILL.md plus the CLAUDE.md routing rule. blueprint scopes a new surface
+  // against the governing docs and the nearest shipped precedent, posts a brief and HARD-STOPS for
+  // approval before any code is written, then writes the feature doc, the INDEX row and the memory entry
+  // into the same commit. hardening reads the governing docs FIRST, cites the rules it found, stops on a
+  // contradiction instead of picking a side, and forbids fixing anything by loosening a type, guard,
+  // validation, limit or test. Peer of the 3-SP board-sync ledger row: process tooling, no deployed
+  // surface. Not 5 — the board-sync build was 15 files and eight scripts; this is two SKILL.md files.
+  // DONE ON USE, not on a click-through, exactly as the two board-sync rows closed in pass 17: this is
+  // local tooling with no deployed surface, so that gate does not map and is not pretended to. The
+  // evidence is that both have been RUN and left records — manager-scheduling-ui-first names the
+  // blueprint run that split Workforce Coverage into three surfaces, hardening-skill-and-open-gaps names
+  // a hardening run, and two separate sessions on 2026-08-28 entered blueprint before writing any code.
+  { epic: 'HRIS-15', name: 'The blueprint and hardening skills — every code change routes through one of them before it is written', type: 'Chore', sp: 3, done: true, sprint: 'S26', priority: 'Medium' },
 ];
