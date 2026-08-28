@@ -17239,30 +17239,37 @@ export default function PayrollWizard({
                 </div>
               ) : (
                 <>
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {/* THREE cards, and the arithmetic is the point: Eligible +
+                      Ineligible = Evaluated, exactly. Eligible folds in the
+                      still-running verdicts because a bare "0 Eligible" reads as a
+                      bug — mid-period NOBODY is finalised, so the honest number is
+                      "nobody has failed yet", labelled provisional. Eligible people
+                      are deliberately absent from the LIST below (it is an
+                      exceptions list); this card is where their count lives. */}
+                  <div className="grid gap-3 sm:grid-cols-3">
                     <TransferKpiCard
-                      label="Eligible"
-                      value={pabGmlCounts.eligible}
+                      label={pabGmlCounts.periodEnded ? 'Eligible' : 'Eligible so far'}
+                      value={pabGmlCounts.eligible + pabGmlCounts.inProgress}
                       tone="emerald"
-                      hint={pabGmlCounts.periodEnded ? 'cleared every required day' : 'no verdict is final until the period closes'}
+                      hint={
+                        pabGmlCounts.periodEnded
+                          ? 'cleared every required day — not listed below'
+                          : `no failed day yet · provisional until ${pabMonthRange
+                              ? pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                              : 'the period closes'}`
+                      }
                     />
                     <TransferKpiCard
                       label="Ineligible"
                       value={pabGmlCounts.ineligible}
                       tone="rose"
-                      hint={`${pabReviewBandCount} missed only 1–2 days`}
+                      hint={`listed below · ${pabReviewBandCount} missed only 1–2 days`}
                     />
                     <TransferKpiCard
-                      label="Still in progress"
-                      value={pabGmlCounts.inProgress}
-                      tone="zinc"
-                      hint="HSL is judged only when the period closes"
-                    />
-                    <TransferKpiCard
-                      label="On the master list"
+                      label="Evaluated"
                       value={pabGmlCounts.evaluated}
                       tone="blue"
-                      hint={`scored this period, of ${masterEmployees.length.toLocaleString()} on the roster`}
+                      hint={`active on the master list with hours, of ${masterEmployees.length.toLocaleString()} on the roster`}
                     />
                   </div>
                   {(pabGmlCounts.offRoster > 0 || pabGmlCounts.noHours > 0) && (

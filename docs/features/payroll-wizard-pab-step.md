@@ -201,12 +201,19 @@ personal email).
 the period — ~2,086 in 2026-08 — and **886 of them (42%) have no roster row at all**. Counting
 those would make "Eligible / Ineligible" describe a population nobody manages.
 
-**Why three verdict cards, not two.** `effectivePabStatus` is tri-state. An Eligible/Ineligible
-pair silently loses everyone mid-period — including *every* HSL person, who is parked
-`in_progress` until the period closes. **Eligible + Ineligible + In progress must equal
-Evaluated**, or the strip lies by omission. Measured 2026-08-28: 0 / 329 / 871 over 1,200
-evaluated — and Eligible is 0 *by construction* until the period ends, which is why that card
-carries the reason on its face rather than a bare zero.
+**Three cards, and the arithmetic is the point: Eligible + Ineligible = Evaluated, exactly.**
+
+`effectivePabStatus` is tri-state, but a card literally labelled "Eligible" reading **0** is
+worse than useless — mid-period nobody is finalised, so the raw `eligible` bucket is 0 *by
+construction* and reads as a bug. The Eligible card therefore folds in the still-running
+verdicts (nobody has failed yet), renames itself **"Eligible so far"** while the period runs,
+and states its own provisionality in the hint. Once the period ends it becomes plain
+"Eligible".
+
+**This card is where eligible people live.** The table below is an EXCEPTIONS list — passing
+people are deliberately absent from it — so their count has nowhere else to appear. Do not
+"simplify" the strip by dropping it back to the raw `eligible` bucket; that is the 0-that-looks-
+broken again. Measured 2026-08-28: **530 eligible so far · 476 ineligible · 1,006 evaluated.**
 
 **The off-roster remainder is disclosed, never dropped** — an amber line under the strip names
 how many had hours but are not on the master list, following the `mesa.md` idiom. They still
