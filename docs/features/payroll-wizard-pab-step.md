@@ -141,6 +141,13 @@ If all three miss, the row still renders, as an explicit *"Unknown — not on th
 with the address in a `title` tooltip only. **Do not drop the row** — that is the all-clear
 that hides someone, and **do not fall back to the email** as a display name.
 
+The **Employee ID** (`master.employee_id`, `YYMM-NNNN`) sits under the name — the slot the
+email used to occupy, because an internal identifier is safe to show where a personal address
+is not. It is also searchable. It comes only from the ACTIVE roster, so it is `—` for the same
+people whose name falls through to the Hubstaff `Member` tier: measured 2026-08-28, 1,328 of
+1,329 roster rows carry an id and all 1,200 hubstaff emails that resolve to a roster row have
+one — the other 886 have no roster row at all. **Never synthesise an id to fill that dash.**
+
 ## Filters narrow the view; they never remove anyone
 
 Department and status filters sit beside the search box, following the rule

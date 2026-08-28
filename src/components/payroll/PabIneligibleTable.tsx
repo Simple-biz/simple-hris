@@ -42,6 +42,9 @@ export type PabIneligibleRow = {
   /** Master quoted nickname. `null` when the person is on no master record — the
    *  table says so explicitly rather than falling back to their email address. */
   name: string | null;
+  /** Master `employee_id` (`YYMM-NNNN`). Null when the active roster has no row
+   *  for them. Safe to show — an internal id, not a contact address. */
+  employeeId: string | null;
   /** RAW department key. Formatted at the render site, never before — an
    *  `hsl:*` slug must not reach a human (docs/features/hsl-subdepartments.md). */
   departmentKey: string | null;
@@ -179,6 +182,7 @@ export default function PabIneligibleTable({
       list = list.filter(
         (r) =>
           (r.name ?? '').toLowerCase().includes(q) ||
+          (r.employeeId ?? '').toLowerCase().includes(q) ||
           catalogDeptNameFrom(r.departmentKey, deptNames).toLowerCase().includes(q),
       );
     }
@@ -292,7 +296,7 @@ export default function PabIneligibleTable({
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search name or department"
+              placeholder="Search name, ID or department"
               className="h-8 pl-8 text-xs"
             />
           </div>
@@ -334,6 +338,8 @@ export default function PabIneligibleTable({
               return (
                 <tr key={row.email} className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40">
                   <td className="px-4 py-2.5">
+                    {/* The id sits where the email used to — an internal
+                        identifier is safe to show, a personal address is not. */}
                     {row.name ? (
                       <div className="font-medium text-zinc-900 dark:text-zinc-100">{row.name}</div>
                     ) : (
@@ -346,6 +352,9 @@ export default function PabIneligibleTable({
                         Unknown — not on the master list
                       </div>
                     )}
+                    <div className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+                      {row.employeeId ?? '—'}
+                    </div>
                   </td>
                   <td className="px-3 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
                     {catalogDeptNameFrom(row.departmentKey, deptNames) || '—'}

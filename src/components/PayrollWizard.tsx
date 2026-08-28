@@ -7521,6 +7521,10 @@ export default function PayrollWizard({
         // Never the email: an address is not a name, and this list spans people
         // the active roster no longer carries.
         name: master?.name?.trim() || calcRow?.name?.trim() || pabMemberNames.get(email) || null,
+        // `YYMM-NNNN`, assigned off the master row. Null for anyone the ACTIVE
+        // roster does not carry — the PAB month spans people who have since left
+        // it, and inventing an id for them would be worse than showing none.
+        employeeId: master?.employee_id?.trim() || null,
         departmentKey: deptKey,
         isHsl,
         severity,
