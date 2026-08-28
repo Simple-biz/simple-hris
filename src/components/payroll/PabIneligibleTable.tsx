@@ -49,6 +49,9 @@ export type PabIneligibleRow = {
   workEmail: string | null;
   /** Resolvable to a master-list row — the population the KPI cards count. */
   onMasterList: boolean;
+  /** Any tracked time on a scoring day. False = never scored, NOT "missed every
+   *  day" — see pabSeverityBand's `no-hours` band. */
+  hasHours: boolean;
   /** RAW department key. Formatted at the render site, never before — an
    *  `hsl:*` slug must not reach a human (docs/features/hsl-subdepartments.md). */
   departmentKey: string | null;
@@ -63,6 +66,12 @@ const BAND_STYLES: Record<PabSeverityBand, { chip: string; label: string }> = {
   eligible: {
     chip: 'border-emerald-300/70 bg-emerald-50 text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200',
     label: 'Eligible',
+  },
+  // Zinc, not rose: this is missing evidence, not a bad result. Painting it as a
+  // failure is what put a leaver at the top of the list.
+  'no-hours': {
+    chip: 'border-zinc-300 bg-zinc-100 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
+    label: 'No hours recorded',
   },
   review: {
     chip: 'border-amber-300/70 bg-amber-50 text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200',
@@ -152,10 +161,11 @@ export default function PabIneligibleTable({
   }, [rows, deptNames]);
 
   const bandOptions = useMemo(() => {
-    const present = new Set(rows.map((r) => pabSeverityBand(r.severity)));
+    const present = new Set(rows.map((r) => pabSeverityBand(r.severity, r.hasHours)));
     const opts = [{ value: '', label: 'All statuses' }];
     if (present.has('review')) opts.push({ value: 'review', label: 'Review (1–2 days)' });
     if (present.has('high')) opts.push({ value: 'high', label: 'Repeated (3+ days)' });
+    if (present.has('no-hours')) opts.push({ value: 'no-hours', label: 'No hours recorded' });
     if (rows.some((r) => r.excluded)) opts.push({ value: 'excluded', label: 'Excluded from PAB' });
     return opts;
   }, [rows]);
@@ -179,7 +189,7 @@ export default function PabIneligibleTable({
     if (bandFilter) {
       list = bandFilter === 'excluded'
         ? list.filter((r) => r.excluded)
-        : list.filter((r) => pabSeverityBand(r.severity) === bandFilter);
+        : list.filter((r) => pabSeverityBand(r.severity, r.hasHours) === bandFilter);
     }
     const q = query.trim().toLowerCase();
     if (q) {
@@ -201,7 +211,7 @@ export default function PabIneligibleTable({
   const safePage = Math.min(page, pageCount);
   const paged = visible.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  const reviewCount = rows.filter((r) => pabSeverityBand(r.severity) === 'review').length;
+  const reviewCount = rows.filter((r) => pabSeverityBand(r.severity, r.hasHours) === 'review').length;
 
   // An empty list has THREE causes and they are not interchangeable. Claiming
   // "nobody is ineligible" while the month has not been evaluated is the worst
@@ -339,7 +349,7 @@ export default function PabIneligibleTable({
           </thead>
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/70">
             {paged.map((row) => {
-              const band = pabSeverityBand(row.severity);
+              const band = pabSeverityBand(row.severity, row.hasHours);
               const style = BAND_STYLES[band];
               const busy = forgivingEmail === row.email;
               return (
@@ -392,13 +402,18 @@ export default function PabIneligibleTable({
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-2">
                       <span
-                        title={`${row.severity} day${row.severity === 1 ? '' : 's'} under 7 hours`}
-                        className="shrink-0 font-mono text-base font-bold leading-none text-rose-700 dark:text-rose-300"
+                        title={row.hasHours
+                          ? `${row.severity} day${row.severity === 1 ? '' : 's'} under 7 hours`
+                          : 'No tracked time anywhere in this period — never scored, not a missed day'}
+                        className={cn(
+                          'shrink-0 font-mono text-base font-bold leading-none',
+                          row.hasHours ? 'text-rose-700 dark:text-rose-300' : 'text-zinc-400 dark:text-zinc-500',
+                        )}
                       >
-                        {row.severity}
+                        {row.hasHours ? row.severity : '—'}
                       </span>
                       <div className="flex flex-wrap gap-1">
-                        {row.failedDays.slice(0, 3).map((d) => (
+                        {row.hasHours && row.failedDays.slice(0, 3).map((d) => (
                           <span
                             key={d.iso}
                             title={`${formatShortfall(d.shortfallSec)} short of 7h`}
@@ -407,7 +422,7 @@ export default function PabIneligibleTable({
                             {formatDay(d.iso)}
                           </span>
                         ))}
-                        {row.failedDays.length > 3 && (
+                        {row.hasHours && row.failedDays.length > 3 && (
                           <span
                             // Every date stays reachable on hover — the cap is a
                             // layout limit, never a claim that the rest do not exist.
@@ -435,10 +450,12 @@ export default function PabIneligibleTable({
                         type="button"
                         size="sm"
                         className="h-7 gap-1 bg-emerald-600 px-2 text-[11px] text-white hover:bg-emerald-700 disabled:opacity-40"
-                        disabled={readOnly || busy || row.excluded}
+                        disabled={readOnly || busy || row.excluded || !row.hasHours}
                         title={
                           readOnly
                             ? 'Replaying a past week — forgiveness is disabled'
+                            : !row.hasHours
+                              ? 'No tracked time in this period — there is no missed day to forgive'
                             : row.excluded
                               ? 'This person is excluded from PAB for the month; lift the exclusion first'
                               : `Forgive all ${row.severity} day${row.severity === 1 ? '' : 's'} for ${monthLabel}`

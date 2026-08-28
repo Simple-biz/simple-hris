@@ -7517,6 +7517,10 @@ export default function PayrollWizard({
         });
       }
 
+      // Any tracked time at all on a scoring day. Without this, a leaver whose
+      // last worked week is months before the period reads as "missed every day".
+      const hasHours = entries.some((e) => e.seconds > 0);
+
       const { severity, failedDays } = computePabIneligibility({
         entries,
         isHsl,
@@ -7573,6 +7577,7 @@ export default function PayrollWizard({
         // unparseable start_date, so the two failure modes would be
         // indistinguishable and the KPI cards would undercount.
         onMasterList: !!master,
+        hasHours,
         departmentKey: deptKey,
         isHsl,
         severity,
@@ -7582,7 +7587,12 @@ export default function PayrollWizard({
     }
     // Worst first, then alphabetical — the 1-and-2-day cohort the step exists for
     // sits together at the bottom rather than scattered.
-    rows.sort((a, b) => b.severity - a.severity || (a.name ?? '￿').localeCompare(b.name ?? '￿'));
+    // People with hours first — a real 1–2-day miss must never sit below a
+    // pile of never-scored leavers. Within each group, worst first.
+    rows.sort((a, b) =>
+      Number(b.hasHours) - Number(a.hasHours)
+      || b.severity - a.severity
+      || (a.name ?? '￿').localeCompare(b.name ?? '￿'));
     return rows;
   }, [
     effectivePabStatus, employeeDepts, employeeAllDaysHours, employeeWeekdayHours,
@@ -7593,7 +7603,7 @@ export default function PayrollWizard({
   /** The 1–2-day cohort, MASTER-LIST scoped so it matches the KPI strip's
    *  "Ineligible" card rather than the table's unfiltered headline pill. */
   const pabReviewBandCount = useMemo(
-    () => pabIneligibleRows.filter((r) => r.onMasterList && pabSeverityBand(r.severity) === 'review').length,
+    () => pabIneligibleRows.filter((r) => r.onMasterList && pabSeverityBand(r.severity, r.hasHours) === 'review').length,
     [pabIneligibleRows],
   );
 

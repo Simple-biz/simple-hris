@@ -148,6 +148,25 @@ people whose name falls through to the Hubstaff `Member` tier: measured 2026-08-
 1,329 roster rows carry an id and all 1,200 hubstaff emails that resolve to a roster row have
 one — the other 886 have no roster row at all. **Never synthesise an id to fill that dash.**
 
+## "No hours recorded" is not a severity — it is missing evidence
+
+A person with **no tracked time on any scoring day** did not miss every day; they were never
+scored. `pabSeverityBand(severity, hasHours)` bands them `no-hours`: zinc chip, severity cell
+reads `—` not a number, no day chips, Forgive **disabled** ("there is no missed day to
+forgive"), and they sort BELOW everyone with real hours.
+
+**Why this matters, from the live failure that caused it.** Aaron Taguas resigned 2026-06-02,
+has no August Hubstaff data at all, and scored **severity 15** — the top of the August list,
+above every genuine 1–2-day case the step exists to surface. Measured 2026-08-28: **871 of the
+2,086** emails the month's merge carries are in that state. Ranking them as the worst
+attendance in the company buried the real cohort and offered a Forgive button for a bonus the
+person cannot earn.
+
+They are **banded, never dropped** — a roster/coverage problem is still worth seeing (that is
+how you find a stale master row or a leaver still in the file), it just is not an attendance
+verdict. The status filter carries a "No hours recorded" option so they can be isolated or
+skipped.
+
 ## The KPI strip is MASTER-LIST scoped, and it reports THREE buckets
 
 The step's header is a four-card strip, not prose (Kane 2026-08-28). Every figure counts only

@@ -326,9 +326,25 @@ function parseIso(iso: string): Date | null {
  * ₱5,000 is lost. It is a prompt to check, never a verdict — the band never gates
  * anything and never changes what is paid.
  */
-export type PabSeverityBand = 'eligible' | 'review' | 'high';
+export type PabSeverityBand = 'eligible' | 'no-hours' | 'review' | 'high';
 
-export function pabSeverityBand(severity: number): PabSeverityBand {
+/**
+ * @param hasHours whether ANY scoring day in the period carried tracked time.
+ *
+ * **`no-hours` is not a severity, it is the absence of evidence.** Someone with no
+ * tracked time at all did not "miss 15 days" — they were never scored. Measured
+ * 2026-08-28, 871 of the 2,086 emails the PAB month merges in are in exactly that
+ * state, most of them leavers whose last worked week is months behind the period
+ * (Aaron Taguas resigned 2026-06-02 and still sorted to the TOP of the August list
+ * on a severity of 15). Reporting them as the worst attendance in the company is
+ * wrong twice: it buries the real 1–2-day cases the step exists for, and it offers
+ * a Forgive button for a bonus the person cannot earn.
+ *
+ * They are banded, never dropped — a roster/coverage problem is still worth seeing,
+ * it just is not an attendance verdict.
+ */
+export function pabSeverityBand(severity: number, hasHours = true): PabSeverityBand {
+  if (!hasHours) return 'no-hours';
   if (severity <= 0) return 'eligible';
   if (severity <= 2) return 'review';
   return 'high';

@@ -319,3 +319,12 @@ test('severity bands: 1–2 is the review cohort', () => {
   assert.equal(pabSeverityBand(3), 'high');
   assert.equal(pabSeverityBand(12), 'high');
 });
+
+test('no tracked time is NOT the worst attendance in the company', () => {
+  // The live failure: Aaron Taguas resigned 2026-06-02, had no August hours, and
+  // scored severity 15 — sorting him above every real 1–2-day case.
+  assert.equal(pabSeverityBand(15, false), 'no-hours');
+  assert.equal(pabSeverityBand(0, false), 'no-hours');
+  // hasHours defaults true so existing callers are unchanged.
+  assert.equal(pabSeverityBand(15), 'high');
+});
