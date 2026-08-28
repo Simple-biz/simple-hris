@@ -78,36 +78,57 @@ Active card is highlighted via Framer Motion's **`layoutId`** glow that physical
 
 #### 3.3.1 Brand logo support
 
-`ProcessorLogo.tsx` takes an explicit `logoSrc` prop and renders that image on a white plate; if it fails to load (`onError`) it falls back to a gradient monogram tile (or icon, for non-brand cards like All / History). **There is no HEAD probe and no `/processors/{id}.svg` convention** — that was never implemented. The live assets sit at the public root: `/kolan.svg` plus PNGs for `/higlobe.png`, `/wise.png`, `/jeeves.png`.
+`ProcessorLogo.tsx` takes an explicit `logoSrc` prop and renders that image on a white plate; if it fails to load (`onError`) it falls back to a gradient monogram tile (or icon, for non-brand cards like All / History). **There is no HEAD probe and no `/processors/{id}.svg` convention** — that was never implemented. The live assets sit at the public root: `/Kolan.png` **and** `/kolan.svg` (Kolan ships two, see below), plus `/higlobe.png`, `/wise.png`, `/jeeves.png`.
 
-> **`/kolan.png` never existed.** The 2026-08-24 rebrand pointed all three registries at
-> `/kolan.png` without ever adding the file, so Kolan — the highest-volume rail — quietly
-> rendered the orange gradient monogram everywhere until `/kolan.svg` landed on 2026-08-25.
-> The `onError` fallback is what made it survivable and also what made it invisible: a
-> referenced-but-absent asset degrades silently and looks exactly like a card that was
-> never given a logo. **After changing a `logoSrc`, confirm the file exists on disk** —
-> nothing in the build fails when it doesn't.
+> **`/kolan.png` — all lowercase — never existed.** The 2026-08-24 rebrand pointed all three
+> registries at `/kolan.png` without ever adding the file, so Kolan — the highest-volume rail —
+> quietly rendered the orange gradient monogram everywhere until `/kolan.svg` landed on
+> 2026-08-25. The `onError` fallback is what made it survivable and also what made it
+> invisible: a referenced-but-absent asset degrades silently and looks exactly like a card that
+> was never given a logo. **After changing a `logoSrc`, confirm the file exists on disk** —
+> nothing in the build fails when it doesn't. The lockup added on 2026-08-28 is `/Kolan.png`
+> with a **capital K**, which is what the registry must say verbatim: `fs.existsSync` and the
+> Windows/macOS filesystem both resolve the wrong case, and Linux static serving does not, so a
+> case slip renders locally and 404s in production. `processor-logo-assets.test.ts` now checks
+> existence **and** case against `readdirSync`.
 
-The path is hardcoded in **three independent registries**, and all three must agree or one rail shows two different marks:
+The path is hardcoded in **three independent registries**. As of 2026-08-28 they no longer all
+have to name the *same* asset — the artwork follows the **plate**, not the rail — but a rail
+with only one asset must still be spelled identically in all three, or it shows two different
+marks depending on which screen you are standing on:
 
-| Registry | Feeds |
-|---|---|
-| `src/lib/employee-payment-processors.ts` | employee + Payroll Readiness pickers |
-| `src/lib/contractor/invoice-payment.ts` | contractor invoice gateways |
-| `PROCESSOR_VISUALS` in `PayrollDispatch.tsx` | the Payment Dispatch filter cards |
+| Registry | Feeds | Surface |
+|---|---|---|
+| `PROCESSOR_VISUALS` in `PayrollDispatch.tsx` | the Payment Dispatch filter cards | **plated** — `ProcessorLogo`'s 80×44 white plate |
+| `src/lib/employee-payment-processors.ts` | employee + Payroll Readiness pickers | **un-plated** — bare 16–20px `<img>` |
+| `src/lib/contractor/invoice-payment.ts` | contractor invoice gateways | **un-plated** — bare 16–20px `<img>` |
 
-The plate adapts to the artwork: `ProcessorLogo` measures the decoded image and gives a squarish **mark** (aspect < 1.5, e.g. Kolan) vertical padding, while a horizontal **wordmark** (Wise, HiGlobe) fills the plate height. See `public/processors/README.md`.
+The plate adapts to the artwork: `ProcessorLogo` measures the decoded image and gives a squarish **mark** (aspect < 1.5) vertical padding, while a horizontal **wordmark** (Wise, HiGlobe, Kolan's lockup) fills the plate height. See `public/processors/README.md`.
 
-**Kolan ships as the MARK, not the lockup — this is deliberate.** The official
-`kolan.xyz` asset is a 131×48 lockup whose "Kolan" wordmark is **white**. The plate is
-`bg-white` in both themes by rule (`docs/design/ui-standards.md` §6.4), so the lockup
-would render as a mark beside an invisible word. `/kolan.svg` is the 42×42 eclipse tile
-cropped out of that lockup (same coordinate space — no path was re-drawn), and because
-it is an *opaque* near-black tile with a white corona it is the only processor asset that
-also reads on the bare, un-plated chips in the contractor and employee pickers. It carries
-explicit `width`/`height` so `naturalWidth`/`naturalHeight` are non-zero — the aspect
-probe needs intrinsic dimensions, and an SVG without them measures 0 in some browsers and
-silently downgrades to wordmark treatment.
+**Kolan ships TWO assets, pinned per surface** (Kane, 2026-08-28 — supersedes the mark-only
+rule below it). The plated dispatch card takes the **dark lockup** `/Kolan.png`
+(2048×768 canvas, ink 1829×418 ≈ 4.4:1), which renders ~69×16px on the plate — within a pixel
+of `wise.png`, whose canvas carries the same transparent-margin profile. The un-plated pickers
+keep the eclipse **mark** `/kolan.svg`: they draw a bare 16–20px square with no plate, where a
+4.4:1 lockup collapses to a ~4px sliver and, being dark-on-transparent, disappears in dark mode.
+
+> **The mark-only rule this replaced, and why the reasoning does not transfer.** Until
+> 2026-08-28 the lockup was banned outright: the official `kolan.xyz` asset is a 131×48 lockup
+> whose "Kolan" wordmark is **white**, the plate is `bg-white` in both themes by rule
+> (`docs/design/ui-standards.md` §6.4), and it would therefore render as a mark beside an
+> invisible word. That hazard is real and unchanged — but it is a property of *that file*, not
+> of lockups. `/Kolan.png` is the **dark** variant: measured 96.5% of its opaque ink below
+> luminance 128, mean RGB (26, 24, 21). So the prohibition became a **measurement** —
+> `processor-logo-assets.test.ts` decodes the PNG with node's own `zlib` (no dependency; `sharp`
+> is only a transitive Next package) and fails below 90% dark ink, below 1.5 canvas aspect, or
+> below 80% ink-to-canvas width. Proven to bite against a synthetically inverted copy, which
+> measures 3.5% dark. **Never install the white lockup**; the test is what enforces that now.
+
+`/kolan.svg` is the 42×42 eclipse tile cropped out of that lockup (same coordinate space — no
+path was re-drawn). Being an *opaque* near-black tile with a white corona, it is the only Kolan
+asset that reads on the bare un-plated chips. It carries explicit `width`/`height` so
+`naturalWidth`/`naturalHeight` are non-zero — the aspect probe needs intrinsic dimensions, and
+an SVG without them measures 0 in some browsers and silently downgrades to wordmark treatment.
 
 ### 3.4 The table
 

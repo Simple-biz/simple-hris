@@ -93,7 +93,16 @@ const PROCESSOR_VISUALS: Record<ProcessorId, ProcessorVisual> = {
     accent: 'from-orange-500 to-amber-500',
     glow: 'from-orange-100/80 via-amber-50/60 to-white dark:from-orange-950/40 dark:via-amber-950/30 dark:to-zinc-900',
     blurb: 'Email only',
-    logoSrc: '/kolan.svg',
+    // The one asset that DELIBERATELY differs from the two lib registries, which
+    // keep '/kolan.svg'. The artwork follows the PLATE, not the rail: this card
+    // renders on ProcessorLogo's 80x44 white plate, where the dark lockup reads at
+    // ~69x16px - within a pixel of wise.png on the same plate. The employee and
+    // contractor pickers draw the same registry asset as a bare 16-20px square with
+    // no plate, where a 4.4:1 lockup would be a ~4px sliver and invisible in dark
+    // mode, so they keep the eclipse MARK. Pinned per-surface by
+    // processor-logo-assets.test.ts. Case-exact on purpose: prod static serving is
+    // case-sensitive, Windows is not.
+    logoSrc: '/Kolan.png',
   },
   wepay: {
     Icon: Wallet,
