@@ -107,18 +107,18 @@ fetches its numbers depend on (`isStepDataLoading`):
 | 1 Initialize | upload list + Hubstaff preview table |
 | 2 Initial Calculation | + week hours, `employee_hourly_rates` |
 | 3 Orphanage | same as 2 — orphanage pay is priced from those hours × rates |
-| 4 Additions (department table + HSL tab) | + the all-weeks PAB merge, HSL KPI amounts, HSL bonus entries (step-scoped) |
+| 4 Additions (`Departments` + `HSL` sections) | + the all-weeks PAB merge, HSL KPI amounts, HSL bonus entries (step-scoped) |
 | 5 Contractors | upload list + invoices (step-scoped) |
 | 6 Validation · 7 Dispatch | everything — these are the steps where a premature reading costs money |
 | 8 Reports | nothing — outside the range |
 
-**Step 4 waits on both halves of the old 4+5 pair, and it must.** The step owns two surfaces
-that never coexist in the DOM — the shared department table and the HSL tab — but green is a
-claim about *the step*, and the operator can switch tabs without reloading anything. So the
-HSL fetch is gated on `currentStep === 4`, **never** on `activeDeptTab === 'hogan_smith_law'`:
-tab-gating it would let the line go green while nothing had ever been fetched for the tab the
-operator is about to open. Same rule as the exclusions below — if it can be judged there, it
-is waited on here.
+**Step 4 waits on both halves of the old 4+5 pair, and it must.** The step owns two sections
+that never coexist in the DOM — `Departments` and `HSL`, chosen by its own tab strip — but
+green is a claim about *the step*, and the operator can switch sections without reloading
+anything. So the HSL fetch is gated on `currentStep === 4`, **never** on
+`activeAdditionsSection === 'hsl'`: section-gating it would let the line go green while
+nothing had ever been fetched for the section the operator is about to open. Same rule as the
+exclusions below — if it can be judged there, it is waited on here.
 
 **Every flag used here settles in a `finally`**, so a stalled fetch that rejects still ends the
 animation. The line cannot become the forever-spinner a terminal skeleton once was
@@ -139,7 +139,7 @@ animation. The line cannot become the forever-spinner a terminal skeleton once w
 `hslStepLoading` (4) and `contractorInvoicesLoading` (5) are gated on `currentStep`, because
 their effects only run while Accounting is standing on the step — which is also the only time
 their absence would be misleading. Step-scoped is as narrow as this may get: **not**
-tab-scoped (see above).
+section-scoped (see above).
 
 ---
 

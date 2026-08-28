@@ -1919,6 +1919,24 @@ const steps = [
   { id: 8, label: 'Reports', icon: BarChart3, description: 'Dispatch summary — salaries, budget requests, and gift payments' },
 ];
 
+/**
+ * The Additions step (4) holds TWO workspaces, switched by a tab strip of its own —
+ * not by the department rail. `departments` is the shared rail + additions table;
+ * `hsl` is the Hogan Smith Law surface (own sub-department rail, KPI Bonus Period
+ * cards, Total Pay table).
+ *
+ * HSL earns a section instead of a rail entry because picking it does not change
+ * *which department* the table shows — it changes *which table there is*. HSL prices
+ * Mon–Sun weeks with a weekend premium and takes its bonuses from HSL KPI periods,
+ * so its rows do not fit the other departments' columns.
+ */
+const ADDITIONS_SECTIONS = [
+  { key: 'departments', label: 'Departments', icon: Users },
+  { key: 'hsl', label: 'HSL', icon: Building2 },
+] as const;
+
+type AdditionsSectionKey = (typeof ADDITIONS_SECTIONS)[number]['key'];
+
 export default function PayrollWizard({
   sessionEmail,
   sessionRole,
@@ -2390,6 +2408,18 @@ export default function PayrollWizard({
   );
 
   const [activeDeptTab, setActiveDeptTab] = useState('accounting');
+  /**
+   * Which workspace the Additions step (4) is showing.
+   *
+   * Deliberately SEPARATE from {@link activeDeptTab} rather than a magic
+   * `'hogan_smith_law'` value on it: HSL is not one more department on the rail —
+   * it replaces the whole workspace with the Hogan surface. Keeping the two
+   * pieces of state apart means the department rail can never select HSL, HSL
+   * rows can never reach the shared department table, and the paused-department
+   * snap (which owns `activeDeptTab`) cannot bounce the operator out of a
+   * section it knows nothing about.
+   */
+  const [additionsSection, setAdditionsSection] = useState<AdditionsSectionKey>('departments');
   const [accountingDeptModalOpen, setAccountingDeptModalOpen] = useState(false);
   const [ticketsModalEmail, setTicketsModalEmail] = useState<string | null>(null);
   const [sitesModalEmail, setSitesModalEmail] = useState<string | null>(null);
@@ -4864,10 +4894,10 @@ export default function PayrollWizard({
     return () => { void supabase.removeChannel(channel); };
   }, [currentStep]);
 
-  // ── HSL (the Additions step's HSL tab): load all dept KPI bonus entries on step entry.
-  // Gated on the STEP, deliberately not on `activeDeptTab === 'hogan_smith_law'`. The
-  // step's load line goes green when the step's data lands, and `isStepDataLoading(4)`
-  // counts this fetch — gating it on the tab would let the line claim HSL figures were
+  // ── HSL (the Additions step's HSL section): load all dept KPI bonus entries on step entry.
+  // Gated on the STEP, deliberately not on `activeAdditionsSection === 'hsl'`. The step's
+  // load line goes green when the step's data lands, and `isStepDataLoading(4)` counts
+  // this fetch — gating it on the section would let the line claim HSL figures were
   // judgeable while nothing had ever been fetched for them.
   useEffect(() => {
     if (currentStep !== 4) return;
@@ -5042,13 +5072,13 @@ export default function PayrollWizard({
         // Orphanage pay is priced from the same hours and rates.
         case 3:
           return loadingUploadList || loadingWeekHours || loadingRates;
-        // Bonuses and adjustments for every department INCLUDING the HSL tab, so
-        // this one step waits on both halves of the old 4+5 pair: the all-weeks PAB
-        // merge AND the HSL KPI amounts / HSL bonus entries. Green here claims that
-        // both tabs' figures can be judged, so leaving either out would let it lie
-        // about whichever tab the operator happens to open. `hslStepLoading` is only
-        // ever true while Accounting is standing on this step (its effect is gated on
-        // currentStep — NOT on the active tab, so opening the step loads HSL whether
+        // Bonuses and adjustments for BOTH of this step's sections — Departments and
+        // HSL — so it waits on both halves of the old 4+5 pair: the all-weeks PAB merge
+        // AND the HSL KPI amounts / HSL bonus entries. Green here claims that both
+        // sections' figures can be judged, so leaving either out would let it lie about
+        // whichever section the operator happens to open. `hslStepLoading` is only ever
+        // true while Accounting is standing on this step (its effect is gated on
+        // currentStep — NOT on the active section, so opening the step loads HSL whether
         // or not its tab is selected), which is also the only time its absence would
         // be misleading.
         case 4:
@@ -8007,6 +8037,32 @@ export default function PayrollWizard({
     [allWizardDepartments, pausedDeptKeys],
   );
 
+  // ── Additions step (4): its two sections ──────────────────────────────────
+  /**
+   * HSL switched off for this week in the Configuration tab. Its section tab then
+   * leaves the strip, exactly as a paused department's tab leaves the rail
+   * (`payroll-wizard-configuration-tab.md`): its rows are already filtered out of
+   * `effectiveCalcResults`, so the surface would be an empty bucket.
+   */
+  const hslSectionPaused = pausedDeptKeys.has('hogan_smith_law');
+  /**
+   * DERIVED, never stored — the stored section can outlive the tab that offered it
+   * (HSL switched off mid-cycle in Configuration). Deriving means the fallback
+   * cannot go stale the way a snap-back effect can.
+   */
+  const activeAdditionsSection: AdditionsSectionKey =
+    additionsSection === 'hsl' && hslSectionPaused ? 'departments' : additionsSection;
+  /** Payable HSL rows this run — the HSL tab's count badge. */
+  const hslSectionCount = useMemo(
+    () => effectiveCalcResults.filter(r => employeeDepts[r.email] === 'hogan_smith_law').length,
+    [effectiveCalcResults, employeeDepts],
+  );
+  /** Payable non-HSL rows this run — the Departments tab's count badge. */
+  const departmentsSectionCount = useMemo(
+    () => effectiveCalcResults.filter(r => employeeDepts[r.email] !== 'hogan_smith_law').length,
+    [effectiveCalcResults, employeeDepts],
+  );
+
   /** Workers in the current Hubstaff upload per dept key — Config-tab counts.
    *  Built from the RAW calc rows so an excluded department still shows how
    *  many people it would cover if switched back on. */
@@ -8801,7 +8857,7 @@ export default function PayrollWizard({
       hslTechColumnShown: isDeptEligible(sysBonusCfg.tech, 'hogan_smith_law'),
       // Which of step 4's two surfaces is mounted — the guide may only ring anchors
       // that exist, and the HSL table and the shared department table never coexist.
-      additionsHslTabActive: activeDeptTab === 'hogan_smith_law',
+      additionsHslTabActive: activeAdditionsSection === 'hsl',
       systemBonusModalOpen: pabSettingsOpen,
       pabSetForActiveMonth: pabPeriodSettings.overrides.has(editMonthKey),
       // Self-contained label — the modal's MONTH_NAMES is local to its render.
@@ -8826,7 +8882,7 @@ export default function PayrollWizard({
     techBonusWeekInfo.isTechBonusWeek,
     sysBonusCfg.pab,
     sysBonusCfg.tech,
-    activeDeptTab,
+    activeAdditionsSection,
     pabSettingsOpen,
     pabPeriodSettings.overrides,
     editMonthKey,
@@ -14568,79 +14624,67 @@ export default function PayrollWizard({
               )}
             </div>
 
+            {/* ── Section tabs: Departments | HSL ─────────────────────────────────
+                Step 4 holds two workspaces, not one workspace with an extra department.
+                Departments = the shared rail + additions table; HSL = the Hogan surface
+                (its own sub-dept rail, KPI period cards, Total Pay table). The strip sits
+                ABOVE the workspace and BELOW the step header, so the step-level controls
+                (System Bonus settings, the PAB month, "Lock in additions") stay shared by
+                both — they are cycle-wide, not per-section. */}
+            <div role="tablist" aria-label="Additions sections" className="flex items-center gap-1 border-b border-zinc-200 dark:border-zinc-800">
+              {ADDITIONS_SECTIONS.filter(sec => sec.key === 'departments' || !hslSectionPaused).map(sec => {
+                const isActive = activeAdditionsSection === sec.key;
+                const count = sec.key === 'hsl' ? hslSectionCount : departmentsSectionCount;
+                return (
+                  <button
+                    key={sec.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => { setAdditionsSection(sec.key); setAdditionsSearch(''); }}
+                    className={cn(
+                      'relative -mb-px flex items-center gap-2 border-b-2 px-3.5 py-2 text-sm font-semibold transition-colors',
+                      isActive
+                        ? sec.key === 'hsl'
+                          ? 'border-violet-600 text-violet-700 dark:border-violet-400 dark:text-violet-300'
+                          : 'border-indigo-600 text-indigo-700 dark:border-indigo-400 dark:text-indigo-300'
+                        : 'border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-700 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:text-zinc-200',
+                    )}
+                  >
+                    <sec.icon className="h-3.5 w-3.5 shrink-0" />
+                    <span>{sec.label}</span>
+                    {count > 0 && (
+                      <span
+                        className={cn(
+                          'rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none',
+                          isActive
+                            ? sec.key === 'hsl'
+                              ? 'bg-violet-600 text-white'
+                              : 'bg-indigo-600 text-white'
+                            : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+                        )}
+                      >
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
             {/* Department workspace: vertical rail (left) + content (right). On mobile the
                 rail collapses to a horizontal scroller above the content. */}
+            {activeAdditionsSection === 'hsl' ? renderHslWorkspace() : (
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
               {/* Department rail */}
               <div role="tablist" aria-label="Departments" className="flex gap-1.5 overflow-x-auto pb-1 xl:w-48 xl:shrink-0 xl:flex-col xl:gap-1 xl:overflow-visible xl:pb-0 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
                 <p className="hidden px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 xl:block dark:text-zinc-500">
                   Departments
                 </p>
-                {/* HSL is pinned first and wears violet, because it is not one more
-                    department in this list: picking it swaps the entire workspace for
-                    the HSL surface (Mon–Sun weeks, weekend premium, KPI-period cards).
-                    It stays OUT of the generic map below so its rows can never end up
-                    in the shared department table. */}
-                {/* Paused in Configuration ⇒ the tab leaves the rail, exactly like any
-                    other excluded department (payroll-wizard-configuration-tab.md:58).
-                    Leaving it up would hand back a workspace whose rows were already
-                    filtered out of `effectiveCalcResults` — an empty bucket — and the
-                    paused-tab snap below would bounce the operator straight off it. */}
-                {!pausedDeptKeys.has('hogan_smith_law') && (() => {
-                  const hslCount = effectiveCalcResults.filter(r => employeeDepts[r.email] === 'hogan_smith_law').length;
-                  const hslPendingAdj = pendingAdjustmentCountByDept.get('hogan_smith_law') ?? 0;
-                  const isActive = activeDeptTab === 'hogan_smith_law';
-                  return (
-                    <motion.button
-                      type="button"
-                      role="tab"
-                      aria-selected={isActive}
-                      onClick={() => { setActiveDeptTab('hogan_smith_law'); setAdditionsSearch(''); }}
-                      whileTap={{ scale: 0.97 }}
-                      title="Hogan Smith Law — initial pay, KPI bonuses and accounting overrides"
-                      className={cn(
-                        'relative flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold xl:w-full xl:justify-between',
-                        isActive
-                          ? 'border-violet-500/60 text-violet-700 dark:text-violet-300'
-                          : 'border-violet-200 bg-white text-violet-700/80 hover:border-violet-300 hover:bg-violet-50/60 dark:border-violet-900/50 dark:bg-zinc-900 dark:text-violet-300/80 dark:hover:border-violet-800 dark:hover:bg-violet-950/30',
-                      )}
-                    >
-                      {isActive && (
-                        <motion.span
-                          layoutId="additions-dept-active-bg"
-                          className="absolute inset-0 rounded-[7px] bg-violet-600/10 dark:bg-violet-500/15"
-                          transition={{ type: 'spring', stiffness: 400, damping: 34 }}
-                        />
-                      )}
-                      <span className="relative flex min-w-0 items-center gap-1.5">
-                        <Building2 className="h-3 w-3 shrink-0" />
-                        <span className="truncate">HSL</span>
-                      </span>
-                      <span className="relative flex shrink-0 items-center gap-1">
-                        {hslPendingAdj > 0 && (
-                          <span
-                            className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
-                            title={`${hslPendingAdj} pending time adjustment${hslPendingAdj === 1 ? '' : 's'}`}
-                          >
-                            {hslPendingAdj}
-                          </span>
-                        )}
-                        {hslCount > 0 && (
-                          <span
-                            className={cn(
-                              'rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none',
-                              isActive
-                                ? 'bg-violet-600 text-white'
-                                : 'bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300',
-                            )}
-                          >
-                            {hslCount}
-                          </span>
-                        )}
-                      </span>
-                    </motion.button>
-                  );
-                })()}
+                {/* HSL is NOT in this list. It is a section tab above the workspace,
+                    because picking it does not switch which department the table shows —
+                    it replaces the workspace entirely. Keeping it out of the map is also
+                    what stops its rows reaching the shared department table. */}
                 {additionsDepartments.filter(dept => dept.key !== 'hogan_smith_law').map(dept => {
                   const count = effectiveCalcResults.filter(r => employeeDepts[r.email] === dept.key).length;
                   const pendingAdj = pendingAdjustmentCountByDept.get(dept.key) ?? 0;
@@ -14706,12 +14750,6 @@ export default function PayrollWizard({
                     transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
                     className="space-y-4"
                   >
-                {/* HSL is a TAB of this step, never a row in the shared department
-                    table: selecting it swaps the whole workspace for the HSL surface.
-                    Everything above the rail (System Bonus settings, the PAB month,
-                    "Lock in additions") is step-level and stays put across both tabs. */}
-                {activeDeptTab === 'hogan_smith_law' ? renderHslWorkspace() : (
-                  <>
                 <TimeAdjustmentReviewPanel
                   deptName={activeDept.name}
                   adjustments={deptAdjustments}
@@ -16014,12 +16052,11 @@ export default function PayrollWizard({
                   </div>
                 )}
               </div>
-                  </>
-                )}
                   </motion.div>
                 </AnimatePresence>
               </div>{/* content: review panel + table */}
-            </div>{/* department workspace flex-row */}
+            </div>
+            )}{/* /department workspace — HSL section renders instead of it */}
           </div>
         );
       }

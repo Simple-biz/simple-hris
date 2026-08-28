@@ -93,22 +93,23 @@ static steps). Two steps are dynamic:
   (`step2-fx-php` + `step2-fx-php-cta`, same for `cop`). Entering one rate stops the ring on
   that box while the other keeps it. Both set → falls back to `step2-review`. Kane 2026-08-17:
   ringing the step header was wrong; it is the box and the CTA per box.
-- **Step 4 has two faces**, because HSL and Additions are one step whose department rail
-  decides which surface is mounted (2026-08-28). Which face the guide shows is driven by the
+- **Step 4 has two faces**, because HSL and Additions are one step whose own
+  `Departments | HSL` tab strip decides which surface is mounted (2026-08-28). Which face
+  the guide shows is driven by the
   `additionsHslTabActive` signal — the same reason the FX legs are resolved per render:
   **the guide may only ring an anchor that exists.**
-  - **On the HSL tab** it rings the HSL table permanently and **takes turns** across its money
+  - **On the HSL section** it rings the HSL table permanently and **takes turns** across its money
     columns — PAB → Tech Bonus → MESA → Adjustment → Orphanage, one every 2.6s, wrapping.
     `PAB` and `Tech Bonus` are conditional columns, so the rotation filters to what this cycle
     actually renders (`hslPabColumnShown` / `hslTechColumnShown`); rotating onto a column that
     isn't in the DOM would silently show no ring. The 2.6s timer itself only runs while that
-    tab is open, and restarts from the first column each time it is re-entered.
-  - **On any other department tab** it follows the operator **into** the System Bonus modal:
+    section is open, and restarts from the first column each time it is re-entered.
+  - **On the Departments section** it follows the operator **into** the System Bonus modal:
     closed → the trigger; open → the month pill plus the Tech-week picker; **and a month whose
     PAB period is already set gets no ring at all** (Kane: "if PAB is set already for that
     period this shouldn't bother"). Only the month being edited carries `step4-pab-month`, so
     exactly one pill is ever ringed.
-  A test pins both directions: HSL columns are never resolved off the HSL tab, and the
+  A test pins both directions: HSL columns are never resolved off the HSL section, and the
   System-Bonus anchors are never resolved on it.
 
 ## FX staleness is displayed, never adopted

@@ -29,14 +29,32 @@ total, handler or stored value changed in the move — `bonusOverrides`,
 shared** by both tables, which is what made the merge a render change rather than a
 money change.
 
-**HSL is a tab, never a row in the shared department table.** It is pinned first on the
-department rail, wears violet, and swaps the whole workspace — its own sub-department
-rail, KPI Bonus Period cards and Total Pay table. It has to stay separate: HSL prices
-**Mon–Sun** weeks with a **+₱15/h weekend premium** and takes its bonuses from HSL KPI
-periods, so its rows do not fit the other departments' columns. The rail's generic map
-still excludes `hogan_smith_law` for exactly that reason. **Paused in the Configuration
-tab ⇒ the HSL tab leaves the rail**, like any other excluded department
-([payroll-wizard-configuration-tab.md](./payroll-wizard-configuration-tab.md)).
+**HSL is its OWN TAB inside the step — not an entry on the Departments rail**
+(Kane, revised the same day). The step carries a **section tab strip** of its own,
+`Departments | HSL`, sitting above the workspace and below the step header:
+
+- **Departments** — the vertical department rail plus the shared additions table.
+- **HSL** — the Hogan surface, replacing the workspace entirely: its own sub-department
+  rail, KPI Bonus Period cards and Total Pay table.
+
+Selecting HSL does not change *which department the table shows*; it changes *which table
+there is*. That is why it is a section rather than a rail entry, and it is also what keeps
+HSL out of the shared department table: `hogan_smith_law` is excluded from the rail's map,
+and the rail can no longer select it at all. HSL has to stay separate on the merits too —
+it prices **Mon–Sun** weeks with a **+₱15/h weekend premium** and takes its bonuses from
+HSL KPI periods, so its rows do not fit the other departments' columns.
+
+The section is **separate state** (`additionsSection`), never a magic
+`'hogan_smith_law'` value on `activeDeptTab`: the department rail owns `activeDeptTab` and
+snaps it away from paused departments, and that snap must not be able to bounce the
+operator out of a section it knows nothing about. The **active** section is *derived*
+(`activeAdditionsSection`) rather than stored, so a stored `hsl` cannot outlive the tab
+that offered it. **Paused in the Configuration tab ⇒ the HSL tab leaves the strip**, like
+any other excluded department
+([payroll-wizard-configuration-tab.md](./payroll-wizard-configuration-tab.md)) — its rows
+are already filtered out of `effectiveCalcResults`, so the surface would be an empty
+bucket. Each tab carries its own payable-headcount badge; pending time-adjustment counts
+stay on the department rail, where the review panel that answers them lives.
 
 **Every later step shifted down by one, and that was forced.** The rail's progress bar is
 `currentStep / steps.length` and completion is `currentStep >= steps.length`, so leaving
@@ -60,14 +78,14 @@ now step **7**. Nothing was loosened to make the renumbering fit — every step 
 in the code, the readiness checklist's `stepNo` strings, the tutorial guide and these
 docs was corrected in the same commit.
 
-**The step's load line waits on BOTH halves.** `isStepDataLoading(4)` now counts the
+**The step's load line waits on BOTH sections.** `isStepDataLoading(4)` now counts the
 all-weeks PAB merge **and** the HSL KPI amounts / HSL bonus entries, and the HSL fetch
-stays gated on **step** entry — never on `activeDeptTab === 'hogan_smith_law'`. Gating it
-on the tab would let the line go green while nothing had ever been fetched for HSL,
+stays gated on **step** entry — never on `activeAdditionsSection === 'hsl'`. Gating it
+on the section would let the line go green while nothing had ever been fetched for HSL,
 which is the one thing that line is not allowed to do
 ([payroll-wizard-step-load.md](./payroll-wizard-step-load.md)).
 
-**One behaviour deliberately NOT added:** the HSL tab still shows no time-adjustment
+**One behaviour deliberately NOT added:** the HSL section still shows no time-adjustment
 review panel. HSL adjustments were never reviewed on the old HSL step either, and
 surfacing them here would be a new approval surface, not a merge.
 
