@@ -255,26 +255,37 @@ export default function PabIneligibleTable({
             </span>
           )}
         </div>
+        {/* Filters share one row and one height with the search box. `portal` is
+            required, not cosmetic: the menu would otherwise be clipped by the
+            table card's scroll/overflow ancestors and open as a sliver. */}
         <div className="flex flex-wrap items-center gap-2">
           {deptOptions.length > 1 && (
-            <SmoothSelect
-              aria-label="Filter by department"
-              value={deptFilter}
-              onChange={setDeptFilter}
-              triggerClassName="h-8 w-[13rem] text-[11px]"
-              searchable={deptOptions.length > 8}
-              searchPlaceholder="Search departments…"
-              options={deptOptions}
-            />
+            <label className="flex items-center gap-1.5">
+              <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Dept</span>
+              <SmoothSelect
+                aria-label="Filter by department"
+                value={deptFilter}
+                onChange={setDeptFilter}
+                portal
+                triggerClassName="h-8 w-[14rem] text-xs"
+                searchable={deptOptions.length > 8}
+                searchPlaceholder="Search departments…"
+                options={deptOptions}
+              />
+            </label>
           )}
           {bandOptions.length > 1 && (
-            <SmoothSelect
-              aria-label="Filter by status"
-              value={bandFilter}
-              onChange={setBandFilter}
-              triggerClassName="h-8 w-[11rem] text-[11px]"
-              options={bandOptions}
-            />
+            <label className="flex items-center gap-1.5">
+              <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Status</span>
+              <SmoothSelect
+                aria-label="Filter by status"
+                value={bandFilter}
+                onChange={setBandFilter}
+                portal
+                triggerClassName="h-8 w-[12rem] text-xs"
+                options={bandOptions}
+              />
+            </label>
           )}
           <div className="relative w-[15rem]">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
@@ -285,6 +296,17 @@ export default function PabIneligibleTable({
               className="h-8 pl-8 text-xs"
             />
           </div>
+          {(deptFilter || bandFilter || query) && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-[11px] text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+              onClick={() => { setDeptFilter(''); setBandFilter(''); setQuery(''); }}
+            >
+              Clear
+            </Button>
+          )}
         </div>
       </div>
 

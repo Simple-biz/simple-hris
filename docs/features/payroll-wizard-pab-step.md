@@ -169,6 +169,43 @@ Department and status filters sit beside the search box, following the rule
 Status options are the severity bands (**Review** 1–2 days, **Repeated** 3+) plus **Excluded
 from PAB**, and each appears only when some row is actually in it.
 
+## OPEN — HSL cannot appear on this step until the period's last day
+
+**Measured 2026-08-28.** The department filter shows no HSL entry, and that is not a filter
+bug. `pabStatusByEmail`'s HSL branch is:
+
+```
+if (isHsl) { map.set(email, periodEnded ? (eligible ? 'eligible' : 'ineligible') : 'in_progress'); }
+```
+
+So every HSL person is `in_progress` until the PAB period ENDS, and this step lists only
+`ineligible`. With the 2026-08 window closing Sat Aug 29, all **587** HSL-family people on the
+active roster were `in_progress` on Aug 28. The frozen snapshot for the 08-16 week agrees:
+564 in_progress, 21 ineligible, 0 eligible — and even those 21 are lifted back to
+`in_progress` by `effectivePabStatus`'s upgrade-never-downgrade rule.
+
+**Why this matters more than it looks.** The step exists for the cohort the ask named — "1 or 2
+days, probably HSL with shifting schedules". That cohort is precisely the one that cannot be
+reviewed until the day the period closes, which is the day it is too late to act calmly.
+
+**Why non-HSL differs.** A non-HSL person locks `ineligible` on their first PAST failed
+weekday: the verdict cannot be salvaged by future days, so it is safe to state early. The same
+argument holds for HSL at the WEEK level — once a week has closed with fewer than 5 of its 7
+days qualifying, that week can never be recovered and the month is already lost. So HSL COULD
+be locked mid-period on closed weeks only.
+
+**Not changed here, deliberately.** `pabStatusByEmail` drives the Additions pill, the
+auto-applied `perfect_attendance` toggle and therefore the staged dispatch amount. Making HSL
+lock mid-period would move a money-adjacent verdict for 587 people, which is a decision to take
+explicitly, not a side effect of a review screen. Raised with Kane 2026-08-28; pending.
+
+Second landmine in the same branch, for whoever takes it on: after the period ends the HSL
+verdict reads `perfectAttendanceEligible`, which returns an EMPTY SET when
+`pabMonthColumnCoverageComplete` is false. On 2026-08-28 only 15 of the 20 expected Mon–Fri
+column groups were uploaded, so a period that ended while coverage was short would mark every
+HSL person `ineligible` at once. Any fix must handle incomplete coverage as "cannot judge yet",
+never as "everybody failed".
+
 ## The PAB Calendar modal is two columns, not a tower
 
 The modal (`PayrollWizard.tsx`, the `pabCalendarModalEmail` block) is `max-w-6xl` and lays the
