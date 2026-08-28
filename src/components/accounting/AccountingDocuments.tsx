@@ -1029,9 +1029,9 @@ export default function AccountingDocuments({
           <DialogHeader>
             <DialogTitle>{signature ? 'Update your signature' : 'Set up your signature'}</DialogTitle>
             <DialogDescription>
-              Drawn once, saved to Supabase, and stamped onto every document you approve — with
-              the requested and signed dates so the document can be verified. You can revoke it
-              any time with the switch.
+              Draw it, or type your name and pick a style. Either way it is saved once and
+              stamped onto every document you approve — with the requested and signed dates so
+              the document can be verified. You can revoke it any time with the switch.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -1059,10 +1059,10 @@ export default function AccountingDocuments({
                 />
               </label>
             </div>
-            <SignaturePad onChange={setSigDraft} />
+            <SignaturePad onChange={setSigDraft} defaultName={sigName} />
             {signature && !sigDraft && (
               <p className="text-[11.5px] text-zinc-400">
-                Leave the pad blank to keep your current drawing and just update the name/title.
+                Leave this blank to keep your current signature and just update the name/title.
               </p>
             )}
           </div>

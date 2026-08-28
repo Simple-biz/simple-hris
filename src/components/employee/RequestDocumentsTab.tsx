@@ -10,6 +10,7 @@ import {
   FileCheck2,
   FileSignature,
   FileText,
+  Info,
   Loader2,
   Paperclip,
   Send,
@@ -468,6 +469,23 @@ export default function RequestDocumentsTab({
               className="w-full resize-y rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[13.5px] leading-relaxed text-zinc-900 placeholder:text-zinc-400 transition-colors focus:border-orange-300 focus:outline-none focus:ring-1 focus:ring-orange-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-100 dark:focus:border-orange-500/40 dark:focus:ring-orange-500/20"
             />
           </label>
+
+          {/* Fair warning, deliberately NOT a gate (Kane, 2026-08-28). Accounting
+              signs electronically — drawn or typed — and some institutions want wet
+              ink on the page. Whether that matters is the reader's call, not ours,
+              so this informs and never blocks: no per-type branch, no acknowledgement,
+              nothing disabled. */}
+          {!!docType && (
+            <div className="flex items-start gap-2.5 rounded-xl border border-zinc-200/80 bg-zinc-50/70 px-3.5 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400" />
+              <p className="text-[11.5px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                Your signed copy carries Accounting&rsquo;s <strong>electronic signature</strong>{' '}
+                and a Reference ID it can be verified against. Most banks, embassies and
+                government offices accept this — but a few still ask for an original in wet
+                ink, so it&rsquo;s worth checking with them before you file it.
+              </p>
+            </div>
+          )}
 
           <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-[11.5px] text-zinc-400 dark:text-zinc-600">

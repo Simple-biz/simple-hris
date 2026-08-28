@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import zlib from 'node:zlib';
 import { PDFDocument } from 'pdf-lib';
 import { renderCoeDocument, __coeInternals } from './coe-document';
 import { coeWorkerName, formatCoeMoney, formatCoeStartDate, type CoeFacts } from './coe-facts';
+import { RASTER_PADDING, TYPED_EXPORT_HEIGHT } from './signature-render';
 
 // A 1x1 transparent PNG — enough for pdf-lib to embed as a "signature".
 const PNG_1PX =
@@ -244,4 +246,109 @@ test('money renders in each currency the way the business writes it', () => {
   // COP is quoted in whole pesos, es-CO groups with dots, and the house "$COP"
   // symbol gets a space so a bank doesn't read it as one token.
   assert.equal(formatCoeMoney(320_000, 'COP'), '$COP 320.000');
+});
+
+// ── Realistically-sized signatures ───────────────────────────────────────────
+//
+// The tests above embed a 1x1 PNG, which scale-to-fit renders 1pt tall. A real
+// signature — drawn OR typed — is 46pt tall, the full height the block allows,
+// so those tests exercise the layout with 45pt of slack that production never
+// has. The typed-signature mode (src/lib/documents/signature-render.ts) emits a
+// fixed 184px-tall raster, so pin the one-page constraint against the real
+// thing rather than against a placeholder.
+
+/** A valid RGBA PNG of exactly `width` x `height`, opaque black. pdf-lib reads
+ *  the dimensions off IHDR, which is all the layout depends on. */
+function makePng(width: number, height: number): string {
+  const bytesPerRow = width * 4 + 1; // +1 filter byte per scanline
+  const raw = Buffer.alloc(bytesPerRow * height);
+  for (let y = 0; y < height; y += 1) {
+    const rowStart = y * bytesPerRow;
+    raw[rowStart] = 0; // filter: none
+    for (let x = 0; x < width; x += 1) {
+      raw[rowStart + 1 + x * 4 + 3] = 255; // opaque
+    }
+  }
+
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const typed = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(typed));
+    return Buffer.concat([len, typed, crc]);
+  };
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // colour type: RGBA
+  // 10..12 = compression / filter / interlace, all 0
+
+  const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+  return `data:image/png;base64,${png.toString('base64')}`;
+}
+
+/** The raster Type mode actually produces: TYPED_EXPORT_HEIGHT + padding tall,
+ *  at the widest aspect a real cursive name reaches. */
+const TYPED_SIGNATURE_PNG = makePng(
+  Math.round((TYPED_EXPORT_HEIGHT * 12) + RASTER_PADDING * 2),
+  TYPED_EXPORT_HEIGHT + RASTER_PADDING * 2,
+);
+
+test('the PNG helper produces something pdf-lib will actually embed', async () => {
+  // If this ever breaks, the two tests below would pass for the wrong reason.
+  const doc = await PDFDocument.create();
+  const img = await doc.embedPng(TYPED_SIGNATURE_PNG);
+  assert.equal(img.height, TYPED_EXPORT_HEIGHT + RASTER_PADDING * 2);
+  assert.ok(img.width > img.height, 'a signature raster is wider than it is tall');
+});
+
+test('a FULL-HEIGHT typed signature still fits one page', async () => {
+  const bytes = await renderCoeDocument({
+    facts: FACTS,
+    requestId: REQUEST_ID,
+    generatedAtIso: GENERATED_AT,
+    signature: {
+      dataUrl: TYPED_SIGNATURE_PNG,
+      name: 'Alissa Re',
+      title: 'Payroll Coordinator',
+      email: 'payroll@simple.biz',
+      signedAtIso: GENERATED_AT,
+    },
+  });
+  assert.equal((await PDFDocument.load(bytes)).getPageCount(), 1);
+});
+
+test('the realistic worst case, signed at FULL signature height, still fits one page', async () => {
+  // The worst case above, but with the 45pt of slack the 1x1 placeholder was
+  // silently granting it removed.
+  const bytes = await renderCoeDocument({
+    facts: {
+      ...FACTS,
+      workerName: 'Maria Cristina Villanueva-Santos',
+      team: 'Healthcare Solutions — Dental Billing',
+      performanceBonuses: [
+        { label: 'Sales Closer Bonus', amount: '₱2,500' },
+        { label: 'Quarterly KPI Bonus', amount: null },
+        { label: 'Attestation Bonus', amount: '₱50,000' },
+      ],
+    },
+    requestId: REQUEST_ID,
+    generatedAtIso: GENERATED_AT,
+    signature: {
+      dataUrl: TYPED_SIGNATURE_PNG,
+      name: 'Alissa Re',
+      title: 'Payroll Coordinator',
+      email: 'payroll@simple.biz',
+      signedAtIso: GENERATED_AT,
+    },
+  });
+  assert.equal((await PDFDocument.load(bytes)).getPageCount(), 1);
 });
