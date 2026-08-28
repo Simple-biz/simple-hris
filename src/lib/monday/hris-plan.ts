@@ -992,7 +992,12 @@ export const PLAN_TASKS: PlanTask[] = [
   // repo and has never been imported. Split out of the gate row rather than blocking it, because the
   // gate row's claim is about the sender and Kane has confirmed the sender works. 1 SP: an import,
   // not a build.
-  { epic: 'HRIS-24', name: 'Import orientation-email-leadgen-only.json into live n8n as the second-layer filter', type: 'Chore', sp: 1, done: false, sprint: 'S27', priority: 'Medium' },
+  // CLOSED 2026-08-28 on Kane's direct confirmation ("Import Orientation Email leadgen mark it as
+  // Done"). NOT measurable from this repo — the filter lives inside the n8n cloud workflow and there
+  // is no API here to read it, so his word is the evidence and `dateBasis: 'external'` is the honest
+  // shape. That is the same exemption the 08-14 n8n-paystub rows took, and it is NOT the blanket the
+  // honesty gate forbids: he named this row specifically, unprompted.
+  { epic: 'HRIS-24', name: 'Import orientation-email-leadgen-only.json into live n8n as the second-layer filter', type: 'Chore', sp: 1, done: true, sprint: 'S27', priority: 'Medium' },
   // 3 SP, High: the DATA half of the sheet_synced false-success bug. The code fix stops NEW drift;
   // it repairs nothing already drifted. Measured 2026-08-25 across 1,592 sheet rows and 2,564 DB
   // rows: 1,583 agree, 9 drift, 6 of them repairable. Those 9 stale cells are why people who are
@@ -1003,7 +1008,17 @@ export const PLAN_TASKS: PlanTask[] = [
   // --apply gate, backup written first) and REFUSES three classes rather than guessing: an
   // off_boarded_at stamp anywhere, DB rows disagreeing with each other, and a DB department that is
   // not placeable. 3 SP: a gated data repair on live payroll identity, not a script run.
-  { epic: 'HRIS-26', name: 'Repair the 9 drifted master-sheet department cells left behind by the sheet_synced false success', type: 'Chore', sp: 3, done: false, sprint: 'S27', priority: 'High' },
+  // CLOSED 2026-08-28, and closed on a MEASUREMENT rather than the assertion that prompted it. Kane
+  // said it was done; re-running the detection half of fix-sheet-dept-drift.mts (dry-run, read-only)
+  // against the live Sheet and DB returned "DRIFT: 3 rows (0 repairable, 3 to escalate) — nothing
+  // repairable — done", against 9 rows / 6 repairable when it was measured on 2026-08-25. All six
+  // repairable cells are repaired. The three that remain are the exact classes the script REFUSES by
+  // design rather than guessing: shainan@ (DB dept is bare `hsl`, not a placeable label), beao@ and
+  // ellainnec@ (both carry an off_boarded_at stamp — active-vs-offboarded is a business call). They
+  // are escalations, never in this row's scope, and they want their own row if anyone wants them
+  // fixed. See the note above: running a plain sync instead of the script would have been actively
+  // harmful, and the 0-repairable result is evidence the correct order was followed.
+  { epic: 'HRIS-26', name: 'Repair the 9 drifted master-sheet department cells left behind by the sheet_synced false success', type: 'Chore', sp: 3, done: true, sprint: 'S27', priority: 'High' },
   // ── Pass 14 · 2026-08-26 · the three commits the 08-25 pass could not have covered ────────────
   // All three are on LOCAL main only (origin/main is at 667dfe9d), so all three are In Progress and
   // none carries an Actual SP. That is the honesty gate doing its job, not a scoring opinion.

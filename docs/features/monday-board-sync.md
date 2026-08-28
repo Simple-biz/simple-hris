@@ -1102,6 +1102,86 @@ Two bodies of work are **in flight, not shipped**, and neither gets a row:
 Also unlogged, and not a board matter: **no session-log audit exists for 08-27 or 08-28**. The last is
 `audit-2026-08-26-session-log.md`. Two days of sessions are undocumented.
 
+## Pass 19 — 2026-08-28 · two rows approved, the budget died in PHASE 1, 4 SP owed
+
+Kane: *"Import Orientation Email leadgen mark it as Done, Repair drifted master sheet is already
+done as well."* Two rows that already existed on the board at `done: false`. **Approved as
+`6a8c8aca5f43`, and NOT yet written** — read the failure below before believing any of it landed.
+
+### One closed on a measurement, one on his word, and the difference is not blurred
+
+| Row | SP | Evidence | Basis |
+|---|---|---|---|
+| Import `orientation-email-leadgen-only.json` into live n8n | 1 | `d79c1a64` | **his word** |
+| Repair the 9 drifted master-sheet department cells | 3 | `667dfe9d` | **a re-measurement** |
+
+The drift row was **not** closed on the assertion that prompted it. Re-running the detection half of
+`scripts/fix-sheet-dept-drift.mts` dry-run and read-only against the live Sheet and DB returned:
+
+```
+DRIFT: 3 rows (0 repairable, 3 to escalate)
+nothing repairable — done.
+```
+
+against **9 rows / 6 repairable** when it was measured on 2026-08-25, read over 1,592 sheet rows and
+2,564 `global_master_list` rows. All six repairable cells are repaired. **The three that remain are
+not leftovers** — they are the exact classes the script refuses by design rather than guessing:
+`shainan@` (DB department is bare `hsl`, not a placeable label), `beao@` and `ellainnec@` (both carry
+an `off_boarded_at` stamp; active-vs-offboarded is a business call). They want their own row.
+
+The n8n import is **not measurable from this checkout** — the filter lives inside the n8n cloud
+workflow and there is no API configured here. So it takes `dateBasis: 'external'`, the exemption for
+work that is an action in another system, and the basis names the confirmation instead of pretending
+to a commit date. That is not the blanket the honesty gate forbids: he named the row specifically.
+
+### THE FAILURE: a phase-1 budget death queues NOTHING, and that is a hole in the ledger
+
+`apply.mts` accepted the hash, printed `[APPLY] phase 1 — structure (real reconciler)`, and **exited
+0 with no phase-1 counts, no phase-2 section, and no `apply-result.json`** — the result file still
+held pass 18's hash `74130e0cdeed`. The corrections never ran, so **the two rows are still
+`Ready to Start`**. That is an inference from the missing phase-2 output, *not* a re-read: the
+verification that would confirm it is itself dead.
+
+```
+DailyLimitExceeded observed 2026-08-28T18:19:10Z · retry_in_seconds: 20447 → 00:00Z
+```
+
+**The clean UTC-day bucket, confirmed a fourth time.** 18:19:10Z + 20447s lands exactly on midnight
+UTC (20:00 EDT). Never guess this — the number is free in the error body.
+
+**The gap worth fixing:** `apply.mts` catches `DailyLimitExceeded` **in its corrections loop** and
+queues every row it had not yet written. It has no such catch around **phase 1**, so a budget death
+during the reconciler's 220-task patch queues *nothing* and the approved SP is recoverable only by
+re-deriving the pass. That is precisely the failure the ledger exists to prevent, and it is currently
+only half-covered.
+
+**Worked around, not routed around.** Both rows were queued into `pending-sp.json` by hand under
+their real approval hash `6a8c8aca5f43` and `inputsHash` `fa8b7cec7c61` — the hash they were *born*
+under, so flushing them completes an already-approved write the budget interrupted rather than
+inventing a new one, which is the entire justification the ledger rests on. `revalidate()` was then
+run offline against both (0 API calls) and returned **an empty refusal list for each**: all seven
+conditions pass.
+
+### What this costs, and why queueing was the right move
+
+A retry via `apply.mts` is another **~200 calls** — the reconciler re-patches all 220 tasks and 37
+epics regardless of how little changed. A flush is **~2 calls per row**, so these two are **~5 calls
+total**, including the budget probe that makes a still-dead budget cost 1 call instead of
+re-fragmenting the queue. After 00:00 UTC:
+
+```
+node --import tsx .claude/skills/monday-board-sync/scripts/flush-pending.mts --apply
+```
+
+then `verify-one.mts 12895660792` and `verify-one.mts 12895680676`. **The Completed Dates stay
+2026-08-28** — the flush is when the board catches up, not when the work finished, and both dates sit
+inside S27 either way.
+
+### Pass 18 is unaffected
+
+Its ten rows were applied *and* fully verified before the budget ran out — `verify.mts` returned
+220/220 parity, 0 orphans, all invariants clean. Nothing about this failure touches them.
+
 ## Cross-links
 
 `docs/features/INDEX.md` · memory `monday-hris-board-sync` · pass evidence
