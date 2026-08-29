@@ -11,7 +11,7 @@ import type { AuthzOk } from './authorize-email';
  * "open"). Checked inline in each route ahead of the session check, so a
  * valid secret short-circuits without a DB/session round-trip.
  */
-const RECRUITING_ACTOR_EMAIL = 'recruiting-integration@simple.biz';
+const RECRUITING_ACTOR_EMAIL = 'hr@simple.biz';
 
 export function recruitingIntegrationAuthorized(req: Request): AuthzOk | null {
   const expected = process.env.RECRUITING_INTEGRATION_SECRET?.trim();
