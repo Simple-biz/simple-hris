@@ -12,8 +12,10 @@ Key files:
 - `src/components/employee/EmployeeSidebar.tsx` — the nav label.
 - `src/lib/policies/team-policies.ts` — per-department policy copy (display-only).
 - `src/lib/supabase/team-rankings.ts` — ranking assembly (`buildRankingWeeks` is pure).
-- `app/api/team-rankings/route.ts` — the scoped read.
-- Tests: `src/lib/supabase/team-rankings.test.ts` · `src/lib/policies/team-policies.test.ts`.
+- `src/lib/rbac/rankings-viewers.ts` — who may see Rankings at all (allow-list).
+- `app/api/team-rankings/route.ts` — the gated, scoped read.
+- Tests: `src/lib/supabase/team-rankings.test.ts` · `src/lib/rbac/rankings-viewers.test.ts`
+  · `src/lib/policies/team-policies.test.ts`.
 
 ## The tab is named after the department
 
@@ -42,6 +44,13 @@ animation is gated on `useReducedMotion()`.
 **Rankings only appears when the team actually has ranked weeks** — the pill is
 absent otherwise, and an employee sitting on it when the data empties is bounced
 back to Directory. That is driven by the returned data, not a department allowlist.
+
+Since **2026-08-29** it is also allow-listed to a single reader (see
+[Authorization](#authorization)). Everyone else's fetch comes back `{ weeks: [] }`,
+so the pill vanishes through the same code path as an unscored team — there is no
+second hiding mechanism and no "restricted" state. The header sentence under the
+page title drops the words "weekly rankings" for the same reason: the copy must not
+name a section the viewer cannot open.
 
 ### Directory
 
@@ -123,17 +132,53 @@ rather than a hardcoded department list. A second team put on the same bonus sha
 lights up with no code change. Scoping (who may *read* whose department) is enforced
 separately in the route.
 
+That is still true after the 2026-08-29 allow-list: it gates the **viewer**, never
+the department, so the "second team lights up" property survives — such a team would
+light up for the allow-list only.
+
 ## Authorization
 
-`GET /api/team-rankings?department=X` mirrors `/api/team-roster` **exactly**:
-elevated roles (admin/payroll/finance/hr/viewer) may read any department; everyone
-else is limited to their own home department plus any department they manage. An
-out-of-scope or empty `?department=` degrades to `{ weeks: [] }` rather than 403, so
-the tab renders cleanly. Neither route is in `route-access.ts` — both do their own
-in-route scoping, which is the established pattern for these personal-portal reads.
+`GET /api/team-rankings?department=X` applies **two gates, in this order**.
+
+### 1 — Rankings are allow-listed to one reader (2026-08-29)
+
+Kane: *"Employee - AI/API Team - Rankings lets hide this please for everyone else
+except kaner@simple.biz"* — confirmed the same day to mean **every department**, not
+just `devs`, and **no elevated bypass**. `canViewTeamRankings()`
+(`src/lib/rbac/rankings-viewers.ts`) runs before anything else; a caller who is not
+on the list gets `{ weeks: [] }` and costs no query.
+
+> **This is where the route stops mirroring `/api/team-roster`.** It used to match it
+> exactly and this section used to say so — that is no longer true. An admin,
+> payroll, finance, hr or viewer session now reads an empty list *here* while still
+> reading any department's **roster**. The gate sits **above** the elevated-role
+> branch deliberately: below it, those five roles would be the only people who kept
+> full access, which is the opposite of the ask.
+>
+> It allow-lists the **viewer**, never the department — see
+> [Which departments get a Rankings tab](#which-departments-get-a-rankings-tab).
+
+The employee portal has no `FeatureViewKey` in `FEATURE_CATALOG`
+(`src/lib/rbac/feature-permissions.ts`), so the admin per-tab permission grid cannot
+express this today and a named constant is the honest form. Moving it into the grid
+would mean adding an `employee` view there first.
+
+### 2 — Department scoping (unchanged)
+
+Still identical to `/api/team-roster`: elevated roles may read any department;
+everyone else is limited to their own home department plus any department they
+manage. An out-of-scope or empty `?department=` degrades to `{ weeks: [] }` rather
+than 403, so the tab renders cleanly. Neither route is in `route-access.ts` — both do
+their own in-route scoping, which is the established pattern for these
+personal-portal reads.
 
 The raw department label is sent to both routes; only the *display* label collapses
 (`hsl:filing_specialist` scopes as itself, renders as "HSL").
+
+Both gates return the same empty shape on purpose, so a denied viewer and a team
+that was never scored are indistinguishable to the client. `rankings-viewers.test.ts`
+pins the ordering against the source, because a gate that drifts below
+`hasElevatedRole` still passes every behavioural test while leaking to five roles.
 
 ## Policies are display-only
 

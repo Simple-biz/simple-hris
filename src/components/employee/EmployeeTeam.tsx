@@ -774,8 +774,14 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
               </div>
             )}
           </div>
+          {/* Never advertise the Rankings pill to a viewer who doesn't get one —
+              the tab is allow-listed server-side (rankings-viewers.ts), so for
+              almost everyone `hasRankings` is false and the sentence must not
+              name a section that isn't there. */}
           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-500">
-            Your team directory, weekly rankings, and the policies for this team.
+            {hasRankings
+              ? 'Your team directory, weekly rankings, and the policies for this team.'
+              : 'Your team directory and the policies for this team.'}
           </p>
         </header>
 

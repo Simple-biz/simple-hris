@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
 import { hasElevatedRole } from '@/lib/auth/elevated-roles';
 import { getTeamRankings } from '@/lib/supabase/team-rankings';
+import { canViewTeamRankings } from '@/lib/rbac/rankings-viewers';
 import { getEmployeeMasterRecord } from '@/lib/supabase/employees';
 import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
@@ -19,12 +20,23 @@ export const runtime = 'nodejs';
  * `src/lib/supabase/team-rankings.ts`). Weeks appear only once the manager marks
  * them ready/locked.
  *
- * Scoping is deliberately IDENTICAL to /api/team-roster: elevated roles
- * (admin/payroll/finance/hr/viewer) may view any department; everyone else is
- * limited to their own home department plus any department they manage. An
- * arbitrary `?department=` therefore can't dump another team's scores, and an
- * empty value can't dump the company. Out-of-scope requests degrade to an empty
- * list rather than 403 so the tab renders cleanly.
+ * ## Two gates, in this order
+ *
+ * 1. **Viewer allow-list** — `canViewTeamRankings` (Kane, 2026-08-29). Everyone
+ *    not on it reads an empty list for EVERY department, elevated roles included.
+ *    This is why the route no longer mirrors /api/team-roster, which it used to
+ *    match exactly; see `src/lib/rbac/rankings-viewers.ts` for why admins are not
+ *    an exception. It runs before the department work so a denied caller costs no
+ *    query.
+ * 2. **Department scoping**, unchanged, and still identical to /api/team-roster:
+ *    elevated roles may view any department; everyone else is limited to their own
+ *    home department plus any department they manage. An arbitrary `?department=`
+ *    therefore can't dump another team's scores, and an empty value can't dump the
+ *    company.
+ *
+ * Both degrade to an empty list rather than 403 so the tab renders cleanly — the
+ * client drops the Rankings pill when no weeks come back, so a denied viewer sees
+ * the same thing as a team that was never scored, not an error.
  */
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -34,6 +46,13 @@ export async function GET(req: NextRequest) {
   const sessionEmail = (user?.email ?? '').trim().toLowerCase();
   if (!sessionEmail) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Gate 1. Above the elevated-role bypass on purpose — an admin session is not an
+  // exception here. Same empty shape as an out-of-scope department, so the tab just
+  // loses its pill instead of surfacing "you are not allowed to see this".
+  if (!canViewTeamRankings(sessionEmail)) {
+    return NextResponse.json({ weeks: [], error: null });
   }
 
   const department = req.nextUrl.searchParams.get('department')?.trim() ?? '';
