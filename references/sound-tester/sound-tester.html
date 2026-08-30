@@ -71,6 +71,27 @@
   button.play:hover { filter: brightness(1.06); }
   button.play:active { transform: scale(0.95); }
   button.play .tri { font-size: 0.75rem; }
+  button.stop {
+    flex-shrink: 0;
+    appearance: none;
+    cursor: pointer;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 0.82rem;
+    padding: 10px 14px;
+    border-radius: 10px;
+    transition: border-color 0.2s ease, color 0.2s ease;
+  }
+  button.stop:hover { border-color: #3b3b48; color: var(--text); }
+  .card p code {
+    background: var(--panel);
+    padding: 1px 5px;
+    border-radius: 5px;
+    font-size: 0.76rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
   .playall {
     margin: 24px 0 4px;
     display: flex;
@@ -112,7 +133,7 @@
 
   <footer>
     Source of truth:
-    <code>src/lib/sound/ping-chime.ts</code> (payment + pings) and
+    <code>src/lib/sound/ping-chime.ts</code> (engine start, payment + pings) and
     <code>src/hooks/useNotificationChime.ts</code> (notification bell).
     The functions below are copied verbatim so this page always matches the app.
   </footer>
@@ -254,29 +275,226 @@ function playPaymentConfirmed() {
 }
 
 /* ------------------------------------------------------------------ *
+ *  5) Start Processing — from ping-chime.ts (playStagePrepped)
+ *  A Lamborghini V12 ignition: starter motor, the catch, a flare to
+ *  ~6,200 rpm, one throttle blip, then settle to idle.
+ *  Everything is scaled off ONE rev curve, so the whole engine stays
+ *  locked together as it revs. Firing frequency of a V12 = rpm / 10.
+ * ------------------------------------------------------------------ */
+const REV_CURVE = [
+  [0.70, 18],   // catching
+  [0.88, 130],  // caught — 1,300 rpm
+  [1.08, 620],  // the flare — 6,200 rpm
+  [1.50, 240],
+  [1.74, 170],
+  [2.02, 470],  // throttle blip
+  [2.44, 155],
+  [2.78, 112],
+  [3.25, 96],
+  [4.60, 92],   // idle
+];
+const ENGINE_END = 4.85;
+const STAGE_PREPPED_VOLUME = 0.7;
+
+function scheduleRev(param, scale, base, now) {
+  param.setValueAtTime(base + REV_CURVE[0][1] * scale, now + REV_CURVE[0][0]);
+  for (let i = 1; i < REV_CURVE.length; i += 1) {
+    param.linearRampToValueAtTime(base + REV_CURVE[i][1] * scale, now + REV_CURVE[i][0]);
+  }
+}
+
+let noiseBuf = null;
+function getNoise(c) {
+  if (!noiseBuf || noiseBuf.sampleRate !== c.sampleRate) {
+    const len = Math.floor(c.sampleRate * 2);
+    noiseBuf = c.createBuffer(1, len, c.sampleRate);
+    const data = noiseBuf.getChannelData(0);
+    for (let i = 0; i < len; i += 1) data[i] = Math.random() * 2 - 1;
+  }
+  return noiseBuf;
+}
+
+let engineRun = null;
+function killEngine(fade) {
+  const run = engineRun;
+  if (!run) return;
+  engineRun = null;
+  const c = run.ctx, master = run.master, now = c.currentTime, g = master.gain;
+  try {
+    if (typeof g.cancelAndHoldAtTime === 'function') g.cancelAndHoldAtTime(now);
+    else { const held = g.value; g.cancelScheduledValues(now); g.setValueAtTime(held, now); }
+    g.linearRampToValueAtTime(0, now + fade);
+  } catch (e) { /* param already torn down */ }
+  const at = now + fade + 0.05;
+  for (const src of run.sources) { try { src.stop(at); } catch (e) { /* already ended */ } }
+  setTimeout(() => { try { master.disconnect(); } catch (e) {} }, (fade + 0.25) * 1000);
+}
+
+function playStagePrepped() {
+  const c = getCtx();
+  if (!c) return;
+  killEngine(0.06);
+  if (c.state !== 'running') c.resume().catch(() => {});
+
+  const now = c.currentTime + 0.02;
+  const sources = [];
+
+  const master = c.createGain();
+  master.gain.value = STAGE_PREPPED_VOLUME;
+  const comp = c.createDynamicsCompressor();
+  comp.threshold.value = -18;
+  comp.knee.value = 24;
+  comp.ratio.value = 6;
+  comp.attack.value = 0.004;
+  comp.release.value = 0.18;
+  master.connect(comp).connect(c.destination);
+
+  // 1. Starter motor — seven grinding turns.
+  const crankGain = c.createGain();
+  crankGain.gain.value = 0;
+  const crankTone = c.createBiquadFilter();
+  crankTone.type = 'lowpass';
+  crankTone.frequency.value = 900;
+  crankGain.connect(crankTone).connect(master);
+
+  const crankOsc = c.createOscillator();
+  crankOsc.type = 'sawtooth';
+  crankOsc.frequency.setValueAtTime(42, now);
+  crankOsc.frequency.linearRampToValueAtTime(68, now + 0.78);
+  crankOsc.connect(crankGain);
+
+  const crankNoise = c.createBufferSource();
+  crankNoise.buffer = getNoise(c);
+  crankNoise.loop = true;
+  const crankNoiseGain = c.createGain();
+  crankNoiseGain.gain.value = 0.5;
+  crankNoise.connect(crankNoiseGain).connect(crankGain);
+
+  const TURNS = 7, TURN = 0.112;
+  for (let i = 0; i < TURNS; i += 1) {
+    const t = now + i * TURN;
+    crankGain.gain.setValueAtTime(0.02, t);
+    crankGain.gain.linearRampToValueAtTime(0.42, t + 0.026);
+    crankGain.gain.exponentialRampToValueAtTime(0.03, t + TURN * 0.82);
+  }
+  crankGain.gain.linearRampToValueAtTime(0, now + TURNS * TURN + 0.08);
+  for (const src of [crankOsc, crankNoise]) {
+    src.start(now);
+    src.stop(now + TURNS * TURN + 0.2);
+    sources.push(src);
+  }
+
+  // 2. Ignition thump — the whump as it catches.
+  const thump = c.createOscillator();
+  thump.type = 'sine';
+  thump.frequency.setValueAtTime(160, now + 0.78);
+  thump.frequency.exponentialRampToValueAtTime(42, now + 0.98);
+  const thumpEnv = c.createGain();
+  thumpEnv.gain.setValueAtTime(0, now + 0.78);
+  thumpEnv.gain.linearRampToValueAtTime(0.5, now + 0.8);
+  thumpEnv.gain.exponentialRampToValueAtTime(0.0001, now + 1.05);
+  thump.connect(thumpEnv).connect(master);
+  thump.start(now + 0.78);
+  thump.stop(now + 1.1);
+  sources.push(thump);
+
+  // 3. The V12.
+  const engineGain = c.createGain();
+  engineGain.gain.setValueAtTime(0, now + 0.72);
+  engineGain.gain.linearRampToValueAtTime(0.95, now + 0.92);
+  engineGain.gain.setValueAtTime(0.95, now + 3.9);
+  engineGain.gain.linearRampToValueAtTime(0, now + ENGINE_END - 0.1);
+
+  const engineTone = c.createBiquadFilter();
+  engineTone.type = 'lowpass';
+  engineTone.Q.value = 0.9;
+  scheduleRev(engineTone.frequency, 5.2, 260, now);
+  engineGain.connect(engineTone).connect(master);
+
+  // [harmonic of the firing frequency, gain, waveform, detune cents]
+  const HARMONICS = [
+    [0.5, 0.13, 'sawtooth', 0],   // half-order lope — the V-angle beat
+    [1, 0.3, 'sawtooth', -7],     // fundamental, detuned pair for thickness
+    [1, 0.22, 'sawtooth', 7],
+    [2, 0.17, 'sawtooth', 0],
+    [3, 0.09, 'square', 0],
+    [4, 0.05, 'sawtooth', 0],
+  ];
+  for (const [mult, gain, type, detune] of HARMONICS) {
+    const osc = c.createOscillator();
+    osc.type = type;
+    osc.detune.value = detune;
+    scheduleRev(osc.frequency, mult, 0, now);
+    const g = c.createGain();
+    g.gain.value = gain;
+    osc.connect(g).connect(engineGain);
+    osc.start(now + 0.7);
+    osc.stop(now + ENGINE_END);
+    sources.push(osc);
+  }
+
+  // Induction / exhaust rasp: noise through a band that rides the revs.
+  const rasp = c.createBufferSource();
+  rasp.buffer = getNoise(c);
+  rasp.loop = true;
+  const raspBand = c.createBiquadFilter();
+  raspBand.type = 'bandpass';
+  raspBand.Q.value = 1.1;
+  scheduleRev(raspBand.frequency, 3.4, 420, now);
+  const raspGain = c.createGain();
+  raspGain.gain.value = 0;
+  scheduleRev(raspGain.gain, 0.00035, 0.01, now);
+  rasp.connect(raspBand).connect(raspGain).connect(engineGain);
+  rasp.start(now + 0.7);
+  rasp.stop(now + ENGINE_END);
+  sources.push(rasp);
+
+  const run = { ctx: c, master: master, sources: sources };
+  engineRun = run;
+  setTimeout(() => { if (engineRun === run) engineRun = null; }, (ENGINE_END + 0.3) * 1000);
+}
+
+/** Mirrors stopStagePrepped() — the fade the Preparing Dispatch modal fires on close. */
+function stopStagePrepped(fadeMs) {
+  killEngine(Math.max(0, fadeMs === undefined ? 450 : fadeMs) / 1000);
+}
+
+/* ------------------------------------------------------------------ *
  *  Render the cards
  * ------------------------------------------------------------------ */
 const CUES = [
   {
+    name: 'Start Processing (Lamborghini V12)',
+    fn: playStagePrepped,
+    stop: stopStagePrepped,
+    dur: 5000,
+    where: "ping-chime.ts · playStagePrepped() / stopStagePrepped()",
+    desc: 'Payroll Wizard → Start Processing, and Accounting → Payment Dispatch → Start Processing: fires the instant the confirm is clicked, in sync with the “Preparing Dispatch” scene. Starter motor, ignition, a flare to ~6,200&nbsp;rpm, one throttle blip, then idle. Closing the modal calls <code>stopStagePrepped()</code>, which fades it out over 450ms — that is what Stop does here.',
+  },
+  {
     name: 'Payment Confirmed',
+    dur: 900,
     fn: playPaymentConfirmed,
     where: "ping-chime.ts · playPaymentConfirmed()",
     desc: 'Accounting → Payment Dispatch: plays when a payment is marked paid and “Confirm sent” succeeds. Also plays on the CEO’s Live Dispatch “Being paid now” feed for every new person paid. Crisp tick + warm rising resolve.',
   },
   {
     name: 'Notification Bell',
+    dur: 900,
     fn: playBell,
     where: "useNotificationChime.ts · playBell()",
     desc: 'Rings on privileged dashboards (e.g. HR) whenever a new unread notification arrives. Bright strike + softer overtone.',
   },
   {
     name: 'Ping Chime (received)',
+    dur: 900,
     fn: playPingChime,
     where: "ping-chime.ts · playPingChime()",
     desc: 'Accounting collaboration layer: heard by the recipient when someone pings them. Rising 3-note sparkle.',
   },
   {
     name: 'Ping Sent',
+    dur: 900,
     fn: playPingSent,
     where: "ping-chime.ts · playPingSent()",
     desc: 'Accounting collaboration layer: soft “it went out” blip on the sender’s side. Deliberately quiet.',
@@ -294,13 +512,19 @@ for (const cue of CUES) {
       <p>${cue.desc}</p>
     </div>
     <button class="play"><span class="tri">▶</span> Play</button>
+    ${cue.stop ? '<button class="stop">■ Stop</button>' : ''}
   `;
-  card.querySelector('button').addEventListener('click', cue.fn);
+  card.querySelector('button.play').addEventListener('click', cue.fn);
+  if (cue.stop) card.querySelector('button.stop').addEventListener('click', () => cue.stop());
   grid.appendChild(card);
 }
 
 document.getElementById('playAll').addEventListener('click', () => {
-  CUES.forEach((cue, i) => setTimeout(cue.fn, i * 900));
+  let at = 0;
+  for (const cue of CUES) {
+    setTimeout(cue.fn, at);
+    at += cue.dur;
+  }
 });
 </script>
 </body>

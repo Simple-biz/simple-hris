@@ -147,57 +147,263 @@ export function playPaymentConfirmed(): void {
   });
 }
 
-// "Stage prepped" cue = the CS:GO match-accept sound, played when the clerk
-// starts payroll processing. Shipped as an asset (public/sounds/match-accept.mp3)
-// rather than synthesized. Fired from the confirm click (a user gesture) so
-// autoplay policy allows it. A single reusable <audio> element is kept so
-// rapid re-triggers just rewind rather than stacking.
-const STAGE_PREPPED_SRC = '/sounds/match-accept.mp3';
-let stagePreppedEl: HTMLAudioElement | null = null;
+/* ────────────────────────────────────────────────────────────────────────────
+ * "Stage prepped" cue = a Lamborghini V12 ignition, played when the clerk hits
+ * Start Processing (Payroll Wizard AND Payment Dispatch — deliberately the same
+ * cue for the same action). Synthesized, not an asset: no engine recording can
+ * be licensed into the repo, and this keeps the sound-reference page's promise
+ * that every cue is Web Audio.
+ *
+ * Three movements, ~4.8s total:
+ *   1. starter motor — seven grinding turns
+ *   2. ignition      — a sub thump as it catches
+ *   3. V12           — flare to ~6,200 rpm, one throttle blip, settle to idle
+ *
+ * Fired from the confirm click (a user gesture) so autoplay policy allows it.
+ * Deliberately NOT routed through `withCtx`: that queues a cue for the next
+ * gesture, and a 4.8-second engine roar must never ambush someone on an
+ * unrelated later click. A locked context just resumes and plays from the top.
+ * ──────────────────────────────────────────────────────────────────────────── */
 
 const STAGE_PREPPED_VOLUME = 0.7;
-let stagePreppedFade: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Firing frequency of a V12 = rpm ÷ 10 (12 cylinders, two revolutions per
+ * cycle). Every oscillator, filter and noise band is scaled off this one curve
+ * so the whole engine stays locked together as it revs. 92 Hz ≈ 920 rpm idle;
+ * 620 Hz ≈ 6,200 rpm on the flare.
+ */
+const REV_CURVE: ReadonlyArray<readonly [number, number]> = [
+  [0.70, 18],   // catching
+  [0.88, 130],  // caught — 1,300 rpm
+  [1.08, 620],  // the flare — 6,200 rpm
+  [1.50, 240],
+  [1.74, 170],
+  [2.02, 470],  // throttle blip
+  [2.44, 155],
+  [2.78, 112],
+  [3.25, 96],
+  [4.60, 92],   // idle
+];
+
+const ENGINE_END = 4.85;
+
+/** Drive one AudioParam off the rev curve: `base + firingHz * scale`. */
+function scheduleRev(param: AudioParam, scale: number, base: number, now: number): void {
+  const [t0, v0] = REV_CURVE[0];
+  param.setValueAtTime(base + v0 * scale, now + t0);
+  for (let i = 1; i < REV_CURVE.length; i += 1) {
+    const [t, v] = REV_CURVE[i];
+    param.linearRampToValueAtTime(base + v * scale, now + t);
+  }
+}
+
+let noiseBuf: AudioBuffer | null = null;
+function getNoise(c: AudioContext): AudioBuffer {
+  if (!noiseBuf || noiseBuf.sampleRate !== c.sampleRate) {
+    const len = Math.floor(c.sampleRate * 2);
+    noiseBuf = c.createBuffer(1, len, c.sampleRate);
+    const data = noiseBuf.getChannelData(0);
+    for (let i = 0; i < len; i += 1) data[i] = Math.random() * 2 - 1;
+  }
+  return noiseBuf;
+}
+
+interface EngineRun {
+  ctx: AudioContext;
+  master: GainNode;
+  sources: AudioScheduledSourceNode[];
+}
+let engineRun: EngineRun | null = null;
+
+/**
+ * Fade the running engine out over `fade` seconds, then stop every source and
+ * drop it. Safe to call when nothing is playing.
+ */
+function killEngine(fade: number): void {
+  const run = engineRun;
+  if (!run) return;
+  engineRun = null;
+  const { ctx: c, master, sources } = run;
+  const now = c.currentTime;
+  const g = master.gain;
+  try {
+    if (typeof g.cancelAndHoldAtTime === 'function') {
+      g.cancelAndHoldAtTime(now);
+    } else {
+      const held = g.value;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(held, now);
+    }
+    g.linearRampToValueAtTime(0, now + fade);
+  } catch {
+    /* param already torn down — the stop() below still ends it */
+  }
+  const at = now + fade + 0.05;
+  for (const src of sources) {
+    try {
+      src.stop(at);
+    } catch {
+      /* already ended */
+    }
+  }
+  window.setTimeout(
+    () => {
+      try {
+        master.disconnect();
+      } catch {
+        /* already detached */
+      }
+    },
+    (fade + 0.25) * 1000,
+  );
+}
 
 export function playStagePrepped(): void {
-  if (typeof window === 'undefined') return;
-  try {
-    if (stagePreppedFade) { clearInterval(stagePreppedFade); stagePreppedFade = null; }
-    if (!stagePreppedEl) {
-      stagePreppedEl = new Audio(STAGE_PREPPED_SRC);
-      stagePreppedEl.preload = 'auto';
-    }
-    stagePreppedEl.volume = STAGE_PREPPED_VOLUME;
-    stagePreppedEl.currentTime = 0;
-    // play() may reject if not yet unlocked; ignore — it'll work on the gesture.
-    void stagePreppedEl.play().catch(() => {});
-  } catch {
-    /* no audio support — degrade to silent */
+  const c = getCtx();
+  if (!c) return;
+  // Rapid re-trigger: snap the previous run off with a click-free 60ms fade
+  // rather than layering a second engine on top of the first.
+  killEngine(0.06);
+  if (c.state !== 'running') void c.resume().catch(() => {});
+
+  const now = c.currentTime + 0.02;
+  const sources: AudioScheduledSourceNode[] = [];
+
+  // Master bus → compressor, which glues the crank, thump and V12 into one
+  // body and keeps the flare from clipping.
+  const master = c.createGain();
+  master.gain.value = STAGE_PREPPED_VOLUME;
+  const comp = c.createDynamicsCompressor();
+  comp.threshold.value = -18;
+  comp.knee.value = 24;
+  comp.ratio.value = 6;
+  comp.attack.value = 0.004;
+  comp.release.value = 0.18;
+  master.connect(comp).connect(c.destination);
+
+  // ── 1. Starter motor ──────────────────────────────────────────────────────
+  const crankGain = c.createGain();
+  crankGain.gain.value = 0;
+  const crankTone = c.createBiquadFilter();
+  crankTone.type = 'lowpass';
+  crankTone.frequency.value = 900;
+  crankGain.connect(crankTone).connect(master);
+
+  const crankOsc = c.createOscillator();
+  crankOsc.type = 'sawtooth';
+  crankOsc.frequency.setValueAtTime(42, now);
+  crankOsc.frequency.linearRampToValueAtTime(68, now + 0.78);
+  crankOsc.connect(crankGain);
+
+  const crankNoise = c.createBufferSource();
+  crankNoise.buffer = getNoise(c);
+  crankNoise.loop = true;
+  const crankNoiseGain = c.createGain();
+  crankNoiseGain.gain.value = 0.5;
+  crankNoise.connect(crankNoiseGain).connect(crankGain);
+
+  const TURNS = 7;
+  const TURN = 0.112;
+  for (let i = 0; i < TURNS; i += 1) {
+    const t = now + i * TURN;
+    crankGain.gain.setValueAtTime(0.02, t);
+    crankGain.gain.linearRampToValueAtTime(0.42, t + 0.026);
+    crankGain.gain.exponentialRampToValueAtTime(0.03, t + TURN * 0.82);
   }
+  crankGain.gain.linearRampToValueAtTime(0, now + TURNS * TURN + 0.08);
+  for (const src of [crankOsc, crankNoise] as AudioScheduledSourceNode[]) {
+    src.start(now);
+    src.stop(now + TURNS * TURN + 0.2);
+    sources.push(src);
+  }
+
+  // ── 2. Ignition thump — the whump as it catches ───────────────────────────
+  const thump = c.createOscillator();
+  thump.type = 'sine';
+  thump.frequency.setValueAtTime(160, now + 0.78);
+  thump.frequency.exponentialRampToValueAtTime(42, now + 0.98);
+  const thumpEnv = c.createGain();
+  thumpEnv.gain.setValueAtTime(0, now + 0.78);
+  thumpEnv.gain.linearRampToValueAtTime(0.5, now + 0.8);
+  thumpEnv.gain.exponentialRampToValueAtTime(0.0001, now + 1.05);
+  thump.connect(thumpEnv).connect(master);
+  thump.start(now + 0.78);
+  thump.stop(now + 1.1);
+  sources.push(thump);
+
+  // ── 3. The V12 ────────────────────────────────────────────────────────────
+  const engineGain = c.createGain();
+  engineGain.gain.setValueAtTime(0, now + 0.72);
+  engineGain.gain.linearRampToValueAtTime(0.95, now + 0.92);
+  engineGain.gain.setValueAtTime(0.95, now + 3.9);
+  engineGain.gain.linearRampToValueAtTime(0, now + ENGINE_END - 0.1);
+
+  // Cutoff tracks revs, so it snarls open on the flare and darkens at idle.
+  const engineTone = c.createBiquadFilter();
+  engineTone.type = 'lowpass';
+  engineTone.Q.value = 0.9;
+  scheduleRev(engineTone.frequency, 5.2, 260, now);
+  engineGain.connect(engineTone).connect(master);
+
+  // [harmonic of the firing frequency, gain, waveform, detune cents]
+  const HARMONICS: ReadonlyArray<readonly [number, number, OscillatorType, number]> = [
+    [0.5, 0.13, 'sawtooth', 0],   // half-order lope — the V-angle beat
+    [1, 0.3, 'sawtooth', -7],     // fundamental, detuned pair for thickness
+    [1, 0.22, 'sawtooth', 7],
+    [2, 0.17, 'sawtooth', 0],
+    [3, 0.09, 'square', 0],
+    [4, 0.05, 'sawtooth', 0],
+  ];
+  for (const [mult, gain, type, detune] of HARMONICS) {
+    const osc = c.createOscillator();
+    osc.type = type;
+    osc.detune.value = detune;
+    scheduleRev(osc.frequency, mult, 0, now);
+    const g = c.createGain();
+    g.gain.value = gain;
+    osc.connect(g).connect(engineGain);
+    osc.start(now + 0.7);
+    osc.stop(now + ENGINE_END);
+    sources.push(osc);
+  }
+
+  // Induction / exhaust rasp: noise through a band that rides the revs.
+  const rasp = c.createBufferSource();
+  rasp.buffer = getNoise(c);
+  rasp.loop = true;
+  const raspBand = c.createBiquadFilter();
+  raspBand.type = 'bandpass';
+  raspBand.Q.value = 1.1;
+  scheduleRev(raspBand.frequency, 3.4, 420, now);
+  const raspGain = c.createGain();
+  raspGain.gain.value = 0;
+  scheduleRev(raspGain.gain, 0.00035, 0.01, now);
+  rasp.connect(raspBand).connect(raspGain).connect(engineGain);
+  rasp.start(now + 0.7);
+  rasp.stop(now + ENGINE_END);
+  sources.push(rasp);
+
+  const run: EngineRun = { ctx: c, master, sources };
+  engineRun = run;
+  // Let go of the run once it has ended on its own, so a later stop can't
+  // reach into finished nodes.
+  window.setTimeout(
+    () => {
+      if (engineRun === run) engineRun = null;
+    },
+    (ENGINE_END + 0.3) * 1000,
+  );
 }
 
 /**
  * Smoothly fade out + stop the stage-prepped cue — call when the "Preparing
- * Dispatch" modal closes so the (long) clip doesn't keep playing behind the UI.
- * Ramps the volume down over ~450ms, then pauses and rewinds. Safe to call when
- * nothing is playing.
+ * Dispatch" modal closes so the engine doesn't keep running behind the UI.
+ * Ramps down over ~450ms, then stops every source. Safe to call when nothing
+ * is playing.
  */
 export function stopStagePrepped(fadeMs = 450): void {
-  const el = stagePreppedEl;
-  if (!el) return;
-  if (stagePreppedFade) { clearInterval(stagePreppedFade); stagePreppedFade = null; }
-  const steps = 15;
-  const stepMs = Math.max(16, fadeMs / steps);
-  const startVol = el.volume;
-  let i = 0;
-  stagePreppedFade = setInterval(() => {
-    i += 1;
-    const next = startVol * (1 - i / steps);
-    el.volume = next > 0 ? next : 0;
-    if (i >= steps) {
-      if (stagePreppedFade) { clearInterval(stagePreppedFade); stagePreppedFade = null; }
-      try { el.pause(); el.currentTime = 0; el.volume = STAGE_PREPPED_VOLUME; } catch { /* ignore */ }
-    }
-  }, stepMs);
+  killEngine(Math.max(0, fadeMs) / 1000);
 }
 
 /** Sender cue: one soft, short blip — quiet so it never nags. */
