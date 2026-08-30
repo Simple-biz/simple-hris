@@ -1182,6 +1182,77 @@ inside S27 either way.
 Its ten rows were applied *and* fully verified before the budget ran out — `verify.mts` returned
 220/220 parity, 0 orphans, all invariants clean. Nothing about this failure touches them.
 
+## Pass 19b — 2026-08-29 · the withheld 4 SP lands, and a stale lock nearly ate it
+
+Kane: *"All withheld SP lets push it to monday."* That is the flush word, and what it authorises is
+narrow and already-approved: `pending-sp.json` held **2 unflushed entries of 11**, both born under
+approval `6a8c8aca5f43` / inputs `fa8b7cec7c61` — the pass-19 hash. Flushing them **completes the
+write the budget interrupted**; it does not mint a new approval, which is the only reason a
+one-command flush is legitimate at all.
+
+### A stale `.apply.lock` blocked the flush, and staleness is NOT detected
+
+`withLock` writes the lock with `flag: 'wx'` and clears it in a `.finally()`, so a *thrown*
+`DailyLimitExceeded` unlinks it on the way out. **This one survived**, holding PID `41512` and
+stamped `2026-08-28 14:03 EDT` — meaning the pass-19 process never ran its own `finally` (hard kill
+or session death), not that a pass was running. The error text is the whole safety net:
+*"Delete it only if that is stale."* There is **no PID liveness check and no age check** — a lock
+outlives its process forever and the next flush refuses with `another apply is running`.
+
+Proven stale three ways before it was touched, because an unlocked concurrent apply is the one thing
+this lock exists to stop:
+
+| Check | Reading |
+|---|---|
+| PID 41512 alive? | `tasklist /FI "PID eq 41512"` → *No tasks are running* |
+| Age | mtime 2026-08-28 14:03 EDT, i.e. **31 hours** — no pass runs that long |
+| Tree | `git status` clean but for `tsconfig.tsbuildinfo`; pass 19's own commit `6ae82ac5` already landed |
+
+**OPEN GAP, deliberately not fixed in this pass.** The fix shape is a PID-liveness *plus* age check;
+what must never be written is an auto-unlink that trusts age alone, because a long legitimate pass
+would then be unlocked underneath itself. Loosening the guard to clear an error is exactly what the
+hardening rule forbids, so it is recorded here rather than patched on the way past.
+
+### `revalidate()` clean on both, a day after queueing
+
+All seven conditions re-derived from the **current** repo and plan, 0 API calls: hash present; both
+names still byte-exact in `PLAN_TASKS`; `plan.sp` still 1 and 3 against `planSp` 1 and 3 (no
+re-score); Fibonacci and under the 8-SP cap; `done: true` on both sides with a Completed Date and
+zero blockers; `d79c1a64` and `667dfe9d` both resolve and are both still ancestors of `origin/main`.
+The commit-date equality check is the one that does **not** apply — both rows are `dateBasis:
+'external'` (an n8n import and a Google Sheet repair; neither is an action any commit performed), and
+that exemption was taken openly in pass 19 with the confirmation named.
+
+### The budget, and what the flush actually cost
+
+The UTC bucket had rolled at 00:00Z ~1.5h before the run, and the probe returned OK on the first
+call. Dry run **3 calls** (probe + 2 exact-name lookups), apply **~7** (probe + 2 lookups + 2 ×
+set-columns/post-update), two `verify-one` re-reads **2** — **~12 calls total** against the **~200** a
+retry of the full `apply.mts` would have cost to write the same 4 SP.
+
+### Written, then verified by re-reading — not off the write log
+
+| Item | Row | Status | Est SP | Actual SP | Completed |
+|---|---|---|---|---|---|
+| `12895660792` | Import `orientation-email-leadgen-only.json` into live n8n | Done | 1 | **1** | 2026-08-28 |
+| `12895680676` | Repair the 9 drifted master-sheet department cells | Done | 3 | **3** | 2026-08-28 |
+
+Both re-read clean: group `Sprint 27 · Aug 18-Aug 29 · Backlog Pull`, Sprint label `Sprint 27`, Type
+`Chore`, and an intact epic relation (`12620521236` / `12620559892`). **The relation is the load-bearing
+detail** — the flush never writes one, so its presence proves the reconciler's link survived the
+phase-1 death rather than needing a 200-call reconcile to restore.
+
+**The Completed Dates stayed 2026-08-28**, one day before the write. The lag is recorded in each
+row's evidence footnote instead — the board caught up on the 29th, the work did not move.
+
+`pending-sp.json`: **11 entries, 0 unflushed.** The board owes nothing.
+
+### Pass 19's hole is still open
+
+`apply.mts` still catches `DailyLimitExceeded` only around its **corrections** loop, not phase 1. The
+ledger paid for that gap by hand twice now. Until the catch wraps phase 1, a budget death during the
+reconciler's 220-task patch still queues nothing on its own.
+
 ## Cross-links
 
 `docs/features/INDEX.md` · memory `monday-hris-board-sync` · pass evidence
