@@ -18895,18 +18895,23 @@ export default function PayrollWizard({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-zinc-900 dark:text-white">
               <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500" />
-              This week&apos;s Hubstaff CSV isn&apos;t uploaded yet
+              No Hubstaff CSV for {weekRangeLabel(expectedPayWeekStart)}
             </DialogTitle>
             <DialogDescription className="text-zinc-600 dark:text-zinc-400">
-              The pay week <span className="font-semibold">{weekRangeLabel(expectedPayWeekStart)}</span> has no
-              Hubstaff report uploaded. Rates, hours, and every later step run on last week&apos;s file until it lands.
+              Hours, rates, and every later step are running on last week&apos;s file. Nothing loads it
+              automatically.
             </DialogDescription>
           </DialogHeader>
           <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-500/40 dark:bg-amber-950/30">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
-            <p className="text-[11px] leading-snug text-amber-700 dark:text-amber-300">
-              Newest upload: {newestSourceFile ? <span className="font-mono">{newestSourceFile}</span> : 'none yet'}.
-              The weekly auto-sync normally lands it Sunday afternoon — upload manually if it hasn&apos;t.
+            <p className="break-all text-[11px] leading-snug text-amber-700 dark:text-amber-300">
+              {newestSourceFile ? (
+                <>
+                  Loaded now: <span className="font-mono">{newestSourceFile}</span>
+                </>
+              ) : (
+                'No Hubstaff file has been uploaded yet.'
+              )}
             </p>
           </div>
           <div className="flex justify-end gap-2 pt-2">
