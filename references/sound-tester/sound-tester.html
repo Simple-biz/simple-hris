@@ -460,9 +460,207 @@ function stopStagePrepped(fadeMs) {
 }
 
 /* ------------------------------------------------------------------ *
+ *  CANDIDATES — not shipped. Kane 2026-08-29: the V12 above "sounds
+ *  ugly as hell". Direction chosen: keep the engine, lose the grind,
+ *  one gesture instead of three movements.
+ *
+ *  What was actually wrong with it, so the replacements don't repeat it:
+ *    · a 42→68 Hz SAWTOOTH through a lowpass for 0.78s = the grind
+ *    · noise-heavy crank on top of that
+ *    · 4.85s and three movements — a short film for a button press
+ *    · the rev curve wobbles 620→240→170→470→155→112→96→92, which
+ *      reads as messy rather than deliberate
+ *
+ *  What is kept, because it was the good bone: ONE rev curve drives
+ *  every oscillator, filter and gain, so the engine stays locked
+ *  together as it revs. Firing frequency of a V12 = rpm ÷ 10.
+ *
+ *  What replaces the noise: a PeriodicWave harmonic stack. An engine's
+ *  body is its firing frequency plus harmonics — building that directly
+ *  gives the richness without the fizz, and a resonant lowpass that
+ *  TRACKS the revs does the rest (that tracking is most of why a
+ *  synthesized engine reads as an engine at all).
+ * ------------------------------------------------------------------ */
+
+/** Harmonic amplitudes → a PeriodicWave. Index 0 is the fundamental. */
+function engineWave(c, harmonics) {
+  const real = new Float32Array(harmonics.length + 1);
+  const imag = new Float32Array(harmonics.length + 1);
+  for (let i = 0; i < harmonics.length; i += 1) imag[i + 1] = harmonics[i];
+  return c.createPeriodicWave(real, imag);
+}
+
+/** Drive one AudioParam off a rev curve: `base + firingHz * scale`. */
+function scheduleCurve(param, curve, scale, base, now) {
+  param.setValueAtTime(base + curve[0][1] * scale, now + curve[0][0]);
+  for (let i = 1; i < curve.length; i += 1) {
+    param.linearRampToValueAtTime(base + curve[i][1] * scale, now + curve[i][0]);
+  }
+}
+
+/**
+ * One engine, parameterised. Both candidates are the same machine with a
+ * different attitude — so an A/B is a fair test of attitude, not of two
+ * unrelated sounds.
+ */
+function playEngine(spec) {
+  const c = getCtx();
+  if (!c) return;
+  killEngine(0.06);
+  if (c.state !== 'running') c.resume().catch(() => {});
+
+  const now = c.currentTime + 0.02;
+  const sources = [];
+  const curve = spec.curve;
+  const end = spec.end;
+
+  const master = c.createGain();
+  master.gain.value = 0.7;
+  const comp = c.createDynamicsCompressor();
+  comp.threshold.value = -18;
+  comp.knee.value = 24;
+  comp.ratio.value = 6;
+  comp.attack.value = 0.004;
+  comp.release.value = 0.18;
+  master.connect(comp).connect(c.destination);
+
+  // ── The catch: a sub thump with weight, where the starter grind used to be.
+  const thump = c.createOscillator();
+  const thumpGain = c.createGain();
+  thump.type = 'sine';
+  thump.frequency.setValueAtTime(62, now);
+  thump.frequency.exponentialRampToValueAtTime(38, now + 0.20);
+  thumpGain.gain.setValueAtTime(0, now);
+  thumpGain.gain.linearRampToValueAtTime(spec.thump, now + 0.012);
+  thumpGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.26);
+  thump.connect(thumpGain).connect(master);
+  thump.start(now);
+  thump.stop(now + 0.3);
+  sources.push(thump);
+
+  // ── The engine: harmonic stack → resonant lowpass that tracks the revs.
+  const body = c.createBiquadFilter();
+  body.type = 'lowpass';
+  body.Q.value = spec.q;
+  scheduleCurve(body.frequency, curve, spec.cutoffScale, spec.cutoffBase, now);
+
+  const engineGain = c.createGain();
+  engineGain.gain.setValueAtTime(0, now);
+  engineGain.gain.linearRampToValueAtTime(spec.level, now + spec.attack);
+  engineGain.gain.linearRampToValueAtTime(spec.level * 0.78, now + end - 0.30);
+  engineGain.gain.linearRampToValueAtTime(0.0001, now + end);
+  body.connect(engineGain).connect(master);
+
+  const osc = c.createOscillator();
+  osc.setPeriodicWave(engineWave(c, spec.harmonics));
+  scheduleCurve(osc.frequency, curve, 1, 0, now);
+  osc.connect(body);
+  osc.start(now);
+  osc.stop(now + end + 0.02);
+  sources.push(osc);
+
+  // An octave-down layer for weight. Same curve, so it cannot drift.
+  const sub = c.createOscillator();
+  const subGain = c.createGain();
+  sub.type = 'triangle';
+  scheduleCurve(sub.frequency, curve, 0.5, 0, now);
+  subGain.gain.setValueAtTime(0, now);
+  subGain.gain.linearRampToValueAtTime(spec.level * 0.55, now + spec.attack);
+  subGain.gain.linearRampToValueAtTime(0.0001, now + end);
+  sub.connect(subGain).connect(master);
+  sub.start(now);
+  sub.stop(now + end + 0.02);
+  sources.push(sub);
+
+  // ── Air: a whisper of noise, tracked and kept deliberately tiny. This is
+  //    the ONLY noise in the cue — the old one leaned on it and that is
+  //    exactly what grated.
+  const air = c.createBufferSource();
+  air.buffer = getNoise(c);
+  air.loop = true;
+  const airBand = c.createBiquadFilter();
+  airBand.type = 'bandpass';
+  airBand.Q.value = 0.9;
+  scheduleCurve(airBand.frequency, curve, 5, 380, now);
+  const airGain = c.createGain();
+  scheduleCurve(airGain.gain, curve, spec.air, 0.003, now);
+  air.connect(airBand).connect(airGain).connect(master);
+  air.start(now);
+  air.stop(now + end);
+  sources.push(air);
+
+  const run = { ctx: c, master: master, sources: sources };
+  engineRun = run;
+  setTimeout(() => { if (engineRun === run) engineRun = null; }, (end + 0.3) * 1000);
+}
+
+/** A — Clean spool. Smooth rise, one flare to 5,600 rpm, settle to idle. */
+function playEngineA() {
+  playEngine({
+    curve: [
+      [0.00, 105],  // catches at ~1,050 rpm
+      [0.10, 150],
+      [0.55, 560],  // the flare — 5,600 rpm
+      [0.95, 300],
+      [1.30, 140],
+      [1.75, 95],   // idle
+    ],
+    end: 1.75,
+    harmonics: [1, 0.55, 0.38, 0.20, 0.12, 0.07],
+    q: 4,
+    cutoffScale: 4,
+    cutoffBase: 180,
+    level: 0.34,
+    attack: 0.07,
+    thump: 0.5,
+    air: 0.00004,
+  });
+}
+
+/** B — Hard edge. Same shape, quicker and angrier: more upper harmonics,
+ *  a tighter filter, a higher flare. For if A is too polite. */
+function playEngineB() {
+  playEngine({
+    curve: [
+      [0.00, 120],
+      [0.06, 190],
+      [0.42, 620],  // 6,200 rpm
+      [0.80, 300],
+      [1.15, 135],
+      [1.60, 98],
+    ],
+    end: 1.60,
+    harmonics: [1, 0.72, 0.58, 0.42, 0.30, 0.20, 0.13, 0.08],
+    q: 7,
+    cutoffScale: 5,
+    cutoffBase: 220,
+    level: 0.30,
+    attack: 0.035,
+    thump: 0.58,
+    air: 0.00006,
+  });
+}
+
+/* ------------------------------------------------------------------ *
  *  Render the cards
  * ------------------------------------------------------------------ */
 const CUES = [
+  {
+    name: '⟳ CANDIDATE A — Clean spool (~1.8s)',
+    fn: playEngineA,
+    stop: stopStagePrepped,
+    dur: 2000,
+    where: 'CANDIDATE — sound-tester only, nothing shipped yet',
+    desc: 'Replacement candidate for Start Processing. Same idea as the V12, without what made it grate: <b>no sawtooth starter grind</b>, no noise bed, one gesture instead of three movements, and <b>1.8s instead of 4.85s</b>. The body is a PeriodicWave harmonic stack through a resonant lowpass that tracks the revs; the catch is a sub thump where the grinding crank used to be. Flares to 5,600&nbsp;rpm and settles to idle.',
+  },
+  {
+    name: '⟳ CANDIDATE B — Hard edge (~1.6s)',
+    fn: playEngineB,
+    stop: stopStagePrepped,
+    dur: 1900,
+    where: 'CANDIDATE — sound-tester only, nothing shipped yet',
+    desc: 'The same engine with a different attitude, so the A/B tests attitude and not two unrelated sounds: faster attack, more upper harmonics, a tighter filter (Q&nbsp;7) and a higher flare at 6,200&nbsp;rpm. Pick this one if A is too polite.',
+  },
   {
     name: 'Start Processing (Lamborghini V12)',
     fn: playStagePrepped,
