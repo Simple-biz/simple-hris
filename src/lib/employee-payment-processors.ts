@@ -186,6 +186,73 @@ export const BANK_PREFERRED_OPTIONS: { label: string; id: ProcessorId }[] = [
   { label: 'x1153', id: 'wires' },
 ];
 
+/**
+ * The Bank Preferred options an employee may actually pick, given whether they
+ * are locked out of the WALLET rails.
+ *
+ * `locked` MUST be the verdict on the **EFFECTIVE** rail — `resolveWalletRailLock()`
+ * server-side, or `isWalletRailLocked(effective_processor)` where the caller
+ * already holds a server-resolved effective rail (People → Banking does this).
+ * Never pass `isWiresPreferred(bank_preferred)`: tier 1 is NULL for 1,796 of
+ * 1,926 people, 920 of whom are on a wallet via tier 2, so a tier-1 verdict
+ * hides Kolan/HiGlobe from the rail they are being paid on.
+ *
+ * The option side stays on the CONSERVATIVE `isWiresPreferred`, which is what
+ * keeps a locked list free of every wallet spelling: `WALLET_RAILS` is the thing
+ * being withheld, and nothing but an exact `hurupay`/`kolan`/`higlobe` escapes
+ * the residual. Pinned by test.
+ */
+export function selectableBankPreferredOptions(
+  locked: boolean,
+): { label: string; id: ProcessorId }[] {
+  if (!locked) return BANK_PREFERRED_OPTIONS;
+  return BANK_PREFERRED_OPTIONS.filter((o) => isWiresPreferred(o.id));
+}
+
+/**
+ * Read an API `walletRail` payload (from `/api/employee-ids?email=`) **FAIL
+ * CLOSED**: anything other than an explicit `locked: false` carrying no error is
+ * a lockout — a missing payload, a non-object, an unresolved fetch, a 503, or a
+ * `locked: false` that arrived alongside a read error.
+ *
+ * A client that defaults to "unlocked" while the rail is still loading would
+ * offer a wire-only payee a wallet for one render, which is the one direction
+ * the WIRES lock has no tolerance for (bank-preferred-routing.md §4: being
+ * stricter than the gate is safe, looser is not).
+ */
+export function walletRailLockedFromPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return true;
+  const p = payload as { locked?: unknown; error?: unknown };
+  if (p.error) return true;
+  return p.locked !== false;
+}
+
+/**
+ * The WIRES-lock verdict for a caller holding a server-resolved effective rail
+ * **plus** whether that read actually resolved. **Fail closed on unresolved.**
+ *
+ * `effectiveRail === null` is ambiguous on its own: it is both "the read failed
+ * / hasn't landed" and "this person has no rail in any tier", and those demand
+ * OPPOSITE verdicts — `isWalletRailLocked(null)` is `false`, so a caller that
+ * reads a missing payload as a rail offers a wire-only payee the wallets. The
+ * `resolved` flag is the only thing that separates them, so it is a required
+ * argument and not a defaulted one.
+ */
+export function walletRailLockedForResolvedRail(
+  resolved: boolean,
+  effectiveRail: string | null | undefined,
+): boolean {
+  if (!resolved) return true;
+  return isWalletRailLocked(effectiveRail);
+}
+
+/** The server-resolved effective rail from a `walletRail` payload, or null. */
+export function walletRailEffectiveFromPayload(payload: unknown): ProcessorId | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const raw = (payload as { effectiveRail?: unknown }).effectiveRail;
+  return typeof raw === 'string' && isProcessorId(raw) ? raw : null;
+}
+
 /** The dropdown label to show for a saved `preferred_processor` value. Returns
  *  '' when nothing is selected or the value isn't one of the offered options. */
 export function bankPreferredLabelForProcessor(p: ProcessorId | ''): string {

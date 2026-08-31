@@ -36,6 +36,12 @@ export async function GET(
 
   return NextResponse.json({
     banking,
+    // Did the BANKING read actually resolve? `banking: null` is ambiguous on its
+    // own — it means both "read failed" and "this person has no employee_ids row
+    // and no rail in any tier", and those two demand opposite WIRES-lock
+    // verdicts (fail closed vs. genuinely assignable, §4). The combined `error`
+    // below cannot answer it either, since a history failure would poison it.
+    bankingResolved: bankErr == null,
     history,
     bankHistory,
     error: bankErr ?? histErr ?? bankHistErr ?? null,

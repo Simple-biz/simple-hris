@@ -11,7 +11,14 @@ import {
   bankPreferredLabelForProcessor,
   PROCESSOR_OPTIONS,
   BANK_PREFERRED_OPTIONS,
+  WALLET_RAILS,
+  selectableBankPreferredOptions,
+  walletRailLockedFromPayload,
+  walletRailEffectiveFromPayload,
+  walletRailLockedForResolvedRail,
+  type ProcessorId,
 } from './employee-payment-processors';
+import { resolveEffectivePayoutProcessor } from './employee/payout-completeness';
 
 // WIRES is the residual: anything that isn't exactly hurupay/higlobe.
 test('isWiresPreferred: hurupay and higlobe are NOT wires', () => {
@@ -204,4 +211,120 @@ test('lock laundering: wire-to-wire moves are unaffected', () => {
   assert.equal(isBankPreferredTransitionAllowed('wires', 'x1153'), true);
   assert.equal(isBankPreferredTransitionAllowed('x1153', 'x1161'), true);
   assert.equal(isBankPreferredTransitionAllowed('bpi', 'wires'), true);
+});
+
+// ---------------------------------------------------------------------------
+// The Employee Profile dropdown's option list (2026-08-31)
+//
+// The dropdown used to judge the lock from `employee_ids.bank_preferred` alone
+// and treat NULL as locked. Tier 1 is NULL for 1,796 of 1,926 people, 920 of
+// whom route to a wallet via tier 2 — so the rail they are actually paid on was
+// missing from their own dropdown. The verdict now comes from the EFFECTIVE
+// rail (resolveWalletRailLock, server-side, fail-closed) and these pin the two
+// halves of that: what a locked list may contain, and how a client must read a
+// lock payload it does not fully trust.
+// ---------------------------------------------------------------------------
+
+test('selectableBankPreferredOptions: locked withholds BOTH wallet rails', () => {
+  const locked = selectableBankPreferredOptions(true);
+  assert.equal(
+    locked.some((o) => (WALLET_RAILS as readonly ProcessorId[]).includes(o.id)),
+    false,
+    'a locked list must never contain a wallet rail',
+  );
+  // Stated positively too, so widening WALLET_RAILS alone cannot pass this.
+  assert.deepEqual(
+    locked.map((o) => o.label),
+    ['Jeeves', 'Wise', 'x1153'],
+  );
+});
+
+test('selectableBankPreferredOptions: unlocked offers the full list', () => {
+  const open = selectableBankPreferredOptions(false);
+  assert.deepEqual(open, BANK_PREFERRED_OPTIONS);
+  assert.deepEqual(
+    open.map((o) => o.label),
+    ['HiGlobe', 'Kolan', 'Jeeves', 'Wise', 'x1153'],
+  );
+});
+
+// The whole point of the change: someone whose EFFECTIVE rail is a wallet sees
+// the wallet rails, even though their tier 1 is NULL.
+test('selectableBankPreferredOptions: a tier-2 wallet payee sees Kolan and HiGlobe', () => {
+  const effective = resolveEffectivePayoutProcessor({
+    bank_preferred: null,
+    preferred_processor: 'hurupay',
+  });
+  assert.equal(effective, 'hurupay');
+  const labels = selectableBankPreferredOptions(isWalletRailLocked(effective)).map((o) => o.label);
+  assert.ok(labels.includes('Kolan'));
+  assert.ok(labels.includes('HiGlobe'));
+});
+
+// ...and someone explicitly on wires via the LEGACY CELL still does not — the
+// population a tier-1-only read would have wrongly unlocked.
+test('selectableBankPreferredOptions: a legacy-cell wires payee stays locked', () => {
+  const effective = resolveEffectivePayoutProcessor(
+    { bank_preferred: null, preferred_processor: null },
+    { bankPreferredRaw: 'x1153' },
+  );
+  const labels = selectableBankPreferredOptions(isWalletRailLocked(effective)).map((o) => o.label);
+  assert.equal(labels.includes('Kolan'), false);
+  assert.equal(labels.includes('HiGlobe'), false);
+});
+
+test('walletRailLockedFromPayload: fails CLOSED on anything but an explicit clean unlock', () => {
+  // The only shape that unlocks.
+  assert.equal(walletRailLockedFromPayload({ locked: false, effectiveRail: 'hurupay', error: null }), false);
+
+  assert.equal(walletRailLockedFromPayload(undefined), true, 'payload absent (list branch)');
+  assert.equal(walletRailLockedFromPayload(null), true);
+  assert.equal(walletRailLockedFromPayload({}), true, 'no `locked` key at all');
+  assert.equal(walletRailLockedFromPayload({ locked: true }), true);
+  assert.equal(walletRailLockedFromPayload('false'), true, 'not an object');
+  assert.equal(walletRailLockedFromPayload({ locked: 'false' }), true, 'string is not false');
+  assert.equal(walletRailLockedFromPayload({ locked: 0 }), true, 'falsy is not false');
+  assert.equal(
+    walletRailLockedFromPayload({ locked: false, error: 'read failed' }),
+    true,
+    'a read error outranks an unlocked verdict',
+  );
+});
+
+test('walletRailEffectiveFromPayload: only a real ProcessorId survives', () => {
+  assert.equal(walletRailEffectiveFromPayload({ effectiveRail: 'higlobe' }), 'higlobe');
+  assert.equal(walletRailEffectiveFromPayload({ effectiveRail: 'kolan' }), null, 'stored ids only');
+  assert.equal(walletRailEffectiveFromPayload({ effectiveRail: null }), null);
+  assert.equal(walletRailEffectiveFromPayload({}), null);
+  assert.equal(walletRailEffectiveFromPayload(undefined), null);
+});
+
+// People → Banking holds a server-resolved effective rail, not a lock payload,
+// and `banking === null` there conflates "read failed" with "no rail anywhere".
+// Those need opposite verdicts, so the resolved flag carries the difference.
+test('walletRailLockedForResolvedRail: an UNRESOLVED read is locked, whatever the rail says', () => {
+  assert.equal(walletRailLockedForResolvedRail(false, null), true, 'fetch failed / not landed');
+  assert.equal(walletRailLockedForResolvedRail(false, 'hurupay'), true, 'stale wallet rail');
+  assert.equal(walletRailLockedForResolvedRail(false, undefined), true);
+});
+
+test('walletRailLockedForResolvedRail: a RESOLVED read keeps the 2026-08-24 ruling', () => {
+  // No rail in any tier, and we know it — assignable. Covers every new hire.
+  assert.equal(walletRailLockedForResolvedRail(true, null), false);
+  assert.equal(walletRailLockedForResolvedRail(true, ''), false);
+  // Already on a wallet — assignable between wallets.
+  assert.equal(walletRailLockedForResolvedRail(true, 'hurupay'), false);
+  assert.equal(walletRailLockedForResolvedRail(true, 'higlobe'), false);
+  // Explicitly on a non-wallet rail — locked, Wise and Jeeves included.
+  assert.equal(walletRailLockedForResolvedRail(true, 'wires'), true);
+  assert.equal(walletRailLockedForResolvedRail(true, 'x1153'), true);
+  assert.equal(walletRailLockedForResolvedRail(true, 'wise'), true);
+  assert.equal(walletRailLockedForResolvedRail(true, 'jeeves'), true);
+});
+
+// The regression this closed: a null payload used to reach isWalletRailLocked
+// directly, which unlocked the picker AND the laundering "Not set" option.
+test('walletRailLockedForResolvedRail: unresolved is stricter than the raw predicate', () => {
+  assert.equal(isWalletRailLocked(null), false, 'the raw predicate says assignable');
+  assert.equal(walletRailLockedForResolvedRail(false, null), true, 'the UI must not');
 });

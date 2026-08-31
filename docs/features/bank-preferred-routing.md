@@ -3,7 +3,9 @@
 *Shipped 2026-07-22; Wise updates + the No-Bank clobber discovery added
 2026-07-25 (§7); People-tab parity + Accounting direct-edit added 2026-08-10
 (§8). Migration status re-verified against production 2026-08-11 — see
-[Migrations](#migrations). Bank changes KPI band added 2026-08-19 (§10) — rail-shaped, no bank names.*
+[Migrations](#migrations). Bank changes KPI band added 2026-08-19 (§10) — rail-shaped, no bank names.
+Employee Profile dropdown moved onto the EFFECTIVE rail 2026-08-31 (§1, §4) — the lock is
+unchanged, the question it asks is not.*
 
 "Bank Preferred" is the processor **Accounting sends a salary OUT on** — the
 *send-from rail*. It is a first-class, employee-owned field that wins Payment
@@ -63,6 +65,14 @@ HiGlobe / Kolan / Jeeves / Wise / **x1153**.
   dropdown.
 - The field shows a **"Pending approval"** badge whenever the employee has an
   outstanding change (see §3).
+- **Which of the five an employee actually sees is the WIRES lock (§4), and as
+  of 2026-08-31 it is judged on the EFFECTIVE rail, not `bank_preferred`.**
+  `selectableBankPreferredOptions(locked)` is the one place the list is narrowed;
+  `locked` arrives from the server on `GET /api/employee-ids?email=` as
+  `walletRail` (`resolveWalletRailLock`, all three tiers, fails closed) and is
+  read client-side through `walletRailLockedFromPayload`, which treats a missing
+  payload, a non-object, or a `locked: false` carrying an `error` as **locked**.
+  The dropdown starts locked and unlocks only on an explicit clean verdict.
 - `EmployeeIdRow` and both `.select(cols)` strings in
   [`src/lib/supabase/employee-ids.ts`](../../src/lib/supabase/employee-ids.ts)
   must list `bank_preferred`, or reads return `undefined`.
@@ -190,11 +200,23 @@ the same question, and that asymmetry is the design:
 
 - The two **server gates** resolve the **effective** rail across all three tiers
   (`resolveWalletRailLock`) and fail closed. They are the real gate.
-- The three **client / pre-filter** sites see only tier 1, so they use the
-  **conservative** `isWiresPreferred` and treat unset as locked. Being stricter
-  than the gate is safe; being looser is not. A UI that offers an option the API
-  refuses is a bad prompt, but a UI that offers one the API *accepts* when it
-  should not is a mispaid salary.
+- The two remaining **client / pre-filter** sites see only tier 1, so they use
+  the **conservative** `isWiresPreferred` and treat unset as locked. Being
+  stricter than the gate is safe; being looser is not. A UI that offers an option
+  the API refuses is a bad prompt, but a UI that offers one the API *accepts*
+  when it should not is a mispaid salary.
+- **The Employee Profile dropdown left that group on 2026-08-31 (Kane).** It now
+  asks the gate's own question — the server hands it `resolveWalletRailLock`'s
+  verdict on `/api/employee-ids?email=` and it fails closed on anything less than
+  an explicit clean unlock. Conservatism was costing real money-adjacent
+  legibility: tier 1 is NULL for **1,796 of 1,926** people, and **920 of them
+  route to Kolan/HiGlobe via tier 2**, so the tier-1 read hid the wallet rails
+  from the very people already being paid on one — the same misclassification
+  `wallet-rail-lock.ts` was written to stop, pointed the other way. Nothing was
+  loosened: the option side still uses `isWiresPreferred`, and the set of people
+  the dropdown offers a wallet to is now exactly the set the gate accepts.
+  **Being stricter than the gate was never free** — it is safe for the money and
+  unsafe for the support queue, and only the effective rail is both.
 
 **Never wire a client site to `isBankPreferredTransitionAllowed` on a tier-1
 snapshot.** Doing so is what silently un-disabled the Approve button for the
@@ -205,7 +227,7 @@ legacy sheet-routed population when `null` stopped meaning "locked".
 | `update-employee-ids` intercept | **400** before a request is even filed |
 | Approval **PATCH** re-check | re-checks against the **live** stored value at approve time → 400, request stays pending |
 | People → Banking save (`/api/people/[email]/banking`) | **400** against the stored value, then applies the wallet mirror |
-| Employee Profile dropdown | **hides** hurupay/higlobe options for an explicitly-wires employee |
+| Employee Profile dropdown | **hides** hurupay/higlobe options whenever the **effective** rail is locked (server verdict, fail-closed) |
 | Accounting approvals row | **Approve disabled** + an "owner-only / locked" row note |
 
 ## 5. Mark Paid bank-details override
@@ -306,6 +328,23 @@ by resolving everything People shows through the SAME dispatch-parity helpers:
 
 Parity is pinned by `src/lib/employee/payout-completeness.test.ts` and the
 audit script's post-fix run: **0 disagreements across 1,498 active people**.
+
+> **The picker's option filter was failing OPEN until 2026-08-31.** It read
+> `isWalletRailLocked(banking?.effective_processor ?? null)`, but `banking` is
+> `null` in three different situations — still loading, the fetch failed, and
+> "no `employee_ids` row and no rail in any tier" — and `isWalletRailLocked(null)`
+> is **false**. So a hiccuped read offered a wire-only payee both wallet rails
+> *and* the laundering **"Not set"** option. The save 400s, so no money moved,
+> but this is the exact re-audit `wallet-rail-mirror-and-lock` demanded of every
+> site that lets a read error fall through to null. `GET /api/people/[email]`
+> now returns **`bankingResolved`** (`bankErr == null` — the combined `error`
+> field cannot stand in, a history failure would poison it) and the verdict goes
+> through `walletRailLockedForResolvedRail(resolved, effectiveRail)`, which fails
+> closed on unresolved while keeping a *resolved* null assignable, so new hires
+> are unaffected. The hand-written `o.id !== 'hurupay' && o.id !== 'higlobe'` —
+> a second copy of `WALLET_RAILS` that would have kept offering any third wallet
+> rail to locked payees — is gone; both this picker and the Employee Profile
+> dropdown now narrow through the one `selectableBankPreferredOptions`.
 
 ## 9. Routing + lock hardening (2026-08-10)
 

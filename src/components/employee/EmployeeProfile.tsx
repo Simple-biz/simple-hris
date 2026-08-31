@@ -74,10 +74,11 @@ import {
   PROCESSOR_OPTIONS,
   type ProcessorId,
   isProcessorId,
-  BANK_PREFERRED_OPTIONS,
   bankPreferredLabelForProcessor,
   processorForBankPreferredLabel,
-  isWiresPreferred,
+  selectableBankPreferredOptions,
+  walletRailLockedFromPayload,
+  walletRailEffectiveFromPayload,
 } from '@/lib/employee-payment-processors';
 import { getTitlesForDepartment, hasAnySkillSetContent } from '@/lib/skill-set-titles';
 import {
@@ -650,6 +651,17 @@ export default function EmployeeProfile({
   // processor id), or null. The live `bankPreferred` above still shows the
   // currently-approved value until accounting approves this.
   const [pendingBankPreferred, setPendingBankPreferred] = useState<ProcessorId | ''>('');
+  // The WIRES lock for this employee, judged on the EFFECTIVE rail across all
+  // three routing tiers and resolved SERVER-side (`/api/employee-ids?email=`
+  // → resolveWalletRailLock). This component can only see tier 1, and tier 1 is
+  // NULL for 1,796 of 1,926 people — 920 of whom are on Kolan/HiGlobe via tier
+  // 2 and used to be shown a dropdown without their own rail in it.
+  //
+  // Starts LOCKED and stays locked on any read error: offering a wire-only
+  // payee a wallet for even one render is the one direction this lock has no
+  // tolerance for (bank-preferred-routing.md §4).
+  const [walletRailLocked, setWalletRailLocked] = useState(true);
+  const [walletRailEffective, setWalletRailEffective] = useState<ProcessorId | null>(null);
   const [payout, setPayout] = useState<PayoutFields>(() => ({ ...emptyPayout }));
   const [payoutSaving, setPayoutSaving] = useState(false);
   const [payoutSavedAt, setPayoutSavedAt] = useState<string | null>(null);
@@ -954,7 +966,11 @@ export default function EmployeeProfile({
 
         const empJson = (await empRes.json()) as { employees?: EmployeeRow[]; error?: string | null };
         const rateJson = (await rateRes.json()) as { rows?: EmployeeHourlyRateRow[]; error?: string | null };
-        const idsJson = (await idsRes.json()) as { rows?: EmployeeIdRow[]; error?: string | null };
+        const idsJson = (await idsRes.json()) as {
+          rows?: EmployeeIdRow[];
+          error?: string | null;
+          walletRail?: unknown;
+        };
         const fxJson = (await fxRes.json()) as { value: string | null };
 
         if (cancelled) return;
@@ -1009,6 +1025,9 @@ export default function EmployeeProfile({
         }
         const myId = (idsJson.rows ?? [])[0];
         setBankInfo(myId ?? null);
+        // Fail-closed read: a missing/`error`-bearing payload leaves the lock on.
+        setWalletRailLocked(walletRailLockedFromPayload(idsJson.walletRail));
+        setWalletRailEffective(walletRailEffectiveFromPayload(idsJson.walletRail));
 
         // A pending Bank Preferred change (awaiting accounting approval) shows as
         // a badge on the field; the live value stays whatever's on employee_ids.
@@ -1167,9 +1186,13 @@ export default function EmployeeProfile({
         `/api/employee-ids?email=${encodeURIComponent(employeeEmail)}`,
         { cache: 'no-store' },
       );
-      const idsJson = (await idsRes.json()) as { rows?: EmployeeIdRow[] };
+      const idsJson = (await idsRes.json()) as { rows?: EmployeeIdRow[]; walletRail?: unknown };
       const myId = (idsJson.rows ?? [])[0];
       setBankInfo(myId ?? null);
+      // Re-read the lock too: an approved wallet pick moves the effective rail,
+      // and a stale `locked` here would keep offering options the gate refuses.
+      setWalletRailLocked(walletRailLockedFromPayload(idsJson.walletRail));
+      setWalletRailEffective(walletRailEffectiveFromPayload(idsJson.walletRail));
       onPayoutCompletionChange?.(isPayoutComplete((myId as unknown as Record<string, unknown>) ?? null));
       setPayoutSavedAt(new Date().toLocaleTimeString());
       setPayoutEditing(false);
@@ -1900,8 +1923,10 @@ export default function EmployeeProfile({
                         <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
                           {pendingBankPreferred
                             ? 'Your change is awaiting Accounting approval. Until then, your current setting below stays active.'
-                            : isWiresPreferred(bankPreferred)
-                              ? 'You are set to WIRES — salary is sent by bank wire, so Kolan/HiGlobe are not available. Changes need Accounting approval.'
+                            : walletRailLocked
+                              ? walletRailEffective
+                                ? `Your salary is routed on ${PROCESSOR_OPTIONS.find((p) => p.id === walletRailEffective)?.label ?? 'a bank rail'} — Kolan/HiGlobe are not available from that rail. Accounting can change this.`
+                                : 'We could not confirm which rail your salary is routed on, so the wallet options are hidden. Ask Accounting if that looks wrong.'
                               : 'The bank Payment Dispatch routes your salary through. Changes need Accounting approval before they take effect. Independent of your disbursement channel above.'}
                         </p>
                       </div>
@@ -1917,25 +1942,21 @@ export default function EmployeeProfile({
                           ...(bankPreferredLabelForProcessor(bankPreferred)
                             ? []
                             : [{ value: '', label: 'Select…' }]),
-                          ...BANK_PREFERRED_OPTIONS
-                            // WIRES lock: a WIRES employee can only stay WIRES,
-                            // so never offer hurupay/higlobe to them.
-                            //
-                            // Deliberately the CONSERVATIVE predicate, not
-                            // isWalletRailLocked. This component only knows tier
-                            // 1 (`bank_preferred`); it cannot see the
-                            // disbursement pick or the legacy rates cell, so it
-                            // cannot tell "never assigned" from "on wires via
-                            // the sheet". Self-service stays locked when unset
-                            // and the employee asks Accounting, who CAN see all
-                            // three tiers in People → Banking.
-                            .filter((o) =>
-                              isWiresPreferred(bankPreferred) ? isWiresPreferred(o.id) : true,
-                            )
-                            .map((o) => ({
-                              value: o.label,
-                              label: o.label,
-                            })),
+                          // WIRES lock: an employee on a bank rail can only stay
+                          // on one, so Kolan/HiGlobe are withheld from them.
+                          //
+                          // Judged on `walletRailLocked` — the EFFECTIVE rail
+                          // across all three tiers, resolved server-side and
+                          // failing closed. NOT `isWiresPreferred(bankPreferred)`:
+                          // tier 1 is NULL for all but 130 people, so that read
+                          // hid the wallet rails from the 920 payees already ON
+                          // one. Being stricter than the gate is safe; being
+                          // looser is not — and this is neither, it is the same
+                          // question the gate asks (bank-preferred-routing.md §4).
+                          ...selectableBankPreferredOptions(walletRailLocked).map((o) => ({
+                            value: o.label,
+                            label: o.label,
+                          })),
                         ]}
                       />
                     </div>
