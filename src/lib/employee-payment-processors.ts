@@ -228,6 +228,33 @@ export function walletRailLockedFromPayload(payload: unknown): boolean {
 }
 
 /**
+ * Does this **receiving-channel** (`preferred_processor`) move need a WIRES-lock
+ * check at all? True **only** for a genuine move onto a WALLET rail.
+ *
+ * This is the scope line for the 2026-08-31 receiving-side gate, and it is
+ * deliberately a separate, pure function so it can be tested without a database:
+ *
+ * - **Kolan and HiGlobe only.** wise / jeeves / wires / wepay return `false` and
+ *   the caller performs no read — those rails send from one place into the
+ *   person's own bank, so send-from and receive stay independent, which is what
+ *   the 2026-07-22 decoupling protected.
+ * - **A no-op is not a move.** Both self-service forms post the whole payout
+ *   payload, so a locked payee whose stored channel is already a wallet must
+ *   still be able to save their address.
+ * - Both sides normalise through `processorIdFromBankPreferredText`, so `kolan`
+ *   is recognised as the `hurupay` rail rather than sneaking past as unknown
+ *   text — the same non-widening alias rule the rest of this module follows.
+ */
+export function disbursementWalletMoveNeedsCheck(
+  current: string | null | undefined,
+  next: string | null | undefined,
+): boolean {
+  const to = processorIdFromBankPreferredText(next);
+  if (!to || !(WALLET_RAILS as readonly ProcessorId[]).includes(to)) return false;
+  return processorIdFromBankPreferredText(current) !== to;
+}
+
+/**
  * The WIRES-lock verdict for a caller holding a server-resolved effective rail
  * **plus** whether that read actually resolved. **Fail closed on unresolved.**
  *

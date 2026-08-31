@@ -5,7 +5,8 @@
 (§8). Migration status re-verified against production 2026-08-11 — see
 [Migrations](#migrations). Bank changes KPI band added 2026-08-19 (§10) — rail-shaped, no bank names.
 Employee Profile dropdown moved onto the EFFECTIVE rail 2026-08-31 (§1, §4) — the lock is
-unchanged, the question it asks is not.*
+unchanged, the question it asks is not. Receiving side gated the same day (§4.1): the
+coupling stays ONE-WAY and `preferred_processor` stops being an ungated tier-2 rail switch.*
 
 "Bank Preferred" is the processor **Accounting sends a salary OUT on** — the
 *send-from rail*. It is a first-class, employee-owned field that wins Payment
@@ -229,6 +230,79 @@ legacy sheet-routed population when `null` stopped meaning "locked".
 | People → Banking save (`/api/people/[email]/banking`) | **400** against the stored value, then applies the wallet mirror |
 | Employee Profile dropdown | **hides** hurupay/higlobe options whenever the **effective** rail is locked (server verdict, fail-closed) |
 | Accounting approvals row | **Approve disabled** + an "owner-only / locked" row note |
+
+### 4.1 The receiving side is gated too (2026-08-31)
+
+Kane asked for the coupling to run **both** ways — "if they choose HiGlobe or
+Kolan as their receiving bank, their Bank Preferred should be the same, it's 1
+to 1" — and the answer was **(a): the coupling stays one-way, and the receiving
+side gets the same lock instead.** Why the reverse mirror was the wrong shape:
+
+**The two fields had opposite security postures.**
+
+| | Receiving (`preferred_processor`) | Send-from (`bank_preferred`) |
+|---|---|---|
+| Who may set it | any employee, **unconditionally** | employee may only *request* it |
+| When it lands | **immediately** | after Accounting approves (§3) |
+| WIRES lock | **none** | five enforcement sites (§4) |
+
+A reverse mirror wires the **ungated** field onto the **gated** one, so it would
+have handed every employee a one-click switch on the field that decides which
+processor Accounting pays them from. And it could not have delivered "1 to 1"
+anyway: for a locked payee the pre-filter refuses, so the receiving pick would
+move while the send-from stayed put — a silent divergence — and for everyone
+else it becomes a *pending approval*, not an automatic write.
+
+**Underneath the request was a live hole.** `preferred_processor` **is tier 2 of
+the routing precedence** (§2), so for the 1,796 people whose tier 1 is NULL it
+*is* the rail Payment Dispatch pays out on. A payee explicitly on wires via the
+legacy rates cell could therefore re-route their own salary onto a wallet in one
+ungated save — and, once the effective rail read as a wallet, unlock the Bank
+Preferred field on the next load (§1's effective-rail read, shipped the same
+day, widened the reach of that walk).
+
+Closed by `checkDisbursementWalletMove()`
+([`wallet-rail-lock.ts`](../../src/lib/employee/wallet-rail-lock.ts)) at **both**
+employee self-service write paths — `POST /api/update-employee-ids` and the
+OTP-verified `POST /api/bank-update/save`. Gating one and not the other would
+just move the hole. It runs **before** the Bank Preferred intercept, so a refused
+save never leaves an approval request filed behind it.
+
+**Scope is KOLAN AND HIGLOBE ONLY**, and that is a pure, unit-tested predicate
+rather than a comment: `disbursementWalletMoveNeedsCheck(current, next)` returns
+false — with **no database read** — for wise / jeeves / wires / wepay, so those
+rails stay fully independent exactly as the 2026-07-22 decoupling protected. It
+also returns false for a **no-op**, because both forms post the whole payout
+payload and a payee already on a wallet must still be able to save their address.
+Both sides normalise through `processorIdFromBankPreferredText`, so `kolan`
+cannot walk past as unknown text.
+
+> **The gate and the lock predicate read `huru`/`huropay` differently, on
+> purpose.** `isWiresPreferred` must NOT widen (a legacy spelling misread as a
+> wallet would unlock a wire payee), while the GATE erring toward "check it" is
+> strictly safer. Pinned by test so nobody harmonises the two and quietly makes
+> the gate more permissive.
+
+Client side, `PreferredPaymentMethodRadios` takes a **required** `walletRailLocked`
+prop — no default, because a defaulted `false` would silently reopen the hole at
+the next call site someone adds — and withholds the two wallet tiles from a
+locked payee, while still showing a wallet the person is ALREADY on (tier 1 can
+say wires while tier 2 says Kolan, and hiding their own stored pick would
+misreport it). The external page gets its verdict from `verify-otp`.
+
+**The Payroll Readiness "Set bank" editor rides the same route and is
+unaffected, by construction.** It writes `preferred_processor` only when the
+person has **no** effective processor at all
+([`PayrollWizardNotesFab.tsx`](../../src/components/accounting/PayrollWizardNotesFab.tsx):2633,
+"routing changes stay in their existing approval flows") — and for exactly those
+people `resolveWalletRailLock` returns `locked: false`. Two different mechanisms,
+the same verdict. Where they *disagree*, the 400 is a catch, not a regression: it
+means the readiness resolution missed a rail the router would have found.
+
+**Accounting's escape hatch is unchanged:** change the SEND-FROM rail in People →
+Banking (§8, where the edit *is* the approval), after which the payee is no
+longer locked and the wallet receiving channel is available. The gate sequences
+those two steps; it does not remove either.
 
 ## 5. Mark Paid bank-details override
 

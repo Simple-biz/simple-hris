@@ -16,6 +16,7 @@ import {
   walletRailLockedFromPayload,
   walletRailEffectiveFromPayload,
   walletRailLockedForResolvedRail,
+  disbursementWalletMoveNeedsCheck,
   type ProcessorId,
 } from './employee-payment-processors';
 import { resolveEffectivePayoutProcessor } from './employee/payout-completeness';
@@ -327,4 +328,68 @@ test('walletRailLockedForResolvedRail: a RESOLVED read keeps the 2026-08-24 ruli
 test('walletRailLockedForResolvedRail: unresolved is stricter than the raw predicate', () => {
   assert.equal(isWalletRailLocked(null), false, 'the raw predicate says assignable');
   assert.equal(walletRailLockedForResolvedRail(false, null), true, 'the UI must not');
+});
+
+// ---------------------------------------------------------------------------
+// The RECEIVING-side gate (2026-08-31, Kane's ruling (a))
+//
+// `preferred_processor` is tier 2 of the routing precedence, so for the 1,796
+// people whose tier 1 is NULL it IS the rail Payment Dispatch pays out on — yet
+// it was employee-writable, immediately, with no lock check, while
+// `bank_preferred` sat behind five enforcement sites. These pin the SCOPE of the
+// new gate: Kolan and HiGlobe only, and never a no-op.
+// ---------------------------------------------------------------------------
+
+test('disbursementWalletMoveNeedsCheck: gates ONLY the two wallet rails', () => {
+  for (const rail of WALLET_RAILS) {
+    assert.equal(disbursementWalletMoveNeedsCheck('wires', rail), true, rail);
+  }
+  // Every other rail is untouched — the 2026-07-22 decoupling still holds, and
+  // the caller pays for no database read on these.
+  for (const rail of ['wise', 'jeeves', 'wires', 'wepay']) {
+    assert.equal(disbursementWalletMoveNeedsCheck('wires', rail), false, rail);
+    assert.equal(disbursementWalletMoveNeedsCheck('hurupay', rail), false, rail);
+  }
+  // Nothing requested, or unrecognisable text, is not a wallet move.
+  assert.equal(disbursementWalletMoveNeedsCheck('wires', null), false);
+  assert.equal(disbursementWalletMoveNeedsCheck('wires', ''), false);
+  assert.equal(disbursementWalletMoveNeedsCheck('wires', 'bpi'), false);
+});
+
+test('disbursementWalletMoveNeedsCheck: a no-op is not a move', () => {
+  // Otherwise a payee already on a wallet could not save their address.
+  assert.equal(disbursementWalletMoveNeedsCheck('hurupay', 'hurupay'), false);
+  assert.equal(disbursementWalletMoveNeedsCheck('higlobe', 'higlobe'), false);
+  assert.equal(disbursementWalletMoveNeedsCheck(' HURUPAY ', 'hurupay'), false, 'case/space');
+  // ...but wallet-to-wallet IS a move and still gets checked.
+  assert.equal(disbursementWalletMoveNeedsCheck('hurupay', 'higlobe'), true);
+});
+
+test('disbursementWalletMoveNeedsCheck: kolan is the hurupay rail on BOTH sides', () => {
+  // Reading 'kolan' as unknown text would let the rebranded spelling walk
+  // straight past the gate.
+  assert.equal(disbursementWalletMoveNeedsCheck('wires', 'kolan'), true);
+  assert.equal(disbursementWalletMoveNeedsCheck('kolan', 'hurupay'), false, 'same rail');
+  assert.equal(disbursementWalletMoveNeedsCheck('hurupay', 'kolan'), false, 'same rail');
+
+  // The gate uses the TEXT normaliser, which accepts the `huru`/`huropay`
+  // aliases that `isWiresPreferred` deliberately does NOT widen for. That
+  // asymmetry is correct and load-bearing in this direction: the lock predicate
+  // must not misread a legacy spelling as a wallet (it would unlock a wire
+  // payee), while the GATE erring toward "check it" is strictly safer. Pinned so
+  // nobody 'harmonises' the two and quietly makes the gate more permissive.
+  assert.equal(isWiresPreferred('huru'), true, 'lock predicate: still WIRES');
+  assert.equal(disbursementWalletMoveNeedsCheck('wires', 'huru'), true, 'gate: still checked');
+  assert.equal(disbursementWalletMoveNeedsCheck('wires', 'huropay'), true);
+
+  // Text that resolves to no rail at all is not a wallet move.
+  assert.equal(disbursementWalletMoveNeedsCheck('wires', 'kolanx'), false);
+  assert.equal(disbursementWalletMoveNeedsCheck('wires', 'bpi savings'), false);
+});
+
+// An unassigned person is assignable (Kane, 2026-08-24) — the gate still RUNS
+// for them, and resolveWalletRailLock is what says yes.
+test('disbursementWalletMoveNeedsCheck: an unset channel moving to a wallet is checked', () => {
+  assert.equal(disbursementWalletMoveNeedsCheck(null, 'hurupay'), true);
+  assert.equal(disbursementWalletMoveNeedsCheck('', 'higlobe'), true);
 });

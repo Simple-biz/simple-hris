@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { verifyOtp } from "@/lib/bank-update/otp";
 import { getPayoutPrefill } from "@/lib/bank-update/prefill";
+import { resolveWalletRailLock } from "@/lib/employee/wallet-rail-lock";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { normEmail } from "@/lib/email/norm-email";
 
@@ -62,11 +63,18 @@ export async function POST(req: Request) {
     ip_address: ip,
   });
 
+  // The WIRES lock on the EFFECTIVE send-from rail, so this page can withhold
+  // Kolan/HiGlobe from someone who cannot be paid into a wallet — instead of
+  // collecting a wallet email nobody will deposit to and then 400ing the save.
+  // Fails closed inside resolveWalletRailLock; the save re-checks regardless.
+  const walletRail = await resolveWalletRailLock(result.workEmail);
+
   return NextResponse.json({
     ok: true,
     session_token: result.sessionToken,
     work_email: result.workEmail,
     name: result.name,
     payout: payout ?? {},
+    walletRail,
   });
 }

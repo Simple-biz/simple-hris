@@ -1894,6 +1894,7 @@ export default function EmployeeProfile({
                         value={preferredProcessor}
                         onChange={setPreferredProcessor}
                         disabled={payoutReadOnly}
+                        walletRailLocked={walletRailLocked}
                       />
                       {preferredProcessor ? (
                         <PayoutDetailsFields

@@ -16,7 +16,10 @@ import {
   type PayoutFields,
 } from '@/components/employee/employee-payout-fields';
 import { resolveEffectivePayoutProcessor } from '@/lib/employee/payout-completeness';
-import type { ProcessorId } from '@/lib/employee-payment-processors';
+import {
+  walletRailLockedFromPayload,
+  type ProcessorId,
+} from '@/lib/employee-payment-processors';
 
 type Step = 'email' | 'code' | 'edit' | 'done';
 
@@ -32,6 +35,10 @@ export default function UpdateBankInfoPage() {
   const [info, setInfo] = useState<string | null>(null);
 
   const [sessionToken, setSessionToken] = useState('');
+  // Barred from the Kolan/HiGlobe wallet rails? Server verdict on the EFFECTIVE
+  // send-from rail. Starts LOCKED — this page is unauthenticated until the OTP
+  // clears, so it must never open a wallet rail on a missing answer.
+  const [walletRailLocked, setWalletRailLocked] = useState(true);
   const [workEmail, setWorkEmail] = useState('');
   const [name, setName] = useState<string | null>(null);
 
@@ -117,6 +124,7 @@ export default function UpdateBankInfoPage() {
         work_email?: string;
         name?: string | null;
         payout?: Record<string, unknown>;
+        walletRail?: unknown;
         error?: string;
       };
       if (!res.ok || json.error) throw new Error(json.error ?? 'That code is incorrect.');
@@ -124,6 +132,9 @@ export default function UpdateBankInfoPage() {
       setSessionToken(json.session_token ?? '');
       setWorkEmail(json.work_email ?? email.trim().toLowerCase());
       setName(json.name ?? null);
+      // Fail-closed read: anything but an explicit clean unlock keeps the wallet
+      // rails hidden. Starts true, so a payload without it never opens them.
+      setWalletRailLocked(walletRailLockedFromPayload(json.walletRail));
 
       const payoutRow = (json.payout ?? {}) as Record<string, unknown>;
       const draft = payoutDraftFromIdsRow(payoutRow);
@@ -304,6 +315,7 @@ export default function UpdateBankInfoPage() {
                 value={preferredProcessor}
                 onChange={setPreferredProcessor}
                 disabled={busy}
+                walletRailLocked={walletRailLocked}
               />
 
               {preferredProcessor ? (

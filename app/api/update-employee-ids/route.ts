@@ -9,6 +9,7 @@ import { normalizeSource, EMPLOYEE_DASHBOARD_SOURCE } from "@/lib/payroll/readin
 import { pulseBankChanges } from "@/lib/supabase/app-settings";
 import { maskFieldValue } from "@/lib/bank-update/mask-field";
 import { isBankPreferredTransitionAllowed } from "@/lib/employee-payment-processors";
+import { checkDisbursementWalletMove } from "@/lib/employee/wallet-rail-lock";
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
@@ -497,6 +498,30 @@ export async function POST(req: Request) {
       bootstrap_display_name ||
       (typeof beforeRow.name === "string" ? beforeRow.name : "") ||
       null;
+
+    // RECEIVING-CHANNEL gate — Kolan/HiGlobe only. `preferred_processor` is tier 2
+    // of the routing precedence, so for the 1,796 people whose tier 1 is NULL it
+    // IS the rail Payment Dispatch pays out on — yet it was employee-writable,
+    // immediately, with no lock check, while `bank_preferred` sat behind five.
+    // A payee explicitly on wires via the legacy rates cell could therefore
+    // re-route their own salary onto a wallet in a single save. Kane's ruling
+    // 2026-08-31: same verdict on both fields, coupling stays one-way.
+    //
+    // Runs BEFORE the Bank Preferred intercept so a refused save never leaves an
+    // approval request filed behind it. A move to wise/jeeves/wires costs no read.
+    if ("preferred_processor" in update) {
+      const walletMove = await checkDisbursementWalletMove({
+        email: identifier,
+        current:
+          typeof beforeRow.preferred_processor === "string"
+            ? beforeRow.preferred_processor
+            : null,
+        next: update.preferred_processor,
+      });
+      if (!walletMove.allowed) {
+        return NextResponse.json({ error: walletMove.error }, { status: walletMove.status });
+      }
+    }
 
     // Bank Preferred changes go through Accounting approval: hold the requested
     // value as a pending request and REMOVE it from `update` so it is not written

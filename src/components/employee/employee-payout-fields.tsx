@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import {
   EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS,
   PROCESSOR_OPTIONS,
+  WALLET_RAILS,
   processorDescription,
   type ProcessorId,
 } from '@/lib/employee-payment-processors';
@@ -216,10 +217,21 @@ export function PreferredPaymentMethodRadios({
   value,
   onChange,
   disabled = false,
+  walletRailLocked,
 }: {
   value: ProcessorId | '';
   onChange: (id: ProcessorId) => void;
   disabled?: boolean;
+  /**
+   * Is this person barred from the Kolan/HiGlobe WALLET rails? The verdict on
+   * the EFFECTIVE send-from rail, resolved server-side and fail-closed.
+   *
+   * **Required, with no default.** `preferred_processor` is tier 2 of the routing
+   * precedence, so this picker moves real money for anyone whose tier 1 is NULL —
+   * and a defaulted `false` would silently reopen the hole at the next call site
+   * someone adds (bank-preferred-routing.md §4).
+   */
+  walletRailLocked: boolean;
 }) {
   return (
     <>
@@ -233,9 +245,24 @@ export function PreferredPaymentMethodRadios({
         )}
       >
         {EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS
+          // WALLET rails are withheld from a locked payee: Kolan and HiGlobe pay
+          // INTO the same wallet they send FROM, so "receive on Kolan, sent from
+          // wires" describes nothing real — it just collects a wallet email
+          // nobody will ever deposit to. Mirrors the Bank Preferred dropdown's
+          // filter, and the two server routes refuse the move regardless.
+          // Wise / Jeeves / Wires are untouched and stay independent.
+          .filter((p) => !walletRailLocked || !(WALLET_RAILS as readonly ProcessorId[]).includes(p.id))
           // Keep a retired processor visible only if it's the current selection,
-          // so existing employees aren't silently shown an empty picker.
+          // so existing employees aren't silently shown an empty picker. Same for
+          // a wallet rail they are ALREADY on: tier 1 can say wires while tier 2
+          // says Kolan, and hiding their own stored pick would misreport it.
           .concat(PROCESSOR_OPTIONS.filter((p) => p.id === value && !EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS.includes(p)))
+          .concat(
+            walletRailLocked &&
+              (WALLET_RAILS as readonly ProcessorId[]).includes(value as ProcessorId)
+              ? PROCESSOR_OPTIONS.filter((p) => p.id === value)
+              : [],
+          )
           .map(({ id, label, blurb, Icon, ...rest }) => {
           const logoSrc = 'logoSrc' in rest ? (rest as { logoSrc?: string }).logoSrc : undefined;
           const active = value === id;
