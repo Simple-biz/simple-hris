@@ -16,7 +16,7 @@ and employee KPI results all read.
 | --- | --- | --- | --- |
 | `callback_team` *(new)* | Callback Team | weekly | Medicare Sign Ups × ₱250 |
 | `simple_texting` *(new)* | Simple Texting | weekly | Transferred Calls × ₱50 · Sign Ups × ₱250 |
-| `medical_records` *(new)* | Medical Records | weekly | Patient Portal Log Ins × ₱250 · RFC × ₱250 |
+| `medical_records` *(new)* | Medical Records | weekly | Patient Portal Log Ins × ₱250 · RFC × ₱250 **⚠ CONTRADICTED BY CODE — [schema.ts:178](../../src/lib/hsl-bonus/schema.ts#L178) has `portal_login rate: 100`, not 250. The code produced every stored value, so this cell is the likely typo — but if ₱250 is right this is a live underpayment, not a doc defect. UNRESOLVED, Kane's call; see `hsl-catalog-migration.md` §1.2.** |
 | `hsl_managers` *(new)* | Managers Weekly | weekly | bespoke per-manager checklist (see below) |
 | `attestation` *(new 2026-07-21; rules extended 2026-08-24)* | Attestation | weekly | Attested Cases tiered (25→₱50 · 35→₱75 · 50+→₱100 per case; thresholds corrected 2026-07-27 to match the sheet formula — Filing Specialist still uses 30/40/50) **+ Referral Leads ×₱250 · SSA.Gov ×₱250** (see §Attestation additive terms) |
 | `case_managers` *(new 2026-07-22)* | Case Managers | weekly | Reviews ×₱250 · RFC ×₱250 · PPL ×₱100 · DME ×₱250 · Task ×₱250 · Referral Leads ×₱250 |
