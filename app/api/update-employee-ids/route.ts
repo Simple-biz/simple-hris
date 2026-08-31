@@ -8,8 +8,10 @@ import { getSessionActor } from "@/lib/auth/session-actor";
 import { normalizeSource, EMPLOYEE_DASHBOARD_SOURCE } from "@/lib/payroll/readiness-audit";
 import { pulseBankChanges } from "@/lib/supabase/app-settings";
 import { maskFieldValue } from "@/lib/bank-update/mask-field";
-import { isBankPreferredTransitionAllowed } from "@/lib/employee-payment-processors";
-import { checkDisbursementWalletMove } from "@/lib/employee/wallet-rail-lock";
+import {
+  isBankPreferredAllowedForReceiving,
+  mirroredBankPreferredFor,
+} from "@/lib/employee-payment-processors";
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
@@ -147,8 +149,11 @@ async function interceptBankPreferred(opts: {
   workEmail: string | null;
   displayName: string | null;
   currentValue: string | null;
+  /** The receiving channel this save leaves in place: the value being written in
+   *  the same request, else the stored one. The 1:1 rule judges against THIS. */
+  receiving: string | null;
 }): Promise<{ requested: boolean; forbidden?: boolean }> {
-  const { supabase, update, workEmail, displayName, currentValue } = opts;
+  const { supabase, update, workEmail, displayName, currentValue, receiving } = opts;
   if (!("bank_preferred" in update)) return { requested: false };
 
   const requested = update.bank_preferred; // already trimmed/validated, or null
@@ -169,14 +174,13 @@ async function interceptBankPreferred(opts: {
   // no-op request to avoid filing an empty approval. (Set requires a value.)
   if (!target) return { requested: false };
 
-  // WIRES lock PRE-FILTER, not the gate. Rejects the obvious cases before a
-  // request enters the approval queue, but it only sees tier 1 (`currentValue`
-  // is `employee_ids.bank_preferred`), so a payee who is explicitly on wires via
-  // the legacy rates cell can still file. That is safe: the approval PATCH
-  // re-checks the EFFECTIVE rail across all three tiers via
-  // resolveWalletRailLock() and fails closed, so such a request can be filed but
-  // never approved. The money gate is there, not here.
-  if (!isBankPreferredTransitionAllowed(current, target)) {
+  // THE 1:1 RULE, pre-filter edition (Kane, 2026-08-31 PM). The send-from rail
+  // must agree with the RECEIVING channel: a wallet receiver's send-from IS that
+  // wallet, a bank receiver never sends from a wallet. Stateless — judged
+  // against the receiving value this save leaves in place, so there is no
+  // transition history to launder. The approval PATCH re-checks against the
+  // LIVE receiving channel at approve time; the money gate is there, not here.
+  if (!isBankPreferredAllowedForReceiving(receiving, target)) {
     return { requested: false, forbidden: true };
   }
 
@@ -484,6 +488,12 @@ export async function POST(req: Request) {
     const preInterceptBankFields = Object.keys(update).filter((k) =>
       BLOCKED_WHILE_PAYROLL_LOCKED.has(k),
     );
+    // The 1:1 pre-filter judges bank_preferred against the RECEIVING channel, so
+    // when only bank_preferred is being written we still need the stored
+    // preferred_processor in the snapshot.
+    if ("bank_preferred" in update && !preInterceptBankFields.includes("preferred_processor")) {
+      preInterceptBankFields.push("preferred_processor");
+    }
     let beforeRow: Record<string, unknown> = {};
     if (preInterceptBankFields.length > 0) {
       const { data } = await supabase
@@ -499,28 +509,17 @@ export async function POST(req: Request) {
       (typeof beforeRow.name === "string" ? beforeRow.name : "") ||
       null;
 
-    // RECEIVING-CHANNEL gate — Kolan/HiGlobe only. `preferred_processor` is tier 2
-    // of the routing precedence, so for the 1,796 people whose tier 1 is NULL it
-    // IS the rail Payment Dispatch pays out on — yet it was employee-writable,
-    // immediately, with no lock check, while `bank_preferred` sat behind five.
-    // A payee explicitly on wires via the legacy rates cell could therefore
-    // re-route their own salary onto a wallet in a single save. Kane's ruling
-    // 2026-08-31: same verdict on both fields, coupling stays one-way.
-    //
-    // Runs BEFORE the Bank Preferred intercept so a refused save never leaves an
-    // approval request filed behind it. A move to wise/jeeves/wires costs no read.
-    if ("preferred_processor" in update) {
-      const walletMove = await checkDisbursementWalletMove({
-        email: identifier,
-        current:
-          typeof beforeRow.preferred_processor === "string"
-            ? beforeRow.preferred_processor
-            : null,
-        next: update.preferred_processor,
-      });
-      if (!walletMove.allowed) {
-        return NextResponse.json({ error: walletMove.error }, { status: walletMove.status });
-      }
+    // THE 1:1 MIRROR, employee edition: a save that moves the RECEIVING channel
+    // onto Kolan/HiGlobe also aligns the send-from — by FILING the matching Bank
+    // Preferred change through the same Accounting approval gate, never by
+    // writing it. Applied server-side so it holds however the save was made; the
+    // client mirrors it in-form only so the UI shows what will be requested.
+    if (
+      "preferred_processor" in update &&
+      !("bank_preferred" in update) &&
+      mirroredBankPreferredFor(update.preferred_processor)
+    ) {
+      update.bank_preferred = mirroredBankPreferredFor(update.preferred_processor);
     }
 
     // Bank Preferred changes go through Accounting approval: hold the requested
@@ -533,13 +532,19 @@ export async function POST(req: Request) {
       displayName: displayNameForChange,
       currentValue:
         typeof beforeRow.bank_preferred === "string" ? beforeRow.bank_preferred : null,
+      receiving:
+        ("preferred_processor" in update
+          ? update.preferred_processor
+          : typeof beforeRow.preferred_processor === "string"
+            ? beforeRow.preferred_processor
+            : null) ?? null,
     });
 
     if (bankPreferred.forbidden) {
       return NextResponse.json(
         {
           error:
-            "This employee is set to WIRES and can only be paid via wires — Kolan/HiGlobe is not possible.",
+            "The sending rail must match the receiving bank: a Kolan/HiGlobe receiver is paid from that wallet, and a bank receiver cannot be paid from a wallet.",
         },
         { status: 400 },
       );

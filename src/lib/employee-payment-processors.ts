@@ -125,26 +125,12 @@ export function isWalletRailLocked(current: string | null | undefined): boolean 
   return isWiresPreferred(v);
 }
 
-/**
- * The only forbidden Bank Preferred transition: an employee EXPLICITLY on a wire
- * rail cannot be switched to `hurupay` (Kolan) or `higlobe` — you cannot pay a
- * wire recipient into a wallet. Everything else is allowed: hurupay↔higlobe,
- * moving TO wires, and assigning a wallet to someone who has no rail yet.
- * `current` is the employee's stored Bank Preferred; `next` is the requested one.
- */
-export function isBankPreferredTransitionAllowed(
-  current: string | null | undefined,
-  next: string | null | undefined,
-): boolean {
-  if (isWalletRailLocked(current) && !isWiresPreferred(next)) return false;
-  // LAUNDERING GUARD. Unset is assignable (see isWalletRailLocked), so without
-  // this a locked payee could be walked onto a wallet in two saves:
-  //   wires -> "Not set" -> Kolan
-  // Clearing a WALLET rail stays allowed — it launders nothing, since unset was
-  // already assignable to a wallet.
-  if (isWalletRailLocked(current) && !(next ?? '').trim()) return false;
-  return true;
-}
+// `isBankPreferredTransitionAllowed(current, next)` — the stored-transition WIRES
+// lock — was REMOVED 2026-08-31 PM, superseded by the stateless, receiving-keyed
+// `isBankPreferredAllowedForReceiving` below (Kane's 1:1 ruling). Do not
+// reintroduce a transition-history guard: the verdict now derives from the LIVE
+// receiving channel on every write, which has no clear-then-set laundering walk
+// to defend against. See bank-preferred-routing.md §4.
 
 /**
  * The Disbursement channel that must follow a Bank Preferred pick, or `null`
@@ -178,6 +164,65 @@ export function mirroredDisbursementFor(
  * `wires`. Because `wires` has no dedicated non-x1153 option here, a saved
  * `wires` value displays as "x1153" in this dropdown. See the design doc.
  */
+/**
+ * The WALLET rail this receiving channel is, or null when it is a bank rail /
+ * unset / unrecognised text. Normalises through the text resolver so `kolan`
+ * reads as the hurupay rail.
+ */
+export function walletFromReceiving(receiving: string | null | undefined): ProcessorId | null {
+  const rail = processorIdFromBankPreferredText(receiving);
+  if (!rail) return null;
+  return (WALLET_RAILS as readonly ProcessorId[]).includes(rail) ? rail : null;
+}
+
+/**
+ * **THE 1:1 RULE (Kane, 2026-08-31 PM).** The RECEIVING bank drives the
+ * send-from rail:
+ *
+ * - Receiving = Kolan/HiGlobe ⇒ Bank Preferred must be **that same wallet**
+ *   (or unset — tier 2 already routes them there). "Send from x1153/Wise into a
+ *   Kolan wallet" describes nothing real; the wallet is topped up from itself.
+ * - Receiving = a bank rail (or nothing) ⇒ Bank Preferred must **not** be a
+ *   wallet — a wallet deposit needs its wallet, wire details can't substitute.
+ *
+ * This SUPERSEDES the stored-transition WIRES lock
+ * (`isBankPreferredTransitionAllowed`) at the write sites: the verdict is
+ * **stateless**, judged against the live receiving channel on every write, so
+ * there is no clear-then-set laundering walk to guard against. It is tighter
+ * than the old rule in one direction — wallet → wires used to be allowed, and
+ * under this rule a wallet payee can never be pointed at x1153/Wise — and looser
+ * in the other, by design: a payee whose receiving genuinely IS a wallet is no
+ * longer barred from having their send-from say so.
+ */
+export function isBankPreferredAllowedForReceiving(
+  receiving: string | null | undefined,
+  next: string | null | undefined,
+): boolean {
+  const to = processorIdFromBankPreferredText(next);
+  if (!to) return true; // clearing / unset is always writable; routing falls to tier 2
+  const wallet = walletFromReceiving(receiving);
+  if (wallet) return to === wallet;
+  // NO receiving channel at all → anything goes: a wallet send-from assigned
+  // here is completed into a 1:1 pair by the forward mirror
+  // (mirroredDisbursementFor sets receiving to match). This is the new-hire
+  // assignment path and Kane's 2026-08-24 "unassigned ⇒ assignable" ruling.
+  if (!processorIdFromBankPreferredText(receiving)) return true;
+  // Receiving is a BANK rail → never send from a wallet the person cannot
+  // receive into.
+  return !(WALLET_RAILS as readonly ProcessorId[]).includes(to);
+}
+
+/**
+ * The reverse of `mirroredDisbursementFor`: the Bank Preferred value a RECEIVING
+ * pick imposes, or null when it imposes nothing. Wallet receiving pins the
+ * send-from to the same wallet (the 1:1 rule); bank rails impose nothing.
+ */
+export function mirroredBankPreferredFor(
+  receiving: string | null | undefined,
+): ProcessorId | null {
+  return walletFromReceiving(receiving);
+}
+
 export const BANK_PREFERRED_OPTIONS: { label: string; id: ProcessorId }[] = [
   { label: 'HiGlobe', id: 'higlobe' },
   { label: 'Kolan', id: 'hurupay' },
@@ -187,90 +232,37 @@ export const BANK_PREFERRED_OPTIONS: { label: string; id: ProcessorId }[] = [
 ];
 
 /**
- * The Bank Preferred options an employee may actually pick, given whether they
- * are locked out of the WALLET rails.
+ * The Bank Preferred options a picker may offer, keyed on the person's RECEIVING
+ * channel (the 1:1 rule, Kane 2026-08-31 PM):
  *
- * `locked` MUST be the verdict on the **EFFECTIVE** rail — `resolveWalletRailLock()`
- * server-side, or `isWalletRailLocked(effective_processor)` where the caller
- * already holds a server-resolved effective rail (People → Banking does this).
- * Never pass `isWiresPreferred(bank_preferred)`: tier 1 is NULL for 1,796 of
- * 1,926 people, 920 of whom are on a wallet via tier 2, so a tier-1 verdict
- * hides Kolan/HiGlobe from the rail they are being paid on.
+ * - Receiving = Kolan/HiGlobe → exactly **that wallet**. The send-from is pinned;
+ *   there is nothing else it can coherently be.
+ * - Receiving = a bank rail (wise/jeeves/wires/wepay) → the bank options only
+ *   (Jeeves / Wise / x1153). A wallet send-from needs a wallet to land in.
+ * - No receiving channel at all → the full list; picking a wallet here mirrors
+ *   the receiving channel to match server-side.
  *
- * The option side stays on the CONSERVATIVE `isWiresPreferred`, which is what
- * keeps a locked list free of every wallet spelling: `WALLET_RAILS` is the thing
- * being withheld, and nothing but an exact `hurupay`/`kolan`/`higlobe` escapes
- * the residual. Pinned by test.
+ * Pass the LIVE receiving value the form is about to save, so the options track
+ * the pick in real time and never offer what the API will refuse. `audience`
+ * decides whether Wise is offered as a send-from: Accounting-only (People →
+ * Banking); employees can hold a stored Wise but not newly pick it.
  */
 export function selectableBankPreferredOptions(
-  locked: boolean,
+  receiving: string | null | undefined,
+  audience: 'employee' | 'accounting',
 ): { label: string; id: ProcessorId }[] {
-  if (!locked) return BANK_PREFERRED_OPTIONS;
-  return BANK_PREFERRED_OPTIONS.filter((o) => isWiresPreferred(o.id));
-}
-
-/**
- * Read an API `walletRail` payload (from `/api/employee-ids?email=`) **FAIL
- * CLOSED**: anything other than an explicit `locked: false` carrying no error is
- * a lockout — a missing payload, a non-object, an unresolved fetch, a 503, or a
- * `locked: false` that arrived alongside a read error.
- *
- * A client that defaults to "unlocked" while the rail is still loading would
- * offer a wire-only payee a wallet for one render, which is the one direction
- * the WIRES lock has no tolerance for (bank-preferred-routing.md §4: being
- * stricter than the gate is safe, looser is not).
- */
-export function walletRailLockedFromPayload(payload: unknown): boolean {
-  if (!payload || typeof payload !== 'object') return true;
-  const p = payload as { locked?: unknown; error?: unknown };
-  if (p.error) return true;
-  return p.locked !== false;
-}
-
-/**
- * Does this **receiving-channel** (`preferred_processor`) move need a WIRES-lock
- * check at all? True **only** for a genuine move onto a WALLET rail.
- *
- * This is the scope line for the 2026-08-31 receiving-side gate, and it is
- * deliberately a separate, pure function so it can be tested without a database:
- *
- * - **Kolan and HiGlobe only.** wise / jeeves / wires / wepay return `false` and
- *   the caller performs no read — those rails send from one place into the
- *   person's own bank, so send-from and receive stay independent, which is what
- *   the 2026-07-22 decoupling protected.
- * - **A no-op is not a move.** Both self-service forms post the whole payout
- *   payload, so a locked payee whose stored channel is already a wallet must
- *   still be able to save their address.
- * - Both sides normalise through `processorIdFromBankPreferredText`, so `kolan`
- *   is recognised as the `hurupay` rail rather than sneaking past as unknown
- *   text — the same non-widening alias rule the rest of this module follows.
- */
-export function disbursementWalletMoveNeedsCheck(
-  current: string | null | undefined,
-  next: string | null | undefined,
-): boolean {
-  const to = processorIdFromBankPreferredText(next);
-  if (!to || !(WALLET_RAILS as readonly ProcessorId[]).includes(to)) return false;
-  return processorIdFromBankPreferredText(current) !== to;
-}
-
-/**
- * The WIRES-lock verdict for a caller holding a server-resolved effective rail
- * **plus** whether that read actually resolved. **Fail closed on unresolved.**
- *
- * `effectiveRail === null` is ambiguous on its own: it is both "the read failed
- * / hasn't landed" and "this person has no rail in any tier", and those demand
- * OPPOSITE verdicts — `isWalletRailLocked(null)` is `false`, so a caller that
- * reads a missing payload as a rail offers a wire-only payee the wallets. The
- * `resolved` flag is the only thing that separates them, so it is a required
- * argument and not a defaulted one.
- */
-export function walletRailLockedForResolvedRail(
-  resolved: boolean,
-  effectiveRail: string | null | undefined,
-): boolean {
-  if (!resolved) return true;
-  return isWalletRailLocked(effectiveRail);
+  const wallet = walletFromReceiving(receiving);
+  if (wallet) return BANK_PREFERRED_OPTIONS.filter((o) => o.id === wallet);
+  const rail = processorIdFromBankPreferredText(receiving);
+  const base = rail
+    ? BANK_PREFERRED_OPTIONS.filter((o) => isWiresPreferred(o.id))
+    : BANK_PREFERRED_OPTIONS;
+  // Wise as a SEND-FROM rail is Accounting's call, made in People → Banking
+  // (Kane, 2026-08-31 PM: "only accounting can set wise as their sending
+  // banks"). Employees never get it as a new pick; a STORED wise still
+  // displays, because the select's value is rendered independently of the
+  // option list.
+  return audience === 'employee' ? base.filter((o) => o.id !== 'wise') : base;
 }
 
 /** The server-resolved effective rail from a `walletRail` payload, or null. */

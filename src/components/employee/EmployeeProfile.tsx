@@ -77,7 +77,8 @@ import {
   bankPreferredLabelForProcessor,
   processorForBankPreferredLabel,
   selectableBankPreferredOptions,
-  walletRailLockedFromPayload,
+  walletFromReceiving,
+  mirroredBankPreferredFor,
   walletRailEffectiveFromPayload,
 } from '@/lib/employee-payment-processors';
 import { getTitlesForDepartment, hasAnySkillSetContent } from '@/lib/skill-set-titles';
@@ -651,16 +652,11 @@ export default function EmployeeProfile({
   // processor id), or null. The live `bankPreferred` above still shows the
   // currently-approved value until accounting approves this.
   const [pendingBankPreferred, setPendingBankPreferred] = useState<ProcessorId | ''>('');
-  // The WIRES lock for this employee, judged on the EFFECTIVE rail across all
-  // three routing tiers and resolved SERVER-side (`/api/employee-ids?email=`
-  // → resolveWalletRailLock). This component can only see tier 1, and tier 1 is
-  // NULL for 1,796 of 1,926 people — 920 of whom are on Kolan/HiGlobe via tier
-  // 2 and used to be shown a dropdown without their own rail in it.
-  //
-  // Starts LOCKED and stays locked on any read error: offering a wire-only
-  // payee a wallet for even one render is the one direction this lock has no
-  // tolerance for (bank-preferred-routing.md §4).
-  const [walletRailLocked, setWalletRailLocked] = useState(true);
+  // The EFFECTIVE send-from rail across all three routing tiers, resolved
+  // SERVER-side (`/api/employee-ids?email=` → resolveWalletRailLock). Used as
+  // the dropdown's DISPLAY DEFAULT for the 1,796 people whose tier 1 is NULL —
+  // "defaulted to what they are" (Kane, 2026-08-31): a tier-2 Kolan payee sees
+  // Kolan, not an empty "Select…".
   const [walletRailEffective, setWalletRailEffective] = useState<ProcessorId | null>(null);
   const [payout, setPayout] = useState<PayoutFields>(() => ({ ...emptyPayout }));
   const [payoutSaving, setPayoutSaving] = useState(false);
@@ -1025,8 +1021,6 @@ export default function EmployeeProfile({
         }
         const myId = (idsJson.rows ?? [])[0];
         setBankInfo(myId ?? null);
-        // Fail-closed read: a missing/`error`-bearing payload leaves the lock on.
-        setWalletRailLocked(walletRailLockedFromPayload(idsJson.walletRail));
         setWalletRailEffective(walletRailEffectiveFromPayload(idsJson.walletRail));
 
         // A pending Bank Preferred change (awaiting accounting approval) shows as
@@ -1189,9 +1183,7 @@ export default function EmployeeProfile({
       const idsJson = (await idsRes.json()) as { rows?: EmployeeIdRow[]; walletRail?: unknown };
       const myId = (idsJson.rows ?? [])[0];
       setBankInfo(myId ?? null);
-      // Re-read the lock too: an approved wallet pick moves the effective rail,
-      // and a stale `locked` here would keep offering options the gate refuses.
-      setWalletRailLocked(walletRailLockedFromPayload(idsJson.walletRail));
+      // Re-read the effective rail too — this save may have moved it.
       setWalletRailEffective(walletRailEffectiveFromPayload(idsJson.walletRail));
       onPayoutCompletionChange?.(isPayoutComplete((myId as unknown as Record<string, unknown>) ?? null));
       setPayoutSavedAt(new Date().toLocaleTimeString());
@@ -1892,9 +1884,19 @@ export default function EmployeeProfile({
                       )}
                       <PreferredPaymentMethodRadios
                         value={preferredProcessor}
-                        onChange={setPreferredProcessor}
+                        onChange={(id) => {
+                          setPreferredProcessor(id);
+                          // THE 1:1 MIRROR (Kane, 2026-08-31 PM): picking Kolan
+                          // or HiGlobe as the receiving bank pins the sending
+                          // rail to the same wallet. In-form only — the save
+                          // FILES the Bank Preferred change through the
+                          // Accounting approval gate; the server applies the
+                          // same mirror regardless, so this is display, not
+                          // enforcement. Bank rails impose nothing.
+                          const wallet = mirroredBankPreferredFor(id);
+                          if (wallet) setBankPreferred(wallet);
+                        }}
                         disabled={payoutReadOnly}
-                        walletRailLocked={walletRailLocked}
                       />
                       {preferredProcessor ? (
                         <PayoutDetailsFields
@@ -1924,40 +1926,51 @@ export default function EmployeeProfile({
                         <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
                           {pendingBankPreferred
                             ? 'Your change is awaiting Accounting approval. Until then, your current setting below stays active.'
-                            : walletRailLocked
-                              ? walletRailEffective
-                                ? `Your salary is routed on ${PROCESSOR_OPTIONS.find((p) => p.id === walletRailEffective)?.label ?? 'a bank rail'} — Kolan/HiGlobe are not available from that rail. Accounting can change this.`
-                                : 'We could not confirm which rail your salary is routed on, so the wallet options are hidden. Ask Accounting if that looks wrong.'
-                              : 'The bank Payment Dispatch routes your salary through. Changes need Accounting approval before they take effect. Independent of your disbursement channel above.'}
+                            : walletFromReceiving(preferredProcessor)
+                              ? `Your receiving bank is ${PROCESSOR_OPTIONS.find((p) => p.id === walletFromReceiving(preferredProcessor))?.label} — your salary is sent from that same wallet, 1:1. Changes need Accounting approval.`
+                              : 'The bank Payment Dispatch routes your salary through. Kolan/HiGlobe follow your receiving bank automatically; Wise can only be set by Accounting. Changes need Accounting approval.'}
                         </p>
                       </div>
                       <SmoothSelect
                         aria-label="Bank Preferred"
-                        value={bankPreferredLabelForProcessor(bankPreferred)}
+                        value={
+                          // "Defaulted to what they are": the stored tier-1 pick
+                          // wins; else a wallet receiving bank pins the display
+                          // (1:1); else the server-resolved EFFECTIVE rail, so a
+                          // tier-2/tier-3-routed person sees their real rail
+                          // instead of an empty "Select…". Display only — no
+                          // write happens until the user changes something.
+                          bankPreferredLabelForProcessor(bankPreferred) ||
+                          bankPreferredLabelForProcessor(
+                            walletFromReceiving(preferredProcessor) ?? walletRailEffective ?? '',
+                          )
+                        }
                         onChange={(label) => {
                           setBankPreferred(processorForBankPreferredLabel(label) ?? '');
                         }}
                         disabled={payoutReadOnly}
                         triggerClassName="w-full sm:w-48"
                         options={[
-                          ...(bankPreferredLabelForProcessor(bankPreferred)
+                          ...(bankPreferredLabelForProcessor(bankPreferred) ||
+                          bankPreferredLabelForProcessor(
+                            walletFromReceiving(preferredProcessor) ?? walletRailEffective ?? '',
+                          )
                             ? []
                             : [{ value: '', label: 'Select…' }]),
-                          // WIRES lock: an employee on a bank rail can only stay
-                          // on one, so Kolan/HiGlobe are withheld from them.
-                          //
-                          // Judged on `walletRailLocked` — the EFFECTIVE rail
-                          // across all three tiers, resolved server-side and
-                          // failing closed. NOT `isWiresPreferred(bankPreferred)`:
-                          // tier 1 is NULL for all but 130 people, so that read
-                          // hid the wallet rails from the 920 payees already ON
-                          // one. Being stricter than the gate is safe; being
-                          // looser is not — and this is neither, it is the same
-                          // question the gate asks (bank-preferred-routing.md §4).
-                          ...selectableBankPreferredOptions(walletRailLocked).map((o) => ({
-                            value: o.label,
-                            label: o.label,
-                          })),
+                          // THE 1:1 RULE, option-list edition: keyed on the LIVE
+                          // receiving pick above. A wallet receiver sees exactly
+                          // their wallet (the send-from is pinned); a bank-rail
+                          // receiver sees the bank options; someone with no
+                          // receiving channel sees everything, and a wallet pick
+                          // here mirrors the receiving channel server-side. Wise
+                          // is absent for employees — Accounting sets Wise as a
+                          // sending bank in People → Banking.
+                          ...selectableBankPreferredOptions(preferredProcessor, 'employee').map(
+                            (o) => ({
+                              value: o.label,
+                              label: o.label,
+                            }),
+                          ),
                         ]}
                       />
                     </div>

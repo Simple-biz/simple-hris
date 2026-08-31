@@ -11,10 +11,10 @@ import { invalidateRateProfilesCache } from '@/lib/supabase/employee-rate-profil
 import { pulseBankChanges } from '@/lib/supabase/app-settings';
 import {
   bankPreferredLabelForProcessor,
-  isBankPreferredTransitionAllowed,
+  isBankPreferredAllowedForReceiving,
   mirroredDisbursementFor,
 } from '@/lib/employee-payment-processors';
-import { resolveWalletRailLock } from '@/lib/employee/wallet-rail-lock';
+import { getEmployeeIdRowByEmail } from '@/lib/supabase/employee-ids';
 import {
 } from '@/lib/employee-payment-processors';
 import type { ProcessorId } from '@/lib/employee-payment-processors';
@@ -90,34 +90,35 @@ export async function PATCH(
         );
       }
 
-      // WIRES lock re-check against the LIVE state, not the request's
-      // from_value (it may have changed since the request was filed), and on
-      // the EFFECTIVE rail across all three routing tiers — tier 1 alone would
-      // read a legacy sheet-routed wires payee as "never assigned".
+      // THE 1:1 RULE re-checked against the LIVE receiving channel, not the
+      // request's from_value (both fields may have changed since it was filed):
+      // a wallet receiver's send-from must be that wallet, a bank receiver
+      // never sends from a wallet, and an unset receiver takes anything (the
+      // forward mirror below completes the pair).
       //
-      // MUST fail closed. This used to rely on a failed read collapsing to
-      // null, which WAS the safe direction while null meant "locked"; once null
-      // became "assignable" (2026-08-24) that same code silently inverted to
-      // fail-OPEN, so the error is now explicit rather than implied.
-      const railLock = await resolveWalletRailLock(workEmail);
-      if (railLock.error) {
+      // MUST fail closed. This site once relied on a failed read collapsing to
+      // null, which silently inverted to fail-OPEN when null's meaning changed
+      // (2026-08-24) — so the read error stays explicit, never implied.
+      const { row: liveIds, error: liveErr } = await getEmployeeIdRowByEmail(workEmail).catch(
+        (e: unknown) => ({ row: null, error: e instanceof Error ? e.message : String(e) }),
+      );
+      if (liveErr) {
         console.error(
-          `bank-preferred approve: wallet-rail lock check failed for ${workEmail}: ${railLock.error}`,
+          `bank-preferred approve: live receiving-channel read failed for ${workEmail}: ${liveErr}`,
         );
         return NextResponse.json(
           {
             error:
-              'Could not verify the current payout rail for this employee, so the approval was not applied. Please retry.',
+              'Could not verify the current receiving bank for this employee, so the approval was not applied. Please retry.',
           },
           { status: 503 },
         );
       }
-      const liveCurrent = railLock.locked ? (railLock.effectiveRail ?? 'wires') : null;
-      if (!isBankPreferredTransitionAllowed(liveCurrent, row.to_value)) {
+      if (!isBankPreferredAllowedForReceiving(liveIds?.preferred_processor ?? null, row.to_value)) {
         return NextResponse.json(
           {
             error:
-              'This employee is set to WIRES and can only be paid via wires — approving Kolan/HiGlobe is not possible. Deny this request instead.',
+              'The sending rail must match the receiving bank: this employee currently receives on a different rail than the request asks to send from. Deny this request, or fix the receiving bank first.',
           },
           { status: 400 },
         );

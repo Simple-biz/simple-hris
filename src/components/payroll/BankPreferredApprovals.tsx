@@ -135,20 +135,17 @@ export function BankPreferredApprovals() {
         <ul className="space-y-2">
           {rows.map((row) => {
             const acting = actingId === row.id;
-            // CONSERVATIVE on purpose, and deliberately NOT
-            // isBankPreferredTransitionAllowed. A queue row carries only
-            // `from_value` — the tier-1 snapshot taken when the request was
-            // FILED — so it cannot tell "never assigned" from "on wires via the
-            // rates sheet", and it may be stale besides. Warning on a null
-            // from_value is the safe error: the approve API re-resolves the
-            // EFFECTIVE rail (resolveWalletRailLock) and is the real gate.
-            //
-            // Using the transition predicate directly here was a regression:
-            // once null became "assignable" this row silently un-disabled
-            // Approve and dropped its red note for exactly the legacy
-            // sheet-routed population the lock exists to protect.
-            const wiresLocked =
-              isWiresPreferred(row.from_value) && !isWiresPreferred(row.to_value);
+            // ADVISORY only, under the 1:1 rule (2026-08-31 PM). Whether a
+            // wallet send-from is approvable now depends on the employee's LIVE
+            // receiving bank, which a queue row does not carry — from_value is
+            // just the tier-1 snapshot taken at filing. So the row can hint
+            // (this LOOKS like a rail change) but must not hard-disable
+            // Approve: a wires→Kolan request from someone whose receiving bank
+            // is now Kolan is exactly the legitimate case, and the approve API
+            // re-checks the live receiving channel (400s a mismatch, fails
+            // closed on a read error). It is the real gate; this is a label.
+            const railChange =
+              isWiresPreferred(row.from_value) !== isWiresPreferred(row.to_value);
             return (
               <li
                 key={row.id}
@@ -171,9 +168,9 @@ export function BankPreferredApprovals() {
                     <Clock className="h-3 w-3" />
                     Requested {timeAgo(row.created_at)}
                   </div>
-                  {wiresLocked && (
-                    <div className="mt-1 text-[11px] font-medium text-rose-600 dark:text-rose-400">
-                      WIRES employee — Kolan/HiGlobe not possible. Deny this request.
+                  {railChange && (
+                    <div className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                      Rail change — approval is checked against the live receiving bank (1:1 rule).
                     </div>
                   )}
                 </div>
@@ -193,10 +190,10 @@ export function BankPreferredApprovals() {
                     type="button"
                     size="sm"
                     className="h-8 gap-1.5 rounded-lg bg-emerald-600 text-[12px] text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-emerald-500 dark:hover:bg-emerald-400"
-                    disabled={acting || wiresLocked}
+                    disabled={acting}
                     title={
-                      wiresLocked
-                        ? 'This employee is set to WIRES and cannot be paid via Kolan/HiGlobe. Deny this request.'
+                      railChange
+                        ? 'The save verifies the sending rail against this employee’s live receiving bank and refuses a mismatch.'
                         : undefined
                     }
                     onClick={() => void decide(row, 'approved')}

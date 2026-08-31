@@ -7,7 +7,7 @@ import {
 } from './payout-completeness';
 import {
   isWalletRailLocked,
-  isBankPreferredTransitionAllowed,
+  isBankPreferredAllowedForReceiving,
 } from '../employee-payment-processors';
 
 /**
@@ -140,7 +140,9 @@ test('lock: only a person unrouted in ALL THREE tiers is assignable', () => {
   const effective = resolveEffectivePayoutProcessor(row, { bankPreferredRaw: null });
   assert.equal(effective, null, 'no tier resolves anything');
   assert.equal(isWalletRailLocked(effective), false);
-  assert.equal(isBankPreferredTransitionAllowed(effective, 'kolan'), true);
+  // Under the 1:1 rule (2026-08-31 PM) the write-time verdict keys on the
+  // RECEIVING channel: unset receiving takes any assignment.
+  assert.equal(isBankPreferredAllowedForReceiving(row.preferred_processor, 'kolan'), true);
 });
 
 // Tier precedence still holds: an explicit bank_preferred beats the sheet, so a

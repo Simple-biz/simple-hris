@@ -28,8 +28,8 @@ import { parseNameParts, composeMasterListName, type NameParts } from '@/lib/nam
 import { isHslFamilyLabel, formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import {
   mirroredDisbursementFor,
+  mirroredBankPreferredFor,
   selectableBankPreferredOptions,
-  walletRailLockedForResolvedRail,
 } from '@/lib/employee-payment-processors';
 import {
   buildRosterExport,
@@ -2936,14 +2936,6 @@ function PersonDetailDialog({
   const [showPabLoader, setShowPabLoader] = useState(true);
   const handlePabLoaderDone = useCallback(() => setShowPabLoader(false), []);
   const [banking, setBanking] = useState<Banking | null>(null);
-  // Did the banking READ resolve? `banking === null` conflates three states —
-  // still loading, the fetch failed, and "no employee_ids row and no rail in any
-  // tier" — and isWalletRailLocked(null) is FALSE, so reading the rail straight
-  // off a missing payload offered a wire-only payee both wallet rails and the
-  // laundering "Not set" whenever the read hiccuped. The server answers the
-  // question directly (`bankingResolved`) so the genuinely-unassigned person
-  // stays assignable while an unknown one fails CLOSED.
-  const [bankingResolved, setBankingResolved] = useState(false);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [bankHistory, setBankHistory] = useState<BankChangeEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3003,6 +2995,15 @@ function PersonDetailDialog({
       if (k === 'bank_preferred') {
         const mirrored = mirroredDisbursementFor(v);
         if (mirrored) next.preferred_processor = mirrored;
+      }
+      // REVERSE MIRROR (Kane, 2026-08-31 PM): picking Kolan or HiGlobe as the
+      // RECEIVING bank pins the send-from to the same wallet — "they cannot
+      // receive from an x1153 or Wise if they have HiGlobe or Kolan". Same
+      // display-only role: the server applies the identical rule on save.
+      // Bank rails impose nothing in either direction.
+      if (k === 'preferred_processor') {
+        const pinned = mirroredBankPreferredFor(v);
+        if (pinned) next.bank_preferred = pinned;
       }
       return next;
     });
@@ -3122,21 +3123,17 @@ function PersonDetailDialog({
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    // Locked until this person's own read comes back — never carry the previous
-    // person's verdict across a selection change.
-    setBankingResolved(false);
     fetch(`/api/people/${encodeURIComponent(email)}`, { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { banking?: Banking | null; bankingResolved?: boolean; history?: HistoryRow[]; bankHistory?: BankChangeEntry[] }) => {
+      .then((j: { banking?: Banking | null; history?: HistoryRow[]; bankHistory?: BankChangeEntry[] }) => {
         if (!alive) return;
         setBanking(j.banking ?? null);
-        setBankingResolved(j.bankingResolved === true);
         setHistory(j.history ?? []);
         setBankHistory(j.bankHistory ?? []);
         setHistPage(1);
         setBankHistPage(1);
       })
-      .catch(() => { if (alive) { setBanking(null); setBankingResolved(false); } })
+      .catch(() => { if (alive) setBanking(null); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [email]);
@@ -3198,15 +3195,6 @@ function PersonDetailDialog({
   // The editor's field visibility follows the same processor rules as the
   // read view, but driven by the FORM's processor so switching the payment
   // method immediately swaps the relevant fields in.
-  // The WIRES lock for this person, FAIL CLOSED: locked until a resolved read
-  // says otherwise. A person the read resolved with no rail anywhere stays
-  // assignable (effective null ⇒ not locked) — that is Kane's 2026-08-24 ruling
-  // and it covers every new hire; only an UNKNOWN rail locks.
-  const walletRailLocked = walletRailLockedForResolvedRail(
-    bankingResolved,
-    banking?.effective_processor ?? null,
-  );
-
   const editProc = bankForm.preferred_processor;
   const editShowsBank = editProc === 'wires' || editProc === 'jeeves' || editProc === 'wise' || editProc === '';
   const editAlt = bankForm.preferred_bank_slot === 'alternative';
@@ -3217,7 +3205,7 @@ function PersonDetailDialog({
       const res = await fetch(`/api/people/${encodeURIComponent(email)}/reveal-banking`, { method: 'POST' });
       const j = (await res.json()) as { banking?: Banking | null; error?: string };
       if (!res.ok) throw new Error(j.error || 'Reveal failed');
-      if (j.banking) { setBanking(j.banking); setBankingResolved(true); }
+      if (j.banking) setBanking(j.banking);
       return j.banking ?? null;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not reveal banking');
@@ -3274,10 +3262,8 @@ function PersonDetailDialog({
       const j = (await res.json()) as { ok?: boolean; banking?: Banking | null; bankHistory?: BankChangeEntry[]; error?: string };
       if (!res.ok || !j.ok) throw new Error(j.error || `Save failed (${res.status})`);
       // The endpoint returns the fresh UNMASKED record + updated change history,
-      // so the modal reflects the save immediately without a refetch. It comes
-      // from getPeopleBanking(), so effective_processor is filled and the rail
-      // lock can be trusted again — a save can MOVE that rail.
-      if (j.banking) { setBanking(j.banking); setBankingResolved(true); }
+      // so the modal reflects the save immediately without a refetch.
+      if (j.banking) setBanking(j.banking);
       if (j.bankHistory) { setBankHistory(j.bankHistory); setBankHistPage(1); }
       setBankEditing(false);
       toast.success('Payout details updated — this is now what payroll pays to.');
@@ -3621,39 +3607,24 @@ function PersonDetailDialog({
                         aria-label="Bank Preferred (send-from rail)"
                         className="mt-1 w-full"
                         options={[
-                          // "Not set" is withheld from a locked payee: clearing
-                          // would launder the WIRES lock (wires -> unset ->
-                          // wallet), and the API refuses it, so offering it
-                          // would just produce a 400.
-                          //
-                          // Judged on effective_processor, NOT bank_preferred:
-                          // a payee can be explicitly on wires via the legacy
-                          // rates cell with bank_preferred still null, and the
-                          // API checks all three tiers. Reading tier 1 here
-                          // would offer options the save then rejects.
-                          ...(walletRailLocked ? [] : [{ value: '', label: 'Not set' }]),
-                          // WIRES lock: a person EXPLICITLY on a wire rail can
-                          // never be offered Kolan/HiGlobe. A person who has
-                          // never been assigned a rail at all IS offerable —
-                          // that is the whole point of isWalletRailLocked vs
-                          // isWiresPreferred.
-                          //
-                          // Keyed on effective_processor (all three routing
-                          // tiers), which is what /api/people/[email]/banking
-                          // re-checks on save, so the dropdown and the API can
-                          // never disagree. "Pays via" below shows the same
-                          // value, so the reason an option is missing is
-                          // visible in the panel.
-                          //
-                          // Narrowed by the SHARED selectableBankPreferredOptions
-                          // rather than a hand-written `!== 'hurupay' && !==
-                          // 'higlobe'`: that literal pair is a second copy of
-                          // WALLET_RAILS, and a third wallet rail added to the
-                          // registry would have kept being offered here to
-                          // locked payees — a UI looser than the gate, the one
-                          // direction §4 forbids. One narrowing point, two
-                          // surfaces (this and the Employee Profile dropdown).
-                          ...selectableBankPreferredOptions(walletRailLocked).map((o) => ({
+                          // Clearing is always writable under the stateless 1:1
+                          // rule — routing falls to the receiving channel, which
+                          // for a wallet receiver is the same wallet anyway.
+                          { value: '', label: 'Not set' },
+                          // THE 1:1 RULE, keyed on the FORM's receiving pick so
+                          // the options track the edit in real time and never
+                          // offer what the save refuses: a wallet receiver's
+                          // send-from is pinned to that wallet; a bank-rail
+                          // receiver gets the bank options; no receiving channel
+                          // gets the full list (a wallet pick then mirrors the
+                          // receiving channel server-side). 'accounting' keeps
+                          // Wise on the list — Accounting is the only audience
+                          // allowed to set Wise as a sending bank (Kane,
+                          // 2026-08-31 PM), and this is where they do it.
+                          ...selectableBankPreferredOptions(
+                            bankForm.preferred_processor,
+                            'accounting',
+                          ).map((o) => ({
                             value: o.id,
                             label: o.label,
                           })),

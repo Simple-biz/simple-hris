@@ -4,22 +4,20 @@ import assert from 'node:assert/strict';
 import {
   isWiresPreferred,
   isWalletRailLocked,
-  isBankPreferredTransitionAllowed,
+  isBankPreferredAllowedForReceiving,
+  walletFromReceiving,
   mirroredDisbursementFor,
+  mirroredBankPreferredFor,
   processorIdFromBankPreferredText,
   processorForBankPreferredLabel,
   bankPreferredLabelForProcessor,
+  selectableBankPreferredOptions,
+  walletRailEffectiveFromPayload,
   PROCESSOR_OPTIONS,
   BANK_PREFERRED_OPTIONS,
   WALLET_RAILS,
-  selectableBankPreferredOptions,
-  walletRailLockedFromPayload,
-  walletRailEffectiveFromPayload,
-  walletRailLockedForResolvedRail,
-  disbursementWalletMoveNeedsCheck,
   type ProcessorId,
 } from './employee-payment-processors';
-import { resolveEffectivePayoutProcessor } from './employee/payout-completeness';
 
 // WIRES is the residual: anything that isn't exactly hurupay/higlobe.
 test('isWiresPreferred: hurupay and higlobe are NOT wires', () => {
@@ -39,40 +37,11 @@ test('isWiresPreferred: wires/x1153/legacy/null/empty all count as wires', () =>
 });
 
 // The DB's legacy free-text values may be cased/padded — the defensive
-// trim+lowercase is load-bearing for the guard's `current` side.
+// trim+lowercase is load-bearing everywhere a stored value is judged.
 test('isWiresPreferred: case- and whitespace-insensitive on legacy free-text', () => {
   assert.equal(isWiresPreferred(' Hurupay '), false);
   assert.equal(isWiresPreferred('HIGLOBE'), false);
   assert.equal(isWiresPreferred(' Wires '), true);
-  assert.equal(isBankPreferredTransitionAllowed(' HURUPAY ', 'higlobe'), true);
-  assert.equal(isBankPreferredTransitionAllowed(' Wires ', 'hurupay'), false);
-});
-
-// The ONLY forbidden transition: a WIRES employee → hurupay/higlobe.
-test('transition: wires -> hurupay/higlobe is forbidden', () => {
-  assert.equal(isBankPreferredTransitionAllowed('wires', 'hurupay'), false);
-  assert.equal(isBankPreferredTransitionAllowed('wires', 'higlobe'), false);
-});
-
-// CHANGED 2026-08-24 (Kane's ruling, deliberate — not a loosened assertion).
-// LEGACY free-text and explicit wire accounts are still locked. UNSET is not:
-// never having been assigned a rail is not the same as having been put on
-// wires, and treating it as a lockout meant a new hire could never be placed on
-// a wallet at all. See isWalletRailLocked.
-test('transition: an EXPLICIT wire rail -> hurupay/higlobe is forbidden', () => {
-  assert.equal(isBankPreferredTransitionAllowed('x1153', 'hurupay'), false);
-  assert.equal(isBankPreferredTransitionAllowed('x1161', 'higlobe'), false);
-  assert.equal(isBankPreferredTransitionAllowed('bpi', 'hurupay'), false);
-  assert.equal(isBankPreferredTransitionAllowed('wise', 'hurupay'), false);
-  // The rebranded spelling is locked out from wires exactly like the old one.
-  assert.equal(isBankPreferredTransitionAllowed('x1153', 'kolan'), false);
-});
-
-test('transition: an UNSET person can be assigned a wallet rail', () => {
-  assert.equal(isBankPreferredTransitionAllowed(null, 'hurupay'), true);
-  assert.equal(isBankPreferredTransitionAllowed(undefined, 'higlobe'), true);
-  assert.equal(isBankPreferredTransitionAllowed('', 'kolan'), true);
-  assert.equal(isBankPreferredTransitionAllowed('   ', 'hurupay'), true);
 });
 
 // The two predicates answer DIFFERENT questions and must not be collapsed back
@@ -83,86 +52,208 @@ test('isWiresPreferred vs isWalletRailLocked: unset differs, everything else agr
   assert.equal(isWalletRailLocked(null), false, 'lock: no rail => still assignable');
   assert.equal(isWiresPreferred(''), true);
   assert.equal(isWalletRailLocked('   '), false);
-  for (const v of ['wires', 'x1153', 'x1161', 'bpi', 'wise', 'jeeves']) {
+  for (const v of ['wires', 'x1153', 'wise', 'jeeves', 'bpi']) {
     assert.equal(isWiresPreferred(v), true, v);
     assert.equal(isWalletRailLocked(v), true, v);
   }
-  for (const v of ['hurupay', 'kolan', 'higlobe', ' Kolan ']) {
+  for (const v of ['hurupay', 'higlobe']) {
     assert.equal(isWiresPreferred(v), false, v);
     assert.equal(isWalletRailLocked(v), false, v);
   }
 });
 
-// Only the two wallet rails impose a Disbursement channel. This is the whole
-// of Kane's 2026-08-24 mirror rule.
+// ── The two mirrors (forward 2026-08-24, reverse 2026-08-31 PM) ─────────────
+// Only the two wallet rails impose anything, in EITHER direction. Kolan and
+// HiGlobe pay INTO the wallet they send from, so send-from and receiving are
+// physically the same account; wise/jeeves/wires stay independent.
+
 test('wallet mirror: only Kolan and HiGlobe force the Disbursement channel', () => {
   assert.equal(mirroredDisbursementFor('hurupay'), 'hurupay');
   assert.equal(mirroredDisbursementFor('kolan'), 'hurupay');
-  assert.equal(mirroredDisbursementFor(' KOLAN '), 'hurupay');
   assert.equal(mirroredDisbursementFor('higlobe'), 'higlobe');
 });
 
 test('wallet mirror: every other rail leaves Disbursement alone', () => {
-  for (const v of ['wise', 'jeeves', 'wires', 'x1153', 'x1161', 'bpi', '', null, undefined]) {
+  for (const v of ['wise', 'jeeves', 'wires', 'x1153', 'bpi', '', null, undefined]) {
     assert.equal(mirroredDisbursementFor(v), null, String(v));
   }
 });
 
-test('transition: wires -> wires and null -> wires are allowed', () => {
-  assert.equal(isBankPreferredTransitionAllowed('wires', 'wires'), true);
-  assert.equal(isBankPreferredTransitionAllowed(null, 'wires'), true);
-  assert.equal(isBankPreferredTransitionAllowed('x1153', 'wires'), true);
+test('reverse mirror: only a wallet RECEIVING pick pins the send-from', () => {
+  assert.equal(mirroredBankPreferredFor('hurupay'), 'hurupay');
+  assert.equal(mirroredBankPreferredFor('kolan'), 'hurupay');
+  assert.equal(mirroredBankPreferredFor('higlobe'), 'higlobe');
+  for (const v of ['wise', 'jeeves', 'wires', 'wepay', '', null, undefined]) {
+    assert.equal(mirroredBankPreferredFor(v), null, String(v));
+  }
 });
 
-test('transition: hurupay/higlobe can move freely (incl. to wires)', () => {
-  assert.equal(isBankPreferredTransitionAllowed('hurupay', 'higlobe'), true);
-  assert.equal(isBankPreferredTransitionAllowed('higlobe', 'hurupay'), true);
-  assert.equal(isBankPreferredTransitionAllowed('hurupay', 'wires'), true);
-  assert.equal(isBankPreferredTransitionAllowed('higlobe', 'wires'), true);
-  assert.equal(isBankPreferredTransitionAllowed('hurupay', 'hurupay'), true);
+test('walletFromReceiving: the two wallets, alias- and case-tolerant, nothing else', () => {
+  assert.equal(walletFromReceiving('hurupay'), 'hurupay');
+  assert.equal(walletFromReceiving(' KOLAN '), 'hurupay');
+  assert.equal(walletFromReceiving('higlobe'), 'higlobe');
+  for (const v of ['wise', 'jeeves', 'wires', 'wepay', 'x1153', 'bpi', '', null, undefined]) {
+    assert.equal(walletFromReceiving(v), null, String(v));
+  }
+});
+
+// ── THE 1:1 RULE (Kane, 2026-08-31 PM) ──────────────────────────────────────
+// The RECEIVING bank drives the send-from rail. This SUPERSEDED the
+// stored-transition guard (isBankPreferredTransitionAllowed, removed): the
+// verdict is stateless, judged against the live receiving channel on every
+// write, so there is no clear-then-set laundering walk left to defend.
+
+test('1:1 rule: a wallet receiver sends from exactly that wallet', () => {
+  assert.equal(isBankPreferredAllowedForReceiving('hurupay', 'hurupay'), true);
+  assert.equal(isBankPreferredAllowedForReceiving('higlobe', 'higlobe'), true);
+  assert.equal(isBankPreferredAllowedForReceiving('kolan', 'hurupay'), true, 'rebrand alias');
+
+  // Not the OTHER wallet, and never a bank rail — "they cannot receive from an
+  // x1153 or Wise if they have HiGlobe or Kolan".
+  assert.equal(isBankPreferredAllowedForReceiving('hurupay', 'higlobe'), false);
+  assert.equal(isBankPreferredAllowedForReceiving('higlobe', 'hurupay'), false);
+  assert.equal(isBankPreferredAllowedForReceiving('hurupay', 'wise'), false);
+  assert.equal(isBankPreferredAllowedForReceiving('hurupay', 'x1153'), false);
+  assert.equal(isBankPreferredAllowedForReceiving('higlobe', 'wires'), false);
+  assert.equal(isBankPreferredAllowedForReceiving('higlobe', 'jeeves'), false);
+});
+
+// TIGHTER than the old lock in this direction: wallet -> wires used to be an
+// allowed transition; under the 1:1 rule a wallet receiver can never be pointed
+// at a bank rail without changing the receiving bank in the same save.
+test('1:1 rule: wallet -> wires is no longer reachable while receiving stays a wallet', () => {
+  assert.equal(isBankPreferredAllowedForReceiving('hurupay', 'wires'), false);
+  assert.equal(isBankPreferredAllowedForReceiving('kolan', 'x1153'), false);
+});
+
+test('1:1 rule: a bank-rail receiver never sends from a wallet', () => {
+  assert.equal(isBankPreferredAllowedForReceiving('wires', 'hurupay'), false);
+  assert.equal(isBankPreferredAllowedForReceiving('wires', 'kolan'), false, 'alias too');
+  assert.equal(isBankPreferredAllowedForReceiving('wise', 'higlobe'), false);
+  assert.equal(isBankPreferredAllowedForReceiving('jeeves', 'hurupay'), false);
+  // Bank-to-bank stays free — Accounting corrections between wire rails.
+  assert.equal(isBankPreferredAllowedForReceiving('wires', 'wires'), true);
+  assert.equal(isBankPreferredAllowedForReceiving('wires', 'x1153'), true);
+  assert.equal(isBankPreferredAllowedForReceiving('wise', 'wise'), true);
+  assert.equal(isBankPreferredAllowedForReceiving('wise', 'jeeves'), true);
+});
+
+// NO receiving channel: anything goes — a wallet send-from assigned here is
+// completed into a 1:1 pair by the forward mirror. This carries Kane's
+// 2026-08-24 "unassigned means assignable" ruling forward — every new hire.
+test('1:1 rule: an unset receiver takes any assignment (mirror completes the pair)', () => {
+  for (const recv of [null, undefined, '', '   ']) {
+    assert.equal(isBankPreferredAllowedForReceiving(recv, 'hurupay'), true, String(recv));
+    assert.equal(isBankPreferredAllowedForReceiving(recv, 'higlobe'), true, String(recv));
+    assert.equal(isBankPreferredAllowedForReceiving(recv, 'wires'), true, String(recv));
+    assert.equal(isBankPreferredAllowedForReceiving(recv, 'wise'), true, String(recv));
+  }
+});
+
+// Clearing the send-from is always writable — the verdict is stateless and
+// routing falls to the receiving channel, which for a wallet receiver is the
+// same wallet anyway. (The old guard blocked clearing to prevent a two-step
+// laundering walk; with no stored-transition semantics there is nothing to
+// launder.)
+test('1:1 rule: clearing is always allowed', () => {
+  for (const recv of ['hurupay', 'higlobe', 'wires', 'wise', null]) {
+    assert.equal(isBankPreferredAllowedForReceiving(recv, null), true, String(recv));
+    assert.equal(isBankPreferredAllowedForReceiving(recv, ''), true, String(recv));
+  }
+});
+
+// ── The pickers' option lists ────────────────────────────────────────────────
+
+test('options: a wallet receiver sees exactly their wallet, both audiences', () => {
+  assert.deepEqual(
+    selectableBankPreferredOptions('hurupay', 'employee').map((o) => o.label),
+    ['Kolan'],
+  );
+  assert.deepEqual(
+    selectableBankPreferredOptions('kolan', 'accounting').map((o) => o.label),
+    ['Kolan'],
+  );
+  assert.deepEqual(
+    selectableBankPreferredOptions('higlobe', 'employee').map((o) => o.label),
+    ['HiGlobe'],
+  );
+});
+
+test('options: a bank-rail receiver gets bank rails only; Wise is Accounting-only', () => {
+  // Kane, 2026-08-31 PM: "only accounting can set wise as their sending banks"
+  // — set in People -> Banking, never offered to employees as a new pick.
+  assert.deepEqual(
+    selectableBankPreferredOptions('wires', 'employee').map((o) => o.label),
+    ['Jeeves', 'x1153'],
+  );
+  assert.deepEqual(
+    selectableBankPreferredOptions('wise', 'accounting').map((o) => o.label),
+    ['Jeeves', 'Wise', 'x1153'],
+  );
+});
+
+test('options: no receiving channel offers the full list (minus Wise for employees)', () => {
+  assert.deepEqual(
+    selectableBankPreferredOptions(null, 'accounting').map((o) => o.label),
+    ['HiGlobe', 'Kolan', 'Jeeves', 'Wise', 'x1153'],
+  );
+  assert.deepEqual(
+    selectableBankPreferredOptions('', 'employee').map((o) => o.label),
+    ['HiGlobe', 'Kolan', 'Jeeves', 'x1153'],
+  );
+});
+
+// Structural pins: whatever the receiving value, an employee list never offers
+// Wise, and a wallet receiver's list never contains anything but their wallet.
+test('options: structural — employee lists are Wise-free, wallet lists are pinned', () => {
+  const receivings = ['hurupay', 'kolan', 'higlobe', 'wise', 'jeeves', 'wires', '', null];
+  for (const recv of receivings) {
+    assert.equal(
+      selectableBankPreferredOptions(recv, 'employee').some((o) => o.id === 'wise'),
+      false,
+      `employee list for ${String(recv)}`,
+    );
+    const wallet = walletFromReceiving(recv);
+    if (wallet) {
+      for (const audience of ['employee', 'accounting'] as const) {
+        assert.deepEqual(
+          selectableBankPreferredOptions(recv, audience).map((o) => o.id),
+          [wallet],
+          `${audience} list for ${String(recv)}`,
+        );
+      }
+    }
+  }
 });
 
 // ── Kolan rebrand (2026-08-24) ──────────────────────────────────────────────
 // Hurupay renamed itself to Kolan. The STORED value stayed `hurupay` on purpose,
-// so these pin the two things that would otherwise silently misroute money.
+// so these pin the things that would otherwise silently misroute money.
 
 // A rates-sheet cell that says "Kolan" must resolve to the SAME rail. Without
 // this the person resolves to no processor at all and Payment Dispatch drops
 // them from the queue — they simply do not get paid, with no error anywhere.
 test('kolan resolves to the hurupay rail (sheet cell after the rebrand)', () => {
   assert.equal(processorIdFromBankPreferredText('kolan'), 'hurupay');
-  assert.equal(processorIdFromBankPreferredText('Kolan'), 'hurupay');
-  assert.equal(processorIdFromBankPreferredText(' KOLAN '), 'hurupay');
-  // …and every pre-rebrand spelling keeps resolving exactly as before.
+  assert.equal(processorIdFromBankPreferredText(' Kolan '), 'hurupay');
+  assert.equal(processorIdFromBankPreferredText('KOLAN'), 'hurupay');
   assert.equal(processorIdFromBankPreferredText('hurupay'), 'hurupay');
   assert.equal(processorIdFromBankPreferredText('huru'), 'hurupay');
   assert.equal(processorIdFromBankPreferredText('huropay'), 'hurupay');
 });
 
 // `kolan` is the wallet rail, not the WIRES residual. Reading it as WIRES would
-// permanently lock a wallet payee out of their own rail via the transition guard.
+// misclassify a wallet payee's rail everywhere the residual is consulted.
 test('isWiresPreferred: kolan is the hurupay wallet, NOT wires', () => {
   assert.equal(isWiresPreferred('kolan'), false);
   assert.equal(isWiresPreferred(' Kolan '), false);
   assert.equal(isWiresPreferred('KOLAN'), false);
 });
 
-test('transition: kolan behaves exactly as hurupay on both sides of the guard', () => {
-  assert.equal(isBankPreferredTransitionAllowed('kolan', 'higlobe'), true);
-  assert.equal(isBankPreferredTransitionAllowed('kolan', 'wires'), true);
-  assert.equal(isBankPreferredTransitionAllowed('higlobe', 'kolan'), true);
-  // A payee EXPLICITLY on wires still cannot be moved onto the wallet,
-  // whichever name the wallet happens to be called by.
-  assert.equal(isBankPreferredTransitionAllowed('wires', 'kolan'), false);
-  assert.equal(isBankPreferredTransitionAllowed('x1153', 'kolan'), false);
-  // An UNSET person is assignable as of 2026-08-24 — see the isWalletRailLocked
-  // tests below. This assertion was `false` until that ruling.
-  assert.equal(isBankPreferredTransitionAllowed(null, 'kolan'), true);
-});
-
-// Non-loosening proof: ONLY `kolan` joined the wallet set. Every other legacy
-// free-text spelling stays WIRES exactly as bank-preferred-routing.md §4
-// requires — including the typo aliases the TEXT normaliser separately accepts.
+// Non-widening proof: ONLY `kolan` joined the wallet set. Every other legacy
+// free-text spelling stays WIRES — including the typo aliases the TEXT
+// normaliser separately accepts (that asymmetry is deliberate: the residual
+// must not misread a legacy spelling as a wallet).
 test('isWiresPreferred: nothing except kolan was widened', () => {
   assert.equal(isWiresPreferred('huru'), true);
   assert.equal(isWiresPreferred('huropay'), true);
@@ -175,122 +266,17 @@ test('isWiresPreferred: nothing except kolan was widened', () => {
 // The label moved; the id did not. That is the whole rebrand in one assertion.
 test('registry: hurupay id keeps its value, label reads Kolan', () => {
   const opt = PROCESSOR_OPTIONS.find((p) => p.id === 'hurupay');
-  assert.ok(opt, 'hurupay must remain a processor id');
+  assert.ok(opt);
   assert.equal(opt.label, 'Kolan');
   assert.equal(BANK_PREFERRED_OPTIONS.find((o) => o.id === 'hurupay')?.label, 'Kolan');
-  // Label <-> id round trip stays closed after the rename.
   assert.equal(processorForBankPreferredLabel('Kolan'), 'hurupay');
   assert.equal(bankPreferredLabelForProcessor('hurupay'), 'Kolan');
+  // x1153 is the wires option's display name, not a distinct processor.
+  assert.equal(processorForBankPreferredLabel('x1153'), 'wires');
+  assert.equal(bankPreferredLabelForProcessor('wires'), 'x1153');
 });
 
-// Unset became assignable (2026-08-24), which opens a two-step laundering path
-// unless clearing is blocked for a locked payee. This is the proof it is closed.
-test('lock laundering: an explicitly-wires payee cannot be CLEARED to unset', () => {
-  assert.equal(isBankPreferredTransitionAllowed('wires', null), false);
-  assert.equal(isBankPreferredTransitionAllowed('wires', ''), false);
-  assert.equal(isBankPreferredTransitionAllowed('wires', '   '), false);
-  assert.equal(isBankPreferredTransitionAllowed('x1153', null), false);
-  assert.equal(isBankPreferredTransitionAllowed('bpi', ''), false);
-  // …so the full two-step walk is dead at step one.
-  assert.equal(isBankPreferredTransitionAllowed('wires', null), false, 'step 1: clear');
-  assert.equal(isBankPreferredTransitionAllowed('wires', 'kolan'), false, 'direct move');
-});
-
-// Clearing a WALLET rail launders nothing — unset was already assignable to a
-// wallet — so it stays allowed and Accounting keeps that escape hatch.
-test('lock laundering: clearing a WALLET rail is still allowed', () => {
-  assert.equal(isBankPreferredTransitionAllowed('hurupay', null), true);
-  assert.equal(isBankPreferredTransitionAllowed('kolan', ''), true);
-  assert.equal(isBankPreferredTransitionAllowed('higlobe', null), true);
-  // And an already-unset person can stay unset.
-  assert.equal(isBankPreferredTransitionAllowed(null, null), true);
-});
-
-// A locked payee can still be moved BETWEEN wire rails — the guard blocks
-// escapes, not ordinary wire-account corrections.
-test('lock laundering: wire-to-wire moves are unaffected', () => {
-  assert.equal(isBankPreferredTransitionAllowed('wires', 'x1153'), true);
-  assert.equal(isBankPreferredTransitionAllowed('x1153', 'x1161'), true);
-  assert.equal(isBankPreferredTransitionAllowed('bpi', 'wires'), true);
-});
-
-// ---------------------------------------------------------------------------
-// The Employee Profile dropdown's option list (2026-08-31)
-//
-// The dropdown used to judge the lock from `employee_ids.bank_preferred` alone
-// and treat NULL as locked. Tier 1 is NULL for 1,796 of 1,926 people, 920 of
-// whom route to a wallet via tier 2 — so the rail they are actually paid on was
-// missing from their own dropdown. The verdict now comes from the EFFECTIVE
-// rail (resolveWalletRailLock, server-side, fail-closed) and these pin the two
-// halves of that: what a locked list may contain, and how a client must read a
-// lock payload it does not fully trust.
-// ---------------------------------------------------------------------------
-
-test('selectableBankPreferredOptions: locked withholds BOTH wallet rails', () => {
-  const locked = selectableBankPreferredOptions(true);
-  assert.equal(
-    locked.some((o) => (WALLET_RAILS as readonly ProcessorId[]).includes(o.id)),
-    false,
-    'a locked list must never contain a wallet rail',
-  );
-  // Stated positively too, so widening WALLET_RAILS alone cannot pass this.
-  assert.deepEqual(
-    locked.map((o) => o.label),
-    ['Jeeves', 'Wise', 'x1153'],
-  );
-});
-
-test('selectableBankPreferredOptions: unlocked offers the full list', () => {
-  const open = selectableBankPreferredOptions(false);
-  assert.deepEqual(open, BANK_PREFERRED_OPTIONS);
-  assert.deepEqual(
-    open.map((o) => o.label),
-    ['HiGlobe', 'Kolan', 'Jeeves', 'Wise', 'x1153'],
-  );
-});
-
-// The whole point of the change: someone whose EFFECTIVE rail is a wallet sees
-// the wallet rails, even though their tier 1 is NULL.
-test('selectableBankPreferredOptions: a tier-2 wallet payee sees Kolan and HiGlobe', () => {
-  const effective = resolveEffectivePayoutProcessor({
-    bank_preferred: null,
-    preferred_processor: 'hurupay',
-  });
-  assert.equal(effective, 'hurupay');
-  const labels = selectableBankPreferredOptions(isWalletRailLocked(effective)).map((o) => o.label);
-  assert.ok(labels.includes('Kolan'));
-  assert.ok(labels.includes('HiGlobe'));
-});
-
-// ...and someone explicitly on wires via the LEGACY CELL still does not — the
-// population a tier-1-only read would have wrongly unlocked.
-test('selectableBankPreferredOptions: a legacy-cell wires payee stays locked', () => {
-  const effective = resolveEffectivePayoutProcessor(
-    { bank_preferred: null, preferred_processor: null },
-    { bankPreferredRaw: 'x1153' },
-  );
-  const labels = selectableBankPreferredOptions(isWalletRailLocked(effective)).map((o) => o.label);
-  assert.equal(labels.includes('Kolan'), false);
-  assert.equal(labels.includes('HiGlobe'), false);
-});
-
-test('walletRailLockedFromPayload: fails CLOSED on anything but an explicit clean unlock', () => {
-  // The only shape that unlocks.
-  assert.equal(walletRailLockedFromPayload({ locked: false, effectiveRail: 'hurupay', error: null }), false);
-
-  assert.equal(walletRailLockedFromPayload(undefined), true, 'payload absent (list branch)');
-  assert.equal(walletRailLockedFromPayload(null), true);
-  assert.equal(walletRailLockedFromPayload({}), true, 'no `locked` key at all');
-  assert.equal(walletRailLockedFromPayload({ locked: true }), true);
-  assert.equal(walletRailLockedFromPayload('false'), true, 'not an object');
-  assert.equal(walletRailLockedFromPayload({ locked: 'false' }), true, 'string is not false');
-  assert.equal(walletRailLockedFromPayload({ locked: 0 }), true, 'falsy is not false');
-  assert.equal(
-    walletRailLockedFromPayload({ locked: false, error: 'read failed' }),
-    true,
-    'a read error outranks an unlocked verdict',
-  );
-});
+// ── The employee dashboard's display default payload ────────────────────────
 
 test('walletRailEffectiveFromPayload: only a real ProcessorId survives', () => {
   assert.equal(walletRailEffectiveFromPayload({ effectiveRail: 'higlobe' }), 'higlobe');
@@ -300,96 +286,15 @@ test('walletRailEffectiveFromPayload: only a real ProcessorId survives', () => {
   assert.equal(walletRailEffectiveFromPayload(undefined), null);
 });
 
-// People → Banking holds a server-resolved effective rail, not a lock payload,
-// and `banking === null` there conflates "read failed" with "no rail anywhere".
-// Those need opposite verdicts, so the resolved flag carries the difference.
-test('walletRailLockedForResolvedRail: an UNRESOLVED read is locked, whatever the rail says', () => {
-  assert.equal(walletRailLockedForResolvedRail(false, null), true, 'fetch failed / not landed');
-  assert.equal(walletRailLockedForResolvedRail(false, 'hurupay'), true, 'stale wallet rail');
-  assert.equal(walletRailLockedForResolvedRail(false, undefined), true);
-});
-
-test('walletRailLockedForResolvedRail: a RESOLVED read keeps the 2026-08-24 ruling', () => {
-  // No rail in any tier, and we know it — assignable. Covers every new hire.
-  assert.equal(walletRailLockedForResolvedRail(true, null), false);
-  assert.equal(walletRailLockedForResolvedRail(true, ''), false);
-  // Already on a wallet — assignable between wallets.
-  assert.equal(walletRailLockedForResolvedRail(true, 'hurupay'), false);
-  assert.equal(walletRailLockedForResolvedRail(true, 'higlobe'), false);
-  // Explicitly on a non-wallet rail — locked, Wise and Jeeves included.
-  assert.equal(walletRailLockedForResolvedRail(true, 'wires'), true);
-  assert.equal(walletRailLockedForResolvedRail(true, 'x1153'), true);
-  assert.equal(walletRailLockedForResolvedRail(true, 'wise'), true);
-  assert.equal(walletRailLockedForResolvedRail(true, 'jeeves'), true);
-});
-
-// The regression this closed: a null payload used to reach isWalletRailLocked
-// directly, which unlocked the picker AND the laundering "Not set" option.
-test('walletRailLockedForResolvedRail: unresolved is stricter than the raw predicate', () => {
-  assert.equal(isWalletRailLocked(null), false, 'the raw predicate says assignable');
-  assert.equal(walletRailLockedForResolvedRail(false, null), true, 'the UI must not');
-});
-
-// ---------------------------------------------------------------------------
-// The RECEIVING-side gate (2026-08-31, Kane's ruling (a))
-//
-// `preferred_processor` is tier 2 of the routing precedence, so for the 1,796
-// people whose tier 1 is NULL it IS the rail Payment Dispatch pays out on — yet
-// it was employee-writable, immediately, with no lock check, while
-// `bank_preferred` sat behind five enforcement sites. These pin the SCOPE of the
-// new gate: Kolan and HiGlobe only, and never a no-op.
-// ---------------------------------------------------------------------------
-
-test('disbursementWalletMoveNeedsCheck: gates ONLY the two wallet rails', () => {
-  for (const rail of WALLET_RAILS) {
-    assert.equal(disbursementWalletMoveNeedsCheck('wires', rail), true, rail);
+// WALLET_RAILS is the single source for "which rails are wallets" — the 1:1
+// rule, both mirrors, and the option pinning all derive from it. If a third
+// wallet rail is ever added, every one of them follows automatically.
+test('structural: the wallet set is exactly hurupay + higlobe', () => {
+  assert.deepEqual([...WALLET_RAILS].sort(), ['higlobe', 'hurupay']);
+  const walletIds: ProcessorId[] = [...WALLET_RAILS];
+  for (const id of walletIds) {
+    assert.equal(mirroredBankPreferredFor(id), id);
+    assert.equal(mirroredDisbursementFor(id), id);
+    assert.equal(walletFromReceiving(id), id);
   }
-  // Every other rail is untouched — the 2026-07-22 decoupling still holds, and
-  // the caller pays for no database read on these.
-  for (const rail of ['wise', 'jeeves', 'wires', 'wepay']) {
-    assert.equal(disbursementWalletMoveNeedsCheck('wires', rail), false, rail);
-    assert.equal(disbursementWalletMoveNeedsCheck('hurupay', rail), false, rail);
-  }
-  // Nothing requested, or unrecognisable text, is not a wallet move.
-  assert.equal(disbursementWalletMoveNeedsCheck('wires', null), false);
-  assert.equal(disbursementWalletMoveNeedsCheck('wires', ''), false);
-  assert.equal(disbursementWalletMoveNeedsCheck('wires', 'bpi'), false);
-});
-
-test('disbursementWalletMoveNeedsCheck: a no-op is not a move', () => {
-  // Otherwise a payee already on a wallet could not save their address.
-  assert.equal(disbursementWalletMoveNeedsCheck('hurupay', 'hurupay'), false);
-  assert.equal(disbursementWalletMoveNeedsCheck('higlobe', 'higlobe'), false);
-  assert.equal(disbursementWalletMoveNeedsCheck(' HURUPAY ', 'hurupay'), false, 'case/space');
-  // ...but wallet-to-wallet IS a move and still gets checked.
-  assert.equal(disbursementWalletMoveNeedsCheck('hurupay', 'higlobe'), true);
-});
-
-test('disbursementWalletMoveNeedsCheck: kolan is the hurupay rail on BOTH sides', () => {
-  // Reading 'kolan' as unknown text would let the rebranded spelling walk
-  // straight past the gate.
-  assert.equal(disbursementWalletMoveNeedsCheck('wires', 'kolan'), true);
-  assert.equal(disbursementWalletMoveNeedsCheck('kolan', 'hurupay'), false, 'same rail');
-  assert.equal(disbursementWalletMoveNeedsCheck('hurupay', 'kolan'), false, 'same rail');
-
-  // The gate uses the TEXT normaliser, which accepts the `huru`/`huropay`
-  // aliases that `isWiresPreferred` deliberately does NOT widen for. That
-  // asymmetry is correct and load-bearing in this direction: the lock predicate
-  // must not misread a legacy spelling as a wallet (it would unlock a wire
-  // payee), while the GATE erring toward "check it" is strictly safer. Pinned so
-  // nobody 'harmonises' the two and quietly makes the gate more permissive.
-  assert.equal(isWiresPreferred('huru'), true, 'lock predicate: still WIRES');
-  assert.equal(disbursementWalletMoveNeedsCheck('wires', 'huru'), true, 'gate: still checked');
-  assert.equal(disbursementWalletMoveNeedsCheck('wires', 'huropay'), true);
-
-  // Text that resolves to no rail at all is not a wallet move.
-  assert.equal(disbursementWalletMoveNeedsCheck('wires', 'kolanx'), false);
-  assert.equal(disbursementWalletMoveNeedsCheck('wires', 'bpi savings'), false);
-});
-
-// An unassigned person is assignable (Kane, 2026-08-24) — the gate still RUNS
-// for them, and resolveWalletRailLock is what says yes.
-test('disbursementWalletMoveNeedsCheck: an unset channel moving to a wallet is checked', () => {
-  assert.equal(disbursementWalletMoveNeedsCheck(null, 'hurupay'), true);
-  assert.equal(disbursementWalletMoveNeedsCheck('', 'higlobe'), true);
 });

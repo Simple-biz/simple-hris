@@ -1,18 +1,21 @@
-# Bank Preferred — send-from routing, approval gate & WIRES lock
+# Bank Preferred — send-from routing, approval gate & the 1:1 rule
 
 *Shipped 2026-07-22; Wise updates + the No-Bank clobber discovery added
 2026-07-25 (§7); People-tab parity + Accounting direct-edit added 2026-08-10
 (§8). Migration status re-verified against production 2026-08-11 — see
 [Migrations](#migrations). Bank changes KPI band added 2026-08-19 (§10) — rail-shaped, no bank names.
-Employee Profile dropdown moved onto the EFFECTIVE rail 2026-08-31 (§1, §4) — the lock is
-unchanged, the question it asks is not. Receiving side gated the same day (§4.1): the
-coupling stays ONE-WAY and `preferred_processor` stops being an ungated tier-2 rail switch.*
+Employee Profile dropdown moved onto the EFFECTIVE rail 2026-08-31 AM (§1). **2026-08-31 PM
+(Kane): the stored-transition WIRES lock and the same-morning receiving gate were BOTH
+superseded by the 1:1 rule (§4)** — the RECEIVING bank drives the send-from rail, the wallet
+coupling is two-way, and Wise as a send-from is Accounting-only.*
 
 "Bank Preferred" is the processor **Accounting sends a salary OUT on** — the
-*send-from rail*. It is a first-class, employee-owned field that wins Payment
-Dispatch's processor-routing precedence, is **held for Accounting approval**
-before it takes effect, and carries a hard **WIRES lock** that a wires employee
-can never be moved off of onto Kolan/HiGlobe.
+*send-from rail*. It is a first-class field that wins Payment Dispatch's
+processor-routing precedence, is **held for Accounting approval** before an
+employee's own change takes effect, and is constrained by the **1:1 rule** (§4):
+the send-from rail must agree with the employee's RECEIVING bank — a
+Kolan/HiGlobe receiver is paid from that same wallet, and a bank receiver is
+never paid from a wallet.
 
 > **Rebrand, 2026-08-24 — Hurupay is now Kolan.** Only the human-visible label
 > changed. The processor **id**, `employee_ids.bank_preferred`, the
@@ -36,20 +39,27 @@ can never be moved off of onto Kolan/HiGlobe.
 > absolute: `account_number`, `swift_code` and the wallet-email columns are the
 > employee's own data and no rail pick may write them.
 >
-> The **Disbursement** picker is a different story as of **2026-08-24** (Kane).
-> The first build wired both fields to `preferred_processor`, so changing either
-> flipped the other — that was a bug and it stays fixed. But the two **wallet**
-> rails are now deliberately coupled in ONE direction:
+> The **Disbursement** picker and Bank Preferred are deliberately coupled for
+> the two **wallet** rails — and as of **2026-08-31 PM (Kane) the coupling is
+> TWO-WAY, "1 to 1"**. Kolan and HiGlobe pay *into* the same wallet they send
+> *from*, so the pair can only ever be that wallet on both sides:
 >
-> **Setting Bank Preferred to Kolan or HiGlobe also sets Disbursement to match.**
+> - **Bank Preferred → Disbursement** (2026-08-24): setting the send-from to a
+>   wallet sets the receiving channel to match — `mirroredDisbursementFor()`.
+> - **Disbursement → Bank Preferred** (2026-08-31 PM): setting the RECEIVING
+>   bank to a wallet pins the send-from to the same wallet — "they cannot
+>   receive from an x1153 or Wise if they have HiGlobe or Kolan" —
+>   `mirroredBankPreferredFor()`. In People → Banking this applies immediately
+>   (Accounting's edit is the approval, §8); on the employee dashboard it FILES
+>   the matching Bank Preferred change through the §3 approval gate, applied
+>   server-side in `update-employee-ids` so it holds however the save was made.
 >
-> Kolan and HiGlobe pay *into* the same wallet they send *from*, so "send from
-> Kolan, receive on Wise" describes nothing real — it just asks the employee for
-> detail fields nobody will ever use. Wise / Jeeves / Wires impose nothing and
-> remain fully independent, which is what the original decoupling protected. The
-> rule lives in `mirroredDisbursementFor()` and is applied server-side in
-> `app/api/people/[email]/banking/route.ts`, so it holds however the save was
-> made; the People-tab form mirrors it only so the UI shows what will be saved.
+> Wise / Jeeves / Wires impose nothing in either direction and remain fully
+> independent, which is what the original 2026-07-22 decoupling protected. (The
+> first build wired both fields to one column so changing either flipped the
+> other — that was a bug, and the mirrors are NOT it: they couple the two wallet
+> rails only, by rule, in code.) Neither mirror ever touches the RECEIVING
+> ACCOUNT columns.
 
 ---
 
@@ -66,14 +76,18 @@ HiGlobe / Kolan / Jeeves / Wise / **x1153**.
   dropdown.
 - The field shows a **"Pending approval"** badge whenever the employee has an
   outstanding change (see §3).
-- **Which of the five an employee actually sees is the WIRES lock (§4), and as
-  of 2026-08-31 it is judged on the EFFECTIVE rail, not `bank_preferred`.**
-  `selectableBankPreferredOptions(locked)` is the one place the list is narrowed;
-  `locked` arrives from the server on `GET /api/employee-ids?email=` as
-  `walletRail` (`resolveWalletRailLock`, all three tiers, fails closed) and is
-  read client-side through `walletRailLockedFromPayload`, which treats a missing
-  payload, a non-object, or a `locked: false` carrying an `error` as **locked**.
-  The dropdown starts locked and unlocks only on an explicit clean verdict.
+- **Which options an employee sees is the 1:1 rule (§4), keyed on the LIVE
+  receiving pick in the form above.** `selectableBankPreferredOptions(receiving,
+  audience)` is the one narrowing point: a wallet receiver sees exactly their
+  wallet (the send-from is pinned), a bank-rail receiver sees the bank options,
+  no receiving channel sees everything. The `'employee'` audience never includes
+  **Wise** — only Accounting sets Wise as a sending bank, in People → Banking.
+- **The displayed value defaults to what they ARE** (Kane, 2026-08-31): the
+  stored tier-1 pick wins, else a wallet receiving bank pins the display, else
+  the server-resolved EFFECTIVE rail (`walletRail.effectiveRail` on
+  `GET /api/employee-ids?email=`) — so a tier-2 Kolan payee sees **Kolan**, not
+  an empty "Select…". Display only; nothing writes until the user changes
+  something, and an employee's change still files through §3.
 - `EmployeeIdRow` and both `.select(cols)` strings in
   [`src/lib/supabase/employee-ids.ts`](../../src/lib/supabase/employee-ids.ts)
   must list `bank_preferred`, or reads return `undefined`.
@@ -103,8 +117,8 @@ routing to be authoritative, since it outranks the legacy CSV column.
 > `wires`, Payment Dispatch reroutes the payment **via Wise for that week** when
 > the week's PHP amount is strictly under ₱7,000 — recomputed every cycle, never
 > written to `employee_ids`, so a ≥₱7k week lands the person back on Wires by
-> itself. No interaction with the WIRES lock (§4), which guards *stored*
-> transitions. Detail:
+> itself. No interaction with the 1:1 rule (§4), which constrains *stored*
+> values, not the per-week reroute. Detail:
 > [payment-dispatch.md §12.3.1](./payment-dispatch.md#1231-sub-₱7k-wires--wise-temporary-weekly-reroute-2026-07-29).
 
 > **Known gap (accepted, awaiting a product call):** the All-Dept rates sheet
@@ -112,8 +126,9 @@ routing to be authoritative, since it outranks the legacy CSV column.
 > `employee_hourly_rates."Bank Preferred"` column
 > ([`rates-upload-db.ts`](../../src/lib/supabase/rates-upload-db.ts)). For a
 > person whose `bank_preferred` **and** `preferred_processor` are both null, a
-> sheet cell saying "Hurupay" still routes them to Hurupay — a bulk path around
-> the WIRES lock's intent. Needs a ticket or an explicit "accepted".
+> sheet cell saying "Hurupay" still routes them to Hurupay — a bulk write into
+> the routing precedence that bypasses every picker and the §4 mirrors. Needs a
+> ticket or an explicit "accepted".
 
 ## 3. Accounting approval gate
 
@@ -144,165 +159,96 @@ Requests workflow.
 API routes: [`app/api/bank-preferred-requests/route.ts`](../../app/api/bank-preferred-requests/route.ts)
 and [`[id]/route.ts`](../../app/api/bank-preferred-requests/[id]/route.ts).
 
-## 4. The WIRES lock
+## 4. The 1:1 rule (supersedes the WIRES lock, 2026-08-31 PM)
 
-A **WIRES employee** — one whose `employee_ids.bank_preferred` is set to anything
-but exactly `hurupay`/`kolan`/`higlobe`, **including legacy free-text** — can
-**never** be switched to Kolan or HiGlobe. WIRES is the residual bucket.
+**The RECEIVING bank drives the send-from rail** (Kane): a **Kolan/HiGlobe
+receiver is paid from that same wallet — 1 to 1** — and a **bank receiver is
+never paid from a wallet**. "They cannot receive from an x1153 or Wise if they
+have HiGlobe or Kolan."
 
-**`null` is NOT a lockout (changed 2026-08-24, Kane).** Two different questions
-share the word "wires" and used to share one predicate:
-
-| Question | Predicate | Unset (`null`/`''`) means |
-|---|---|---|
-| Which rail does this person get paid on? | `isWiresPreferred` | **wires** — no rail assigned ⇒ paid by bank wire |
-| Is this person barred from the wallet rails? | `isWalletRailLocked` | **not locked** — never assigned ≠ put on wires |
-
-Collapsing those two meant a payee whose `bank_preferred` had simply never been
-populated could never be placed on Kolan/HiGlobe at all — **including every new
-hire**. Routing is unchanged: `isWiresPreferred` still answers the routing
-question exactly as before, and only the transition guard's `current` side moved
-to the narrower predicate. A person **explicitly** on `wires`/`x1153`/legacy text
-is still locked, and that is pinned by test.
-
-**`kolan` is the rebranded spelling of `hurupay` (2026-08-24) and counts as that
-same wallet rail — nothing else was widened.** The stored value stays
-`hurupay`; `kolan` is accepted defensively because the rates sheet is free text
-and a human will eventually type the new name. Reading it as WIRES would be a
-misclassification that permanently locks a wallet payee out of their own rail.
-Every other legacy spelling — including the `huru`/`huropay` aliases the TEXT
-normaliser separately accepts — still counts as WIRES, and
-`employee-payment-processors.test.ts` pins that non-widening explicitly.
-
-Single source of truth, both unit-tested (incl. mixed-case legacy free-text) in
+Single source of truth, pure and unit-tested, in
 [`src/lib/employee-payment-processors.ts`](../../src/lib/employee-payment-processors.ts):
 
 ```ts
-isWiresPreferred(value)                    // true unless value is exactly hurupay/kolan/higlobe
-isBankPreferredTransitionAllowed(current, next)
-  // false iff current is wires-preferred and next is NOT wires-preferred
+isBankPreferredAllowedForReceiving(receiving, next)
+  // wallet receiving  ⇒ next must be THAT wallet (or unset)
+  // bank receiving    ⇒ next must not be a wallet
+  // no receiving      ⇒ anything (the forward mirror completes the 1:1 pair)
+  // clearing (next unset) is always allowed — routing falls to tier 2
+mirroredBankPreferredFor(receiving)   // wallet receiving pins the send-from
+mirroredDisbursementFor(bankPreferred) // wallet send-from pins the receiving
+walletFromReceiving(receiving)        // kolan-alias- and case-tolerant
 ```
 
-**Allowed:** `hurupay ↔ higlobe`, `anything → wires`, and `unassigned → any rail`
-(unassigned = **no** tier resolves a rail at all).
-**Blocked:** `wires/legacy → hurupay | kolan | higlobe`, and `wires/legacy → unset`
-(clearing would launder the lock, since unassigned is assignable).
+**The verdict is STATELESS** — judged against the live receiving channel on
+every write, never against transition history. That is why
+`isBankPreferredTransitionAllowed` (the stored-transition WIRES lock, 2026-07-22
+→ 2026-08-31) was **removed**, not adapted: with no stored-transition semantics
+there is no clear-then-set laundering walk to defend, and its laundering guard,
+its `null`-handling subtleties, and its five-site enforcement table went with
+it. Do not reintroduce a transition-history guard.
 
-**"Current" means the EFFECTIVE rail, not `employee_ids.bank_preferred` alone.**
-`resolveWalletRailLock()` resolves all three tiers and **fails closed** — a read
-error is a 503, never an unlocked payee. A tier-1-only check would read the
-~1,351 people seeded into the legacy cell in 2026-07-22 (466 with
-`preferred_processor` deliberately cleared) as "never assigned", because their
-`bank_preferred` is still NULL — and let a wire-only payee onto a wallet in a
-single save.
+Compared to the old lock, the rule is **tighter in one direction and looser in
+the other, both deliberately**:
 
-Five enforcement sites (defense in depth). They deliberately do **not** all ask
-the same question, and that asymmetry is the design:
+- Tighter: **wallet → wires is gone.** A wallet receiver can never be pointed at
+  x1153/Wise/Jeeves without changing the receiving bank in the same save. The
+  old lock allowed `anything → wires`.
+- Looser: a payee who genuinely moves their RECEIVING bank onto a wallet is no
+  longer barred from a matching send-from — under the old lock a wires-history
+  payee could never reach Kolan at all. The old lock's protective content — "you
+  cannot pay a wire recipient into a wallet" — survives receiving-keyed: it is
+  exactly the "bank receiver never sends from a wallet" half.
 
-- The two **server gates** resolve the **effective** rail across all three tiers
-  (`resolveWalletRailLock`) and fail closed. They are the real gate.
-- The two remaining **client / pre-filter** sites see only tier 1, so they use
-  the **conservative** `isWiresPreferred` and treat unset as locked. Being
-  stricter than the gate is safe; being looser is not. A UI that offers an option
-  the API refuses is a bad prompt, but a UI that offers one the API *accepts*
-  when it should not is a mispaid salary.
-- **The Employee Profile dropdown left that group on 2026-08-31 (Kane).** It now
-  asks the gate's own question — the server hands it `resolveWalletRailLock`'s
-  verdict on `/api/employee-ids?email=` and it fails closed on anything less than
-  an explicit clean unlock. Conservatism was costing real money-adjacent
-  legibility: tier 1 is NULL for **1,796 of 1,926** people, and **920 of them
-  route to Kolan/HiGlobe via tier 2**, so the tier-1 read hid the wallet rails
-  from the very people already being paid on one — the same misclassification
-  `wallet-rail-lock.ts` was written to stop, pointed the other way. Nothing was
-  loosened: the option side still uses `isWiresPreferred`, and the set of people
-  the dropdown offers a wallet to is now exactly the set the gate accepts.
-  **Being stricter than the gate was never free** — it is safe for the money and
-  unsafe for the support queue, and only the effective rail is both.
+**Wise as a send-from is Accounting-only** (same ruling): employees never get
+Wise as a new Bank Preferred pick — `selectableBankPreferredOptions(receiving,
+'employee')` excludes it for every receiving value, pinned by test — and the
+employee Disbursement radios no longer offer Wise for new picks either
+(`SELECTABLE_PROCESSOR_OPTIONS`; a stored Wise stays visible as the current
+selection). Accounting sets Wise in People → Banking, which uses the
+`'accounting'` audience. This reverses the 2026-07-25 employee-picker Wise
+exception for those two employee surfaces only;
+`EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS` is untouched for Accounting's Readiness
+"Set bank" editor.
 
-**Never wire a client site to `isBankPreferredTransitionAllowed` on a tier-1
-snapshot.** Doing so is what silently un-disabled the Approve button for the
-legacy sheet-routed population when `null` stopped meaning "locked".
+### 4.1 Enforcement sites
 
 | Site | Behavior |
 |---|---|
-| `update-employee-ids` intercept | **400** before a request is even filed |
-| Approval **PATCH** re-check | re-checks against the **live** stored value at approve time → 400, request stays pending |
-| People → Banking save (`/api/people/[email]/banking`) | **400** against the stored value, then applies the wallet mirror |
-| Employee Profile dropdown | **hides** hurupay/higlobe options whenever the **effective** rail is locked (server verdict, fail-closed) |
-| Accounting approvals row | **Approve disabled** + an "owner-only / locked" row note |
+| `update-employee-ids` pre-filter | 1:1 check against the receiving value the save leaves in place (written in the same request, else stored) → **400** before a request is filed |
+| `update-employee-ids` mirror | a save moving RECEIVING onto a wallet with no `bank_preferred` alongside **files** the matching Bank Preferred change through §3 — server-side, so it holds however the save was made |
+| Approval **PATCH** | re-checks the 1:1 rule against the **live** stored receiving channel at approve time; **fails closed** (a read error is a 503, never an applied approval) |
+| People → Banking save | 1:1 check → **400**, then BOTH mirrors apply **immediately** (Accounting's edit is the approval, §8) |
+| Employee Profile UI | options pinned by the live receiving pick (`selectableBankPreferredOptions`); the radios mirror a wallet pick into the Bank Preferred field in-form |
+| Accounting approvals row | **advisory only** — a rail-change note; Approve stays enabled because approvability depends on the live receiving bank, which the queue row does not carry. The PATCH is the gate. |
 
-### 4.1 The receiving side is gated too (2026-08-31)
+### 4.2 History
 
-Kane asked for the coupling to run **both** ways — "if they choose HiGlobe or
-Kolan as their receiving bank, their Bank Preferred should be the same, it's 1
-to 1" — and the answer was **(a): the coupling stays one-way, and the receiving
-side gets the same lock instead.** Why the reverse mirror was the wrong shape:
+- **2026-07-22** — WIRES lock shipped: `bank_preferred` anything-but-wallet ⇒
+  never movable to Kolan/HiGlobe; unset counted as locked.
+- **2026-08-24** — `null` narrowed to "assignable" (`isWalletRailLocked` split
+  from `isWiresPreferred`); the lock re-keyed to the EFFECTIVE rail via
+  `resolveWalletRailLock()` (all three tiers, fails closed); Kolan rebrand
+  aliased. `resolveWalletRailLock` **still exists** — it feeds the §1 display
+  default and the People-tab "Pays via" resolution — it just no longer gates
+  writes.
+- **2026-08-31 AM** — the Employee Profile dropdown moved from a tier-1 read to
+  the effective rail (920 tier-2 wallet payees could not see their own rail);
+  a receiving-side gate (`checkDisbursementWalletMove`) briefly closed the
+  "ungated tier-2 rail switch" hole.
+- **2026-08-31 PM** — Kane's 1:1 ruling replaced both: the tier-2 "hole" — a
+  receiving pick re-routes pay — is now the **mechanism**, made safe by the
+  two-way mirror and the stateless rule above. The receiving gate and the
+  transition guard were removed.
 
-**The two fields had opposite security postures.**
-
-| | Receiving (`preferred_processor`) | Send-from (`bank_preferred`) |
-|---|---|---|
-| Who may set it | any employee, **unconditionally** | employee may only *request* it |
-| When it lands | **immediately** | after Accounting approves (§3) |
-| WIRES lock | **none** | five enforcement sites (§4) |
-
-A reverse mirror wires the **ungated** field onto the **gated** one, so it would
-have handed every employee a one-click switch on the field that decides which
-processor Accounting pays them from. And it could not have delivered "1 to 1"
-anyway: for a locked payee the pre-filter refuses, so the receiving pick would
-move while the send-from stayed put — a silent divergence — and for everyone
-else it becomes a *pending approval*, not an automatic write.
-
-**Underneath the request was a live hole.** `preferred_processor` **is tier 2 of
-the routing precedence** (§2), so for the 1,796 people whose tier 1 is NULL it
-*is* the rail Payment Dispatch pays out on. A payee explicitly on wires via the
-legacy rates cell could therefore re-route their own salary onto a wallet in one
-ungated save — and, once the effective rail read as a wallet, unlock the Bank
-Preferred field on the next load (§1's effective-rail read, shipped the same
-day, widened the reach of that walk).
-
-Closed by `checkDisbursementWalletMove()`
-([`wallet-rail-lock.ts`](../../src/lib/employee/wallet-rail-lock.ts)) at **both**
-employee self-service write paths — `POST /api/update-employee-ids` and the
-OTP-verified `POST /api/bank-update/save`. Gating one and not the other would
-just move the hole. It runs **before** the Bank Preferred intercept, so a refused
-save never leaves an approval request filed behind it.
-
-**Scope is KOLAN AND HIGLOBE ONLY**, and that is a pure, unit-tested predicate
-rather than a comment: `disbursementWalletMoveNeedsCheck(current, next)` returns
-false — with **no database read** — for wise / jeeves / wires / wepay, so those
-rails stay fully independent exactly as the 2026-07-22 decoupling protected. It
-also returns false for a **no-op**, because both forms post the whole payout
-payload and a payee already on a wallet must still be able to save their address.
-Both sides normalise through `processorIdFromBankPreferredText`, so `kolan`
-cannot walk past as unknown text.
-
-> **The gate and the lock predicate read `huru`/`huropay` differently, on
-> purpose.** `isWiresPreferred` must NOT widen (a legacy spelling misread as a
-> wallet would unlock a wire payee), while the GATE erring toward "check it" is
-> strictly safer. Pinned by test so nobody harmonises the two and quietly makes
-> the gate more permissive.
-
-Client side, `PreferredPaymentMethodRadios` takes a **required** `walletRailLocked`
-prop — no default, because a defaulted `false` would silently reopen the hole at
-the next call site someone adds — and withholds the two wallet tiles from a
-locked payee, while still showing a wallet the person is ALREADY on (tier 1 can
-say wires while tier 2 says Kolan, and hiding their own stored pick would
-misreport it). The external page gets its verdict from `verify-otp`.
-
-**The Payroll Readiness "Set bank" editor rides the same route and is
-unaffected, by construction.** It writes `preferred_processor` only when the
-person has **no** effective processor at all
-([`PayrollWizardNotesFab.tsx`](../../src/components/accounting/PayrollWizardNotesFab.tsx):2633,
-"routing changes stay in their existing approval flows") — and for exactly those
-people `resolveWalletRailLock` returns `locked: false`. Two different mechanisms,
-the same verdict. Where they *disagree*, the 400 is a catch, not a regression: it
-means the readiness resolution missed a rail the router would have found.
-
-**Accounting's escape hatch is unchanged:** change the SEND-FROM rail in People →
-Banking (§8, where the edit *is* the approval), after which the payee is no
-longer locked and the wallet receiving channel is available. The gate sequences
-those two steps; it does not remove either.
+> **Known data debt:** rows written under the old model can violate 1:1 — e.g.
+> tier 1 `wise` with tier 2 `hurupay` (tier 1 wins, so they are PAID via Wise
+> while electing to receive on Kolan). The pickers surface these (the options
+> pin to the wallet while the stored value shows Wise) and any touch of the row
+> heals it through the mirrors; a read-only audit for the full population is
+> OPEN. The OTP self-service page (`/update-bank-info`) writes only
+> `preferred_processor`, so a tier-1-set payee moving to a wallet THERE leaves
+> tier 1 stale until Accounting or the dashboard touches it — also OPEN.
 
 ## 5. Mark Paid bank-details override
 
@@ -394,31 +340,26 @@ by resolving everything People shows through the SAME dispatch-parity helpers:
   Preferred (send-from)* dropdown. `PATCH /api/people/[email]/banking` accepts
   `bank_preferred` **without filing a change request** — the route is gated to
   the same roles that approve those requests, so the edit *is* the approval.
-  The **WIRES lock still applies**, enforced server-side against the live
-  stored value and mirrored in the dropdown's option filter. The employee
-  self-service path keeps the §3 approval gate unchanged. (A direct edit does
-  not cancel an employee's pending request; the approval PATCH re-checks the
-  lock at approve time as before.)
+  The **1:1 rule (§4) applies**, enforced server-side against the receiving
+  channel the save leaves in place, and mirrored in the dropdown's option
+  pinning. The employee self-service path keeps the §3 approval gate unchanged.
+  (A direct edit does not cancel an employee's pending request; the approval
+  PATCH re-checks the rule at approve time as before.)
 
 Parity is pinned by `src/lib/employee/payout-completeness.test.ts` and the
 audit script's post-fix run: **0 disagreements across 1,498 active people**.
 
-> **The picker's option filter was failing OPEN until 2026-08-31.** It read
-> `isWalletRailLocked(banking?.effective_processor ?? null)`, but `banking` is
-> `null` in three different situations — still loading, the fetch failed, and
-> "no `employee_ids` row and no rail in any tier" — and `isWalletRailLocked(null)`
-> is **false**. So a hiccuped read offered a wire-only payee both wallet rails
-> *and* the laundering **"Not set"** option. The save 400s, so no money moved,
-> but this is the exact re-audit `wallet-rail-mirror-and-lock` demanded of every
-> site that lets a read error fall through to null. `GET /api/people/[email]`
-> now returns **`bankingResolved`** (`bankErr == null` — the combined `error`
-> field cannot stand in, a history failure would poison it) and the verdict goes
-> through `walletRailLockedForResolvedRail(resolved, effectiveRail)`, which fails
-> closed on unresolved while keeping a *resolved* null assignable, so new hires
-> are unaffected. The hand-written `o.id !== 'hurupay' && o.id !== 'higlobe'` —
-> a second copy of `WALLET_RAILS` that would have kept offering any third wallet
-> rail to locked payees — is gone; both this picker and the Employee Profile
-> dropdown now narrow through the one `selectableBankPreferredOptions`.
+> **History (2026-08-31 AM, superseded the same day):** the picker's option
+> filter briefly failed OPEN — it read
+> `isWalletRailLocked(banking?.effective_processor ?? null)`, and `banking` is
+> `null` while loading, on a failed fetch, AND for "no row, no rail", so a
+> hiccuped read offered a wire-only payee the wallet rails. A `bankingResolved`
+> flag (still returned by `GET /api/people/[email]` — `bankErr == null`, since
+> the combined `error` field is poisoned by history failures) fed a fail-closed
+> verdict for a few hours. Under the 1:1 rule the options key off the FORM's own
+> receiving field (local state, no fetch race) and the save re-checks
+> server-side, so the picker no longer consumes the flag; it remains as honest
+> metadata distinguishing "read failed" from "person has nothing".
 
 ## 9. Routing + lock hardening (2026-08-10)
 
@@ -643,7 +584,7 @@ breaks other notification inserts).
 
 | Path | Purpose |
 |---|---|
-| `src/lib/employee-payment-processors.ts` | `BANK_PREFERRED_OPTIONS`, `isWiresPreferred`, `isBankPreferredTransitionAllowed` (+ tests) |
+| `src/lib/employee-payment-processors.ts` | `BANK_PREFERRED_OPTIONS`, `isWiresPreferred`, `isBankPreferredAllowedForReceiving`, both mirrors, `selectableBankPreferredOptions` (+ tests) |
 | `src/lib/supabase/bank-preferred-requests.ts` | approval-gate data layer |
 | `app/api/update-employee-ids/route.ts` | `interceptBankPreferred` (fail-closed) |
 | `app/api/bank-preferred-requests/route.ts` + `[id]/route.ts` | list / approve / deny |

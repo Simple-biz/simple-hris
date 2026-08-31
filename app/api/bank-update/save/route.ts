@@ -5,7 +5,6 @@ import { getPayrollDispatchLock } from "@/lib/supabase/payroll-dispatch-lock";
 import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profiles";
 import { resolveSessionToken, findActiveEmployeeByEmail } from "@/lib/bank-update/otp";
 import { sendBankUpdatePayrollEmail } from "@/lib/bank-update/notify-email";
-import { checkDisbursementWalletMove } from "@/lib/employee/wallet-rail-lock";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { insertBankUpdateHistory } from "@/lib/supabase/bank-update-history";
 import { pulseBankChanges } from "@/lib/supabase/app-settings";
@@ -169,26 +168,6 @@ export async function POST(req: Request) {
         .limit(1);
       return (Array.isArray(data) && data[0] ? data[0] : {}) as Record<string, unknown>;
     })();
-
-    // RECEIVING-CHANNEL gate — Kolan/HiGlobe only. Same rule as the dashboard's
-    // /api/update-employee-ids: `preferred_processor` is tier 2 of the routing
-    // precedence, so an ungated pick here re-routes the salary itself. This is the
-    // OTP-verified external link, the second self-service write path — gating one
-    // and not the other would just move the hole. A move to wise/jeeves/wires
-    // returns allowed without a read, so the decoupling of those rails is intact.
-    if ("preferred_processor" in update) {
-      const walletMove = await checkDisbursementWalletMove({
-        email: workEmail,
-        current:
-          typeof beforeRow.preferred_processor === "string"
-            ? beforeRow.preferred_processor
-            : null,
-        next: update.preferred_processor,
-      });
-      if (!walletMove.allowed) {
-        return NextResponse.json({ error: walletMove.error }, { status: walletMove.status });
-      }
-    }
 
     // Update the canonical employee_ids row.
     const { data: updatedRows, error: updateError } = await supabase

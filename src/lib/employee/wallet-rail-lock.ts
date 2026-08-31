@@ -3,7 +3,6 @@ import 'server-only';
 import { getEmployeeIdRowByEmail } from '@/lib/supabase/employee-ids';
 import { getEmployeeHourlyRateRowByEmail } from '@/lib/supabase/employee-hourly-rates';
 import {
-  disbursementWalletMoveNeedsCheck,
   isWalletRailLocked,
   type ProcessorId,
 } from '@/lib/employee-payment-processors';
@@ -64,63 +63,4 @@ export async function resolveWalletRailLock(email: string): Promise<{
   // `effectiveRail === null` means no tier resolved anything at all — a
   // genuinely unassigned person, who IS assignable (Kane, 2026-08-24).
   return { locked: isWalletRailLocked(effectiveRail), effectiveRail, error: null };
-}
-
-/**
- * May this employee move their **receiving channel** (`preferred_processor`) onto
- * a WALLET rail — Kolan or HiGlobe?
- *
- * **This exists because the two fields had opposite security postures.**
- * `bank_preferred` (send-from) is approval-gated and WIRES-locked at five sites;
- * `preferred_processor` (receiving) was employee-writable, immediately, with no
- * lock check at all. But `preferred_processor` is **tier 2 of the routing
- * precedence**, so for the 1,796 people whose tier 1 is NULL that ungated field
- * *is* the rail Payment Dispatch pays out on. A payee explicitly on wires via
- * the legacy rates cell could therefore re-route their own salary onto a wallet
- * in one save — no approval, no lock — and, once the effective rail read as a
- * wallet, unlock the Bank Preferred field too on the next load. Kane's ruling
- * 2026-08-31: gate the receiving side by the same verdict, keep the coupling
- * one-way (see bank-preferred-routing.md §4 and the memory entry).
- *
- * **WALLET RAILS ONLY.** A move to wise / jeeves / wires / wepay returns
- * `allowed` without a single database read: those rails send from one place into
- * the person's own bank, so the two fields stay independent — that independence
- * is what the 2026-07-22 decoupling protected and it is untouched here.
- *
- * A no-op (`current === next`) is always allowed. Otherwise a locked payee would
- * be unable to save their ADDRESS, because both self-service forms post the whole
- * payout payload including an unchanged `preferred_processor`.
- *
- * **Fails CLOSED**: an unresolvable rail is a 503, never an allowed wallet move.
- */
-export async function checkDisbursementWalletMove(opts: {
-  email: string;
-  /** The employee's stored `preferred_processor`. */
-  current: string | null | undefined;
-  /** The requested `preferred_processor`. */
-  next: string | null | undefined;
-}): Promise<{ allowed: true } | { allowed: false; error: string; status: number }> {
-  // Scope + no-op short-circuit, pure and unit-tested: a move to
-  // wise/jeeves/wires and a save that does not change the channel both return
-  // here without a single database read.
-  if (!disbursementWalletMoveNeedsCheck(opts.current, opts.next)) return { allowed: true };
-
-  const { locked, effectiveRail, error } = await resolveWalletRailLock(opts.email);
-  if (error) {
-    return {
-      allowed: false,
-      status: 503,
-      error: 'Could not confirm your payout rail just now. Please try again in a moment.',
-    };
-  }
-  if (locked) {
-    return {
-      allowed: false,
-      status: 400,
-      error:
-        `Your salary is sent out on ${effectiveRail ?? 'a bank rail'}, so it cannot be received ` +
-        `on a Kolan or HiGlobe wallet. Accounting can change the sending rail for you.`,
-    };
-  }
-  return { allowed: true };
 }
