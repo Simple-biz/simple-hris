@@ -222,6 +222,28 @@ US Manager Bonus · USEE**.
   paid twice. All three properties are pinned in
   `kpi-calculator-depts.test.ts`. **Retiring a future card is never a reason to
   narrow this set.**
+- **Bare vs namespaced is load-bearing** *(corrected 2026-08-31)*. The payable set
+  holds **unnamespaced** slugs, and an HSL sub-department only ever reaches a
+  payable-key lookup as `hsl:<key>` (`hslAccessKey`). So the **namespaced** form is
+  the double-pay vector — and it was the one property the test never checked. A
+  **bare** key from `HSL_DEPT_KEYS` that matches a payable slug is a *name
+  collision between two unrelated departments*, not a double-pay:
+  `executive_assistants` is simultaneously a retired in-app registry card (payable,
+  for weeks already scored under it) and a roster-only HSL sub-dept created
+  2026-08-14 (`noKpi`, no bonus program) — see the note on that dept in
+  `src/lib/hsl-bonus/schema.ts`. Verified read-only 2026-08-31: it holds **0
+  `bonus_catalog_applied` rows and 0 assignments**, and it is the **only** such
+  collision (1 of 14 HSL keys; 0 namespaced keys and 0 family labels are payable).
+  Because the old test iterated bare keys, it failed permanently on this benign
+  homonym and was being reported as a known-red — **a test that is always red
+  catches nothing.** It now pins the namespaced form and the family labels, and
+  requires any bare-key collision to be declared in
+  `KNOWN_DISTINCT_DEPT_HOMONYMS` with a justification; an **undeclared** collision
+  fails, which is the case that matters — a department retired from the calculator
+  and later adopted into HSL otherwise re-enters the payable set silently.
+  **Do not "fix" a homonym by removing the bare slug from the payable set** unless
+  the two really are the same team; that narrows the set and stops paying weeks
+  already scored under the in-app dept.
 - **No `department_managers` grant was revoked.** The grants still govern My
   Team, transfers and leave approvals — which is why the exclusion lives in
   code rather than in the data.

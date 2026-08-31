@@ -9,7 +9,7 @@ import {
   KPI_CALCULATOR_RETIRED_DEPT_KEYS,
   isKpiCalculatorDeptKey,
 } from './department-bonus';
-import { HSL_DEPT_KEYS } from '../hsl-bonus/schema';
+import { HSL_DEPT_KEYS, hslAccessKey } from '../hsl-bonus/schema';
 import { normalizeDeptToKey } from './normalize-dept-key';
 import { slugifyDeptKey } from '../departments/registry';
 
@@ -138,15 +138,84 @@ test('every current card is payable', () => {
   }
 });
 
-test('the HSL family never enters the payable KPI set', () => {
+// An HSL sub-department reaches a payable-key lookup ONLY in its namespaced
+// `hsl:<key>` form (`hslAccessKey`) — `WIZARD_PAYABLE_KPI_DEPT_KEYS` holds
+// unnamespaced slugs, so the namespaced form is the actual double-pay vector.
+// A BARE HSL key that matches a payable slug is a NAME COLLISION between two
+// unrelated departments, not a double-pay: see the note at
+// `src/lib/hsl-bonus/schema.ts` on `executive_assistants` — "this key only ever
+// appears as `hsl:executive_assistants`, so the two never meet".
+//
+// Declared homonyms: a bare HSL dept key that legitimately coexists with an
+// identically-named in-app registry department. Adding an entry here is a
+// deliberate assertion that the two are DIFFERENT teams paid by different
+// loaders. If they are actually the same team, the fix is to remove the slug
+// from the payable set — not to add it here.
+const KNOWN_DISTINCT_DEPT_HOMONYMS: ReadonlySet<string> = new Set([
+  // `executive_assistants`: the bare slug is the in-app registry dept whose
+  // calculator card was retired 2026-08-10; the HSL sub-dept of the same name
+  // was created 2026-08-14 as roster-only (`noKpi`) and has no bonus program.
+  'executive_assistants',
+]);
+
+test('the namespaced HSL family never enters the payable KPI set', () => {
   // HSL amounts come from `hsl_bonus_entries` via a separate wizard loader, so a
-  // key admitted to BOTH sets is paid twice. `smart_staff` and
-  // `hogan_smith_law` are absent by construction today; this fails the moment a
-  // future retirement or config entry smuggles one in.
-  for (const key of [...HSL_DEPT_KEYS, 'hogan_smith_law', 'smart_staff', 'hsl']) {
+  // key admitted to BOTH sets is paid twice. This is the real vector: it fails
+  // the moment a retirement or config entry smuggles an `hsl:*` key or a family
+  // label into the payable set.
+  for (const key of [
+    ...HSL_DEPT_KEYS.map(hslAccessKey),
+    'hogan_smith_law',
+    'smart_staff',
+    'hsl',
+  ]) {
     assert.ok(
       !WIZARD_PAYABLE_KPI_DEPT_KEYS.has(key),
       `"${key}" is in WIZARD_PAYABLE_KPI_DEPT_KEYS — it would be paid twice (catalog + HSL entries)`,
+    );
+  }
+});
+
+test('every bare HSL key colliding with a payable slug is a declared homonym', () => {
+  // The general failure class: a department retired from the KPI calculator and
+  // later adopted into the HSL family re-enters the payable set silently. This
+  // does not blanket-fail on the known homonym (a permanently-red test catches
+  // nothing and gets normalised away) — it fails on an UNDECLARED one.
+  for (const key of HSL_DEPT_KEYS) {
+    if (!WIZARD_PAYABLE_KPI_DEPT_KEYS.has(key)) continue;
+    assert.ok(
+      KNOWN_DISTINCT_DEPT_HOMONYMS.has(key),
+      `bare HSL dept key "${key}" is in WIZARD_PAYABLE_KPI_DEPT_KEYS. If the in-app ` +
+        `department of the same name is a DIFFERENT team, declare it in ` +
+        `KNOWN_DISTINCT_DEPT_HOMONYMS with a note. If it is the SAME team, it is now paid ` +
+        `from hsl_bonus_entries and the slug must leave the payable set — otherwise it is paid twice.`,
+    );
+  }
+});
+
+test('each declared homonym is genuinely a separate department', () => {
+  // Guards the escape hatch above: a homonym is only benign while the bare slug
+  // is a retired in-app card (paid from bonus_catalog_applied for weeks already
+  // scored) AND the HSL side never reaches the payable set under its own
+  // namespace. If either stops holding, the declaration is wrong.
+  for (const key of KNOWN_DISTINCT_DEPT_HOMONYMS) {
+    assert.ok(
+      HSL_DEPT_KEYS.includes(key as (typeof HSL_DEPT_KEYS)[number]),
+      `"${key}" is declared a homonym but is not an HSL dept key — stale declaration`,
+    );
+    assert.ok(
+      KPI_CALCULATOR_RETIRED_DEPT_KEYS.has(key),
+      `"${key}" is declared a homonym but is a LIVE calculator card — a manager can score ` +
+        `it into bonus_catalog_applied while HSL also pays it`,
+    );
+    assert.ok(
+      !MANAGER_BONUS_DEPT_KEYS.includes(key),
+      `"${key}" is declared a homonym but still offers a calculator card`,
+    );
+    assert.ok(
+      !WIZARD_PAYABLE_KPI_DEPT_KEYS.has(hslAccessKey(key as (typeof HSL_DEPT_KEYS)[number])),
+      `"${hslAccessKey(key as (typeof HSL_DEPT_KEYS)[number])}" is payable — the HSL side of the ` +
+        `homonym has entered the payable set and IS a double-pay`,
     );
   }
 });

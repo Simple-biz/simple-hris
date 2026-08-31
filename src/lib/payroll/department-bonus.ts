@@ -309,7 +309,24 @@ export const MANAGER_BONUS_DEPT_KEYS = Object.keys(DEPT_INPUT_CONFIG).filter(isK
  * key. The HSL family is absent from both halves by construction and must stay
  * absent — `hogan_smith_law` / `hsl:*` / `smart_staff` are paid from
  * `hsl_bonus_entries` by a separate loader, so admitting one here would
- * double-pay it. `kpi-calculator-depts.test.ts` pins that.
+ * double-pay it.
+ *
+ * **Bare vs namespaced — the distinction is load-bearing.** This set holds
+ * UNNAMESPACED slugs. An HSL sub-department only ever reaches a payable-key
+ * lookup as `hsl:<key>` (`hslAccessKey`), so the namespaced form is the double-pay
+ * vector and is what must never appear here. A BARE key from `HSL_DEPT_KEYS` that
+ * matches a slug in this set is a NAME COLLISION between two unrelated
+ * departments, not a double-pay: `executive_assistants` is simultaneously a
+ * retired in-app registry card (payable, for weeks already scored under it) and a
+ * roster-only HSL sub-dept created 2026-08-14 (`noKpi`, no bonus program) — see the
+ * note on that dept in `src/lib/hsl-bonus/schema.ts`.
+ *
+ * `kpi-calculator-depts.test.ts` pins all of it: the namespaced form and the family
+ * labels are asserted absent, and any bare-key collision must be declared in that
+ * file's `KNOWN_DISTINCT_DEPT_HOMONYMS` with a justification. An UNDECLARED
+ * collision fails — which is the case that matters, because a department retired
+ * from the calculator and later adopted into HSL otherwise re-enters the payable
+ * set silently.
  */
 export const WIZARD_PAYABLE_KPI_DEPT_KEYS: ReadonlySet<string> = new Set([
   ...Object.keys(DEPT_INPUT_CONFIG),

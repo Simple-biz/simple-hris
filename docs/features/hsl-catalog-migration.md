@@ -17,17 +17,47 @@ memory [[kpi-calculator-autosave]] · [[hsl-bonus-weeks-never-submitted]] ·
 
 ## 1. The four findings (each reproduced independently, 2026-08-31)
 
-### 1.1 The double-pay guard is RED on `main` right now
+### 1.1 The double-pay guard was RED — ~~FIXED 2026-08-31~~
 
 ```
-$ npx tsx --test src/lib/payroll/kpi-calculator-depts.test.ts
-✖ the HSL family never enters the payable KPI set
-  "executive_assistants" is in WIZARD_PAYABLE_KPI_DEPT_KEYS
-   — it would be paid twice (catalog + HSL entries)
-  tests 9 | pass 8 | fail 1
+BEFORE  ✖ the HSL family never enters the payable KPI set
+          "executive_assistants" is in WIZARD_PAYABLE_KPI_DEPT_KEYS
+           — it would be paid twice (catalog + HSL entries)
+        tests 9 | pass 8 | fail 1
+
+AFTER   ✔ the namespaced HSL family never enters the payable KPI set
+        ✔ every bare HSL key colliding with a payable slug is a declared homonym
+        ✔ each declared homonym is genuinely a separate department
+        tests 11 | pass 11 | fail 0     (full src/lib suite: 1627/1627)
 ```
 
-**Pre-existing, not caused by this work.** The mechanism:
+**It was the TEST that was wrong, not the payable set** — and the correct fix was the
+opposite of the obvious one. The payable set holds **unnamespaced** slugs; an HSL
+sub-dept only reaches a payable-key lookup as `hsl:<key>`. The old test iterated
+**bare** `HSL_DEPT_KEYS`, so it compared an HSL sub-dept's bare key against an
+unrelated in-app registry slug. Measured 2026-08-31: **1 of 14** bare keys collides
+(`executive_assistants`), **0** namespaced `hsl:*` keys are payable, **0** family
+labels are payable. The documented invariant held perfectly; the assertion did not
+express it.
+
+Subtracting `HSL_DEPT_KEYS` from the payable set — the intuitive fix — would have
+removed the *legitimate* in-app `executive_assistants` card and stopped the wizard
+reading weeks already scored under it: the exact "never narrow the payable set"
+violation this file's §1.1 was written to warn about. It holds 0 applied rows today,
+so the cost would have been zero *this week* and unbounded later.
+
+The guard now pins the namespaced form (**previously untested — the real double-pay
+vector had no coverage at all**) and the family labels, and forces any bare-key
+collision to be **declared** in `KNOWN_DISTINCT_DEPT_HOMONYMS` with a justification.
+All three assertions were mutation-tested: smuggling `hsl:intake_specialist` in fails
+only the first, an undeclared bare `attestation` fails only the second, and
+un-retiring the declared homonym fails only the third.
+
+**The reason the old test had to change rather than the code:** it failed permanently,
+so other sessions normalised it as "known red" — and a test that is always red catches
+nothing. That normalisation was the actual hazard, as this file already said.
+
+The original mechanism, still worth knowing:
 
 - `WIZARD_PAYABLE_KPI_DEPT_KEYS` is `DEPT_INPUT_CONFIG` keys **∪**
   `KPI_CALCULATOR_RETIRED_DEPT_KEYS`
@@ -127,8 +157,49 @@ measured not asserted). Module shape: `src/lib/payment-catalog/system-bonus.ts` 
 **Two wiring-time decisions were never made** and block any non-inert follow-up: whether
 catalog KPI semantics are auto-applied or overridable, and whether history is backfilled.
 
-## 4. Open
+## 4. The chosen direction — de-hardcode DEFINITIONS, not the payout path
 
-- [ ] **Fix the red guard (§1.1).** It is a live tripwire that no longer trips.
-- [ ] **Resolve ₱100 vs ₱250 (§1.2).** Money path.
-- [ ] Decide whether the inert migration is still wanted at all given §2.
+**Kane's ruling, 2026-08-31 (resolution "A").** The scope in §3 conflated two
+questions that are not the same question:
+
+| Question | Answer |
+| --- | --- |
+| Where do the HSL bonus **rule definitions** live? | Today: hardcoded in `schema.ts`. **Target: DB-backed, editable by Accounting in the Payment Catalog.** |
+| Which table **pays** an HSL bonus? | `hsl_bonus_entries`, via its own wizard loader. **Unchanged. Not in scope.** |
+
+Conflating them is why the migration kept colliding with the double-pay guard:
+`department-bonus.ts` states the HSL family *must stay absent* from the payable set,
+so wiring an HSL dept onto the catalog **payout** path would require removing it from
+the HSL loader in the same commit and migrating its rows — a nine-times money-path
+cutover, with a production write, on ₱5,754,138 across 2,904 rows.
+
+Splitting them makes the goal reachable with the money path untouched. And it widens
+the reachable set: `ssd_medical_records` (`team_split`/`team_pool`),
+`post_hearing_prep` (₱3,500/wk cap) and `hsl_managers` (per-employee checklists) were
+only ever blocked from catalog **payout**, never from catalog **authoring** — so the
+target is **12 of 14** depts, not 9. The two `noKpi` roster-only depts
+(`executive_guest_services`, `executive_assistants`) have no rules to express.
+
+**The invariant this direction must preserve:** with no DB overrides present, every
+resolved definition must be byte-identical to `HSL_DEPTS`. The overlay precedent is
+`src/lib/payroll/resolve-rate.ts` (Pay Structures made authoritative for hourly rates
+via a compute-time overlay, `bonus-catalog.md` §5) — not a rewrite of `schema.ts`,
+which stays the seed and the fallback.
+
+Live-data constraint (Kane, 2026-08-31): *"they are adding bonuses right now … dont let
+the HSL Doable values go."* Measured the same day — the 9 formula-expressible depts hold
+**₱5,754,138 across 2,904 rows, all `ready`, zero drafts**; the only drafts anywhere are
+stale (`accounting` 05-18/05-31, `ssd_medical_records` 06-01 — 54 rows, ₱3,500). Under
+this direction **nothing moves**, which is the strongest form of not losing it.
+
+## 5. Open
+
+- [x] ~~**Fix the red guard (§1.1).**~~ Done 2026-08-31, mutation-tested, suite 1627/1627.
+- [ ] **Resolve ₱100 vs ₱250 (§1.2).** Money path, still unanswered. Blocks nothing
+      structural — `medical_records` encodes `100` verbatim (what produced every stored
+      value) until Kane rules. **Do not normalise it to the doc's number.**
+- [ ] Build the definitions overlay (§4). `src/lib/hsl-bonus-catalog/` still does not exist.
+- [ ] `filing_specialist` still carries the old 30/40/50 Attested Cases bands and did not
+      receive the Referral Leads / SSA.Gov terms. A re-expression must **reproduce that
+      divergence verbatim**, not normalise it.
+- [ ] Stranded `ssd_medical_records` draft at 2026-06-01 (54 rows, ₱3,500) — never submitted.
