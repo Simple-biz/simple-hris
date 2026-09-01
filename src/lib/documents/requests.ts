@@ -161,10 +161,20 @@ export async function createDocumentRequest(params: {
  *
  * Returns `blocked` when the certificate cannot honestly be issued — no start
  * date, no department, no rate on file. The message is written for the employee.
+ *
+ * `actor` is set when ACCOUNTING generates the certificate on the employee's
+ * behalf (the Signing Queue's "Generate COE" flow): the audit entry then names
+ * the admin who clicked, with `generated_for` carrying the employee — an entry
+ * attributed to the employee would claim they filed a request they never made.
+ * `notifyAccounting: false` skips the documents.requested ping for the same
+ * flow (accounting notifying itself about its own click is noise); both default
+ * to the original employee-initiated behaviour.
  */
 export async function createCoeDocumentRequest(params: {
   employee_email: string;
   note?: string | null;
+  actor?: { email: string };
+  notifyAccounting?: boolean;
 }): Promise<{ row: DocumentRequestRow | null; blocked: string | null; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { row: null, blocked: null, error: 'Supabase not configured' };
@@ -221,10 +231,14 @@ export async function createCoeDocumentRequest(params: {
   }
   const row = data as DocumentRequestRow;
 
+  const actorEmail = params.actor ? normEmail(params.actor.email) : null;
   void (async () => {
-    const role = await resolveUserRole(email, 'Employee');
+    // Accounting-initiated: the audit names the ADMIN who generated it, never
+    // the employee — the employee filed nothing.
+    const auditAs = actorEmail ?? email;
+    const role = await resolveUserRole(auditAs, actorEmail ? 'Accounting' : 'Employee');
     await insertAuditLog({
-      user_name: email,
+      user_name: auditAs,
       user_role: role,
       action: 'documents.request_submitted',
       resource: TABLE,
@@ -232,6 +246,7 @@ export async function createCoeDocumentRequest(params: {
       details: {
         document_type: 'coe',
         generated: true,
+        ...(actorEmail ? { generated_for: email, initiated_by: 'accounting' } : {}),
         start_date: facts.startDateRaw,
         team: facts.team,
         hourly_rate: facts.hourlyRate,
@@ -241,7 +256,7 @@ export async function createCoeDocumentRequest(params: {
       },
     });
   })();
-  void notifyAccountingOfRequest(row);
+  if (params.notifyAccounting !== false) void notifyAccountingOfRequest(row);
 
   return { row, blocked: null, error: null };
 }

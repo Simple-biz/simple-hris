@@ -8,6 +8,7 @@ import {
   Download,
   ExternalLink,
   Eye,
+  FilePlus2,
   FileSignature,
   FileText,
   Hash,
@@ -55,6 +56,7 @@ import {
 // [TERMINATION-DOCS]
 import TerminationDocsTabRow from '@/components/accounting/termination-docs/TerminationDocsTabRow';
 import TerminationDocsPanel from '@/components/accounting/termination-docs/TerminationDocsPanel'; // [TERMINATION-DOCS]
+import GenerateCoeDialog from '@/components/accounting/GenerateCoeDialog';
 
 type Filter = DocumentRequestStatus | 'all';
 
@@ -104,6 +106,9 @@ export default function AccountingDocuments({
   const [sigSaving, setSigSaving] = useState(false);
   const [sigToggling, setSigToggling] = useState(false);
   const promptedRef = useRef(false);
+
+  /** The "Generate COE" dialog — accounting issues + signs on an employee's behalf. */
+  const [coeDialogOpen, setCoeDialogOpen] = useState(false);
 
   const [signTarget, setSignTarget] = useState<DocumentRequestRow | null>(null);
   const [rejectTarget, setRejectTarget] = useState<DocumentRequestRow | null>(null);
@@ -632,6 +637,17 @@ export default function AccountingDocuments({
             <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
             Refresh
           </Button>
+          {canEdit && (
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setCoeDialogOpen(true)}
+              className="h-9 gap-1.5 bg-orange-500 text-white shadow-sm hover:bg-orange-600 dark:bg-orange-500 dark:hover:bg-orange-400"
+            >
+              <FilePlus2 className="h-3.5 w-3.5" />
+              Generate COE
+            </Button>
+          )}
         </div>
 
         {/* ── Requests table ──────────────────────────────────────────────── */}
@@ -1014,6 +1030,15 @@ export default function AccountingDocuments({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Generate COE (accounting-initiated, active GML people only) ─────── */}
+      <GenerateCoeDialog
+        open={coeDialogOpen}
+        onOpenChange={setCoeDialogOpen}
+        signature={signature}
+        onRequireSignature={openSignatureDialog}
+        onGenerated={() => void fetchRows({ silent: true })}
+      />
 
       {/* ── Reject dialog ───────────────────────────────────────────────────── */}
       <Dialog open={!!rejectTarget} onOpenChange={(o) => !o && setRejectTarget(null)}>

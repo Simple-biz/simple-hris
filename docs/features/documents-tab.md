@@ -112,6 +112,57 @@ keep working — only `DOCUMENT_TYPE_LABELS` changed.
    the certificate and stores it as the request's `original.pdf`, `pending`.
 3. Accounting → Documents previews the real certificate (not a mystery attachment) and signs.
 
+### Accounting can generate + sign it directly
+
+*Added 2026-09-01.* Some employees will never file the request themselves, so the Signing Queue
+toolbar carries a **Generate COE** button (`canEdit` only) →
+[GenerateCoeDialog.tsx](../../src/components/accounting/GenerateCoeDialog.tsx): search an
+employee, review the same facts card the employee-side form shows, and generate + sign in one
+action. The result is an **ordinary `document_requests` COE row** — the signed copy lands in the
+employee's Profile → Request Documents with the usual `documents.signed` notification, so
+delivery needed nothing new. The row's `note` reads *"Issued by Accounting on behalf of the
+employee."* so nobody later reads the queue as the employee having filed it.
+
+Rules that hold it up:
+
+- **Active Global Master List people only** (Kane, 2026-09-01). The population verdict is the
+  GML's own — `fetchGmlStatusMap` (any unstamped row carrying the work email counts active; a
+  stamped duplicate never shadows the live row) — judged in the pure
+  [`decideCoeActiveGate`](../../src/lib/documents/coe-admin.ts), which **fails CLOSED** on every
+  non-active arm: a status-map read error refuses, absence from the map refuses, a stamped person
+  refuses (the message names the departure). This is the OPPOSITE trade from the Payment
+  Catalog's keep-leaning offboard guards, deliberately: a false "active" here issues a signed
+  certificate asserting current engagement. The gate runs at **preview AND generate time**
+  against the live map — never trusted from what the picker showed minutes earlier. Note the
+  known softness: a leaver still on the sheet through final-pay week reads active — they are
+  engaged until final pay, and `resolveCoeFacts` re-resolves every printed fact anyway.
+- **Work email IDENTIFIES; a name or personal email only SEARCHES** — Termination Docs' G1.
+  [`searchCoeCandidates`](../../src/lib/documents/coe-admin-search.ts) matches partial fragments
+  over the GML's `"Name"` / `"Work Email"` / `"Personal Email"` (one `.ilike` per column, never
+  `.or()`, everything through `escapeLikePattern`, every read `selectAllPaged`), but the folded
+  candidate carries only the work email as identity and rows without one are dropped
+  ([`foldCoeCandidates`](../../src/lib/documents/coe-admin.ts), unit-tested). The search also
+  fails closed: an errored status map returns an ERROR and zero candidates, never an unvetted
+  list. `tooShort` / `truncated` are stated rather than left to read as "nobody found".
+- **One flow, three routes, no new feature key** — `coe/search` (view),
+  `coe/preview` (edit — only generators need the full rate readout; same `resolveCoeFacts`, so
+  the admin card and the employee card can never disagree) and `coe` POST (edit), all under the
+  existing `accounting/documents` gates. The POST orders its refusals: active gate → **one
+  pending COE per person** (409 naming the existing row — approving that one beats minting a
+  second) → **signature gate BEFORE any row exists** (412, same steering into the capture dialog
+  as Approve — a signature-less rep never mints a pending row as a side effect) →
+  `createCoeDocumentRequest` → `signDocumentRequest`, the same two functions the employee path
+  and the Approve button already use — no second render or sign implementation exists.
+- **A sign failure after create is a designed degradation, not an error**: the pending row is
+  real and visible in the queue, so the POST returns it with `sign_error` and the dialog says
+  "waiting in the queue — finish it with Approve & sign".
+- **The audit entry names the ADMIN.** `createCoeDocumentRequest` takes an optional `actor`; with
+  it, `documents.request_submitted` is attributed to the accounting rep with
+  `details.generated_for` carrying the employee — an entry attributed to the employee would claim
+  they filed a request they never made. The accounting self-ping (`documents.requested`) is
+  suppressed for this flow (`notifyAccounting: false`); both parameters default to the original
+  employee-initiated behaviour byte-for-byte.
+
 ### Where the facts come from
 
 [coe-facts.ts](../../src/lib/documents/coe-facts.ts) resolves everything server-side; nothing is
