@@ -386,6 +386,21 @@ test('clearing one key leaves the others alone', () => {
   assert.deepEqual(getKpiCache(other), { entries: [2] });
 });
 
+test('the catalog key is not parameterised - one payload for every surface and week', () => {
+  newTab();
+  bindKpiCacheIdentity('gyd@simple.biz');
+  setKpiCache(KPI_CACHE_KEYS.catalog, { bonuses: [{ id: 'b1' }], assignments: [] });
+
+  // Same key from anywhere: the route answers the same for manager and QC, and
+  // a definition is not week-scoped. It is still identity-stamped and still
+  // paint-only - `catalogLoaded` (and so `weekPending`) waits on the live fetch.
+  assert.deepEqual(getKpiCache(KPI_CACHE_KEYS.catalog), {
+    bonuses: [{ id: 'b1' }],
+    assignments: [],
+  });
+  assert.equal(typeof KPI_CACHE_KEYS.catalog, 'string');
+});
+
 test('every key factory is uniquely spelled across its parameters', () => {
   const keys = [
     KPI_CACHE_KEYS.presumedWeek('hsl'),
@@ -397,6 +412,7 @@ test('every key factory is uniquely spelled across its parameters', () => {
     KPI_CACHE_KEYS.deptApplied('dept-manager', 'callback', WEEK),
     KPI_CACHE_KEYS.deptApplied('dept-qc', 'callback', WEEK),
     KPI_CACHE_KEYS.deptApplied('dept-manager', 'callback', PRIOR),
+    KPI_CACHE_KEYS.catalog,
   ];
   for (const k of keys) assert.equal(typeof k, 'string');
   assert.equal(new Set(keys).size, keys.length, 'two datasets share a cache key');

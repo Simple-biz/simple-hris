@@ -436,4 +436,16 @@ export const KPI_CACHE_KEYS = {
    */
   deptApplied: (surface: KpiCacheSurface, dept: string, week: string): string =>
     `${surface}:applied:${dept}:${week}`,
+
+  /**
+   * `/api/bonus-catalog` — the bonus definitions and their assignments.
+   *
+   * Not parameterised: the route answers the same for every surface and every
+   * week. **Paint only**, and more strictly so than the rest of this registry —
+   * a definition decides the peso figure a save stores
+   * (`docs/features/bonus-catalog.md` → *FX at save time*), so the department
+   * calculator seeds its display from this while `catalogLoaded`, and with it
+   * `weekPending`, still waits on the live fetch before scoring is possible.
+   */
+  catalog: 'catalog',
 } as const;

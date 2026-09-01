@@ -549,10 +549,34 @@ neutral **"as of HH:MM"** chip stamped with the cache write time (not the paint
 time), cleared once the live loads settle — and kept if one of them failed, so
 the label stays honest. Neutral, not amber: amber is reserved for warnings.
 
+### The catalog: cached for paint, live for the write
+
+The first cut left `/api/bonus-catalog` uncached, reasoning that a bonus
+definition is a *write* input. That was right about the write and wrong about the
+paint, and it showed: the catalog gates the pre-apply pass and the reveal, so
+switching in from HSL Branches still sat on the skeleton for a full round trip
+even when every department's rows were already cached (Kane, same day: *"when I
+switch to Department from HSL Branches it reloads it again"*).
+
+The split that fixes it without giving anything up:
+
+| | seeded from cache | waits for the live fetch |
+|---|---|---|
+| `bonuses` / `assignments` (what is drawn) | yes | overwritten when it lands |
+| `catalogAvailable` (may we paint?) | yes | — |
+| `catalogLoaded` (may we score?) | **never** | yes — and `weekPending` holds on it |
+| the per-dept live loads | — | yes, so what persists is derived from the LIVE catalog |
+
+So a cached definition can be *drawn*, and only a live one can be *derived from*
+into anything that gets saved. The seeded paint is `seeded` (untouched), which is
+exactly why `isUnsavedLocalWork` lets the live load replace it.
+
 ### Not cached, on purpose
 
-- **The bonus catalog and the FX rates.** Both are *write* inputs — they decide
-  the peso figure a save stores — not paint. They are one small request each.
+- **The FX rates.** `usd_to_php_rate` is snapshotted into the stored peso amount
+  at save time, and unlike the catalog it has a documented fallback that a cached
+  copy would silently displace. One small request, and `fxSettled` already holds
+  scoring until it answers.
 - **SSD sub-team inputs** (above).
 - **Nothing server-side changed.** Every route keeps `cache: 'no-store'`.
 

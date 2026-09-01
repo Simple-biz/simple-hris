@@ -204,6 +204,12 @@ interface DeptAppliedPayload {
   seededFromQc: boolean;
 }
 
+/** `/api/bonus-catalog` verbatim — the definitions and who they are assigned to. */
+interface CatalogPayload {
+  bonuses: BonusDef[];
+  assignments: BonusAssignment[];
+}
+
 type AllState = Record<string, DeptState>;
 
 interface DeptBonusCalculatorProps {
@@ -849,9 +855,30 @@ export default function DeptBonusCalculator({
   const isLiveWeek = currentWeekStart == null || weekStart === currentWeekStart;
 
   // Catalog (authored in Accounting -> Bonus Catalog).
-  const [bonuses, setBonuses] = useState<BonusDef[]>([]);
-  const [assignments, setAssignments] = useState<BonusAssignment[]>([]);
+  //
+  // Seeded from the tab cache so switching in from HSL Branches paints at once
+  // instead of waiting on `/api/bonus-catalog`. The catalog gates far more than
+  // its own display — the pre-apply pass and the reveal both need it — so
+  // leaving it uncached meant every switch to Departments sat on the skeleton
+  // for a round trip even when every department's rows were already cached.
+  //
+  // `catalogLoaded` below is deliberately NOT seeded with it. That flag means
+  // "the live catalog is confirmed on this mount", and it is what `weekPending`
+  // holds scoring on: a bonus definition decides the peso figure a save stores,
+  // so a cached catalog may PAINT but must never be the one a write is computed
+  // against.
+  const catalogSeededFromCache = useRef(false);
+  const [bonuses, setBonuses] = useState<BonusDef[]>(() => {
+    const cached = getKpiCache<CatalogPayload>(KPI_CACHE_KEYS.catalog);
+    if (cached) catalogSeededFromCache.current = true;
+    return cached?.bonuses ?? [];
+  });
+  const [assignments, setAssignments] = useState<BonusAssignment[]>(
+    () => getKpiCache<CatalogPayload>(KPI_CACHE_KEYS.catalog)?.assignments ?? [],
+  );
   const [catalogLoaded, setCatalogLoaded] = useState(false);
+  /** Enough catalog to derive a department's cards — cached or live. */
+  const catalogAvailable = catalogLoaded || catalogSeededFromCache.current;
 
   // Live USD-anchored FX rates. Non-PHP catalog bonuses are converted to PHP at
   // these rates when applied, mirroring how Pay Structures convert (resolve-rate.ts):
@@ -906,8 +933,13 @@ export default function DeptBonusCalculator({
     try {
       const res = await fetch('/api/bonus-catalog', { cache: 'no-store' });
       const json = (await res.json()) as { bonuses?: BonusDef[]; assignments?: BonusAssignment[] };
-      setBonuses(json.bonuses ?? []);
-      setAssignments(json.assignments ?? []);
+      const payload: CatalogPayload = {
+        bonuses: json.bonuses ?? [],
+        assignments: json.assignments ?? [],
+      };
+      setKpiCache(KPI_CACHE_KEYS.catalog, payload);
+      setBonuses(payload.bonuses);
+      setAssignments(payload.assignments);
     } catch {
       /* keep prior */
     } finally {
@@ -1537,7 +1569,7 @@ export default function DeptBonusCalculator({
    * construction rather than by care.
    */
   useEffect(() => {
-    if (cacheSeeded.current || !catalogLoaded || !cachedWeek) return;
+    if (cacheSeeded.current || !catalogAvailable || !cachedWeek) return;
     // A picked week that is not the cached one has nothing to seed from, and
     // seeding after the live loads have landed would repaint them backwards.
     if (weekStart !== cachedWeek || weekResolved) return;
@@ -1552,7 +1584,7 @@ export default function DeptBonusCalculator({
       if (at !== undefined && (newest === null || at > newest)) newest = at;
     }
     setCacheAsOf(newest);
-  }, [catalogLoaded, cachedWeek, weekStart, weekResolved, visibleDeptKeys, variant, applyDeptPayload]);
+  }, [catalogAvailable, cachedWeek, weekStart, weekResolved, visibleDeptKeys, variant, applyDeptPayload]);
 
   // Live: a teammate authoring/assigning a bonus, or another manager applying one,
   // refetches the catalog and reloads the open departments.
@@ -1634,7 +1666,7 @@ export default function DeptBonusCalculator({
   // nothing: the week is still unresolved, so every read and write stays held,
   // and `weekPending` below keeps the inputs read-only until it lands.
   const ready = kpiCalculatorRevealed({
-    dataSettled: catalogLoaded && visibleDeptKeys.every((k) => state[k]?.loaded),
+    dataSettled: catalogAvailable && visibleDeptKeys.every((k) => state[k]?.loaded),
     weekError,
   });
 
