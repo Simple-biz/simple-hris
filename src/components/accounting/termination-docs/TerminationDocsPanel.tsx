@@ -10,7 +10,11 @@
  *      not even a lone result. Two limits speak instead of lying: a fragment
  *      under TERMINATION_SEARCH_MIN_QUERY gets its own "type more" pane, and a
  *      capped list says how many matched, because a row the rep cannot see reads
- *      as "this person was never offboarded".
+ *      as "this person was never offboarded". The search runs as the rep types
+ *      (debounced; Enter searches immediately; a seq guard drops any response a
+ *      newer keystroke has outrun) and a mono console line narrates the request
+ *      — the People → Offboarded search console, re-used with this route's own
+ *      phase lines.
  *   2. Show the server-resolved facts sheet read-only, with where each fact
  *      came from, and turn every fact the server could NOT resolve into a
  *      required input. A blank is the normal state of an old leaver — this
@@ -64,7 +68,7 @@ import {
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -365,6 +369,133 @@ function logUrl(q?: string): string {
   return `/api/accounting/documents/termination?q=${p}&query=${p}`;
 }
 
+// ── Search console (the People → Offboarded pattern) ────────────────────────
+
+const SEARCH_DEBOUNCE_MS = 300;
+const SEARCH_PHASE_MS = 850;
+
+/** The searched term as the readout speaks it — trimmed and capped so a pasted
+ *  novel can't wrap the console line. */
+function spokenTerm(q: string): string {
+  const t = q.trim();
+  return t.length > 24 ? `${t.slice(0, 24)}…` : t;
+}
+
+/**
+ * What the console readout says while a query is in flight. The lines walk in
+ * the rough order the search route reads its sources — master list, offboarded
+ * sheet, completed offboarding queue, then the screens — and the LAST line
+ * holds until the response lands (never loops back, which would claim progress
+ * that isn't happening).
+ */
+function searchPhases(q: string): string[] {
+  const term = spokenTerm(q);
+  return [
+    `Looking for “${term}”…`,
+    `Searching the master list for “${term}”…`,
+    'Searching the offboarded sheet…',
+    'Checking the completed offboarding queue…',
+    'Screening alternate and personal emails…',
+    'Weighing departure evidence…',
+  ];
+}
+
+/**
+ * The mono console line under the person-search field. While loading it walks
+ * the phase lines; otherwise it states the result plainly — including the cap,
+ * because a capped count that reads as complete says "this person was never
+ * offboarded". aria-live so screen readers hear the search progress without
+ * watching the animation.
+ */
+function SearchConsoleReadout({
+  loading,
+  failed,
+  tooShort,
+  searched,
+  count,
+  matched,
+  truncated,
+  query,
+}: {
+  loading: boolean;
+  failed: boolean;
+  tooShort: boolean;
+  /** A response has landed for the current query (the too-short state wins). */
+  searched: boolean;
+  count: number;
+  /** How many identities matched before the server's cap. */
+  matched: number;
+  truncated: boolean;
+  /** The term being searched — spoken back in the first phase lines. */
+  query: string;
+}) {
+  const reduceMotion = useReducedMotion();
+  const [phase, setPhase] = useState(0);
+  const phases = searchPhases(query);
+
+  // Restart the phase walk on every new request; hold on the final line.
+  useEffect(() => {
+    if (!loading) return;
+    setPhase(0);
+    const t = setInterval(
+      () => setPhase((p) => Math.min(p + 1, searchPhases('').length - 1)),
+      SEARCH_PHASE_MS,
+    );
+    return () => clearInterval(t);
+  }, [loading]);
+
+  let text: string;
+  if (loading) text = phases[Math.min(phase, phases.length - 1)];
+  else if (failed) text = 'The search failed — see the message below.';
+  else if (tooShort)
+    text = `Need at least ${TERMINATION_SEARCH_MIN_QUERY} characters — nothing was searched.`;
+  else if (searched && count > 0)
+    text = truncated
+      ? `${count} of ${matched.toLocaleString('en-US')} matching identities shown`
+      : `${count} matching identit${count === 1 ? 'y' : 'ies'}`;
+  else if (searched) text = 'No matching records.';
+  else text = 'Standing by — type a name, a work email or a personal email.';
+
+  return (
+    <div
+      aria-live="polite"
+      className="mt-1.5 flex items-center gap-1.5 font-mono text-[11px] tracking-tight text-zinc-500 dark:text-zinc-400"
+    >
+      <span
+        aria-hidden
+        className={cn(
+          'h-1.5 w-1.5 shrink-0 rounded-full',
+          loading
+            ? cn('bg-orange-500', !reduceMotion && 'animate-pulse')
+            : failed
+              ? 'bg-rose-500'
+              : 'bg-zinc-300 dark:bg-zinc-600',
+        )}
+      />
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.span
+          key={text}
+          initial={reduceMotion ? false : { opacity: 0, y: 2 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={reduceMotion ? undefined : { opacity: 0, y: -2 }}
+          transition={{ duration: 0.15, ease: 'easeOut' }}
+        >
+          {text}
+        </motion.span>
+      </AnimatePresence>
+      {loading && (
+        <span
+          aria-hidden
+          className={cn(
+            'ml-0.5 inline-block h-3 w-[5px] rounded-[1px] bg-orange-500',
+            !reduceMotion && 'animate-pulse',
+          )}
+        />
+      )}
+    </div>
+  );
+}
+
 // ── Panel ────────────────────────────────────────────────────────────────────
 
 interface PriorDocsState {
@@ -411,6 +542,19 @@ export default function TerminationDocsPanel({
   /** The fragment was too short to search on — a state of its own, because it is
    *  neither "nothing searched yet" nor "nothing matched". */
   const [searchTooShort, setSearchTooShort] = useState(false);
+  /** Drops answers that arrive after a newer keystroke's request — required now
+   *  that the search runs as the rep types: without it a slow older response
+   *  overwrites a newer one and the list silently describes the wrong query. */
+  const searchSeqRef = useRef(0);
+  /** The typing debounce timer. Armed ONLY in handleQueryChange (a keystroke),
+   *  never in an effect — so a mount/remount can never fire a search. */
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    },
+    [],
+  );
 
   // ── Facts sheet ──
   const [selected, setSelected] = useState<string | null>(null);
@@ -545,11 +689,25 @@ export default function TerminationDocsPanel({
 
   const runSearch = useCallback(async (raw: string) => {
     const q = raw.trim();
-    if (!q) return;
+    const seq = ++searchSeqRef.current;
+    if (!q) {
+      // The box was emptied: back to the prompt state, and bumping the seq above
+      // already retired any answer still in flight.
+      setSearching(false);
+      setCandidates(null);
+      setSearchedFor(null);
+      setSearchDegraded([]);
+      setSearchError(null);
+      setSearchMatched(0);
+      setSearchTruncated(false);
+      setSearchTooShort(false);
+      return;
+    }
     // The server runs no read on a fragment this short either — `%a%` matches
     // most of the master list. Checking here as well means the rep is told to
     // type more instead of waiting for a round trip to say nothing.
     if (q.length < TERMINATION_SEARCH_MIN_QUERY) {
+      setSearching(false);
       setCandidates([]);
       setSearchDegraded([]);
       setSearchError(null);
@@ -568,6 +726,7 @@ export default function TerminationDocsPanel({
         { cache: 'no-store' },
       );
       const json = (await res.json()) as TerminationSearchResponse;
+      if (seq !== searchSeqRef.current) return;
       if (!res.ok || json.error) throw new Error(json.error || `Search failed (${res.status})`);
       // INVARIANT: never auto-select, not even a single result. A personal email
       // backs several master identities, so "the only match" is a property of
@@ -579,16 +738,42 @@ export default function TerminationDocsPanel({
       setSearchTruncated(!!json.truncated);
       setSearchTooShort(!!json.tooShort);
     } catch (e) {
+      if (seq !== searchSeqRef.current) return;
       setCandidates([]);
       setSearchDegraded([]);
       setSearchMatched(0);
       setSearchTruncated(false);
       setSearchError(e instanceof Error ? e.message : 'The search failed');
     } finally {
-      setSearchedFor(q);
-      setSearching(false);
+      // A stale response never writes anything — including `searchedFor`, which
+      // must stay the string that produced the candidates on screen.
+      if (seq === searchSeqRef.current) {
+        setSearchedFor(q);
+        setSearching(false);
+      }
     }
   }, []);
+
+  const handleQueryChange = useCallback(
+    (v: string) => {
+      setQuery(v);
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = setTimeout(() => void runSearch(v), SEARCH_DEBOUNCE_MS);
+    },
+    [runSearch],
+  );
+
+  /** Enter — search right now, ahead of the debounce. */
+  const searchNow = useCallback(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    void runSearch(query);
+  }, [runSearch, query]);
+
+  const clearSearch = useCallback(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    setQuery('');
+    void runSearch('');
+  }, [runSearch]);
 
   const loadFacts = useCallback(async (workEmail: string) => {
     setSelected(workEmail);
@@ -1079,57 +1264,77 @@ export default function TerminationDocsPanel({
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4 p-5">
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void runSearch(query);
-              }}
-              className="flex flex-wrap items-center gap-2"
-            >
-              <div className="relative min-w-[260px] flex-1">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            {/* Search console — debounced live input plus the mono readout that
+                narrates it (the People → Offboarded pattern). Enter searches
+                immediately; the seq guard in runSearch drops any answer a newer
+                keystroke has outrun. */}
+            <div className="sm:max-w-2xl">
+              <div
+                className={cn(
+                  'relative overflow-hidden rounded-xl border bg-white transition-shadow dark:bg-zinc-950',
+                  searching
+                    ? 'border-orange-300 shadow-[0_0_0_3px_rgba(249,115,22,0.08)] dark:border-orange-800'
+                    : 'border-zinc-200 dark:border-zinc-800',
+                )}
+              >
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
                 <Input
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search a name, a surname, a work email or a personal email — part of any of them is enough…"
+                  onChange={(e) => handleQueryChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      searchNow();
+                    }
+                  }}
+                  placeholder="Search a name, a surname, a work email or a personal email…"
                   aria-label="Search offboarded people by name, work email or personal email"
-                  className="h-9 border-zinc-200 bg-white pl-9 pr-8 text-sm focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900/60"
+                  className="h-10 border-0 pl-9 pr-8 text-sm shadow-none focus-visible:ring-1 focus-visible:ring-orange-500/40"
                 />
                 {query && (
                   <button
                     type="button"
-                    onClick={() => setQuery('')}
+                    onClick={clearSearch}
                     aria-label="Clear search"
                     className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
                 )}
-              </div>
-              <Button
-                type="submit"
-                size="sm"
-                disabled={!query.trim() || searching}
-                className="h-9 gap-1.5 bg-orange-500 text-xs font-semibold text-white hover:bg-orange-600"
-              >
-                {searching ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Search className="h-3.5 w-3.5" />
+                {/* Scan line — a single moving segment along the bottom edge
+                    while a request is in flight. Transform-only; absent under
+                    reduced motion (the readout TEXT is the reduced-motion
+                    signal). */}
+                {searching && !reduce && (
+                  <motion.span
+                    aria-hidden
+                    className="absolute bottom-0 left-0 h-[2px] w-1/3 rounded-full bg-orange-500"
+                    animate={{ x: ['-100%', '300%'] }}
+                    transition={{ repeat: Infinity, duration: 1.2, ease: 'linear' }}
+                  />
                 )}
-                Search
-              </Button>
-            </form>
+              </div>
+              <SearchConsoleReadout
+                loading={searching}
+                failed={!!searchError}
+                tooShort={searchTooShort}
+                searched={candidates != null}
+                count={candidates?.length ?? 0}
+                matched={searchMatched}
+                truncated={searchTruncated}
+                query={query}
+              />
+            </div>
 
             <p className="text-[11.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-              A name or a personal email{' '}
+              Results appear as you type. A name or a personal email{' '}
               <strong className="font-semibold text-zinc-700 dark:text-zinc-200">searches</strong>; a
               work email{' '}
-              <strong className="font-semibold text-zinc-700 dark:text-zinc-200">identifies</strong>.
-              One inbox — and one surname — can sit behind several master records, so every match is
-              listed, including the ones that cannot be used and why, and you pick the person
-              yourself. Words are matched in any order, so “carla thomas” finds “Thomas, Carla”; at
-              least {TERMINATION_SEARCH_MIN_QUERY} characters are needed.
+              <strong className="font-semibold text-zinc-700 dark:text-zinc-200">identifies</strong>{' '}
+              — one inbox can sit behind several master records, so every match is listed, including
+              the ones that cannot be used and why, and you pick the person yourself. Words match in
+              any order (“carla thomas” finds “Thomas, Carla”); at least{' '}
+              {TERMINATION_SEARCH_MIN_QUERY} characters are needed.
             </p>
 
             {searchDegraded.length > 0 && (
@@ -1161,16 +1366,11 @@ export default function TerminationDocsPanel({
               </p>
             )}
 
-            {searching ? (
-              <div className="space-y-2">
-                {[1, 2, 3].map((i) => (
-                  <div
-                    key={i}
-                    className="h-20 w-full animate-pulse rounded-xl bg-zinc-100 motion-reduce:animate-none dark:bg-zinc-800"
-                  />
-                ))}
-              </div>
-            ) : searchTooShort ? (
+            {/* No skeleton while a search is in flight: the scan line and the
+                console readout carry the loading state, and the previous
+                result set stays on screen instead of flashing away under a
+                rep who is still typing. */}
+            {searchTooShort ? (
               /* Too short to search — distinct from both "nothing searched yet"
                  and "nothing matched", because the fix is different: type more.
                  No read was run, so this is not evidence about anybody. */
@@ -1221,14 +1421,7 @@ export default function TerminationDocsPanel({
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    setQuery('');
-                    setCandidates(null);
-                    setSearchedFor(null);
-                    setSearchMatched(0);
-                    setSearchTruncated(false);
-                    setSearchTooShort(false);
-                  }}
+                  onClick={clearSearch}
                   className="h-7 text-xs"
                 >
                   Clear search
