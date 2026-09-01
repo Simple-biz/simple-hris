@@ -121,8 +121,11 @@ export async function PATCH(req: Request) {
   return NextResponse.json({ row });
 }
 
-/** DELETE — remove notes by id. Body: { id? , ids?: [...] }. Owner-only: a
- *  note can only be deleted by the person who created it (no admin bypass). */
+/** DELETE — remove notes by id. Body: { id? , ids?: [...] }. Anyone with the
+ *  payroll_wizard EDIT grant may delete ANY row — the board is one shared
+ *  surface for everyone who edits the wizard (owner-only scoping removed
+ *  2026-09-01, Kane). Deleting an id that is already gone is a success: the
+ *  desired state holds, and a 4xx here used to resurrect the row client-side. */
 export async function DELETE(req: Request) {
   const authz = await requireFeatureEdit("accounting", "payroll_wizard");
   if (!authz.ok) return deniedResponse(authz);
@@ -143,16 +146,8 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "id or ids[] is required" }, { status: 400 });
   }
 
-  const { deleted, denied, error } = await deletePayrollWizardNotes(ids, {
-    ownedBy: authz.sessionEmail,
-  });
+  const { deleted, error } = await deletePayrollWizardNotes(ids);
   if (error) return NextResponse.json({ error }, { status: 500 });
-  if (deleted === 0 && denied > 0) {
-    return NextResponse.json(
-      { error: "Only the person who created a note can delete it." },
-      { status: 403 },
-    );
-  }
 
   void insertAuditLog({
     user_name: authz.sessionEmail,

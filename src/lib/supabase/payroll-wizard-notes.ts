@@ -7,6 +7,7 @@ import { fetchHubstaffRowsOrdered, rowsToPayrollRows } from "./hubstaff-hours-db
 import { manilaMonthDayStamp, payrollNotesWeekStart, sundayOf } from "@/lib/payroll/manila-week";
 import { formatAdjustmentText, parseAdjustmentAmount } from "@/lib/payroll/adjustment-bridge";
 import { stripMiddleMarker } from "@/lib/name/name-parts";
+import { selectAllPaged } from "./select-all-paged";
 import { getAppSetting } from "./app-settings";
 import { getDepartmentRegistry } from "@/lib/departments/registry-db";
 import { resolveDeptKeyWithRegistry } from "@/lib/departments/registry";
@@ -97,21 +98,27 @@ function toPayload(values: PayrollWizardNoteValues): Record<string, unknown> {
 }
 
 /** Every note as a per-clerk board: grouped by Payroll Clerk (A→Z), open
- *  items before done ones within a clerk, then oldest-first. */
+ *  items before done ones within a clerk, then oldest-first. Paged via
+ *  `selectAllPaged` — PostgREST caps at 1000 rows even under an explicit
+ *  `.range()`, and the table passed 800 rows in Sep 2026; `id` is the final
+ *  order key so pages can't shear under concurrent writes. */
 export async function listPayrollWizardNotes(): Promise<{
   rows: PayrollWizardNoteRow[];
   error: string | null;
 }> {
   const sb = client();
-  const { data, error } = await sb
-    .from(TABLE)
-    .select("*")
-    .order("payroll_clerk", { ascending: true })
-    .order("done", { ascending: true })
-    .order("created_at", { ascending: true })
-    .range(0, 1999);
-  if (error) return { rows: [], error: error.message };
-  return { rows: (data ?? []) as PayrollWizardNoteRow[], error: null };
+  const { rows, error } = await selectAllPaged<PayrollWizardNoteRow>((from, to) =>
+    sb
+      .from(TABLE)
+      .select("*")
+      .order("payroll_clerk", { ascending: true })
+      .order("done", { ascending: true })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (error) return { rows: [], error };
+  return { rows, error: null };
 }
 
 /**
@@ -625,22 +632,17 @@ export async function bridgeWizardAdjustment(params: {
   return { row: data as PayrollWizardNoteRow, created: true, error: null };
 }
 
-/** Delete notes by id (one or many). When `ownedBy` is given, only rows that
- *  person created are deleted (owner-only delete) — the rest are left alone
- *  and counted in `denied`. Returns how many were deleted. */
+/** Delete notes by id (one or many). Board editing is shared: any caller that
+ *  passed the feature-edit gate may delete any row (owner-only scoping removed
+ *  2026-09-01, Kane). Returns how many rows actually existed and were deleted —
+ *  an already-gone id simply contributes 0, which is not an error. */
 export async function deletePayrollWizardNotes(
   ids: string[],
-  opts: { ownedBy?: string | null } = {},
-): Promise<{ deleted: number; denied: number; error: string | null }> {
+): Promise<{ deleted: number; error: string | null }> {
   const cleanIds = [...new Set(ids.map((i) => (i ?? "").trim()).filter(Boolean))];
-  if (cleanIds.length === 0) return { deleted: 0, denied: 0, error: null };
+  if (cleanIds.length === 0) return { deleted: 0, error: null };
   const sb = client();
-  const owner = clean(opts.ownedBy)?.toLowerCase() ?? null;
-
-  let query = sb.from(TABLE).delete().in("id", cleanIds);
-  if (owner) query = query.eq("created_by", owner);
-  const { data, error } = await query.select("id");
-  if (error) return { deleted: 0, denied: 0, error: error.message };
-  const deleted = (data ?? []).length;
-  return { deleted, denied: cleanIds.length - deleted, error: null };
+  const { data, error } = await sb.from(TABLE).delete().in("id", cleanIds).select("id");
+  if (error) return { deleted: 0, error: error.message };
+  return { deleted: (data ?? []).length, error: null };
 }

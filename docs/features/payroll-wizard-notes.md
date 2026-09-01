@@ -90,6 +90,16 @@ and weekly period selector (Jul 17, `f1f930d2`).
 
 - One flat table, no RLS: access is enforced at the API layer via the
   accounting `payroll_wizard` feature grant, same as the other wizard tables.
+- **Editing is shared, not owner-siloed (2026-09-01, Kane).** Anyone holding
+  the `payroll_wizard` EDIT grant may edit, delete, or Apply Changes on ANY
+  row/section — the original owner-only delete ("no admin bypass") and the
+  owner-only Apply Changes button were removed on Kane's ruling: "anyone who
+  has access to the payroll wizard tab should have edit access to everything."
+  View-only grants remain read-only. `created_by` is still stamped (it drives
+  the "only my rows" view filter and blank-seed accounting), it just no longer
+  gates anything. DELETE is idempotent: an id that is already gone is a
+  success, not a 4xx — the old 403 made the client resurrect the row, which
+  read as "delete is broken."
 - The table is in the `supabase_realtime` publication — every clerk with
   wizard access sees adds/ticks/edits live (`useLiveRefresh`'s poll covers the
   degraded case).
@@ -183,8 +193,10 @@ hold the same fact. `src/lib/payroll/adjustment-bridge.ts` owns the translation
   wizard figure is their combined total, so writing it into one of those rows
   would add it on top of the others. The clerk is told (toast) rather than left
   with two surfaces quietly disagreeing.
-- **Board → wizard**: entering step 4/5/7/8 pulls open rows (merge-only), and a
-  clerk's **Apply Changes** force-applies their rows and files them Done.
+- **Board → wizard**: entering step 4/5/7/8 pulls open rows (merge-only), and
+  **Apply Changes** on a section force-applies that section's rows and files
+  them Done (any editor may apply any section since 2026-09-01; live week only,
+  as ever).
 
 ### Several rows for one worker: combined (changed 2026-07-29)
 

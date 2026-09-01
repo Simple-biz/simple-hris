@@ -916,7 +916,7 @@ export default function PayrollWizardNotesFab({
     );
   };
 
-  /** One clerk's "Apply Changes": hand THEIR rows to the wizard, which
+  /** A section's "Apply Changes": hand its rows to the wizard, which
    *  overwrites its Adj. overrides from them (linked workers with plain
    *  amounts). The event handshake tells us whether a live wizard took it —
    *  if it did, the modal closes so the Adj. column itself is visible. */
@@ -1163,7 +1163,7 @@ export default function PayrollWizardNotesFab({
                 <>
                   Anything to correct on an upcoming payroll — a missed bonus, a rate change, a
                   deduction in progress. <span className="font-medium">Apply Changes</span> pushes
-                  your rows to the wizard and marks them <span className="font-medium">Done</span>;
+                  a section&apos;s rows to the wizard and marks them <span className="font-medium">Done</span>;
                   editing a Worker or Adjustment reopens the row. Cells save automatically.
                 </>
               ) : modalTab === "readiness" ? (
@@ -1335,12 +1335,13 @@ export default function PayrollWizardNotesFab({
                             </span>
                             {/* Apply pushes into the CURRENT wizard run, so it
                                 only appears on the live period — never a
-                                past page or a staged upcoming one. */}
-                            {canEdit && isLiveWeek && isOwnGroup(group) && (
+                                past page or a staged upcoming one. Any editor
+                                may apply any section (2026-09-01, Kane). */}
+                            {canEdit && isLiveWeek && (
                               <button
                                 type="button"
                                 onClick={() => applyGroupAdjustments(group.rows)}
-                                title="Apply YOUR rows' Adjustment amounts to the wizard's Adj. column, then mark those rows Done (workers picked from the list, amounts like +₱500 / -$25 / COP 50,000). Editing a Worker or Adjustment reopens a row."
+                                title="Apply this section's Adjustment amounts to the wizard's Adj. column, then mark those rows Done (workers picked from the list, amounts like +₱500 / -$25 / COP 50,000). Editing a Worker or Adjustment reopens a row."
                                 className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-400/40 transition-all hover:scale-[1.03] hover:bg-emerald-200 focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:outline-none dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-500/30 dark:hover:bg-emerald-950/70"
                               >
                                 <CheckCheck className="h-3 w-3" />
@@ -1417,20 +1418,19 @@ export default function PayrollWizardNotesFab({
                       })}
                       {canEdit && (
                         <td className="px-1 pt-1 pb-0.5 text-center align-top">
-                          {/* Owner-only: you can only delete notes you created
-                              (the API enforces the same rule). */}
-                          {(row.created_by ?? "").trim().toLowerCase() === selfEmail && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-sm"
-                              className="text-zinc-400 hover:text-red-600 dark:hover:text-red-400"
-                              onClick={() => void deleteRow(row.id)}
-                              aria-label="Delete note"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
+                          {/* The board is one shared surface: anyone with wizard
+                              edit access may delete any row (owner-only scoping
+                              removed 2026-09-01, Kane). */}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            className="text-zinc-400 hover:text-red-600 dark:hover:text-red-400"
+                            onClick={() => void deleteRow(row.id)}
+                            aria-label="Delete note"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
                         </td>
                       )}
                         </tr>
