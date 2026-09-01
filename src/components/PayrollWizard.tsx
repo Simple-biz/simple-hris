@@ -21766,14 +21766,23 @@ export default function PayrollWizard({
                             state = 'idle';
                           } else if (weekend && isHsl) {
                             // HSL Sat/Sun: green if ≥ 7h standalone, teal if overnight-qualifying,
-                            // orange reconciled if week passes despite this day, idle otherwise — NEVER red
+                            // orange reconciled if week passes despite this day — NEVER red.
+                            // A weekend with NO HOURS in a failing week is 'missing', not grey
+                            // furniture (Kane 2026-09-01: Aug 2 must read amber when unworked —
+                            // it is a quota day that contributed nothing, worth a look). A
+                            // weekend with SOME sub-7h hours stays idle: it has evidence, it
+                            // just was not needed.
                             if (data && data.seconds >= 7 * 3600) {
                               state = 'passed';
                             } else if (hslOvernightIsoSet.has(cell.iso)) {
                               state = 'overnight';
                             } else {
                               const weekData = hslWeekInfo.get(getWeekStartIso(cell.date));
-                              state = weekData?.weekPasses ? 'reconciled' : 'idle';
+                              state = weekData?.weekPasses
+                                ? 'reconciled'
+                                : (!data || data.seconds <= 0)
+                                  ? 'missing'
+                                  : 'idle';
                             }
                           } else if (data?.passes) {
                             state = 'passed';
@@ -21800,7 +21809,11 @@ export default function PayrollWizard({
                             holiday: 'bg-sky-200 text-sky-900 ring-1 ring-sky-500/70 shadow-[0_1px_2px_rgba(14,165,233,0.18)] dark:bg-sky-600/40 dark:text-sky-50 dark:ring-sky-400/50',
                             reconciled: 'bg-orange-100 text-orange-900 ring-1 ring-orange-400/60 shadow-[0_1px_2px_rgba(234,88,12,0.10)] dark:bg-orange-700/30 dark:text-orange-50 dark:ring-orange-400/40',
                             failed: 'relative bg-red-200 text-red-900 ring-2 ring-red-500/80 shadow-[0_1px_2px_rgba(239,68,68,0.22)] dark:bg-red-600/40 dark:text-red-50 dark:ring-red-400/70',
-                            missing: 'bg-zinc-100 text-zinc-400 border border-dashed border-zinc-300 dark:bg-zinc-900/50 dark:text-zinc-500 dark:border-zinc-700',
+                            // Amber, not zinc (Kane 2026-09-01, same ruling as the review
+                            // table's no-hours band): a day with no tracked time is missing
+                            // evidence — a warning to check, not furniture. The dashed border
+                            // keeps it distinct from the solid Forgiven amber.
+                            missing: 'bg-amber-50 text-amber-700 border border-dashed border-amber-400/70 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-600/50',
                           };
                           const shortfall = data && !data.passes ? Math.max(0, 7 * 3600 - data.seconds) : 0;
                           return (
@@ -21921,7 +21934,7 @@ export default function PayrollWizard({
                           <span className="h-2.5 w-2.5 rounded-sm bg-red-200 ring-1 ring-red-500/80 dark:bg-red-600/40 dark:ring-red-400/70" /> &lt; 7h
                         </span>
                         <span className="flex items-center gap-1">
-                          <span className="h-2.5 w-2.5 rounded-sm border border-dashed border-zinc-300 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900/50" /> No data yet
+                          <span className="h-2.5 w-2.5 rounded-sm border border-dashed border-amber-400/70 bg-amber-50 dark:border-amber-600/50 dark:bg-amber-950/30" /> No data yet
                         </span>
                         <span className="flex items-center gap-1">
                           <span className="h-2.5 w-2.5 rounded-sm bg-zinc-100/70 ring-1 ring-zinc-200/70 dark:bg-zinc-900/50 dark:ring-zinc-800/60" />

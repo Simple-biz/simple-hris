@@ -475,6 +475,12 @@ Rules for anyone touching it:
   first child.
 - The header names the person through the same chain as the step-6 list (master → calc row →
   Hubstaff `Member`), falling back to an explicit unknown. It used to render the raw email.
+- **A day with no tracked time renders AMBER (dashed), never grey** (Kane 2026-09-01, the same
+  ruling as the review table's no-hours band): the weekday `missing` state, and an in-range HSL
+  weekend with zero hours in a failing week (Aug 2's case), both wear it — missing evidence is
+  a warning to check, not furniture. An HSL weekend with SOME sub-7h hours in a failing week
+  stays grey idle (it has evidence, it just was not needed), and HSL weekends are still NEVER
+  red. The dashed border keeps it distinct from the solid Forgiven amber.
 
 ## An empty list has three causes and they are NOT interchangeable
 
