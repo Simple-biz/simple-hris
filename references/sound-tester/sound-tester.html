@@ -118,7 +118,7 @@
 <div class="wrap">
   <header>
     <h1>🔊 HRIS Sound Reference</h1>
-    <p class="sub">Every notification &amp; UI cue in the app, synthesized live with the Web Audio API — no audio files are shipped. Click a button to hear each one.</p>
+    <p class="sub">The app's notification &amp; UI cues, synthesized live with the Web Audio API. Click a button to hear each one. One exception ships as a recording: Start Processing plays <code>public/sounds/truckstart.mp3</code> since 2026-09-01 — the V12 synth below is the retired predecessor, kept for reference.</p>
   </header>
 
   <div class="hint">
@@ -662,12 +662,12 @@ const CUES = [
     desc: 'The same engine with a different attitude, so the A/B tests attitude and not two unrelated sounds: faster attack, more upper harmonics, a tighter filter (Q&nbsp;7) and a higher flare at 6,200&nbsp;rpm. Pick this one if A is too polite.',
   },
   {
-    name: 'Start Processing (Lamborghini V12)',
+    name: 'Start Processing (Lamborghini V12) — RETIRED 2026-09-01',
     fn: playStagePrepped,
     stop: stopStagePrepped,
     dur: 5000,
-    where: "ping-chime.ts · playStagePrepped() / stopStagePrepped()",
-    desc: 'Payroll Wizard → Start Processing, and Accounting → Payment Dispatch → Start Processing: fires the instant the confirm is clicked, in sync with the “Preparing Dispatch” scene. Starter motor, ignition, a flare to ~6,200&nbsp;rpm, one throttle blip, then idle. Closing the modal calls <code>stopStagePrepped()</code>, which fades it out over 450ms — that is what Stop does here.',
+    where: "RETIRED — the shipped cue now plays public/sounds/truckstart.mp3",
+    desc: 'Retired predecessor of the shipped cue, kept here for reference. Payroll Wizard → Start Processing and Accounting → Payment Dispatch → Start Processing now play the <code>truckstart.mp3</code> recording via <code>playStagePrepped()</code> in ping-chime.ts (same trigger: fires the instant the confirm is clicked; closing the modal calls <code>stopStagePrepped()</code>, a 450ms fade-out). This card still plays the old synth: starter motor, ignition, a flare to ~6,200&nbsp;rpm, one throttle blip, then idle.',
   },
   {
     name: 'Payment Confirmed',
