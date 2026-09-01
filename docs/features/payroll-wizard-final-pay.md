@@ -340,6 +340,11 @@ deducts. So the auto PAB/Tech/KPI/dept amounts always remain in Final.
 
 Persistence: saved in the Additions draft (`app_settings` key
 `payroll.wizard.additions.<sourceFile>`) and reloaded by `loadAdditionsProgress`.
+Since 2026-09-01 the save is **compare-and-swap** through
+`/api/payroll-wizard/additions` (the generic `/api/app-settings` POST refuses the
+key family): the client presents the `updated_at` it loaded and a stale write is
+refused with a 409 instead of silently reverting the whole map — see
+[orphanage-pay-step.md](./orphanage-pay-step.md) §Two carriers.
 
 ---
 

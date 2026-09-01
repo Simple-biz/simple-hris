@@ -7,6 +7,7 @@ import {
 } from '@/lib/supabase/app-settings';
 import { requireElevatedSession, requireAdminSession, deniedResponse } from '@/lib/auth/authorize-email';
 import { requireFeatureEditAnyView } from '@/lib/auth/authorize-feature';
+import { isWizardAdditionsKey } from '@/lib/payroll/wizard-additions';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
 
@@ -130,6 +131,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing key or value' }, { status: 400 });
     }
     const isAdmin = authz.roles.includes('admin');
+
+    // 0. The wizard additions blob is CAS-only. This generic POST is
+    //    last-write-wins on the whole value, which for that map meant a save
+    //    from a stale tab silently reverted every person in it (the 2026-08
+    //    orphanage incident, twice). Refusing here — with no admin bypass — is
+    //    what makes "no un-CAS'd writer remains" true.
+    if (isWizardAdditionsKey(body.key)) {
+      return NextResponse.json(
+        { error: 'payroll.wizard.additions.* is concurrency-checked — write it through /api/payroll-wizard/additions.' },
+        { status: 400 },
+      );
+    }
 
     // 1. Secret credential keys: admin-only, even for elevated callers.
     if (isAdminOnlyKey(body.key) && !isAdmin) {

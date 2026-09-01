@@ -2331,6 +2331,16 @@ export default function PayrollWizard({
    * rows carrying real amounts against `bonusOverrides: {}` on file.
    */
   const additionsEditGenRef = useRef(0);
+  /**
+   * The `updated_at` this tab LOADED the additions blob at — the revision every
+   * save must present to `/api/payroll-wizard/additions` (compare-and-swap).
+   * `updatedAt: null` = the blob did not exist at load, so the save INSERTs and
+   * a racing creator conflicts instead of being overwritten. A ref for another
+   * file (or none, e.g. hydration failed) also sends null, which an EXISTING
+   * blob refuses — a whole-object write over a blob this tab never read is the
+   * exact wipe the CAS exists to stop, manual lock-in included.
+   */
+  const additionsRevisionRef = useRef<{ file: string; updatedAt: string | null } | null>(null);
   // Per-cycle "values locked" flag for Payment Dispatch (realtime). Lock = send
   // values to dispatch; Unlock = pull them back (dispatch shows nothing).
   const dispatchValuesLock = useWizardDispatchLock(calcSourceFile);
@@ -3300,7 +3310,10 @@ export default function PayrollWizard({
     // it survives the hydration (see additionsEditGenRef).
     const genAtStart = additionsEditGenRef.current;
     try {
-      const res = await fetch(`/api/app-settings?key=payroll.wizard.additions.${sourceFile}`);
+      // `meta=1`: the row's `updated_at` rides along — it is the revision every
+      // save presents to the CAS route, so a stale tab's write is refused
+      // instead of reverting the whole map (the 2026-08 orphanage incident).
+      const res = await fetch(`/api/app-settings?key=payroll.wizard.additions.${sourceFile}&meta=1`);
       const json = await res.json();
       // A failed read must NOT be mistaken for "no saved additions" — that would
       // wipe the state to empty AND open the publish gate on zeroed figures.
@@ -3315,6 +3328,7 @@ export default function PayrollWizard({
       // file nobody is looking at any more. Applying it would cross-contaminate
       // the selected period's additions.
       if (calcSourceFileRef.current !== sourceFile) return;
+      additionsRevisionRef.current = { file: sourceFile, updatedAt: (json.updatedAt as string | null) ?? null };
       const savedOverrides = (data.bonusOverrides ?? {}) as Record<string, number>;
       const savedOverrideNotes = (data.bonusOverrideNotes ?? {}) as Record<string, string>;
       const savedOrphanage = (data.orphanageAmounts ?? {}) as Record<string, number>;
@@ -6054,20 +6068,21 @@ export default function PayrollWizard({
     bonusOverrideNotes?: Record<string, string>;
     /** Skip the success toast (an automatic save riding along with its own toast). */
     silent?: boolean;
-  }) => {
+  }): Promise<boolean> => {
     if (!calcSourceFile) {
       if (!opts?.silent) toast.error('No source file selected to lock progress against.');
-      return;
+      return false;
     }
     if (isReplay) {
       if (!opts?.silent) toast.error('Replaying a past period is view-only', { description: 'Return to the current period to make changes.' });
-      return;
+      return false;
     }
     // An automatic save may only run once this file's additions have hydrated:
     // the payload carries every additions field, so writing it mid-hydration
     // would persist empty maps for the ones it isn't trying to change. (A
-    // manual lock-in is the clerk's explicit call and isn't gated.)
-    if (opts?.silent && additionsHydratedFor !== calcSourceFile) return;
+    // manual lock-in is the clerk's explicit call and isn't gated here — but
+    // the CAS below still refuses it against a blob this tab never read.)
+    if (opts?.silent && additionsHydratedFor !== calcSourceFile) return false;
     setAdditionsSaving(true);
     try {
       // Callers that just batch-wrote orphanageAmounts (e.g. the Orphanage paste tool)
@@ -6086,18 +6101,46 @@ export default function PayrollWizard({
         techBonusManualRevokes: Array.from(techBonusManualRevokes),
         pabStatusSnapshot: Object.fromEntries(pabStatusByEmail),
       };
-      await savePabSetting(`payroll.wizard.additions.${calcSourceFile}`, JSON.stringify(payload));
+      // Compare-and-swap: present the revision this tab loaded. The whole-object
+      // blob is last-writer-wins by shape, and a save from a stale tab used to
+      // revert EVERY amount in it with no error — the 2026-08 orphanage
+      // incident, twice. A stale write now gets a 409 and nothing lands.
+      const rev = additionsRevisionRef.current;
+      const expectedUpdatedAt = rev && rev.file === calcSourceFile ? rev.updatedAt : null;
+      const res = await fetch('/api/payroll-wizard/additions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceFile: calcSourceFile, payload, expectedUpdatedAt }),
+      });
+      const json = (await res.json()) as { error: string | null; updatedAt?: string | null; conflict?: boolean };
+      if (res.status === 409) {
+        // Refuse-and-rehydrate, never auto-merge: the maps carry deletions, and
+        // a merge cannot tell a stale key from an edit — it would resurrect
+        // removed money. Re-hydration adopts what actually happened; the clerk
+        // re-applies their last change on top and saves again.
+        toast.error('Not saved — this period was updated by someone else', {
+          description:
+            'Another tab or clerk saved these additions after this one loaded them. Reloading their version now; re-apply your last change and save again.',
+          duration: 10000,
+        });
+        void loadAdditionsProgress(calcSourceFile);
+        return false;
+      }
+      if (!res.ok || json.error) throw new Error(json.error || `HTTP ${res.status}`);
+      additionsRevisionRef.current = { file: calcSourceFile, updatedAt: json.updatedAt ?? null };
       setAdditionsSavedAt(new Date());
       setLockedPabSnapshot(Object.fromEntries(pabStatusByEmail) as Record<string, 'eligible' | 'ineligible' | 'in_progress'>);
       if (!opts?.silent) toast.success('Additions progress locked in');
+      return true;
     } catch (e) {
       // Never silent: a failed save is exactly the case where the clerk must
       // know the amounts are still only in this tab.
       toast.error('Failed to lock in additions', { description: e instanceof Error ? e.message : 'Unknown error' });
+      return false;
     } finally {
       setAdditionsSaving(false);
     }
-  }, [calcSourceFile, isReplay, additionsHydratedFor, bonusOverrides, bonusOverrideNotes, orphanageAmounts, employeeMetrics, deptMetrics, employeeDepts, employeeDeptsManual, employeeBonuses, techBonusManualGrants, techBonusManualRevokes, pabStatusByEmail, savePabSetting]);
+  }, [calcSourceFile, isReplay, additionsHydratedFor, bonusOverrides, bonusOverrideNotes, orphanageAmounts, employeeMetrics, deptMetrics, employeeDepts, employeeDeptsManual, employeeBonuses, techBonusManualGrants, techBonusManualRevokes, pabStatusByEmail, loadAdditionsProgress]);
 
   /** Latest {@link saveAdditionsProgress}, reachable from callbacks that must
    *  stay identity-stable — `pullNotesAdjustments` drives a step-entry effect,
@@ -9593,7 +9636,12 @@ export default function PayrollWizard({
         next[r.emailKey] = r.amount;
         updateOrphanageAmount(r.emailKey, r.amount); // updates state + writes the audit log
       }
-      await saveAdditionsProgress({ orphanageAmounts: next });
+      // If the blob save was refused (CAS conflict, network), NOTHING else may
+      // proceed: writing the orphanage_pay records or clearing the paste after
+      // a failed save mints record↔column divergence client-side — hours on
+      // record, no money on the column. The save already explained itself.
+      const saved = await saveAdditionsProgress({ orphanageAmounts: next });
+      if (!saved) return;
       void publishFinalPaySnapshot();
 
       // Also persist a first-class record (see references/create_orphanage_pay.sql).
@@ -9750,7 +9798,11 @@ export default function PayrollWizard({
       }
 
       if (repriced.length > 0) {
-        await saveAdditionsProgress({ orphanageAmounts: next });
+        // A refused blob save (CAS conflict, network) aborts the repair: the
+        // record re-sync below would otherwise certify amounts that never
+        // reached the column. The save already explained itself.
+        const saved = await saveAdditionsProgress({ orphanageAmounts: next });
+        if (!saved) return;
         void publishFinalPaySnapshot();
         // Keep the first-class record in step with the money, so the next
         // reconciliation reads a consistent pair rather than re-flagging.
@@ -9822,7 +9874,11 @@ export default function PayrollWizard({
       delete n[email.toLowerCase()];
       return n;
     });
-    await saveAdditionsProgress({ orphanageAmounts: next });
+    // A refused blob save (CAS conflict, network) aborts the removal — deleting
+    // the orphanage_pay record after a save that never landed would erase the
+    // hours evidence while the column still pays. Re-hydration puts the row back.
+    const saved = await saveAdditionsProgress({ orphanageAmounts: next });
+    if (!saved) return;
     void publishFinalPaySnapshot();
     if (calcSourceFile) {
       try {
@@ -14188,7 +14244,7 @@ export default function PayrollWizard({
                       <button
                         key={additionsSavedAt ? 'locked' : 'unlocked'}
                         type="button"
-                        onClick={async () => { await saveAdditionsProgress(); void publishFinalPaySnapshot(); }}
+                        onClick={async () => { if (await saveAdditionsProgress()) void publishFinalPaySnapshot(); }}
                         disabled={additionsSaving || !calcSourceFile || isReplay}
                         title={isReplay
                           ? 'Replaying a past period — view-only'
@@ -17054,21 +17110,54 @@ export default function PayrollWizard({
                     overwrote a colleague's edits reads exactly like this. */}
                 {orphRecordedNotOnColumn.length > 0 && (
                   <div className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 dark:border-rose-900/50 dark:bg-rose-950/25">
-                    <p className="flex items-center gap-2 text-sm font-semibold text-rose-900 dark:text-rose-200">
-                      <AlertTriangle className="h-4 w-4 shrink-0" />
-                      {orphRecordedNotOnColumn.length} {orphRecordedNotOnColumn.length === 1 ? 'person has' : 'people have'} orphanage hours on record but no amount on the Orphanage column
-                    </p>
-                    <ul className="mt-1 flex flex-col gap-0.5 text-[12.5px] text-rose-800 dark:text-rose-300">
-                      {orphRecordedNotOnColumn.map((r) => (
-                        <li key={r.email} className="font-mono">
-                          {r.email} · {r.detail.hours.toFixed(2)} h
-                          {r.detail.rate != null ? ` @ ${formatPHP(r.detail.rate)}` : ''}
-                        </li>
-                      ))}
-                    </ul>
-                    <p className="mt-1.5 text-[12.5px] text-rose-800 dark:text-rose-300">
-                      They will be paid nothing for these hours. Paste them again to put the amount back.
-                    </p>
+                    <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="flex items-center gap-2 text-sm font-semibold text-rose-900 dark:text-rose-200">
+                          <AlertTriangle className="h-4 w-4 shrink-0" />
+                          {orphRecordedNotOnColumn.length} {orphRecordedNotOnColumn.length === 1 ? 'person has' : 'people have'} orphanage hours on record but no amount on the Orphanage column
+                        </p>
+                        <ul className="mt-1 flex flex-col gap-0.5 text-[12.5px] text-rose-800 dark:text-rose-300">
+                          {orphRecordedNotOnColumn.map((r) => (
+                            <li key={r.email} className="font-mono">
+                              {r.email} · {r.detail.hours.toFixed(2)} h
+                              {r.detail.rate != null ? ` @ ${formatPHP(r.detail.rate)}` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="mt-1.5 text-[12.5px] text-rose-800 dark:text-rose-300">
+                          They will be paid nothing for these hours. Restore prices the recorded hours with the same
+                          arithmetic as pasting them again; anyone it cannot price is reported, not skipped.
+                        </p>
+                      </div>
+                      {!isReplay && (
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            // The blob keys on the Additions row's literal `.email`
+                            // (see OrphanagePasteOk); the record keys are lowercased.
+                            // Resolve each record email to its row key first, or a
+                            // restored amount could land under a key the column
+                            // never reads. Unresolved emails pass through and are
+                            // refused by the re-price with "not in this pay period".
+                            const rowKeyByNorm = new Map<string, string>();
+                            for (const r of effectiveCalcResults) {
+                              const k = normEmail(r.email) ?? r.email.trim().toLowerCase();
+                              if (k && !rowKeyByNorm.has(k)) rowKeyByNorm.set(k, r.email);
+                            }
+                            void repriceOrphanageLocked(
+                              orphRecordedNotOnColumn.map(
+                                (r) => rowKeyByNorm.get(normEmail(r.email) ?? r.email) ?? r.email,
+                              ),
+                            );
+                          }}
+                          disabled={orphanageLockingIn}
+                          className="gap-2 bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50"
+                        >
+                          {orphanageLockingIn ? <Loader2 className="h-4 w-4 animate-spin" /> : <Calculator className="h-4 w-4" />}
+                          Restore {orphRecordedNotOnColumn.length === 1 ? 'it' : 'all'} from record
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 )}
 

@@ -66,10 +66,26 @@ Consequences that have each cost money at least once:
   `orphanage_pay` row behind a hand-typed orphanage amount, so it cannot be
   reconciled or re-priced, and if it is lost there is nothing but `audit_log`
   (`action = wizard.addition_edited`, `resource = orphanage_pay`) to recover it from.
-- The blob is saved as a **whole object**. `saveAdditionsProgress` sends the entire
-  `orphanageAmounts` map, so a save from a tab holding stale state reverts **every**
-  person in it, not just the one being edited. This is unclosed at the time of
-  writing — see [Open](#open).
+- The blob is saved as a **whole object**, and until 2026-09-01 that write was
+  last-writer-wins: a save from a tab holding stale state reverted **every** person
+  in it, not just the one being edited — which is how the 08-18 correction was rolled
+  back, and how the 2026-08-23 week ended up with 44 recorded-hours rows paying ₱0
+  (₱176,016.67). **Closed 2026-09-01 by compare-and-swap**: `saveAdditionsProgress`
+  presents the `updated_at` it loaded to `/api/payroll-wizard/additions`
+  (`casUpdateAppSetting`; `src/lib/payroll/wizard-additions.ts` + tests), a stale
+  write gets a **409 and nothing lands**, and the generic `/api/app-settings` POST
+  refuses the key family so no un-CAS'd writer remains. There is **no server-side
+  merge on purpose** — the maps carry deletions, and a merge cannot tell a stale key
+  from an edit, so it would resurrect removed money. On a 409 the wizard re-hydrates
+  (`loadAdditionsProgress`), tells the clerk whose version now stands, and the clerk
+  re-applies their last change and saves again. Never "fix" a 409 by dropping the CAS
+  predicate. A side benefit: a revision the tab never loaded is presented as `null`
+  (an INSERT), so a manual lock-in fired before hydration can no longer wipe an
+  existing blob — previously only *silent* saves were gated on hydration.
+- A failed or refused blob save now **aborts the rest of its action**: lock-in keeps
+  the paste and writes no `orphanage_pay` records, Re-price/Restore re-syncs nothing,
+  and Remove leaves the record row alone — a record write behind a save that never
+  landed is how record↔column divergence gets minted client-side.
 
 ## Reconciliation (2026-08-21)
 
@@ -97,7 +113,13 @@ reported, not skipped.
 The reverse direction is surfaced too: hours on record with **no amount on the
 Orphanage column** get their own red panel. That is what a clobbered save looks like
 from here — the hours were locked in and the money vanished — and it is never hidden
-by the search box.
+by the search box. Since 2026-09-01 the panel carries **Restore from record**
+(human-initiated, audited): it resolves each record email to this period's Additions
+row (the blob keys on the row's literal `.email`; the record keys are lowercased) and
+rides the same re-price path, so a restore, a re-price and a fresh paste all price
+through `priceOrphanageHours`. Anyone it cannot price — no longer in the period, no
+rate — is **reported, not skipped**. Before this, the only repair was re-pasting from
+a sheet nobody may still have open.
 
 **Fleet-wide detector:** `scripts/audit-orphanage-pay-divergence.mts` (read-only, no
 `--apply`) runs the same reconciliation over every week's record against every week's
@@ -153,8 +175,11 @@ What closed, and what proves it:
 | An amount trusted forever after lock-in | `reconcileLockedOrphanageAmount` on every render + the banner | tests: 5 status cases |
 | A repair drifting from a re-paste | both go through `priceOrphanageHours` | test: "a repriced row and a fresh paste agree exactly" |
 | A rateless / OT-rateless row priced low instead of refused | refusal codes `no_regular_rate` / `no_ot_rate` | tests |
-| Hours on record with no money on the column | the red "no amount on the Orphanage column" panel | — |
+| Hours on record with no money on the column | the red "no amount on the Orphanage column" panel, with **Restore from record** since 2026-09-01 | — |
 | An orphanage edit rolled back by a hydration landing mid-edit | `updateOrphanageAmount` now bumps `additionsEditGenRef`, and the hydration merges `orphanageAmounts` freshest-wins like the bonus maps | — |
+| A save from a stale tab reverting the whole map (step 5 of the incident) | CAS on `payroll.wizard.additions.*` — stale write → 409, nothing lands; generic route refuses the family (2026-09-01) | `wizard-additions.test.ts`; `casUpdateAppSetting`'s predicate |
+| A manual lock-in before hydration wiping an existing blob | unknown revision ⇒ `expectedUpdatedAt: null` ⇒ INSERT ⇒ conflicts with any existing row | `casUpdateAppSetting` insert branch |
+| Record writes / paste-clear / record-delete proceeding after a failed blob save | `saveAdditionsProgress` returns success; lock-in, Re-price/Restore and Remove abort downstream on failure | — |
 | A past week silently wrong | `scripts/audit-orphanage-pay-divergence.mts` | run against prod, 2026-08-21 |
 
 ## UI
@@ -172,16 +197,26 @@ What closed, and what proves it:
   week with no visits is distinguishable from a week nobody got to.
 - Replay is view-only: no paste, no re-price, no remove.
 
+## The 2026-08-23 recurrence
+
+The clobber fired again on the next-but-one week,
+`simple-biz_daily_report_2026-08-23_to_2026-08-29 (1).csv`: measured 2026-09-01 by the
+detector, **44 of 83 recorded rows had no amount on the column — ₱176,016.67 paying
+₱0** — plus andret@ over by ₱3,187.50 (`amount_mismatch`). The paste itself had also
+gone in badly and was re-pasted by hand (Kane), which is the same two-generations-of-
+state shape as the original incident. This recurrence is what reversed the 2026-08-21
+"out of scope" call on the CAS fix (Kane, 2026-09-01: fix the step and harden it) —
+the whole-object write is now compare-and-swapped and the red panel can **Restore from
+record** instead of demanding a third paste. The repair itself is a human action in
+the step (Restore, then Re-price for andret@), and if the cycle was locked, **unlock +
+re-lock** afterwards so the staged stubs re-stage.
+
 ## Open
 
-- **The additions blob is last-writer-wins on the whole object.** A save from a stale
-  tab still reverts every orphanage amount in it. The reconciliation banner means the
-  next person to open the step *sees* it, which is why the 2026-08 revert went
-  unnoticed for three days and would not now — but the clobber itself is unclosed.
-  Closing it needs optimistic concurrency on `payroll.wizard.additions.*` (the client
-  sends the revision it loaded, the server refuses a stale write), which spans bonus
-  overrides, metrics and PAB status too. Deliberately out of scope on 2026-08-21
-  (Kane: "A. Orphanage step").
+- **The 2026-08-23 week's repair is pending a human**: 44 rows to Restore from record
+  (₱176,016.67) and andret@ to Re-price (−₱3,187.50), then unlock + re-lock if the
+  cycle was locked. Verify after with `scripts/audit-orphanage-pay-divergence.mts
+  --file "simple-biz_daily_report_2026-08-23_to_2026-08-29 (1).csv"`.
 - **Hand-typed orphanage amounts have no first-class record**, so they cannot be
   reconciled or re-priced, and a lost one is recoverable only from `audit_log`.
 - **erict@'s ₱5,373.00 on the 2026-08-09 week is still missing** and no automated check

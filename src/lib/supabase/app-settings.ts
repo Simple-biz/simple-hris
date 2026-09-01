@@ -147,7 +147,7 @@ export async function casUpdateAppSetting(
   key: string,
   value: string,
   expectedUpdatedAt: string | null,
-): Promise<{ ok: boolean; conflict: boolean; error: string | null }> {
+): Promise<{ ok: boolean; conflict: boolean; error: string | null; updatedAt?: string }> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { ok: false, conflict: false, error: 'Supabase client unavailable' };
   const stamp = new Date().toISOString();
@@ -162,7 +162,7 @@ export async function casUpdateAppSetting(
       const conflict = error.code === '23505';
       return { ok: false, conflict, error: conflict ? null : error.message };
     }
-    return { ok: true, conflict: false, error: null };
+    return { ok: true, conflict: false, error: null, updatedAt: stamp };
   }
 
   const { data, error } = await supabase
@@ -174,7 +174,9 @@ export async function casUpdateAppSetting(
   if (error) return { ok: false, conflict: false, error: error.message };
   // No row matched ⇒ updated_at moved under us ⇒ somebody else wrote first.
   if (!data || data.length === 0) return { ok: false, conflict: true, error: null };
-  return { ok: true, conflict: false, error: null };
+  // `updatedAt` is the row's new revision — callers that track the revision
+  // they loaded (the wizard additions blob) chain their next CAS off it.
+  return { ok: true, conflict: false, error: null, updatedAt: stamp };
 }
 
 /**
