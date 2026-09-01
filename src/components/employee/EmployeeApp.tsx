@@ -35,6 +35,7 @@ import UnderConstruction from '@/components/common/UnderConstruction';
 import ConstructionBanner from '@/components/common/ConstructionBanner';
 
 import { normEmail } from '@/lib/email/norm-email';
+import { bindEmployeeCacheIdentity } from '@/lib/employee/tab-cache';
 import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
 import { humanizeTabId } from '@/lib/presence/page-label';
 import { useTabDocumentTitle } from '@/hooks/useTabDocumentTitle';
@@ -275,12 +276,21 @@ export default function EmployeeApp() {
       }
 
       if (!identity) {
+        // Identity lost — drop any cached portal data before leaving the tab.
+        bindEmployeeCacheIdentity(null);
         router.replace('/login');
         return;
       }
       sessionStorage.setItem(SESSION_KEY, identity);
+      // Point the reload cache at this viewer BEFORE any tab mounts. Binding a
+      // different identity than the entries on disk were written for purges them
+      // first, so an elevated ?email= preview of someone else's portal can never
+      // repaint into this one — the same property the identity rule above exists
+      // to guarantee, extended to the copy that now survives a reload.
+      bindEmployeeCacheIdentity(identity);
       setEmployeeEmail(identity);
     } catch {
+      bindEmployeeCacheIdentity(null);
       router.replace('/login');
     }
   }, [router, emailFromQuery, session?.user, sessionStatus]);

@@ -34,6 +34,7 @@ import SidebarCollapsedDot from '@/components/common/SidebarCollapsedDot';
 import EmployeeAvatar from './EmployeeAvatar';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
+import { clearAllEmployeeCache } from '@/lib/employee/tab-cache';
 
 interface EmployeeSidebarProps {
   activeTab: string;
@@ -379,6 +380,11 @@ export default function EmployeeSidebar({
             try {
               sessionStorage.removeItem(SESSION_EMAIL_KEY);
             } catch { /* ignore */ }
+            // The portal's reload cache holds pay-adjacent data for the person
+            // signing out. It must not still be on disk when the next person
+            // signs in on this tab — bindEmployeeCacheIdentity would purge it
+            // anyway, but only once they get far enough to resolve an identity.
+            clearAllEmployeeCache();
             void signOut({ callbackUrl: '/login' });
           }}
         >

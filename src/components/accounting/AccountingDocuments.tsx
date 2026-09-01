@@ -52,6 +52,9 @@ import {
   type DocumentRequestStatus,
   type DocumentSignatureRow,
 } from '@/lib/documents/types';
+// [TERMINATION-DOCS]
+import TerminationDocsTabRow from '@/components/accounting/termination-docs/TerminationDocsTabRow';
+import TerminationDocsPanel from '@/components/accounting/termination-docs/TerminationDocsPanel'; // [TERMINATION-DOCS]
 
 type Filter = DocumentRequestStatus | 'all';
 
@@ -89,6 +92,8 @@ export default function AccountingDocuments({
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('pending');
   const [query, setQuery] = useState('');
+  // [TERMINATION-DOCS]
+  const [docTab, setDocTab] = useState<'queue' | 'termination'>('queue'); // [TERMINATION-DOCS]
 
   const [signature, setSignature] = useState<DocumentSignatureRow | null>(null);
   const [signatureLoaded, setSignatureLoaded] = useState(false);
@@ -387,6 +392,19 @@ export default function AccountingDocuments({
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-gradient-to-br from-white via-orange-50/30 to-amber-50/20 p-4 sm:p-6 dark:bg-none dark:bg-[#0d1117]">
       <div className="w-full space-y-5">
 
+        {/* [TERMINATION-DOCS] Inner tabs. The queue body below is HIDDEN, never
+            unmounted: the signature-capture Dialog and the four confirm dialogs
+            sit past this wrapper's close, and the Termination panel steers the
+            rep into that same capture dialog. Unmounting the queue would take
+            them with it. The wrapped lines are NOT reindented on purpose —
+            reindenting them would replace a 12-line insertion with a 450-line
+            diff and destroy the paired-marker delete ranges. */}
+        <TerminationDocsTabRow value={docTab} onChange={setDocTab} />
+        {/* A plain block div, never display:contents — `contents` defeats
+            [hidden] outright, and it would also make the outer space-y-5 space
+            THIS wrapper instead of the sections inside it. The inner space-y-5
+            reproduces the current spacing exactly. */}
+        <div hidden={docTab !== 'queue'} className="space-y-5">{/* [TERMINATION-DOCS] */}
         {/* ── Header ──────────────────────────────────────────────────────── */}
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
@@ -839,6 +857,16 @@ export default function AccountingDocuments({
             )}
           </CardContent>
         </Card>
+        </div>{/* [TERMINATION-DOCS] closes the hidden queue wrapper */}
+        {docTab === 'termination' && (
+          <TerminationDocsPanel
+            canEdit={canEdit}
+            sessionEmail={sessionEmail}
+            signature={signature}
+            signatureLoaded={signatureLoaded}
+            onSetUpSignature={openSignatureDialog}
+          />
+        )}{/* [TERMINATION-DOCS] */}
       </div>
 
       {/* ── Detail modal ──────────────────────────────────────────────────── */}

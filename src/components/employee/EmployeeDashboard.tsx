@@ -2,6 +2,8 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resolveFirstName } from '@/lib/name/first-name';
+import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
+import { useEmployeeCachedState } from '@/hooks/useEmployeeCachedState';
 import {
   AlertCircle,
   CalendarDays,
@@ -387,7 +389,12 @@ interface EmployeeSpecialTransferRow {
 }
 
 function EmployeeSpecialTransfers({ employeeEmail }: { employeeEmail: string | null }) {
-  const [rows, setRows] = useState<EmployeeSpecialTransferRow[]>([]);
+  // Seeded from the reload cache so a refresh repaints the strip immediately;
+  // the fetch below still runs unconditionally and overwrites it.
+  const [rows, setRows] = useEmployeeCachedState<EmployeeSpecialTransferRow[]>(
+    EMPLOYEE_CACHE_KEYS.specialTransfers,
+    [],
+  );
   useEffect(() => {
     if (!employeeEmail) return;
     let alive = true;
@@ -429,6 +436,53 @@ function EmployeeSpecialTransfers({ employeeEmail }: { employeeEmail: string | n
   );
 }
 
+/** One row exactly as `GET /api/employee-rate-history` returns it. */
+interface RateHistoryApiRow {
+  regular_rate: string | null;
+  ot_rate: string | null;
+  effective_from: string;
+}
+
+/** A rate change resolved to a local-midnight Date, newest first. */
+interface RateHistoryEntry {
+  effectiveFrom: Date;
+  regularRate: number | null;
+  otRate: number | null;
+}
+
+/**
+ * Parse the rate-history API rows into the shape `resolveDayRate` walks.
+ *
+ * Module-scope and pure so the reload cache can hold the RAW api rows and
+ * re-derive from them. Caching the parsed form instead would be a bug: a `Date`
+ * does not survive `JSON.stringify` — it comes back as a string, and
+ * `row.effectiveFrom.getTime()` in `resolveDayRate` would throw on the first
+ * render after a refresh.
+ *
+ * `effective_from` is read as a LOCAL calendar date (not `new Date(iso)`, which
+ * is UTC and lands on the previous day in Manila), matching how the PAB calendar
+ * builds the cell dates it is compared against.
+ */
+function parseRateHistoryRows(rows: RateHistoryApiRow[]): RateHistoryEntry[] {
+  const parsed: RateHistoryEntry[] = [];
+  for (const r of rows) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(r.effective_from ?? '');
+    if (!m) continue;
+    const num = (s: string | null) => {
+      if (s == null) return null;
+      const v = parseFloat(String(s).replace(/,/g, ''));
+      return Number.isFinite(v) ? v : null;
+    };
+    parsed.push({
+      effectiveFrom: new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])),
+      regularRate: num(r.regular_rate),
+      otRate: num(r.ot_rate),
+    });
+  }
+  parsed.sort((a, b) => b.effectiveFrom.getTime() - a.effectiveFrom.getTime());
+  return parsed;
+}
+
 export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, needsBank = false, needsSkillSet = false, onNavigateToProfile, onNavigateToNotifications, unreadNotifications = 0 }: EmployeeDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
@@ -451,11 +505,13 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   // Rate history for the inline PAB Calendar badge — fetched once per email
   // change so the per-day rate is shown as an emerald-ringed pill on the day
   // a rate change took effect, and as a faint label on every other day.
-  const [rateHistory, setRateHistory] = useState<Array<{
-    effectiveFrom: Date;
-    regularRate: number | null;
-    otRate: number | null;
-  }>>([]);
+  // Cached as the RAW api rows — see parseRateHistoryRows for why the parsed
+  // form (which holds Dates) must never be what goes into storage.
+  const [rateHistoryRows, setRateHistoryRows] = useEmployeeCachedState<RateHistoryApiRow[]>(
+    EMPLOYEE_CACHE_KEYS.rateHistory,
+    [],
+  );
+  const rateHistory = useMemo(() => parseRateHistoryRows(rateHistoryRows), [rateHistoryRows]);
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
   const [dataError, setDataError] = useState<string | null>(null);
   const [sourceFiles, setSourceFiles] = useState<string[]>([]);
@@ -465,14 +521,22 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   const sourceMenuRef = useRef<HTMLDivElement | null>(null);
   // Pay-week files this employee can open a stub for (paid + emailed). Drives the
   // "Open Paystubs" button beside the selector; the modal itself is session-scoped.
-  const [paidPaystubWeeks, setPaidPaystubWeeks] = useState<Set<string>>(new Set());
+  // Cached as the raw week LIST, not as the Set the render wants: a Set does not
+  // survive JSON.stringify (it serialises to `{}`), so caching the derived shape
+  // would silently persist an empty one and quietly disable the Paystubs button
+  // after every reload. Cache what the API returned; derive the Set here.
+  const [paidPaystubWeekList, setPaidPaystubWeekList] = useEmployeeCachedState<string[]>(
+    EMPLOYEE_CACHE_KEYS.paidPaystubWeeks,
+    [],
+  );
+  const paidPaystubWeeks = useMemo(() => new Set(paidPaystubWeekList), [paidPaystubWeekList]);
   const [paystubModalFile, setPaystubModalFile] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     fetch('/api/employee/paystub', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : { weeks: [] }))
       .then((json: { weeks?: string[] }) => {
-        if (!cancelled) setPaidPaystubWeeks(new Set(json.weeks ?? []));
+        if (!cancelled) setPaidPaystubWeekList(json.weeks ?? []);
       })
       .catch(() => {
         /* button just stays disabled if we can't load the paid-week list */
@@ -637,32 +701,17 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   useEffect(() => {
     let cancelled = false;
     if (!email) {
-      setRateHistory([]);
+      setRateHistoryRows([]);
       return;
     }
     fetch(`/api/employee-rate-history?email=${encodeURIComponent(email)}`, { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { rows?: Array<{ regular_rate: string | null; ot_rate: string | null; effective_from: string }> }) => {
+      .then((j: { rows?: RateHistoryApiRow[] }) => {
         if (cancelled) return;
-        const parsed: typeof rateHistory = [];
-        for (const r of j.rows ?? []) {
-          const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(r.effective_from ?? '');
-          if (!m) continue;
-          const num = (s: string | null) => {
-            if (s == null) return null;
-            const v = parseFloat(String(s).replace(/,/g, ''));
-            return Number.isFinite(v) ? v : null;
-          };
-          parsed.push({
-            effectiveFrom: new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])),
-            regularRate: num(r.regular_rate),
-            otRate: num(r.ot_rate),
-          });
-        }
-        parsed.sort((a, b) => b.effectiveFrom.getTime() - a.effectiveFrom.getTime());
-        setRateHistory(parsed);
+        // The raw rows go in; parseRateHistoryRows derives the Dates for render.
+        setRateHistoryRows(j.rows ?? []);
       })
-      .catch(() => { if (!cancelled) setRateHistory([]); });
+      .catch(() => { if (!cancelled) setRateHistoryRows([]); });
     return () => { cancelled = true; };
   }, [email]);
 
@@ -780,12 +829,15 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     }
   };
   /** Master-list profile fields used to prefill the gift-shipping form. */
-  const [profileForShipping, setProfileForShipping] = useState<{
+  // Cached: this feeds the greeting name, the HSL check and the dept key, so
+  // seeding it makes a reload paint a named, correctly-scoped dashboard instead
+  // of a blank one. All four fields are plain JSON, so the shape round-trips.
+  const [profileForShipping, setProfileForShipping] = useEmployeeCachedState<{
     name: string | null;
     personalEmail: string | null;
     workEmail: string | null;
     department: string | null;
-  }>({ name: null, personalEmail: null, workEmail: null, department: null });
+  }>(EMPLOYEE_CACHE_KEYS.masterRow, { name: null, personalEmail: null, workEmail: null, department: null });
   /** PAB + Tech amounts + per-department allowlist (Payment Catalog System Bonuses). */
   const [sysBonusCfg, setSysBonusCfg] = useState<ResolvedSystemBonuses>(() => resolveSystemBonuses([]));
 

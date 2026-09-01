@@ -1,0 +1,72 @@
+-- [TERMINATION-DOCS]
+-- Revert: pair of references/sql/migrate/2026-08-31_termination_docs.sql.
+--
+-- PRECONDITION — run FIRST, or the field write-back becomes unreversible:
+--   node --import tsx scripts/revert-termination-doc-writebacks.mts            -- dry run, predicts exactly
+--   node --import tsx scripts/revert-termination-doc-writebacks.mts --apply    -- reverse
+-- It reads public.termination_documents.field_writebacks, which this script
+-- destroys. audit_log carries a second copy (action
+-- 'documents.termination_writeback') but clearAuditLog() truncates that table,
+-- so it is not a fallback.
+--
+-- 0) PRE-CHECK — must return 0. A non-zero count means records that were NOT
+--    reversed. This is REACHABLE, always, in two steps:
+--
+--    select count(*) from public.termination_documents
+--     where jsonb_array_length(field_writebacks) > 0;
+--
+--    a) After each --apply run, every reversed record LEAVES its array, and each
+--       record that could not be reversed STAYS — annotated in place with a
+--       `revert_skipped` key saying why and what the cell holds instead. So the
+--       count only ever falls, and what remains is exactly what needs a human.
+--       Read them:
+--
+--         select id, work_email, generated_at,
+--                jsonb_pretty(field_writebacks) as unreversed
+--           from public.termination_documents
+--          where jsonb_array_length(field_writebacks) > 0
+--          order by generated_at desc;
+--
+--       A record whose cell no longer equals `after` — the normal outcome when a
+--       master-sheet sync clobbered the cell after generation — can never verify
+--       again, so re-running will not clear it.
+--
+--       A row can also come back UNCHANGED with a "SKIP prune … field_writebacks
+--       CHANGED since this run started" line: a letter was generated with a
+--       write-back while the script was running, so pruning from the array read at
+--       scan start would have destroyed the undo record written in between. That
+--       one IS cleared by simply re-running when generation is quiet — the script
+--       exits non-zero rather than reporting a teardown it did not perform.
+--
+--    b) Once those have been reviewed, retire them deliberately:
+--
+--         node --import tsx scripts/revert-termination-doc-writebacks.mts --accept-skipped
+--         node --import tsx scripts/revert-termination-doc-writebacks.mts --apply --accept-skipped
+--
+--       The first rehearses (dry run is still the default with this flag) and
+--       prints exactly what would be abandoned; the second clears the remainder,
+--       prints every record it is abandoning, and writes the gitignored backup at
+--       references/backups/termination_writeback_revert_<ISO stamp>.json. After it
+--       exits 0 the PRE-CHECK above returns 0 and this script may run.
+--
+--    Do NOT drop the table while the PRE-CHECK is non-zero, and do NOT clear
+--    field_writebacks by hand — the script's backup and printed abandonment list
+--    are the only surviving record of what it gave up.
+
+drop table if exists public.termination_documents cascade;
+
+-- Storage objects are NOT dropped by the above. Remove them separately:
+--   delete from storage.objects
+--    where bucket_id = 'document-requests' and name like 'termination/%';
+-- The `termination/` prefix is exclusive to this feature, so this cannot touch a
+-- document_requests object (those are `<email-segment>/<id>/original.pdf`).
+--
+-- VERIFY
+--   select to_regclass('public.termination_documents');            -- expect NULL
+--   select count(*) from storage.objects
+--    where bucket_id='document-requests' and name like 'termination/%'; -- expect 0
+--
+-- NOT DROPPED, deliberately: the `document-requests` bucket, `document_requests`,
+-- `document_signatures`, and every audit_log row with action
+-- 'documents.termination_generated' or 'documents.termination_writeback' (the
+-- audit trail outlives the feature).
