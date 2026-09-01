@@ -81,6 +81,11 @@ import NewlyHiredPanel from '@/components/manager/NewlyHiredPanel';
 import OrientationAttendancePanel from '@/components/manager/OrientationAttendancePanel';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
+import { MANAGER_CACHE_KEYS } from '@/lib/manager/tab-cache';
+import {
+  useManagerCacheIdentity,
+  useManagerCachedState,
+} from '@/hooks/useManagerCachedState';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import PayrollProcessingLock from '@/components/payroll/PayrollProcessingLock';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
@@ -112,6 +117,120 @@ function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 }
 
+/**
+ * `/api/manager/department-members`, exactly as the route answers it.
+ *
+ * The RAW payload is what the tab cache holds, never the derived
+ * {@link ManagerTeamGate} — see `src/lib/manager/tab-cache.ts`. A gate is a
+ * discriminated union with a `loading` and an `error` arm, and caching one would
+ * mean a reload could paint "loading" or "error" as a settled fact.
+ */
+interface ManagerRosterPayload {
+  rows: EmployeeRow[];
+  scope: 'elevated' | 'department';
+  departments: string[];
+}
+
+/** Stable empty roster, so `teamMembers` keeps its identity across renders. */
+const NO_TEAM_MEMBERS: EmployeeRow[] = [];
+
+/** One `/api/offboarding-queue` row, as the My Team badges read it. */
+interface OffboardOutboxRow {
+  employee_email: string | null;
+  employee_work_email: string | null;
+  employee_personal_email: string | null;
+  status: OffboardingQueueStatus;
+  processed_note: string | null;
+}
+
+/** Most-relevant status wins if a person appears under more than one email. */
+const OFFBOARD_STATUS_RANK: Record<OffboardingQueueStatus, number> = {
+  processing: 6,
+  pending: 5,
+  returned: 4,
+  completed: 3,
+  dismissed: 2,
+  cancelled: 1,
+};
+
+/**
+ * Per-email offboarding badge status, plus the HR note for a returned request.
+ *
+ * Module-scope and pure so the cache-seeded render and the fetch path cannot
+ * produce different badges from the same rows.
+ */
+function deriveOffboardBadges(rows: OffboardOutboxRow[]): {
+  status: Record<string, OffboardingQueueStatus>;
+  note: Record<string, string>;
+} {
+  const status: Record<string, OffboardingQueueStatus> = {};
+  const note: Record<string, string> = {};
+  for (const row of rows) {
+    for (const e of [row.employee_email, row.employee_work_email, row.employee_personal_email]) {
+      const k = normEmail(e ?? '') ?? '';
+      if (!k) continue;
+      const prev = status[k];
+      if (!prev || OFFBOARD_STATUS_RANK[row.status] > OFFBOARD_STATUS_RANK[prev]) {
+        status[k] = row.status;
+        if (row.status === 'returned' && row.processed_note) note[k] = row.processed_note;
+        else delete note[k];
+      }
+    }
+  }
+  return { status, note };
+}
+
+/** One `/api/employee-skill-sets` row — a shared profile, never any pay data. */
+type SkillSetRow = TeamSkillSet & { work_email: string };
+
+/**
+ * Skill sets keyed by normalized work email.
+ *
+ * Module-scope and pure, same contract as the two derivations above.
+ */
+function deriveSkillSetMap(rows: SkillSetRow[]): Record<string, TeamSkillSet> {
+  const map: Record<string, TeamSkillSet> = {};
+  for (const row of rows) {
+    const k = normEmail(row.work_email ?? '') ?? '';
+    if (k) map[k] = row;
+  }
+  return map;
+}
+
+/**
+ * Pending resignations keyed by every email the person is known under.
+ *
+ * Module-scope and pure for the same reason as {@link deriveOffboardBadges}: the
+ * roster floats these people to the top, and the seeded and fetched paths must
+ * float exactly the same set.
+ */
+function derivePendingResignations(
+  rows: ResignationRequestRow[],
+): Record<string, ResignationRequestRow> {
+  const map: Record<string, ResignationRequestRow> = {};
+  for (const row of rows) {
+    if (row.status !== 'pending') continue;
+    for (const e of [row.employee_work_email, row.employee_personal_email, row.employee_email]) {
+      const k = normEmail(e ?? '') ?? '';
+      if (k && !map[k]) map[k] = row;
+    }
+  }
+  return map;
+}
+
+/**
+ * The gate a roster payload implies.
+ *
+ * Module-scope and pure on purpose: it is called once by the live fetch and once
+ * by the cache-seeded render, and if those produced different gates the cached
+ * paint would be a quiet lie rather than a head start.
+ */
+function rosterGateOf(payload: ManagerRosterPayload): ManagerTeamGate {
+  return payload.scope === 'elevated'
+    ? { kind: 'elevated' }
+    : { kind: 'department', departments: payload.departments };
+}
+
 export default function ManagerApp() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -129,6 +248,12 @@ export default function ManagerApp() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  // Point the tab cache at this manager BEFORE any cached state below — or any
+  // tab — reads it. Unlike the Employee shell this component renders its tabs
+  // immediately and resolves `viewerEmail` in the effect below, so the first
+  // render binds `null` and every cached read correctly misses; the render in
+  // which the email arrives is what seeds them. See `useManagerCachedState`.
+  useManagerCacheIdentity(viewerEmail);
 
   // Resolve viewer email from ?email= or sessionStorage.
   useEffect(() => {
@@ -198,16 +323,31 @@ export default function ManagerApp() {
     return () => { document.body.style.overflow = ''; };
   }, [mobileNavOpen]);
 
-  const [pendingApprovals, setPendingApprovals] = useState(0);
+  const [pendingApprovals, setPendingApprovals] = useManagerCachedState(
+    MANAGER_CACHE_KEYS.pendingApprovalCount,
+    0,
+  );
   // All pending requests (newest first) + signed URLs for their evidence images —
   // the Overview gallery hero cycles through them.
-  const [pendingRequests, setPendingRequests] = useState<TimeAdjustmentRow[]>([]);
+  const [pendingRequests, setPendingRequests] = useManagerCachedState<TimeAdjustmentRow[]>(
+    MANAGER_CACHE_KEYS.timeAdjustmentRows,
+    [],
+  );
+  // NOT cached: these are signed storage URLs with an expiry. A cached one paints
+  // a broken image where an uncached one paints nothing, so they are re-fetched
+  // cold every time and the rows above carry the paint on their own.
   const [pendingSignedUrls, setPendingSignedUrls] = useState<Record<string, string>>({});
-  const [requestsLoading, setRequestsLoading] = useState(true);
+  /** Whether the fetch below has answered at least once in this page load. */
+  const [requestsSettled, setRequestsSettled] = useState(false);
+  // Show the skeleton only when there is genuinely nothing to paint. This effect
+  // re-runs on every tab switch to keep the badge live, and the old
+  // `setRequestsLoading(true)` at the top of it re-showed the Overview's
+  // approvals skeleton each time — with the rows already on screen and
+  // unchanged. A cache hit (or a previous settle) now carries the paint through.
+  const requestsLoading = !requestsSettled && pendingRequests.length === 0;
   // Keep the pending-approval badge live — refetch whenever the tab is opened.
   useEffect(() => {
     let cancelled = false;
-    setRequestsLoading(true);
     fetch('/api/manager/time-adjustments', { cache: 'no-store' })
       .then((r) => r.json())
       .then((json: { rows?: TimeAdjustmentRow[]; signedUrls?: Record<string, string> }) => {
@@ -218,26 +358,39 @@ export default function ManagerApp() {
         setPendingApprovals(pendingRows.length);
         setPendingRequests(pendingRows);
         setPendingSignedUrls(json.signedUrls ?? {});
-        setRequestsLoading(false);
+        setRequestsSettled(true);
       })
       .catch(() => {
         if (cancelled) return;
         setPendingApprovals(0);
         setPendingRequests([]);
         setPendingSignedUrls({});
-        setRequestsLoading(false);
+        setRequestsSettled(true);
       });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
-  const [teamMembers, setTeamMembers] = useState<EmployeeRow[]>([]);
-  const [teamGate, setTeamGate] = useState<ManagerTeamGate>({ kind: 'loading' });
+  // The roster payload is the cached unit; `teamMembers` and `teamGate` are both
+  // derived from it, so a reload cannot resurrect a "loading" or "error" gate as
+  // though it were a settled answer.
+  const [roster, setRoster] = useManagerCachedState<ManagerRosterPayload | null>(
+    MANAGER_CACHE_KEYS.teamRoster,
+    null,
+  );
+  const [rosterError, setRosterError] = useState<string | null>(null);
+
+  const teamMembers = useMemo(() => roster?.rows ?? NO_TEAM_MEMBERS, [roster]);
+  const teamGate = useMemo<ManagerTeamGate>(() => {
+    if (rosterError !== null) return { kind: 'error', message: rosterError };
+    if (roster === null) return { kind: 'loading' };
+    return rosterGateOf(roster);
+  }, [roster, rosterError]);
 
   useEffect(() => {
     if (!authChecked) return;
     let cancelled = false;
     (async () => {
-      setTeamGate({ kind: 'loading' });
       try {
         const res = await fetch('/api/manager/department-members', { cache: 'no-store' });
         const json = (await res.json()) as {
@@ -248,33 +401,38 @@ export default function ManagerApp() {
         };
         if (!res.ok) throw new Error(json.error || 'Failed to load team roster');
         if (cancelled) return;
-        setTeamMembers(json.rows ?? []);
-        if (json.scope === 'elevated') {
-          setTeamGate({ kind: 'elevated' });
-          return;
-        }
-        setTeamGate({
-          kind: 'department',
+        setRosterError(null);
+        setRoster({
+          rows: json.rows ?? [],
+          scope: json.scope === 'elevated' ? 'elevated' : 'department',
           departments: json.departments ?? [],
         });
       } catch (e) {
         if (!cancelled) {
-          setTeamMembers([]);
-          setTeamGate({
-            kind: 'error',
-            message: e instanceof Error ? e.message : 'Failed to load team roster',
-          });
+          // Drop the cached roster too. The gate is about to say the roster
+          // could not be loaded, and leaving a previous team on screen under
+          // that banner would imply it is still the server's answer.
+          setRoster(null);
+          setRosterError(e instanceof Error ? e.message : 'Failed to load team roster');
         }
       }
     })();
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authChecked]);
 
   // Live count of pending leave requests across all departments. We re-fetch on tab
   // switch so the badge reflects approvals decided in the panel without a manual reload.
-  const [pendingLeaves, setPendingLeaves] = useState(0);
+  // The COUNT is cached, not the list: `?scope=all` returns every leave request
+  // in the company and this reads one number off it, so caching the rows would
+  // spend the whole sessionStorage budget on data nothing else reads. The cached
+  // value is the state itself, so there is no second derivation to drift.
+  const [pendingLeaves, setPendingLeaves] = useManagerCachedState(
+    MANAGER_CACHE_KEYS.pendingLeaveCount,
+    0,
+  );
   useEffect(() => {
     if (!authChecked) return;
     let cancelled = false;
@@ -671,7 +829,10 @@ function Overview({
   // Resolve the manager's real first name. The email local part alone is
   // unreliable (e.g. "j.delacruz@…" → "J"), so look up the employee record and
   // use the first token of its "First Last" name; fall back to the email.
-  const [realName, setRealName] = useState<string | null>(null);
+  const [realName, setRealName] = useManagerCachedState<string | null>(
+    MANAGER_CACHE_KEYS.viewerName,
+    null,
+  );
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -2831,10 +2992,17 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
   } | null>(null);
   const [tempPauseSaving, setTempPauseSaving] = useState(false);
   const [suspendedKeys, setSuspendedKeys] = useState<Set<string>>(new Set());
-  // The manager's own outbox → per-email offboarding status for the badges,
-  // plus the HR note for a returned request (shown as a tooltip on the badge).
-  const [offboardStatus, setOffboardStatus] = useState<Record<string, OffboardingQueueStatus>>({});
-  const [offboardNote, setOffboardNote] = useState<Record<string, string>>({});
+  // The manager's own outbox. The RAW rows are the cached unit; the per-email
+  // status + note maps are re-derived from them by `deriveOffboardBadges`, which
+  // both the fetch path and the cache-seeded render call.
+  const [offboardQueueRows, setOffboardQueueRows] = useManagerCachedState<OffboardOutboxRow[]>(
+    MANAGER_CACHE_KEYS.offboardingQueue,
+    [],
+  );
+  const { status: offboardStatus, note: offboardNote } = useMemo(
+    () => deriveOffboardBadges(offboardQueueRows),
+    [offboardQueueRows],
+  );
 
   const memberKey = (m: EmployeeRow): string =>
     (m.work_email ?? m.personal_email ?? m.name ?? '').trim().toLowerCase();
@@ -2846,36 +3014,18 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
     return k in callToolsOverrides ? callToolsOverrides[k] : m.calltools_username ?? null;
   };
 
-  // Most-relevant status wins if a person appears under more than one email.
-  const STATUS_RANK: Record<OffboardingQueueStatus, number> = useMemo(
-    () => ({ processing: 6, pending: 5, returned: 4, completed: 3, dismissed: 2, cancelled: 1 }),
-    [],
-  );
   const loadOffboardOutbox = React.useCallback(() => {
     fetch('/api/offboarding-queue', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : { rows: [] }))
-      .then((j: { rows?: Array<{ employee_email: string | null; employee_work_email: string | null; employee_personal_email: string | null; status: OffboardingQueueStatus; processed_note: string | null }> }) => {
-        const map: Record<string, OffboardingQueueStatus> = {};
-        const notes: Record<string, string> = {};
-        for (const row of j.rows ?? []) {
-          for (const e of [row.employee_email, row.employee_work_email, row.employee_personal_email]) {
-            const k = normEmail(e ?? '') ?? '';
-            if (!k) continue;
-            const prev = map[k];
-            if (!prev || STATUS_RANK[row.status] > STATUS_RANK[prev]) {
-              map[k] = row.status;
-              if (row.status === 'returned' && row.processed_note) notes[k] = row.processed_note;
-              else delete notes[k];
-            }
-          }
-        }
-        setOffboardStatus(map);
-        setOffboardNote(notes);
+      .then((j: { rows?: OffboardOutboxRow[] }) => {
+        setOffboardQueueRows(j.rows ?? []);
       })
       .catch(() => {
         /* non-fatal — badges just won't show */
       });
-  }, [STATUS_RANK]);
+    // `setOffboardQueueRows` is a stable useCallback from the cached-state hook.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     loadOffboardOutbox();
   }, [loadOffboardOutbox]);
@@ -2890,7 +3040,16 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
   // A pending resignation floats its person to the TOP of the roster (cards +
   // list) with the person's message shown inline; the manager approves (→ the
   // person is queued for offboarding, reason "resigned") or declines right here.
-  const [resignations, setResignations] = useState<Record<string, ResignationRequestRow>>({});
+  // RAW rows cached; the pending-by-email map is derived by
+  // `derivePendingResignations` on both the seeded and the fetched path.
+  const [resignationRows, setResignationRows] = useManagerCachedState<ResignationRequestRow[]>(
+    MANAGER_CACHE_KEYS.resignations,
+    [],
+  );
+  const resignations = useMemo(
+    () => derivePendingResignations(resignationRows),
+    [resignationRows],
+  );
   const [resignDecision, setResignDecision] = useState<{
     row: ResignationRequestRow;
     action: 'approve' | 'reject';
@@ -2902,19 +3061,13 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
     fetch('/api/resignation-requests?scope=all', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : { rows: [] }))
       .then((j: { rows?: ResignationRequestRow[] }) => {
-        const map: Record<string, ResignationRequestRow> = {};
-        for (const row of j.rows ?? []) {
-          if (row.status !== 'pending') continue;
-          for (const e of [row.employee_work_email, row.employee_personal_email, row.employee_email]) {
-            const k = normEmail(e ?? '') ?? '';
-            if (k && !map[k]) map[k] = row;
-          }
-        }
-        setResignations(map);
+        setResignationRows(j.rows ?? []);
       })
       .catch(() => {
         /* non-fatal — the roster just won't float resigning people */
       });
+    // `setResignationRows` is a stable useCallback from the cached-state hook.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     loadResignations();
@@ -3051,7 +3204,13 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
   // bulk-fetched so the roster cards and the member dialog can show the same
   // shared-profile data the employee My Team view renders. Keyed by normalized
   // work email.
-  const [skillSets, setSkillSets] = useState<Record<string, TeamSkillSet>>({});
+  // RAW rows cached; the by-email map is derived by `deriveSkillSetMap` on both
+  // the seeded and the fetched path.
+  const [skillSetRows, setSkillSetRows] = useManagerCachedState<SkillSetRow[]>(
+    MANAGER_CACHE_KEYS.skillSets,
+    [],
+  );
+  const skillSets = useMemo(() => deriveSkillSetMap(skillSetRows), [skillSetRows]);
   const teamWorkEmails = useMemo(
     () => members.map((m) => normEmail(m.work_email ?? '') ?? '').filter(Boolean),
     [members],
@@ -3059,7 +3218,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
   const teamWorkEmailsKey = teamWorkEmails.join(',');
   useEffect(() => {
     if (!teamWorkEmailsKey) {
-      setSkillSets({});
+      setSkillSetRows([]);
       return;
     }
     let cancelled = false;
@@ -3067,14 +3226,9 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
       cache: 'no-store',
     })
       .then((r) => r.json())
-      .then((j: { rows?: (TeamSkillSet & { work_email: string })[] }) => {
+      .then((j: { rows?: SkillSetRow[] }) => {
         if (cancelled) return;
-        const map: Record<string, TeamSkillSet> = {};
-        for (const row of j.rows ?? []) {
-          const k = normEmail(row.work_email ?? '') ?? '';
-          if (k) map[k] = row;
-        }
-        setSkillSets(map);
+        setSkillSetRows(j.rows ?? []);
       })
       .catch(() => {
         /* non-fatal — cards just render without skill-set detail */
@@ -3082,6 +3236,8 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
     return () => {
       cancelled = true;
     };
+    // `setSkillSetRows` is a stable useCallback from the cached-state hook.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teamWorkEmailsKey]);
 
   // Last-seen timestamps so offline members read "Last seen 5m ago" rather than
@@ -4294,18 +4450,30 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
         onMemberNotesSaved={(notes) => {
           const w = normEmail(selectedMember?.work_email ?? '');
           if (!w) return;
-          setSkillSets((prev) => ({
-            ...prev,
-            [w]: {
-              role_title: prev[w]?.role_title ?? '',
-              currently_working_on: prev[w]?.currently_working_on ?? '',
-              skills: prev[w]?.skills ?? '',
-              strengths: prev[w]?.strengths ?? '',
-              member_notes: notes,
-              projects: prev[w]?.projects ?? [],
-              current_projects: prev[w]?.current_projects ?? [],
-            },
-          }));
+          // The saved note is applied to the cached ROW, not to the derived map —
+          // the map is rebuilt from the rows, so writing it there would be
+          // overwritten on the next render and would never reach the cache.
+          setSkillSetRows((prev) => {
+            const idx = prev.findIndex((r) => (normEmail(r.work_email ?? '') ?? '') === w);
+            if (idx === -1) {
+              return [
+                ...prev,
+                {
+                  work_email: w,
+                  role_title: '',
+                  currently_working_on: '',
+                  skills: '',
+                  strengths: '',
+                  member_notes: notes,
+                  projects: [],
+                  current_projects: [],
+                },
+              ];
+            }
+            const next = prev.slice();
+            next[idx] = { ...next[idx], member_notes: notes };
+            return next;
+          });
         }}
       />
 

@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { MANAGER_CACHE_KEYS } from '@/lib/manager/tab-cache';
+import { useManagerCachedState } from '@/hooks/useManagerCachedState';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarDays,
@@ -152,6 +154,92 @@ function applierName(email: string | null): string {
   return email.split('@')[0];
 }
 
+/** One `/api/bonus-catalog-applied?summary=1` row. */
+interface CatalogSummaryRow {
+  department: string;
+  period_start: string;
+  period_end: string;
+  employee_count: number;
+  total_bonus: number;
+  applied_by: string | null;
+  applied_at: string | null;
+}
+
+/** One `/api/hsl-bonus/period-status` row — the shared status table. */
+interface PeriodStatusRow {
+  department: string;
+  period_start: string;
+  status: BonusStatus;
+  locked_by: string | null;
+  locked_at: string | null;
+  updated_at: string | null;
+}
+
+/**
+ * The three summary responses behind this tab, exactly as the routes answer them.
+ *
+ * The RAW payloads are what the tab cache holds, never the derived
+ * `UnifiedRow[]` — see `src/lib/manager/tab-cache.ts`.
+ */
+interface BonusHistoryPayloads {
+  hsl: { rows?: HslSummaryRow[]; error?: string } | null;
+  catalog: { rows?: CatalogSummaryRow[]; error?: string } | null;
+  status: { rows?: PeriodStatusRow[] } | null;
+}
+
+const EMPTY_BONUS_HISTORY_PAYLOADS: BonusHistoryPayloads = {
+  hsl: null,
+  catalog: null,
+  status: null,
+};
+
+/**
+ * Merge the HSL and catalog summaries with the shared status table.
+ *
+ * Module-scope and pure on purpose: it is called once by the live fetch and once
+ * by the cache-seeded render, and if those produced different statuses the
+ * cached paint would be a quiet lie rather than a head start.
+ */
+function buildBonusHistoryRows(payloads: BonusHistoryPayloads): UnifiedRow[] {
+  // Status map (shared table) keyed by `${dept}::${period_start}`.
+  const statusMap = new Map<string, Omit<PeriodStatusRow, 'department' | 'period_start'>>();
+  for (const r of payloads.status?.rows ?? []) {
+    statusMap.set(`${r.department}::${r.period_start}`, {
+      status: r.status,
+      locked_by: r.locked_by,
+      locked_at: r.locked_at,
+      updated_at: r.updated_at,
+    });
+  }
+
+  const out: UnifiedRow[] = [];
+  for (const r of payloads.hsl?.rows ?? []) {
+    out.push({ kind: 'hsl', ...r, applied_by: null, applied_at: null });
+  }
+  for (const r of payloads.catalog?.rows ?? []) {
+    const st = statusMap.get(`${r.department}::${r.period_start}`);
+    out.push({
+      kind: 'catalog',
+      department: r.department,
+      period_type: 'weekly',
+      period_start: r.period_start,
+      period_end: r.period_end,
+      status: st?.status ?? 'draft',
+      updated_at: st?.updated_at ?? null,
+      locked_by: st?.locked_by ?? null,
+      locked_at: st?.locked_at ?? null,
+      employee_count: r.employee_count,
+      scored_count: r.employee_count,
+      total_bonus: r.total_bonus,
+      applied_by: r.applied_by ?? null,
+      applied_at: r.applied_at ?? null,
+    });
+  }
+
+  out.sort((a, b) => (a.period_start < b.period_start ? 1 : a.period_start > b.period_start ? -1 : 0));
+  return out;
+}
+
 export default function ManagerBonusHistory({
   viewerEmail: _viewerEmail,
   managedDepts,
@@ -179,8 +267,18 @@ export default function ManagerBonusHistory({
     return Array.from(keys);
   }, [managedDepts, isElevated]);
 
-  const [rows, setRows] = useState<UnifiedRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  // RAW payloads are the cached unit; `rows` is derived from them. This tab is
+  // unmounted by `ManagerApp` on every switch, so without this its three
+  // summary fetches re-ran on every visit.
+  const [payloads, setPayloads] = useManagerCachedState<BonusHistoryPayloads>(
+    MANAGER_CACHE_KEYS.bonusHistory,
+    EMPTY_BONUS_HISTORY_PAYLOADS,
+  );
+  const rows = useMemo(() => buildBonusHistoryRows(payloads), [payloads]);
+  /** Whether the load below has answered at least once in this page load. */
+  const [settled, setSettled] = useState(false);
+  // The spinner is for having nothing to show, not for a request in flight.
+  const loading = !settled && rows.length === 0;
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -198,17 +296,13 @@ export default function ManagerBonusHistory({
   const fetchSummary = useMemo(() => {
     return async (showSpinner: boolean) => {
       if (visibleHslDepts.length === 0 && visibleCatalogDepts.length === 0) {
-        setRows([]);
-        setLoading(false);
+        setPayloads(EMPTY_BONUS_HISTORY_PAYLOADS);
+        setSettled(true);
         return;
       }
-      if (showSpinner) setLoading(true);
-      else setRefreshing(true);
+      if (!showSpinner) setRefreshing(true);
       setError(null);
       try {
-        // Status map (shared table) keyed by `${dept}::${period_start}`.
-        const statusMap = new Map<string, { status: BonusStatus; locked_by: string | null; locked_at: string | null; updated_at: string | null }>();
-
         const [hslRes, catRes, statusRes] = await Promise.all([
           visibleHslDepts.length > 0
             ? fetch(`/api/hsl-bonus/period-summary?depts=${visibleHslDepts.join(',')}`, { cache: 'no-store' })
@@ -219,72 +313,27 @@ export default function ManagerBonusHistory({
           fetch('/api/hsl-bonus/period-status', { cache: 'no-store' }),
         ]);
 
-        if (statusRes) {
-          const sj = (await statusRes.json()) as {
-            rows?: { department: string; period_start: string; status: BonusStatus; locked_by: string | null; locked_at: string | null; updated_at: string | null }[];
-          };
-          for (const r of sj.rows ?? []) {
-            statusMap.set(`${r.department}::${r.period_start}`, {
-              status: r.status,
-              locked_by: r.locked_by,
-              locked_at: r.locked_at,
-              updated_at: r.updated_at,
-            });
-          }
-        }
-
-        const out: UnifiedRow[] = [];
-
-        if (hslRes) {
-          const hj = (await hslRes.json()) as { rows?: HslSummaryRow[]; error?: string };
-          if (hj.error) setError(hj.error);
-          for (const r of hj.rows ?? []) out.push({ kind: 'hsl', ...r, applied_by: null, applied_at: null });
-        }
-
-        if (catRes) {
-          const cj = (await catRes.json()) as {
-            rows?: {
-              department: string;
-              period_start: string;
-              period_end: string;
-              employee_count: number;
-              total_bonus: number;
-              applied_by: string | null;
-              applied_at: string | null;
-            }[];
-            error?: string;
-          };
-          if (cj.error) setError(cj.error);
-          for (const r of cj.rows ?? []) {
-            const st = statusMap.get(`${r.department}::${r.period_start}`);
-            out.push({
-              kind: 'catalog',
-              department: r.department,
-              period_type: 'weekly',
-              period_start: r.period_start,
-              period_end: r.period_end,
-              status: st?.status ?? 'draft',
-              updated_at: st?.updated_at ?? null,
-              locked_by: st?.locked_by ?? null,
-              locked_at: st?.locked_at ?? null,
-              employee_count: r.employee_count,
-              scored_count: r.employee_count,
-              total_bonus: r.total_bonus,
-              applied_by: r.applied_by ?? null,
-              applied_at: r.applied_at ?? null,
-            });
-          }
-        }
-
-        out.sort((a, b) => (a.period_start < b.period_start ? 1 : a.period_start > b.period_start ? -1 : 0));
-        setRows(out);
+        // RAW in, RAW cached. `buildBonusHistoryRows` turns these into the
+        // table on both the seeded and the fetched path, so a cached paint can
+        // never disagree with a live one about a period's status.
+        const next: BonusHistoryPayloads = {
+          hsl: hslRes ? ((await hslRes.json()) as BonusHistoryPayloads['hsl']) : null,
+          catalog: catRes ? ((await catRes.json()) as BonusHistoryPayloads['catalog']) : null,
+          status: statusRes ? ((await statusRes.json()) as BonusHistoryPayloads['status']) : null,
+        };
+        const reported = next.hsl?.error || next.catalog?.error || null;
+        if (reported) setError(reported);
+        setPayloads(next);
+        setSettled(true);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load history');
+        setSettled(true);
       } finally {
-        if (showSpinner) setLoading(false);
-        else setRefreshing(false);
+        if (!showSpinner) setRefreshing(false);
       }
     };
+    // `setPayloads` is a stable useCallback from the cached-state hook.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleHslDepts, visibleCatalogDepts]);
 
   useEffect(() => {

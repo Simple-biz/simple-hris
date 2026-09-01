@@ -4,6 +4,7 @@ import React from 'react';
 import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
 import { clearAllKpiCache } from '@/lib/manager/kpi-cache';
+import { clearAllManagerCache } from '@/lib/manager/tab-cache';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
   Bell,
@@ -269,10 +270,12 @@ export default function ManagerSidebar({
               /* ignore */
             }
             // The KPI Calculator's tab cache holds this manager's scored bonus
-            // rows. It must not still be on disk when the next person signs in
-            // on this tab — bindKpiCacheIdentity would purge it anyway, but only
-            // once they get far enough to resolve an identity.
+            // rows, and the shell cache holds their roster and approval queue.
+            // Neither may still be on disk when the next person signs in on this
+            // tab — the bind-time purge would clear them anyway, but only once
+            // that person gets far enough to resolve an identity.
             clearAllKpiCache();
+            clearAllManagerCache();
             void signOut({ callbackUrl: '/login' });
           }}
         >

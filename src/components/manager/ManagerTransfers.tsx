@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { MANAGER_CACHE_KEYS } from '@/lib/manager/tab-cache';
+import { useManagerCachedState } from '@/hooks/useManagerCachedState';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertTriangle,
@@ -421,11 +423,36 @@ function Paginator({
  *     decisions aren't lost once acted on.
  * "Request transfer in" (the pull-in picker) lives in the header, always available.
  */
+/**
+ * The three transfer queues, as one cached unit.
+ *
+ * They are fetched together and are only meaningful together — a decided request
+ * leaves `incoming` and lands in `done` in the same load, so caching them apart
+ * would let a reload paint a request in both queues at once.
+ */
+interface TransferScopes {
+  incoming: DepartmentTransferRequestRow[];
+  outgoing: DepartmentTransferRequestRow[];
+  done: DepartmentTransferRequestRow[];
+}
+
+/** Stable empty value, so destructuring it does not mint new arrays per render. */
+const EMPTY_TRANSFER_SCOPES: TransferScopes = { incoming: [], outgoing: [], done: [] };
+
 export default function ManagerTransfers({ myDepartments, canInitiate }: Props) {
-  const [incoming, setIncoming] = useState<DepartmentTransferRequestRow[]>([]);
-  const [outgoing, setOutgoing] = useState<DepartmentTransferRequestRow[]>([]);
-  const [done, setDone] = useState<DepartmentTransferRequestRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  // The three scopes are one cached unit — they are fetched together and are
+  // only ever meaningful together (a request leaves `incoming` and appears in
+  // `done` in the same load). `ManagerApp` unmounts this tab on every switch,
+  // so without this the queue re-fetched three times on every visit.
+  const [scopes, setScopes] = useManagerCachedState<TransferScopes>(
+    MANAGER_CACHE_KEYS.transfers,
+    EMPTY_TRANSFER_SCOPES,
+  );
+  const { incoming, outgoing, done } = scopes;
+  /** Whether the load below has answered at least once in this page load. */
+  const [settled, setSettled] = useState(false);
+  /** A silent refresh must never re-show the spinner; nor may a cached paint. */
+  const [refreshing, setRefreshing] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [declineFor, setDeclineFor] = useState<string | null>(null);
@@ -457,7 +484,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
   // update the three lists in place without flashing the full-page spinner, so
   // a co-manager's or admin's action shows up live and stale cards can't linger.
   const load = useCallback((opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
+    if (!opts?.silent) setRefreshing(true);
     Promise.all([
       fetch('/api/department-transfers?scope=incoming', { cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : { rows: [] }))
@@ -475,15 +502,25 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
           { rows?: DepartmentTransferRequestRow[] },
           { rows?: DepartmentTransferRequestRow[] },
         ]) => {
-          setIncoming(inc.rows ?? []);
-          setOutgoing(out.rows ?? []);
-          setDone(dn.rows ?? []);
+          setScopes({
+            incoming: inc.rows ?? [],
+            outgoing: out.rows ?? [],
+            done: dn.rows ?? [],
+          });
+          setSettled(true);
         },
       )
       .finally(() => {
-        if (!opts?.silent) setLoading(false);
+        if (!opts?.silent) setRefreshing(false);
       });
+    // `setScopes` is a stable useCallback from the cached-state hook.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The full-page spinner is for having nothing to show, not for having a
+  // request in flight — a cached paint (or a previous settle) skips it.
+  const loading =
+    !settled && incoming.length === 0 && outgoing.length === 0 && done.length === 0;
 
   useEffect(() => {
     load();
@@ -1214,7 +1251,7 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
               onClick={() => load()}
               className="h-8 gap-1.5 border-blue-200 text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300"
             >
-              <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+              <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
               <span className="hidden sm:inline">Refresh</span>
             </Button>
             {canRequest && (
