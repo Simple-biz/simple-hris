@@ -255,6 +255,21 @@ so each team has four custom properties in `src/index.css`
 one `--team*` alias set by `teamVars()`. `-solid`/`-on` are a separate pair from
 the identity hue because the identity hue does not carry label text at 4.5:1.
 
+### First-load skeleton
+
+`KpiCalculatorLoading`'s `hsl` variant mirrors the same split: several branches
+paint as a list of rows, a single branch paints as the scoring block. It also
+takes `teamSplit`, set when the one visible branch scores by sub-team, and then
+paints the SSD workspace shape (status strip, team card beside the rules panel,
+full-width roster) instead of a plain roster.
+
+That flag is not cosmetic. The SSD workspace is roughly twice the height of a
+plain roster, so the generic placeholder would drop the page several hundred
+pixels the moment data landed — and the single-branch path is exactly what the
+Payroll Readiness modal loads. The view switch is drawn as real chrome rather
+than a shimmer block, because it has nothing to load and is usable the instant
+the calculator mounts.
+
 **Not verified in the real app:** the overlay and the redesigned surface were
 checked against Playwright-stubbed API routes at 390 / 820 / 920 / 1180 / 1440px
 in both themes, not against production data or a real manager session.

@@ -1409,6 +1409,13 @@ export default function HslBonusCalculator({
               : 'My Departments'
         }
         cards={visibleDepts.length}
+        // A lone sub-team-scored branch (SSD) renders a workspace about twice
+        // the height of a plain roster; the placeholder has to reserve that or
+        // the page drops several hundred pixels when the data lands.
+        teamSplit={
+          visibleDepts.length === 1 &&
+          HSL_DEPTS[visibleDepts[0]!].rules[0]?.type === 'team_split'
+        }
       />
     );
   }
