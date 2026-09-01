@@ -1301,18 +1301,28 @@ export default function TerminationDocsPanel({
                     <X className="h-3.5 w-3.5" />
                   </button>
                 )}
-                {/* Scan line — a single moving segment along the bottom edge
-                    while a request is in flight. Transform-only; absent under
-                    reduced motion (the readout TEXT is the reduced-motion
-                    signal). */}
-                {searching && !reduce && (
-                  <motion.span
-                    aria-hidden
-                    className="absolute bottom-0 left-0 h-[2px] w-1/3 rounded-full bg-orange-500"
-                    animate={{ x: ['-100%', '300%'] }}
-                    transition={{ repeat: Infinity, duration: 1.2, ease: 'linear' }}
-                  />
-                )}
+                {/* Scan line — a gradient comet along the bottom edge while a
+                    request is in flight. It fades in and out rather than
+                    snapping, its soft edges hide the loop restart (which
+                    happens off-screen anyway), and easeInOut lets it glide
+                    through the visible middle. Transform/opacity only; absent
+                    under reduced motion (the readout TEXT is the
+                    reduced-motion signal). */}
+                <AnimatePresence>
+                  {searching && !reduce && (
+                    <motion.span
+                      aria-hidden
+                      className="absolute bottom-0 left-0 h-[2px] w-1/2 bg-gradient-to-r from-transparent via-orange-500 to-transparent"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1, x: ['-100%', '300%'] }}
+                      exit={{ opacity: 0 }}
+                      transition={{
+                        opacity: { duration: 0.25, ease: 'easeOut' },
+                        x: { repeat: Infinity, duration: 1.6, ease: 'easeInOut' },
+                      }}
+                    />
+                  )}
+                </AnimatePresence>
               </div>
               <SearchConsoleReadout
                 loading={searching}
@@ -1399,8 +1409,19 @@ export default function TerminationDocsPanel({
                 </p>
               </div>
             ) : candidates.length === 0 ? (
-              /* No-results state, distinct from the prompt above (ui-standards §12.2). */
-              <div className="flex flex-col items-center gap-2 py-10 text-center">
+              /* No-results state, distinct from the prompt above (ui-standards §12.2).
+                 Keyed by the searched term so each answered query pops in. */
+              <motion.div
+                key={searchedFor ?? 'no-match'}
+                initial={reduce ? false : { opacity: 0, y: 8, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={
+                  reduce
+                    ? { duration: 0 }
+                    : { type: 'spring', stiffness: 420, damping: 30, mass: 0.7 }
+                }
+                className="flex flex-col items-center gap-2 py-10 text-center"
+              >
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-zinc-400 to-zinc-500 text-white shadow-md">
                   <SearchX className="h-6 w-6" />
                 </div>
@@ -1426,9 +1447,18 @@ export default function TerminationDocsPanel({
                 >
                   Clear search
                 </Button>
-              </div>
+              </motion.div>
             ) : (
-              <div className="space-y-2">
+              /* Keyed by the SEARCHED term, so a fresh result set remounts and
+                 replays the pop-in — entrance only, exit-free, per the house
+                 no-exit-churn rule on list panes. */
+              <motion.div
+                key={searchedFor ?? 'results'}
+                initial={reduce ? false : { opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                className="space-y-2"
+              >
                 <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-orange-700 dark:text-orange-300">
                   {searchTruncated
                     ? `${candidates.length} of ${searchMatched} matches — pick one`
@@ -1466,8 +1496,23 @@ export default function TerminationDocsPanel({
                   const usable = view.selectable;
                   const isSelected = !!workEmail && workEmail === selected;
                   return (
-                    <div
+                    <motion.div
                       key={workEmail ?? `${c.matchedColumn}:${c.personalEmail ?? c.name ?? i}`}
+                      initial={reduce ? false : { opacity: 0, y: 10, scale: 0.97 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={
+                        reduce
+                          ? { duration: 0 }
+                          : {
+                              type: 'spring',
+                              stiffness: 480,
+                              damping: 30,
+                              mass: 0.7,
+                              // Staggered, but capped so a full page of matches
+                              // never keeps the last row waiting.
+                              delay: Math.min(i * 0.05, 0.35),
+                            }
+                      }
                       className={cn(
                         'rounded-xl border p-3 transition-colors',
                         usable
@@ -1560,10 +1605,10 @@ export default function TerminationDocsPanel({
                           <span>{refusal}</span>
                         </p>
                       )}
-                    </div>
+                    </motion.div>
                   );
                 })}
-              </div>
+              </motion.div>
             )}
           </CardContent>
         </Card>
