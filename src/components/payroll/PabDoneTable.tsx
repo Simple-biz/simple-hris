@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { AlertTriangle, Check, ChevronLeft, ChevronRight, ClipboardCheck, EyeOff, Search } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -65,6 +65,7 @@ export default function PabDoneTable({
   const [decisionFilter, setDecisionFilter] = useState('');
   const [deptFilter, setDeptFilter] = useState('');
   const [page, setPage] = useState(1);
+  const reduceMotion = useReducedMotion() ?? false;
 
   const deptOptions = useMemo(() => {
     const byKey = new Map<string, string>();
@@ -238,7 +239,9 @@ export default function PabDoneTable({
               <motion.tr
                 key={row.email}
                 className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40"
-                exit={{ opacity: 0, x: 48, transition: { duration: 0.28, ease: 'easeOut' } }}
+                exit={reduceMotion
+                  ? { opacity: 0, transition: { duration: 0 } }
+                  : { opacity: 0, x: 48, transition: { duration: 0.28, ease: 'easeOut' } }}
               >
                 <td className="px-4 py-2.5">
                   <span className="font-mono text-[11px] text-zinc-600 dark:text-zinc-400">

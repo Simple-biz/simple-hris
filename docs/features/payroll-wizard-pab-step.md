@@ -142,6 +142,13 @@ BOTH chips (days forgiven, then ignored); the exclusion is what pays (₱0). Fil
 never-strand/never-hide rules as the review tab. Its empty state is honest by nature: an empty
 receipts list claims only that nobody has acted yet, so it carries no all-clear hazard.
 
+Switching tabs is animated as state, not decoration (product motion register): the active pill
+**slides** between tabs (shared `layoutId`, the step rail's own idiom) and the panes crossfade
+directionally — each pane enters from and exits toward its own tab's side (review left, done
+right), exit 120ms / enter 180ms on ease-out-quint, transform + opacity only,
+`mode="wait"` so the two tables never overlap. Every motion on this step (pill, pane swap, row
+exits, the rail tab's entrance and ping) collapses to instant under `prefers-reduced-motion`.
+
 ## Realtime — several accountants work this step at once
 
 Decisions converge every open wizard live (Kane 2026-09-01: "multiple persons are working on

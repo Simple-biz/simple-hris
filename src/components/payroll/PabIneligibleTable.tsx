@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight, EyeOff, Loader2, ShieldCheck, Search } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -155,6 +155,7 @@ export default function PabIneligibleTable({
   const [deptFilter, setDeptFilter] = useState('');
   const [bandFilter, setBandFilter] = useState('');
   const [page, setPage] = useState(1);
+  const reduceMotion = useReducedMotion() ?? false;
 
   // Departments present in THESE rows. Built off the unfiltered list so the
   // options cannot shift under the pointer while another filter is being used.
@@ -391,8 +392,10 @@ export default function PabIneligibleTable({
                   className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40"
                   // Exit only: a decided row slides out to the right and fades —
                   // the visible receipt that the click landed. Entrances stay off
-                  // (see AnimatePresence above).
-                  exit={{ opacity: 0, x: 48, transition: { duration: 0.28, ease: 'easeOut' } }}
+                  // (see AnimatePresence above); instant under reduced motion.
+                  exit={reduceMotion
+                    ? { opacity: 0, transition: { duration: 0 } }
+                    : { opacity: 0, x: 48, transition: { duration: 0.28, ease: 'easeOut' } }}
                 >
                   <td className="px-4 py-2.5">
                     {/* Blank when the ACTIVE roster has no row for them. Never

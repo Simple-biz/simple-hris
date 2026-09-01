@@ -17637,7 +17637,10 @@ export default function PayrollWizard({
 
             {/* Review | Done. Review is the exceptions list; Done is the receipts —
                 both decisions, live across every open wizard, so two accountants
-                working the list see each other's calls instead of repeating them. */}
+                working the list see each other's calls instead of repeating them.
+                The active pill SLIDES between tabs (shared layoutId — the step
+                rail's own idiom) instead of teleporting; instant under reduced
+                motion. */}
             <div className="flex w-fit items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-100/80 p-1 dark:border-zinc-800 dark:bg-zinc-900/40" role="tablist">
               {([
                 { key: 'review' as const, label: 'Needs review', count: pabIneligibleRows.length },
@@ -17649,22 +17652,32 @@ export default function PayrollWizard({
                   role="tab"
                   aria-selected={pabStepSection === tab.key}
                   className={cn(
-                    'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                    'relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-200',
                     pabStepSection === tab.key
-                      ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-white'
+                      ? 'text-zinc-900 dark:text-white'
                       : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
                   )}
                   onClick={() => setPabStepSection(tab.key)}
                 >
-                  {tab.key === 'done' ? <ClipboardCheck className="h-3.5 w-3.5" /> : <CalendarCheck className="h-3.5 w-3.5" />}
-                  {tab.label}
-                  <span className={cn(
-                    'rounded-full px-1.5 py-px font-mono text-[10px] font-bold',
-                    tab.key === 'review'
-                      ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300'
-                      : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300',
-                  )}>
-                    {tab.count.toLocaleString()}
+                  {pabStepSection === tab.key && (
+                    <motion.span
+                      layoutId="pab-step-section-pill"
+                      aria-hidden
+                      className="absolute inset-0 rounded-md bg-white shadow-sm dark:bg-zinc-800"
+                      transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 500, damping: 38 }}
+                    />
+                  )}
+                  <span className="relative z-10 flex items-center gap-1.5">
+                    {tab.key === 'done' ? <ClipboardCheck className="h-3.5 w-3.5" /> : <CalendarCheck className="h-3.5 w-3.5" />}
+                    {tab.label}
+                    <span className={cn(
+                      'rounded-full px-1.5 py-px font-mono text-[10px] font-bold',
+                      tab.key === 'review'
+                        ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300'
+                        : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300',
+                    )}>
+                      {tab.count.toLocaleString()}
+                    </span>
                   </span>
                 </button>
               ))}
@@ -17672,31 +17685,61 @@ export default function PayrollWizard({
 
             <Card>
               <CardContent className="p-4">
-                {pabStepSection === 'review' ? (
-                  <PabIneligibleTable
-                    rows={pabIneligibleRows}
-                    deptNames={catalogDeptNames}
-                    monthLabel={monthLabelPab}
-                    onOpenCalendar={setPabCalendarModalEmail}
-                    onForgiveMonth={forgiveMonth}
-                    forgivingEmail={pabForgivingEmail}
-                    onIgnoreMonth={ignoreMonth}
-                    ignoringEmail={pabIgnoringEmail}
-                    readOnly={isReplay}
-                    // `pabMergeLoaded` is the one signal that the month's hours are
-                    // actually in. Without it an empty list renders as "nobody is
-                    // ineligible", which is the all-clear that hides the people this
-                    // step exists to surface.
-                    loading={!pabMergeLoaded}
-                    evaluatedCount={effectivePabStatus.size}
-                  />
-                ) : (
-                  <PabDoneTable
-                    rows={pabDoneRows}
-                    deptNames={catalogDeptNames}
-                    monthLabel={monthLabelPab}
-                  />
-                )}
+                {/* Directional crossfade on the swap: each pane lives on its tab's
+                    side (review left, done right), so it enters from and exits
+                    toward its own edge — reads as one strip sliding under the
+                    pill, both directions. mode="wait" keeps the two tables from
+                    overlapping mid-swap; exit runs faster than enter (120/180ms,
+                    ease-out-quint) per the product motion register. Transform +
+                    opacity only; instant under reduced motion. */}
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={pabStepSection}
+                    initial={reduceMotion ? false : { opacity: 0, x: pabStepSection === 'done' ? 16 : -16 }}
+                    animate={{
+                      opacity: 1,
+                      x: 0,
+                      transition: reduceMotion
+                        ? { duration: 0 }
+                        : { duration: 0.18, ease: [0.22, 1, 0.36, 1] },
+                    }}
+                    exit={{
+                      opacity: 0,
+                      ...(reduceMotion
+                        ? { transition: { duration: 0 } }
+                        : {
+                            x: pabStepSection === 'done' ? 16 : -16,
+                            transition: { duration: 0.12, ease: [0.22, 1, 0.36, 1] },
+                          }),
+                    }}
+                  >
+                    {pabStepSection === 'review' ? (
+                      <PabIneligibleTable
+                        rows={pabIneligibleRows}
+                        deptNames={catalogDeptNames}
+                        monthLabel={monthLabelPab}
+                        onOpenCalendar={setPabCalendarModalEmail}
+                        onForgiveMonth={forgiveMonth}
+                        forgivingEmail={pabForgivingEmail}
+                        onIgnoreMonth={ignoreMonth}
+                        ignoringEmail={pabIgnoringEmail}
+                        readOnly={isReplay}
+                        // `pabMergeLoaded` is the one signal that the month's hours are
+                        // actually in. Without it an empty list renders as "nobody is
+                        // ineligible", which is the all-clear that hides the people this
+                        // step exists to surface.
+                        loading={!pabMergeLoaded}
+                        evaluatedCount={effectivePabStatus.size}
+                      />
+                    ) : (
+                      <PabDoneTable
+                        rows={pabDoneRows}
+                        deptNames={catalogDeptNames}
+                        monthLabel={monthLabelPab}
+                      />
+                    )}
+                  </motion.div>
+                </AnimatePresence>
               </CardContent>
             </Card>
           </div>
@@ -19938,8 +19981,9 @@ export default function PayrollWizard({
             key={step.id}
             className="relative shrink-0"
             // `false` disables the mount animation entirely for the other eight
-            // tabs — only the PAB tab announces itself.
-            initial={isPabPayoutTab ? { opacity: 0, scale: 0.8, y: -10 } : false}
+            // tabs — only the PAB tab announces itself, and only for users who
+            // haven't asked for reduced motion.
+            initial={isPabPayoutTab && !reduceMotion ? { opacity: 0, scale: 0.8, y: -10 } : false}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             transition={{ type: 'spring', stiffness: 260, damping: 20, delay: isPabPayoutTab ? 0.35 : 0 }}
           >
@@ -19985,7 +20029,7 @@ export default function PayrollWizard({
                 the announcement outlives the entrance animation. */}
             {isPabPayoutTab && (
               <span className="pointer-events-none absolute -right-1 -top-1 flex h-3 w-3" aria-hidden>
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 motion-safe:animate-ping" />
                 <span className="relative inline-flex h-3 w-3 rounded-full border border-white bg-emerald-500 dark:border-zinc-950" />
               </span>
             )}
