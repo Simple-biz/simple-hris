@@ -702,9 +702,9 @@ import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-08-28';
-export const AUDIT_RANGE = 'no code range — two EXISTING rows closed on confirmation + a live read-only re-measurement';
-export const AUDIT_COMMITS = 2;
+export const PASS_DATE = '2026-09-01';
+export const AUDIT_RANGE = 'no code range — Sprint 27 → Sprint 28 rollover, sprint moves only';
+export const AUDIT_COMMITS = 0;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -731,34 +731,34 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // ── PASS 19 · 2026-08-28 · two EXISTING rows close, 4 SP ───────────────────────────────────────
-  // Kane: "Import Orientation Email leadgen mark it as Done, Repair drifted master sheet is already
-  // done as well". Both rows already exist on the board at done:false, so NOTHING is created here —
-  // the corrector writes Status, Actual SP and Completed Date, and the plan flags flip only so
-  // selfcheck agrees and a future re-create would be right.
+  // ── PASS 20 · 2026-09-01 · Sprint 27 → 28 rollover — GROOMING ONLY, ROWS is deliberately EMPTY ──
+  // Kane: "All pending or not yet scored Sprint tasks lets move them to Sprint 28 … all pending with
+  // no Actual SP … lets put them in 28 and we will finish them from there."
   //
-  // ONE CLOSES ON A MEASUREMENT AND ONE ON HIS WORD, and the difference is stated rather than
-  // blurred: the drift repair was RE-MEASURED read-only and came back 0-repairable against 6 on
-  // 08-25, while the n8n import lives in a system this checkout cannot read at all. Both take
-  // dateBasis:'external' because neither is work a commit performed.
-  {
-    name: 'Import orientation-email-leadgen-only.json into live n8n as the second-layer filter',
-    status: 'Done',
-    completed: '2026-08-28',
-    dateBasis: 'external',
-    shas: ['d79c1a64'],
-    basis:
-      "CLOSED ON KANE'S DIRECT, SPECIFIC CONFIRMATION, RECORDED HERE RATHER THAN ASSUMED: \"Import Orientation Email leadgen mark it as Done\". He named this row unprompted, so this is NOT the blanket the honesty gate forbids - the gate's rule is that a sweeping \"mark everything Done\" must be turned into a question, and a row he names specifically is the answer to that question. WHY dateBasis external AND NOT commit: the work is an ACTION IN ANOTHER SYSTEM. The filter lives inside the n8n cloud workflow; references/n8n/orientation-email-leadgen-only.json is only the artefact this repo can hold, and there is no n8n API configured here, so the import is NOT measurable from this checkout the way the two migrations in pass 18 were. Rather than stretch a commit date over an action no commit performed, the exemption is taken openly and the confirmation is named - the same shape the 2026-08-14 n8n-paystub rows took. WHAT IT CLOSES: the SECOND layer of the orientation-email gate. Layer one - the server-side isLeadGenDepartment check in the sender, which fails closed on a blank department - shipped in d79c1a64 and is tested, so the hole was already closed without this; the live flow was still Webhook to Split Out to Gmail with NO filter, which is the exact shape that let an HSL hire receive the Zoom link on 2026-08-21. Defence in depth, deliberately split out of the gate row so that closing the gate buried nothing. SCORED 1: an import, not a build - the JSON already existed. COMPLETED DATE is the day he confirmed it, because the day he actually ran the import is not known here; both that day and today fall inside S27 (Aug 18-29), so nothing about the sprint attribution turns on the difference. Say the word if it was an earlier day and it will be re-dated.",
-  },
-  {
-    name: 'Repair the 9 drifted master-sheet department cells left behind by the sheet_synced false success',
-    status: 'Done',
-    completed: '2026-08-28',
-    dateBasis: 'external',
-    shas: ['667dfe9d'],
-    basis:
-      "CLOSED ON A MEASUREMENT, NOT ON THE ASSERTION THAT PROMPTED IT. Kane said this was already done; rather than write that down, the detection half of scripts/fix-sheet-dept-drift.mts was re-run dry-run and READ-ONLY against the live Sheet and DB. IT RAN CLEAN: \"DRIFT: 3 rows (0 repairable, 3 to escalate) ... nothing repairable - done\", read across 1,592 sheet rows and 2,564 global_master_list rows. Measured 2026-08-25 the same script reported NINE rows, SIX of them repairable. All six repairable cells are repaired. THE THREE THAT REMAIN ARE NOT UNFINISHED WORK - they are the exact three classes the script REFUSES by design rather than guessing at, and each is reported by name for escalation: shainan@ (the DB department is bare \"hsl\", which is not a placeable label and needs a sub-team assignment first), beao@ and ellainnec@ (both carry an off_boarded_at stamp, and active-versus-offboarded is a business call, not a script call). They were never in this row's scope and they deserve their own row if anyone wants them settled. WHY THIS MATTERED: the master sync keys identity on (LOWER(Personal Email), LOWER(Department)), so a drifted department means the person is never matched and never re-stamped - they fall out of active_employees and go invisible on every roster surface WHILE STILL BEING PAID off their Hubstaff hours. THE ORDER WAS NOT OPTIONAL and the clean result is evidence it was followed: flip the Sheet cell to the DB department, re-stamp, and only THEN sync. Clicking Sync first would have minted 9 duplicate rows in the pre-transfer departments and clobbered HRIS truth for exactly the invisible people, so a zero-repairable reading would have been impossible had it been done the harmful way. Direction of repair is HRIS WINS, per Kane 2026-08-21: the DB department is pushed INTO the Sheet and a department is never edited in the DB. SCORED 3: a gated data repair on live payroll identity, not a script run. dateBasis is external because the repair is an action against the Google Sheet rather than a commit; the Completed Date is the day it was confirmed and independently measured, and it falls inside S27.",
-  },
+  // Sprint 28 was added ON THE BOARD BY HAND first (group_mm6nv017 "Sprint 28 · Sep 1-Sep 12 ·
+  // Backlog Pull", sprint label index 104 — read off settings_str, not guessed) and mirrored into all
+  // FOUR plan maps the same day. Adding S28's window re-bounds S27's attribution to Aug 18-31.
+  //
+  // THE MOVE IS FIVE PLAN ROWS FLIPPED sprint:'S27' → 'S28' (18 SP), executed by the reconciler as
+  // label + group. Board state measured 2026-09-01: Sprint 27 held 71 rows / 258 SP, 66 of them Done
+  // with an Actual SP and an in-window Completed Date — those STAY in S27, per the 2b rule that Done
+  // rows are filed where they finished. The five open rows, none carrying an Actual SP:
+  //   · Google Sheet sync crons (5 SP, Ready to Start)             — HRIS-14
+  //   · Legacy rates-sheet null-preferred → hurupay (2 SP, Ready)  — HRIS-19
+  //   · Deletion cron never re-checks live roster (3 SP, Ready)    — HRIS-01a, Critical
+  //   · Audit writes fail silently (3 SP, Ready)                   — HRIS-15
+  //   · Tickets board notifies the requester (5 SP, PENDING DEPLOY) — HRIS-17
+  //
+  // WHY ROWS IS EMPTY: a sprint move asserts nothing about progress, so there is NO status change,
+  // NO Actual SP and NO Completed Date to correct — and the tickets row explicitly KEEPS Pending
+  // Deploy rather than being knocked back to Ready to Start by the reschedule (the 2b rule: statuses
+  // only ever move forward on evidence). The five moves are named and bound in the hashed proposal
+  // via sprintMoves, which is exactly the hole the 08-19 hash fix closed.
+  //
+  // NOT IN THE PULL: the two Backlog rows (lawangc@ rate-shadow cleanup, 5 SP total) — both blocked
+  // on Kane running the --apply scripts, and he scoped this pull to Sprint 27's pending rows.
+  // VELOCITY NOTE: an 18 SP pull against S25/S26/S27 velocity is a thin start — S28 needs scope from
+  // somewhere other than this rollover.
 ];
 
 const FIB = new Set([1, 2, 3, 5, 8]);

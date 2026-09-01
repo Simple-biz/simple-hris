@@ -54,6 +54,9 @@ export const TASK_GROUPS = {
   S25: 'group_mm4m16sq',
   S26: 'group_mm5s2dw1',
   S27: 'group_mm66ce8q',
+  // Added by hand on the board and mirrored 2026-09-01 from the live group list
+  // ("Sprint 28 · Sep 1-Sep 12 · Backlog Pull").
+  S28: 'group_mm6nv017',
   BL: 'group_mm4m1eqp', // Backlog
 } as const;
 export const TASK_COLS = {
@@ -124,7 +127,8 @@ export const TASK_TYPE_INDEX: Record<TaskType, number> = {
 export const TASK_SPRINT_INDEX: Record<TaskSprint, number> = {
   // Indices are the board's own and are NOT sequential — S22 is 3 and S23 is 4, while S19-S21 run
   // 10-12. Read off the board settings_str 2026-08-19; never guess one.
-  S17: 8, S18: 9, S19: 10, S20: 11, S21: 12, S22: 3, S23: 4, S24: 0, S25: 1, S26: 13, S27: 103, BL: 2,
+  // S28 = 104, read off settings_str 2026-09-01 — the indices keep not being sequential.
+  S17: 8, S18: 9, S19: 10, S20: 11, S21: 12, S22: 3, S23: 4, S24: 0, S25: 1, S26: 13, S27: 103, S28: 104, BL: 2,
 };
 /**
  * The live label TEXT for each sprint key. The board is structure-locked — the API cannot create a
@@ -143,6 +147,7 @@ export const TASK_SPRINT_LABELS: Record<TaskSprint, string> = {
   S25: 'Sprint 25',
   S26: 'Sprint 26',
   S27: 'Sprint 27',
+  S28: 'Sprint 28',
   BL: 'Backlog',
 };
 /**
@@ -175,6 +180,9 @@ export const TASK_SPRINT_WINDOWS: Record<Exclude<TaskSprint, 'BL'>, { start: str
   // Added 2026-08-19 from the live group title "Sprint 27 · Aug 18-Aug 29". Adding it re-bounds
   // S26's ATTRIBUTION to Aug 4-17, which is what finally gives Aug 16-17 a sprint to belong to.
   S27: { start: '2026-08-18', end: '2026-08-29' },
+  // Added 2026-09-01 from the live group title "Sprint 28 · Sep 1-Sep 12". Adding it re-bounds S27's
+  // attribution to Aug 18-31, giving the gap days Aug 30-31 a sprint to belong to.
+  S28: { start: '2026-09-01', end: '2026-09-12' },
 };
 
 /**
@@ -403,7 +411,9 @@ export const PLAN_TASKS: PlanTask[] = [
   // Google Sheet as an offboarding source outright — so the sprint should re-scope it, not just
   // schedule it. Stays `done: false`: the row carried a phantom Actual SP 5 while reading Ready to
   // Start, which the corrector clears in this same pass.
-  { epic: 'HRIS-14', name: 'Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports', type: 'Integration', sp: 5, done: false, sprint: 'S27' },
+  // Rolled S27 → S28 on 2026-09-01: unfinished at sprint close (Kane: pending rows with no Actual SP
+  // move to 28 "and we will finish them from there"). Status untouched by the move.
+  { epic: 'HRIS-14', name: 'Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports', type: 'Integration', sp: 5, done: false, sprint: 'S28' },
   { epic: 'HRIS-14', name: 'CSV imports admin tab — split of legacy Csv Imports', type: 'Feature', sp: 3, done: true, sprint: 'S19' },
   { epic: 'HRIS-14', name: 'Master-list sync race + orphaned-upload guard', type: 'Bug', sp: 3, done: true, sprint: 'S24' },
   { epic: 'HRIS-14', name: 'Webhooks admin + bank-info-missing red-alarm notify email', type: 'Integration', sp: 2, done: true, sprint: 'S25' },
@@ -434,7 +444,8 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-06', name: 'KPI scored notification fires on months-old weeks — floor it to the current period', type: 'Bug', sp: 2, done: true, sprint: 'S27', priority: 'High' },
   { epic: 'HRIS-15', name: 'Notification insert failures are swallowed into console.warn — make them observable', type: 'Chore', sp: 3, done: true, sprint: 'S27', priority: 'High' },
   { epic: 'HRIS-02b', name: 'PAB exclusions leave no audit trail while PAB disputes are fully audited', type: 'Feature', sp: 2, done: true, sprint: 'S27', priority: 'High' },
-  { epic: 'HRIS-19', name: 'Legacy rates-sheet cell can route null-preferred → hurupay: decision + guard', type: 'Spike', sp: 2, done: false, sprint: 'S27', priority: 'High' },
+  // Rolled S27 → S28 on 2026-09-01: unfinished at sprint close. Status untouched by the move.
+  { epic: 'HRIS-19', name: 'Legacy rates-sheet cell can route null-preferred → hurupay: decision + guard', type: 'Spike', sp: 2, done: false, sprint: 'S28', priority: 'High' },
   { epic: 'HRIS-24', name: 'Referred-by column + Referrals week section (email-tier matching)', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
   // ── Sprint 26 reconciliation — shipped Jul 29 – Aug 5 2026 ─────────────────
   // Grouped from 171 commits by feature, not by commit. SP scored against the
@@ -771,7 +782,8 @@ export const PLAN_TASKS: PlanTask[] = [
   // 3 SP CRITICAL, its own OPEN row because the pre-flight only MEASURED. The cron still trusts
   // scheduled_deletion_at alone and never re-checks the live roster at fire time, so the guard its own
   // comment claims does not exist in code. A lone Done row would have read as "handled".
-  { epic: 'HRIS-01a', name: 'Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion', type: 'Bug', sp: 3, done: false, sprint: 'S27', priority: 'Critical' },
+  // Rolled S27 → S28 on 2026-09-01: unfinished at sprint close. Status untouched by the move.
+  { epic: 'HRIS-01a', name: 'Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion', type: 'Bug', sp: 3, done: false, sprint: 'S28', priority: 'Critical' },
   // 2 SP: both 2026-08-19 migrations had silently never applied because the password's `@` was not
   // percent-encoded in DATABASE_URL — an unencoded @ truncates the host instead of erroring.
   { epic: 'HRIS-15', name: 'Migration applies never ran: an unencoded @ in DATABASE_URL silently truncated the host', type: 'Bug', sp: 2, done: true, sprint: 'S27' },
@@ -788,7 +800,8 @@ export const PLAN_TASKS: PlanTask[] = [
   // This is also the bug that fooled ME on 2026-08-21: I read 0 audit rows as "the write failed",
   // when the write had succeeded and my QUERY was broken. Had the write actually failed, there would
   // have been nothing to distinguish the two — which is the whole problem.
-  { epic: 'HRIS-15', name: 'Audit writes fail silently: insertAuditLog’s error is discarded at 197 of 201 call sites', type: 'Bug', sp: 3, done: false, sprint: 'S27', priority: 'High' },
+  // Rolled S27 → S28 on 2026-09-01: unfinished at sprint close. Status untouched by the move.
+  { epic: 'HRIS-15', name: 'Audit writes fail silently: insertAuditLog’s error is discarded at 197 of 201 call sites', type: 'Bug', sp: 3, done: false, sprint: 'S28', priority: 'High' },
   // ── Requested by Kane 2026-08-21 ─ not started ──────────────────────────────────────
   // 5 SP, and the FIRST task row under HRIS-17, which has carried 20 SP with zero children since the
   // board shipped in July. A ticket today emails on three things only: created (to the owner),
@@ -800,7 +813,10 @@ export const PLAN_TASKS: PlanTask[] = [
   // type, and a new type is DEAD until the employee_notifications CHECK widen runs — the same footgun
   // that left kpi.scored rejected for three days behind a console.warn. That DDL plus two n8n imports
   // are Kane's to run, so this row cannot pass Pending Deploy on code alone.
-  { epic: 'HRIS-17', name: 'Tickets board notifies the requester on every update — comment emails and status-move emails', type: 'Feature', sp: 5, done: false, sprint: 'S27' },
+  // Rolled S27 → S28 on 2026-09-01: unfinished at sprint close. Board status stays Pending Deploy —
+  // the sprint move changes WHERE it is filed, not how far along it is; the CHECK widen + two n8n
+  // imports are still Kane's to run.
+  { epic: 'HRIS-17', name: 'Tickets board notifies the requester on every update — comment emails and status-move emails', type: 'Feature', sp: 5, done: false, sprint: 'S28' },
   // 2 SP: `HUBSTAFF_EXEMPT_DEPTS` matches raw master-list labels exactly, and the dept it excuses was
   // renamed — `Site Building` became `Site Building (US - Freelance)` (20 people, ZERO with Hubstaff
   // hours) and `Site Building (PH - Freelancer)` (13, zero) — so the list silently inverted its own
