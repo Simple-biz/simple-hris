@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { saveOrphanagePay, listOrphanagePay, listAllOrphanagePayHours, deleteOrphanagePay, type OrphanagePayRow } from '@/lib/supabase/orphanage-pay-db';
+import { saveOrphanagePay, listOrphanagePay, listAllOrphanagePayHours, deleteOrphanagePay, deleteAllOrphanagePay, type OrphanagePayRow } from '@/lib/supabase/orphanage-pay-db';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { requireFeatureEdit, requireFeatureAccess } from '@/lib/auth/authorize-feature';
 
@@ -71,7 +71,15 @@ export async function POST(request: Request) {
   return NextResponse.json({ saved, error: null });
 }
 
-/** DELETE ?source_file=...&email=... — remove one locked-in orphanage row. */
+/**
+ * DELETE ?source_file=...&email=... — remove one locked-in orphanage row.
+ * DELETE ?source_file=...&all=1   — remove EVERY row for the period (the
+ * wizard's "Remove all", so a bad paste can be wiped and re-entered fresh).
+ * The period wipe requires the EXPLICIT all=1 flag — a missing email never
+ * silently widens to the whole period — and passing both is refused as
+ * ambiguous. Both shapes snapshot what they destroy into audit_log
+ * (`orphanage_pay.record_deleted` / `orphanage_pay.period_cleared`).
+ */
 export async function DELETE(request: Request) {
   const authz = await requireFeatureEdit('accounting', 'payroll_wizard');
   if (!authz.ok) return deniedResponse(authz);
@@ -79,10 +87,20 @@ export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
   const sourceFile = searchParams.get('source_file');
   const email = searchParams.get('email');
-  if (!sourceFile || !email) {
-    return NextResponse.json({ error: 'source_file and email required' }, { status: 400 });
+  const all = searchParams.get('all') === '1';
+  if (!sourceFile || (!email && !all)) {
+    return NextResponse.json({ error: 'source_file and email (or all=1) required' }, { status: 400 });
   }
-  const { error } = await deleteOrphanagePay(sourceFile, email);
+  if (email && all) {
+    return NextResponse.json({ error: 'pass email or all=1, not both' }, { status: 400 });
+  }
+  const actor = { email: authz.sessionEmail, role: authz.roles[0] ?? 'accounting' };
+  if (all) {
+    const { deleted, error } = await deleteAllOrphanagePay(sourceFile, actor);
+    if (error) return NextResponse.json({ error }, { status: 500 });
+    return NextResponse.json({ deleted, error: null });
+  }
+  const { error } = await deleteOrphanagePay(sourceFile, email as string, actor);
   if (error) return NextResponse.json({ error }, { status: 500 });
   return NextResponse.json({ error: null });
 }

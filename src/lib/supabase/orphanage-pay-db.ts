@@ -1,4 +1,5 @@
 import { createSupabaseServiceRoleClient } from './server';
+import { insertAuditLog } from './audit-log';
 
 // Persistence for locked-in orphanage pay (see references/create_orphanage_pay.sql).
 // One row per (source_file, employee_email): the per-employee orphanage hours and
@@ -64,19 +65,104 @@ export async function saveOrphanagePay(params: {
   return { saved: payload.length, error: null };
 }
 
-/** Remove one locked-in orphanage row (when its amount is cleared in the wizard). */
+/** Who is doing a destructive delete, for the audit snapshot. */
+export type OrphanagePayActor = { email: string | null; role: string };
+
+/**
+ * Remove one locked-in orphanage row (when its amount is cleared in the wizard).
+ * The row is snapshotted into `audit_log` BEFORE it goes — once deleted, that
+ * entry is the only place the hours evidence survives (the same reason
+ * `pab_dispute.admin_deleted` snapshots what it destroys). Fails CLOSED: if the
+ * snapshot read errors, nothing is deleted.
+ */
 export async function deleteOrphanagePay(
   sourceFile: string,
   employeeEmail: string,
+  actor?: OrphanagePayActor,
 ): Promise<{ error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { error: 'Supabase client unavailable' };
+  const email = employeeEmail.trim().toLowerCase();
+  const { data: snapshot, error: readErr } = await supabase
+    .from(TABLE)
+    .select('*')
+    .eq('source_file', sourceFile)
+    .eq('employee_email', email)
+    .maybeSingle();
+  if (readErr) return { error: `Could not snapshot the row before deleting: ${readErr.message}` };
+  if (!snapshot) return { error: null }; // nothing on file — the delete would be a no-op
   const { error } = await supabase
     .from(TABLE)
     .delete()
     .eq('source_file', sourceFile)
-    .eq('employee_email', employeeEmail.trim().toLowerCase());
-  return { error: error ? error.message : null };
+    .eq('employee_email', email);
+  if (error) return { error: error.message };
+  void insertAuditLog({
+    user_name: actor?.email ?? 'system',
+    user_role: actor?.role ?? 'accounting',
+    action: 'orphanage_pay.record_deleted',
+    resource: TABLE,
+    resource_id: `${sourceFile}:${email}`,
+    details: { source_file: sourceFile, row: snapshot },
+  });
+  return { error: null };
+}
+
+/**
+ * Remove EVERY locked-in orphanage row for one pay period — the Payroll Wizard's
+ * "Remove all", so a bad paste can be wiped and re-entered fresh instead of
+ * leaving records behind to haunt the red panel and PAB coverage. Scoped
+ * strictly to the given `source_file`; other weeks' rows are never touched.
+ * The deleted rows are snapshotted into ONE `audit_log` entry BEFORE the
+ * delete (paged read — never trust a single 1000-row page), and the read
+ * failing REFUSES the delete: destroying rows we could not snapshot would
+ * leave the hours unrecoverable.
+ */
+export async function deleteAllOrphanagePay(
+  sourceFile: string,
+  actor: OrphanagePayActor,
+): Promise<{ deleted: number; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { deleted: 0, error: 'Supabase client unavailable' };
+  if (!sourceFile) return { deleted: 0, error: 'source_file required' };
+
+  const PAGE = 1000;
+  const snapshot: Record<string, unknown>[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select('*')
+      .eq('source_file', sourceFile)
+      // Stable order (the composite PK's second column) so pagination never
+      // drops or duplicates a row in the audit snapshot.
+      .order('employee_email', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) return { deleted: 0, error: `Could not snapshot rows before deleting: ${error.message}` };
+    if (!data) break;
+    snapshot.push(...(data as Record<string, unknown>[]));
+    if (data.length < PAGE) break;
+    from += PAGE;
+  }
+  if (snapshot.length === 0) return { deleted: 0, error: null };
+
+  const { error } = await supabase.from(TABLE).delete().eq('source_file', sourceFile);
+  if (error) return { deleted: 0, error: error.message };
+
+  void insertAuditLog({
+    user_name: actor.email ?? 'system',
+    user_role: actor.role,
+    action: 'orphanage_pay.period_cleared',
+    resource: TABLE,
+    resource_id: sourceFile,
+    details: {
+      source_file: sourceFile,
+      deleted_count: snapshot.length,
+      total_amount_php: snapshot.reduce((s, r) => s + Number(r.amount_php ?? 0), 0),
+      rows: snapshot,
+    },
+  });
+  return { deleted: snapshot.length, error: null };
 }
 
 /** All locked-in orphanage rows for a pay period (raw snake_case DB rows). */

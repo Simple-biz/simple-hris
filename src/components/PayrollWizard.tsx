@@ -316,6 +316,7 @@ import { computePabIneligibility, groupFailedDaysByHslWeek, pabSeverityBand, typ
 import PabIneligibleTable, { type PabIneligibleRow } from '@/components/payroll/PabIneligibleTable';
 import PabDoneTable, { type PabDoneRow } from '@/components/payroll/PabDoneTable';
 import PabDecisionConfirmDialog, { type PabDecisionTarget } from '@/components/payroll/PabDecisionConfirmDialog';
+import OrphanageClearConfirmDialog from '@/components/payroll/OrphanageClearConfirmDialog';
 import { TransferKpiCard } from '@/components/transfers/TransferToolbar';
 
 function findHeaderColumn(header: string[], ...labels: string[]): number {
@@ -2424,6 +2425,9 @@ export default function PayrollWizard({
    *  confirmed" without re-deriving from the Readiness pane. */
   const [orphanageNoneConfirmed, setOrphanageNoneConfirmed] = useState(false);
   const [orphanageNoneConfirming, setOrphanageNoneConfirming] = useState(false);
+  /** The Orphanage step's "Remove all" confirmation dialog; the write lives in
+   *  {@link clearAllOrphanageLocked} — in-app dialog, never `window.confirm`. */
+  const [orphClearConfirmOpen, setOrphClearConfirmOpen] = useState(false);
 
   /** USD → COP (COP per $1) FOR THIS CYCLE. 0 until set for the cycle — the
    *  zero placeholder is the point (Kane 2026-08-03): a new Hubstaff upload
@@ -9881,13 +9885,110 @@ export default function PayrollWizard({
     if (!saved) return;
     void publishFinalPaySnapshot();
     if (calcSourceFile) {
+      // The record delete stays behind the blob save (the amount is what pays),
+      // but a failure is SAID, never swallowed — a silently surviving record is
+      // a phantom "hours on record" row that keeps feeding PAB coverage.
       try {
-        await fetch(`/api/orphanage-pay?source_file=${encodeURIComponent(calcSourceFile)}&email=${encodeURIComponent(email)}`, { method: 'DELETE' });
-      } catch { /* best-effort — the additions blob is already updated */ }
+        const res = await fetch(`/api/orphanage-pay?source_file=${encodeURIComponent(calcSourceFile)}&email=${encodeURIComponent(email)}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      } catch {
+        toast.warning('Amount removed, but the hours record could not be deleted', {
+          description: 'It will appear under "hours on record but no amount" — remove it there, or retry.',
+        });
+      }
     }
     // Removing hours may drop a day back below the 7h top-up — refresh coverage.
     refreshOrphanageHoursIndex();
   }, [isReplay, orphanageAmounts, updateOrphanageAmount, saveAdditionsProgress, publishFinalPaySnapshot, calcSourceFile, refreshOrphanageHoursIndex]);
+
+  /** Delete an orphanage_pay record that has NO amount on the Additions column —
+   *  a red-panel row. There is no blob change to make (the column already pays
+   *  nothing for it), so this is the record delete alone: before this, a
+   *  leftover record from a bad paste was undeletable from the UI, and the only
+   *  offer was to restore money nobody wanted restored. */
+  const removeOrphanageRecordOnly = React.useCallback(async (emailLower: string) => {
+    if (isReplay) {
+      toast.error('Replaying a past period is view-only');
+      return;
+    }
+    if (!calcSourceFile) return;
+    try {
+      const res = await fetch(`/api/orphanage-pay?source_file=${encodeURIComponent(calcSourceFile)}&email=${encodeURIComponent(emailLower)}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch {
+      toast.error('Could not delete the hours record — it is still on file.');
+      return;
+    }
+    setOrphanagePayDetail((prev) => {
+      const n = { ...prev };
+      delete n[emailLower];
+      return n;
+    });
+    // Removing hours may drop a day back below the 7h PAB top-up — refresh coverage.
+    refreshOrphanageHoursIndex();
+  }, [isReplay, calcSourceFile, refreshOrphanageHoursIndex]);
+
+  /** Remove EVERY orphanage amount AND hours record for this period — both
+   *  carriers, wiped together, so a bad paste can be re-entered fresh instead of
+   *  leaving either carrier behind to haunt the reconciliation panels or PAB
+   *  coverage. Order preserves the step's invariants: the blob clears first
+   *  under CAS (a refused save aborts the record wipe, exactly like per-row
+   *  Remove), and the route snapshots every deleted record into audit_log before
+   *  it goes. The cleared amounts are audited client-side in ONE entry too —
+   *  a hand-typed amount has no orphanage_pay record, so that entry is the only
+   *  place it survives (the erict@ lesson). */
+  const clearAllOrphanageLocked = React.useCallback(async () => {
+    if (isReplay) {
+      toast.error('Replaying a past period is view-only');
+      return;
+    }
+    const removed = { ...orphanageAmounts };
+    const removedCount = Object.keys(removed).length;
+    setOrphanageLockingIn(true);
+    try {
+      if (removedCount > 0) {
+        additionsEditGenRef.current += 1;
+        const ctx = auditCtxRef.current;
+        setOrphanageAmounts({});
+        void logAudit({
+          user_name: ctx.sessionEmail ?? 'anonymous',
+          user_role: sessionRole ?? 'user',
+          action: 'wizard.orphanage_period_cleared',
+          resource: 'orphanage_pay',
+          resource_id: calcSourceFile ?? 'unknown',
+          cycle: ctx.auditCycle,
+          details: {
+            source_file: calcSourceFile,
+            cleared_count: removedCount,
+            cleared_amounts: removed,
+          },
+        });
+        const saved = await saveAdditionsProgress({ orphanageAmounts: {} });
+        if (!saved) return; // CAS refused — re-hydration restores the map; records untouched
+        void publishFinalPaySnapshot();
+      }
+      if (calcSourceFile) {
+        try {
+          const res = await fetch(`/api/orphanage-pay?source_file=${encodeURIComponent(calcSourceFile)}&all=1`, { method: 'DELETE' });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        } catch {
+          toast.warning('Amounts cleared, but the hours records could not be deleted', {
+            description: 'Anything left shows under "hours on record but no amount" — remove them there, or retry Remove all.',
+          });
+          return;
+        }
+        setOrphanagePayDetail({});
+      }
+      toast.success('Orphanage pay cleared for this period', {
+        description: 'Both the amounts and the hours records are gone — paste the fresh data when ready.',
+      });
+    } finally {
+      setOrphanageLockingIn(false);
+      setOrphClearConfirmOpen(false);
+      // Deleted hours stop forgiving PAB days — recompute coverage either way.
+      refreshOrphanageHoursIndex();
+    }
+  }, [isReplay, orphanageAmounts, sessionRole, calcSourceFile, saveAdditionsProgress, publishFinalPaySnapshot, refreshOrphanageHoursIndex]);
 
   /**
    * Live publish: while accounting edits the wizard (Adj./Orphanage/bonus/metric
@@ -17054,14 +17155,32 @@ export default function PayrollWizard({
             {/* Locked in this period — keeps locked-in orphanage pay visible in this tab */}
             <Card className="border-zinc-200 dark:border-zinc-800">
               <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Lock className="h-4 w-4 text-rose-600 dark:text-rose-400" /> Locked in this period
-                </CardTitle>
-                <CardDescription>
-                  {orphLocked.length > 0
-                    ? <>{orphLocked.length} {orphLocked.length === 1 ? 'person' : 'people'} · <span className="font-semibold text-zinc-800 dark:text-zinc-200">{formatPHP(orphLockedTotal)}</span> on the Additions Orphanage column for {orphPeriodLabel}.</>
-                    : 'Amounts you lock in stay here for this pay period.'}
-                </CardDescription>
+                <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+                  <div className="min-w-0">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Lock className="h-4 w-4 text-rose-600 dark:text-rose-400" /> Locked in this period
+                    </CardTitle>
+                    <CardDescription className="mt-1.5">
+                      {orphLocked.length > 0
+                        ? <>{orphLocked.length} {orphLocked.length === 1 ? 'person' : 'people'} · <span className="font-semibold text-zinc-800 dark:text-zinc-200">{formatPHP(orphLockedTotal)}</span> on the Additions Orphanage column for {orphPeriodLabel}.</>
+                        : 'Amounts you lock in stay here for this pay period.'}
+                    </CardDescription>
+                  </div>
+                  {/* Wipes BOTH carriers for this period (Additions amounts + orphanage_pay
+                      records) so a fresh paste starts clean — confirmation in
+                      OrphanageClearConfirmDialog, write in clearAllOrphanageLocked. */}
+                  {!isReplay && (orphLocked.length > 0 || orphRecordedNotOnColumn.length > 0) && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setOrphClearConfirmOpen(true)}
+                      disabled={orphanageLockingIn}
+                      className="gap-1.5 border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:border-rose-900/50 dark:text-rose-300 dark:hover:bg-rose-950/30 dark:hover:text-rose-200"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> Remove all…
+                    </Button>
+                  )}
+                </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
                 {/* Reconciliation. Present whenever a locked amount disagrees with its
@@ -17118,15 +17237,31 @@ export default function PayrollWizard({
                         </p>
                         <ul className="mt-1 flex flex-col gap-0.5 text-[12.5px] text-rose-800 dark:text-rose-300">
                           {orphRecordedNotOnColumn.map((r) => (
-                            <li key={r.email} className="font-mono">
-                              {r.email} · {r.detail.hours.toFixed(2)} h
-                              {r.detail.rate != null ? ` @ ${formatPHP(r.detail.rate)}` : ''}
+                            <li key={r.email} className="flex items-center gap-1.5 font-mono">
+                              <span>
+                                {r.email} · {r.detail.hours.toFixed(2)} h
+                                {r.detail.rate != null ? ` @ ${formatPHP(r.detail.rate)}` : ''}
+                              </span>
+                              {/* A record-only row was undeletable before 2026-09-01 — a bad
+                                  paste's residue could only be "restored", never removed. */}
+                              {!isReplay && (
+                                <button
+                                  type="button"
+                                  onClick={() => void removeOrphanageRecordOnly(r.email)}
+                                  disabled={orphanageLockingIn}
+                                  title="Delete this hours record — it pays nothing; removing it clears this warning and its PAB coverage"
+                                  className="rounded p-0.5 text-rose-400 transition hover:bg-rose-100 hover:text-rose-700 disabled:opacity-50 dark:text-rose-500 dark:hover:bg-rose-900/40 dark:hover:text-rose-300"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              )}
                             </li>
                           ))}
                         </ul>
                         <p className="mt-1.5 text-[12.5px] text-rose-800 dark:text-rose-300">
                           They will be paid nothing for these hours. Restore prices the recorded hours with the same
-                          arithmetic as pasting them again; anyone it cannot price is reported, not skipped.
+                          arithmetic as pasting them again; anyone it cannot price is reported, not skipped. If the
+                          record itself is wrong (a bad paste), delete it with the ✕ instead.
                         </p>
                       </div>
                       {!isReplay && (
@@ -17290,6 +17425,17 @@ export default function PayrollWizard({
                 )}
               </CardContent>
             </Card>
+
+            <OrphanageClearConfirmDialog
+              open={orphClearConfirmOpen}
+              busy={orphanageLockingIn}
+              peopleCount={orphLocked.length}
+              totalLabel={formatPHP(orphLockedTotal)}
+              recordOnlyCount={orphRecordedNotOnColumn.length}
+              periodLabel={orphPeriodLabel}
+              onCancel={() => setOrphClearConfirmOpen(false)}
+              onConfirm={() => void clearAllOrphanageLocked()}
+            />
           </div>
         );
       }

@@ -134,6 +134,45 @@ six-figure false alarms (₱134k, then ₱183k) before being removed on 2026-08-
 of them weeks where the money was fine. Use `scripts/verify-dispatch-carryover.mts`
 for the carrier question, and unlock + re-lock after repairing amounts.
 
+## Removing data & starting fresh (2026-09-01)
+
+Kane's ask: deleting in this step must delete **everything**, so a bad paste can be
+re-entered clean. Before this, a delete could leave either carrier behind — the
+per-row record delete was silent best-effort (a failed DELETE left a phantom
+"hours on record" row still feeding PAB coverage), and a record with no amount on
+the column (a bad paste's residue) was **undeletable from the UI**; the only offer
+was Restore, i.e. re-creating money nobody wanted.
+
+Three delete paths now exist, all wizard-only (replay stays view-only), all scoped
+strictly to the active `source_file`:
+
+| Path | Clears | Audit |
+|---|---|---|
+| Per-row **Remove** (✕ on the locked-in list) | blob entry + its `orphanage_pay` row | client `wizard.addition_edited` + route `orphanage_pay.record_deleted` |
+| **✕ on a red-panel row** (hours on record, no amount) | the record alone — no blob change exists to make | `orphanage_pay.record_deleted` |
+| **Remove all…** (card header, confirm dialog) | every blob amount **and** every record for the period | ONE client `wizard.orphanage_period_cleared` carrying all cleared amounts + ONE route `orphanage_pay.period_cleared` carrying the full row snapshot |
+
+Invariants these paths keep:
+
+- **Blob first, records second, CAS throughout.** Remove-all clears the column via
+  `saveAdditionsProgress({orphanageAmounts: {}})`; a refused save (409) aborts the
+  record wipe, exactly like per-row Remove.
+- **A record delete failure is SAID, never swallowed** — the per-row and bulk paths
+  toast the failure and the leftovers land in the red panel, where they are now
+  deletable individually.
+- **Nothing is destroyed unsnapshotted.** Both DELETE shapes read the row(s) into
+  the audit entry *before* deleting, with a paged read on the bulk path, and a
+  failed snapshot read **refuses the delete** (fail closed). The bulk client entry
+  carries every cleared blob amount because a hand-typed amount has no record —
+  after erict@, `audit_log` must always be able to answer "what was there".
+- **The route's period wipe needs the explicit `all=1` flag**; a missing `email`
+  never silently widens to the period, and passing both is refused as ambiguous.
+- Deleting hours **withdraws their PAB coverage** — every path refreshes the
+  coverage index, and the confirm dialog says so.
+- The wipe does not touch the "No orphanage hours this week" marker (deleting to
+  re-paste is not a claim that there were no visits), and it does not re-stage
+  locked stubs — unlock + re-lock stays the sanctioned push into a locked cycle.
+
 ## The 2026-08 incident
 
 The sequence, because every step of it is a lesson the guards above encode:
@@ -192,6 +231,10 @@ What closed, and what proves it:
 - **Locked in this period** has a name/email search. Filtering is display-only and the
   footer stays the **period** total (labelled "Period total" while filtering), so a
   search can never make the money on this step look smaller than it is.
+- **Remove all…** sits on the "Locked in this period" card header (hidden in replay
+  and when the period is empty) and confirms through `OrphanageClearConfirmDialog`
+  — an in-app dialog in the `PabDecisionConfirmDialog` vocabulary, never
+  `window.confirm`; undismissable while the wipe is in flight.
 - **"No orphanage hours this week"** is an explicit confirmation marker
   (`orphanageConfirmedSettingKey`), audited as `wizard.orphanage_none_confirmed`, so a
   week with no visits is distinguishable from a week nobody got to.
