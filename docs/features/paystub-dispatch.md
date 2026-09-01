@@ -725,10 +725,53 @@ See `BUSINESS_LOGIC.md#Technology Bonus` and `#Weekly gating for monthly bonuses
 
 The Dispatch step's "Preview Paystubs" button opens a modal built from the same `dispatchData` rows that will be posted. Two views:
 
-1. **List view**: searchable (filter by name, work email, or personal email), one row per employee (name + personal email + "View" action).
-2. **Detail view**: orange/white/blue diagonal-gradient paystub mirroring the email template (header, recipient, earnings, bonuses, total, logo footer). Fits one viewport without scrolling. "← Back" returns to the list.
+1. **List view**: searchable (filter by name, work email, personal email, or department), one row per employee — name + department chip + **work email**, the whole row being the "View" target.
+2. **Detail view**: the shared `PayStubStatement`, the very component the employee sees in their Pay Stubs modal, rendered from `mapPayloadToPayStub(row)`. "← All recipients" returns to the list.
 
-State: `previewPaystubsOpen`, `previewSelectedEmail`, `previewSearch`. All reset on modal close.
+State: `previewPaystubsOpen`, `previewSelectedEmail`, `previewSearch`, `previewTab`, `previewDept`, `previewPage`. All reset on modal close.
+
+### Work email is DISPLAYED; personal email is SEARCHED — 2026-09-01
+
+The row's second line is the **work email** (`DispatchEmployee.email`), not the personal
+address. The work email is the identity a payroll clerk can recognise and cross-check
+against the roster, the People tab, and the Payment Catalog; a bare gmail address is not.
+It is also already this row's identity key everywhere else in the flow —
+`recipient_email` on the staged entry, `previewSelectedEmail`, and the
+`/api/people/[email]` banking lookup behind the rate-snapshot cards all key on it.
+
+The personal address stays **searchable** (`filteredPaystubs` still matches
+`e.personal_email`) so pasting a gmail out of an inbox still finds the person. It is no
+longer displayed.
+
+> **The delivery address is still the personal one.** The n8n paystub workflow mails to
+> `personal_email` and silently *skips* a recipient it cannot mail (see "A zero `failed`
+> is NOT delivery either" in `app/api/payment-dispatches/route.ts`). Preview Emails is a
+> **content** preview — read the statement, confirm the money — not a delivery-address
+> audit. Missing personal emails are surfaced where they are actionable: the
+> *Lock in Values & Send to Payment Dispatch* button raises a
+> "N payable employees without a personal email" warning, and Payroll Readiness blocks
+> on it. Do not "fix" this by putting the personal email back on the row.
+
+### Wizard-theme chrome — 2026-09-01
+
+The modal wears the Payroll Wizard's own vocabulary rather than generic dialog chrome:
+the indigo→violet→fuchsia gradient chip with its `ring-1 ring-inset ring-white/25`
+(identical construction to the wizard title chip and the progress-bar fill), the
+white→indigo→white header and footer bands, the wizard's `animate-ping` live dot (amber,
+reading "Not sent yet"), mono numerals for counts and pagination, and a segmented control
+whose active pill is a shared `layoutId="preview-tab-indicator"` element so it slides
+between tabs the way the stepper's `layoutId="active-indicator"` does. Every animation is
+gated on the component's existing `reduceMotion`. The detail view's chrome stays
+paper-light in both themes because the pane below it is a document.
+
+Two structural fixes landed with it, both instances of the documented `p-0` dialog trap
+(`docs/design/responsive-design.md` § "Dialogs and modals"): the popup now passes
+**`gap-0`** (the shared `DialogContent` is `grid gap-4`, so the flush sections were
+separated by three 16px seams showing the popup's own orange/blue gradient through) and a
+real **height cap** (`max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh]`; the base primitive
+has none, so a full recipient list on a short window was clipped at both ends with its
+pager unreachable). The list body is `min-h-0 flex-1 overflow-y-auto` between `shrink-0`
+chrome.
 
 ## Statement rendering moved into the app — 2026-08-06
 

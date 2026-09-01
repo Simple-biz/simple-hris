@@ -18960,7 +18960,7 @@ export default function PayrollWizard({
       >
         <DialogContent
           className={cn(
-            'rounded-2xl border-zinc-200 bg-white p-0 dark:border-zinc-800 dark:bg-zinc-950',
+            'flex max-h-[calc(100dvh-1.5rem)] flex-col gap-0 rounded-2xl border-zinc-200 bg-white p-0 sm:max-h-[90dvh] dark:border-zinc-800 dark:bg-zinc-950',
             // Animate the width morph so switching between the recipient list and
             // the single-email preview glides instead of snapping. Only max-width
             // transitions (the open/close keyframes drive transform + opacity).
@@ -18999,26 +18999,38 @@ export default function PayrollWizard({
                 <>
                   <DialogHeader className="sr-only">
                     <DialogTitle>Paystub Preview · {selected.name}</DialogTitle>
-                    <DialogDescription>{selected.personal_email}</DialogDescription>
+                    <DialogDescription>{selected.email}</DialogDescription>
                   </DialogHeader>
-                  <div className="relative flex max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-[#f4f7fb] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] animate-in fade-in-0 zoom-in-95">
-                    <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 bg-white/90 px-4 py-2.5 backdrop-blur">
+                  <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-[#f4f7fb] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] animate-in fade-in-0 zoom-in-95">
+                    {/* Deliberately light in both themes: the pane below is a
+                        document, so its chrome stays paper-coloured. The wizard
+                        band tints it indigo without darkening it. */}
+                    <div className="flex shrink-0 items-center justify-between gap-2 border-b border-zinc-200 bg-gradient-to-r from-white via-indigo-50/70 to-white px-3 py-2 pr-10 backdrop-blur">
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-7 gap-1 px-2 text-xs text-zinc-700"
+                        className="h-7 gap-1 px-2 text-xs font-semibold text-zinc-700 hover:bg-indigo-100/60 hover:text-indigo-700"
                         onClick={() => setPreviewSelectedEmail(null)}
                       >
                         <ChevronLeft className="h-4 w-4" />
-                        Back
+                        All recipients
                       </Button>
                       {compareRateSources && (
-                        <span className="hidden truncate px-2 text-[10px] font-medium text-zinc-400 max-[1179px]:inline">
+                        <span className="hidden truncate px-2 text-[10px] font-medium text-zinc-500 max-[1179px]:inline">
                           Rate snapshots need a wider window
                         </span>
                       )}
-                      <span className="pr-8 text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-600">
-                        Preview · Not yet sent
+                      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-300/70 bg-amber-50 py-1 pl-2 pr-2.5 text-[10px] font-bold uppercase tracking-wider text-amber-700">
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span
+                            className={cn(
+                              'absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75',
+                              !reduceMotion && 'animate-ping',
+                            )}
+                          />
+                          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-amber-500" />
+                        </span>
+                        Not sent yet
                       </span>
                     </div>
                     {/* The SHARED PayStubStatement — the very component the
@@ -19158,76 +19170,111 @@ export default function PayrollWizard({
             const pageLast = Math.min(pageEnd, activeCount);
             return (
               <>
-                <DialogHeader className="border-b border-zinc-200 bg-gradient-to-br from-white via-zinc-50/70 to-indigo-50/40 px-6 py-4 dark:border-zinc-800 dark:from-zinc-950 dark:via-zinc-900/40 dark:to-indigo-950/30">
-                  <DialogTitle className="flex items-center gap-2 text-zinc-900 dark:text-white">
-                    <Mail className="h-5 w-5 shrink-0 text-indigo-500" />
-                    Preview Emails
-                  </DialogTitle>
-                  <DialogDescription className="text-zinc-600 dark:text-zinc-400">
-                    {previewTab === 'paystubs'
-                      ? `${dispatchData.rows.length} paystub${dispatchData.rows.length === 1 ? '' : 's'} queued for this batch.`
-                      : `${approvedContractors.length} approved contractor invoice${approvedContractors.length === 1 ? '' : 's'} queued.`}
-                    {' '}Click View to inspect the email.
-                  </DialogDescription>
+                {/* Header — the Payroll Wizard's own chrome: the indigo→violet→
+                    fuchsia chip with its inset ring (same construction as the
+                    wizard title chip and progress fill) over the wizard's
+                    white→indigo→white band. */}
+                <DialogHeader className="shrink-0 gap-0 border-b border-zinc-200 bg-gradient-to-r from-white via-indigo-50/60 to-white px-5 py-4 sm:px-6 dark:border-zinc-800 dark:from-zinc-950 dark:via-indigo-950/25 dark:to-zinc-950">
+                  <div className="flex items-start gap-3 pr-10">
+                    <span className="relative mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 text-white shadow-md shadow-violet-500/30">
+                      <Mail className="h-[18px] w-[18px]" />
+                      <span aria-hidden className="pointer-events-none absolute inset-0 rounded-xl ring-1 ring-inset ring-white/25" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <DialogTitle className="text-base font-bold tracking-tight text-zinc-900 dark:text-white">
+                        Preview Emails
+                      </DialogTitle>
+                      <DialogDescription className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                        {previewTab === 'paystubs'
+                          ? `${dispatchData.rows.length} paystub${dispatchData.rows.length === 1 ? '' : 's'} staged for this batch.`
+                          : `${approvedContractors.length} approved contractor invoice${approvedContractors.length === 1 ? '' : 's'} staged.`}
+                        {' '}Open one to read the exact statement the recipient will get.
+                      </DialogDescription>
+                    </div>
+                    {/* Nothing has left the building yet. The wizard's live-dot
+                        idiom, in amber because "not sent" is the state to notice. */}
+                    <span className="mt-0.5 hidden shrink-0 items-center gap-1.5 rounded-full border border-amber-300/70 bg-amber-50 py-1 pl-2 pr-2.5 text-[10px] font-bold uppercase tracking-wider text-amber-700 sm:inline-flex dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span
+                          className={cn(
+                            'absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75',
+                            !reduceMotion && 'animate-ping',
+                          )}
+                        />
+                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-amber-500" />
+                      </span>
+                      Not sent yet
+                    </span>
+                  </div>
                 </DialogHeader>
-                <div className="px-6 pt-3">
-                  <div className="inline-flex w-full rounded-md border border-zinc-200 bg-zinc-100 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
-                    <button
-                      type="button"
-                      onClick={() => setPreviewTab('paystubs')}
-                      className={cn(
-                        'flex-1 rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
-                        previewTab === 'paystubs'
-                          ? 'bg-white text-indigo-700 shadow-sm dark:bg-zinc-950 dark:text-indigo-300'
-                          : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
-                      )}
-                    >
-                      Paystubs
-                      <span
-                        className={cn(
-                          'ml-1.5 rounded px-1 text-[10px] font-medium',
-                          previewTab === 'paystubs'
-                            ? 'bg-indigo-600 text-white dark:bg-indigo-500'
-                            : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
-                        )}
-                      >
-                        {dispatchData.rows.length}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPreviewTab('contractors')}
-                      className={cn(
-                        'flex-1 rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
-                        previewTab === 'contractors'
-                          ? 'bg-white text-indigo-700 shadow-sm dark:bg-zinc-950 dark:text-indigo-300'
-                          : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
-                      )}
-                    >
-                      Contractors
-                      <span
-                        className={cn(
-                          'ml-1.5 rounded px-1 text-[10px] font-medium',
-                          previewTab === 'contractors'
-                            ? 'bg-indigo-600 text-white dark:bg-indigo-500'
-                            : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
-                        )}
-                      >
-                        {approvedContractors.length}
-                      </span>
-                    </button>
+                {/* Segmented control — the active pill is a shared `layoutId`
+                    element so it slides between tabs the way the stepper's own
+                    active indicator does, and the count wears the wizard
+                    gradient while its tab is the one in view. */}
+                <div className="shrink-0 px-5 pt-3 sm:px-6">
+                  <div className="inline-flex w-full gap-1 rounded-xl border border-zinc-200 bg-zinc-100/80 p-1 dark:border-zinc-800 dark:bg-zinc-900/70">
+                    {([
+                      { key: 'paystubs' as const, label: 'Paystubs', count: dispatchData.rows.length },
+                      { key: 'contractors' as const, label: 'Contractors', count: approvedContractors.length },
+                    ]).map((t) => {
+                      const active = previewTab === t.key;
+                      return (
+                        <button
+                          key={t.key}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => setPreviewTab(t.key)}
+                          className={cn(
+                            'relative flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
+                            active
+                              ? 'text-indigo-700 dark:text-indigo-300'
+                              : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200',
+                          )}
+                        >
+                          {active && (
+                            <motion.span
+                              aria-hidden
+                              layoutId="preview-tab-indicator"
+                              className="absolute inset-0 rounded-lg bg-white shadow-sm ring-1 ring-indigo-600/25 dark:bg-zinc-950 dark:ring-indigo-400/30"
+                              transition={
+                                reduceMotion
+                                  ? { duration: 0 }
+                                  : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }
+                              }
+                            />
+                          )}
+                          <span className="relative inline-flex items-center justify-center gap-1.5">
+                            {t.label}
+                            <span
+                              className={cn(
+                                'rounded px-1.5 py-0.5 font-mono text-[10px] font-bold leading-none',
+                                // Solid indigo-600, not the wizard gradient: white
+                                // on violet-500 is 3.6:1, and 10px bold is not
+                                // "large text". indigo-600 carries the same family
+                                // at 6.3:1.
+                                active
+                                  ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/30'
+                                  : 'bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
+                              )}
+                            >
+                              {t.count}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
-                <div className="flex flex-col gap-2 px-6 pt-3 sm:flex-row sm:items-center">
+                <div className="flex shrink-0 flex-col gap-2 px-5 pt-3 sm:flex-row sm:items-center sm:px-6">
                   {previewTab === 'paystubs' && (
                     <Select value={previewDeptSafe} onValueChange={(v) => setPreviewDept(v ?? 'all')}>
                       <SelectTrigger
                         title="Filter by department"
-                        className="w-full shrink-0 gap-1.5 border-zinc-200 bg-white text-xs data-[size=default]:h-9 dark:border-zinc-800 dark:bg-zinc-900 sm:w-auto"
+                        className="w-full shrink-0 gap-1.5 rounded-lg border-zinc-200 bg-white text-xs data-[size=default]:h-9 dark:border-zinc-800 dark:bg-zinc-900 sm:w-auto"
                       >
                         <Building2 className="h-3.5 w-3.5 shrink-0 text-violet-500 dark:text-violet-400" />
-                        <span className="text-zinc-500 dark:text-zinc-400">Dept:</span>
-                        <span className="max-w-[11rem] truncate font-medium text-zinc-700 dark:text-zinc-200">
+                        <span className="text-zinc-600 dark:text-zinc-400">Dept:</span>
+                        <span className="max-w-[11rem] truncate font-medium text-zinc-800 dark:text-zinc-100">
                           {previewDeptSafe === 'all'
                             ? 'All departments'
                             : previewDeptOptions.find((o) => o.key === previewDeptSafe)?.name ?? previewDeptSafe}
@@ -19243,97 +19290,130 @@ export default function PayrollWizard({
                       </SelectContent>
                     </Select>
                   )}
-                  <input
-                    type="text"
-                    value={previewSearch}
-                    onChange={(ev) => setPreviewSearch(ev.target.value)}
-                    placeholder={previewTab === 'paystubs' ? 'Search by name, email or department…' : 'Search by name or email…'}
-                    className="h-9 w-full flex-1 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
-                  />
+                  <div className="relative w-full flex-1">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500 dark:text-zinc-400" />
+                    <input
+                      type="text"
+                      value={previewSearch}
+                      onChange={(ev) => setPreviewSearch(ev.target.value)}
+                      aria-label="Search recipients"
+                      placeholder={
+                        previewTab === 'paystubs'
+                          ? 'Search by name, work or personal email, or department…'
+                          : 'Search by name, email or invoice number…'
+                      }
+                      className="h-9 w-full rounded-lg border border-zinc-200 bg-white pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white dark:placeholder:text-zinc-400"
+                    />
+                  </div>
                 </div>
-                <div className="min-h-[220px] max-h-[55vh] overflow-y-auto px-6 pb-4 pt-3">
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-3 sm:px-6">
                   {previewTab === 'paystubs' ? (
                     filteredPaystubs.length === 0 ? (
-                      <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
-                        {dispatchData.rows.length === 0
-                          ? 'No employees queued for dispatch.'
-                          : needle
-                            ? `No employees match “${previewSearch}”.`
-                            : 'No employees in the selected department.'}
+                      <div className="flex flex-col items-center justify-center gap-2 py-14 text-center">
+                        <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                          <Users className="h-5 w-5" />
+                        </span>
+                        <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                          {dispatchData.rows.length === 0
+                            ? 'No paystubs staged'
+                            : needle
+                              ? `Nobody matches “${previewSearch}”`
+                              : 'Nobody in this department'}
+                        </p>
+                        <p className="max-w-xs text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                          {dispatchData.rows.length === 0
+                            ? 'This period has not resolved any payable employees yet. Go back to the calculation step.'
+                            : needle
+                              ? 'Search runs across name, work email, personal email and department.'
+                              : 'Pick another department, or switch the filter back to All departments.'}
+                        </p>
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                         {filteredPaystubs.slice(pageStart, pageEnd).map((e) => (
-                          <div
+                          /* The whole row opens the statement — a full-height
+                             target instead of a small button in its corner. A
+                             button may only contain phrasing content, hence
+                             spans rather than divs. */
+                          <button
                             key={e.email}
-                            className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 transition-colors hover:border-indigo-300/70 dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:border-indigo-700/60"
+                            type="button"
+                            onClick={() => setPreviewSelectedEmail(e.email)}
+                            className="group flex items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-left transition-colors duration-200 hover:border-indigo-400/70 hover:bg-indigo-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:border-indigo-600/60 dark:hover:bg-indigo-950/25"
                           >
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-1.5">
-                                <span className="min-w-0 truncate text-sm font-medium text-zinc-900 dark:text-white">
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center gap-1.5">
+                                <span className="min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-white">
                                   {e.name}
                                 </span>
-                                <span className="max-w-[10rem] shrink-0 truncate rounded bg-indigo-600/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200">
+                                <span className="max-w-[9rem] shrink-0 truncate rounded bg-indigo-600/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200">
                                   {e.department_name ?? 'Unassigned'}
                                 </span>
-                              </div>
-                              <div className="truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
-                                {e.personal_email}
-                              </div>
-                            </div>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-8 shrink-0"
-                              onClick={() => setPreviewSelectedEmail(e.email)}
-                            >
+                              </span>
+                              {/* WORK email — the identity a payroll clerk can
+                                  recognise and cross-check against the roster.
+                                  The personal address the statement is mailed
+                                  to stays searchable, just not displayed. */}
+                              <span className="mt-0.5 block truncate font-mono text-xs text-zinc-600 dark:text-zinc-400">
+                                {e.email}
+                              </span>
+                            </span>
+                            <span className="inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-zinc-200 px-2 py-1 text-xs font-semibold text-zinc-700 transition-colors group-hover:border-indigo-400 group-hover:bg-white group-hover:text-indigo-700 dark:border-zinc-700 dark:text-zinc-300 dark:group-hover:border-indigo-600 dark:group-hover:bg-zinc-950 dark:group-hover:text-indigo-300">
                               View
-                            </Button>
-                          </div>
+                              <ChevronRight className="h-3.5 w-3.5" />
+                            </span>
+                          </button>
                         ))}
                       </div>
                     )
                   ) : (
                     filteredContractors.length === 0 ? (
-                      <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
-                        {approvedContractors.length === 0
-                          ? 'No approved contractor invoices queued for dispatch.'
-                          : `No invoices match “${previewSearch}”.`}
+                      <div className="flex flex-col items-center justify-center gap-2 py-14 text-center">
+                        <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                          <FileText className="h-5 w-5" />
+                        </span>
+                        <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                          {approvedContractors.length === 0
+                            ? 'No approved contractor invoices'
+                            : `No invoices match “${previewSearch}”`}
+                        </p>
+                        <p className="max-w-xs text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                          {approvedContractors.length === 0
+                            ? 'An invoice appears here once it is approved and falls inside this pay period.'
+                            : 'Search runs across contractor name, email and invoice number.'}
+                        </p>
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                         {filteredContractors.slice(pageStart, pageEnd).map((inv) => (
-                          <div
+                          <button
                             key={inv.id}
-                            className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 transition-colors hover:border-indigo-300/70 dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:border-indigo-700/60"
+                            type="button"
+                            onClick={() => setPreviewSelectedInvoiceId(inv.id)}
+                            className="group flex items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-left transition-colors duration-200 hover:border-indigo-400/70 hover:bg-indigo-50/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:border-indigo-600/60 dark:hover:bg-indigo-950/25"
                           >
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate text-sm font-medium text-zinc-900 dark:text-white">
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-semibold text-zinc-900 dark:text-white">
                                 {inv.from_entity_name || inv.from_name || inv.contractor_email}
-                              </div>
-                              <div className="truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                              </span>
+                              <span className="mt-0.5 block truncate font-mono text-xs text-zinc-600 dark:text-zinc-400">
                                 {inv.invoice_number} · {formatMoney(inv.total ?? 0, normalizeCurrency(inv.currency))} {normalizeCurrency(inv.currency)}
-                              </div>
-                            </div>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-8 shrink-0"
-                              onClick={() => setPreviewSelectedInvoiceId(inv.id)}
-                            >
+                              </span>
+                            </span>
+                            <span className="inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-zinc-200 px-2 py-1 text-xs font-semibold text-zinc-700 transition-colors group-hover:border-indigo-400 group-hover:bg-white group-hover:text-indigo-700 dark:border-zinc-700 dark:text-zinc-300 dark:group-hover:border-indigo-600 dark:group-hover:bg-zinc-950 dark:group-hover:text-indigo-300">
                               View
-                            </Button>
-                          </div>
+                              <ChevronRight className="h-3.5 w-3.5" />
+                            </span>
+                          </button>
                         ))}
                       </div>
                     )
                   )}
                 </div>
                 {activeCount > 0 && (
-                  <div className="flex items-center justify-between gap-3 border-t border-zinc-200 bg-zinc-50/60 px-6 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-                    <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                      Showing{' '}
-                      <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                  <div className="flex shrink-0 items-center justify-between gap-3 border-t border-zinc-200 bg-gradient-to-r from-white via-indigo-50/50 to-white px-5 py-3 sm:px-6 dark:border-zinc-800 dark:from-zinc-950 dark:via-indigo-950/20 dark:to-zinc-950">
+                    <span className="font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
+                      <span className="font-semibold text-zinc-800 dark:text-zinc-200">
                         {pageFirst}–{pageLast}
                       </span>{' '}
                       of {activeCount}
@@ -19350,7 +19430,7 @@ export default function PayrollWizard({
                           <ChevronLeft className="h-4 w-4" />
                           Prev
                         </Button>
-                        <span className="min-w-[64px] text-center text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                        <span className="min-w-[64px] text-center font-mono text-xs font-medium text-zinc-700 dark:text-zinc-300">
                           {previewSafePage} / {previewTotalPages}
                         </span>
                         <Button
