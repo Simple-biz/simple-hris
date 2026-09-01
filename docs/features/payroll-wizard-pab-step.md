@@ -2,11 +2,17 @@
 
 A review step between **Contractors (5)** and **Validation (7)** listing everyone who lost the
 Perfect Attendance Bonus for the active PAB period, how many days cost them it, a button onto
-the existing PAB Calendar, and a **Forgive month** action that restores the bonus. It exists
-because a month's ₱5,000 could be lost to one or two short days that were a shifting schedule
-rather than absence, and nothing in the wizard ever showed that list.
+the existing PAB Calendar, a **Forgive month** action that restores the bonus, and an
+**Ignore** action that declines it (writes the month's PAB exclusion). It exists because a
+month's ₱5,000 could be lost to one or two short days that were a shifting schedule rather
+than absence, and nothing in the wizard ever showed that list.
 
-Shipped **2026-08-28**. Source: `src/lib/payroll/pab-ineligibility.ts`,
+Since **2026-09-01** the step is the payroll's **last call** on PAB and its tab exists on the
+rail **only during the payout week** — see [the tab only exists on the payout
+week](#the-tab-only-exists-on-the-payout-week).
+
+Shipped **2026-08-28**; Ignore + payout-week gate **2026-09-01**. Source:
+`src/lib/payroll/pab-ineligibility.ts`, `src/lib/payroll/pab-payout-week.ts`,
 `app/api/payroll-wizard/pab-forgive-month/route.ts`,
 `src/components/payroll/PabIneligibleTable.tsx`, `src/components/PayrollWizard.tsx` (step 6).
 
@@ -16,7 +22,9 @@ Shipped **2026-08-28**. Source: `src/lib/payroll/pab-ineligibility.ts`,
 | --- | --- |
 | Failed-day detail — pure, tested | `src/lib/payroll/pab-ineligibility.ts` |
 | The identity alarm | `src/lib/payroll/pab-ineligibility.test.ts` |
+| Payout-week tab gate — pure, tested | `src/lib/payroll/pab-payout-week.ts` (+ `.test.ts`) |
 | Forgive-the-month batch write | `app/api/payroll-wizard/pab-forgive-month/route.ts` |
+| Ignore-the-month write (exclusion) | `app/api/pab-exclusions/route.ts` — pre-existing, see `pab-exclusions.md` |
 | The table | `src/components/payroll/PabIneligibleTable.tsx` |
 | Row builder + step body | `src/components/PayrollWizard.tsx` (`pabIneligibleRows`, `case 6`) |
 | The verdict this step explains | `src/lib/payroll/dispatch-bonuses.ts` (`computePabEligibleEmails`) |
@@ -67,6 +75,74 @@ to keep honest hours.
 override. That divergence is **out of scope by ruling** (Kane, 2026-08-28: "a separate thing
 that would inherit") and is now inert for anything this step writes — but an older dispute row
 carrying `null` or `5` still shows the old contradiction.
+
+## Ignore writes the month's PAB EXCLUSION — the existing store, the audited route
+
+**Kane's ask, 2026-09-01:** the step is where everyone gets their *last* shot at PAB — worthy
+people are forgiven, and everyone else is explicitly **Ignored**: "their PAB eligibility is
+ignored for the month and that PAB period."
+
+Ignore writes a `pab_period_exclusions` entry for `(person, month)` through
+**`/api/pab-exclusions`** — the same route the System Bonus modal's exclusion toggle calls.
+Never a raw `app_settings` write and never a new store:
+
+- The route owns the **audit row** (`pab_exclusion.added`) and the **best-effort employee
+  notification** (`pab.excluded`). `pab-exclusions.md` documents the 107 author-less entries
+  that are the cost of skipping it.
+- The exclusion list is already read by every pay path (`current-pay.ts`, both wizard
+  breakdowns via `perfectAttendanceEligible`), so no verdict needs a new read.
+- The known blind spot — `src/components/employee/` reads no exclusions, so an excluded person's
+  own dashboard does not say so — is **inert for this cohort**: everyone on this step is already
+  `ineligible`, so their dashboard already reads ineligible. The gap remains real for excluding
+  an *eligible* person from the modal (unchanged here).
+
+Money effect, stated plainly: an ignored person earns **₱0 PAB for the period even if a later
+time adjustment would have rescued a failed day**, until the exclusion is lifted (System Bonus →
+PAB settings). That is the decision the button records.
+
+Consequences already built into the table and kept: the row **stays listed** with the Excluded
+chip (a decision that vanishes its row is the all-clear that hides people), **Forgive goes
+disabled** on it ("lift the exclusion first"), and it lands in the "Excluded from PAB" status
+filter. The write is keyed to the **step's evaluated month** (`pabMonthRange`) — deliberately
+not `editMonthKey`, which follows the System Bonus modal's month picker and can point at a
+different month. Forgive and Ignore are opposite verdicts on the same month, so one in-flight
+write freezes both buttons on the row.
+
+## The tab only exists on the payout week
+
+**Kane's ask, 2026-09-01.** The PAB tab appears on the step rail only when the **selected file
+week is the payout week** — the week whose dispatch carries the bonus — and it mount-animates
+(spring entrance + persistent emerald pulse) every page load during that week, so the payout
+week announces itself.
+
+The gate is `isPabPayoutWeekForRange` (`src/lib/payroll/pab-payout-week.ts`, tested), which is
+nothing but the two shared pieces the money path uses: `pabMonthFromWeekStart` (a Sunday
+file-start's owning Monday is the NEXT day) and `isFinalPabWeek` (containment — the week
+CONTAINS the period end, never `weekEnd >= periodEnd`), over the same period-end resolution as
+the wizard's dispatch memo (valid legacy manual range → month override → code default).
+
+- **Keyed on the SELECTED FILE WEEK, never the wall clock.** The 2026-08 period ended Sat
+  Aug 29; during the operational week Aug 30 – Sep 5 the wizard is processing the
+  `2026-08-23_to_2026-08-29` file — that file contains the period end, so the tab shows all
+  week, which is what "the payout week" means in arrears. Wall-clock gating would also break
+  replay: replaying a past payout week **still shows the tab** (read-only via the existing
+  `isReplay`), because a replay shows the week as it was paid.
+- **Ids stay contiguous 1–9.** The step is filtered out of the rail's *render*; `nextStep` /
+  `prevStep` step over id 6 when hidden, and an operator standing on 6 when the gate flips
+  (week switched, override moved) is snapped back to 5. The progress bar, both real gates
+  (red-flag confirm 7, FX-zero 8) and all eight number sites are untouched.
+- **False until the PAB settings have loaded once** (`pabSettingsEverLoaded`) — judging off
+  unfetched default ranges could flash the tab onto the wrong week. Gated on
+  ever-loaded, not `loading`, because `refresh()` flips `loading` true on every save and would
+  blink the tab out mid-action.
+- **The emerald pulse is emerald on purpose** — the bonus pays this week; amber stays the
+  wizard's warning colour.
+- **Standing landmine, inherited:** a month nobody overrides falls back to `getPabMonthRange`'s
+  Mon→Fri default (September 2026 = Mon Sep 7 → Fri Oct 2), which moves the payout week and
+  therefore when the tab appears. The gate follows the money either way — a documented test
+  case pins it. Accounting sets the override monthly (`pab-calendars-sun-sat-sweep`).
+- Forgiveness outside the payout week still exists where it always did: the PAB Calendar
+  modal (reachable from People/Overview) and the step-4 Attendance Issues panel.
 
 ## Severity explains a verdict; it never reaches one
 
@@ -365,6 +441,9 @@ documents the cost of skipping this: 107 person-month entries with no recoverabl
 
 `1` Initialize · `2` Initial Calculation · `3` Orphanage · `4` Additions (+HSL tab) ·
 `5` Contractors · **`6` PAB** · `7` Validation · `8` Dispatch · `9` Reports.
+
+Step 6's tab is conditionally **rendered** (payout week only, above) but its id is
+unconditional — hiding is a render filter plus nav skip, never a renumbering.
 
 The progress bar is `currentStep / steps.length` and completion is `currentStep >=
 steps.length`, so an id gap reads past 100% and marks Reports complete at Dispatch. Step

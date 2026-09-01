@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight, Loader2, ShieldCheck, Search } from 'lucide-react';
+import { AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight, EyeOff, Loader2, ShieldCheck, Search } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -110,6 +110,8 @@ export default function PabIneligibleTable({
   onOpenCalendar,
   onForgiveMonth,
   forgivingEmail,
+  onIgnoreMonth,
+  ignoringEmail,
   readOnly,
   loading,
   evaluatedCount,
@@ -124,6 +126,15 @@ export default function PabIneligibleTable({
   onForgiveMonth: (row: PabIneligibleRow) => void;
   /** Email currently mid-forgive, or null. */
   forgivingEmail: string | null;
+  /**
+   * Decline the last-call forgiveness: writes the person's PAB EXCLUSION for the
+   * month (₱0 regardless of attendance, reversible in System Bonus → PAB
+   * settings). The row stays listed with the Excluded chip — a decision must
+   * never vanish its own row.
+   */
+  onIgnoreMonth: (row: PabIneligibleRow) => void;
+  /** Email currently mid-ignore, or null. */
+  ignoringEmail: string | null;
   /** Replay of a past week — the figures are history, so no writes. */
   readOnly: boolean;
   /** The all-weeks PAB merge is still in flight. */
@@ -351,7 +362,12 @@ export default function PabIneligibleTable({
             {paged.map((row) => {
               const band = pabSeverityBand(row.severity, row.hasHours);
               const style = BAND_STYLES[band];
-              const busy = forgivingEmail === row.email;
+              const forgiving = forgivingEmail === row.email;
+              const ignoring = ignoringEmail === row.email;
+              // Either in-flight write freezes BOTH decision buttons on the row:
+              // forgive and ignore are opposite verdicts on the same month, and
+              // racing them would leave whichever write lands last as the truth.
+              const busy = forgiving || ignoring;
               return (
                 <tr key={row.email} className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40">
                   <td className="px-4 py-2.5">
@@ -462,8 +478,31 @@ export default function PabIneligibleTable({
                         }
                         onClick={() => onForgiveMonth(row)}
                       >
-                        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                        {forgiving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                         Forgive month
+                      </Button>
+                      {/* The opposite verdict: decline the last call. Writes the
+                          month's PAB exclusion (₱0 for the period, employee
+                          notified, reversible in System Bonus → PAB settings).
+                          Zinc outline, deliberately quieter than Forgive — the
+                          default posture of this step is mercy. */}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 gap-1 px-2 text-[11px] text-zinc-600 hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-400 dark:hover:text-zinc-100"
+                        disabled={readOnly || busy || row.excluded}
+                        title={
+                          readOnly
+                            ? 'Replaying a past week — decisions are disabled'
+                            : row.excluded
+                              ? 'Already ignored — their PAB is excluded for this month'
+                              : `Ignore their PAB eligibility for ${monthLabel} — ₱0 for this period, reversible in System Bonus → PAB settings`
+                        }
+                        onClick={() => onIgnoreMonth(row)}
+                      >
+                        {ignoring ? <Loader2 className="h-3 w-3 animate-spin" /> : <EyeOff className="h-3 w-3" />}
+                        Ignore
                       </Button>
                     </div>
                   </td>

@@ -270,6 +270,7 @@ import {
   TECH_BONUS_WEEK_OVERRIDES_KEY,
 } from '@/lib/payroll/dispatch-bonuses';
 import { parseLocalDateFromIso, resolvePabRangeForMonth, yearMonthKey } from '@/lib/pab-period-settings';
+import { isPabPayoutWeekForRange } from '@/lib/payroll/pab-payout-week';
 import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
@@ -1923,7 +1924,9 @@ const steps = [
   // Validation on purpose: forgiving a month changes what Validation is checking,
   // so reviewing attendance after the numbers are final but before they are
   // judged is the only position where the decision still costs nothing.
-  { id: 6, label: 'PAB', icon: CalendarCheck, description: 'Who missed Perfect Attendance this period — review and forgive' },
+  // Rendered on the rail ONLY during the PAB payout week (the file week that
+  // contains the period end) — the id stays so the rail stays contiguous 1–9.
+  { id: 6, label: 'PAB', icon: CalendarCheck, description: 'Payout week — last call: forgive or ignore who missed Perfect Attendance' },
   { id: 7, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
   { id: 8, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
   { id: 9, label: 'Reports', icon: BarChart3, description: 'Dispatch summary — salaries, budget requests, and gift payments' },
@@ -2459,6 +2462,8 @@ export default function PayrollWizard({
   const [pabCalendarModalEmail, setPabCalendarModalEmail] = useState<string | null>(null);
   /** Email mid-forgive on step 6, so only that row's button spins. */
   const [pabForgivingEmail, setPabForgivingEmail] = useState<string | null>(null);
+  /** Email mid-ignore (month exclusion write) on step 6 — same one-row-spins rule. */
+  const [pabIgnoringEmail, setPabIgnoringEmail] = useState<string | null>(null);
   const [pabForgiveActiveIso, setPabForgiveActiveIso] = useState<string | null>(null);
   const [pabForgiveNote, setPabForgiveNote] = useState('');
   const [pabForgiveLoadingIso, setPabForgiveLoadingIso] = useState<string | null>(null);
@@ -3066,6 +3071,50 @@ export default function PayrollWizard({
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     return { startKey: key(r.start), endKey: key(r.end) };
   }, [calcSourceFile]);
+
+  /**
+   * The PAB settings have loaded at least once. `pabPeriodSettings.loading`
+   * alone cannot gate the PAB tab: `refresh()` flips it true on EVERY save
+   * (forgive, ignore, month switch), which would blink the tab out mid-action.
+   */
+  const [pabSettingsEverLoaded, setPabSettingsEverLoaded] = useState(false);
+  useEffect(() => {
+    if (!pabPeriodSettings.loading) setPabSettingsEverLoaded(true);
+  }, [pabPeriodSettings.loading]);
+
+  /**
+   * The selected file week is the PAB PAYOUT week — the one whose dispatch
+   * carries the bonus (`isFinalPabWeek` containment over the week's owning-month
+   * period end, the exact gate the money path uses). Gates whether the step-6
+   * PAB tab exists on the rail at all (Kane 2026-09-01): the review-and-forgive
+   * pass happens on the week the money moves, e.g. the Aug 23–29 file processed
+   * during Aug 30 – Sep 5 for the period that ended Aug 29.
+   *
+   * Keyed on the SELECTED FILE WEEK, never the wall clock, so replaying a past
+   * payout week still shows the step (read-only — replay fidelity) and a week
+   * that pays no PAB never shows it. False until the settings have actually
+   * loaded once: judging off unfetched default ranges could flash the tab onto
+   * a week the real override says is not the payout week.
+   */
+  const pabPayoutWeekActive = useMemo(() => {
+    if (!pabSettingsEverLoaded || !calcSourceFile) return false;
+    const r = parseDateRangeFromFilename(calcSourceFile);
+    if (!r) return false;
+    return isPabPayoutWeekForRange(
+      r.start,
+      r.end,
+      pabPeriodSettings.overrides,
+      pabPeriodSettings.validManualRange?.end ?? null,
+    );
+  }, [pabSettingsEverLoaded, calcSourceFile, pabPeriodSettings.overrides, pabPeriodSettings.validManualRange]);
+
+  // The operator can be standing on step 6 when the tab ceases to exist under
+  // them (week switched to a non-payout week, or a period override moved the
+  // window). Snap back to Contractors rather than stranding them on a hidden
+  // step — ids stay 1–9, only reachability changes.
+  useEffect(() => {
+    if (currentStep === 6 && pabSettingsEverLoaded && !pabPayoutWeekActive) setCurrentStep(5);
+  }, [currentStep, pabSettingsEverLoaded, pabPayoutWeekActive]);
 
   /**
    * Contractor invoices whose billing date falls inside the active batch's pay
@@ -10249,12 +10298,18 @@ export default function PayrollWizard({
   );
 
 
+  // Ids stay contiguous 1–9 (the progress bar is currentStep / steps.length and
+  // the real gates are asserted by number — see payroll-wizard-pab-step.md's
+  // renumbering section). Outside the PAB payout week step 6's tab is not
+  // rendered, so navigation steps OVER it rather than renumbering anything.
   const nextStep = () => {
-    if (currentStep < steps.length) setCurrentStep(currentStep + 1);
+    const next = currentStep + 1 === 6 && !pabPayoutWeekActive ? 7 : currentStep + 1;
+    if (next <= steps.length) setCurrentStep(next);
   };
 
   const prevStep = () => {
-    if (currentStep > 1) setCurrentStep(currentStep - 1);
+    const prev = currentStep - 1 === 6 && !pabPayoutWeekActive ? 5 : currentStep - 1;
+    if (prev >= 1) setCurrentStep(prev);
   };
 
   const handleWeeklyFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -17210,6 +17265,68 @@ export default function PayrollWizard({
           }
         };
 
+        /**
+         * Ignore = decline the last-call forgiveness: write the person's PAB
+         * EXCLUSION for this month, through the same audited route the System
+         * Bonus modal uses (`/api/pab-exclusions` — audit row + best-effort
+         * employee notification; never a raw app-settings write). No new store:
+         * the month-level blob debate was settled for forgiveness (disputes won)
+         * and the exclusion list already exists as the sanctioned "₱0 for the
+         * month" record every pay path reads.
+         *
+         * Money effect stated plainly: the person earns ₱0 PAB for this period
+         * even if a later time adjustment would have rescued a failed day, and
+         * Forgive is disabled on the row until the exclusion is lifted (System
+         * Bonus → PAB settings) — that is what "eligibility ignored for the
+         * period" means. The row STAYS listed with the Excluded chip; a decision
+         * that vanishes its row would be the all-clear that hides people.
+         */
+        const ignoreMonth = async (row: PabIneligibleRow) => {
+          if (pabIgnoringEmail || pabForgivingEmail) return;
+          const ok = window.confirm(
+            `Ignore ${row.name ?? 'this person'}'s PAB eligibility for ${monthLabelPab}?\n\n` +
+            `They will earn ₱0 Perfect Attendance Bonus for this period regardless of ` +
+            `attendance, they will be notified, and Forgive stays disabled until the ` +
+            `exclusion is lifted in System Bonus → PAB settings.`,
+          );
+          if (!ok) return;
+
+          const norm = normEmail(row.email) ?? row.email.toLowerCase();
+          setPabIgnoringEmail(row.email);
+          try {
+            const res = await fetch('/api/pab-exclusions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email: norm,
+                // The STEP's evaluated month — the same key forgiveMonth writes
+                // to. Deliberately not `editMonthKey`, which follows the System
+                // Bonus modal's month picker and can point elsewhere.
+                monthKey: pabMonthRange
+                  ? `${pabMonthRange.year}-${String(pabMonthRange.month + 1).padStart(2, '0')}`
+                  : '',
+                excluded: true,
+              }),
+            });
+            const json = (await res.json()) as { error: string | null; notified?: boolean };
+            if (!res.ok || json.error) throw new Error(json.error || `HTTP ${res.status}`);
+            // The refresh re-feeds `isPabExcluded`, which the row builder reads —
+            // the row re-renders with the Excluded chip and a disabled Forgive.
+            await pabPeriodSettings.refresh();
+            toast.success(`${row.name ?? 'Person'} — PAB ignored for ${monthLabelPab}`, {
+              description: json.notified === false
+                ? '₱0 for this period. They could not be matched to an active roster email — tell them directly.'
+                : '₱0 for this period. The employee has been notified.',
+            });
+          } catch (err) {
+            toast.error('Ignore failed — their eligibility is unchanged', {
+              description: err instanceof Error ? err.message : String(err),
+            });
+          } finally {
+            setPabIgnoringEmail(null);
+          }
+        };
+
         return (
           <div className="flex min-w-0 flex-col gap-5">
             {/* KPI strip replaces the old prose banner (Kane 2026-08-28). It KEEPS the
@@ -17308,6 +17425,8 @@ export default function PayrollWizard({
                   onOpenCalendar={setPabCalendarModalEmail}
                   onForgiveMonth={forgiveMonth}
                   forgivingEmail={pabForgivingEmail}
+                  onIgnoreMonth={ignoreMonth}
+                  ignoringEmail={pabIgnoringEmail}
                   readOnly={isReplay}
                   // `pabMergeLoaded` is the one signal that the month's hours are
                   // actually in. Without it an empty list renders as "nobody is
@@ -19543,11 +19662,25 @@ export default function PayrollWizard({
         <div
           className="flex shrink-0 gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:w-64 md:flex-col md:gap-4 md:overflow-y-auto md:overflow-x-visible md:pr-2 md:pb-0"
         >
-          {steps.map((step) => {
+          {/* Step 6 (PAB) exists on the rail ONLY during the payout week — the
+              file week whose dispatch carries the bonus. Ids stay contiguous
+              1–9; the tab is simply not rendered and nextStep/prevStep step
+              over it. It mount-animates every page load so the payout week is
+              visibly announced (Kane 2026-09-01). */}
+          {steps.filter((step) => step.id !== 6 || pabPayoutWeekActive).map((step) => {
           const stepLoading = isStepDataLoading(step.id);
+          const isPabPayoutTab = step.id === 6;
           return (
           /* StepDataProgress is a sibling of the button, not a child — see its own doc. */
-          <div key={step.id} className="relative shrink-0">
+          <motion.div
+            key={step.id}
+            className="relative shrink-0"
+            // `false` disables the mount animation entirely for the other eight
+            // tabs — only the PAB tab announces itself.
+            initial={isPabPayoutTab ? { opacity: 0, scale: 0.8, y: -10 } : false}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ type: 'spring', stiffness: 260, damping: 20, delay: isPabPayoutTab ? 0.35 : 0 }}
+          >
             <button
               type="button"
               onClick={() => setCurrentStep(step.id)}
@@ -19585,8 +19718,17 @@ export default function PayrollWizard({
                 />
               )}
             </button>
+            {/* PAB payout-week beacon: emerald (the bonus pays this week), never
+                amber — amber is the wizard's warning colour. Persistent pulse so
+                the announcement outlives the entrance animation. */}
+            {isPabPayoutTab && (
+              <span className="pointer-events-none absolute -right-1 -top-1 flex h-3 w-3" aria-hidden>
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-3 w-3 rounded-full border border-white bg-emerald-500 dark:border-zinc-950" />
+              </span>
+            )}
             <StepDataProgress stepId={step.id} loading={stepLoading} />
-          </div>
+          </motion.div>
           );
           })}
           {/* One live region for the whole rail. Per-step regions would fire
