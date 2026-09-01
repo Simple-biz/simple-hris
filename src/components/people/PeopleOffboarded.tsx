@@ -114,20 +114,32 @@ export function ActiveHolderWarning({ holder, compact = false }: { holder: strin
   );
 }
 
+/** The searched term as the readout speaks it — trimmed and capped so a pasted
+ *  novel can't wrap the console line. */
+function spokenTerm(q: string): string {
+  const t = q.trim();
+  return t.length > 24 ? `${t.slice(0, 24)}…` : t;
+}
+
 /**
  * What the console readout says while a query is in flight (Kane's flavor:
- * "looking back / searching previous records"). The lines still walk in the
- * rough order the route works — ledger, records, roster cross-check, payout
- * data — and the last line HOLDS until the response lands (never loops back,
- * which would claim progress that isn't happening).
+ * "looking back / searching previous records", opening with the term itself —
+ * searching "franm" leads with “Looking for ‘franm’…”). The lines still walk
+ * in the rough order the route works — ledger, records, roster cross-check,
+ * payout data — and the last line HOLDS until the response lands (never loops
+ * back, which would claim progress that isn't happening).
  */
-const SEARCH_PHASES = [
-  'Looking back through the offboarded ledger…',
-  'Searching previous records…',
-  'Checking employees who came before…',
-  'Cross-referencing the active roster…',
-  'Pulling up Employee IDs and bank details…',
-] as const;
+function searchPhases(q: string): string[] {
+  const term = spokenTerm(q);
+  return [
+    `Looking for “${term}”…`,
+    `Searching the database for “${term}”…`,
+    'Searching previous records…',
+    'Checking employees who came before…',
+    'Cross-referencing the active roster…',
+    'Pulling up Employee IDs and bank details…',
+  ];
+}
 
 const DEBOUNCE_MS = 300;
 const PHASE_MS = 850;
@@ -143,6 +155,7 @@ function ConsoleReadout({
   searched,
   count,
   total,
+  query,
   accent,
 }: {
   loading: boolean;
@@ -150,24 +163,27 @@ function ConsoleReadout({
   searched: boolean;
   count: number;
   total: number;
+  /** The term being searched — spoken back in the first phase lines. */
+  query: string;
   accent: Accent;
 }) {
   const reduceMotion = useReducedMotion();
   const [phase, setPhase] = useState(0);
+  const phases = searchPhases(query);
 
   // Restart the phase walk on every new request; hold on the final line.
   useEffect(() => {
     if (!loading) return;
     setPhase(0);
     const t = setInterval(
-      () => setPhase((p) => Math.min(p + 1, SEARCH_PHASES.length - 1)),
+      () => setPhase((p) => Math.min(p + 1, searchPhases('').length - 1)),
       PHASE_MS,
     );
     return () => clearInterval(t);
   }, [loading]);
 
   let text: string;
-  if (loading) text = SEARCH_PHASES[phase];
+  if (loading) text = phases[Math.min(phase, phases.length - 1)];
   else if (error) text = 'Query failed — see the message below.';
   else if (searched && count > 0)
     text = total > count ? `${count} of ${total} matching records shown` : `${count} matching record${count === 1 ? '' : 's'}`;
@@ -337,6 +353,7 @@ export default function PeopleOffboarded({
           searched={searched}
           count={rows.length}
           total={total}
+          query={query}
           accent={accent}
         />
       </div>

@@ -59,10 +59,12 @@ snapshot.
 
 ## The tab's console treatment (2026-09-01, "futuristic — only this tab")
 Scoped entirely to `PeopleOffboarded.tsx`: a mono status readout walks flavored
-phase messages while a query is in flight ("Looking back through the offboarded
-ledger…" → … → "Pulling up Employee IDs and bank details…" — roughly the
-route's real stages, holding on the last line, never looping), a scan line runs
-under the search field, and result rows stagger in. All motion sits on the
+phase messages while a query is in flight, opening with the term itself
+(searching "franm" reads “Looking for ‘franm’…” → “Searching the database for
+‘franm’…” → … → "Pulling up Employee IDs and bank details…" — roughly the
+route's real stages, holding on the last line, never looping; the displayed
+term is trimmed and capped at 24 chars), a scan line runs under the search
+field, and result rows stagger in. All motion sits on the
 People tab's own accent (no new palette), works in both themes, and is disabled
 under `prefers-reduced-motion` (the readout text remains). **The 300ms search
 debounce is armed only inside the input's `onChange`** — never in an effect —
