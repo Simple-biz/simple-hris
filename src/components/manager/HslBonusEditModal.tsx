@@ -37,8 +37,7 @@ import {
 import {
   DEFAULT_SUB_TEAMS,
   KpiTable,
-  SsdEmployeeTable,
-  SsdSubTeamGrid,
+  SsdWorkspace,
   type EntryRow,
   type SubTeamState,
   recomputeSsdEntries,
@@ -404,13 +403,18 @@ export default function HslBonusEditModal({
             </div>
           ) : (
             <div className="flex flex-col gap-4">
+              {/* Same workspace the manager scores in, so a correction made
+                  here reads exactly like the original entry. */}
               {isTeamSplit && (
-                <SsdSubTeamGrid
+                <SsdWorkspace
                   subTeams={subTeams}
                   isLocked={isLocked}
                   onSubTeamChange={handleSubTeamChange}
                   ssdShareForTeam={ssdShareForTeam}
                   subTeamMemberCount={subTeamMemberCount}
+                  entries={entries}
+                  allEntries={entries}
+                  onSubTeamAssign={handleSubTeamAssign}
                 />
               )}
 
@@ -441,15 +445,6 @@ export default function HslBonusEditModal({
                 />
               )}
 
-              {isTeamSplit && (
-                <SsdEmployeeTable
-                  entries={entries}
-                  allEntries={entries}
-                  isLocked={isLocked}
-                  ssdShareForTeam={ssdShareForTeam}
-                  onSubTeamAssign={handleSubTeamAssign}
-                />
-              )}
             </div>
           )}
         </div>

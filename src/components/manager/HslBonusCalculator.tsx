@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { createPortal } from 'react-dom';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
-  AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
-  Download, Eye, Filter, Loader2, Lock, Minus, Plus, RefreshCw, RotateCcw,
-  Search, Trash2, UserPlus, Users, X,
+  AlertTriangle, AppWindow, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
+  Download, Eye, History, Loader2, Lock, Maximize2, Minus, PanelRight, Plus,
+  RefreshCw, RotateCcw, Search, Trash2, UserPlus, Users, X,
 } from 'lucide-react';
 
 const COLLAPSE_EASE = [0.22, 1, 0.36, 1] as const;
@@ -89,69 +90,97 @@ export const DEFAULT_SUB_TEAMS: Record<SubTeamName, SubTeamState> = {
   RED: { pct: '', records: '', rfc: '' },
 };
 
+/** Each sub-team's colours live in CSS (see the `--ssd-*` block in index.css)
+ *  rather than as Tailwind classes, because the same hue has to reach places a
+ *  class cannot go: `color-mix()`, inline `style`, and an arbitrary-value
+ *  utility. `varName` is the stem those four custom properties share. */
 export interface SubTeamPalette {
-  ring:       string;  // outer ring colour
-  headerBg:   string;  // top strip
-  headerText: string;
-  bodyBg:     string;  // inner card body
-  accent:     string;  // text-color for share + tier
-  dotOn:      string;  // filled tier dot
+  varName: string;
 }
 
 export const SUB_TEAM_PALETTE: Record<SubTeamName, SubTeamPalette> = {
-  BLUE: {
-    ring:       'ring-blue-400/60 dark:ring-blue-500/50',
-    headerBg:   'bg-gradient-to-r from-blue-500 to-blue-600 dark:from-blue-600 dark:to-blue-700',
-    headerText: 'text-white',
-    bodyBg:     'bg-blue-50/60 dark:bg-blue-950/30',
-    accent:     'text-blue-700 dark:text-blue-300',
-    dotOn:      'bg-blue-500 dark:bg-blue-400',
-  },
-  GREEN: {
-    ring:       'ring-emerald-400/60 dark:ring-emerald-500/50',
-    headerBg:   'bg-gradient-to-r from-emerald-500 to-emerald-600 dark:from-emerald-600 dark:to-emerald-700',
-    headerText: 'text-white',
-    bodyBg:     'bg-emerald-50/60 dark:bg-emerald-950/30',
-    accent:     'text-emerald-700 dark:text-emerald-300',
-    dotOn:      'bg-emerald-500 dark:bg-emerald-400',
-  },
-  YELLOW: {
-    ring:       'ring-yellow-400/60 dark:ring-yellow-500/50',
-    headerBg:   'bg-gradient-to-r from-yellow-400 to-amber-500 dark:from-yellow-500 dark:to-amber-600',
-    headerText: 'text-zinc-900',
-    bodyBg:     'bg-yellow-50/60 dark:bg-yellow-950/30',
-    accent:     'text-amber-700 dark:text-amber-300',
-    dotOn:      'bg-yellow-500 dark:bg-yellow-400',
-  },
-  ORANGE: {
-    ring:       'ring-orange-400/60 dark:ring-orange-500/50',
-    headerBg:   'bg-gradient-to-r from-orange-500 to-orange-600 dark:from-orange-600 dark:to-orange-700',
-    headerText: 'text-white',
-    bodyBg:     'bg-orange-50/60 dark:bg-orange-950/30',
-    accent:     'text-orange-700 dark:text-orange-300',
-    dotOn:      'bg-orange-500 dark:bg-orange-400',
-  },
-  PURPLE: {
-    ring:       'ring-violet-400/60 dark:ring-violet-500/50',
-    headerBg:   'bg-gradient-to-r from-violet-500 to-violet-600 dark:from-violet-600 dark:to-violet-700',
-    headerText: 'text-white',
-    bodyBg:     'bg-violet-50/60 dark:bg-violet-950/30',
-    accent:     'text-violet-700 dark:text-violet-300',
-    dotOn:      'bg-violet-500 dark:bg-violet-400',
-  },
-  RED: {
-    ring:       'ring-red-400/60 dark:ring-red-500/50',
-    headerBg:   'bg-gradient-to-r from-red-500 to-red-600 dark:from-red-600 dark:to-red-700',
-    headerText: 'text-white',
-    bodyBg:     'bg-red-50/60 dark:bg-red-950/30',
-    accent:     'text-red-700 dark:text-red-300',
-    dotOn:      'bg-red-500 dark:bg-red-400',
-  },
+  BLUE:   { varName: 'blue' },
+  GREEN:  { varName: 'green' },
+  YELLOW: { varName: 'yellow' },
+  ORANGE: { varName: 'orange' },
+  PURPLE: { varName: 'purple' },
+  RED:    { varName: 'red' },
 };
 
 /** Active sub-team filter for the SSD roster: a specific team, every member
  *  ('ALL'), or only the still-unassigned ('NONE'). */
 export type SubTeamFilter = SubTeamName | 'ALL' | 'NONE';
+
+// ── Branch overlay presentation ───────────────────────────────────────────────
+
+/** The three ways a branch can open away from the stack. Deliberately the same
+ *  set the Departments calculator offers (`DeptBonusCalculator`'s `OpenMode`) so
+ *  a manager who scores in both learns one control, not two. */
+export type HslOpenMode = 'window' | 'half' | 'full';
+
+const HSL_VIEW_MODES: { mode: HslOpenMode; label: string; Icon: typeof PanelRight }[] = [
+  { mode: 'window', label: 'Windowed', Icon: AppWindow },
+  { mode: 'half', label: 'Half window', Icon: PanelRight },
+  { mode: 'full', label: 'Full screen', Icon: Maximize2 },
+];
+
+/** Overlay entrance easing. Matches the collapse curve already used elsewhere in
+ *  the calculator, so every motion in this surface reads as one system. */
+const OVERLAY_EASE = [0.22, 1, 0.36, 1] as const;
+
+/** How each presentation arrives and leaves. `flat` is the reduced-motion exit:
+ *  a plain fade with no travel. Driven by variant NAME rather than by inline
+ *  objects so the panel keeps one key across mode switches and never remounts. */
+const PANEL_VARIANTS: Record<HslOpenMode, Record<string, Record<string, number | string>>> = {
+  // A window appears in place.
+  window: { hidden: { opacity: 0, scale: 0.97 }, shown: { opacity: 1, scale: 1 }, flat: { opacity: 0 } },
+  // A side panel comes in from the edge it is docked to.
+  half: { hidden: { x: '100%' }, shown: { x: 0, opacity: 1 }, flat: { opacity: 0 } },
+  // Full screen settles rather than travels — there is nowhere for it to come from.
+  full: { hidden: { opacity: 0, scale: 1.012 }, shown: { opacity: 1, scale: 1 }, flat: { opacity: 0 } },
+};
+
+/** Segmented control for Windowed / Half window / Full screen. `compact` drops
+ *  the labels for the tight in-overlay header. */
+function ViewSwitch({
+  mode, onChange, compact,
+}: {
+  mode: HslOpenMode;
+  onChange: (m: HslOpenMode) => void;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="How the branch opens"
+      className="flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60"
+    >
+      {HSL_VIEW_MODES.map(({ mode: m, label, Icon }) => {
+        const active = mode === m;
+        return (
+          <button
+            key={m}
+            type="button"
+            onClick={() => onChange(m)}
+            aria-pressed={active}
+            aria-label={label}
+            title={label}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium outline-none',
+              'transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-blue-500',
+              active
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-zinc-100 dark:text-zinc-900'
+                : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200',
+            )}
+          >
+            <Icon className="h-3.5 w-3.5" aria-hidden />
+            {!compact && <span className="hidden sm:inline">{label}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /** Monday-of-week containing `d`, formatted as YYYY-MM-DD in *local* time.
  *  HSL departments work Mon–Sun, so weeks pivot on Monday. We avoid
@@ -494,12 +523,54 @@ export default function HslBonusCalculator({
   // pill. With many HSL branches visible at once a flat stack is unreadable, so
   // "All" shows a collapsed overview and a single dept can be focused.
   const [activeFilter, setActiveFilter] = useState<HslDeptKey | 'all'>(initialFilter ?? 'all');
-  const [manualOpen, setManualOpen] = useState<Record<string, boolean>>({});
   /** Cross-branch people search: type a work email (or a name) and only the
    *  branches that score that person stay on screen, expanded and pre-filtered. */
   const [personSearch, setPersonSearch] = useState('');
   /** Which dept's "add external member" modal is open (null = closed). */
   const [addingMemberDept, setAddingMemberDept] = useState<HslDeptKey | null>(null);
+
+  // ── Overlay: open one branch away from the stack ──────────────────────────
+  // Same three presentations the Departments calculator offers, so a manager who
+  // scores in both surfaces learns the control once.
+  const [overlayDept, setOverlayDept] = useState<HslDeptKey | null>(null);
+  const [openMode, setOpenMode] = useState<HslOpenMode>('window');
+  // The fixed overlay is portalled to <body> to escape any transformed ancestor,
+  // which means it can only render after mount.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const reduceMotion = useReducedMotion();
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  // Where focus came from, so closing puts it back rather than dumping the user
+  // at the top of the document.
+  const overlayOpenerRef = useRef<HTMLElement | null>(null);
+
+  const openOverlay = useCallback((key: HslDeptKey) => {
+    overlayOpenerRef.current = document.activeElement as HTMLElement | null;
+    setOverlayDept(key);
+  }, []);
+
+  const closeOverlay = useCallback(() => {
+    setOverlayDept(null);
+    // The opener can be gone if the roster re-rendered underneath us.
+    if (overlayOpenerRef.current?.isConnected) overlayOpenerRef.current.focus();
+    overlayOpenerRef.current = null;
+  }, []);
+
+  // Escape closes, and the page behind must not scroll while it's open.
+  useEffect(() => {
+    if (!overlayDept) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeOverlay();
+    };
+    document.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    overlayRef.current?.focus();
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [overlayDept, closeOverlay]);
   // Recently offboarded people (final bonuses may still be owed) — fetched once
   // and shared by the per-dept Offboarded strips and the add-member modal.
   const { people: offboardedPeople, hoursWeekFloor: offboardedHoursFloor } = useOffboardedPeople(true);
@@ -1190,204 +1261,21 @@ export default function HslBonusCalculator({
     return activeFilter === 'all' ? visibleDepts : visibleDepts.filter((k) => k === activeFilter);
   }, [personQuery, personHitDepts, activeFilter, visibleDepts]);
 
-  // "All" overview lays the collapsed branches out as a grid; an expanded card
-  // spans the full width so its wide tables aren't squeezed into one column.
-  const gridMode = !personQuery && activeFilter === 'all' && multiDept;
-
-  /** A block is expanded when: only one dept exists, it's the focused filter,
-   *  a people search matched inside it, or the user manually opened it. With
-   *  multiple depts under "All" the blocks start collapsed so the page reads as
-   *  a tidy overview. */
-  function isOpen(key: HslDeptKey): boolean {
-    if (personQuery) return true; // searched branches always show their match
-    if (key in manualOpen) return manualOpen[key]!;
-    if (!multiDept) return true;
-    return activeFilter === key;
-  }
-
-  function toggleOpen(key: HslDeptKey) {
-    setManualOpen((m) => ({ ...m, [key]: !isOpen(key) }));
-  }
-
-  // ── Render ─────────────────────────────────────────────────────────────────
-
-  if (visibleDepts.length === 0) {
+  /** One department block. Rendered inline in the stack and again inside the
+   *  overlay; `surface` keeps the two mounts from sharing React state (an
+   *  overlay with the same key would inherit the inline block's scroll, page
+   *  and open team) and decides which chrome the block wears. */
+  function renderDeptBlock(key: HslDeptKey, surface: 'inline' | 'overlay') {
+    const inline = surface === 'inline';
     return (
-      <div className="flex flex-col items-center justify-center gap-3 px-6 py-20 text-center">
-        <Users className="h-10 w-10 text-zinc-300 dark:text-zinc-700" aria-hidden />
-        <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-          No HSL bonus departments assigned to you.
-        </p>
-        <p className="max-w-sm text-xs text-zinc-500 dark:text-zinc-500">
-          Ask an admin to assign you to one or more HSL sub-departments under
-          Roles &amp; permissions.
-        </p>
-      </div>
-    );
-  }
-
-  if (!booted) {
-    return (
-      <KpiCalculatorLoading
-        variant="hsl"
-        title={
-          isElevated
-            ? 'All Departments'
-            : visibleDepts.length === 1
-              ? HSL_DEPTS[visibleDepts[0]!].name
-              : 'My Departments'
-        }
-        cards={visibleDepts.length}
-      />
-    );
-  }
-
-  return (
-    <div className="flex min-h-0 flex-col bg-gradient-to-b from-white via-blue-50/20 to-white text-zinc-900 dark:from-black dark:via-blue-950/15 dark:to-black dark:text-zinc-100">
-      {/* Top bar */}
-      <div className="sticky top-0 z-10 flex flex-col gap-2.5 border-b border-zinc-200/80 bg-white/90 px-5 py-3 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/90">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-              KPI Calculator · HSL
-            </p>
-            <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
-              {isElevated ? 'All Departments' : visibleDepts.length === 1 ? HSL_DEPTS[visibleDepts[0]!].name : 'My Departments'}
-              <span className="ml-2 font-mono text-xs font-normal text-zinc-500">
-                week of {weekStart}
-              </span>
-            </h2>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
-              <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">Total</span>
-              <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                <AnimatedPeso amount={grandTotal} />
-              </span>
-              <span className="font-mono text-[10px] text-zinc-500">{totalPeople} ppl</span>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1.5 text-xs"
-              onClick={() => void manualRefresh()}
-              disabled={refreshing}
-              title="Reload scores (also updates live as teammates edit)"
-            >
-              <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
-              {refreshing ? 'Refreshing…' : 'Refresh'}
-            </Button>
-            {isElevated && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 gap-1.5 text-xs"
-                onClick={exportCsv}
-              >
-                <Download className="h-3.5 w-3.5" /> Export CSV
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {/* The payroll week couldn't be confirmed from the Hubstaff upload, so
-            every branch is held back rather than scored against a guessed
-            week key (which is invisible to everyone else — see `weekResolved`). */}
-        {weekError && (
-          <div
-            role="alert"
-            className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/30 dark:text-rose-200"
-          >
-            <span className="font-semibold">Couldn&apos;t confirm the payroll week.</span> All
-            branches are paused — anything scored now would be saved under the wrong week and
-            wouldn&apos;t be visible to Accounting or the other managers. Reload the page to try
-            again.
-          </div>
-        )}
-
-        {/* Department filter rail — focus one branch or scan them all, plus a
-            cross-branch people search (find someone by work email). */}
-        {multiDept && (
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative w-full max-w-[260px]">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
-              <input
-                type="search"
-                value={personSearch}
-                onChange={(e) => setPersonSearch(e.target.value)}
-                placeholder="Find a person by work email…"
-                aria-label="Find a person across branches by name or work email"
-                title="Type a work email or name — only the branches scoring that person stay on screen"
-                className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition-colors focus:border-blue-400 focus:ring-1 focus:ring-blue-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
-              />
-            </div>
-            <div className="-mx-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto px-1 pb-0.5">
-              <DeptPill
-                active={!personQuery && activeFilter === 'all'}
-                label="All"
-                count={visibleDepts.length}
-                onClick={() => {
-                  setPersonSearch('');
-                  setActiveFilter('all');
-                }}
-              />
-              {visibleDepts.map((k) => (
-                <DeptPill
-                  key={k}
-                  active={!personQuery && activeFilter === k}
-                  label={HSL_DEPTS[k].name}
-                  color={HSL_DEPTS[k].color}
-                  count={deptState[k]!.entries.length}
-                  onClick={() => {
-                    // Picking a branch ends the cross-branch search — the two
-                    // filters would otherwise fight over what's on screen.
-                    setPersonSearch('');
-                    setActiveFilter(k);
-                    setManualOpen((m) => ({ ...m, [k]: true }));
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {personQuery && (
-          <p className="font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
-            {personHitDepts.length === 0
-              ? `No one matches “${personSearch.trim()}” in your branches.`
-              : `Matched in ${personHitDepts.length} ${personHitDepts.length === 1 ? 'branch' : 'branches'}: ${personHitDepts.map((k) => HSL_DEPTS[k].name).join(', ')}`}
-          </p>
-        )}
-      </div>
-
-      {/* Payroll processing lock banner */}
-      {payrollLocked && (
-        <div className="flex items-center gap-2 border-b border-red-200 bg-red-50 px-5 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400">
-          <Lock className="h-3.5 w-3.5 shrink-0" />
-          <span>Payroll is being processed — KPI Calculator is locked. You cannot mark ready or unready until processing is complete.</span>
-        </div>
-      )}
-
-      {/* Department blocks */}
-      <div
-        className={cn(
-          'px-4 py-5 sm:px-6',
-          gridMode
-            ? 'grid grid-cols-1 items-start gap-4 sm:grid-cols-2 xl:grid-cols-3'
-            : 'flex flex-col gap-4',
-        )}
-      >
-        {filteredDepts.map((key) => (
           <DeptBlock
-            key={key}
+            key={`${surface}-${key}`}
+            chromeless={!inline}
+            onOpen={inline ? () => openOverlay(key) : undefined}
             deptKey={key}
             state={deptState[key]!}
             loading={loadingDepts.has(key)}
-            collapsible={multiDept}
-            open={isOpen(key)}
             searchSeed={personSearch}
-            sectionClassName={cn(gridMode && isOpen(key) && 'sm:col-span-2 xl:col-span-3')}
-            onToggleOpen={() => toggleOpen(key)}
             periodStartStr={periodStart(HSL_DEPTS[key])}
             onKpiChange={(email, kpiKey, val) => {
               setDeptState((prev) => {
@@ -1489,7 +1377,186 @@ export default function HslBonusCalculator({
             }}
             ssdShareForTeam={key === 'ssd_medical_records' ? ssdShareForTeam : undefined}
           />
-        ))}
+    );
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
+  if (visibleDepts.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 px-6 py-20 text-center">
+        <Users className="h-10 w-10 text-zinc-300 dark:text-zinc-700" aria-hidden />
+        <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+          No HSL bonus departments assigned to you.
+        </p>
+        <p className="max-w-sm text-xs text-zinc-500 dark:text-zinc-500">
+          Ask an admin to assign you to one or more HSL sub-departments under
+          Roles &amp; permissions.
+        </p>
+      </div>
+    );
+  }
+
+  if (!booted) {
+    return (
+      <KpiCalculatorLoading
+        variant="hsl"
+        title={
+          isElevated
+            ? 'All Departments'
+            : visibleDepts.length === 1
+              ? HSL_DEPTS[visibleDepts[0]!].name
+              : 'My Departments'
+        }
+        cards={visibleDepts.length}
+      />
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 flex-col bg-gradient-to-b from-white via-blue-50/20 to-white text-zinc-900 dark:from-black dark:via-blue-950/15 dark:to-black dark:text-zinc-100">
+      {/* Top bar */}
+      <div className="sticky top-0 z-10 flex flex-col gap-2.5 border-b border-zinc-200/80 bg-white/90 px-5 py-3 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/90">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+              KPI Calculator · HSL
+            </p>
+            <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+              {isElevated ? 'All Departments' : visibleDepts.length === 1 ? HSL_DEPTS[visibleDepts[0]!].name : 'My Departments'}
+              <span className="ml-2 font-mono text-xs font-normal text-zinc-500">
+                week of {weekStart}
+              </span>
+            </h2>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
+              <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">Total</span>
+              <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                <AnimatedPeso amount={grandTotal} />
+              </span>
+              <span className="font-mono text-[10px] text-zinc-500">{totalPeople} ppl</span>
+            </div>
+            {/* Sets how the next "Open" presents; also switchable from inside
+                the overlay, so the choice is never a dead end. */}
+            <ViewSwitch mode={openMode} onChange={setOpenMode} />
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5 text-xs"
+              onClick={() => void manualRefresh()}
+              disabled={refreshing}
+              title="Reload scores (also updates live as teammates edit)"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+              {refreshing ? 'Refreshing…' : 'Refresh'}
+            </Button>
+            {isElevated && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1.5 text-xs"
+                onClick={exportCsv}
+              >
+                <Download className="h-3.5 w-3.5" /> Export CSV
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* The payroll week couldn't be confirmed from the Hubstaff upload, so
+            every branch is held back rather than scored against a guessed
+            week key (which is invisible to everyone else — see `weekResolved`). */}
+        {weekError && (
+          <div
+            role="alert"
+            className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/30 dark:text-rose-200"
+          >
+            <span className="font-semibold">Couldn&apos;t confirm the payroll week.</span> All
+            branches are paused — anything scored now would be saved under the wrong week and
+            wouldn&apos;t be visible to Accounting or the other managers. Reload the page to try
+            again.
+          </div>
+        )}
+
+        {/* Department filter rail — focus one branch or scan them all, plus a
+            cross-branch people search (find someone by work email). */}
+        {multiDept && (
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative w-full max-w-[260px]">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+              <input
+                type="search"
+                value={personSearch}
+                onChange={(e) => setPersonSearch(e.target.value)}
+                placeholder="Find a person by work email…"
+                aria-label="Find a person across branches by name or work email"
+                title="Type a work email or name — only the branches scoring that person stay on screen"
+                className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition-colors focus:border-blue-400 focus:ring-1 focus:ring-blue-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
+              />
+            </div>
+            <div className="-mx-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto px-1 pb-0.5">
+              <DeptPill
+                active={!personQuery && activeFilter === 'all'}
+                label="All"
+                count={visibleDepts.length}
+                onClick={() => {
+                  setPersonSearch('');
+                  setActiveFilter('all');
+                }}
+              />
+              {visibleDepts.map((k) => (
+                <DeptPill
+                  key={k}
+                  active={!personQuery && activeFilter === k}
+                  label={HSL_DEPTS[k].name}
+                  color={HSL_DEPTS[k].color}
+                  count={deptState[k]!.entries.length}
+                  onClick={() => {
+                    // Picking a branch ends the cross-branch search — the two
+                    // filters would otherwise fight over what's on screen.
+                    setPersonSearch('');
+                    setActiveFilter(k);
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {personQuery && (
+          <p className="font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
+            {personHitDepts.length === 0
+              ? `No one matches “${personSearch.trim()}” in your branches.`
+              : `Matched in ${personHitDepts.length} ${personHitDepts.length === 1 ? 'branch' : 'branches'}: ${personHitDepts.map((k) => HSL_DEPTS[k].name).join(', ')}`}
+          </p>
+        )}
+      </div>
+
+      {/* Payroll processing lock banner */}
+      {payrollLocked && (
+        <div className="flex items-center gap-2 border-b border-red-200 bg-red-50 px-5 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400">
+          <Lock className="h-3.5 w-3.5 shrink-0" />
+          <span>Payroll is being processed — KPI Calculator is locked. You cannot mark ready or unready until processing is complete.</span>
+        </div>
+      )}
+
+      {/* Branches. A manager with one branch gets the scoring surface directly —
+          a one-row list you have to click through would be pure ceremony. Anyone
+          with several gets the list, and picks one to open. */}
+      <div className="flex flex-col gap-4 px-4 py-5 sm:px-6">
+        {multiDept ? (
+          <HslBranchList
+            deptKeys={filteredDepts}
+            state={deptState}
+            loadingDepts={loadingDepts}
+            periodStart={periodStart}
+            matchedBySearch={personQuery ? new Set(personHitDepts) : undefined}
+            onOpen={openOverlay}
+          />
+        ) : (
+          filteredDepts.map((key) => renderDeptBlock(key, 'inline'))
+        )}
       </div>
 
       {/* Read-only preview modal — opens on View button click. Reopen flips the
@@ -1525,7 +1592,254 @@ export default function HslBonusCalculator({
           />
         )}
       </AnimatePresence>
+
+      {/* Branch overlay — portalled to <body> so a transformed ancestor (the
+          Payroll Readiness modal mounts this component inside one) can't clip
+          or re-anchor a `fixed` panel. */}
+      {mounted &&
+        createPortal(
+          <AnimatePresence>
+            {overlayDept && (
+              <motion.button
+                key="hsl-scrim"
+                type="button"
+                aria-label="Close branch"
+                onClick={closeOverlay}
+                className="fixed inset-0 z-[60] cursor-default bg-zinc-950/55 backdrop-blur-[2px] dark:bg-black/70"
+                initial={reduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.28, ease: OVERLAY_EASE }}
+              />
+            )}
+            {overlayDept && (
+              <motion.div
+                key="hsl-panel"
+                // A layer, not the panel. Centring lives here as flexbox so the
+                // panel's own transform is free for the entrance — the earlier
+                // version centred with translate(-50%,-50%) and had to bake that
+                // offset into every keyframe, which forced a per-mode key and
+                // remounted the whole branch on every mode switch (losing the
+                // open team, the page and the roster selection).
+                className={cn(
+                  'pointer-events-none fixed z-[61] flex',
+                  openMode === 'full' && 'inset-0',
+                  openMode === 'window' && 'inset-0 items-center justify-center p-4 sm:p-6',
+                  openMode === 'half' && 'inset-y-0 right-0',
+                )}
+                initial={reduceMotion ? false : 'hidden'}
+                animate="shown"
+                exit={reduceMotion ? 'flat' : 'hidden'}
+              >
+                <motion.div
+                  ref={overlayRef}
+                  tabIndex={-1}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label={`${HSL_DEPTS[overlayDept].name} KPI calculator`}
+                  variants={PANEL_VARIANTS[openMode]}
+                  transition={{ duration: openMode === 'half' ? 0.42 : 0.36, ease: OVERLAY_EASE }}
+                  className={cn(
+                    'pointer-events-auto flex flex-col overflow-hidden bg-white outline-none dark:bg-zinc-950',
+                    openMode === 'full' && 'h-full w-full',
+                    openMode === 'window' &&
+                      'h-full max-h-[900px] w-full max-w-[1180px] rounded-2xl border border-zinc-200 shadow-2xl dark:border-zinc-800',
+                    openMode === 'half' &&
+                      'h-full w-[min(920px,92vw)] border-l border-zinc-200 shadow-2xl dark:border-zinc-800',
+                  )}
+                  style={{ borderTop: `3px solid ${HSL_DEPTS[overlayDept].color}` }}
+                >
+                <div className="flex flex-none flex-wrap items-center gap-3 border-b border-zinc-200 bg-zinc-50/80 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
+                  <p className="min-w-0 truncate font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-500">
+                    KPI Calculator · HSL · week of {weekStart}
+                  </p>
+                  <div className="ml-auto flex items-center gap-2">
+                    <ViewSwitch mode={openMode} onChange={setOpenMode} compact />
+                    <button
+                      type="button"
+                      onClick={closeOverlay}
+                      aria-label="Close branch"
+                      title="Close (Esc)"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-600 outline-none transition-colors hover:bg-zinc-100 hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                    >
+                      <X className="h-4 w-4" aria-hidden />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex min-h-0 flex-1">
+                  {/* Branch rail. Full screen has the width to spare, and jumping
+                      between branches without closing is the whole point of it. */}
+                  {openMode === 'full' && multiDept && (
+                    <aside className="hidden w-56 flex-none flex-col overflow-y-auto border-r border-zinc-200 bg-zinc-50/60 p-2 dark:border-zinc-800 dark:bg-zinc-900/30 md:flex">
+                      {visibleDepts.map((k) => {
+                        const on = k === overlayDept;
+                        const st = deptState[k]!;
+                        return (
+                          <button
+                            key={k}
+                            type="button"
+                            onClick={() => setOverlayDept(k)}
+                            aria-current={on ? 'true' : undefined}
+                            className={cn(
+                              'mb-1 flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-500',
+                              on
+                                ? 'border-zinc-300 bg-white shadow-sm dark:border-zinc-700 dark:bg-zinc-900'
+                                : 'border-transparent hover:bg-white/70 dark:hover:bg-zinc-900/50',
+                            )}
+                          >
+                            <span
+                              aria-hidden
+                              className="h-2 w-2 flex-none rounded-full"
+                              style={{ backgroundColor: HSL_DEPTS[k].color }}
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-[12.5px] font-medium text-zinc-800 dark:text-zinc-100">
+                                {HSL_DEPTS[k].name}
+                              </span>
+                              <span className="block font-mono text-[10px] text-zinc-500">
+                                {formatPeso(st.entries.reduce((s, e) => s + e.calculated_bonus, 0))}
+                              </span>
+                            </span>
+                            {(st.status === 'ready' || st.status === 'locked') && (
+                              <CheckCircle2 className="h-3.5 w-3.5 flex-none text-emerald-500" aria-hidden />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </aside>
+                  )}
+
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                    {renderDeptBlock(overlayDept, 'overlay')}
+                  </div>
+                </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          document.body,
+        )}
     </div>
+  );
+}
+
+// ── Branch list ───────────────────────────────────────────────────────────────
+
+/** Status chip for a scoring period. Shared by the branch list and the block
+ *  header so one status never reads two ways. */
+const DEPT_STATUS_CHIP: Record<BonusStatus, string> = {
+  draft:  'bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200',
+  ready:  'bg-amber-200 text-amber-900 dark:bg-amber-700/80 dark:text-amber-100',
+  locked: 'bg-emerald-200 text-emerald-900 dark:bg-emerald-800/80 dark:text-emerald-100',
+};
+
+interface HslBranchListProps {
+  deptKeys: HslDeptKey[];
+  state: AllDeptState;
+  loadingDepts: Set<HslDeptKey>;
+  periodStart: (dept: DeptConfig) => string;
+  /** Branches containing a cross-branch people-search hit, flagged on the row. */
+  matchedBySearch?: Set<HslDeptKey>;
+  onOpen: (key: HslDeptKey) => void;
+}
+
+/** Every branch as one row: colour, name, cadence, period, status, headcount,
+ *  total. Picking one opens it in the overlay.
+ *
+ *  This replaced a stack of collapsible cards (Kane, 2026-09-01). Accordions
+ *  made the page's height depend on what was open, so two branches could never
+ *  be compared without scrolling past a full roster, and the scoring surface was
+ *  always squeezed into whatever width the stack left it. A list compares in one
+ *  glance and hands the whole overlay to the branch you actually picked. */
+export function HslBranchList({
+  deptKeys, state, loadingDepts, periodStart, matchedBySearch, onOpen,
+}: HslBranchListProps) {
+  if (deptKeys.length === 0) {
+    return (
+      <p className="rounded-xl border border-dashed border-zinc-200 px-4 py-10 text-center text-xs text-zinc-500 dark:border-zinc-800">
+        No branches match the current filter.
+      </p>
+    );
+  }
+
+  return (
+    <ul className="divide-y divide-zinc-200 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-950/50">
+      {deptKeys.map((key) => {
+        const dept = HSL_DEPTS[key];
+        const st = state[key]!;
+        const total = st.entries.reduce((s, e) => s + e.calculated_bonus, 0);
+        const loading = loadingDepts.has(key);
+        const matched = !!matchedBySearch?.has(key);
+        return (
+          <li key={key}>
+            <button
+              type="button"
+              onClick={() => onOpen(key)}
+              title={`Open ${dept.name}`}
+              className="group flex w-full flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 text-left outline-none transition-colors duration-150 hover:bg-zinc-50 focus-visible:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 dark:hover:bg-zinc-900/60 dark:focus-visible:bg-zinc-900/60"
+            >
+              <span
+                aria-hidden
+                className="h-8 w-1 flex-none rounded-full"
+                style={{ backgroundColor: dept.color }}
+              />
+
+              {/* `basis-40` is the load-bearing bit: the name keeps a readable
+                  minimum and the figures wrap to their own line rather than
+                  squeezing "SSD Medical Records" into "SSD …". */}
+              <span className="flex min-w-0 flex-[2] basis-40 flex-col gap-0.5">
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+                    {dept.name}
+                  </span>
+                  {matched && (
+                    <span className="flex-none rounded bg-blue-100 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-blue-800 dark:bg-blue-950/60 dark:text-blue-300">
+                      match
+                    </span>
+                  )}
+                </span>
+                <span className="truncate font-mono text-[10px] text-zinc-500">
+                  {dept.cadence} · {periodLabel(dept, periodStart(dept))}
+                </span>
+              </span>
+
+              <span className="ml-auto flex flex-none items-center gap-3">
+                <span className="flex items-center gap-2">
+                  <span
+                    className={cn(
+                      'rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em]',
+                      DEPT_STATUS_CHIP[st.status],
+                    )}
+                  >
+                    {st.status}
+                  </span>
+                  {loading && (
+                    <RefreshCw className="h-3 w-3 animate-spin text-zinc-500" aria-hidden />
+                  )}
+                </span>
+
+                <span className="text-right font-mono text-[10px] text-zinc-500 sm:w-16">
+                  {st.entries.length} ppl
+                </span>
+
+                <span
+                  className="text-right font-mono text-sm font-bold tabular-nums sm:w-32"
+                  style={{ color: dept.color }}
+                >
+                  <AnimatedPeso amount={total} />
+                </span>
+
+                <ChevronRight
+                  aria-hidden
+                  className="h-4 w-4 flex-none text-zinc-400 transition-colors group-hover:text-zinc-700 dark:text-zinc-600 dark:group-hover:text-zinc-300"
+                />
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -1564,14 +1878,17 @@ interface DeptBlockProps {
   deptKey: HslDeptKey;
   state: DeptState;
   loading: boolean;
-  collapsible: boolean;
-  open: boolean;
   /** Query pushed down from the top bar's cross-branch people search. Whenever
    *  it changes it takes over this block's own search box, so a branch that
    *  surfaced from a work-email search opens already filtered to that person. */
   searchSeed?: string;
   sectionClassName?: string;
-  onToggleOpen: () => void;
+  /** Drops the block's own card frame so it can fill an overlay panel edge to
+   *  edge. The coloured left rule survives — it is how the branch is identified. */
+  chromeless?: boolean;
+  /** Opens this branch in the overlay. Absent when the block already IS the
+   *  overlay, which is what keeps the header from offering to reopen itself. */
+  onOpen?: () => void;
   periodStartStr: string;
   onKpiChange: (email: string, key: string, val: number | boolean) => void;
   onToggleManager: (email: string) => void;
@@ -1604,7 +1921,8 @@ interface DeptBlockProps {
 const DEPT_PAGE_SIZE = 10;
 
 function DeptBlock({
-  deptKey, state, loading, collapsible, open, searchSeed, sectionClassName, onToggleOpen, periodStartStr,
+  deptKey, state, loading, searchSeed, sectionClassName,
+  chromeless, onOpen, periodStartStr,
   onKpiChange, onToggleManager,
   savedAtMs, autosaveError, onMarkReady, onMarkUnready, onView, onSubTeamChange, ssdShareForTeam,
   payrollLocked, markUnreadySubmitting,
@@ -1667,50 +1985,51 @@ function DeptBlock({
   // Reset to page 1 whenever the search or sub-team filter changes
   useEffect(() => { setPage(1); }, [search, subTeamFilter]);
 
-  const statusColors: Record<BonusStatus, string> = {
-    draft:  'bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200',
-    ready:  'bg-amber-200 text-amber-900 dark:bg-amber-700/80 dark:text-amber-100',
-    locked: 'bg-emerald-200 text-emerald-900 dark:bg-emerald-800/80 dark:text-emerald-100',
-  };
+  /** Page stepper. Rendered in the toolbar for most departments; SSD instead
+   *  hands it to the roster footer, where it sits with the rows it pages. */
+  const pagerControls = (
+    <div
+      data-readonly-allow
+      className="flex items-center gap-0.5 rounded-md border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60"
+    >
+      <button
+        type="button"
+        className="rounded p-1 text-zinc-600 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800"
+        disabled={currentPage <= 1}
+        onClick={() => setPage((p) => Math.max(1, p - 1))}
+        aria-label="Previous page"
+      >
+        <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
+      </button>
+      <span className="min-w-[3rem] text-center font-mono text-[10px] tabular-nums text-zinc-600 dark:text-zinc-400">
+        {currentPage} / {totalPages}
+      </span>
+      <button
+        type="button"
+        className="rounded p-1 text-zinc-600 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800"
+        disabled={currentPage >= totalPages}
+        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+        aria-label="Next page"
+      >
+        <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+      </button>
+    </div>
+  );
 
   return (
     <section
       className={cn(
-        'overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950/60',
+        'bg-white dark:bg-zinc-950/60',
+        chromeless
+          ? 'flex min-h-0 flex-1 flex-col overflow-y-auto'
+          : 'overflow-hidden rounded-xl border border-zinc-200 shadow-sm dark:border-zinc-800',
         sectionClassName,
       )}
-      style={{ borderLeft: `3px solid ${dept.color}` }}
+      style={chromeless ? undefined : { borderLeft: `3px solid ${dept.color}` }}
     >
-      {/* Header — click to expand/collapse when several depts are visible */}
-      <header
-        className={cn(
-          'flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-zinc-50/70 px-5 py-3.5 dark:border-zinc-800/80 dark:bg-zinc-900/40',
-          collapsible && 'cursor-pointer select-none transition-colors hover:bg-zinc-100/70 dark:hover:bg-zinc-900/70',
-        )}
-        {...(collapsible
-          ? {
-              role: 'button' as const,
-              tabIndex: 0,
-              'aria-expanded': open,
-              onClick: onToggleOpen,
-              onKeyDown: (ev: React.KeyboardEvent) => {
-                if (ev.key === 'Enter' || ev.key === ' ') {
-                  ev.preventDefault();
-                  onToggleOpen();
-                }
-              },
-            }
-          : {})}
-      >
-        {collapsible && (
-          <ChevronDown
-            className={cn(
-              'h-4 w-4 shrink-0 text-zinc-400 transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-              open ? 'rotate-180' : 'rotate-0',
-            )}
-            aria-hidden
-          />
-        )}
+      {/* Header. Identity and totals only — picking a branch happens in the list
+          above (or the overlay rail); this no longer expands or collapses. */}
+      <header className="flex flex-none flex-wrap items-center gap-3 border-b border-zinc-200 bg-zinc-50/70 px-5 py-3.5 dark:border-zinc-800/80 dark:bg-zinc-900/40">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <h3 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
             {dept.name}
@@ -1721,7 +2040,7 @@ function DeptBlock({
           )}>
             {dept.cadence}
           </span>
-          <span className={cn('rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em]', statusColors[state.status])}>
+          <span className={cn('rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em]', DEPT_STATUS_CHIP[state.status])}>
             {state.status}
           </span>
           {dept.monthlyMax && (
@@ -1741,20 +2060,23 @@ function DeptBlock({
           <span className="font-mono text-base font-bold tabular-nums" style={{ color: dept.color }}>
             <AnimatedPeso amount={deptTotal} />
           </span>
+          {onOpen && (
+            // The header itself toggles the collapse, so this must not bubble.
+            <button
+              type="button"
+              onClick={(ev) => { ev.stopPropagation(); onOpen(); }}
+              onKeyDown={(ev) => ev.stopPropagation()}
+              title={`Open ${dept.name} on its own`}
+              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-600 outline-none transition-colors hover:bg-zinc-50 hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+            >
+              <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+              <span className="hidden sm:inline">Open</span>
+            </button>
+          )}
         </div>
       </header>
 
       {/* Body */}
-      <AnimatePresence initial={false}>
-      {open && (
-      <motion.div
-        key="dept-body"
-        initial={{ height: 0, opacity: 0 }}
-        animate={{ height: 'auto', opacity: 1 }}
-        exit={{ height: 0, opacity: 0 }}
-        transition={{ height: { duration: 0.36, ease: COLLAPSE_EASE }, opacity: { duration: 0.22, ease: 'easeOut' } }}
-        className="overflow-hidden"
-      >
       <div className="space-y-4 px-5 py-5">
         {/* Action row. Add member (any dept, even empty) is a draft-only edit:
             in 'ready'/'locked' the row instead shows why scoring is read-only, so
@@ -1815,29 +2137,8 @@ function DeptBlock({
                   <span className="text-zinc-400"> · filtered from {state.entries.length}</span>
                 )}
               </span>
-              <div data-readonly-allow className="flex items-center gap-0.5 rounded-md border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60">
-                <button
-                  type="button"
-                  className="rounded p-1 text-zinc-600 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                  disabled={currentPage <= 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  aria-label="Previous page"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </button>
-                <span className="min-w-[3rem] text-center font-mono text-[10px] tabular-nums text-zinc-600 dark:text-zinc-400">
-                  {currentPage} / {totalPages}
-                </span>
-                <button
-                  type="button"
-                  className="rounded p-1 text-zinc-600 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                  disabled={currentPage >= totalPages}
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  aria-label="Next page"
-                >
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </button>
-              </div>
+              {/* SSD renders this in the roster footer instead — see `pagerControls`. */}
+              {!isTeamSplit && pagerControls}
             </div>
           </div>
         )}
@@ -1909,51 +2210,27 @@ function DeptBlock({
           />
         )}
 
-        {/* SSD: side-by-side at lg+ — sub-team scoring boxes (left), employee
-            chip picker (right). `items-stretch` (default for grid) + the inner
-            `h-full auto-rows-fr` on SsdSubTeamGrid keeps both columns and the
-            6 boxes vertically aligned with the employee list. */}
-        {isTeamSplit && ssdShareForTeam && !dept.noKpi && (
-          <div className="grid items-stretch gap-4 lg:grid-cols-2">
-            <div className="flex min-w-0 flex-col">
-              <SsdSubTeamGrid
-                subTeams={state.subTeams}
-                isLocked={readOnly}
-                onSubTeamChange={onSubTeamChange}
-                ssdShareForTeam={ssdShareForTeam}
-                subTeamMemberCount={subTeamMemberCount}
-                activeFilter={subTeamFilter}
-                onFilterToggle={toggleSubTeamFilter}
-              />
-            </div>
-            <div className="flex min-w-0 flex-col">
-              <SsdEmployeeTable
-                entries={pagedEntries}
-                allEntries={state.entries}
-                isLocked={readOnly}
-                ssdShareForTeam={ssdShareForTeam}
-                onSubTeamAssign={(email, subTeam) =>
-                  onKpiChange(email, 'sub_team', subTeam as unknown as number)
-                }
-                activeFilter={subTeamFilter}
-                onFilterChange={setSubTeamFilter}
-                rosterEmails={rosterEmails}
-                offboardedEmails={offboardedEmails}
-                onRemoveMember={onRemoveMember}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Fallback for any team_split dept that has no KPI inputs (none today).
-            No employee table here, so the boxes stay static (no filter toggle). */}
-        {isTeamSplit && ssdShareForTeam && dept.noKpi && (
-          <SsdSubTeamGrid
+        {/* SSD: status strip + one team card + full-width roster. The roster
+            filter is lifted to this block because `filteredEntries` above pages
+            against it — the workspace must not hold a second copy. */}
+        {isTeamSplit && ssdShareForTeam && (
+          <SsdWorkspace
             subTeams={state.subTeams}
             isLocked={readOnly}
             onSubTeamChange={onSubTeamChange}
             ssdShareForTeam={ssdShareForTeam}
             subTeamMemberCount={subTeamMemberCount}
+            entries={pagedEntries}
+            allEntries={state.entries}
+            onSubTeamAssign={(email, subTeam) =>
+              onKpiChange(email, 'sub_team', subTeam as unknown as number)
+            }
+            activeFilter={subTeamFilter}
+            onFilterChange={setSubTeamFilter}
+            rosterEmails={rosterEmails}
+            offboardedEmails={offboardedEmails}
+            onRemoveMember={onRemoveMember}
+            pager={pagerControls}
           />
         )}
 
@@ -2050,9 +2327,6 @@ function DeptBlock({
           </div>
         </div>
       </div>
-      </motion.div>
-      )}
-      </AnimatePresence>
     </section>
   );
 }
@@ -2488,7 +2762,7 @@ function SsdTeamTabs({
       <div
         role="tablist"
         aria-label="Sub-teams"
-        className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5"
+        className="flex min-w-0 flex-1 basis-full flex-wrap items-center gap-1.5 sm:basis-0"
       >
         {SSD_TEAMS.map((name, i) => {
           const status = statuses[name];
@@ -2570,6 +2844,9 @@ interface SsdTeamCardProps {
   state: SubTeamState;
   status: SsdTeamStatus;
   members: number;
+  /** Per-member payout. For a `restored` team this is the SAVED share, not a
+   *  recompute — the three inputs are blank, so recomputing would report ₱0 for
+   *  a team that has already been scored and will be paid. */
   share: number;
   splitRule: TeamSplitRule | undefined;
   poolRule: TeamPoolRule | undefined;
@@ -2719,7 +2996,14 @@ function SsdTeamCard({
       </div>
 
       {/* Live arithmetic for both rules, so the payout below is never a number
-          the operator has to take on faith. */}
+          the operator has to take on faith. A restored team has no arithmetic to
+          show — its inputs are gone and only the result survived. */}
+      {status === 'restored' ? (
+        <p className="border-t border-zinc-100 px-4 py-2.5 font-mono text-[11px] leading-relaxed text-zinc-600 dark:border-zinc-800/70 dark:text-zinc-400">
+          Scored in an earlier session. Accuracy, records and RFC aren&rsquo;t saved between
+          sessions, so only the share below survived. Re-enter all three to change it.
+        </p>
+      ) : (
       <dl className="grid gap-1 border-t border-zinc-100 px-4 py-2.5 font-mono text-[11px] dark:border-zinc-800/70">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3">
           <dt className="min-w-0 text-zinc-500">
@@ -2744,6 +3028,7 @@ function SsdTeamCard({
           </dd>
         </div>
       </dl>
+      )}
 
       {/* Tier meter left, per-member payout right. */}
       <div className="mt-auto flex flex-wrap items-end justify-between gap-3 border-t border-zinc-200 bg-zinc-50/70 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
@@ -2769,7 +3054,11 @@ function SsdTeamCard({
               state.pct.trim() ? 'text-[var(--team-text)]' : 'text-zinc-500',
             )}
           >
-            {state.pct.trim() ? tier.label : 'Awaiting accuracy'}
+            {state.pct.trim()
+              ? tier.label
+              : status === 'restored'
+                ? 'Accuracy not on screen'
+                : 'Awaiting accuracy'}
           </span>
         </div>
         <div className="text-right">
@@ -2779,7 +3068,7 @@ function SsdTeamCard({
               typed || share !== 0 ? 'text-[var(--team-text)]' : 'text-zinc-400 dark:text-zinc-600',
             )}
           >
-            {typed || share !== 0 ? <AnimatedPeso amount={share} /> : '—'}
+            {typed || status === 'restored' || share !== 0 ? <AnimatedPeso amount={share} /> : '—'}
           </div>
           <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
             per member
@@ -2848,7 +3137,10 @@ interface SsdRosterProps {
   entries: EntryRow[];
   allEntries: EntryRow[];
   isLocked: boolean;
-  ssdShareForTeam: (subTeam: SubTeamName, memberCount: number) => number;
+  /** Per-row payout. Not `ssdShareForTeam` directly: a team scored in an earlier
+   *  session has blank inputs, and recomputing from those would print ₱0.00 next
+   *  to a share that is banked and about to be paid. */
+  shareForRow: (entry: EntryRow, subTeam: SubTeamName, memberCount: number) => number;
   onSubTeamAssign: (email: string, subTeam: SubTeamName | '') => void;
   activeFilter: SubTeamFilter;
   onFilterChange: (f: SubTeamFilter) => void;
@@ -2860,7 +3152,7 @@ interface SsdRosterProps {
 }
 
 function SsdRoster({
-  entries, allEntries, isLocked, ssdShareForTeam, onSubTeamAssign,
+  entries, allEntries, isLocked, shareForRow, onSubTeamAssign,
   activeFilter, onFilterChange, rosterEmails, offboardedEmails, onRemoveMember, pager,
 }: SsdRosterProps) {
   // Counts must reflect the whole department, never just the visible page.
@@ -3125,7 +3417,7 @@ function SsdRoster({
             {entries.map((e, i) => {
               const subTeam = String(e.kpi_data.sub_team ?? '') as SubTeamName | '';
               const memberCount = subTeam ? (memberCounts[subTeam] ?? 0) : 0;
-              const share = subTeam ? ssdShareForTeam(subTeam, memberCount) : 0;
+              const share = subTeam ? shareForRow(e, subTeam, memberCount) : 0;
               const isSel = selected.has(e.employee_email);
               const isExternal = !!rosterEmails && !rosterEmails.has(e.employee_email);
               return (
@@ -3158,13 +3450,18 @@ function SsdRoster({
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1.5">
-                      {!subTeam && (
-                        <span
-                          aria-hidden
-                          title="No sub-team — this person earns nothing until assigned"
-                          className="h-1.5 w-1.5 flex-none rounded-full bg-amber-500"
-                        />
-                      )}
+                      {/* The slot is always here, filled only when unassigned —
+                          rendering it conditionally indented every flagged name
+                          out of the column. */}
+                      <span className="flex h-1.5 w-1.5 flex-none items-center justify-center">
+                        {!subTeam && (
+                          <span
+                            aria-hidden
+                            title="No sub-team — this person earns nothing until assigned"
+                            className="h-1.5 w-1.5 rounded-full bg-amber-500"
+                          />
+                        )}
+                      </span>
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 font-medium text-zinc-900 dark:text-zinc-100">
                           <span className="truncate">{e.employee_name}</span>
@@ -3284,9 +3581,31 @@ export function SsdWorkspace({
     [allEntries],
   );
 
+  /** The banked per-member share for a team whose inputs are no longer on
+   *  screen. Every member of a team gets the same share by construction, so the
+   *  first non-zero one is the team's figure. */
+  const savedShareByTeam = useMemo(() => {
+    const byTeam: Partial<Record<SubTeamName, number>> = {};
+    for (const e of allEntries) {
+      const t = String(e.kpi_data.sub_team ?? '') as SubTeamName | '';
+      if (t && byTeam[t] === undefined && e.calculated_bonus !== 0) byTeam[t] = e.calculated_bonus;
+    }
+    return byTeam;
+  }, [allEntries]);
+
+  const shareForRow = useCallback(
+    (e: EntryRow, team: SubTeamName, memberCount: number) =>
+      statuses[team] === 'restored' ? e.calculated_bonus : ssdShareForTeam(team, memberCount),
+    [statuses, ssdShareForTeam],
+  );
+
   const blanks = SSD_TEAMS.filter((t) => statuses[t] === 'empty');
   const partials = SSD_TEAMS.filter((t) => statuses[t] === 'partial');
   const members = subTeamMemberCount(activeTeam);
+  const activeShare =
+    statuses[activeTeam] === 'restored'
+      ? (savedShareByTeam[activeTeam] ?? 0)
+      : ssdShareForTeam(activeTeam, members || 1);
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -3308,7 +3627,7 @@ export function SsdWorkspace({
           state={subTeams[activeTeam]}
           status={statuses[activeTeam]}
           members={members}
-          share={ssdShareForTeam(activeTeam, members || 1)}
+          share={activeShare}
           splitRule={splitRule}
           poolRule={poolRule}
           isLocked={isLocked}
@@ -3317,39 +3636,46 @@ export function SsdWorkspace({
 
         {/* The rules, stated once, read off the live schema. The handoff left
             these as invented placeholders and asked for the real ones. */}
-        <aside className="flex min-w-0 flex-col gap-2.5 rounded-xl border border-zinc-200 bg-zinc-50/60 px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/30">
+        {/* A container, not a viewport consumer: this panel is ~330px wide beside
+            the card in a half-window overlay and full width when stacked, so its
+            own inline size decides the split. Keying it to `sm:` collided the two
+            columns' text at exactly the width the side panel produces. */}
+        <aside className="@container flex min-w-0 flex-col gap-3 rounded-xl border border-zinc-200 bg-zinc-50/60 px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/30">
           <h4 className="font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
             How a share is built
           </h4>
-          <div>
-            <p className="font-mono text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">
-              {splitRule?.label ?? 'Team Accuracy Bonus'}
-            </p>
-            <ul className="mt-1 space-y-0.5">
-              {(splitRule?.thresholds ?? []).map((t) => (
-                <li
-                  key={t.minPct}
-                  className="flex justify-between gap-2 font-mono text-[10px] text-zinc-600 dark:text-zinc-400"
-                >
-                  <span>
-                    {t.minPct}%{t.maxPct === null ? '+' : `–${t.maxPct}%`}
-                  </span>
-                  <span className="tabular-nums">
-                    {t.ratePerRecord === 0 ? 'no bonus' : `${formatPeso(t.ratePerRecord)}/record`}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            <p className="mt-1 font-mono text-[10px] text-zinc-500">records × rate ÷ headcount</p>
-          </div>
-          <div className="border-t border-zinc-200 pt-2.5 dark:border-zinc-800">
-            <p className="font-mono text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">
-              {poolRule?.label ?? 'RFC'} pool
-            </p>
-            <p className="mt-1 font-mono text-[10px] leading-relaxed text-zinc-600 dark:text-zinc-400">
-              {formatPeso(poolRule?.ratePerRecord ?? 0)} per RFC, pooled and split evenly. No
-              accuracy tiering — it stacks on top of the bonus above.
-            </p>
+          {/* Two columns only once the panel itself can carry them. */}
+          <div className="grid gap-x-6 gap-y-3 @md:grid-cols-2">
+            <div className="min-w-0">
+              <p className="font-mono text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">
+                {splitRule?.label ?? 'Team Accuracy Bonus'}
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {(splitRule?.thresholds ?? []).map((t) => (
+                  <li
+                    key={t.minPct}
+                    className="flex gap-2 font-mono text-[10px] text-zinc-600 dark:text-zinc-400"
+                  >
+                    <span className="w-[5.5rem] flex-none tabular-nums">
+                      {t.minPct}%{t.maxPct === null ? '+' : `–${t.maxPct}%`}
+                    </span>
+                    <span className="tabular-nums">
+                      {t.ratePerRecord === 0 ? 'no bonus' : `${formatPeso(t.ratePerRecord)}/record`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1 font-mono text-[10px] text-zinc-500">records × rate ÷ headcount</p>
+            </div>
+            <div className="min-w-0 border-t border-zinc-200 pt-3 dark:border-zinc-800 @md:border-l @md:border-t-0 @md:pl-6 @md:pt-0">
+              <p className="font-mono text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">
+                {poolRule?.label ?? 'RFC'} pool
+              </p>
+              <p className="mt-1 max-w-[42ch] font-mono text-[10px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                {formatPeso(poolRule?.ratePerRecord ?? 0)} per RFC, pooled and split evenly. No
+                accuracy tiering — it stacks on top of the bonus above.
+              </p>
+            </div>
           </div>
 
           {/* Why the run is not finished, stated plainly rather than left for the
@@ -3383,7 +3709,7 @@ export function SsdWorkspace({
         entries={entries}
         allEntries={allEntries}
         isLocked={isLocked}
-        ssdShareForTeam={ssdShareForTeam}
+        shareForRow={shareForRow}
         onSubTeamAssign={onSubTeamAssign}
         activeFilter={filter}
         onFilterChange={setFilter}

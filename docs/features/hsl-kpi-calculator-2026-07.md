@@ -149,6 +149,116 @@ product register (calm, familiar, motion conveys state):
   Once `ready`/`locked` the dept is read-only (with a "Mark as Unready to edit"
   hint), so an edit or an added member can't silently fail to reach Accounting.
 
+## Branch list + overlay, SSD workspace rebuild *(2026-09-01)*
+
+Two changes, one pass. Reference: `references/UI improvement request/design_handoff_bonus_run/`.
+
+### Branches are a list, not a stack of accordions
+
+`HslBranchList` replaced the stack of collapsible dept cards. One row per branch:
+colour bar, name, cadence + period, status chip, headcount, total, chevron.
+Picking a row opens that branch in an overlay.
+
+Kane's call (2026-09-01). The accordions made page height depend on what was
+open, so two branches could never be compared without scrolling past a full
+roster, and the scoring surface was always squeezed into whatever width the
+stack left it. `manualOpen` / `isOpen` / `toggleOpen` / `gridMode` are gone, and
+`DeptBlock` no longer takes `collapsible` / `open` / `onToggleOpen`.
+
+**A manager with ONE branch still gets the block directly** — a one-row list you
+must click through is pure ceremony, and it preserves what the Payroll Readiness
+modal already relied on (it scopes `managedDepts` to a single key, so
+`multiDept` is false and the branch renders in place, as before).
+
+### Three overlay presentations
+
+`HslOpenMode` = `window` | `half` | `full`, chosen from a `ViewSwitch` in the top
+bar and switchable again from inside the overlay. Deliberately the same set
+`DeptBonusCalculator` offers, so a manager scoring in both learns one control.
+Full screen adds a branch rail so you can move between branches without closing.
+
+Portalled to `<body>`: the Payroll Readiness modal mounts this component inside a
+transformed ancestor, which would otherwise re-anchor a `fixed` panel. Escape
+closes, body scroll locks while open, focus moves to the panel and returns to the
+opener.
+
+**The panel keeps ONE key across mode switches.** Centring lives on an outer
+layer as flexbox and the entrance is driven by variant *name* (`PANEL_VARIANTS`),
+not inline objects. The first cut centred the window with
+`translate(-50%,-50%)`, which had to be baked into every keyframe and therefore
+forced a per-mode key — switching Windowed → Full screen remounted the whole
+branch and silently discarded the open team, the page and the roster selection.
+
+### SSD Medical Records workspace
+
+`SsdSubTeamGrid` + `SsdEmployeeTable` + `SubTeamChips` are replaced by
+`SsdWorkspace`: a status strip that doubles as the team tab bar, ONE team card,
+then a full-width roster. Used by both the manager calculator and
+`HslBonusEditModal`, so an Accounting correction reads like the original entry.
+
+- **Status strip** — `N / 6 teams scored` plus six tabs, each carrying a glyph
+  (`✓` entered, `!` incomplete, `·` scored earlier, `–` not started) as well as a
+  colour, so status never rests on hue. Real `tablist` with roving arrow-key
+  focus. The unassigned count is a button that filters the roster to them.
+- **Team card** — three fields (accuracy / records / RFC), live arithmetic for
+  **both** rules shown separately (a team under 90% accuracy still earns its RFC
+  pool, and one summed figure would hide that), a three-segment tier meter, and
+  the per-member payout. Keyed by team so it replays its entrance on switch.
+- **Roster** — full width, filter chips, bulk-assign bar, and a single native
+  `<select>` per row instead of seven chips. At 60+ people the chips were the
+  loudest thing on the screen.
+- **Rules panel** — the real thresholds, read off `HSL_DEPTS` rather than
+  restated, so a schema edit can never leave the UI describing a rate that no
+  longer pays. It is an `@container`: its two-column split keys on **its own**
+  inline size, because it is ~330px wide beside the card in a half-window overlay
+  and full width when stacked. Keying it to `sm:` collided the two columns' text
+  at exactly the width the side panel produces.
+
+Two things in the handoff are deliberately NOT followed, and both are called out
+in code comments at the site:
+
+1. **Tier thresholds are the real ones** (`<90%` → nothing, `90–94.99%` →
+   ₱250/record, `95%+` → ₱350/record, plus the separate ₱250 RFC pool). The
+   handoff's `90/95/98 → 50/75/100% of pool` ladder is flagged as invented in its
+   own README.
+2. **No "✓ Saved" footer.** It would be a lie sitting under three fields that are
+   deliberately never persisted (see *SSD sub-team inputs are still NOT saved*).
+
+The handoff also marks unassigned rows with a 3px inset side stripe; this uses a
+dot instead (side stripes are banned by the `impeccable` skill).
+
+### `restored` — the fourth team state
+
+The handoff has three states (complete / partial / empty). This surface needs a
+fourth, and it is forced by the persistence rule above: after a reload the three
+inputs are blank while the per-member shares they produced are not.
+
+A team whose inputs are blank but whose members carry a non-zero
+`calculated_bonus` is `restored`, not `empty`. Calling it "Not started" would
+send the operator off to re-key numbers that are already banked — and
+`recomputeSsdEntries` refuses to overwrite those shares precisely because they
+are real.
+
+**A restored team reports the SAVED share, never a recompute.** `shareForRow`
+returns the row's `calculated_bonus` and the card takes `savedShareByTeam`.
+Without that the roster printed ₱0.00 against every member of a team the header
+was simultaneously totalling at ₱29,640 — caught in review, not in theory. A
+typed `0` still counts as entered, matching `subTeamInputsBlank`.
+
+### Sub-team colour tokens
+
+Six teams named after colours means colour is data, not decoration: one hue has
+to drive a tab dot, a card rail, a roster chip and a payout figure in both
+themes. Tailwind classes can't be handed to `color-mix()` or an inline `style`,
+so each team has four custom properties in `src/index.css`
+(`--ssd-<t>`, `-solid`, `-on`, `-text`) and every SSD surface reads them through
+one `--team*` alias set by `teamVars()`. `-solid`/`-on` are a separate pair from
+the identity hue because the identity hue does not carry label text at 4.5:1.
+
+**Not verified in the real app:** the overlay and the redesigned surface were
+checked against Playwright-stubbed API routes at 390 / 820 / 920 / 1180 / 1440px
+in both themes, not against production data or a real manager session.
+
 ## Autosave *(2026-08-17 — replaces the Save button)*
 
 Kane: "Instead of Saving Manually every field entered should just be
