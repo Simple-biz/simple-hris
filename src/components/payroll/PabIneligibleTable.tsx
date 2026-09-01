@@ -31,8 +31,11 @@ import { catalogDeptNameFrom } from '@/lib/departments/dept-identity';
  * two is the band worth a human look, which is the entire reason the column exists.
  * It is a prompt, never a gate.
  *
- * Amber is used ONLY for the review band. It is the wizard's warning colour and must
- * not be borrowed for an OK state (see the step-2 header cards ruling).
+ * Amber is the wizard's warning colour and must never be borrowed for an OK state
+ * (see the step-2 header cards ruling). Two bands wear it here, both genuinely
+ * warnings: `review` (1–2 days — worth a human look) and `no-hours` (missing
+ * evidence — Kane 2026-09-01: amber, not greyed out, so an unscored person reads
+ * as something to check rather than furniture).
  */
 
 export type PabIneligibleRow = {
@@ -75,10 +78,11 @@ const BAND_STYLES: Record<PabSeverityBand, { chip: string; label: string }> = {
     chip: 'border-emerald-300/70 bg-emerald-50 text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200',
     label: 'Eligible',
   },
-  // Zinc, not rose: this is missing evidence, not a bad result. Painting it as a
-  // failure is what put a leaver at the top of the list.
+  // Amber, not rose and not zinc (Kane 2026-09-01): missing evidence is a WARNING,
+  // not a failure — rose would put a leaver back at the top of the list — and not
+  // furniture either; greyed out read as ignorable.
   'no-hours': {
-    chip: 'border-zinc-300 bg-zinc-100 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
+    chip: 'border-amber-300/70 bg-amber-50 text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200',
     label: 'No hours recorded',
   },
   review: {
@@ -452,7 +456,9 @@ export default function PabIneligibleTable({
                             : `${row.severity} day${row.severity === 1 ? '' : 's'} under 7 hours`}
                         className={cn(
                           'shrink-0 font-mono text-base font-bold leading-none',
-                          row.hasHours ? 'text-rose-700 dark:text-rose-300' : 'text-zinc-400 dark:text-zinc-500',
+                          // The no-hours dash is amber like its chip — missing
+                          // evidence is a warning, not a muted nothing.
+                          row.hasHours ? 'text-rose-700 dark:text-rose-300' : 'text-amber-600 dark:text-amber-400',
                         )}
                       >
                         {row.hasHours ? row.severity : '—'}

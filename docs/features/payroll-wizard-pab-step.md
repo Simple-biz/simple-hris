@@ -335,8 +335,11 @@ all-clear-that-hides-people.
 ## "No hours recorded" is not a severity — it is missing evidence
 
 A person with **no tracked time on any scoring day** did not miss every day; they were never
-scored. `pabSeverityBand(severity, hasHours)` bands them `no-hours`: zinc chip, severity cell
-reads `—` not a number, no day chips, Forgive **disabled** ("there is no missed day to
+scored. `pabSeverityBand(severity, hasHours)` bands them `no-hours`: **amber** chip and amber
+`—` in the severity cell (Kane 2026-09-01 — amber, not greyed out: missing evidence is a
+warning to check, not furniture; the original zinc read as ignorable). Amber stays legal here
+because it is the wizard's warning colour and this is genuinely a warning — never an OK state
+(step-2 header cards ruling). No day chips, Forgive **disabled** ("there is no missed day to
 forgive"), and they sort BELOW everyone with real hours.
 
 **Why this matters, from the live failure that caused it.** Aaron Taguas resigned 2026-06-02,
