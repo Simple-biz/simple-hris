@@ -166,6 +166,9 @@ export function playPaymentConfirmed(): void {
 
 const STAGE_PREPPED_VOLUME = 0.7;
 const STAGE_PREPPED_SRC = '/sounds/truckstart.mp3';
+// Ramp the tail down instead of letting the recording end cold. Clamped to
+// half the clip so a short asset never fades from the very start.
+const STAGE_PREPPED_FADE_TAIL = 1.2;
 
 /**
  * Decoded once and cached; a failed fetch/decode resolves null (silent no-op)
@@ -258,6 +261,14 @@ export function playStagePrepped(): void {
     const master = c.createGain();
     master.gain.value = STAGE_PREPPED_VOLUME;
     master.connect(c.destination);
+
+    // Natural-end fade-out over the clip's last STAGE_PREPPED_FADE_TAIL
+    // seconds. killEngine's cancelAndHoldAtTime overrides this cleanly when
+    // the modal closes mid-play.
+    const now = c.currentTime;
+    const fade = Math.min(STAGE_PREPPED_FADE_TAIL, buf.duration / 2);
+    master.gain.setValueAtTime(STAGE_PREPPED_VOLUME, now + buf.duration - fade);
+    master.gain.linearRampToValueAtTime(0, now + buf.duration);
 
     const src = c.createBufferSource();
     src.buffer = buf;
