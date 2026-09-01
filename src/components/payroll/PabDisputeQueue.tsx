@@ -183,22 +183,30 @@ export default function PabDisputeQueue() {
     return () => { cancelled = true; };
   }, [currentUser]);
 
-  // Default filter is 'pending'; seed disputes + spinner from that filter's
-  // cached snapshot so re-opening the tab paints instantly.
+  // Default filter is 'all' (Kane 2026-09-01); seed disputes + spinner from
+  // that filter's cached snapshot so re-opening the tab paints instantly.
   const [disputes, setDisputes] = useState<PabDayDisputeRow[]>(
-    () => getTabCache<PabDayDisputeRow[]>(TAB_CACHE_KEYS.pabDisputes('pending')) ?? [],
+    () => getTabCache<PabDayDisputeRow[]>(TAB_CACHE_KEYS.pabDisputes('all')) ?? [],
   );
   // Bank Preferred change requests live in the same table (merged 2026-09-01,
   // they're a yes/no like every other issue). Cached per filter like disputes.
   const [bankRequests, setBankRequests] = useState<BankPreferredRequestRow[]>(
-    () => getTabCache<BankPreferredRequestRow[]>(TAB_CACHE_KEYS.bankPreferredRequests('pending')) ?? [],
+    () => getTabCache<BankPreferredRequestRow[]>(TAB_CACHE_KEYS.bankPreferredRequests('all')) ?? [],
+  );
+  // The KPI cards always read the FULL dataset, whatever the table filter says
+  // (Kane 2026-09-01) — kept as its own pair so filtering never zeroes a card.
+  const [allDisputes, setAllDisputes] = useState<PabDayDisputeRow[]>(
+    () => getTabCache<PabDayDisputeRow[]>(TAB_CACHE_KEYS.pabDisputes('all')) ?? [],
+  );
+  const [allBankRequests, setAllBankRequests] = useState<BankPreferredRequestRow[]>(
+    () => getTabCache<BankPreferredRequestRow[]>(TAB_CACHE_KEYS.bankPreferredRequests('all')) ?? [],
   );
   const [bankError, setBankError] = useState<string | null>(null);
   const [reasonCodes, setReasonCodes] = useState<PabDisputeReasonCode[]>(
     () => getTabCache<PabDisputeReasonCode[]>(TAB_CACHE_KEYS.pabReasonCodes) ?? [],
   );
-  const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.pabDisputes('pending')));
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'denied'>('pending');
+  const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.pabDisputes('all')));
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'denied'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
 
@@ -257,18 +265,49 @@ export default function PabDisputeQueue() {
     }
     if (cachedBank) setBankRequests(cachedBank);
 
+    const loadBank = async (filter: typeof statusFilter): Promise<BankPreferredRequestRow[]> => {
+      const qs = filter === 'all' ? '' : `?status=${filter}`;
+      const res = await fetch(`/api/bank-preferred-requests${qs}`, { cache: 'no-store' });
+      const json = (await res.json()) as { rows?: BankPreferredRequestRow[]; error?: string | null };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load Bank Preferred requests');
+      return json.rows ?? [];
+    };
+
+    const loadDisputeRows = async (filter: typeof statusFilter): Promise<PabDayDisputeRow[]> => {
+      const params = new URLSearchParams();
+      params.set('limit', '500');
+      if (filter === 'pending') {
+        params.set('awaiting_accounting', '1');
+      } else if (filter === 'approved') {
+        params.append('status', 'approved');
+        params.append('status', 'accounting_approved');
+      } else if (filter === 'denied') {
+        params.append('status', 'denied');
+        params.append('status', 'orphanage_manager_denied');
+        params.append('status', 'accounting_denied');
+      }
+      const res = await fetch(`/api/pab-disputes?${params}`, { cache: 'no-store' });
+      const json = await res.json();
+      return (json.rows ?? []) as PabDayDisputeRow[];
+    };
+
     // Bank Preferred requests load alongside the disputes; a failure on one
-    // never blanks the other (each keeps its cached rows).
+    // never blanks the other (each keeps its cached rows). The KPI cards read
+    // the 'all' dataset regardless of the table filter, so a non-'all' filter
+    // refreshes both its own slice and the full set.
     const bankPromise = (async () => {
       try {
-        const qs = statusFilter === 'all' ? '' : `?status=${statusFilter}`;
-        const res = await fetch(`/api/bank-preferred-requests${qs}`, { cache: 'no-store' });
-        const json = (await res.json()) as { rows?: BankPreferredRequestRow[]; error?: string | null };
-        if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load Bank Preferred requests');
-        const rows = json.rows ?? [];
+        const rows = await loadBank(statusFilter);
         setTabCache(bankCacheKey, rows);
         setBankRequests(rows);
         setBankError(null);
+        if (statusFilter === 'all') {
+          setAllBankRequests(rows);
+        } else {
+          const allRows = await loadBank('all');
+          setTabCache(TAB_CACHE_KEYS.bankPreferredRequests('all'), allRows);
+          setAllBankRequests(allRows);
+        }
       } catch (e) {
         if (!hasTabCache(bankCacheKey)) setBankRequests([]);
         setBankError(e instanceof Error ? e.message : 'Failed to load Bank Preferred requests');
@@ -276,23 +315,16 @@ export default function PabDisputeQueue() {
     })();
 
     try {
-      const params = new URLSearchParams();
-      params.set('limit', '500');
-      if (statusFilter === 'pending') {
-        params.set('awaiting_accounting', '1');
-      } else if (statusFilter === 'approved') {
-        params.append('status', 'approved');
-        params.append('status', 'accounting_approved');
-      } else if (statusFilter === 'denied') {
-        params.append('status', 'denied');
-        params.append('status', 'orphanage_manager_denied');
-        params.append('status', 'accounting_denied');
-      }
-      const res = await fetch(`/api/pab-disputes?${params}`, { cache: 'no-store' });
-      const json = await res.json();
-      const rows = (json.rows ?? []) as PabDayDisputeRow[];
+      const rows = await loadDisputeRows(statusFilter);
       setTabCache(cacheKey, rows);
       setDisputes(rows);
+      if (statusFilter === 'all') {
+        setAllDisputes(rows);
+      } else {
+        const allRows = await loadDisputeRows('all');
+        setTabCache(TAB_CACHE_KEYS.pabDisputes('all'), allRows);
+        setAllDisputes(allRows);
+      }
     } catch {
       // Keep the cached rows on a background-refresh failure.
       if (!hasTabCache(cacheKey)) setDisputes([]);
@@ -307,15 +339,22 @@ export default function PabDisputeQueue() {
   // Approve/deny a Bank Preferred change request. The PATCH is the real gate —
   // it re-checks the 1:1 rule against the employee's LIVE receiving bank and
   // fails closed, so the row never pre-judges approvability (advisory only).
+  // Same action set as the dispute rows: immediate Approve, Deny through a
+  // note dialog, View detail modal. (Edit/Revoke after a decision don't exist
+  // for bank requests — the API is decide-once by design; an approved value
+  // is corrected in People → Banking or by a new change request.)
   const [bankActingId, setBankActingId] = useState<string | null>(null);
+  const [bankDecideDialog, setBankDecideDialog] = useState<{ request: BankPreferredRequestRow; action: 'approved' | 'denied' } | null>(null);
+  const [bankDecisionNote, setBankDecisionNote] = useState('');
+  const [viewBankTarget, setViewBankTarget] = useState<BankPreferredRequestRow | null>(null);
   const decideBankRequest = useCallback(
-    async (row: BankPreferredRequestRow, status: 'approved' | 'denied') => {
+    async (row: BankPreferredRequestRow, status: 'approved' | 'denied', note?: string): Promise<boolean> => {
       setBankActingId(row.id);
       try {
         const res = await fetch(`/api/bank-preferred-requests/${row.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status }),
+          body: JSON.stringify({ status, review_notes: note?.trim() ? note.trim() : null }),
         });
         const json = (await res.json()) as { success?: boolean; error?: string };
         if (!res.ok || json.error) throw new Error(json.error ?? 'Action failed');
@@ -325,8 +364,10 @@ export default function PabDisputeQueue() {
             : `Denied ${row.employee_name || row.work_email}'s Bank Preferred change.`,
         );
         fetchDisputes();
+        return true;
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Action failed');
+        return false;
       } finally {
         setBankActingId(null);
       }
@@ -402,28 +443,30 @@ export default function PabDisputeQueue() {
 
   useEffect(() => { setPage(1); }, [searchQuery, statusFilter]);
 
+  // KPI counts fold the FULL dataset, never the filtered slice — the table
+  // filter narrows the rows below, the cards keep the whole picture.
   const pendingCount = useMemo(
     () =>
-      disputes.filter((d) => d.status === 'pending' || d.status === 'orphanage_manager_approved').length +
-      bankRequests.filter((r) => r.status === 'pending').length,
-    [disputes, bankRequests],
+      allDisputes.filter((d) => d.status === 'pending' || d.status === 'orphanage_manager_approved').length +
+      allBankRequests.filter((r) => r.status === 'pending').length,
+    [allDisputes, allBankRequests],
   );
   const approvedCount = useMemo(
     () =>
-      disputes.filter((d) => d.status === 'approved' || d.status === 'accounting_approved').length +
-      bankRequests.filter((r) => r.status === 'approved').length,
-    [disputes, bankRequests],
+      allDisputes.filter((d) => d.status === 'approved' || d.status === 'accounting_approved').length +
+      allBankRequests.filter((r) => r.status === 'approved').length,
+    [allDisputes, allBankRequests],
   );
   const deniedCount = useMemo(
     () =>
-      disputes.filter(
+      allDisputes.filter(
         (d) =>
           d.status === 'denied' ||
           d.status === 'orphanage_manager_denied' ||
           d.status === 'accounting_denied',
       ).length +
-      bankRequests.filter((r) => r.status === 'denied').length,
-    [disputes, bankRequests],
+      allBankRequests.filter((r) => r.status === 'denied').length,
+    [allDisputes, allBankRequests],
   );
 
   const handleEdit = useCallback(async () => {
@@ -628,7 +671,7 @@ export default function PabDisputeQueue() {
 
       {/* KPI cards */}
       <div className="grid shrink-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Total" value={disputes.length + bankRequests.length} tone="indigo" icon={ClipboardList} />
+        <StatCard label="Total" value={allDisputes.length + allBankRequests.length} tone="indigo" icon={ClipboardList} />
         <StatCard label="Pending" value={pendingCount} tone="amber" icon={Clock} />
         <StatCard label="Approved" value={approvedCount} tone="emerald" icon={CheckCircle2} />
         <StatCard label="Denied" value={deniedCount} tone="rose" icon={XCircle} />
@@ -773,35 +816,45 @@ export default function PabDisputeQueue() {
                           ) : '—'}
                         </TableCell>
                         <TableCell className="min-w-[260px] text-right align-top">
-                          {r.status === 'pending' ? (
-                            <div className="flex flex-wrap justify-end gap-1">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={acting}
-                                className="h-7 border-emerald-300 px-2 text-[11px] text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-400"
-                                title={
-                                  railChange
-                                    ? 'The save verifies the sending rail against this employee’s live receiving bank and refuses a mismatch.'
-                                    : undefined
-                                }
-                                onClick={() => void decideBankRequest(r, 'approved')}
-                              >
-                                {acting ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Approve'}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={acting}
-                                className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
-                                onClick={() => void decideBankRequest(r, 'denied')}
-                              >
-                                Deny
-                              </Button>
-                            </div>
-                          ) : (
-                            <span className="text-[10px] text-zinc-400">—</span>
-                          )}
+                          <div className="flex flex-wrap justify-end gap-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 border-indigo-200 px-2 text-[11px] text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-950/40"
+                              title="View details"
+                              onClick={() => setViewBankTarget(r)}
+                            >
+                              <Eye className="mr-1 h-3 w-3" />
+                              View
+                            </Button>
+                            {r.status === 'pending' && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={acting}
+                                  className="h-7 border-emerald-300 px-2 text-[11px] text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-400"
+                                  title={
+                                    railChange
+                                      ? 'The save verifies the sending rail against this employee’s live receiving bank and refuses a mismatch.'
+                                      : undefined
+                                  }
+                                  onClick={() => void decideBankRequest(r, 'approved')}
+                                >
+                                  {acting ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Approve'}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={acting}
+                                  className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
+                                  onClick={() => { setBankDecideDialog({ request: r, action: 'denied' }); setBankDecisionNote(''); }}
+                                >
+                                  Deny
+                                </Button>
+                              </>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -1063,6 +1116,152 @@ export default function PabDisputeQueue() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Bank Preferred view details modal — same shell as the issue View. */}
+      {viewBankTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px] animate-in fade-in duration-200 ease-out motion-reduce:animate-none"
+          onClick={() => setViewBankTarget(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Bank Preferred change details"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200 ease-out dark:border-zinc-800 dark:bg-zinc-950 motion-reduce:animate-none"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-sm shadow-indigo-500/20 dark:from-indigo-600 dark:to-violet-700">
+                  <Landmark className="h-4 w-4" aria-hidden />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">
+                    Bank Preferred change
+                  </p>
+                  <h3 className="mt-0.5 truncate font-mono text-sm font-bold text-zinc-900 dark:text-white">
+                    {viewBankTarget.work_email}
+                  </h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewBankTarget(null)}
+                aria-label="Close"
+                className="shrink-0 rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3.5 px-5 py-4">
+              <div className="grid grid-cols-2 gap-3">
+                <InfoRow label="Requested" value={new Date(viewBankTarget.created_at).toLocaleString()} />
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Status</p>
+                  <div className="mt-1">
+                    <Badge variant="outline" className={cn('text-[10px]', STATUS_BADGE[viewBankTarget.status]?.className)}>
+                      {STATUS_BADGE[viewBankTarget.status]?.label ?? viewBankTarget.status}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+
+              {viewBankTarget.employee_name && <InfoRow label="Employee" value={viewBankTarget.employee_name} />}
+
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Change</p>
+                <div className="mt-1 flex items-center gap-1.5">
+                  <span className="rounded-md bg-zinc-200/70 px-1.5 py-0.5 text-[11px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                    {bankLabel(viewBankTarget.from_value)}
+                  </span>
+                  <ArrowRight className="h-3 w-3 shrink-0 text-zinc-400" />
+                  <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                    {bankLabel(viewBankTarget.to_value)}
+                  </span>
+                </div>
+                {isWiresPreferred(viewBankTarget.from_value) !== isWiresPreferred(viewBankTarget.to_value) && (
+                  <p className="mt-1.5 text-[11px] font-medium leading-snug text-amber-600 dark:text-amber-400">
+                    Rail change — approval is checked against the live receiving bank (1:1 rule).
+                  </p>
+                )}
+              </div>
+
+              {viewBankTarget.reviewed_by && <InfoRow label="Decided by" value={viewBankTarget.reviewed_by} />}
+              {viewBankTarget.reviewed_at && <InfoRow label="Decided at" value={new Date(viewBankTarget.reviewed_at).toLocaleString()} />}
+
+              {viewBankTarget.review_notes && (
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Decision note</p>
+                  <p className="mt-1 break-words text-sm italic leading-relaxed text-zinc-700 dark:text-zinc-300">
+                    {viewBankTarget.review_notes}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end border-t border-zinc-200 px-5 py-3 dark:border-zinc-800">
+              <Button variant="outline" size="sm" onClick={() => setViewBankTarget(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bank Preferred decide dialog — same shape as the issue Deny dialog. */}
+      {bankDecideDialog && (
+        <Dialog open onOpenChange={() => { setBankDecideDialog(null); setBankDecisionNote(''); }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="text-sm">
+                {bankDecideDialog.action === 'denied' ? 'Deny Bank Preferred change' : 'Approve Bank Preferred change'}
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                {bankDecideDialog.request.employee_name || bankDecideDialog.request.work_email} —{' '}
+                {bankLabel(bankDecideDialog.request.from_value)} → {bankLabel(bankDecideDialog.request.to_value)}
+                {bankDecideDialog.action === 'denied' && (
+                  <span className="mt-1 block text-[10px] text-zinc-500">
+                    Denying keeps the current Bank Preferred; the employee is notified with your note.
+                  </span>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Decision note (optional)</Label>
+              <textarea
+                value={bankDecisionNote}
+                onChange={e => setBankDecisionNote(e.target.value)}
+                rows={2}
+                placeholder="Optional note..."
+                className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              />
+            </div>
+            <DialogFooter className="gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { setBankDecideDialog(null); setBankDecisionNote(''); }}
+                disabled={bankActingId === bankDecideDialog.request.id}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={bankActingId === bankDecideDialog.request.id}
+                className={bankDecideDialog.action === 'approved' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}
+                onClick={async () => {
+                  const ok = await decideBankRequest(bankDecideDialog.request, bankDecideDialog.action, bankDecisionNote);
+                  if (ok) { setBankDecideDialog(null); setBankDecisionNote(''); }
+                }}
+              >
+                {bankActingId === bankDecideDialog.request.id && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+                {bankDecideDialog.action === 'denied' ? 'Deny' : 'Approve'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
 
       {/* Decide confirmation dialog */}
