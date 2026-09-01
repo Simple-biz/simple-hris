@@ -30,6 +30,7 @@ Every row below has its own section further down — this is the index, so a
 | 2026-08-11 | **Post-enrichment rate retry** — the rate is resolved twice. |
 | 2026-08-18 | **Activity feed** at the pane bottom (audited saves only, fixed templates) + **KPI submission attribution** (who submitted, when, via what) — see the section at the end of this doc. |
 | 2026-08-18 | Pane infrastructure, shared with its sibling panes: **cached-then-revalidated** paints, a per-pane **"Last data pull"** stamp, and a Realtime **signal dot** (emerald = live, amber = polling). The read-only **Rates** glance was removed the same day. Owned by [payroll-wizard-notes.md](../features/payroll-wizard-notes.md). |
+| 2026-09-01 | No Pay Rate **"Ignore"** — the rate twin of the Bank Info Temporary Exemption: acknowledge one person's missing rate for the week in view only. |
 
 The **Wizard Setup checklist** (2026-08-03) is a separate, later addition: a
 per-week checklist of wizard-step prerequisites that sits *beside* the four
@@ -48,6 +49,8 @@ week's readiness at all.
 | Wizard setup checklist — pure derivation + marker keys (unit-tested) | `src/lib/payroll/wizard-setup-steps.ts` (+ `wizard-setup-steps.test.ts`) |
 | Week-scoped roster predicates (pure, unit-tested) | `src/lib/payroll/readiness-week-scope.ts` (+ `readiness-week-scope.test.ts`) |
 | No-Pay-Rate post-enrichment retry rule (pure, unit-tested) | `src/lib/payroll/readiness-rate-retry.ts` (+ `readiness-rate-retry.test.ts`) |
+| No-Pay-Rate "Ignore" partition rule (pure, unit-tested) | `src/lib/payroll/readiness-rate-ignore.ts` (+ `readiness-rate-ignore.test.ts`) |
+| No-Pay-Rate "Ignore" storage + API | `src/lib/supabase/payroll-rate-exemptions.ts` · `app/api/payroll-wizard/rate-exemptions/route.ts` · `references/sql/create/create_payroll_rate_exemptions.sql` (+ `scripts/apply-rate-exemptions-migration.mjs`) |
 | API | `app/api/payroll-wizard/readiness/route.ts` — `GET /api/payroll-wizard/readiness[?source_file=…]` |
 | Readiness pane + inline fixers | `src/components/accounting/PayrollWizardNotesFab.tsx` (`PayrollReadinessGlance`, `SetRateDialog`, `SetBankDialog`, `KpiCalculatorDialog`) |
 | 100% celebration — trigger rule (pure, unit-tested) | `src/lib/payroll/readiness-celebration.ts` (+ `readiness-celebration.test.ts`) |
@@ -59,7 +62,10 @@ week's readiness at all.
 | CLI verifier (runs the REAL fn) | `scripts/verify-readiness.mts` + `scripts/server-only-stub.ts` + `tsconfig.readiness-verify.json` |
 | Bank-dimension reconciliation audit | `scripts/audit-readiness-bank-score.mjs` (local-only diagnostic) |
 
-No migration — everything reads existing tables.
+No migration for the original build — everything read existing tables. Two
+week-scoped exemption stores were added later: `payroll_bank_exemptions`
+(2026-08-04, applied) and `payroll_rate_exemptions` (2026-09-01 — apply with
+`node scripts/apply-rate-exemptions-migration.mjs`, `--dry` first).
 
 ## Week resolution
 
@@ -129,6 +135,9 @@ No migration — everything reads existing tables.
    contractor also on the employee roster keeps their normal Bank Info
    treatment. Best-effort read: a role-table failure re-lists contractors
    (over-flags, never hides an employee), so it doesn't join `degraded`.
+   Rows Accounting chose to **"Ignore" for the week** leave the list, the
+   worker denominator, and the score, and show under Exceptions instead —
+   see "No Pay Rate 'Ignore'" below.
    **The rate is resolved TWICE (2026-08-11)** — see "Post-enrichment rate
    retry" below. The first pass keys the department off `active_employees`,
    which by definition excludes every off-boarded person on the very week
@@ -158,8 +167,9 @@ No migration — everything reads existing tables.
    guard). A missing or unparseable start date fails safe and stays listed.
 4. **Exceptions** — people expected NOT to be paid this week: the HR
    onboarding-pipeline kinds `onboarding`, `awaiting_orientation`, `no_show`,
-   `started_this_week` (first pay period hasn't closed), plus `bank_exempt`
-   (a hand-granted Temporary Exemption — see below). **Excluded from the score entirely** —
+   `started_this_week` (first pay period hasn't closed), plus the two
+   hand-granted, undoable kinds: `bank_exempt` (a Temporary Exemption — see
+   below) and `rate_exempt` (a No Pay Rate "Ignore" — see below). **Excluded from the score entirely** —
    their identities (all email aliases + a name fallback) are also subtracted
    from the rate/bank lists AND denominators, so an expected non-payment never
    costs points anywhere. Week-scoped (2026-08-03): a row also leaves that
@@ -281,6 +291,73 @@ over-flags and makes the score read *worse*, never better — and `degraded[]`
 exists to catch failures that flatter the dashboard. Verified against the live
 DB before the migration ran: readiness composed clean (`degraded: none`) with
 identical numbers, exercising exactly that path.
+
+### No Pay Rate "Ignore" (2026-09-01)
+
+An **"Ignore"** button sits beside "Set rate" on every No Pay Rate row
+(`canEdit`-gated) — the rate twin of the Bank Info Temporary Exemption above,
+built to the same shape on purpose. It is the *acknowledge* action next to the
+*fix* action: when Accounting knows a person's rate won't be settled this week
+(a contractor conversion in flight, a duplicate identity being merged, someone
+whose pay is handled off-list), they excuse the gap for **one pay week**
+instead of leaving a permanent-looking hard blocker pinning the score at 60.
+
+Effect, on save (a confirm dialog with an optional one-line reason):
+
+- the person leaves the **No Pay Rate list** AND the **worker denominator**
+  (`workerCount`) — an ignore declares an expected non-payment for the week,
+  the same thing an onboarding exception declares, so they get the same
+  treatment (this deliberately differs from the post-enrichment retry, whose
+  removals keep the denominator: a retried row was a *false* numerator on a
+  real worker; an ignored row is a real gap Accounting decided not to count);
+- they appear immediately under **Exceptions** as `rate_exempt`, badged
+  "Ignored · no rate" (violet, `EyeOff` — the hand-granted family), with the
+  reason in the badge tooltip and an **Undo** action on the row;
+- the score-details modal's "Never counted against the score" list gains a
+  line for them, split out from the HR-pipeline and bank-exempt counts.
+
+**Week-scoped, no expiry job.** A record is only honoured for the `week_start`
+it was filed against, so the person **reappears on next week's No Pay Rate
+list automatically** if they log hours and still have no rate.
+
+**Readiness-only by design.** `payroll-readiness.ts` is the sole reader —
+neither the wizard's pay computation nor Payment Dispatch sees these records,
+so an ignore sets no rate and changes nothing about what the person would be
+paid. The dialog says so outright: they have hours this week and will not be
+paid for them unless a rate is set.
+
+Three behaviours worth knowing:
+
+- The ignore is judged **after** the full resolve-then-retry chain
+  (`partitionIgnoredRates` in `readiness-rate-ignore.ts`, pure + unit-tested),
+  so an ignore someone has since made moot (the rate got set) simply stops
+  rendering rather than lingering as a stale "ignored" row. A row still only
+  ever leaves the *missing* judgment by resolving through the real
+  `resolvePeopleRate` — the ignore moves a genuinely-missing row to a
+  different, visible shelf; it never fakes a resolution.
+- Identity matching prefers **email keys** (matched across the same alias
+  union the retry resolves on); the `name:` fallback is used only when the
+  record carries no email at all — same namesake reasoning as the bank
+  exemption's.
+- The `workerCount` subtraction happens in `buildMissingRates`, so the score,
+  the stat tile, and the details modal all read the same shrunken denominator.
+
+Storage: `payroll_rate_exemptions`
+(`references/sql/create/create_payroll_rate_exemptions.sql` — apply with
+`node scripts/apply-rate-exemptions-migration.mjs`, rehearse with `--dry`
+first; until it runs, filing an ignore errors while the read side fails soft
+and everyone simply stays listed), accessed via
+`src/lib/supabase/payroll-rate-exemptions.ts`, mutated through
+`app/api/payroll-wizard/rate-exemptions/route.ts` (`view` to read, `edit` to
+file/undo — the same grant behind the inline fixers). Undo is a **soft delete**
+(`revoked_at`/`revoked_by`); a partial-unique index over the active slice makes
+a double-click a no-op that returns the existing row. Audited as
+`payroll.rate.exempted` / `payroll.rate.exemption_undone`.
+
+The read is **best-effort and deliberately not in `degraded[]`**: a failed read
+leaves everyone on the No Pay Rate list (the pre-ignore behaviour), which
+over-flags and makes the score read *worse*, never better — `degraded[]`
+exists to catch failures that flatter the dashboard.
 
 ### Auto-Ready (`no_bonus`)
 
@@ -703,7 +780,12 @@ the raw tables, for reconciling the dashboard against the data.
 
 ## Deploy / pending notes
 
-- **No migration** and no new tables — safe to deploy standalone.
+- The original build had **no migration**; the two exemption stores added
+  since each have one. Pending: `payroll_rate_exemptions` (2026-09-01) —
+  `node scripts/apply-rate-exemptions-migration.mjs --dry` to rehearse, then
+  without `--dry` to apply; `scripts/audit-pending-migrations.mts` probes it.
+  Until it runs, the Ignore button's save errors (the read side fails soft —
+  everyone stays listed).
 - `audit-readiness-bank-score.mjs` is marked "not meant to be committed"
   in-file but ships in `scripts/` as a diagnostic; it needs
   `SUPABASE_SERVICE_ROLE_KEY` locally.

@@ -17,6 +17,7 @@ import {
   ClipboardList,
   Clock,
   DollarSign,
+  EyeOff,
   FileText,
   Heart,
   ListChecks,
@@ -1546,12 +1547,20 @@ const EXCEPTION_META: Record<ExceptionKind, { label: string; cls: string; Icon: 
     Icon: UserPlus,
   },
   // Missing bank info that Accounting excused for THIS week from the Bank Info
-  // tab. Violet keeps it visually distinct from the HR-pipeline kinds: it's the
-  // one exception a human granted by hand, and the only one with an Undo.
+  // tab. Violet keeps it visually distinct from the HR-pipeline kinds: it's an
+  // exception a human granted by hand, and one of the two with an Undo.
   bank_exempt: {
     label: "Temp exempt",
     cls: "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300",
     Icon: Clock,
+  },
+  // Missing pay rate that Accounting chose to Ignore for THIS week from the
+  // No Pay Rate tab — the same hand-granted, undoable, week-scoped shape as
+  // bank_exempt, so it shares the violet family.
+  rate_exempt: {
+    label: "Ignored · no rate",
+    cls: "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300",
+    Icon: EyeOff,
   },
 };
 
@@ -1896,10 +1905,15 @@ function RatePersonRow({
   person,
   canEdit,
   onFix,
+  onIgnore,
+  weekLabel,
 }: {
   person: ReadinessMissingRate;
   canEdit: boolean;
   onFix: () => void;
+  onIgnore: () => void;
+  /** "Jul 27 – Aug 2" — names the week the Ignore would apply to. */
+  weekLabel: string;
 }) {
   return (
     <div
@@ -1954,6 +1968,18 @@ function RatePersonRow({
                 ? "Set this person's pay rate"
                 : "No email on the roster — set the rate from the Payment Catalog"
             }
+          />
+        )}
+        {/* Acknowledge the gap for THIS week instead of fixing it: the row
+            moves to Exceptions and stops scoring, and comes back next week if
+            they log hours and still have no rate. Mirrors the Bank Info tab's
+            Temporary Exemption. */}
+        {canEdit && (
+          <RowFixButton
+            label="Ignore"
+            Icon={EyeOff}
+            onClick={onIgnore}
+            title={`Ignore this person's missing rate for ${weekLabel} only — they move to Exceptions now and return to this list next week if it's still missing. Does not set a rate; they still can't be paid.`}
           />
         )}
       </div>
@@ -2927,6 +2953,129 @@ function ExemptBankDialog({
 }
 
 /**
+ * "Ignore" confirm for a No Pay Rate row — the rate twin of
+ * {@link ExemptBankDialog}: files a per-week record
+ * (POST /api/payroll-wizard/rate-exemptions) that moves the person off the No
+ * Pay Rate list and out of the readiness score's rate dimension, onto the
+ * Exceptions list, for the week in view ONLY.
+ *
+ * Deliberately a confirm rather than a one-click action: the optional reason is
+ * the only context whoever reads the Exceptions row later will have, and an
+ * accidental click on a row full of near-identical names is easy.
+ *
+ * It sets NO rate — the wizard still can't price this person — so the copy says
+ * so outright rather than letting an accountant think the ignore got them paid.
+ */
+function IgnoreRateDialog({
+  person,
+  weekLabel,
+  weekStart,
+  onClose,
+  onSaved,
+}: {
+  person: ReadinessMissingRate;
+  /** "Jul 27 – Aug 2" — the week the ignore will apply to. */
+  weekLabel: string;
+  weekStart: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/payroll-wizard/rate-exemptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          weekStart,
+          name: person.name,
+          // The rate list is keyed on the Hubstaff/master email; the readiness
+          // composer matches an ignore across every alias the person owns, so
+          // filing against this one address is enough.
+          workEmail: person.email,
+          department: person.department,
+          reason: reason.trim() || null,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error || `Save failed (${res.status})`);
+      toast.success(`${person.name} ignored for this week`, {
+        description: `Moved to Exceptions for ${weekLabel}. They return to No Pay Rate next week if they log hours and still have no rate.`,
+      });
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not file the ignore");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <EyeOff className="h-4 w-4 text-orange-500" />
+            Ignore for this week
+          </DialogTitle>
+          <DialogDescription>
+            {person.name}
+            {person.email ? ` · ${person.email}` : ""} — ignores their missing pay rate
+            for {weekLabel} only.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2 text-[11px] leading-relaxed text-sky-800 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
+            They move to <span className="font-semibold">Exceptions</span> straight away and
+            stop counting against the readiness score. They come back on the No Pay Rate list
+            <span className="font-semibold"> next week</span> if they log hours and still have
+            no rate. This sets <span className="font-semibold">no</span> rate — they have hours
+            this week and the wizard still can&apos;t price them, so they will not be paid for
+            it unless a rate is set.
+          </div>
+          <div className="grid gap-1">
+            <label className={EDITOR_LABEL_CLS} htmlFor="readiness-ignore-rate-reason">
+              Reason <span className="font-normal normal-case">(optional)</span>
+            </label>
+            <Input
+              id="readiness-ignore-rate-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              maxLength={300}
+              placeholder="e.g. contractor conversion pending"
+              className="h-8 text-xs"
+            />
+            <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+              Shows on the Exceptions row so whoever looks next knows why.
+            </p>
+          </div>
+          {error && (
+            <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={() => void save()} disabled={saving}>
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Ignore this week
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
  * KPI Calculator modal for a clicked Readiness department — the SAME calculator
  * the manager uses, mounted elevated so accounting can score and Mark Ready
  * without leaving the wizard. Being the same component, it autosaves the same
@@ -3116,6 +3265,9 @@ function PayrollReadinessGlance({
   // confirm dialog is closed). Its own slot, so the two bank editors can never
   // fight over one piece of state.
   const [exemptPerson, setExemptPerson] = useState<ReadinessMissingBank | null>(null);
+  // Person being Ignored for the week on the No Pay Rate list — the rate twin
+  // of `exemptPerson`, its own slot for the same reason.
+  const [ignoreRatePerson, setIgnoreRatePerson] = useState<ReadinessMissingRate | null>(null);
   // Exemption ids with an Undo request in flight, so a row's button can't be
   // double-fired while the POST is out.
   const [undoingExemptions, setUndoingExemptions] = useState<Set<string>>(new Set());
@@ -3315,23 +3467,35 @@ function PayrollReadinessGlance({
     [currentSourceFile, wizardSourceFile, effectiveSourceFile],
   );
 
-  /** Undo a Bank Info Temporary Exemption from its Exceptions row — the person
-   *  goes straight back onto the Bank Info list (and the score). Soft-deleted
+  /** Undo a hand-granted exemption from its Exceptions row — a Bank Info
+   *  Temporary Exemption or a No Pay Rate Ignore, routed by kind. The person
+   *  goes straight back onto their list (and the score). Soft-deleted
    *  server-side, so who granted it and who reversed it both stay on record. */
   const undoExemption = useCallback(
-    async (exemptionId: string, name: string) => {
+    async (exemptionId: string, name: string, kind: "bank_exempt" | "rate_exempt") => {
       setUndoingExemptions((prev) => new Set(prev).add(exemptionId));
       try {
-        const res = await fetch("/api/payroll-wizard/bank-exemptions", {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: exemptionId }),
-        });
+        const res = await fetch(
+          kind === "rate_exempt"
+            ? "/api/payroll-wizard/rate-exemptions"
+            : "/api/payroll-wizard/bank-exemptions",
+          {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: exemptionId }),
+          },
+        );
         const json = (await res.json().catch(() => ({}))) as { error?: string };
         if (!res.ok || json.error) throw new Error(json.error || `Undo failed (${res.status})`);
-        toast.success(`Exemption removed for ${name}`, {
-          description: "They're back on the Bank Info list.",
-        });
+        toast.success(
+          kind === "rate_exempt" ? `Ignore removed for ${name}` : `Exemption removed for ${name}`,
+          {
+            description:
+              kind === "rate_exempt"
+                ? "They're back on the No Pay Rate list."
+                : "They're back on the Bank Info list.",
+          },
+        );
         await load();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Could not undo the exemption");
@@ -3840,6 +4004,8 @@ function PayrollReadinessGlance({
                               person={r}
                               canEdit={canEdit}
                               onFix={() => setRatePerson(r)}
+                              onIgnore={() => setIgnoreRatePerson(r)}
+                              weekLabel={data.weekLabel}
                             />
                           ))}
                         </div>
@@ -4010,6 +4176,8 @@ function PayrollReadinessGlance({
                         <div className="space-y-0.5">
                           {excPage.pageItems.map((r, i) => {
                             const meta = EXCEPTION_META[r.kind];
+                            const handGranted =
+                              r.kind === "bank_exempt" || r.kind === "rate_exempt";
                             const undoing = r.exemptionId
                               ? undoingExemptions.has(r.exemptionId)
                               : false;
@@ -4018,12 +4186,13 @@ function PayrollReadinessGlance({
                                 key={`${r.email ?? r.name}:${i}`}
                                 name={r.name}
                                 email={r.email}
-                                // Temp-exempt rows keep the DEPARTMENT on the
-                                // sub-line (their `detail` is a free-text reason
-                                // that reads as a sentence, not a label) and
-                                // carry the reason in the badge's tooltip.
+                                // Hand-granted rows (temp exempt / ignored) keep
+                                // the DEPARTMENT on the sub-line (their `detail`
+                                // is a free-text reason that reads as a sentence,
+                                // not a label) and carry the reason in the
+                                // badge's tooltip.
                                 department={
-                                  r.kind === "bank_exempt" ? r.department : (r.detail ?? r.department)
+                                  handGranted ? r.department : (r.detail ?? r.department)
                                 }
                                 right={
                                   <div className="flex shrink-0 items-center gap-1.5">
@@ -4031,7 +4200,9 @@ function PayrollReadinessGlance({
                                       title={
                                         r.kind === "bank_exempt"
                                           ? `No bank info — exempted for ${data.weekLabel}${r.detail ? `: ${r.detail}` : ""}. Returns to the Bank Info list next week if it's still missing.`
-                                          : (r.detail ?? undefined)
+                                          : r.kind === "rate_exempt"
+                                            ? `No pay rate — ignored for ${data.weekLabel}${r.detail ? `: ${r.detail}` : ""}. Returns to the No Pay Rate list next week if they log hours and it's still missing.`
+                                            : (r.detail ?? undefined)
                                       }
                                       className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${meta.cls}`}
                                     >
@@ -4041,12 +4212,22 @@ function PayrollReadinessGlance({
                                     {/* Only a hand-granted exemption is reversible —
                                         the HR-pipeline kinds are facts about the
                                         person, not decisions made here. */}
-                                    {canEdit && r.kind === "bank_exempt" && r.exemptionId && (
+                                    {canEdit && handGranted && r.exemptionId && (
                                       <button
                                         type="button"
-                                        onClick={() => void undoExemption(r.exemptionId!, r.name)}
+                                        onClick={() =>
+                                          void undoExemption(
+                                            r.exemptionId!,
+                                            r.name,
+                                            r.kind as "bank_exempt" | "rate_exempt",
+                                          )
+                                        }
                                         disabled={undoing}
-                                        title="Remove the exemption — this person goes back on the Bank Info list now"
+                                        title={
+                                          r.kind === "rate_exempt"
+                                            ? "Remove the ignore — this person goes back on the No Pay Rate list now"
+                                            : "Remove the exemption — this person goes back on the Bank Info list now"
+                                        }
                                         className="inline-flex shrink-0 items-center gap-1 rounded-md border border-orange-200/80 bg-white px-2 py-1 text-[10px] font-semibold whitespace-nowrap text-orange-700 transition-colors hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-orange-300 dark:hover:bg-blue-950/50"
                                       >
                                         {undoing ? (
@@ -4185,6 +4366,15 @@ function PayrollReadinessGlance({
           weekLabel={data.weekLabel}
           weekStart={data.weekStart}
           onClose={() => setExemptPerson(null)}
+          onSaved={() => void load()}
+        />
+      )}
+      {ignoreRatePerson && (
+        <IgnoreRateDialog
+          person={ignoreRatePerson}
+          weekLabel={data.weekLabel}
+          weekStart={data.weekStart}
+          onClose={() => setIgnoreRatePerson(null)}
           onSaved={() => void load()}
         />
       )}
@@ -5064,11 +5254,13 @@ function ScoreDetailsDialog({
   const kpiExcluded = data.kpi.filter((d) => d.status === "excluded").length;
   const kpiNotDue = data.kpi.filter((d) => d.status === "na").length;
   const bankHygiene = data.missingBank.length - data.missingBankOnPayroll;
-  // The exceptions list holds two different things — HR-pipeline hires and
-  // hand-granted bank exemptions — so the "never counted" bullets split them
-  // rather than quoting one total against two different explanations.
+  // The exceptions list holds three different things — HR-pipeline hires,
+  // hand-granted bank exemptions, and hand-granted rate ignores — so the
+  // "never counted" bullets split them rather than quoting one total against
+  // three different explanations.
   const bankExemptCount = data.exceptions.filter((e) => e.kind === "bank_exempt").length;
-  const hrExceptionCount = data.exceptions.length - bankExemptCount;
+  const rateExemptCount = data.exceptions.filter((e) => e.kind === "rate_exempt").length;
+  const hrExceptionCount = data.exceptions.length - bankExemptCount - rateExemptCount;
   const plural = (n: number) => (n === 1 ? "" : "s");
 
   // One explainer row per score component: who was counted, what's open, and
@@ -5221,6 +5413,11 @@ function ScoreDetailsDialog({
                 Temporary Exemptions granted on the Bank Info tab
                 {bankExemptCount > 0 ? ` (${bankExemptCount} this week)` : ""} — acknowledged for
                 this week only; they return to Bank Info next week.
+              </li>
+              <li>
+                People Ignored on the No Pay Rate tab
+                {rateExemptCount > 0 ? ` (${rateExemptCount} this week)` : ""} — acknowledged for
+                this week only; they return to No Pay Rate next week if they log hours.
               </li>
               <li>US Employees (USEE) — paid off-channel, outside this pipeline.</li>
               <li>

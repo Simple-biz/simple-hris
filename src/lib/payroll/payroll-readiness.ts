@@ -18,7 +18,10 @@ import 'server-only';
  *                           so is anyone provisioned the `contractor` dashboard
  *                           role in Admin → Roles (contractors are paid
  *                           per-invoice via the wizard's Contractor Invoices
- *                           step, never by hourly rate).
+ *                           step, never by hourly rate). Anyone Accounting
+ *                           chose to "Ignore" for the week moves out of this
+ *                           family and into the exceptions below for that week
+ *                           only (see payroll-rate-exemptions.ts).
  *   3. Missing bank info  — active employees whose employee_ids row isn't payable
  *                           (isPayoutComplete === false), USEE/US Employees aside.
  *                           Off-boarded people stay only while their final pay is
@@ -32,7 +35,8 @@ import 'server-only';
  *                           paid this week (still onboarding, no-show, or started
  *                           this week so their first period hasn't closed), plus
  *                           bank-info Temporary Exemptions (see
- *                           payroll-bank-exemptions.ts).
+ *                           payroll-bank-exemptions.ts) and No Pay Rate
+ *                           "Ignore" records (see payroll-rate-exemptions.ts).
  *
  * Everything is derived from the same primitives payroll itself uses, so the
  * checklist stays honest:
@@ -90,6 +94,7 @@ import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { applyDeptOverrideToRawRow } from '@/lib/departments/dept-email-overrides';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
 import { rowsStillMissingAfterRetry } from '@/lib/payroll/readiness-rate-retry';
+import { partitionIgnoredRates } from '@/lib/payroll/readiness-rate-ignore';
 import { DEPARTMENTS, MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
 import { listBonusCatalog } from '@/lib/supabase/bonus-catalog-db';
 import { getDepartmentRegistry } from '@/lib/departments/registry-db';
@@ -116,6 +121,10 @@ import {
   listActiveBankExemptions,
   type PayrollBankExemptionRow,
 } from '@/lib/supabase/payroll-bank-exemptions';
+import {
+  listActiveRateExemptions,
+  type PayrollRateExemptionRow,
+} from '@/lib/supabase/payroll-rate-exemptions';
 import { listPayrollWizardNotes } from '@/lib/supabase/payroll-wizard-notes';
 import { listApprovedLeavesFrom } from '@/lib/supabase/leave-requests';
 import { buildLeaveIndex, classifyZeroHours } from '@/lib/payroll/zero-hours-gap';
@@ -285,7 +294,8 @@ export type ExceptionKind =
   | 'awaiting_orientation' // ready but manager hasn't confirmed orientation
   | 'no_show' // marked no-show — will not be paid
   | 'started_this_week' // promoted, but started in the current pay week
-  | 'bank_exempt'; // no bank info, temporarily exempted for THIS week only
+  | 'bank_exempt' // no bank info, temporarily exempted for THIS week only
+  | 'rate_exempt'; // no pay rate, ignored for THIS week only
 
 export interface ReadinessException {
   name: string;
@@ -294,9 +304,30 @@ export interface ReadinessException {
   kind: ExceptionKind;
   /** Human sub-label, e.g. a start date. */
   detail: string | null;
-  /** Set on `bank_exempt` rows only: `payroll_bank_exemptions.id`, so the row
-   *  can offer an Undo. Null on every HR-pipeline exception. */
+  /** Set on `bank_exempt` / `rate_exempt` rows only: the exemption row's id
+   *  (`payroll_bank_exemptions` / `payroll_rate_exemptions` respectively), so
+   *  the row can offer an Undo. Null on every HR-pipeline exception. */
   exemptionId?: string | null;
+}
+
+/**
+ * A person still missing a resolvable rate whom Accounting chose to "Ignore"
+ * for the week in view — the No Pay Rate twin of {@link ReadinessBankExemption}.
+ * They leave the No Pay Rate list AND the rate dimension's worker denominator,
+ * and show up as a `rate_exempt` exception instead. Week-scoped: they reappear
+ * on next week's list if they log hours and still have no rate (see
+ * payroll-rate-exemptions.ts).
+ */
+export interface ReadinessRateExemption {
+  name: string;
+  email: string | null;
+  department: string | null;
+  /** `payroll_rate_exemptions.id` — the key the Undo action posts back. */
+  exemptionId: string;
+  /** Optional one-liner Accounting typed in the confirm dialog. */
+  reason: string | null;
+  /** Who granted it (actor email), when known. */
+  exemptedBy: string | null;
 }
 
 export interface PayrollReadiness {
@@ -900,6 +931,12 @@ async function buildMissingRates(
   /** See {@link loadContractorEmails} — Admin-provisioned contractors leave
    *  this check (list and denominator alike). */
   contractorEmails: Set<string>,
+  /** See {@link loadRateExemptions} — the week's No Pay Rate "Ignore" records,
+   *  keyed by identity. An ignored still-rate-less person leaves BOTH this list
+   *  and the worker denominator (the same treatment paused departments and
+   *  onboarding exceptions get) and is returned under `exemptRows` instead, for
+   *  the Exceptions list. */
+  rateExemptByIdentity: Map<string, PayrollRateExemptionRow>,
 ): Promise<{
   rows: ReadinessMissingRate[];
   workerCount: number;
@@ -914,6 +951,11 @@ async function buildMissingRates(
    *  who is ALSO on the employee roster keeps whatever bank-list treatment
    *  they had before. */
   payrollEmails: Set<string>;
+  /** The ignored people who STILL have no resolvable rate. Judged after the
+   *  same resolve-then-retry chain as everyone else, so an ignore that has
+   *  since been made moot (someone set the rate afterwards) quietly drops off
+   *  instead of lingering as a stale "ignored" row. */
+  exemptRows: ReadinessRateExemption[];
   /** Human-readable notes for reads that failed (see PayrollReadiness.degraded). */
   degraded: string[];
 }> {
@@ -933,6 +975,7 @@ async function buildMissingRates(
       rows: [],
       workerCount: 0,
       payrollEmails: new Set(),
+      exemptRows: [],
       degraded: [
         "Hubstaff hours couldn't be read — the pay-rate check and this week's payday-blocker detection were skipped.",
       ],
@@ -1074,19 +1117,45 @@ async function buildMissingRates(
   // list in the first place.
   // `workerCount` is untouched on purpose: these people ARE workers being paid
   // this week and belong in the denominator. Only the numerator was wrong.
+  const aliasUnion = (m: ReadinessMissingRate) => [
+    ...new Set([...(firstPassAliases.get(m) ?? []), ...(masterAliases.get(m) ?? [])]),
+  ];
   const stillMissing = rowsStillMissingAfterRetry(
     missing,
-    (m) => [...new Set([...(firstPassAliases.get(m) ?? []), ...(masterAliases.get(m) ?? [])])],
+    aliasUnion,
     (emails, department) => resolvePeopleRate(rateCtx, emails, department).source !== null,
   );
 
-  for (const m of stillMissing) {
+  // Per-week "Ignore" (the Bank Info Temporary Exemption's rate twin): judged
+  // AFTER the resolve-then-retry chain, so it is only ever consulted for rows
+  // the real rate chain still can't price — an ignore someone has since made
+  // moot (the rate got set) simply stops mattering. Matched on the same alias
+  // union the retry resolves on. An ignored person leaves the list AND the
+  // worker denominator: the ignore declares an expected non-payment for this
+  // week, the same thing an onboarding exception declares — this is a human
+  // decision on record, not a weaker resolution (those rows still failed
+  // `resolvePeopleRate`), and it surfaces under Exceptions rather than
+  // disappearing.
+  const { kept, ignored } = partitionIgnoredRates(stillMissing, aliasUnion, rateExemptByIdentity);
+  workerCount -= ignored.length;
+
+  const exemptRows: ReadinessRateExemption[] = ignored.map(({ row, exemption }) => ({
+    name: row.name,
+    email: row.email,
+    department: row.department,
+    exemptionId: exemption.id,
+    reason: exemption.reason,
+    exemptedBy: exemption.created_by,
+  }));
+  exemptRows.sort((a, b) => a.name.localeCompare(b.name));
+
+  for (const m of kept) {
     m.recentlyOnboarded = Boolean(
       m.startDate && recentStartCutoff && m.startDate >= recentStartCutoff,
     );
   }
-  stillMissing.sort((a, b) => a.name.localeCompare(b.name));
-  return { rows: stillMissing, workerCount, payrollEmails, degraded: [] };
+  kept.sort((a, b) => a.name.localeCompare(b.name));
+  return { rows: kept, workerCount, payrollEmails, exemptRows, degraded: [] };
 }
 
 // ── Missing bank info (active roster, USEE excluded) ──────────────────────────
@@ -1197,6 +1266,49 @@ async function loadBankExemptions(
             : [];
       // First-wins: the list is ordered oldest-first, so if two rows somehow
       // share a key the original exemption is the one that's honoured (and the
+      // one an Undo will clear).
+      for (const k of keys) if (!byIdentity.has(k)) byIdentity.set(k, r);
+    }
+  } catch {
+    // best-effort — see the doc comment above.
+  }
+  return byIdentity;
+}
+
+/**
+ * The week's active No Pay Rate "Ignore" records, indexed by the identity keys
+ * the rate list matches on — the exact mirror of {@link loadBankExemptions},
+ * with the same two deliberate properties:
+ *
+ * Email keys are preferred and the `name:` fallback is used ONLY when the
+ * record carries no email at all (the master list is full of namesakes and
+ * duplicate person rows, so a blanket name key could silently ignore someone
+ * who was never ignored — hiding a real payday blocker).
+ *
+ * Best-effort by design: a failed read just leaves everyone on the No Pay Rate
+ * list (the pre-ignore behaviour). That over-flags and makes the score read
+ * WORSE, never better, so it doesn't join `degraded` — the whole point of that
+ * array is catching failures that flatter the dashboard.
+ */
+async function loadRateExemptions(
+  weekStart: string,
+): Promise<Map<string, PayrollRateExemptionRow>> {
+  const byIdentity = new Map<string, PayrollRateExemptionRow>();
+  try {
+    const { rows, error } = await listActiveRateExemptions(weekStart);
+    if (error) return byIdentity;
+    for (const r of rows) {
+      const emails = [normEmail(r.work_email ?? ''), normEmail(r.personal_email ?? '')].filter(
+        (e): e is string => Boolean(e),
+      );
+      const keys =
+        emails.length > 0
+          ? emails
+          : (r.name ?? '').trim()
+            ? [`name:${r.name.trim().toLowerCase()}`]
+            : [];
+      // First-wins: the list is ordered oldest-first, so if two rows somehow
+      // share a key the original ignore is the one that's honoured (and the
       // one an Undo will clear).
       for (const k of keys) if (!byIdentity.has(k)) byIdentity.set(k, r);
     }
@@ -1932,6 +2044,7 @@ export async function getPayrollReadiness(
     offboardDateByEmail,
     contractorEmails,
     bankExemptByIdentity,
+    rateExemptByIdentity,
     auditRows,
   ] = await Promise.all([
     resolvedFile
@@ -1946,6 +2059,7 @@ export async function getPayrollReadiness(
     loadOffboardDatesByEmail(),
     loadContractorEmails(),
     loadBankExemptions(weekStart),
+    loadRateExemptions(weekStart),
     loadReadinessAuditRows(weekStart),
   ]);
 
@@ -2003,6 +2117,7 @@ export async function getPayrollReadiness(
       isPausedDept,
       weekStart,
       contractorEmails,
+      rateExemptByIdentity,
     ),
   ]);
   // KPI submission attribution: who last marked each dept-week ready/locked,
@@ -2062,7 +2177,7 @@ export async function getPayrollReadiness(
   // Temporarily-exempted people join the exceptions list — the same "expected
   // non-payment" shelf as onboarding hires and no-shows, which is exactly what
   // an exemption declares them to be for this week. They carry their exemption
-  // id so the row can offer an Undo.
+  // id so the row can offer an Undo. Rate "Ignore" rows ride the same shelf.
   const exceptions: ReadinessException[] = [
     ...hrExceptions,
     ...bankRes.exemptRows.map((r) => ({
@@ -2070,6 +2185,14 @@ export async function getPayrollReadiness(
       email: r.email,
       department: r.department,
       kind: 'bank_exempt' as const,
+      detail: r.reason,
+      exemptionId: r.exemptionId,
+    })),
+    ...ratesRes.exemptRows.map((r) => ({
+      name: r.name,
+      email: r.email,
+      department: r.department,
+      kind: 'rate_exempt' as const,
       detail: r.reason,
       exemptionId: r.exemptionId,
     })),

@@ -146,6 +146,9 @@ await probeNotificationType('pab_exclusion_notification_types', 'pab.restored');
 console.log('\n#3 Bank Info Temporary Exemption');
 await probeTable('create_payroll_bank_exemptions', 'payroll_bank_exemptions');
 
+console.log('\n#3b No Pay Rate Ignore');
+await probeTable('create_payroll_rate_exemptions', 'payroll_rate_exemptions');
+
 console.log('\n#4/#5 CallTools usernames');
 await probeTable('2026-07-20_employee_calltools_usernames', 'employee_calltools_usernames');
 await probeColumn('add_calltools_username_to_onboarding', 'hr_onboarding_submissions', 'calltools_username');
