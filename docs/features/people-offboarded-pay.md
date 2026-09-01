@@ -47,6 +47,27 @@ recycled email share ONE bank record — editing it edits it for the email, not 
 stint. Saves go through `POST /api/update-employee-ids` (the 1:1-rule write path)
 with `source: PEOPLE_TAB_SOURCE`; there is no second write path.
 
+## Employee ID: live row wins — EXCEPT on a recycled email
+The Employee ID column reads `employee_ids.employee_id` (a dedicated
+two-column query, deliberately not added to `fetchPayoutIdsByEmail`'s shared
+column list), falling back to the offboard snapshot's frozen copy. **On a row
+whose work email now belongs to an ACTIVE person, the live row describes the
+CURRENT holder — so the snapshot outranks it there**, and with no snapshot the
+cell stays "—" rather than printing the wrong person's ID. Most of the ledger
+shows "—" honestly: the majority of leavers have neither a surviving row nor a
+snapshot.
+
+## The tab's console treatment (2026-09-01, "futuristic — only this tab")
+Scoped entirely to `PeopleOffboarded.tsx`: a mono status readout walks flavored
+phase messages while a query is in flight ("Looking back through the offboarded
+ledger…" → … → "Pulling up Employee IDs and bank details…" — roughly the
+route's real stages, holding on the last line, never looping), a scan line runs
+under the search field, and result rows stagger in. All motion sits on the
+People tab's own accent (no new palette), works in both themes, and is disabled
+under `prefers-reduced-motion` (the readout text remains). **The 300ms search
+debounce is armed only inside the input's `onChange`** — never in an effect —
+so a mount/remount can never fire a query; Enter searches immediately.
+
 ## Recycled work emails: WARN AND ALLOW, never block
 305 offboarded work emails belong to someone on the ACTIVE roster today. For those
 rows the route returns `activeHolder` (resolved live per search — never stored), and

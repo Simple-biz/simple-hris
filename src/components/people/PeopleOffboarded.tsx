@@ -19,10 +19,24 @@
  * them — Pay prefills and bank edits on that email physically target the
  * current holder. The warning repeats inside PayDialog and SetBankDialog; it
  * never blocks.
+ *
+ * Visual register (Kane 2026-09-01, "futuristic — only this tab"): a console
+ * treatment scoped to THIS FILE — a mono status readout that narrates the real
+ * phases of a query, a scan line on the search field while a request is in
+ * flight, staggered row entrances. It stays on the People tab's own accent
+ * (orange/amber via the `accent` prop) in both themes, and every animation has
+ * a reduced-motion fallback. The status phases mirror what the route actually
+ * does (ledger read → match → active-roster cross-check → payout resolution),
+ * so the motion conveys state, not decoration.
+ *
+ * Debounce rule: the 300ms timer is armed ONLY by keystrokes (scheduled in the
+ * input's onChange, never in an effect), so nothing runs on mount or remount.
+ * Enter searches immediately.
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Banknote, Loader2, Search, UserX } from 'lucide-react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { AlertTriangle, Banknote, Search, UserX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { TeamAvatar } from '@/components/team/team-ui';
@@ -40,6 +54,10 @@ export interface OffboardedRow {
   name: string | null;
   workEmail: string | null;
   personalEmail: string | null;
+  /** Live employee_ids id, or the offboard snapshot's frozen copy; on a
+   *  recycled email the snapshot outranks the live row (which is the current
+   *  holder's). Null for most of the ledger. */
+  employeeId: string | null;
   department: string | null;
   startDate: string | null;
   offBoardedAt: string | null;
@@ -96,6 +114,96 @@ export function ActiveHolderWarning({ holder, compact = false }: { holder: strin
   );
 }
 
+/**
+ * What the console readout says while a query is in flight (Kane's flavor:
+ * "looking back / searching previous records"). The lines still walk in the
+ * rough order the route works — ledger, records, roster cross-check, payout
+ * data — and the last line HOLDS until the response lands (never loops back,
+ * which would claim progress that isn't happening).
+ */
+const SEARCH_PHASES = [
+  'Looking back through the offboarded ledger…',
+  'Searching previous records…',
+  'Checking employees who came before…',
+  'Cross-referencing the active roster…',
+  'Pulling up Employee IDs and bank details…',
+] as const;
+
+const DEBOUNCE_MS = 300;
+const PHASE_MS = 850;
+
+/**
+ * The mono console line under the search field. While loading it walks the
+ * SEARCH_PHASES; otherwise it states the result plainly. aria-live so screen
+ * readers hear the search progress without watching the animation.
+ */
+function ConsoleReadout({
+  loading,
+  error,
+  searched,
+  count,
+  total,
+  accent,
+}: {
+  loading: boolean;
+  error: string | null;
+  searched: boolean;
+  count: number;
+  total: number;
+  accent: Accent;
+}) {
+  const reduceMotion = useReducedMotion();
+  const [phase, setPhase] = useState(0);
+
+  // Restart the phase walk on every new request; hold on the final line.
+  useEffect(() => {
+    if (!loading) return;
+    setPhase(0);
+    const t = setInterval(
+      () => setPhase((p) => Math.min(p + 1, SEARCH_PHASES.length - 1)),
+      PHASE_MS,
+    );
+    return () => clearInterval(t);
+  }, [loading]);
+
+  let text: string;
+  if (loading) text = SEARCH_PHASES[phase];
+  else if (error) text = 'Query failed — see the message below.';
+  else if (searched && count > 0)
+    text = total > count ? `${count} of ${total} matching records shown` : `${count} matching record${count === 1 ? '' : 's'}`;
+  else if (searched) text = 'No matching records.';
+  else text = 'Standing by — type a name or work email.';
+
+  return (
+    <div
+      aria-live="polite"
+      className="mt-1.5 flex items-center gap-1.5 font-mono text-[11px] tracking-tight text-zinc-500 dark:text-zinc-400"
+    >
+      <span
+        aria-hidden
+        className={cn(
+          'h-1.5 w-1.5 shrink-0 rounded-full',
+          loading ? cn(accent.bar, !reduceMotion && 'animate-pulse') : error ? 'bg-rose-500' : 'bg-zinc-300 dark:bg-zinc-600',
+        )}
+      />
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.span
+          key={text}
+          initial={reduceMotion ? false : { opacity: 0, y: 2 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={reduceMotion ? undefined : { opacity: 0, y: -2 }}
+          transition={{ duration: 0.15, ease: 'easeOut' }}
+        >
+          {text}
+        </motion.span>
+      </AnimatePresence>
+      {loading && (
+        <span aria-hidden className={cn('ml-0.5 inline-block h-3 w-[5px] rounded-[1px]', accent.bar, !reduceMotion && 'animate-pulse')} />
+      )}
+    </div>
+  );
+}
+
 export default function PeopleOffboarded({
   accent,
   canPay,
@@ -108,6 +216,7 @@ export default function PeopleOffboarded({
   canEdit: boolean;
   onPay: (person: OffboardedPayPerson) => void;
 }) {
+  const reduceMotion = useReducedMotion();
   const [query, setQuery] = useState('');
   const [rows, setRows] = useState<OffboardedRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -117,6 +226,10 @@ export default function PeopleOffboarded({
   const [bankTarget, setBankTarget] = useState<OffboardedRow | null>(null);
   // Drops answers that arrive after a newer keystroke's request.
   const seqRef = useRef(0);
+  // The typing debounce timer. Armed ONLY in handleQueryChange (a keystroke),
+  // never in an effect — so a mount/remount can never fire a search.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
   const runSearch = async (q: string) => {
     const seq = ++seqRef.current;
@@ -149,11 +262,16 @@ export default function PeopleOffboarded({
     }
   };
 
-  useEffect(() => {
-    const t = setTimeout(() => void runSearch(query), 300);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
+  const handleQueryChange = (v: string) => {
+    setQuery(v);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => void runSearch(v), DEBOUNCE_MS);
+  };
+
+  const searchNow = () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    void runSearch(query);
+  };
 
   const bankChip = (r: OffboardedRow) => {
     if (r.bankStatus === 'ok') {
@@ -179,16 +297,47 @@ export default function PeopleOffboarded({
 
   return (
     <div>
-      <div className="relative sm:max-w-md">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-        <Input
-          type="search"
-          autoFocus
-          placeholder="Search offboarded people by name or work email…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className={cn('pl-9', accent.ring)}
-          aria-label="Search offboarded people"
+      {/* Search console — the input plus the mono readout that narrates it. */}
+      <div className="sm:max-w-xl">
+        <div
+          className={cn(
+            'relative overflow-hidden rounded-xl border bg-white transition-shadow dark:bg-zinc-950',
+            loading
+              ? 'border-zinc-300 shadow-[0_0_0_3px_rgba(249,115,22,0.08)] dark:border-zinc-700'
+              : 'border-zinc-200 dark:border-zinc-800',
+          )}
+        >
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+          <Input
+            type="search"
+            autoFocus
+            placeholder="Search offboarded people by name or work email…"
+            value={query}
+            onChange={(e) => handleQueryChange(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') searchNow(); }}
+            className={cn('border-0 pl-9 shadow-none focus-visible:ring-1', accent.ring)}
+            aria-label="Search offboarded people"
+          />
+          {/* Scan line — a single moving segment along the bottom edge while a
+              request is in flight. Transform-only; absent under reduced motion
+              (the readout dot still pulses state → no, it's static too: the
+              console TEXT is the reduced-motion signal). */}
+          {loading && !reduceMotion && (
+            <motion.span
+              aria-hidden
+              className={cn('absolute bottom-0 left-0 h-[2px] w-1/3 rounded-full', accent.bar)}
+              animate={{ x: ['-100%', '300%'] }}
+              transition={{ repeat: Infinity, duration: 1.2, ease: 'linear' }}
+            />
+          )}
+        </div>
+        <ConsoleReadout
+          loading={loading}
+          error={error}
+          searched={searched}
+          count={rows.length}
+          total={total}
+          accent={accent}
         />
       </div>
 
@@ -199,34 +348,35 @@ export default function PeopleOffboarded({
       )}
 
       {!searched && !loading && !error ? (
-        <div className="mt-10 flex flex-col items-center gap-2 text-center text-zinc-400 dark:text-zinc-500">
-          <UserX className="h-8 w-8" />
-          <p className="text-sm">
-            Search the offboarded ledger — every record ever kept, including people who
-            shared a work email.
-          </p>
-          <p className="text-[11px]">Type at least {OFFBOARDED_SEARCH_MIN_QUERY} characters of a name or work email.</p>
+        <div className="mt-12 flex flex-col items-center gap-4 text-center">
+          {/* Idle reticle — concentric rings around the empty-state mark. */}
+          <div className="relative flex h-20 w-20 items-center justify-center" aria-hidden>
+            <span className="absolute inset-0 rounded-full border border-dashed border-zinc-300 dark:border-zinc-700" />
+            <span className="absolute inset-3 rounded-full border border-zinc-200 dark:border-zinc-800" />
+            <UserX className="h-7 w-7 text-zinc-400 dark:text-zinc-500" />
+          </div>
+          <div className="max-w-md space-y-1">
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Search the offboarded ledger — every record ever kept, including people who
+              shared a work email.
+            </p>
+            <p className="font-mono text-[11px] text-zinc-400 dark:text-zinc-500">
+              min. {OFFBOARDED_SEARCH_MIN_QUERY} characters · name or work email
+            </p>
+          </div>
         </div>
-      ) : loading && rows.length === 0 ? (
-        <div className="mt-10 flex items-center justify-center gap-2 text-sm text-zinc-400">
-          <Loader2 className="h-4 w-4 animate-spin" /> Searching…
-        </div>
-      ) : searched && rows.length === 0 && !error ? (
-        <div className="mt-10 text-center text-sm text-zinc-400 dark:text-zinc-500">
+      ) : searched && rows.length === 0 && !error && !loading ? (
+        <div className="mt-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
           No offboarded records match “{query.trim()}”.
         </div>
       ) : rows.length > 0 ? (
-        <>
-          <p className="mt-3 text-[12px] text-zinc-500 dark:text-zinc-400">
-            {total > rows.length
-              ? `Showing the first ${rows.length} of ${total} matching records — narrow the search to see the rest.`
-              : `${rows.length} matching record${rows.length === 1 ? '' : 's'}.`}
-          </p>
-          <div className="mt-2 overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-            <table className="w-full min-w-[860px] text-left text-[13px]">
+        <div className={cn('mt-3 transition-opacity', loading && 'opacity-60')}>
+          <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+            <table className="w-full min-w-[980px] text-left text-[13px]">
               <thead>
-                <tr className="border-b border-zinc-200 text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
+                <tr className="border-b border-zinc-200 font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500 dark:border-zinc-800">
                   <th className="px-3 py-2 font-medium">Name</th>
+                  <th className="px-3 py-2 font-medium">Employee ID</th>
                   <th className="px-3 py-2 font-medium">Work Email</th>
                   <th className="px-3 py-2 font-medium">Personal Email</th>
                   <th className="px-3 py-2 font-medium">Start Date</th>
@@ -236,8 +386,14 @@ export default function PeopleOffboarded({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} className="border-b border-zinc-100 last:border-0 dark:border-zinc-900">
+                {rows.map((r, i) => (
+                  <motion.tr
+                    key={r.id}
+                    initial={reduceMotion ? false : { opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.18, delay: Math.min(i * 0.02, 0.24), ease: 'easeOut' }}
+                    className="border-b border-zinc-100 transition-colors last:border-0 hover:bg-orange-50/40 dark:border-zinc-900 dark:hover:bg-orange-500/[0.04]"
+                  >
                     <td className="px-3 py-2.5" data-label="Name">
                       <div className="flex items-center gap-2.5">
                         <TeamAvatar name={r.name ?? ''} email={r.workEmail} />
@@ -256,16 +412,19 @@ export default function PeopleOffboarded({
                         </div>
                       </div>
                     </td>
-                    <td className="px-3 py-2.5 text-zinc-600 dark:text-zinc-300" data-label="Work Email">
+                    <td className="px-3 py-2.5 font-mono text-[12px] tabular-nums text-zinc-600 dark:text-zinc-300" data-label="Employee ID">
+                      {r.employeeId ?? <span className="text-zinc-400" title="No employee_ids record survives for this person">—</span>}
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-[12px] text-zinc-600 dark:text-zinc-300" data-label="Work Email">
                       {r.workEmail ?? <span className="text-zinc-400">—</span>}
                     </td>
-                    <td className="px-3 py-2.5 text-zinc-600 dark:text-zinc-300" data-label="Personal Email">
+                    <td className="px-3 py-2.5 font-mono text-[12px] text-zinc-600 dark:text-zinc-300" data-label="Personal Email">
                       {r.personalEmail ?? <span className="text-zinc-400">—</span>}
                     </td>
-                    <td className="px-3 py-2.5 tabular-nums text-zinc-500 dark:text-zinc-400" data-label="Start Date">
+                    <td className="px-3 py-2.5 font-mono text-[12px] tabular-nums text-zinc-500 dark:text-zinc-400" data-label="Start Date">
                       {r.startDate ?? '—'}
                     </td>
-                    <td className="px-3 py-2.5 tabular-nums text-zinc-500 dark:text-zinc-400" data-label="Offboarded">
+                    <td className="px-3 py-2.5 font-mono text-[12px] tabular-nums text-zinc-500 dark:text-zinc-400" data-label="Offboarded">
                       {offDateLabel(r.offBoardedAt)}
                     </td>
                     <td className="px-3 py-2.5" data-label="Bank">
@@ -307,12 +466,12 @@ export default function PeopleOffboarded({
                         )}
                       </div>
                     </td>
-                  </tr>
+                  </motion.tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </>
+        </div>
       ) : null}
 
       {bankTarget && (

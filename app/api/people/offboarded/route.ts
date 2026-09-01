@@ -21,6 +21,10 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export interface OffboardedSearchRow extends OffboardedSearchHit {
+  /** `employee_ids.employee_id` — the LIVE row's when one survives, else the
+   *  offboard snapshot's frozen copy. Null for the majority of the ledger
+   *  (most leavers' employee_ids rows are gone and only 288 have snapshots). */
+  employeeId: string | null;
   bankStatus: OffboardedBankStatus;
   /** LIVE-resolved effective rail (the one allowed to LOCK Set Bank's picker
    *  and the one the chip names). Null = unrouted. */
@@ -91,7 +95,7 @@ export async function GET(request: NextRequest) {
     // Mark Paid at send time — same posture as the Urgent feed). The ACTIVE-
     // roster read is the exception: it powers a money-direction warning, so a
     // failure must SAY so rather than silently claiming "no collision".
-    const [idsByEmail, legacyByEmail, rawSnapshots, activeRes] = await Promise.all([
+    const [idsByEmail, legacyByEmail, rawSnapshots, activeRes, employeeIdRes] = await Promise.all([
       fetchPayoutIdsByEmail(supabase, workEmails),
       fetchLegacyBankPreferredByEmail(supabase, workEmails).catch(
         () => ({}) as Record<string, string | null>,
@@ -105,6 +109,12 @@ export async function GET(request: NextRequest) {
             .select('"Name","Work Email"')
             .or(workEmails.map((e) => `"Work Email".ilike.${e}`).join(','))
         : Promise.resolve({ data: [], error: null }),
+      // Employee ID — kept out of fetchPayoutIdsByEmail's shared column list
+      // (the urgent feeds don't need it). Best-effort like the other bank
+      // enrichment: a failure blanks the column, never the search.
+      workEmails.length > 0
+        ? supabase.from('employee_ids').select('work_email, employee_id').in('work_email', workEmails)
+        : Promise.resolve({ data: [], error: null }),
     ]);
 
     if (activeRes.error) {
@@ -117,6 +127,13 @@ export async function GET(request: NextRequest) {
     for (const r of (activeRes.data ?? []) as Record<string, unknown>[]) {
       const e = normEmail(String(r['Work Email'] ?? ''));
       if (e) activeByEmail.set(e, String(r['Name'] ?? '').trim());
+    }
+
+    const employeeIdByEmail = new Map<string, string>();
+    for (const r of (employeeIdRes.data ?? []) as { work_email?: string | null; employee_id?: string | null }[]) {
+      const e = normEmail(r.work_email ?? '');
+      const id = (r.employee_id ?? '').trim();
+      if (e && id) employeeIdByEmail.set(e, id);
     }
 
     const readSnapshotRows = (workEmail: string): Record<string, unknown>[] | null => {
@@ -134,15 +151,30 @@ export async function GET(request: NextRequest) {
       const email = normEmail(hit.workEmail ?? '');
       const idRow = email ? (idsByEmail[email] as unknown as Record<string, unknown> | undefined) : undefined;
       const legacy = email ? legacyByEmail[email] : null;
+      const snapshotRows = email ? readSnapshotRows(email) : null;
       const folded = foldBankStatus({
         idRow: idRow ?? null,
         extras: legacy != null ? { bankPreferredRaw: legacy } : undefined,
-        snapshotIdRows: email ? readSnapshotRows(email) : null,
+        snapshotIdRows: snapshotRows,
       });
+      const snapshotEmployeeId =
+        snapshotRows
+          ?.map((r) => String((r as { employee_id?: unknown }).employee_id ?? '').trim())
+          .find((v) => v !== '') ?? null;
+      const liveEmployeeId = (email ? employeeIdByEmail.get(email) : undefined) ?? null;
+      const activeHolder = email ? activeByEmail.get(email) ?? null : null;
+      // Employee ID: normally the live row wins and the snapshot backfills a
+      // torn-down leaver. But on a RECYCLED email the live row describes the
+      // CURRENT holder, so their ID must not be printed on the leaver's row —
+      // there the snapshot (frozen at a departure) outranks it.
+      const employeeId = activeHolder
+        ? snapshotEmployeeId
+        : liveEmployeeId ?? snapshotEmployeeId;
       return {
         ...hit,
+        employeeId,
         ...folded,
-        activeHolder: email ? activeByEmail.get(email) ?? null : null,
+        activeHolder,
       };
     });
 
