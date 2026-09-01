@@ -4,7 +4,7 @@
  *
  * The shipped engine (`computePabEligibleEmails` in dispatch-bonuses.ts) answers a
  * yes/no question and returns a Set of passers. It cannot say "Maria missed two
- * days" — and the wizard's step-6 PAB review needs exactly that, for everyone, so
+ * days" — and the wizard's PAB review step needs exactly that, for everyone, so
  * an accountant can spot the 1-or-2-day cases that are usually a shifting schedule
  * rather than absence.
  *

@@ -9,7 +9,8 @@ line along its bottom edge while **its own** data is in flight, completing in gr
 data lands.
 
 > **Step ids shifted down by one on 2026-08-28** when HSL and Additions merged into a single
-> step 4 (`payroll-wizard-final-pay.md`). Every number on this page is the post-merge id.
+> one step (`payroll-wizard-final-pay.md`); PAB moved to 4 on 2026-09-01, making Additions 5
+> and Contractors 6. Every number on this page is the current id.
 
 > A tab going green is a statement that **its figures can now be judged**, not that the page
 > finished mounting. That is the entire contract, and everything below exists to keep it true.
@@ -29,9 +30,9 @@ part and is not tapered by the rounded corners.
 | hold | green holds `STEP_PROGRESS_HOLD_MS` = **1700 ms**, then returns to `idle` |
 
 Steps go green in a **wave**, and the ordering is the useful part — it tells Accounting *which*
-tab is still cooking rather than just "something is". Step 1 first; then 2/3; then 5; then 4
-and 6/7 last, because the all-weeks PAB merge fires one request per archived upload and is
-reliably the straggler — and since the merge, step 4 waits on that merge **and** the HSL
+tab is still cooking rather than just "something is". Step 1 first; then 2/3; then 6; then 4/5
+and 7/8 last, because the all-weeks PAB merge fires one request per archived upload and is
+reliably the straggler — and since the merge, the Additions step waits on that merge **and** the HSL
 amounts.
 
 **Reports (step 9) is outside the range** — it is a post-dispatch summary, not a figure anyone
@@ -107,15 +108,19 @@ fetches its numbers depend on (`isStepDataLoading`):
 | 1 Initialize | upload list + Hubstaff preview table |
 | 2 Initial Calculation | + week hours, `employee_hourly_rates` |
 | 3 Orphanage | same as 2 — orphanage pay is priced from those hours × rates |
-| 4 Additions (`Departments` + `HSL` sections) | + the all-weeks PAB merge, HSL KPI amounts, HSL bonus entries (step-scoped) |
-| 5 Contractors | upload list + invoices (step-scoped) |
-| 6 Validation · 7 Dispatch | everything — these are the steps where a premature reading costs money |
-| 8 Reports | nothing — outside the range |
+| 4 PAB (payout week only) | upload list + week hours + the all-weeks PAB merge — green claims the ineligible list is complete |
+| 5 Additions (`Departments` + `HSL` sections) | + the all-weeks PAB merge, HSL KPI amounts, HSL bonus entries (step-scoped) |
+| 6 Contractors | upload list + invoices (step-scoped) |
+| 7 Validation · 8 Dispatch | everything — these are the steps where a premature reading costs money |
+| 9 Reports | nothing — outside the range |
 
-**Step 4 waits on both halves of the old 4+5 pair, and it must.** The step owns two sections
-that never coexist in the DOM — `Departments` and `HSL`, chosen by its own tab strip — but
-green is a claim about *the step*, and the operator can switch sections without reloading
-anything. So the HSL fetch is gated on `currentStep === 4`, **never** on
+(This table had drifted one renumbering behind — it was still the pre-PAB-step order until
+2026-09-01, when PAB also moved to 4 and Additions/Contractors became 5/6.)
+
+**Step 5 (Additions) waits on both halves of the old pair, and it must.** The step owns two
+sections that never coexist in the DOM — `Departments` and `HSL`, chosen by its own tab strip —
+but green is a claim about *the step*, and the operator can switch sections without reloading
+anything. So the HSL fetch is gated on `currentStep === 5`, **never** on
 `activeAdditionsSection === 'hsl'`: section-gating it would let the line go green while
 nothing had ever been fetched for the section the operator is about to open. Same rule as the
 exclusions below — if it can be judged there, it is waited on here.
@@ -136,7 +141,7 @@ animation. The line cannot become the forever-spinner a terminal skeleton once w
 
 ### Step-scoped fetches
 
-`hslStepLoading` (4) and `contractorInvoicesLoading` (5) are gated on `currentStep`, because
+`hslStepLoading` (5) and `contractorInvoicesLoading` (6) are gated on `currentStep`, because
 their effects only run while Accounting is standing on the step — which is also the only time
 their absence would be misleading. Step-scoped is as narrow as this may get: **not**
 section-scoped (see above).

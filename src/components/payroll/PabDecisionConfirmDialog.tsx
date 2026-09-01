@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Step 6's Forgive / Ignore confirmation — the in-app dialog that replaced the
+ * The PAB step's Forgive / Ignore confirmation — the in-app dialog that replaced the
  * browser's `window.confirm` (Kane 2026-09-01: "wrapped properly in Tailwind,
  * not the generic"). Same vocabulary as `LockToggleConfirmDialog`: shadcn
  * Dialog, icon-in-title, verb+object confirm button wearing the action's

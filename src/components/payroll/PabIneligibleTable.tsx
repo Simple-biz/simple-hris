@@ -12,7 +12,7 @@ import { pabSeverityBand, type PabFailedDay, type PabFailedWeek, type PabSeverit
 import { catalogDeptNameFrom } from '@/lib/departments/dept-identity';
 
 /**
- * The Payroll Wizard's step-6 PAB review table.
+ * The Payroll Wizard’s PAB review table (step 4 since 2026-09-01; step 6 before).
  *
  * ## The one rule this component exists to obey
  *
@@ -141,8 +141,8 @@ export default function PabIneligibleTable({
   /**
    * Decline the last-call forgiveness: writes the person's PAB EXCLUSION for the
    * month (₱0 regardless of attendance, reversible in System Bonus → PAB
-   * settings). The row stays listed with the Excluded chip — a decision must
-   * never vanish its own row.
+   * settings). The decided row then LEAVES this list for the Done tab (Kane
+   * 2026-09-01 PM), animated by the row's exit.
    */
   onIgnoreMonth: (row: PabIneligibleRow) => void;
   /** Email currently mid-ignore, or null. */

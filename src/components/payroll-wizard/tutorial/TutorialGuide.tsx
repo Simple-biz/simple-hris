@@ -127,9 +127,9 @@ export default function TutorialGuide({
   );
   const activeStatus = activeDef ? statuses.get(activeDef.stepId) : undefined;
 
-  // ── HSL column rotation (step 4's HSL tab only) ────────────────────────────
+  // ── HSL column rotation (step 5's HSL tab only) ────────────────────────────
   // The ring takes turns across PAB / Tech Bonus / MESA / Adjustment /
-  // Orphanage. Since HSL and Additions merged, step 4 only shows that table on
+  // Orphanage. Since HSL and Additions merged, step 5 only shows that table on
   // its HSL tab — so the timer runs while THAT tab is open, not for the whole
   // step. Rotating over the shared department table would name columns the
   // operator cannot see.
@@ -160,7 +160,7 @@ export default function TutorialGuide({
     }
     const next: SpotRect[] = [];
     // Targets are resolved per render, not read off the static def: step 2 rings
-    // only the FX legs still unset; step 4 rotates the HSL columns on its HSL tab and
+    // only the FX legs still unset; step 5 rotates the HSL columns on its HSL tab and
     // otherwise moves inside the System Bonus modal once it opens.
     for (const key of resolveStepTargets(activeDef.stepId, mergedSignals, rotationTick)) {
       const el = document.querySelector<HTMLElement>(`[data-tutorial-target="${key}"]`);
@@ -230,7 +230,7 @@ export default function TutorialGuide({
           <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
             {activeDef.hint}
           </p>
-          {/* Names the column the ring is currently sitting on (step 4). */}
+          {/* Names the column the ring is currently sitting on (step 5). */}
           {rotatingLabel && (
             <p className="mt-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-indigo-700 dark:text-indigo-300">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-500 motion-reduce:animate-none dark:bg-indigo-400" />

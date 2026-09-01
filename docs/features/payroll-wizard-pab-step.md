@@ -1,6 +1,8 @@
-# Payroll Wizard — Step 6 "PAB"
+# Payroll Wizard — Step 4 "PAB"
 
-A review step between **Contractors (5)** and **Validation (7)** listing everyone who lost the
+A review step between **Orphanage (3)** and **Additions (5)** — moved in front of Additions on
+2026-09-01 (it landed at 6 on 2026-08-28), so attendance is decided before the bonuses that
+depend on the verdict are reviewed — listing everyone who lost the
 Perfect Attendance Bonus for the active PAB period, how many days cost them it, a button onto
 the existing PAB Calendar, a **Forgive month** action that restores the bonus, and an
 **Ignore** action that declines it (writes the month's PAB exclusion). It exists because a
@@ -14,7 +16,7 @@ week](#the-tab-only-exists-on-the-payout-week).
 Shipped **2026-08-28**; Ignore + payout-week gate **2026-09-01**. Source:
 `src/lib/payroll/pab-ineligibility.ts`, `src/lib/payroll/pab-payout-week.ts`,
 `app/api/payroll-wizard/pab-forgive-month/route.ts`,
-`src/components/payroll/PabIneligibleTable.tsx`, `src/components/PayrollWizard.tsx` (step 6).
+`src/components/payroll/PabIneligibleTable.tsx`, `src/components/PayrollWizard.tsx` (step 4).
 
 ## Key files
 
@@ -27,7 +29,7 @@ Shipped **2026-08-28**; Ignore + payout-week gate **2026-09-01**. Source:
 | Ignore-the-month write (exclusion) | `app/api/pab-exclusions/route.ts` — pre-existing, see `pab-exclusions.md` |
 | The table | `src/components/payroll/PabIneligibleTable.tsx` |
 | The Done tab (receipts) | `src/components/payroll/PabDoneTable.tsx` |
-| Row builder + step body | `src/components/PayrollWizard.tsx` (`pabIneligibleRows`, `case 6`) |
+| Row builder + step body | `src/components/PayrollWizard.tsx` (`pabIneligibleRows`, `case 4`) |
 | The verdict this step explains | `src/lib/payroll/dispatch-bonuses.ts` (`computePabEligibleEmails`) |
 
 ## Forgiveness writes DISPUTES, never a month-level grant
@@ -49,7 +51,7 @@ invisible exclusion, because it is a benefit the employee was told they received
 writes one approved dispute per failed day. Do not "simplify" this into a single row.
 
 Per-day forgiveness is unchanged and still lives in two places: the PAB Calendar modal's
-`handleForgiveDay`, and the step-4 Additions **Attendance Issues** panel (which lists people
+`handleForgiveDay`, and the Additions step's **Attendance Issues** panel (which lists people
 who FILED an issue, scoped to the active department — a different list from this one, which is
 everyone who FAILED, filed or not, across every department).
 
@@ -165,10 +167,10 @@ this PAB section"). One Supabase channel, `payroll-wizard-pab-decisions`, **Broa
 
 | Action | Event payload |
 | --- | --- |
-| Forgive month (step 6) | `days_forgiven` + the re-read day list |
+| Forgive month (the PAB step) | `days_forgiven` + the re-read day list |
 | Forgive day (calendar modal) | `days_forgiven` + the dispute id |
 | Revoke day (calendar modal) | `day_revoked` |
-| Ignore (step 6) / exclusion toggle (System Bonus modal) | `exclusion_changed` |
+| Ignore (the PAB step) / exclusion toggle (System Bonus modal) | `exclusion_changed` |
 
 Receivers patch the SAME local maps the actor patches (`approvedDisputeDates` /
 `approvedDisputeIds`) so the row leaves B's review list exactly as it left A's;
@@ -394,9 +396,10 @@ wizard's slowest fetch is the all-clear-that-hides-people bug wearing more autho
 sentence it replaced. And when `masterRosterUnavailable`, every GML-scoped number is 0 by
 construction, so the strip says the roster failed instead of showing the zeros.
 
-**The `step6-pab-review` tutorial anchor moved onto the strip's wrapper, verbatim.** Deleting
-the node would orphan `guide.ts`'s step-6 target, and nothing tests that link — step 7's
-`step7-validation-table` is already dead exactly that way (the DOM says `step6-validation-table`).
+**The `step4-pab-review` tutorial anchor (renamed from `step6-` in the 2026-09-01 move) sits on
+the strip's wrapper.** Deleting the node would orphan `guide.ts`'s PAB-step target, and nothing
+tests that link — `step7-validation-table` and `step9-audit-trail` were both dead exactly that
+way (stale DOM names from the 08-28 renumbering) until the 09-01 move revived them.
 
 ## Filters narrow the view; they never remove anyone
 
@@ -538,11 +541,15 @@ documents the cost of skipping this: 107 person-month entries with no recoverabl
 
 ## Renumbering: the rail is 9 steps and the ids must stay contiguous
 
-`1` Initialize · `2` Initial Calculation · `3` Orphanage · `4` Additions (+HSL tab) ·
-`5` Contractors · **`6` PAB** · `7` Validation · `8` Dispatch · `9` Reports.
+`1` Initialize · `2` Initial Calculation · `3` Orphanage · **`4` PAB** · `5` Additions
+(+HSL tab) · `6` Contractors · `7` Validation · `8` Dispatch · `9` Reports
+(2026-09-01; before that PAB sat at 6).
 
-Step 6's tab is conditionally **rendered** (payout week only, above) but its id is
-unconditional — hiding is a render filter plus nav skip, never a renumbering.
+Step 4's tab is conditionally **rendered** (payout week only, above) but its id is
+unconditional — hiding is a render filter plus nav skip (snap back to Orphanage, 3), never a
+renumbering. The 2026-09-01 move itself WAS a renumbering and touched all eight places; the
+two dead tutorial anchors it surfaced (`step6-validation-table`, `step8-audit-trail`) were
+revived as `step7-`/`step9-` in the same commit.
 
 The progress bar is `currentStep / steps.length` and completion is `currentStep >=
 steps.length`, so an id gap reads past 100% and marks Reports complete at Dispatch. Step

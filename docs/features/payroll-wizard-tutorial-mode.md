@@ -3,7 +3,7 @@
 When Payroll Processing is started (the dispatch lock flips on), the lock **driver** gets a
 floating **chat head** (a small messenger-style bubble, bottom-right — explicitly NOT a panel
 or modal, Kane 2026-08-17) that walks the shipped wizard steps 1→8 (1→9 until HSL and Additions
-merged into one step 4 on 2026-08-28). Tapping the head toggles a
+merged into one step on 2026-08-28 — step 5 since PAB moved to 4 on 2026-09-01). Tapping the head toggles a
 compact speech balloon with the current step's hint, advisory note, and one status dot per step; the
 teaching itself is done by spotlight rings drawn over each step's key indicators. The Reports step additionally
 gains a **Processing Narrative**: a templated, plain-English retelling of the calendar week's
@@ -93,7 +93,7 @@ static steps). Two steps are dynamic:
   (`step2-fx-php` + `step2-fx-php-cta`, same for `cop`). Entering one rate stops the ring on
   that box while the other keeps it. Both set → falls back to `step2-review`. Kane 2026-08-17:
   ringing the step header was wrong; it is the box and the CTA per box.
-- **Step 4 has two faces**, because HSL and Additions are one step whose own
+- **Step 5 has two faces** (was 4 until PAB moved in front, 2026-09-01), because HSL and Additions are one step whose own
   `Departments | HSL` tab strip decides which surface is mounted (2026-08-28). Which face
   the guide shows is driven by the
   `additionsHslTabActive` signal — the same reason the FX legs are resolved per render:

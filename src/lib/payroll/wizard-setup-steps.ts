@@ -4,11 +4,13 @@
  * Seven prerequisites must be true before a cycle can go to Payment Dispatch:
  * this week's Hubstaff CSV (step 1), the USD→PHP rate confirmed for the week
  * (step 2), orphanage hours entered or confirmed-none (step 3), KPI bonuses
- * ready (step 4, including its HSL tab), notes adjustments pulled (step 4),
- * contractor invoices reviewed (step 5), and finally the dispatch lock itself
+ * ready (step 5, including its HSL tab), notes adjustments pulled (step 5),
+ * contractor invoices reviewed (step 6), and finally the dispatch lock itself
  * (step 8). These strings are the operator's map to the rail, so they move with
- * it — twice on 2026-08-28 alone: down one when HSL and Additions merged into a
- * single step 4, then back up one for Dispatch when the PAB review landed at 6.
+ * it — twice on 2026-08-28 (HSL+Additions merged, then the PAB review landed
+ * at 6), and again 2026-09-01 when PAB moved to 4, pushing Additions to 5 and
+ * Contractors to 6. PAB has no checklist row: forgiveness is judgment, not a
+ * prerequisite.
  *
  * This module is PURE (no I/O, no server-only) so node:test can exercise every
  * status branch; the reads live in payroll-readiness.ts `buildWizardSetup`.
@@ -29,7 +31,7 @@ export type WizardSetupStepKey =
 
 export interface WizardSetupStep {
   key: WizardSetupStepKey;
-  /** Wizard step number(s) the fix lives on — "1", "2", "3", "4", "5", "8". */
+  /** Wizard step number(s) the fix lives on — "1", "2", "3", "5", "6", "8". */
   stepNo: string;
   label: string;
   /** done = green · attention = amber (actionable) · blocked = rose (CSV missing
@@ -265,13 +267,13 @@ export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
 
   // 4–5 · KPI bonuses.
   if (degraded('kpi')) {
-    steps.push({ key: 'kpi', stepNo: '4', label: 'KPI bonuses', status: 'pending', detail: "Couldn't read KPI statuses" });
+    steps.push({ key: 'kpi', stepNo: '5', label: 'KPI bonuses', status: 'pending', detail: "Couldn't read KPI statuses" });
   } else if (input.kpi.due === 0) {
-    steps.push({ key: 'kpi', stepNo: '4', label: 'KPI bonuses', status: 'pending', detail: 'No departments due this week' });
+    steps.push({ key: 'kpi', stepNo: '5', label: 'KPI bonuses', status: 'pending', detail: 'No departments due this week' });
   } else if (input.kpi.submitted >= input.kpi.due) {
     steps.push({
       key: 'kpi',
-      stepNo: '4',
+      stepNo: '5',
       label: 'KPI bonuses',
       status: 'done',
       detail: `${input.kpi.due}/${input.kpi.due} departments ready`,
@@ -281,7 +283,7 @@ export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
     const extra = input.kpi.pendingDepts.length > 3 ? ` +${input.kpi.pendingDepts.length - 3} more` : '';
     steps.push({
       key: 'kpi',
-      stepNo: '4',
+      stepNo: '5',
       label: 'KPI bonuses',
       status: 'attention',
       detail: `${input.kpi.submitted}/${input.kpi.due} ready${listed ? ` · ${listed}${extra}` : ''}`,
@@ -290,13 +292,13 @@ export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
 
   // 5 · Notes adjustments.
   if (degraded('notes')) {
-    steps.push({ key: 'notes', stepNo: '4', label: 'Notes adjustments', status: 'pending', detail: "Couldn't read the notes board" });
+    steps.push({ key: 'notes', stepNo: '5', label: 'Notes adjustments', status: 'pending', detail: "Couldn't read the notes board" });
   } else if (input.notes.total === 0) {
-    steps.push({ key: 'notes', stepNo: '4', label: 'Notes adjustments', status: 'done', detail: 'None this week' });
+    steps.push({ key: 'notes', stepNo: '5', label: 'Notes adjustments', status: 'done', detail: 'None this week' });
   } else if (input.notes.applied >= input.notes.total) {
     steps.push({
       key: 'notes',
-      stepNo: '4',
+      stepNo: '5',
       label: 'Notes adjustments',
       status: 'done',
       detail: `${input.notes.total} applied in the wizard`,
@@ -304,7 +306,7 @@ export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
   } else {
     steps.push({
       key: 'notes',
-      stepNo: '4',
+      stepNo: '5',
       label: 'Notes adjustments',
       status: 'attention',
       detail: `${input.notes.total - input.notes.applied} of ${input.notes.total} not yet in wizard`,
@@ -313,13 +315,13 @@ export function deriveWizardSetupSteps(input: WizardSetupInput): WizardSetup {
 
   // 6 · Contractor invoices.
   if (degraded('contractors')) {
-    steps.push({ key: 'contractors', stepNo: '5', label: 'Contractor invoices', status: 'pending', detail: "Couldn't read invoices" });
+    steps.push({ key: 'contractors', stepNo: '6', label: 'Contractor invoices', status: 'pending', detail: "Couldn't read invoices" });
   } else if (input.contractorsPending === 0) {
-    steps.push({ key: 'contractors', stepNo: '5', label: 'Contractor invoices', status: 'done', detail: 'None pending' });
+    steps.push({ key: 'contractors', stepNo: '6', label: 'Contractor invoices', status: 'done', detail: 'None pending' });
   } else {
     steps.push({
       key: 'contractors',
-      stepNo: '5',
+      stepNo: '6',
       label: 'Contractor invoices',
       status: 'attention',
       detail: `${input.contractorsPending} awaiting approval`,

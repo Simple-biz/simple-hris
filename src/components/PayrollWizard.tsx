@@ -1916,20 +1916,20 @@ const steps = [
   },
   { id: 2, label: 'Initial Calculation', icon: DollarSign, description: 'Hubstaff hours × employee_hourly_rates → Initial Pay' },
   { id: 3, label: 'Orphanage', icon: Heart, description: 'Approved orphanage visits and the hours/wages they cover' },
+  // PAB review — moved BEFORE Additions 2026-09-01 (Kane; it landed at 6 on
+  // 2026-08-28), so attendance is forgiven or ignored before the bonuses that
+  // depend on the verdict are reviewed. Rendered on the rail ONLY during the
+  // PAB payout week (the file week that contains the period end) — the id
+  // stays so the rail stays contiguous 1–9. Renumbering is forced, not
+  // cosmetic: the progress bar is `currentStep / steps.length` and completion
+  // is `currentStep >= steps.length`, so a gap in the ids would read past
+  // 100% and mark Reports complete at Dispatch.
+  { id: 4, label: 'PAB', icon: CalendarCheck, description: 'Payout week — last call: forgive or ignore who missed Perfect Attendance' },
   // HSL and Additions merged into this one step 2026-08-28 (Kane). HSL keeps its own
   // workspace as the rail's HSL **tab** — its rows never join the shared department
-  // table. Renumbering the rest is forced, not cosmetic: the progress bar is
-  // `currentStep / steps.length` and completion is `currentStep >= steps.length`, so a
-  // gap in the ids would read past 100% and mark Reports complete at Dispatch.
-  { id: 4, label: 'Additions', icon: Calculator, description: 'Bonuses and adjustments — every department plus the HSL tab' },
-  { id: 5, label: 'Contractors', icon: HardHat, description: 'Pending contractor invoices — review and approve before dispatch' },
-  // PAB review inserted 2026-08-28 (Kane). It sits AFTER Contractors and BEFORE
-  // Validation on purpose: forgiving a month changes what Validation is checking,
-  // so reviewing attendance after the numbers are final but before they are
-  // judged is the only position where the decision still costs nothing.
-  // Rendered on the rail ONLY during the PAB payout week (the file week that
-  // contains the period end) — the id stays so the rail stays contiguous 1–9.
-  { id: 6, label: 'PAB', icon: CalendarCheck, description: 'Payout week — last call: forgive or ignore who missed Perfect Attendance' },
+  // table.
+  { id: 5, label: 'Additions', icon: Calculator, description: 'Bonuses and adjustments — every department plus the HSL tab' },
+  { id: 6, label: 'Contractors', icon: HardHat, description: 'Pending contractor invoices — review and approve before dispatch' },
   { id: 7, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
   { id: 8, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
   { id: 9, label: 'Reports', icon: BarChart3, description: 'Dispatch summary — salaries, budget requests, and gift payments' },
@@ -2371,7 +2371,7 @@ export default function PayrollWizard({
   // the drift class the catalog exists to prevent — so it must be VISIBLE.
   const [payStructuresError, setPayStructuresError] = useState<string | null>(null);
 
-  // ── HSL step: per-dept KPI bonus data loaded on demand (step 4) ─────────────
+  // ── HSL step: per-dept KPI bonus data loaded on demand (step 5) ─────────────
   const [hslStepPeriods, setHslStepPeriods] = useState<{
     department: string;
     period_start: string;
@@ -2390,7 +2390,7 @@ export default function PayrollWizard({
   // the HSL tab's per-department rail (mirrors the Additions tab's dept grouping).
   const [hslDeptByEmail, setHslDeptByEmail] = useState<Record<string, string>>({});
 
-  // ── Step 5: Contractor invoices ──────────────────────────────────────────────
+  // ── Step 6: Contractor invoices ──────────────────────────────────────────────
   // The /api/contractor/invoices endpoint returns the full invoice row (line
   // items, addresses, logo, notes), so we hold the complete SavedInvoice shape
   // here — that lets the Preview Emails → Contractors tab render the exact same
@@ -2463,11 +2463,11 @@ export default function PayrollWizard({
   const [qcModalEmail, setQcModalEmail] = useState<string | null>(null);
   const [hrModalEmail, setHrModalEmail] = useState<string | null>(null);
   const [pabCalendarModalEmail, setPabCalendarModalEmail] = useState<string | null>(null);
-  /** Email mid-forgive on step 6, so only that row's button spins. */
+  /** Email mid-forgive on step 4 (PAB), so only that row's button spins. */
   const [pabForgivingEmail, setPabForgivingEmail] = useState<string | null>(null);
-  /** Email mid-ignore (month exclusion write) on step 6 — same one-row-spins rule. */
+  /** Email mid-ignore (month exclusion write) on step 4 — same one-row-spins rule. */
   const [pabIgnoringEmail, setPabIgnoringEmail] = useState<string | null>(null);
-  /** Step 6's inner tab: the exceptions list, or the receipts ("Done") list. */
+  /** Step 4's inner tab: the exceptions list, or the receipts ("Done") list. */
   const [pabStepSection, setPabStepSection] = useState<'review' | 'done'>('review');
   /** The Forgive/Ignore confirmation dialog's target; null = closed. Replaced
    *  `window.confirm` (Kane 2026-09-01) — the write handlers no longer prompt. */
@@ -2675,7 +2675,7 @@ export default function PayrollWizard({
   // Hubstaff week, pinned. Monthly-cadence HSL depts (Collections, Healthcare TL)
   // are intentionally excluded — they remain on the manual
   // Adjustment path, exactly as before. Feeds the Additions "KPI Bonus" toggle
-  // and the step-4 review totals so what accounting sees is what dispatches.
+  // and the step-5 review totals so what accounting sees is what dispatches.
   const [hslKpiAmounts, setHslKpiAmounts] = useState<Record<string, number>>({});
   // Eligibility (who has a scored amount this week) is derived per wizard row in
   // `resolvedHslKpi` — which resolves Hubstaff email → master → work/personal email
@@ -3108,7 +3108,7 @@ export default function PayrollWizard({
   /**
    * The selected file week is the PAB PAYOUT week — the one whose dispatch
    * carries the bonus (`isFinalPabWeek` containment over the week's owning-month
-   * period end, the exact gate the money path uses). Gates whether the step-6
+   * period end, the exact gate the money path uses). Gates whether the step-4
    * PAB tab exists on the rail at all (Kane 2026-09-01): the review-and-forgive
    * pass happens on the week the money moves, e.g. the Aug 23–29 file processed
    * during Aug 30 – Sep 5 for the period that ended Aug 29.
@@ -3131,12 +3131,12 @@ export default function PayrollWizard({
     );
   }, [pabSettingsEverLoaded, calcSourceFile, pabPeriodSettings.overrides, pabPeriodSettings.validManualRange]);
 
-  // The operator can be standing on step 6 when the tab ceases to exist under
-  // them (week switched to a non-payout week, or a period override moved the
-  // window). Snap back to Contractors rather than stranding them on a hidden
+  // The operator can be standing on step 4 (PAB) when the tab ceases to exist
+  // under them (week switched to a non-payout week, or a period override moved
+  // the window). Snap back to Orphanage rather than stranding them on a hidden
   // step — ids stay 1–9, only reachability changes.
   useEffect(() => {
-    if (currentStep === 6 && pabSettingsEverLoaded && !pabPayoutWeekActive) setCurrentStep(5);
+    if (currentStep === 4 && pabSettingsEverLoaded && !pabPayoutWeekActive) setCurrentStep(3);
   }, [currentStep, pabSettingsEverLoaded, pabPayoutWeekActive]);
 
   /**
@@ -4520,7 +4520,7 @@ export default function PayrollWizard({
     }
   }, [calcSourceFile, loadCalcSourceFileData]);
 
-  // PAB eligibility (Additions / Step 4) merges **every** archived Hubstaff upload so the
+  // PAB eligibility (PAB step 4 / Additions 5) merges **every** archived Hubstaff upload so the
   // full PAB month has data, not just the latest weekly CSV. Matches the Employee Dashboard.
   useEffect(() => {
     if (sourceFilesLoading) return;
@@ -4972,7 +4972,7 @@ export default function PayrollWizard({
     };
   }, [effectiveMonth.year, effectiveMonth.month, effectiveMonthRange.start, effectiveMonthRange.end]);
 
-  /** `YYYY-MM` of the step's evaluated PAB month — the key every step-6 write
+  /** `YYYY-MM` of the step's evaluated PAB month — the key every step-4 write
    *  and broadcast is addressed to. '' while no month resolves. */
   const pabMonthKey = pabMonthRange
     ? `${pabMonthRange.year}-${String(pabMonthRange.month + 1).padStart(2, '0')}`
@@ -4992,7 +4992,7 @@ export default function PayrollWizard({
 
   // Real-time: when a manager marks a dept ready/unready, update accounting's view live.
   useEffect(() => {
-    if (currentStep !== 4) return;
+    if (currentStep !== 5) return;
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
     const channel = supabase
@@ -5006,11 +5006,11 @@ export default function PayrollWizard({
 
   // ── HSL (the Additions step's HSL section): load all dept KPI bonus entries on step entry.
   // Gated on the STEP, deliberately not on `activeAdditionsSection === 'hsl'`. The step's
-  // load line goes green when the step's data lands, and `isStepDataLoading(4)` counts
+  // load line goes green when the step's data lands, and `isStepDataLoading(5)` counts
   // this fetch — gating it on the section would let the line claim HSL figures were
   // judgeable while nothing had ever been fetched for them.
   useEffect(() => {
-    if (currentStep !== 4) return;
+    if (currentStep !== 5) return;
     let cancelled = false;
     setHslStepLoading(true);
     setHslStepError(null);
@@ -5119,9 +5119,9 @@ export default function PayrollWizard({
     // included, stayed on the previously-viewed week until the step was re-entered.
   }, [currentStep, hslRefreshKey, hubstaffWeekStart]);
 
-  // Fetch all contractor invoices when on step 5 (Contractors)
+  // Fetch all contractor invoices when on step 6 (Contractors)
   useEffect(() => {
-    if (currentStep !== 5) return;
+    if (currentStep !== 6) return;
     let cancelled = false;
     setContractorInvoicesLoading(true);
     fetch('/api/contractor/invoices', { cache: 'no-store' })
@@ -5182,29 +5182,29 @@ export default function PayrollWizard({
         // Orphanage pay is priced from the same hours and rates.
         case 3:
           return loadingUploadList || loadingWeekHours || loadingRates;
-        // Bonuses and adjustments for BOTH of this step's sections — Departments and
-        // HSL — so it waits on both halves of the old 4+5 pair: the all-weeks PAB merge
-        // AND the HSL KPI amounts / HSL bonus entries. Green here claims that both
-        // sections' figures can be judged, so leaving either out would let it lie about
-        // whichever section the operator happens to open. `hslStepLoading` is only ever
-        // true while Accounting is standing on this step (its effect is gated on
-        // currentStep — NOT on the active section, so opening the step loads HSL whether
-        // or not its tab is selected), which is also the only time its absence would
-        // be misleading.
+        // PAB review (4 since the 2026-09-01 move before Additions). Its list is
+        // derived from the all-weeks PAB merge, so it waits on exactly that plus
+        // the hours underneath it. Green here claims the ineligible list is
+        // complete — and an incomplete one is worse than no list, because a name
+        // that has not loaded looks like a name that passed.
         case 4:
-          return loadingUploadList || loadingWeekHours || loadingRates || loadingPabMerge
-            || loadingHslKpi || (currentStep === 4 && hslStepLoading);
-        // Contractor invoices are independent of hours, but the period they're
-        // scoped to comes from the active week. Same step-scoped caveat as 4.
-        case 5:
-          return loadingUploadList || (currentStep === 5 && contractorInvoicesLoading);
-        // PAB review. Its list is derived from the all-weeks PAB merge, so it
-        // waits on exactly that plus the hours underneath it. Green here claims
-        // the ineligible list is complete — and an incomplete one is worse than
-        // no list, because a name that has not loaded looks like a name that
-        // passed.
-        case 6:
           return loadingUploadList || loadingWeekHours || loadingPabMerge;
+        // Additions (5). Bonuses and adjustments for BOTH of this step's sections
+        // — Departments and HSL — so it waits on both halves of the old 4+5 pair:
+        // the all-weeks PAB merge AND the HSL KPI amounts / HSL bonus entries.
+        // Green here claims that both sections' figures can be judged, so leaving
+        // either out would let it lie about whichever section the operator happens
+        // to open. `hslStepLoading` is only ever true while Accounting is standing
+        // on this step (its effect is gated on currentStep — NOT on the active
+        // section, so opening the step loads HSL whether or not its tab is
+        // selected), which is also the only time its absence would be misleading.
+        case 5:
+          return loadingUploadList || loadingWeekHours || loadingRates || loadingPabMerge
+            || loadingHslKpi || (currentStep === 5 && hslStepLoading);
+        // Contractor invoices are independent of hours, but the period they're
+        // scoped to comes from the active week. Same step-scoped caveat as 5.
+        case 6:
+          return loadingUploadList || (currentStep === 6 && contractorInvoicesLoading);
         // Validation and Dispatch read the finished numbers, so they wait on
         // everything and are the last two to go green. That is the point: these
         // are the steps where a premature reading actually costs money.
@@ -5494,7 +5494,7 @@ export default function PayrollWizard({
     refreshApprovedAdjustmentOverrides();
   }, [refreshApprovedAdjustmentOverrides]);
 
-  // Time-adjustment requests for the Additions review panel (step 5). Fetched
+  // Time-adjustment requests for the Additions review panel (step 5, since PAB moved in front). Fetched
   // across all periods here, then filtered at render time to the pay week the
   // wizard is currently processing (see `weekScopedAdjustmentRows`) so only the
   // requests that concern this run are shown. Accounting can only ACT on
@@ -5513,7 +5513,7 @@ export default function PayrollWizard({
   }, []);
 
   useEffect(() => {
-    if (currentStep !== 4) return;
+    if (currentStep !== 5) return;
     fetchTimeAdjustmentReview();
   }, [currentStep, fetchTimeAdjustmentReview]);
 
@@ -5738,7 +5738,7 @@ export default function PayrollWizard({
   );
 
   useEffect(() => {
-    if (currentStep !== 4 || !pabMonthRange) return;
+    if (currentStep !== 5 || !pabMonthRange) return;
     const s = pabMonthRange.start;
     const e = pabMonthRange.end;
     const from = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
@@ -7567,7 +7567,7 @@ export default function PayrollWizard({
   }, [calcResults]);
 
   /**
-   * Step 6's list: everyone the wizard has already judged INELIGIBLE for this PAB
+   * Step 4's list: everyone the wizard has already judged INELIGIBLE for this PAB
    * period, with the days that cost them the bonus.
    *
    * Membership comes from `effectivePabStatus` — the same verdict the Additions
@@ -7584,7 +7584,7 @@ export default function PayrollWizard({
   /**
    * email → the name Hubstaff itself carries on the row (`Member`).
    *
-   * The last-resort display name for step 6. Measured 2026-08-28: the master
+   * The last-resort display name for the PAB step. Measured 2026-08-28: the master
    * roster (`active_employees`, what `/api/employees` serves) resolves only
    * 1,200 of the 2,086 emails with hours in the PAB month, because the month
    * spans people who have since left the active roster — but EVERY Hubstaff row
@@ -7604,7 +7604,7 @@ export default function PayrollWizard({
     return map;
   }, [hubstaffRowsForPab]);
 
-  /** Payment Catalog display names, so step 6 never shows a raw `lead_gen` slug.
+  /** Payment Catalog display names, so the PAB step never shows a raw `lead_gen` slug.
    *  Built from the in-app registry; anything not registered falls back to the
    *  built-in DEPARTMENTS list, then to a humanized slug (catalogDeptNameFrom). */
   const catalogDeptNames = useMemo(
@@ -7615,7 +7615,7 @@ export default function PayrollWizard({
   /**
    * Emails with ANY tracked time on a scoring day of this PAB period.
    *
-   * Shared by the step-6 list and its KPI strip so the two can never describe
+   * Shared by the PAB step's list and its KPI strip so the two can never describe
    * different populations. Zero tracked time means the person was never scored —
    * not that they missed every day — and a leaver whose last worked week is months
    * behind the period would otherwise rank as the worst attendance in the company
@@ -7635,7 +7635,7 @@ export default function PayrollWizard({
   }, [employeeWeekdayHours, employeeAllDaysHours]);
 
   /**
-   * Step 6's KPI strip — every figure scoped to people who resolve to a MASTER-LIST
+   * The PAB step's KPI strip — every figure scoped to people who resolve to a MASTER-LIST
    * row, because that is the only population these numbers can honestly describe.
    * The PAB month spans every Hubstaff email across every uploaded week (~2,000),
    * and roughly 42% of those have no roster row: leavers still inside the month,
@@ -7822,7 +7822,7 @@ export default function PayrollWizard({
   const pabIneligibleRows = pabIneligible.rows;
 
   /**
-   * Step 6's "Done" tab — the receipts. Everyone acted on this PAB period,
+   * The PAB step's "Done" tab — the receipts. Everyone acted on this PAB period,
    * folded from the TWO existing stores (no new one): approved forgiven days
    * (`approvedDisputeDates`, already period-fetched, patched live by both
    * forgive paths and the realtime channel) and the month's exclusions
@@ -7924,7 +7924,7 @@ export default function PayrollWizard({
   useEffect(() => {
     if (isReplay || !calcSourceFile || !hasCalcRows) return;
     if (dispatchValuesLock.loading || dispatchValuesLock.state.locked) return;
-    if (currentStep === 4 || currentStep === 7 || currentStep === 8) {
+    if (currentStep === 5 || currentStep === 7 || currentStep === 8) {
       void pullNotesAdjustments();
     }
   }, [currentStep, isReplay, calcSourceFile, hasCalcRows, pullNotesAdjustments, dispatchValuesLock.loading, dispatchValuesLock.state.locked]);
@@ -8283,7 +8283,7 @@ export default function PayrollWizard({
   // NOTE: the HSL KPI bonus is auto-applied UNCONDITIONALLY in `bonusTotals` (a
   // dedicated hogan_smith_law pass), not via the toggle — so there is no
   // auto-toggle effect here. This keeps the dispatched paystub equal to the
-  // step-4 review by construction and avoids a toggle that can't be reliably
+  // step-5 review by construction and avoids a toggle that can't be reliably
   // turned off. Exceptions go through the Adjustment column.
 
   /**
@@ -8761,7 +8761,7 @@ export default function PayrollWizard({
 
     // HSL weekly KPI bonus — auto-applied for every hogan_smith_law employee with
     // a scored amount for the processed week. Added UNCONDITIONALLY (no toggle) so
-    // the dispatched paystub always equals the step-4 review Total Pay. This runs
+    // the dispatched paystub always equals the step-5 review Total Pay. This runs
     // regardless of the resolvedManagerBonus short-circuit above, so a dual-dept
     // person still gets their HSL KPI. For a one-off exception use the Adjustment
     // column; do NOT also key HSL KPI amounts into Adjustment by hand (double-pay).
@@ -9374,7 +9374,7 @@ export default function PayrollWizard({
       isTechBonusWeek: techBonusWeekInfo.isTechBonusWeek,
       hslPabColumnShown: isDeptEligible(sysBonusCfg.pab, 'hogan_smith_law'),
       hslTechColumnShown: isDeptEligible(sysBonusCfg.tech, 'hogan_smith_law'),
-      // Which of step 4's two surfaces is mounted — the guide may only ring anchors
+      // Which of step 5's two surfaces is mounted — the guide may only ring anchors
       // that exist, and the HSL table and the shared department table never coexist.
       additionsHslTabActive: activeAdditionsSection === 'hsl',
       systemBonusModalOpen: pabSettingsOpen,
@@ -10488,15 +10488,15 @@ export default function PayrollWizard({
 
   // Ids stay contiguous 1–9 (the progress bar is currentStep / steps.length and
   // the real gates are asserted by number — see payroll-wizard-pab-step.md's
-  // renumbering section). Outside the PAB payout week step 6's tab is not
+  // renumbering section). Outside the PAB payout week step 4's tab is not
   // rendered, so navigation steps OVER it rather than renumbering anything.
   const nextStep = () => {
-    const next = currentStep + 1 === 6 && !pabPayoutWeekActive ? 7 : currentStep + 1;
+    const next = currentStep + 1 === 4 && !pabPayoutWeekActive ? 5 : currentStep + 1;
     if (next <= steps.length) setCurrentStep(next);
   };
 
   const prevStep = () => {
-    const prev = currentStep - 1 === 6 && !pabPayoutWeekActive ? 5 : currentStep - 1;
+    const prev = currentStep - 1 === 4 && !pabPayoutWeekActive ? 3 : currentStep - 1;
     if (prev >= 1) setCurrentStep(prev);
   };
 
@@ -11261,7 +11261,7 @@ export default function PayrollWizard({
                         No employees match &ldquo;{hslSearch}&rdquo;.
                       </p>
                     ) : (
-                      <table data-tutorial-target="step4-hsl-table" className="w-full min-w-[1180px] text-xs">
+                      <table data-tutorial-target="step5-hsl-table" className="w-full min-w-[1180px] text-xs">
                         <thead className="sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 shadow-[0_1px_0_0_rgb(228_228_231)] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:shadow-[0_1px_0_0_rgb(39_39_42)]">
                           <tr>
                             <th className="px-4 py-2.5 text-left">Employee</th>
@@ -11269,11 +11269,11 @@ export default function PayrollWizard({
                             <th className="px-3 py-2.5 text-right" title="+15 PHP/h for Saturday and Sunday hours (included in Initial Pay)">Wknd +</th>
                             <th className="px-3 py-2.5 text-right">Initial Pay</th>
                             {hslKpiColShown && <th className="px-3 py-2.5 text-right">KPI Bonus</th>}
-                            {pabColShownHsl && <th data-tutorial-target="step4-col-pab" className="px-3 py-2.5 text-center">PAB</th>}
-                            {techColShownHsl && <th data-tutorial-target="step4-col-tech" className="px-3 py-2.5 text-center">Tech Bonus</th>}
-                            <th data-tutorial-target="step4-col-mesa" className="px-3 py-2.5 text-right" title="MESA — ₱100/paycheck deduction for enrolled members, plus any accounting-approved disbursement (paid out this run). Both fold into Total Pay.">MESA</th>
-                            <th data-tutorial-target="step4-col-adjustment" className="px-3 py-2.5 text-right">Adjustment</th>
-                            <th data-tutorial-target="step4-col-orphanage" className="px-3 py-2.5 text-right" title="Orphanage pay — a manual amount added on top of total pay; appears as its own paystub line.">Orphanage</th>
+                            {pabColShownHsl && <th data-tutorial-target="step5-col-pab" className="px-3 py-2.5 text-center">PAB</th>}
+                            {techColShownHsl && <th data-tutorial-target="step5-col-tech" className="px-3 py-2.5 text-center">Tech Bonus</th>}
+                            <th data-tutorial-target="step5-col-mesa" className="px-3 py-2.5 text-right" title="MESA — ₱100/paycheck deduction for enrolled members, plus any accounting-approved disbursement (paid out this run). Both fold into Total Pay.">MESA</th>
+                            <th data-tutorial-target="step5-col-adjustment" className="px-3 py-2.5 text-right">Adjustment</th>
+                            <th data-tutorial-target="step5-col-orphanage" className="px-3 py-2.5 text-right" title="Orphanage pay — a manual amount added on top of total pay; appears as its own paystub line.">Orphanage</th>
                             <th className="px-3 py-2.5 text-right">Total Pay</th>
                           </tr>
                         </thead>
@@ -12996,7 +12996,7 @@ export default function PayrollWizard({
                         <dd className="mt-0.5">
                           Every department paying this week, Hogan Smith Law included. HSL KPI
                           bonuses are still added on the <span className="font-medium">HSL</span> tab
-                          (step 4). Use the department filter to narrow the table.
+                          (step 5). Use the department filter to narrow the table.
                         </dd>
                       </div>
                     </dl>
@@ -13911,9 +13911,10 @@ export default function PayrollWizard({
           </div>
         );
       }
-      case 4: {
+      case 5: {
         // ──────────── Additions step (HSL + every other department) ────────────
-        // (Defined here after the Orphanage block; Orphanage = step 3, Additions = step 4.)
+        // (Defined here after the Orphanage block; Additions = step 5 since PAB
+        // moved in front of it on 2026-09-01.)
         // HSL is the rail's own tab and renders `renderHslWorkspace()` instead of the
         // shared department table — see the branch inside the content column below.
         // Last resort covers "every department excluded in Configuration" —
@@ -14132,7 +14133,7 @@ export default function PayrollWizard({
                 const activeHasOverride = pabPeriodSettings.overrides.has(effectiveMonthKey);
                 return (
                   <div
-                    data-tutorial-target="step4-system-bonus"
+                    data-tutorial-target="step5-system-bonus"
                     className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-white/60 px-3 py-2 dark:border-indigo-900/50 dark:bg-zinc-900/40"
                   >
                     <button
@@ -14387,7 +14388,7 @@ export default function PayrollWizard({
                             /* [WIZARD-TUTORIAL] Only the month being edited carries
                                the anchor, so the guide rings one pill (and only
                                while that month's PAB period is still unset). */
-                            data-tutorial-target={isActive ? 'step4-pab-month' : undefined}
+                            data-tutorial-target={isActive ? 'step5-pab-month' : undefined}
                             disabled={!selectable || pabSaveState === 'saving'}
                             onClick={() => { if (selectable) void selectPabMonth(pabPickerYear, m); }}
                             title={
@@ -14531,7 +14532,7 @@ export default function PayrollWizard({
                         engine through resolveIsTechBonusWeek — no more guessing the
                         "3rd week". No pick = the automatic 3rd-week rule. */}
                     <div
-                      data-tutorial-target="step4-tech-week"
+                      data-tutorial-target="step5-tech-week"
                       className="mt-3 border-t border-sky-200/60 pt-3 dark:border-sky-900/40"
                     >
                       {(() => {
@@ -15134,7 +15135,7 @@ export default function PayrollWizard({
             </div>
 
             {/* ── Section tabs: Departments | HSL ─────────────────────────────────
-                Step 4 holds two workspaces, not one workspace with an extra department.
+                Step 5 holds two workspaces, not one workspace with an extra department.
                 Departments = the shared rail + additions table; HSL = the Hogan surface
                 (its own sub-dept rail, KPI period cards, Total Pay table). The strip sits
                 ABOVE the workspace and BELOW the step header, so the step-level controls
@@ -17203,7 +17204,7 @@ export default function PayrollWizard({
           </div>
         );
       }
-      case 5: {
+      case 6: {
         // ── Contractors ────────────────────────────────────────────────────────
         const updateInvoiceStatus = async (id: string, status: 'approved' | 'rejected' | 'pending') => {
           setContractorInvoicesUpdating(id);
@@ -17241,7 +17242,7 @@ export default function PayrollWizard({
           <div className="flex min-w-0 flex-col gap-5">
             {/* Header banner */}
             <div
-              data-tutorial-target="step5-pending-invoices"
+              data-tutorial-target="step6-pending-invoices"
               className="flex flex-col gap-1 rounded-2xl border border-emerald-200/70 bg-gradient-to-br from-emerald-50 via-white to-teal-50/40 p-5 shadow-sm dark:border-emerald-900/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-emerald-950/15"
             >
               <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">
@@ -17391,8 +17392,8 @@ export default function PayrollWizard({
           </div>
         );
       }
-      case 6: {
-        // ── PAB review ─────────────────────────────────────────────────────────
+      case 4: {
+        // ── PAB review (before Additions since 2026-09-01) ─────────────────────
         const monthLabelPab = pabMonthRange
           ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
           : 'the active PAB month';
@@ -17515,8 +17516,8 @@ export default function PayrollWizard({
         return (
           <div className="flex min-w-0 flex-col gap-5">
             {/* KPI strip replaces the old prose banner (Kane 2026-08-28). It KEEPS the
-                `step6-pab-review` tutorial anchor — deleting the node would orphan
-                `guide.ts`'s target for step 6, and nothing tests that link (step 7's
+                `step4-pab-review` tutorial anchor — deleting the node would orphan
+                `guide.ts`'s target for step 4, and nothing tests that link (step 7's
                 `step7-validation-table` is already dead that way).
 
                 Every number is scoped to people resolvable to a MASTER-LIST row, which
@@ -17524,7 +17525,7 @@ export default function PayrollWizard({
                 honestly describe: the PAB month spans ~2,000 Hubstaff emails, ~42% of
                 which have no roster row. The off-roster remainder is disclosed under the
                 strip rather than silently dropped (the `mesa.md` idiom). */}
-            <div data-tutorial-target="step6-pab-review" className="flex flex-col gap-3">
+            <div data-tutorial-target="step4-pab-review" className="flex flex-col gap-3">
               <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-700 dark:text-indigo-300">
                 <CalendarCheck className="h-3.5 w-3.5" /> PAB · {monthLabelPab}
               </div>
@@ -17789,7 +17790,7 @@ export default function PayrollWizard({
           <div className="flex min-w-0 flex-col gap-5">
             {/* Header */}
             <div
-              data-tutorial-target="step6-validation-table"
+              data-tutorial-target="step7-validation-table"
               className="rounded-xl border border-zinc-200/90 bg-gradient-to-br from-white via-zinc-50/80 to-emerald-50/25 p-4 shadow-sm sm:p-5 dark:border-zinc-800 dark:from-zinc-950/50 dark:via-zinc-900/40 dark:to-emerald-950/15"
             >
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -19004,7 +19005,11 @@ export default function PayrollWizard({
                 around them, running until the next week begins even when
                 processing is off. Render-only over audit_log; the cycle
                 close-out stays the only per-cycle record. */}
-            <div data-tutorial-target="step8-audit-trail">
+            {/* Was step8-audit-trail — dead since the 2026-08-28 renumbering
+                moved Reports to 9 (guide.ts asks for step9-audit-trail).
+                Revived during the 2026-09-01 PAB move, same as
+                step7-validation-table. */}
+            <div data-tutorial-target="step9-audit-trail">
               <ProcessingNarrative />
             </div>
 
@@ -19978,14 +19983,14 @@ export default function PayrollWizard({
         <div
           className="flex shrink-0 gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:w-64 md:flex-col md:gap-4 md:overflow-y-auto md:overflow-x-visible md:pr-2 md:pb-0"
         >
-          {/* Step 6 (PAB) exists on the rail ONLY during the payout week — the
-              file week whose dispatch carries the bonus. Ids stay contiguous
-              1–9; the tab is simply not rendered and nextStep/prevStep step
-              over it. It mount-animates every page load so the payout week is
-              visibly announced (Kane 2026-09-01). */}
-          {steps.filter((step) => step.id !== 6 || pabPayoutWeekActive).map((step) => {
+          {/* Step 4 (PAB, before Additions since 2026-09-01) exists on the rail
+              ONLY during the payout week — the file week whose dispatch carries
+              the bonus. Ids stay contiguous 1–9; the tab is simply not rendered
+              and nextStep/prevStep step over it. It mount-animates every page
+              load so the payout week is visibly announced (Kane 2026-09-01). */}
+          {steps.filter((step) => step.id !== 4 || pabPayoutWeekActive).map((step) => {
           const stepLoading = isStepDataLoading(step.id);
-          const isPabPayoutTab = step.id === 6;
+          const isPabPayoutTab = step.id === 4;
           return (
           /* StepDataProgress is a sibling of the button, not a child — see its own doc. */
           <motion.div
@@ -21532,7 +21537,7 @@ export default function PayrollWizard({
               });
               const createData = await createRes.json();
               if (!createRes.ok || !createData.id) throw new Error(createData.error ?? 'Failed to create issue');
-              // A flat 7h SET, matching the step-6 "Forgive month" batch so the two
+              // A flat 7h SET, matching the PAB step's "Forgive month" batch so the two
               // forgive paths write indistinguishable rows.
               //
               // Server-side this is identical to the old `null` / 5h pair —

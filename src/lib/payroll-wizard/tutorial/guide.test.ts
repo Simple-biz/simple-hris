@@ -43,7 +43,8 @@ const BASE: TutorialSignals = {
 };
 
 test('guide covers wizard steps 1–9 exactly once, in shipped order', () => {
-  // Nine since the PAB review landed after Contractors (2026-08-28). The ids must
+  // Nine since the PAB review landed (2026-08-28; moved before Additions
+  // 2026-09-01: PAB 4 · Additions 5 · Contractors 6). The ids must
   // stay contiguous — the wizard's progress bar divides by steps.length, so a gap
   // reads past 100% and marks Reports complete while standing on Dispatch.
   assert.deepEqual(
@@ -136,78 +137,78 @@ test('step 3: pasted rows mark done without requiring a visit', () => {
 
 const HSL_TAB: TutorialSignals = { ...BASE, additionsHslTabActive: true };
 
-test("step 4's HSL tab rings the HSL table and takes turns across its money columns", () => {
-  const order = [0, 1, 2, 3, 4].map((tick) => resolveStepTargets(4, HSL_TAB, tick));
+test("step 5's HSL tab rings the HSL table and takes turns across its money columns", () => {
+  const order = [0, 1, 2, 3, 4].map((tick) => resolveStepTargets(5, HSL_TAB, tick));
   // The table stays ringed the whole time; the second target rotates.
-  assert.ok(order.every((t) => t[0] === 'step4-hsl-table'));
+  assert.ok(order.every((t) => t[0] === 'step5-hsl-table'));
   assert.deepEqual(
     order.map((t) => t[1]),
     [
-      'step4-col-pab',
-      'step4-col-tech',
-      'step4-col-mesa',
-      'step4-col-adjustment',
-      'step4-col-orphanage',
+      'step5-col-pab',
+      'step5-col-tech',
+      'step5-col-mesa',
+      'step5-col-adjustment',
+      'step5-col-orphanage',
     ],
   );
   // And it wraps rather than running off the end.
-  assert.deepEqual(resolveStepTargets(4, HSL_TAB, 5)[1], 'step4-col-pab');
+  assert.deepEqual(resolveStepTargets(5, HSL_TAB, 5)[1], 'step5-col-pab');
   assert.deepEqual(activeHslColumnLabel(HSL_TAB, 1), 'Tech Bonus');
 });
 
-test('step 4 rotation skips columns the cycle does not render', () => {
+test('step 5 rotation skips columns the cycle does not render', () => {
   const noBonusCols = { ...HSL_TAB, hslPabColumnShown: false, hslTechColumnShown: false };
-  const seen = [0, 1, 2].map((t) => resolveStepTargets(4, noBonusCols, t)[1]);
-  assert.deepEqual(seen, ['step4-col-mesa', 'step4-col-adjustment', 'step4-col-orphanage']);
+  const seen = [0, 1, 2].map((t) => resolveStepTargets(5, noBonusCols, t)[1]);
+  assert.deepEqual(seen, ['step5-col-mesa', 'step5-col-adjustment', 'step5-col-orphanage']);
   assert.equal(activeHslColumnLabel(noBonusCols, 0), 'MESA');
 });
 
-test('step 6 flags an ineligible cohort but never gates', () => {
+test('step 4 (PAB) flags an ineligible cohort but never gates', () => {
   // Advisory by contract: the worst this may do is turn a badge amber.
-  assert.equal(deriveStepStatus(6, BASE).status, 'pending');
-  const some = deriveStepStatus(6, { ...BASE, pabIneligibleCount: 4, pabReviewCount: 2 });
+  assert.equal(deriveStepStatus(4, BASE).status, 'pending');
+  const some = deriveStepStatus(4, { ...BASE, pabIneligibleCount: 4, pabReviewCount: 2 });
   assert.equal(some.status, 'attention');
   assert.match(some.note ?? '', /4 person\(s\) ineligible/);
   assert.match(some.note ?? '', /2 missed only 1–2 days/);
   // Visited with nobody ineligible reads done, not attention.
-  assert.equal(deriveStepStatus(6, { ...BASE, visitedSteps: [6] }).status, 'done');
+  assert.equal(deriveStepStatus(4, { ...BASE, visitedSteps: [4] }).status, 'done');
 });
 
-test('step 4 follows the operator into the System Bonus modal', () => {
+test('step 5 follows the operator into the System Bonus modal', () => {
   // Closed → ring the trigger.
-  assert.deepEqual(resolveStepTargets(4, BASE), ['step4-system-bonus']);
+  assert.deepEqual(resolveStepTargets(5, BASE), ['step5-system-bonus']);
   // Open, month unset → ring the month pill AND the tech-week picker.
-  assert.deepEqual(resolveStepTargets(4, { ...BASE, systemBonusModalOpen: true }), [
-    'step4-pab-month',
-    'step4-tech-week',
+  assert.deepEqual(resolveStepTargets(5, { ...BASE, systemBonusModalOpen: true }), [
+    'step5-pab-month',
+    'step5-tech-week',
   ]);
 });
 
-test('step 4 leaves an already-set PAB month alone', () => {
+test('step 5 leaves an already-set PAB month alone', () => {
   const s = { ...BASE, systemBonusModalOpen: true, pabSetForActiveMonth: true };
   // "if PAB is set already for that period this shouldnt bother at all" — the
   // month pill loses its ring entirely; only the tech week keeps one.
-  assert.deepEqual(resolveStepTargets(4, s), ['step4-tech-week']);
-  const st = deriveStepStatus(4, s);
+  assert.deepEqual(resolveStepTargets(5, s), ['step5-tech-week']);
+  const st = deriveStepStatus(5, s);
   assert.equal(st.status, 'done');
   assert.match(st.note ?? '', /already set/);
 
-  const unset = deriveStepStatus(4, { ...BASE, systemBonusModalOpen: true });
+  const unset = deriveStepStatus(5, { ...BASE, systemBonusModalOpen: true });
   assert.equal(unset.status, 'attention');
   assert.match(unset.note ?? '', /August 2026 has no PAB period saved/);
 });
 
-test('step 4: note always names the PAB range and tech-bonus verdict', () => {
-  const s = deriveStepStatus(4, BASE);
+test('step 5: note always names the PAB range and tech-bonus verdict', () => {
+  const s = deriveStepStatus(5, BASE);
   assert.match(s.note ?? '', /PAB range: August 2026/);
   assert.match(s.note ?? '', /Not a Technology Bonus payout week/);
-  const techWeek = deriveStepStatus(4, { ...BASE, isTechBonusWeek: true });
+  const techWeek = deriveStepStatus(5, { ...BASE, isTechBonusWeek: true });
   assert.match(techWeek.note ?? '', /IS a Technology Bonus payout week/);
 });
 
-test('step 5: pending invoices demand attention, none is done', () => {
-  assert.equal(deriveStepStatus(5, { ...BASE, pendingContractorCount: 3 }).status, 'attention');
-  assert.equal(deriveStepStatus(5, BASE).status, 'done');
+test('step 6: pending invoices demand attention, none is done', () => {
+  assert.equal(deriveStepStatus(6, { ...BASE, pendingContractorCount: 3 }).status, 'attention');
+  assert.equal(deriveStepStatus(6, BASE).status, 'done');
 });
 
 test('step 7: red flags demand attention and count appears in the note', () => {
@@ -223,13 +224,13 @@ test('step 8: never attention — advisory pending until dispatched', () => {
   assert.equal(deriveStepStatus(8, { ...BASE, dispatched: true }).status, 'done');
 });
 
-test('step 4 only rings what is mounted: HSL columns need the HSL tab', () => {
+test('step 5 only rings what is mounted: HSL columns need the HSL tab', () => {
   // The merged step's two surfaces never coexist in the DOM, so a ring resolved
   // for the wrong one would silently disappear.
-  const onHslTab = resolveStepTargets(4, { ...HSL_TAB, systemBonusModalOpen: true }, 0);
-  assert.deepEqual(onHslTab, ['step4-hsl-table', 'step4-col-pab']);
-  const onDeptTab = resolveStepTargets(4, BASE, 0);
-  assert.ok(onDeptTab.every((t) => !t.startsWith('step4-col-') && t !== 'step4-hsl-table'));
+  const onHslTab = resolveStepTargets(5, { ...HSL_TAB, systemBonusModalOpen: true }, 0);
+  assert.deepEqual(onHslTab, ['step5-hsl-table', 'step5-col-pab']);
+  const onDeptTab = resolveStepTargets(5, BASE, 0);
+  assert.ok(onDeptTab.every((t) => !t.startsWith('step5-col-') && t !== 'step5-hsl-table'));
 });
 
 test('persisted state round-trips and survives garbage', () => {

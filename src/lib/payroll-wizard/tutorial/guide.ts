@@ -25,37 +25,39 @@ export type TutorialTargetKey =
   | 'step2-fx-cop'
   | 'step2-fx-cop-cta'
   | 'step3-paste-data'
-  | 'step4-hsl-table'
-  | 'step4-col-pab'
-  | 'step4-col-tech'
-  | 'step4-col-mesa'
-  | 'step4-col-adjustment'
-  | 'step4-col-orphanage'
-  // Step 4 carries two surfaces since HSL and Additions merged (2026-08-28): the
+  // PAB review moved BEFORE Additions on 2026-09-01: PAB is 4, Additions 5,
+  // Contractors 6. The step*- prefixes track the step ids.
+  | 'step4-pab-review'
+  | 'step5-hsl-table'
+  | 'step5-col-pab'
+  | 'step5-col-tech'
+  | 'step5-col-mesa'
+  | 'step5-col-adjustment'
+  | 'step5-col-orphanage'
+  // Step 5 carries two surfaces since HSL and Additions merged (2026-08-28): the
   // `hsl-*`/`col-*` anchors live on the HSL tab, these three on the shared
   // department side. Only one set is ever mounted, and a missing anchor is
   // skipped — the guide runs head-only rather than crashing.
-  | 'step4-system-bonus'
-  | 'step4-pab-month'
-  | 'step4-tech-week'
-  | 'step5-pending-invoices'
-  | 'step6-pab-review'
+  | 'step5-system-bonus'
+  | 'step5-pab-month'
+  | 'step5-tech-week'
+  | 'step6-pending-invoices'
   | 'step7-validation-table'
   | 'step8-lock-in'
   | 'step9-audit-trail';
 
 /**
- * Step 4's spotlight takes turns across the HSL table's money columns rather
- * than ringing the whole table forever (Kane, 2026-08-17). Order is the table's
- * own left-to-right order; PAB and Tech are conditional columns, so the visible
- * set is filtered from signals before rotating.
+ * The Additions step's spotlight takes turns across the HSL table's money
+ * columns rather than ringing the whole table forever (Kane, 2026-08-17).
+ * Order is the table's own left-to-right order; PAB and Tech are conditional
+ * columns, so the visible set is filtered from signals before rotating.
  */
 export const HSL_COLUMN_ROTATION: { target: TutorialTargetKey; label: string }[] = [
-  { target: 'step4-col-pab', label: 'PAB' },
-  { target: 'step4-col-tech', label: 'Tech Bonus' },
-  { target: 'step4-col-mesa', label: 'MESA' },
-  { target: 'step4-col-adjustment', label: 'Adjustment' },
-  { target: 'step4-col-orphanage', label: 'Orphanage' },
+  { target: 'step5-col-pab', label: 'PAB' },
+  { target: 'step5-col-tech', label: 'Tech Bonus' },
+  { target: 'step5-col-mesa', label: 'MESA' },
+  { target: 'step5-col-adjustment', label: 'Adjustment' },
+  { target: 'step5-col-orphanage', label: 'Orphanage' },
 ];
 
 export type TutorialStepDef = {
@@ -94,30 +96,32 @@ export const TUTORIAL_STEPS: TutorialStepDef[] = [
     targets: ['step3-paste-data'],
   },
   {
+    // PAB review moved before Additions 2026-09-01 (payout week only — the tab
+    // is absent on other weeks, and a missing anchor is simply skipped).
+    stepId: 4,
+    title: 'PAB',
+    hint:
+      'Check who lost Perfect Attendance this period. One or two missed days is usually a shifting schedule — open the calendar and forgive, or Ignore, before the month’s bonus is written off.',
+    kind: 'review',
+    targets: ['step4-pab-review'],
+  },
+  {
     // HSL and Additions merged into this one step 2026-08-28. The hint covers both
     // halves because the rail's HSL tab is where HSL review now happens.
-    stepId: 4,
+    stepId: 5,
     title: 'Additions, HSL & System Bonus',
     hint:
       'Review bonuses and adjustments department by department, then open System Bonus settings — the guide follows you inside and rings the month that still needs a PAB period. Hogan Smith Law has its own tab on the rail: open it and the ring walks the HSL table’s money columns (PAB, Tech Bonus, MESA, Adjustment, Orphanage) in turn.',
     kind: 'review',
-    targets: ['step4-system-bonus'],
+    targets: ['step5-system-bonus'],
   },
   {
-    stepId: 5,
+    stepId: 6,
     title: 'Contractors',
     hint:
       'Review each pending contractor invoice for this period and approve or reject it before dispatch.',
     kind: 'action',
-    targets: ['step5-pending-invoices'],
-  },
-  {
-    stepId: 6,
-    title: 'PAB',
-    hint:
-      'Check who lost Perfect Attendance this period. One or two missed days is usually a shifting schedule — open the calendar before the month’s bonus is written off.',
-    kind: 'review',
-    targets: ['step6-pab-review'],
+    targets: ['step6-pending-invoices'],
   },
   {
     stepId: 7,
@@ -190,20 +194,20 @@ export type TutorialSignals = {
   hslPabColumnShown: boolean;
   hslTechColumnShown: boolean;
   /**
-   * True while step 4's department rail is on its HSL tab. Step 4 owns two
+   * True while step 5's department rail is on its HSL tab. Step 5 owns two
    * surfaces since the merge, and only the mounted one may be ringed: rotating
    * onto an HSL column while the shared department table is showing would ask
    * for an anchor that is not in the DOM, and the ring would silently vanish.
    */
   additionsHslTabActive: boolean;
-  /** System Bonus modal state — step 4 teaches inside it once it's open. */
+  /** System Bonus modal state — step 5 teaches inside it once it's open. */
   systemBonusModalOpen: boolean;
   /** True when the PAB period for the month being edited is already set. */
   pabSetForActiveMonth: boolean;
   /** The month the System Bonus modal is editing, e.g. "August 2026". */
   pabActiveMonthLabel: string | null;
   pendingContractorCount: number;
-  /** Step 6: how many people are ineligible for the active PAB period. */
+  /** Step 4 (PAB): how many people are ineligible for the active PAB period. */
   pabIneligibleCount: number;
   /** Of those, how many missed only 1–2 days — the cohort worth a look. */
   pabReviewCount: number;
@@ -246,11 +250,11 @@ function shortDate(iso: string | null, todayIso: string): string | null {
  * - Step 2 rings only the FX legs still UNSET, plus that box's CTA, so a rate
  *   already entered stops being nagged about (Kane 2026-08-17: highlight the
  *   box and the CTA per box, not the step header).
- * - Step 4 has two faces since HSL and Additions merged. On the HSL tab it rings
- *   the HSL table and takes turns across its visible money columns (`tick`
- *   advances the rotation); on any other department tab it moves inside the
- *   System Bonus modal once it's open, and goes quiet about the PAB month when
- *   that month's period is already set.
+ * - Step 5 (Additions) has two faces since HSL and Additions merged. On the HSL
+ *   tab it rings the HSL table and takes turns across its visible money columns
+ *   (`tick` advances the rotation); on any other department tab it moves inside
+ *   the System Bonus modal once it's open, and goes quiet about the PAB month
+ *   when that month's period is already set.
  *
  * Pure: `tick` is supplied by the caller so the rotation stays testable.
  */
@@ -267,25 +271,25 @@ export function resolveStepTargets(
       // Both legs set — nothing to fix, so fall back to reviewing the calc.
       return targets.length > 0 ? targets : ['step2-review'];
     }
-    case 4: {
+    case 5: {
       // HSL tab open ⇒ the HSL table is what's mounted, so ring it and walk its
       // money columns. Only the HSL anchors exist in this state.
       if (s.additionsHslTabActive) {
         const visible = HSL_COLUMN_ROTATION.filter((c) => {
-          if (c.target === 'step4-col-pab') return s.hslPabColumnShown;
-          if (c.target === 'step4-col-tech') return s.hslTechColumnShown;
+          if (c.target === 'step5-col-pab') return s.hslPabColumnShown;
+          if (c.target === 'step5-col-tech') return s.hslTechColumnShown;
           return true;
         });
-        if (visible.length === 0) return ['step4-hsl-table'];
+        if (visible.length === 0) return ['step5-hsl-table'];
         const current = visible[((tick % visible.length) + visible.length) % visible.length];
-        return ['step4-hsl-table', current.target];
+        return ['step5-hsl-table', current.target];
       }
-      if (!s.systemBonusModalOpen) return ['step4-system-bonus'];
+      if (!s.systemBonusModalOpen) return ['step5-system-bonus'];
       // Inside the modal: the month pill only earns a ring while its PAB
       // period is unset. A set period "shouldn't bother at all" (Kane).
       return s.pabSetForActiveMonth
-        ? ['step4-tech-week']
-        : ['step4-pab-month', 'step4-tech-week'];
+        ? ['step5-tech-week']
+        : ['step5-pab-month', 'step5-tech-week'];
     }
     default: {
       const def = TUTORIAL_STEPS.find((d) => d.stepId === stepId);
@@ -297,8 +301,8 @@ export function resolveStepTargets(
 /** The rotating column's human label, for the balloon's copy. */
 export function activeHslColumnLabel(s: TutorialSignals, tick = 0): string | null {
   const visible = HSL_COLUMN_ROTATION.filter((c) => {
-    if (c.target === 'step4-col-pab') return s.hslPabColumnShown;
-    if (c.target === 'step4-col-tech') return s.hslTechColumnShown;
+    if (c.target === 'step5-col-pab') return s.hslPabColumnShown;
+    if (c.target === 'step5-col-tech') return s.hslTechColumnShown;
     return true;
   });
   if (visible.length === 0) return null;
@@ -375,10 +379,25 @@ export function deriveStepStatus(
         ? { status: 'done', note: 'No orphanage rows pasted — fine if there are none this week.' }
         : { status: 'pending', note: null };
     }
+    // PAB review (4 since it moved before Additions 2026-09-01). The count is
+    // advisory like every other badge here — the guide never gates, and nobody
+    // is required to forgive anyone.
+    case 4: {
+      if (s.pabIneligibleCount > 0) {
+        const review = s.pabReviewCount > 0 ? ` ${s.pabReviewCount} missed only 1–2 days.` : '';
+        return {
+          status: 'attention',
+          note: `${s.pabIneligibleCount} person(s) ineligible for this PAB period.${review}`,
+        };
+      }
+      return visited
+        ? { status: 'done', note: 'Nobody lost Perfect Attendance this period.' }
+        : { status: 'pending', note: 'Nobody ineligible so far.' };
+    }
     // Additions + HSL + System Bonus (merged 2026-08-28). The old HSL step had no
     // note of its own — visited was the whole status — so the merged step keeps the
     // Additions side's copy, which is the half that actually has something to say.
-    case 4: {
+    case 5: {
       // Inside the modal the guide talks about what still needs setting.
       if (s.systemBonusModalOpen) {
         const month = s.pabActiveMonthLabel ?? 'this month';
@@ -405,7 +424,7 @@ export function deriveStepStatus(
         ? { status: 'done', note }
         : { status: 'pending', note };
     }
-    case 5: {
+    case 6: {
       if (s.pendingContractorCount > 0) {
         return {
           status: 'attention',
@@ -413,20 +432,6 @@ export function deriveStepStatus(
         };
       }
       return { status: 'done', note: 'No pending contractor invoices for this period.' };
-    }
-    // PAB review. The count is advisory like every other badge here — the guide
-    // never gates, and nobody is required to forgive anyone.
-    case 6: {
-      if (s.pabIneligibleCount > 0) {
-        const review = s.pabReviewCount > 0 ? ` ${s.pabReviewCount} missed only 1–2 days.` : '';
-        return {
-          status: 'attention',
-          note: `${s.pabIneligibleCount} person(s) ineligible for this PAB period.${review}`,
-        };
-      }
-      return visited
-        ? { status: 'done', note: 'Nobody lost Perfect Attendance this period.' }
-        : { status: 'pending', note: 'Nobody ineligible so far.' };
     }
     case 7: {
       if (s.validationRedFlagCount > 0) {

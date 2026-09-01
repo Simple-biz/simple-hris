@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import { catalogDeptNameFrom } from '@/lib/departments/dept-identity';
 
 /**
- * The Payroll Wizard's step-6 "Done" tab — the RECEIPTS list.
+ * The Payroll Wizard's PAB-step "Done" tab (step 4 since 2026-09-01) — the RECEIPTS list.
  *
  * Everyone the accountants have acted on this PAB period, from BOTH decision
  * paths: forgiven (approved `pab_day_disputes` days — the step's month batch,
