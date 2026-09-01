@@ -1589,3 +1589,64 @@
   src: url('/fonts/signature/caveat-latin.woff2') format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
+
+/* ────────────────────────────────────────────────────────────────────────
+   SSD Medical Records — sub-team colour tokens.
+
+   The six sub-teams ARE named after colours (BLUE … RED), so colour here is
+   data, not decoration: the same hue has to drive a tab dot, a card rail, a
+   roster chip and a payout figure, in both themes. Tailwind classes can't be
+   handed to `color-mix()` or to an inline `style`, so each team gets four
+   custom properties and every SSD surface reads them through one `--team-*`
+   alias set on the element (see SUB_TEAM_PALETTE in HslBonusCalculator.tsx).
+
+     --ssd-<t>        identity hue — dots, rails, meters, borders
+     --ssd-<t>-solid  fill that carries WHITE (light) / near-black (dark)
+                      label text at >= 4.5:1; NOT the same as the identity hue
+     --ssd-<t>-on     the label colour that pairs with -solid
+     --ssd-<t>-text   the hue as readable text on a neutral surface
+
+   Values are the app's existing Tailwind ramp (blue/emerald/yellow-amber/
+   orange/violet/red), not a second palette — the KPI calculator has to look
+   like the rest of the HRIS.
+   ──────────────────────────────────────────────────────────────────── */
+:root {
+  --ssd-blue: #3b82f6;   --ssd-blue-solid: #1d4ed8;   --ssd-blue-on: #ffffff;   --ssd-blue-text: #1d4ed8;
+  --ssd-green: #10b981;  --ssd-green-solid: #047857;  --ssd-green-on: #ffffff;  --ssd-green-text: #047857;
+  --ssd-yellow: #eab308; --ssd-yellow-solid: #b45309; --ssd-yellow-on: #ffffff; --ssd-yellow-text: #b45309;
+  --ssd-orange: #f97316; --ssd-orange-solid: #c2410c; --ssd-orange-on: #ffffff; --ssd-orange-text: #c2410c;
+  --ssd-purple: #8b5cf6; --ssd-purple-solid: #6d28d9; --ssd-purple-on: #ffffff; --ssd-purple-text: #6d28d9;
+  --ssd-red: #ef4444;    --ssd-red-solid: #b91c1c;    --ssd-red-on: #ffffff;    --ssd-red-text: #b91c1c;
+}
+
+.dark {
+  --ssd-blue: #60a5fa;   --ssd-blue-solid: #60a5fa;   --ssd-blue-on: #0b1220;   --ssd-blue-text: #93c5fd;
+  --ssd-green: #34d399;  --ssd-green-solid: #34d399;  --ssd-green-on: #052e21;  --ssd-green-text: #6ee7b7;
+  --ssd-yellow: #facc15; --ssd-yellow-solid: #facc15; --ssd-yellow-on: #2a1f04; --ssd-yellow-text: #fcd34d;
+  --ssd-orange: #fb923c; --ssd-orange-solid: #fb923c; --ssd-orange-on: #2b1304; --ssd-orange-text: #fdba74;
+  --ssd-purple: #a78bfa; --ssd-purple-solid: #a78bfa; --ssd-purple-on: #1e1039; --ssd-purple-text: #c4b5fd;
+  --ssd-red: #f87171;    --ssd-red-solid: #f87171;    --ssd-red-on: #2b0a0a;    --ssd-red-text: #fca5a5;
+}
+
+/* The team card replays this on every tab switch (keyed remount), so "the card
+   changed" is legible even when two teams score identically. */
+@keyframes ssd-card-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.ssd-card-in {
+  animation: ssd-card-in 0.3s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+/* Roster rows cascade in when the filter changes. Capped so a 63-person team
+   never waits on a long tail. */
+@keyframes ssd-row-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ssd-card-in { animation: none; }
+  [class*='ssd-row-in'],
+  .ssd-roster-row { animation: none !important; }
+}

@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/modernist-1d1ff938-fc63-49ec-8fc9-e1e921204ff7/styles.css">
+<script src="_ds/modernist-1d1ff938-fc63-49ec-8fc9-e1e921204ff7/_ds_bundle.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&family=Archivo+Narrow:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; background: var(--app-bg, #f3f2f2); }
+  .app { --app-bg: #f3f2f2; --ink: #201e1d; --surface: #ffffff; --sunk: #eae9e9; --line: #cfcbcb; --line-strong: #201e1d; --mute: #7d7979; --accent: #ec3013;
+    --t-blue:#0b5cff; --t-green:#00c97b; --t-yellow:#ffc400; --t-orange:#ff7a00; --t-purple:#9b2bff; --t-red:#ff2d16; }
+  .app[data-theme="dark"] { --app-bg: #131211; --ink: #f3f2f2; --surface: #1c1b1a; --sunk: #131211; --line: #3a3736; --line-strong: #6d6866; --mute: #918c8a; --accent: #ff563c;
+    --t-blue:#3d7dff; --t-green:#00e894; --t-yellow:#ffce1f; --t-orange:#ff8f1f; --t-purple:#b455ff; --t-red:#ff4a33; }
+  .app input:focus-visible, .app select:focus-visible, .app button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .app input::placeholder { color: var(--mute); }
+  .app select:hover { filter: brightness(1.04); border-color: currentColor; }
+  .app select option { background: var(--surface); color: var(--ink); text-transform: none; letter-spacing: 0; font-size: 13px; }
+  .row-hit { transition: background 140ms ease, box-shadow 140ms ease; }
+  .row-hit:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  .app button, .app select, .app input { transition: background-color 180ms cubic-bezier(.2,.7,.3,1), border-color 180ms cubic-bezier(.2,.7,.3,1), color 180ms ease, box-shadow 180ms ease, transform 120ms cubic-bezier(.2,.7,.3,1); }
+  .app button:not(:disabled):hover { transform: translateY(-1px); }
+  .app button:not(:disabled):active { transform: translateY(0) scale(0.98); }
+  .app .tcard { transition: border-color 260ms cubic-bezier(.2,.7,.3,1), box-shadow 260ms cubic-bezier(.2,.7,.3,1); }
+  .app .tcard span, .app .tcard div { transition: background-color 240ms ease, color 240ms ease, border-color 240ms ease; }
+  @keyframes cardInA { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @keyframes cardInB { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .app *, .app *::before { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
+</style>
+</helmet>
+
+<div class="app" data-theme="{{ theme }}" style="background: var(--app-bg); color: var(--ink); font-family: 'Archivo', system-ui, sans-serif; min-height: 100vh; display: flex; flex-direction: column;">
+
+  <header style="display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; padding: 20px 28px 16px; border-bottom: 1px solid var(--line);">
+    <div style="display: flex; flex-direction: column; gap: 2px;">
+      <div style="font-family: 'Archivo Narrow', sans-serif; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--mute);">Production bonus · monthly run</div>
+      <h1 style="font-size: 30px; font-weight: 800; letter-spacing: -0.02em; margin: 0; line-height: 1.1;">{{ period }}</h1>
+    </div>
+    <div style="display: flex; align-items: center; gap: 20px;">
+      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-align: right;">
+        <div style="font-family: 'Archivo Narrow', sans-serif; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--mute);">Total payout</div>
+        <div style="font-size: 24px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums;">{{ totalPayout }}</div>
+      </div>
+      <div style="width: 2px; align-self: stretch; background: var(--line);"></div>
+      <button onClick="{{ toggleTheme }}" style="display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--ink); font-family: 'Archivo Narrow', sans-serif; font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer;">{{ themeLabel }}</button>
+      <button onClick="{{ onSubmit }}" disabled="{{ submitDisabled }}" style="{{ submitStyle }}">{{ submitLabel }}</button>
+    </div>
+  </header>
+
+  <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 10px 20px; padding: 12px 28px; border-bottom: 1px solid var(--line); background: var(--sunk);">
+    <div style="flex: none; white-space: nowrap; display: flex; align-items: baseline; gap: 10px; padding-right: 20px; border-right: 1px solid var(--line);">
+      <span style="font-size: 20px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums;">{{ doneLabel }}</span>
+      <span style="font-family: 'Archivo Narrow', sans-serif; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--mute);">teams entered</span>
+    </div>
+    <div style="flex: 1 1 auto; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px;">
+    <sc-for list="{{ teamChips }}" as="c" hint-placeholder-count="6">
+      <button onClick="{{ c.onJump }}" style="{{ c.style }}">
+        <span style="{{ c.dotStyle }}"></span>
+        <span>{{ c.name }}</span>
+        <span style="{{ c.markStyle }}">{{ c.mark }}</span>
+      </button>
+    </sc-for>
+    </div>
+    <sc-if value="{{ unassignedCount }}" hint-placeholder-val="{{ true }}">
+      <div style="flex: none; white-space: nowrap; display: flex; align-items: center; gap: 8px; font-family: 'Archivo Narrow', sans-serif; font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent);">
+        <span style="width: 8px; height: 8px; border-radius: 999px; background: var(--accent); display: block;"></span>
+        <span>{{ unassignedLabel }}</span>
+      </div>
+    </sc-if>
+  </div>
+
+  <div style="flex: 1; display: flex; flex-direction: column; align-items: stretch;">
+
+    <section style="padding: 24px 28px 28px;">
+      <div style="display: grid; grid-template-columns: minmax(0, 620px); gap: 20px;">
+        <sc-for list="{{ teams }}" as="t" hint-placeholder-count="6">
+          <div class="tcard" id="{{ t.anchor }}" style="{{ t.cardStyle }}">
+
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line);">
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="{{ t.swatchStyle }}"></span>
+                <span style="font-family: 'Archivo Narrow', sans-serif; font-size: 15px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;">{{ t.name }}</span>
+                <span style="font-family: 'Archivo Narrow', sans-serif; font-size: 12px; letter-spacing: 0.06em; color: var(--mute);">{{ t.memberLabel }}</span>
+              </div>
+              <span style="{{ t.statusStyle }}">{{ t.statusLabel }}</span>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px 16px; padding: 18px 20px;">
+              <label style="display: flex; flex-direction: column; gap: 5px;">
+                <span style="font-family: 'Archivo Narrow', sans-serif; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--mute);">Accuracy</span>
+                <span style="display: flex; align-items: center; border: 1px solid var(--line); border-radius: 10px; background: var(--sunk);">
+                  <input value="{{ t.accuracy }}" onChange="{{ t.onAccuracy }}" placeholder="0.00" inputmode="decimal" style="width: 100%; min-width: 56px; border: 0; background: transparent; color: var(--ink); font-family: inherit; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; padding: 9px 4px 9px 10px;">
+                  <span style="padding-right: 10px; color: var(--mute); font-size: 14px;">%</span>
+                </span>
+              </label>
+              <label style="display: flex; flex-direction: column; gap: 5px;">
+                <span style="font-family: 'Archivo Narrow', sans-serif; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--mute);">Records</span>
+                <input value="{{ t.records }}" onChange="{{ t.onRecords }}" placeholder="0" inputmode="numeric" style="border: 1px solid var(--line); border-radius: 10px; outline-offset: 1px; background: var(--sunk); color: var(--ink); font-family: inherit; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; padding: 9px 10px;">
+              </label>
+              <label style="display: flex; flex-direction: column; gap: 5px;">
+                <span style="font-family: 'Archivo Narrow', sans-serif; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--mute);">{{ t.poolLabel }}</span>
+                <span style="display: flex; align-items: center; border: 1px solid var(--line); border-radius: 10px; background: var(--sunk);">
+                  <span style="padding-left: 10px; color: var(--mute); font-size: 15px;">₱</span>
+                  <input value="{{ t.pool }}" onChange="{{ t.onPool }}" placeholder="0" inputmode="numeric" style="width: 100%; min-width: 0; border: 0; background: transparent; color: var(--ink); font-family: inherit; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; padding: 9px 10px 9px 6px;">
+                </span>
+                <span style="font-family: 'Archivo Narrow', sans-serif; font-size: 11px; letter-spacing: 0.04em; color: var(--mute);">{{ t.poolHint }}</span>
+              </label>
+            </div>
+
+            <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--line); background: var(--sunk);">
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                <div style="display: flex; gap: 3px;">
+                  <span style="{{ t.seg1 }}"></span>
+                  <span style="{{ t.seg2 }}"></span>
+                  <span style="{{ t.seg3 }}"></span>
+                </div>
+                <div style="{{ t.tierStyle }}">{{ t.tierLabel }}</div>
+              </div>
+              <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 1px;">
+                <div style="{{ t.payoutStyle }}">{{ t.perMember }}</div>
+                <div style="font-family: 'Archivo Narrow', sans-serif; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--mute);">per member</div>
+              </div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <section style="border-top: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0;">
+
+      <div style="display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--line);">
+        <span style="font-family: 'Archivo Narrow', sans-serif; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--mute); margin-right: 2px;">Roster</span>
+        <sc-for list="{{ filters }}" as="f" hint-placeholder-count="8">
+          <button onClick="{{ f.onClick }}" style="{{ f.style }}">
+            <span>{{ f.label }}</span>
+            <span style="{{ f.countStyle }}">{{ f.count }}</span>
+          </button>
+        </sc-for>
+      </div>
+
+      <sc-if value="{{ selectedCount }}" hint-placeholder-val="{{ true }}">
+        <div style="display: flex; align-items: center; gap: 10px; padding: 10px 20px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 10%, transparent);">
+          <span style="font-family: 'Archivo Narrow', sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;">{{ selectedLabel }} →</span>
+          <sc-for list="{{ bulkTargets }}" as="b" hint-placeholder-count="7">
+            <button onClick="{{ b.onClick }}" style="{{ b.style }}">{{ b.label }}</button>
+          </sc-for>
+          <div style="flex: 1;"></div>
+          <button onClick="{{ clearSelection }}" style="border: 0; background: transparent; color: var(--ink); font-family: 'Archivo Narrow', sans-serif; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; text-decoration: underline; text-underline-offset: 3px;">Clear</button>
+        </div>
+      </sc-if>
+
+      <div style="display: grid; grid-template-columns: 34px 1fr 190px 110px; align-items: center; gap: 12px; padding: 8px 20px; border-bottom: 1px solid var(--line); font-family: 'Archivo Narrow', sans-serif; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--mute);">
+        <input type="checkbox" checked="{{ allChecked }}" onChange="{{ toggleAll }}" style="width: 16px; height: 16px; accent-color: var(--accent); margin: 0;">
+        <span>Employee</span>
+        <span>Sub-team</span>
+        <span style="text-align: right;">Share</span>
+      </div>
+
+      <div style="flex: 1; overflow: auto; max-height: 46vh;">
+        <sc-for list="{{ rows }}" as="r" hint-placeholder-count="12">
+          <div class="row-hit" style="{{ r.rowStyle }}">
+            <input type="checkbox" checked="{{ r.checked }}" onChange="{{ r.onCheck }}" style="width: 16px; height: 16px; accent-color: var(--accent); margin: 0;">
+            <div style="display: flex; flex-direction: column; gap: 0; min-width: 0;">
+              <span style="font-size: 14px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ r.name }}</span>
+              <span style="font-size: 12px; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ r.email }}</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="{{ r.dotStyle }}"></span>
+              <span style="{{ r.selectWrapStyle }}">
+                <select value="{{ r.team }}" onChange="{{ r.onTeam }}" style="{{ r.selectStyle }}">
+                  <sc-for list="{{ teamOptions }}" as="o" hint-placeholder-count="7">
+                    <option value="{{ o.value }}">{{ o.label }}</option>
+                  </sc-for>
+                </select>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; right: 10px; top: 50%; margin-top: -7px; pointer-events: none; opacity: 0.55;">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </span>
+            </div>
+            <span style="{{ r.shareStyle }}">{{ r.share }}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="padding: 10px 20px; border-top: 1px solid var(--line); font-family: 'Archivo Narrow', sans-serif; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--mute);">{{ rowsLabel }}</div>
+    </section>
+  </div>
+
+  <footer style="display: flex; align-items: center; gap: 12px; padding: 10px 28px; border-top: 1px solid var(--line); background: var(--sunk); font-family: 'Archivo Narrow', sans-serif; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--mute);">
+    <span>{{ saveState }}</span>
+    <span style="flex: 1;"></span>
+    <span>{{ blockerLabel }}</span>
+  </footer>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light&quot;,&quot;tsType&quot;:&quot;'light' | 'dark'&quot;},&quot;period&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;August 2026&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;rate&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:250,&quot;min&quot;:50,&quot;max&quot;:2000,&quot;step&quot;:50,&quot;unit&quot;:&quot;₱/record&quot;,&quot;tsType&quot;:&quot;number&quot;}}">
+const TEAMS = [
+  { key: 'blue', name: 'Blue', varName: '--t-blue' },
+  { key: 'green', name: 'Green', varName: '--t-green' },
+  { key: 'yellow', name: 'Yellow', varName: '--t-yellow' },
+  { key: 'orange', name: 'Orange', varName: '--t-orange' },
+  { key: 'purple', name: 'Purple', varName: '--t-purple' },
+  { key: 'red', name: 'Red', varName: '--t-red' },
+];
+
+const PEOPLE = [
+  ['Abad, Hannah Lynn "Hannah"', 'hannaa@simple.biz', 'orange'],
+  ['Abejuela, Jeralyn "Jeralyn"', 'jeralyna@simple.biz', ''],
+  ['Abuel, Paul Angelo R. "Gelo"', 'geloa@simple.biz', 'purple'],
+  ['Adove, Jeriemy Mckinly "Jeriemy"', 'jeriemym@simple.biz', 'yellow'],
+  ['Aguirre, Jerome G "Jerome"', 'jeromea@simple.biz', 'red'],
+  ['Alejandre, Girod "Rod"', 'roda@simple.biz', 'orange'],
+  ['Arce, Jomar "Jom"', 'jomsa@simple.biz', 'orange'],
+  ['Asackil, Aguell "Zak"', 'zaka@simple.biz', 'orange'],
+  ['Baillo, Jan Michael M "Mike"', 'mikeb@simple.biz', 'green'],
+  ['Benito, Mechaila "Kaila"', 'kailab@simple.biz', ''],
+  ['Cabrera, Lorraine "Rain"', 'rainc@simple.biz', 'blue'],
+  ['Dizon, Mark Anthony "Mac"', 'macd@simple.biz', 'blue'],
+  ['Espino, Kristine "Tin"', 'tine@simple.biz', 'green'],
+  ['Fajardo, Rommel "Mel"', 'melf@simple.biz', 'yellow'],
+  ['Gonzales, Aira Mae "Aira"', 'airag@simple.biz', 'purple'],
+  ['Hernandez, Joshua "Josh"', 'joshh@simple.biz', 'blue'],
+  ['Ibarra, Necie "Nes"', 'nesi@simple.biz', ''],
+  ['Jimenez, Carlo "Caloy"', 'caloyj@simple.biz', 'green'],
+  ['Lagman, Precious "Shan"', 'shanl@simple.biz', 'purple'],
+  ['Morales, Bryan "Bry"', 'brym@simple.biz', 'yellow'],
+];
+
+const LIGHT_FILL = { yellow: true, green: true, orange: true, red: false };
+
+const TIERS = [
+  { min: 98, mult: 1.0, label: 'Tier 3 · 100% of pool' },
+  { min: 95, mult: 0.75, label: 'Tier 2 · 75% of pool' },
+  { min: 90, mult: 0.5, label: 'Tier 1 · 50% of pool' },
+];
+
+class Component extends DCLogic {
+  state = {
+    activeTeam: 'blue',
+    tick: 0,
+    theme: null,
+    locked: false,
+    filter: 'all',
+    selected: {},
+    entries: {
+      blue: { accuracy: '96.40', records: '1240', pool: '310000' },
+      green: { accuracy: '98.10', records: '1188', pool: '297000' },
+      yellow: { accuracy: '91.75', records: '', pool: '' },
+      orange: { accuracy: '', records: '', pool: '' },
+      purple: { accuracy: '95.00', records: '1104', pool: '276000' },
+      red: { accuracy: '', records: '', pool: '' },
+    },
+    assign: PEOPLE.reduce((a, p, i) => { a[i] = p[2]; return a; }, {}),
+  };
+
+  num(v) { const n = parseFloat(String(v).replace(/,/g, '')); return isNaN(n) ? 0 : n; }
+  peso(n) { return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+  setEntry(key, field, value) {
+    this.setState(s => ({ entries: Object.assign({}, s.entries, { [key]: Object.assign({}, s.entries[key], { [field]: value }) }) }));
+  }
+
+  teamState(key) {
+    const e = this.state.entries[key];
+    const filled = ['accuracy', 'records', 'pool'].filter(f => String(e[f]).trim() !== '' && this.num(e[f]) > 0).length;
+    return filled === 3 ? 'ready' : filled === 0 ? 'empty' : 'partial';
+  }
+
+  tierFor(acc) { return TIERS.find(t => acc >= t.min) || null; }
+
+  renderVals() {
+    const theme = this.state.theme || this.props.theme || 'light';
+    const rate = this.props.rate ?? 250;
+    const dark = theme === 'dark';
+    const assign = this.state.assign;
+    const counts = {};
+    TEAMS.forEach(t => { counts[t.key] = 0; });
+    let unassigned = 0;
+    PEOPLE.forEach((p, i) => { const k = assign[i]; if (k && counts[k] !== undefined) counts[k]++; else unassigned++; });
+
+    const chipBase = 'display:inline-flex;align-items:center;gap:7px;flex:none;white-space:nowrap;height:28px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-family:"Archivo Narrow",sans-serif;font-size:12px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;';
+
+    let total = 0;
+    const perMemberOf = {};
+
+    const active = this.state.activeTeam;
+    const teams = TEAMS.map(t => {
+      const e = this.state.entries[t.key];
+      const st = this.teamState(t.key);
+      const acc = this.num(e.accuracy);
+      const records = this.num(e.records);
+      const pool = this.num(e.pool);
+      const tier = this.tierFor(acc);
+      const members = counts[t.key];
+      const payout = tier && st === 'ready' ? pool * tier.mult : 0;
+      const per = members > 0 ? payout / members : 0;
+      perMemberOf[t.key] = st === 'ready' ? per : null;
+      total += payout;
+      const c = 'var(' + t.varName + ')';
+      const tierIdx = tier ? TIERS.indexOf(tier) : -1;
+      const seg = (i) => {
+        const on = tierIdx >= 0 && (2 - tierIdx) >= i;
+        return 'display:block;width:26px;height:5px;border-radius:999px;background:' + (on ? c : 'var(--line)') + ';';
+      };
+      const statusStyles = {
+        ready: 'display:inline-flex;align-items:center;gap:6px;padding:3px 11px;border-radius:999px;background:' + c + ';color:' + (LIGHT_FILL[t.key] ? '#201e1d' : '#fff') + ';font-family:"Archivo Narrow",sans-serif;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;',
+        partial: 'display:inline-flex;align-items:center;gap:6px;padding:3px 11px;border-radius:999px;border:1px solid var(--accent);color:var(--accent);font-family:"Archivo Narrow",sans-serif;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;',
+        empty: 'display:inline-flex;align-items:center;gap:6px;padding:3px 11px;border-radius:999px;border:1px solid var(--line);color:var(--mute);font-family:"Archivo Narrow",sans-serif;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;',
+      };
+      return {
+        anchor: 'team-' + t.key,
+        isActive: t.key === active,
+        name: t.name,
+        memberLabel: members + (members === 1 ? ' member' : ' members'),
+        accuracy: e.accuracy, records: e.records, pool: e.pool,
+        onAccuracy: ev => this.setEntry(t.key, 'accuracy', ev.target.value),
+        onRecords: ev => this.setEntry(t.key, 'records', ev.target.value),
+        onPool: ev => this.setEntry(t.key, 'pool', ev.target.value),
+        poolLabel: 'RFC pool, pooled',
+        poolHint: records > 0 ? records.toLocaleString() + ' records × ₱' + rate + ' = ₱' + (records * rate).toLocaleString() : '₱' + rate + ' per record',
+        cardStyle: 'animation:' + (this.state.tick % 2 ? 'cardInA' : 'cardInB') + ' 300ms cubic-bezier(.2,.7,.3,1) both;display:flex;flex-direction:column;overflow:hidden;border-radius:16px;background:var(--surface);border:1px solid ' + (st === 'empty' ? 'var(--line)' : 'color-mix(in srgb, ' + c + ' 65%, var(--line))') + ';' + (st === 'empty' ? '' : 'box-shadow:0 1px 2px rgba(0,0,0,0.05), 0 8px 20px -12px rgba(0,0,0,0.18);') + 'border-top:5px solid ' + (st === 'empty' ? 'var(--line)' : c) + ';',
+        swatchStyle: 'display:block;width:12px;height:12px;border-radius:999px;background:' + (st === 'empty' ? 'var(--line)' : c) + ';',
+        statusStyle: statusStyles[st],
+        statusLabel: st === 'ready' ? '✓ Entered' : st === 'partial' ? 'Incomplete' : 'Not started',
+        seg1: seg(0), seg2: seg(1), seg3: seg(2),
+        tierStyle: 'font-family:"Archivo Narrow",sans-serif;font-size:12px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:' + (tier ? 'var(--ink)' : 'var(--mute)') + ';',
+        tierLabel: acc > 0 ? (tier ? tier.label : 'Below 90% · no bonus') : 'Awaiting accuracy',
+        perMember: st === 'ready' ? this.peso(per) : '—',
+        payoutStyle: 'font-size:22px;font-weight:800;letter-spacing:-0.02em;font-variant-numeric:tabular-nums;color:' + (st === 'ready' && per > 0 ? c : 'var(--mute)') + ';',
+      };
+    });
+
+    const done = TEAMS.filter(t => this.teamState(t.key) === 'ready').length;
+
+    const teamChips = TEAMS.map(t => {
+      const st = this.teamState(t.key);
+      const c = 'var(' + t.varName + ')';
+      const on = t.key === active;
+      return {
+        name: t.name,
+        onJump: () => this.setState(s => s.activeTeam === t.key ? null : { activeTeam: t.key, tick: s.tick + 1 }),
+        style: chipBase + (on
+          ? 'border-color:' + c + ';background:color-mix(in srgb, ' + c + ' 22%, var(--surface));box-shadow:inset 0 0 0 1px ' + c + ';'
+          : st === 'empty' ? 'color:var(--mute);' : ''),
+        dotStyle: 'display:block;width:9px;height:9px;border-radius:999px;background:' + (st === 'empty' && !on ? 'var(--line)' : c) + ';',
+        mark: st === 'ready' ? '✓' : st === 'partial' ? '!' : '–',
+        markStyle: 'font-size:12px;color:' + (st === 'ready' ? 'var(--ink)' : st === 'partial' ? 'var(--accent)' : 'var(--mute)') + ';',
+      };
+    });
+
+    const filterDefs = [{ key: 'all', label: 'All', count: PEOPLE.length }]
+      .concat(TEAMS.map(t => ({ key: t.key, label: t.name, count: counts[t.key], varName: t.varName })))
+      .concat([{ key: 'none', label: 'Unassigned', count: unassigned }]);
+
+    const filters = filterDefs.map(f => {
+      const active = this.state.filter === f.key;
+      const c = f.varName ? 'var(' + f.varName + ')' : (f.key === 'none' ? 'var(--accent)' : 'var(--ink)');
+      return {
+        label: f.label, count: f.count,
+        onClick: () => this.setState({ filter: f.key }),
+        style: 'display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;border:1px solid ' + (active ? 'transparent' : 'var(--line)') + ';background:' + (active ? c : 'transparent') + ';color:' + (active ? (f.varName ? (LIGHT_FILL[f.key] ? '#201e1d' : '#fff') : (f.key === 'none' ? '#fff' : 'var(--app-bg)')) : 'var(--ink)') + ';font-family:"Archivo Narrow",sans-serif;font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;',
+        countStyle: 'font-variant-numeric:tabular-nums;opacity:0.65;',
+      };
+    });
+
+    const selectedIds = Object.keys(this.state.selected).filter(k => this.state.selected[k]);
+    const teamOptions = [{ value: '', label: 'Unassigned' }].concat(TEAMS.map(t => ({ value: t.key, label: t.name })));
+
+    const rows = PEOPLE.map((p, i) => ({ p, i }))
+      .filter(({ i }) => {
+        const f = this.state.filter;
+        if (f === 'all') return true;
+        if (f === 'none') return !assign[i];
+        return assign[i] === f;
+      })
+      .map(({ p, i }) => {
+        const key = assign[i];
+        const def = TEAMS.find(t => t.key === key);
+        const c = def ? 'var(' + def.varName + ')' : 'var(--line)';
+        const per = def ? perMemberOf[def.key] : null;
+        const checked = !!this.state.selected[i];
+        return {
+          name: p[0], email: p[1], team: key || '', checked,
+          rowStyle: 'display:grid;grid-template-columns:34px 1fr 190px 110px;align-items:center;gap:12px;padding:9px 20px;border-bottom:1px solid var(--line);' + (checked ? 'background:color-mix(in srgb, var(--accent) 8%, transparent);' : '') + (!def ? 'box-shadow:inset 3px 0 0 var(--accent);' : ''),
+          onCheck: () => this.setState(s => ({ selected: Object.assign({}, s.selected, { [i]: !s.selected[i] }) })),
+          onTeam: ev => { const v = ev.target.value; this.setState(s => ({ assign: Object.assign({}, s.assign, { [i]: v }) })); },
+          dotStyle: 'display:block;width:10px;height:10px;flex:none;border-radius:999px;background:' + c + ';',
+          selectWrapStyle: 'position:relative;display:block;flex:1;min-width:0;color:' + (def ? c : 'var(--mute)') + ';',
+          selectStyle: 'appearance:none;-webkit-appearance:none;width:100%;min-width:0;border-radius:999px;border:1px solid ' + (def ? 'color-mix(in srgb, ' + c + ' 60%, var(--line))' : 'var(--line)') + ';background:' + (def ? 'color-mix(in srgb, ' + c + ' 18%, var(--surface))' : 'var(--surface)') + ';color:' + (def ? 'var(--ink)' : 'var(--mute)') + ';font-family:"Archivo Narrow",sans-serif;font-size:12px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;padding:6px 30px 6px 12px;cursor:pointer;text-overflow:ellipsis;',
+          share: per === null || per === undefined ? '—' : this.peso(per),
+          shareStyle: 'text-align:right;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;color:' + (per ? 'var(--ink)' : 'var(--mute)') + ';',
+        };
+      });
+
+    const bulkTargets = teamOptions.map(o => {
+      const def = TEAMS.find(t => t.key === o.value);
+      const c = def ? 'var(' + def.varName + ')' : 'var(--mute)';
+      return {
+        label: o.label,
+        onClick: () => this.setState(s => {
+          const a = Object.assign({}, s.assign);
+          selectedIds.forEach(id => { a[id] = o.value; });
+          return { assign: a, selected: {} };
+        }),
+        style: 'padding:4px 12px;border-radius:999px;border:1px solid ' + c + ';background:transparent;color:var(--ink);font-family:"Archivo Narrow",sans-serif;font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;',
+      };
+    });
+
+    const blockers = [];
+    if (done < TEAMS.length) blockers.push((TEAMS.length - done) + ' team' + (TEAMS.length - done === 1 ? '' : 's') + ' missing KPIs');
+    if (unassigned > 0) blockers.push(unassigned + ' unassigned');
+    const canSubmit = blockers.length === 0 && !this.state.locked;
+
+    return {
+      theme, period: this.props.period ?? 'August 2026',
+      themeLabel: dark ? 'Light' : 'Dark',
+      toggleTheme: () => this.setState({ theme: dark ? 'light' : 'dark' }),
+      totalPayout: this.peso(total),
+      doneLabel: done + ' / ' + TEAMS.length,
+      teams: teams.filter(t => t.isActive), teamChips, filters, rows, teamOptions, bulkTargets,
+      unassignedCount: unassigned > 0,
+      unassignedLabel: unassigned + ' unassigned employee' + (unassigned === 1 ? '' : 's'),
+      selectedCount: selectedIds.length > 0,
+      selectedLabel: selectedIds.length + ' selected · assign to',
+      clearSelection: () => this.setState({ selected: {} }),
+      allChecked: rows.length > 0 && selectedIds.length === PEOPLE.length,
+      toggleAll: () => this.setState(s => {
+        const all = Object.keys(s.selected).filter(k => s.selected[k]).length === PEOPLE.length;
+        if (all) return { selected: {} };
+        const sel = {}; PEOPLE.forEach((_, i) => { sel[i] = true; });
+        return { selected: sel };
+      }),
+      rowsLabel: rows.length + ' of ' + PEOPLE.length + ' shown',
+      saveState: this.state.locked ? '🔒 Locked · sent to accounting' : '✓ Saved 2 min ago · draft',
+      blockerLabel: this.state.locked ? '' : blockers.length ? 'Blocked: ' + blockers.join(' · ') : 'All checks passed',
+      submitDisabled: !canSubmit,
+      submitLabel: this.state.locked ? 'Locked' : 'Lock & send to accounting',
+      onSubmit: () => { if (canSubmit) this.setState({ locked: true }); },
+      submitStyle: 'height:40px;padding:0 20px;border-radius:999px;border:0;background:' + (canSubmit ? 'var(--accent)' : 'var(--line)') + ';color:' + (canSubmit ? '#fff' : 'var(--mute)') + ';font-family:"Archivo Narrow",sans-serif;font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;cursor:' + (canSubmit ? 'pointer' : 'not-allowed') + ';text-align:left;',
+    };
+  }
+}
+
+</script>
+</body>
+</html>

@@ -2349,521 +2349,261 @@ export function HslManagersTable({
     </div>
   );
 }
-// ── SSD Medical Records workspace ─────────────────────────────────────────────
-//
-// Structure comes from the Bonus Run design handoff
-// (references/UI improvement request/design_handoff_bonus_run/): a status strip
-// that doubles as the team tab bar, ONE team card at a time, then a full-width
-// roster. Three places deliberately depart from it, because the handoff was
-// written against sample data and says so itself:
-//
-//  1. Tier thresholds are the REAL ones from schema.ts — below 90% earns
-//     nothing, 90–94.99% pays ₱250/record, 95%+ pays ₱350/record — plus the
-//     SEPARATE RFC pool (₱250 per RFC, split by headcount) that stacks on top.
-//     The handoff's 90/95/98 → 50/75/100%-of-pool ladder is flagged as invented
-//     in its own README.
-//  2. Its "✓ Saved 2 min ago" footer would be a lie sitting under these three
-//     fields: accuracy / records / RFC are deliberately NOT persisted (Kane,
-//     2026-08-17 — docs/features/hsl-kpi-calculator-2026-07.md). That forces a
-//     fourth team state, `restored`, and an amber note in place of a save stamp.
-//  3. Unassigned rows carry a dot, not its 3px inset side stripe.
 
-const SSD_TEAMS: SubTeamName[] = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'];
+// ── SSD Sub-team Grid ─────────────────────────────────────────────────────────
 
-/** Binds one team's colour tokens (index.css) to an element as `--team*`, so a
- *  single hue can drive inline styles and `color-mix()` — neither of which can
- *  take a Tailwind class. Every SSD surface reads `var(--team)` and friends. */
-function teamVars(name: SubTeamName): React.CSSProperties {
-  const v = SUB_TEAM_PALETTE[name].varName;
-  return {
-    '--team': `var(--ssd-${v})`,
-    '--team-solid': `var(--ssd-${v}-solid)`,
-    '--team-on': `var(--ssd-${v}-on)`,
-    '--team-text': `var(--ssd-${v}-text)`,
-  } as React.CSSProperties;
+interface SsdSubTeamGridProps {
+  subTeams: Record<SubTeamName, SubTeamState>;
+  isLocked: boolean;
+  onSubTeamChange: (subTeam: SubTeamName, field: 'pct' | 'records' | 'rfc', val: string) => void;
+  ssdShareForTeam: (subTeam: SubTeamName, memberCount: number) => number;
+  subTeamMemberCount: (subTeam: SubTeamName) => number;
+  /** Currently-active roster filter (shared with the employee table). */
+  activeFilter?: SubTeamFilter;
+  /** Toggle the filter for a team — click the same team again to clear it. */
+  onFilterToggle?: (subTeam: SubTeamName) => void;
 }
 
-/** Completeness of one sub-team, derived every render and never stored.
- *
- *  `restored` is the state the handoff could not have known about: after a
- *  reload the three inputs are blank while the per-member shares they produced
- *  are not. Reporting that as "Not started" would send the operator off to
- *  re-key numbers that are already banked — and `recomputeSsdEntries` refuses to
- *  overwrite those shares precisely because they are real. A typed `0` counts as
- *  entered, matching `subTeamInputsBlank`. */
-type SsdTeamStatus = 'entered' | 'partial' | 'restored' | 'empty';
-
-function ssdTeamStatus(st: SubTeamState, hasSavedShare: boolean): SsdTeamStatus {
-  const filled = [st.pct, st.records, st.rfc].filter((v) => v.trim() !== '').length;
-  if (filled === 3) return 'entered';
-  if (filled > 0) return 'partial';
-  return hasSavedShare ? 'restored' : 'empty';
-}
-
-const SSD_STATUS_MARK: Record<SsdTeamStatus, string> = {
-  entered: '✓',
-  partial: '!',
-  restored: '·',
-  empty: '–',
-};
-
-const SSD_STATUS_LABEL: Record<SsdTeamStatus, string> = {
-  entered: 'Entered',
-  partial: 'Incomplete',
-  restored: 'Scored earlier',
-  empty: 'Not started',
-};
-
-/** Which threshold a team's accuracy lands in, and how far along the tier meter
- *  that is. Reads the live rule rather than restating it, so a schema edit can
- *  never leave the meter describing a rate that no longer pays. */
-function ssdTier(pct: number, rule: TeamSplitRule | undefined) {
-  const sorted = [...(rule?.thresholds ?? [])].sort((a, b) => a.minPct - b.minPct);
-  const idx = sorted.findIndex(
-    (t) => pct >= t.minPct && (t.maxPct === null || pct <= t.maxPct),
-  );
-  const hit = idx >= 0 ? sorted[idx] : undefined;
-  const firstPaying = sorted.find((t) => t.ratePerRecord > 0);
-  return {
-    step: idx >= 0 ? idx + 1 : 0,
-    steps: Math.max(1, sorted.length),
-    rate: hit?.ratePerRecord ?? 0,
-    label: !hit
-      ? 'No matching tier'
-      : hit.ratePerRecord === 0
-        ? `Below ${firstPaying?.minPct ?? 90}% · no accuracy bonus`
-        : `${hit.minPct}%${hit.maxPct === null ? '+' : `–${hit.maxPct}%`} · ${formatPeso(hit.ratePerRecord)}/record`,
-  };
-}
-
-// ── Status strip / team tab bar ───────────────────────────────────────────────
-
-interface SsdTeamTabsProps {
-  statuses: Record<SubTeamName, SsdTeamStatus>;
-  memberCount: (t: SubTeamName) => number;
-  activeTeam: SubTeamName;
-  onSelect: (t: SubTeamName) => void;
-  unassignedCount: number;
-  onShowUnassigned: () => void;
-}
-
-/** The completion overview AND the tab control. Answers "which teams are done?"
- *  without opening any of them — every tab carries a glyph as well as a colour,
- *  so status never rests on hue alone. */
-function SsdTeamTabs({
-  statuses, memberCount, activeTeam, onSelect, unassignedCount, onShowUnassigned,
-}: SsdTeamTabsProps) {
-  const scored = SSD_TEAMS.filter(
-    (t) => statuses[t] === 'entered' || statuses[t] === 'restored',
-  ).length;
-  const tabsRef = useRef<(HTMLButtonElement | null)[]>([]);
-
-  // Roving focus: the tablist is a single tab stop and arrows move between teams.
-  function onKeyDown(e: React.KeyboardEvent, i: number) {
-    const last = SSD_TEAMS.length - 1;
-    let next = -1;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = i === last ? 0 : i + 1;
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = i === 0 ? last : i - 1;
-    else if (e.key === 'Home') next = 0;
-    else if (e.key === 'End') next = last;
-    if (next < 0) return;
-    e.preventDefault();
-    onSelect(SSD_TEAMS[next]!);
-    tabsRef.current[next]?.focus();
-  }
-
+export function SsdSubTeamGrid({
+  subTeams, isLocked, onSubTeamChange, ssdShareForTeam, subTeamMemberCount,
+  activeFilter = 'ALL', onFilterToggle,
+}: SsdSubTeamGridProps) {
+  const SUB_TEAM_NAMES: SubTeamName[] = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'];
+  const filterActive = activeFilter !== 'ALL';
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-zinc-200 bg-zinc-50/80 px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40">
-      {/* Held at its natural size — without `flex-none` and `nowrap` this block
-          collapses into a vertical stack the moment the tabs need to wrap. */}
-      <div className="flex-none whitespace-nowrap border-r border-zinc-200 pr-4 dark:border-zinc-800">
-        <span className="font-mono text-base font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-          {scored} / {SSD_TEAMS.length}
-        </span>
-        <span className="ml-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500">
-          teams scored
-        </span>
-      </div>
+    <div className="grid h-full auto-rows-fr gap-3 sm:grid-cols-2">
+      {SUB_TEAM_NAMES.map((name) => {
+        const st = subTeams[name];
+        const members = subTeamMemberCount(name);
+        const share = ssdShareForTeam(name, members || 1);
+        const pct = parseFloat(st.pct) || 0;
+        const tier: 'gold' | 'silver' | 'none' = pct >= 95 ? 'gold' : pct >= 90 ? 'silver' : 'none';
+        const palette = SUB_TEAM_PALETTE[name];
+        const tierLabel =
+          tier === 'gold'   ? '≥ 95%  ·  ₱350 / record'
+          : tier === 'silver' ? '90–94%  ·  ₱250 / record'
+          : 'Below 90%  ·  no bonus';
+        const tierStep = tier === 'gold' ? 3 : tier === 'silver' ? 2 : 1;
+        const isPicked = activeFilter === name;       // this box drives the filter
+        const isDimmed = filterActive && !isPicked;   // another team is being viewed
 
-      <div
-        role="tablist"
-        aria-label="Sub-teams"
-        className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5"
-      >
-        {SSD_TEAMS.map((name, i) => {
-          const status = statuses[name];
-          const active = activeTeam === name;
-          const touched = status !== 'empty';
-          const members = memberCount(name);
-          return (
+        return (
+          <div
+            key={name}
+            className={cn(
+              'group/box relative overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm ring-1 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:border-zinc-800 dark:bg-zinc-950/40',
+              palette.ring,
+              tier === 'gold' && 'shadow-md',
+              isPicked && 'scale-[1.015] shadow-lg ring-2',
+              isDimmed && 'scale-[0.99] opacity-55 saturate-[0.7]',
+            )}
+          >
+            {/* Header — doubles as the filter toggle for this team */}
             <button
-              key={name}
-              ref={(el) => { tabsRef.current[i] = el; }}
               type="button"
-              role="tab"
-              id={`ssd-tab-${name}`}
-              aria-selected={active}
-              aria-controls={`ssd-card-${name}`}
-              tabIndex={active ? 0 : -1}
-              onClick={() => onSelect(name)}
-              onKeyDown={(e) => onKeyDown(e, i)}
-              style={teamVars(name)}
-              title={`${name} — ${SSD_STATUS_LABEL[status]}, ${members} ${members === 1 ? 'member' : 'members'}`}
+              onClick={() => onFilterToggle?.(name)}
+              aria-pressed={isPicked}
+              title={isPicked ? `Showing ${name} only — click to show all` : `Filter roster to ${name}`}
               className={cn(
-                'inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1',
-                'font-mono text-[10px] font-semibold uppercase tracking-[0.12em] outline-none',
-                'transition-[background-color,border-color,box-shadow,color] duration-200 ease-[cubic-bezier(0.2,0.7,0.3,1)]',
-                'focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-zinc-950',
-                active
-                  ? 'border-[var(--team)] bg-[color-mix(in_srgb,var(--team)_18%,transparent)] text-zinc-900 shadow-[inset_0_0_0_1px_var(--team)] dark:text-zinc-50'
-                  : touched
-                    ? 'border-zinc-200 bg-white text-zinc-700 hover:border-[var(--team)] dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-300'
-                    : 'border-zinc-200 bg-white text-zinc-400 hover:border-zinc-300 hover:text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-500 dark:hover:text-zinc-400',
+                'flex w-full items-center justify-between px-3 py-2 text-left transition-[filter] duration-200',
+                palette.headerBg, palette.headerText,
+                onFilterToggle ? 'cursor-pointer hover:brightness-110 active:brightness-95' : 'cursor-default',
               )}
             >
+              <span className="flex items-center gap-1.5 font-mono text-[11px] font-bold tracking-[0.2em]">
+                <Filter
+                  className={cn(
+                    'h-3 w-3 transition-all duration-300',
+                    isPicked ? 'scale-100 opacity-100' : 'scale-75 opacity-0 group-hover/box:opacity-60',
+                  )}
+                  aria-hidden
+                />
+                {name}
+              </span>
               <span
-                aria-hidden
                 className={cn(
-                  'h-2 w-2 flex-none rounded-full transition-colors duration-200',
-                  !touched && !active && 'bg-zinc-300 dark:bg-zinc-700',
-                )}
-                style={touched || active ? { backgroundColor: 'var(--team)' } : undefined}
-              />
-              {name}
-              <span
-                aria-hidden
-                className={cn(
-                  'w-2 text-center',
-                  status === 'entered' && 'text-emerald-600 dark:text-emerald-400',
-                  status === 'partial' && 'text-amber-600 dark:text-amber-400',
-                  status === 'restored' && 'text-zinc-500',
-                  status === 'empty' && 'text-zinc-300 dark:text-zinc-600',
+                  'rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold backdrop-blur-sm transition-colors',
+                  isPicked ? 'bg-white/40 ring-1 ring-white/60' : 'bg-white/25',
                 )}
               >
-                {SSD_STATUS_MARK[status]}
+                {members} {members === 1 ? 'member' : 'members'}
               </span>
-              <span className="sr-only">{SSD_STATUS_LABEL[status]}</span>
             </button>
-          );
-        })}
-      </div>
 
-      {unassignedCount > 0 && (
-        <button
-          type="button"
-          onClick={onShowUnassigned}
-          className="inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-amber-700 outline-none transition-colors hover:bg-amber-100 focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-400 dark:hover:bg-amber-950/40"
-          title="Show only the people with no sub-team"
-        >
-          <span aria-hidden className="h-2 w-2 rounded-full bg-amber-500" />
-          {unassignedCount} unassigned
-        </button>
-      )}
-    </div>
-  );
-}
+            {/* Body */}
+            <div className={cn('px-3 py-3', palette.bodyBg)}>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
+                    Accuracy %
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number" step="0.01" min={0} max={100}
+                      className="h-9 w-full rounded-md border border-zinc-300 bg-white pl-2 pr-7 font-mono text-sm font-medium text-zinc-900 shadow-inner outline-none transition-colors focus:border-blue-400 focus:ring-2 focus:ring-blue-200 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-zinc-500 dark:focus:ring-zinc-700"
+                      value={st.pct}
+                      disabled={isLocked}
+                      placeholder="0.00"
+                      onFocus={(e) => e.currentTarget.select()}
+                      onChange={(e) => onSubTeamChange(name, 'pct', e.target.value)}
+                    />
+                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 font-mono text-[10px] text-zinc-400">%</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 block font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
+                    Records
+                  </label>
+                  <input
+                    type="number" min={0}
+                    className="h-9 w-full rounded-md border border-zinc-300 bg-white px-2 font-mono text-sm font-medium text-zinc-900 shadow-inner outline-none transition-colors focus:border-blue-400 focus:ring-2 focus:ring-blue-200 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-zinc-500 dark:focus:ring-zinc-700"
+                    value={st.records}
+                    disabled={isLocked}
+                    placeholder="0"
+                    onFocus={(e) => e.currentTarget.select()}
+                    onChange={(e) => onSubTeamChange(name, 'records', e.target.value)}
+                  />
+                </div>
+              </div>
 
-// ── Team card ─────────────────────────────────────────────────────────────────
-
-interface SsdTeamCardProps {
-  name: SubTeamName;
-  state: SubTeamState;
-  status: SsdTeamStatus;
-  members: number;
-  share: number;
-  splitRule: TeamSplitRule | undefined;
-  poolRule: TeamPoolRule | undefined;
-  isLocked: boolean;
-  onChange: (field: 'pct' | 'records' | 'rfc', val: string) => void;
-}
-
-const SSD_FIELD_LABEL =
-  'mb-1 block font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400';
-const SSD_FIELD_SHELL =
-  'flex items-center rounded-lg border border-zinc-300 bg-zinc-50 transition-colors duration-[180ms] focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/25 dark:border-zinc-700 dark:bg-zinc-900';
-const SSD_FIELD_INPUT =
-  'h-10 w-full min-w-0 bg-transparent px-2.5 font-mono text-[15px] font-semibold tabular-nums text-zinc-900 outline-none placeholder:font-normal placeholder:text-zinc-400 disabled:cursor-not-allowed disabled:opacity-55 dark:text-zinc-100 dark:placeholder:text-zinc-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none';
-
-function SsdTeamCard({
-  name, state, status, members, share, splitRule, poolRule, isLocked, onChange,
-}: SsdTeamCardProps) {
-  const pct = parseFloat(state.pct) || 0;
-  const records = parseFloat(state.records) || 0;
-  const rfc = parseFloat(state.rfc) || 0;
-  const tier = ssdTier(pct, splitRule);
-  const rfcRate = poolRule?.ratePerRecord ?? 0;
-  const denom = members || 1;
-
-  // The two rules are independent and SUM. Showing only the total would hide
-  // that a team under 90% accuracy still earns its RFC pool.
-  const accuracyShare = (records * tier.rate) / denom;
-  const rfcShare = (rfc * rfcRate) / denom;
-  const typed = status === 'entered' || status === 'partial';
-
-  return (
-    <div
-      id={`ssd-card-${name}`}
-      role="tabpanel"
-      aria-labelledby={`ssd-tab-${name}`}
-      tabIndex={0}
-      style={teamVars(name)}
-      className={cn(
-        'ssd-card-in flex min-w-0 flex-col overflow-hidden rounded-xl border bg-white outline-none',
-        'transition-[border-color,box-shadow] duration-[260ms] ease-[cubic-bezier(0.2,0.7,0.3,1)]',
-        'focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:bg-zinc-950/50 dark:focus-visible:ring-offset-zinc-950',
-        status === 'empty'
-          ? 'border-zinc-200 dark:border-zinc-800'
-          : 'border-[color-mix(in_srgb,var(--team)_50%,#e4e4e7)] shadow-[0_1px_2px_rgba(0,0,0,0.05),0_8px_20px_-12px_rgba(0,0,0,0.18)] dark:border-[color-mix(in_srgb,var(--team)_45%,#27272a)]',
-      )}
-    >
-      <div
-        aria-hidden
-        className="h-1 w-full flex-none transition-colors duration-[260ms]"
-        style={{
-          backgroundColor:
-            status === 'empty' ? 'color-mix(in srgb, var(--team) 22%, transparent)' : 'var(--team)',
-        }}
-      />
-
-      {/* Identity left, a text badge right — the card's state is never carried
-          by colour alone. */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800">
-        <div className="flex min-w-0 items-center gap-2">
-          <span
-            aria-hidden
-            className="h-2.5 w-2.5 flex-none rounded-full"
-            style={{ backgroundColor: 'var(--team)' }}
-          />
-          <h4 className="font-mono text-[13px] font-bold uppercase tracking-[0.16em] text-zinc-900 dark:text-zinc-100">
-            {name}
-          </h4>
-          <span className="font-mono text-[11px] text-zinc-500">
-            {members} {members === 1 ? 'member' : 'members'}
-          </span>
-        </div>
-        <span
-          className={cn(
-            'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.14em]',
-            status === 'entered' && 'text-[var(--team-on)]',
-            status === 'partial' && 'border border-amber-500 text-amber-700 dark:text-amber-400',
-            status === 'restored' && 'border border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400',
-            status === 'empty' && 'border border-zinc-200 text-zinc-500 dark:border-zinc-800 dark:text-zinc-500',
-          )}
-          style={status === 'entered' ? { backgroundColor: 'var(--team-solid)' } : undefined}
-        >
-          {status === 'entered' && <Check className="h-2.5 w-2.5" aria-hidden />}
-          {status === 'restored' && <History className="h-2.5 w-2.5" aria-hidden />}
-          {SSD_STATUS_LABEL[status]}
-        </span>
-      </div>
-
-      {/* Fields stay strings end to end: the operator types "96." on the way to
-          "96.2", and coercing on every keystroke fights the input. */}
-      <div className="grid gap-x-4 gap-y-3 px-4 py-4 [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))]">
-        <div className="min-w-0">
-          <label className={SSD_FIELD_LABEL} htmlFor={`ssd-pct-${name}`}>Accuracy</label>
-          <div className={SSD_FIELD_SHELL}>
-            <input
-              id={`ssd-pct-${name}`}
-              type="number"
-              inputMode="decimal"
-              step="0.01"
-              min={0}
-              max={100}
-              className={cn(SSD_FIELD_INPUT, 'min-w-[56px] pr-0')}
-              value={state.pct}
-              disabled={isLocked}
-              placeholder="0.00"
-              onFocus={(e) => e.currentTarget.select()}
-              onChange={(e) => onChange('pct', e.target.value)}
-            />
-            <span aria-hidden className="pr-2.5 font-mono text-[11px] text-zinc-500">%</span>
-          </div>
-        </div>
-
-        <div className="min-w-0">
-          <label className={SSD_FIELD_LABEL} htmlFor={`ssd-rec-${name}`}>Records</label>
-          <div className={SSD_FIELD_SHELL}>
-            <input
-              id={`ssd-rec-${name}`}
-              type="number"
-              inputMode="numeric"
-              min={0}
-              className={SSD_FIELD_INPUT}
-              value={state.records}
-              disabled={isLocked}
-              placeholder="0"
-              onFocus={(e) => e.currentTarget.select()}
-              onChange={(e) => onChange('records', e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="min-w-0">
-          <label className={SSD_FIELD_LABEL} htmlFor={`ssd-rfc-${name}`}>RFC · pooled</label>
-          <div className={SSD_FIELD_SHELL}>
-            <input
-              id={`ssd-rfc-${name}`}
-              type="number"
-              inputMode="numeric"
-              min={0}
-              className={SSD_FIELD_INPUT}
-              value={state.rfc}
-              disabled={isLocked}
-              placeholder="0"
-              onFocus={(e) => e.currentTarget.select()}
-              onChange={(e) => onChange('rfc', e.target.value)}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Live arithmetic for both rules, so the payout below is never a number
-          the operator has to take on faith. */}
-      <dl className="grid gap-1 border-t border-zinc-100 px-4 py-2.5 font-mono text-[11px] dark:border-zinc-800/70">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-          <dt className="min-w-0 text-zinc-500">
-            {records > 0 && tier.rate > 0
-              ? `${records.toLocaleString('en-PH')} records × ${formatPeso(tier.rate)} ÷ ${denom}`
-              : state.pct.trim() && tier.rate === 0
-                ? 'Accuracy below the paying tier'
-                : 'Accuracy sets the per-record rate'}
-          </dt>
-          <dd className="tabular-nums text-zinc-700 dark:text-zinc-300">
-            {records > 0 && tier.rate > 0 ? formatPeso(accuracyShare) : '—'}
-          </dd>
-        </div>
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-          <dt className="min-w-0 text-zinc-500">
-            {rfc > 0
-              ? `${rfc.toLocaleString('en-PH')} RFC × ${formatPeso(rfcRate)} ÷ ${denom}`
-              : `RFC pools at ${formatPeso(rfcRate)} each, split evenly`}
-          </dt>
-          <dd className="tabular-nums text-zinc-700 dark:text-zinc-300">
-            {rfc > 0 ? formatPeso(rfcShare) : '—'}
-          </dd>
-        </div>
-      </dl>
-
-      {/* Tier meter left, per-member payout right. */}
-      <div className="mt-auto flex flex-wrap items-end justify-between gap-3 border-t border-zinc-200 bg-zinc-50/70 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-        <div className="flex min-w-0 flex-col gap-1.5">
-          <div className="flex items-center gap-1" aria-hidden>
-            {Array.from({ length: tier.steps }, (_, i) => {
-              const lit = !!state.pct.trim() && i < tier.step;
-              return (
-                <span
-                  key={i}
-                  className={cn(
-                    'h-1.5 w-7 rounded-full transition-colors duration-[240ms]',
-                    !lit && 'bg-zinc-200 dark:bg-zinc-800',
-                  )}
-                  style={lit ? { backgroundColor: 'var(--team)' } : undefined}
+              {/* RFC — pooled at a flat ₱250/record and split evenly across the
+                  team's headcount, independent of the accuracy tier above. */}
+              <div className="mt-2">
+                <label className="mb-1 block font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400">
+                  RFC · ₱250/record, pooled
+                </label>
+                <input
+                  type="number" min={0}
+                  className="h-9 w-full rounded-md border border-zinc-300 bg-white px-2 font-mono text-sm font-medium text-zinc-900 shadow-inner outline-none transition-colors focus:border-blue-400 focus:ring-2 focus:ring-blue-200 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-zinc-500 dark:focus:ring-zinc-700"
+                  value={st.rfc}
+                  disabled={isLocked}
+                  placeholder="0"
+                  onFocus={(e) => e.currentTarget.select()}
+                  onChange={(e) => onSubTeamChange(name, 'rfc', e.target.value)}
                 />
-              );
-            })}
+              </div>
+
+              {/* Tier indicator + share */}
+              <div className="mt-3 flex items-center justify-between gap-2 border-t border-zinc-200/80 pt-2.5 dark:border-zinc-800/80">
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-1">
+                    {[1, 2, 3].map((step) => (
+                      <span
+                        key={step}
+                        className={cn(
+                          'h-1.5 w-5 rounded-full transition-colors',
+                          step <= tierStep ? palette.dotOn : 'bg-zinc-200 dark:bg-zinc-800',
+                        )}
+                        aria-hidden
+                      />
+                    ))}
+                  </div>
+                  <span className={cn('font-mono text-[10px] font-medium', palette.accent)}>
+                    {tierLabel}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <div className={cn('font-mono text-base font-bold tabular-nums leading-none', palette.accent)}>
+                    <AnimatedPeso amount={share} />
+                  </div>
+                  <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-500">
+                    per member
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-          <span
-            className={cn(
-              'font-mono text-[11px] font-medium',
-              state.pct.trim() ? 'text-[var(--team-text)]' : 'text-zinc-500',
-            )}
-          >
-            {state.pct.trim() ? tier.label : 'Awaiting accuracy'}
-          </span>
-        </div>
-        <div className="text-right">
-          <div
-            className={cn(
-              'font-mono text-xl font-bold tabular-nums leading-none',
-              typed || share !== 0 ? 'text-[var(--team-text)]' : 'text-zinc-400 dark:text-zinc-600',
-            )}
-          >
-            {typed || share !== 0 ? <AnimatedPeso amount={share} /> : '—'}
-          </div>
-          <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-            per member
-          </div>
-        </div>
-      </div>
+        );
+      })}
     </div>
   );
 }
 
-// ── Sub-team picker (one roster row) ──────────────────────────────────────────
+// ── SSD Employee Table ────────────────────────────────────────────────────────
 
-/** A native <select> with the browser chrome removed — one control per row
- *  instead of seven chips, which is what keeps a 60-person roster readable.
- *  `option` styling is re-set to normal case: browsers otherwise inherit the
- *  uppercase tracking straight into the popup. */
-function SubTeamSelect({
-  value, onChange, isLocked, employeeName,
-}: {
-  value: SubTeamName | '';
-  onChange: (v: SubTeamName | '') => void;
-  isLocked: boolean;
-  employeeName: string;
-}) {
-  return (
-    <div className="relative block min-w-0 flex-1">
-      <select
-        aria-label={`Sub-team for ${employeeName}`}
-        value={value}
-        disabled={isLocked}
-        onChange={(e) => onChange(e.target.value as SubTeamName | '')}
-        className={cn(
-          'w-full min-w-0 appearance-none truncate rounded-full border py-1.5 pl-3 pr-7 outline-none',
-          'font-mono text-[10px] font-semibold uppercase tracking-[0.1em]',
-          'transition-[background-color,border-color,box-shadow] duration-[180ms] ease-[cubic-bezier(0.2,0.7,0.3,1)]',
-          'hover:brightness-[1.04] focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-zinc-950',
-          'disabled:cursor-not-allowed disabled:opacity-60',
-          value
-            ? 'border-[color-mix(in_srgb,var(--team)_60%,transparent)] bg-[color-mix(in_srgb,var(--team)_16%,transparent)] text-zinc-900 dark:text-zinc-100'
-            : 'border-zinc-200 bg-white text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-400',
-        )}
-      >
-        <option value="" className="font-sans text-[13px] normal-case tracking-normal">
-          Unassigned
-        </option>
-        {SSD_TEAMS.map((t) => (
-          <option key={t} value={t} className="font-sans text-[13px] normal-case tracking-normal">
-            {t.charAt(0) + t.slice(1).toLowerCase()}
-          </option>
-        ))}
-      </select>
-      <ChevronDown
-        aria-hidden
-        className={cn(
-          'pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 opacity-70',
-          value ? 'text-[var(--team-text)]' : 'text-zinc-500',
-        )}
-      />
-    </div>
-  );
-}
-
-// ── Roster ────────────────────────────────────────────────────────────────────
-
-interface SsdRosterProps {
+interface SsdEmployeeTableProps {
   entries: EntryRow[];
   allEntries: EntryRow[];
   isLocked: boolean;
   ssdShareForTeam: (subTeam: SubTeamName, memberCount: number) => number;
   onSubTeamAssign: (email: string, subTeam: SubTeamName | '') => void;
-  activeFilter: SubTeamFilter;
-  onFilterChange: (f: SubTeamFilter) => void;
+  /** Active roster filter, shared with the colored scoring boxes. */
+  activeFilter?: SubTeamFilter;
+  /** Set the active roster filter. */
+  onFilterChange?: (f: SubTeamFilter) => void;
   rosterEmails?: Set<string>;
   offboardedEmails?: Set<string>;
   onRemoveMember?: (email: string) => void;
-  /** Page controls owned by the parent block, dropped into the roster footer. */
-  pager?: React.ReactNode;
 }
 
-function SsdRoster({
+/** Colored sub-team chip picker. Replaces the native <select> — clicking a chip
+ *  assigns that sub-team. Selected chip uses the sub-team's gradient header
+ *  palette so the row's affiliation is visible at a glance. */
+export function SubTeamChips({
+  value,
+  onChange,
+  isLocked,
+}: {
+  value: SubTeamName | '';
+  onChange: (v: SubTeamName | '') => void;
+  isLocked: boolean;
+}) {
+  const SUB_TEAM_NAMES: SubTeamName[] = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'];
+  return (
+    <div className="inline-flex flex-wrap items-center gap-1">
+      <button
+        type="button"
+        disabled={isLocked}
+        onClick={() => onChange('')}
+        className={cn(
+          'rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider transition-colors',
+          value === ''
+            ? 'bg-zinc-200 text-zinc-700 ring-1 ring-zinc-300 dark:bg-zinc-700 dark:text-zinc-200 dark:ring-zinc-600'
+            : 'text-zinc-400 hover:text-zinc-700 dark:text-zinc-500 dark:hover:text-zinc-300',
+          isLocked && 'cursor-not-allowed opacity-60',
+        )}
+      >
+        none
+      </button>
+      {SUB_TEAM_NAMES.map((name) => {
+        const palette = SUB_TEAM_PALETTE[name];
+        const selected = value === name;
+        return (
+          <button
+            key={name}
+            type="button"
+            disabled={isLocked}
+            onClick={() => onChange(name)}
+            title={`Assign to ${name}`}
+            className={cn(
+              'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-all',
+              selected
+                ? `${palette.headerBg} ${palette.headerText} shadow-sm`
+                : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:text-zinc-800 dark:bg-zinc-900 dark:text-zinc-500 dark:ring-zinc-800 dark:hover:text-zinc-300',
+              isLocked && 'cursor-not-allowed opacity-60',
+            )}
+          >
+            <span
+              className={cn(
+                'h-1.5 w-1.5 rounded-full',
+                selected ? 'bg-white/85' : palette.dotOn,
+              )}
+            />
+            {name}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function SsdEmployeeTable({
   entries, allEntries, isLocked, ssdShareForTeam, onSubTeamAssign,
-  activeFilter, onFilterChange, rosterEmails, offboardedEmails, onRemoveMember, pager,
-}: SsdRosterProps) {
-  // Counts must reflect the whole department, never just the visible page.
+  activeFilter = 'ALL', onFilterChange, rosterEmails, offboardedEmails, onRemoveMember,
+}: SsdEmployeeTableProps) {
+  const SUB_TEAM_NAMES: SubTeamName[] = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'];
+
+  // Member counts must reflect every entry in the dept, not just the current page
   const memberCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const e of allEntries) {
@@ -2878,11 +2618,12 @@ function SsdRoster({
     [allEntries],
   );
 
-  // Selection is keyed by email so it survives paging and filtering; checkboxes
-  // only render for the rows currently on screen.
+  // ── Bulk selection ──────────────────────────────────────────────────────────
+  // Selection is keyed by email so it survives pagination; checkboxes only show
+  // for the rows currently on the page.
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // Drop selected emails that no longer exist (the roster changed under us).
+  // Drop any selected emails that no longer exist (e.g. roster changed).
   useEffect(() => {
     setSelected((prev) => {
       if (prev.size === 0) return prev;
@@ -2901,11 +2642,9 @@ function SsdRoster({
   const allPageSelected = pageEmails.length > 0 && pageEmails.every((em) => selected.has(em));
   const somePageSelected = pageEmails.some((em) => selected.has(em));
 
-  const selectAllRef = useRef<HTMLInputElement>(null);
+  const selectAllRef = React.useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate = somePageSelected && !allPageSelected;
-    }
+    if (selectAllRef.current) selectAllRef.current.indeterminate = somePageSelected && !allPageSelected;
   }, [somePageSelected, allPageSelected]);
 
   function toggleOne(email: string) {
@@ -2933,162 +2672,151 @@ function SsdRoster({
     setSelected(new Set());
   }
 
-  const chipBase =
-    'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] outline-none transition-[background-color,border-color,color] duration-200 ease-[cubic-bezier(0.2,0.7,0.3,1)] focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-zinc-950';
-  const chipIdle =
-    'border-zinc-200 bg-white text-zinc-600 hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-400 dark:hover:text-zinc-200';
-
   return (
-    <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950/40">
-      {/* Filter bar. Independent of the open team card, so you can score BLUE
-          while looking at who is still unassigned. */}
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
-        <span className="mr-1 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-          Roster
-        </span>
-        <button
-          type="button"
-          onClick={() => onFilterChange('ALL')}
-          aria-pressed={activeFilter === 'ALL'}
-          className={cn(
-            chipBase,
-            activeFilter === 'ALL'
-              ? 'border-transparent bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
-              : chipIdle,
-          )}
-        >
-          All
-          <span className="tabular-nums opacity-65">{allEntries.length}</span>
-        </button>
-        {SSD_TEAMS.map((name) => {
-          const active = activeFilter === name;
-          return (
-            <button
-              key={name}
-              type="button"
-              style={teamVars(name)}
-              onClick={() => onFilterChange(active ? 'ALL' : name)}
-              aria-pressed={active}
-              title={active ? `Showing ${name} only — click to show everyone` : `Show ${name} only`}
-              className={cn(
-                chipBase,
-                active ? 'border-transparent bg-[var(--team-solid)] text-[var(--team-on)]' : chipIdle,
-              )}
-            >
-              <span
-                aria-hidden
-                className="h-1.5 w-1.5 rounded-full"
-                style={{ backgroundColor: active ? 'var(--team-on)' : 'var(--team)' }}
-              />
-              {name}
-              <span className="tabular-nums opacity-65">{memberCounts[name] ?? 0}</span>
-            </button>
-          );
-        })}
-        <button
-          type="button"
-          onClick={() => onFilterChange(activeFilter === 'NONE' ? 'ALL' : 'NONE')}
-          aria-pressed={activeFilter === 'NONE'}
-          title={
-            activeFilter === 'NONE'
-              ? 'Showing unassigned only — click to show everyone'
-              : 'Show only people with no sub-team'
-          }
-          className={cn(
-            chipBase,
-            activeFilter === 'NONE'
-              ? 'border-transparent bg-amber-700 text-white dark:bg-amber-400 dark:text-amber-950'
-              : chipIdle,
-          )}
-        >
-          <span
-            aria-hidden
-            className={cn(
-              'h-1.5 w-1.5 rounded-full',
-              activeFilter === 'NONE' ? 'bg-white dark:bg-amber-950' : 'bg-amber-500',
-            )}
-          />
-          Unassigned
-          <span className="tabular-nums opacity-65">{unassignedCount}</span>
-        </button>
-        {activeFilter !== 'ALL' && (
+    <div className="flex h-full flex-col gap-2">
+      {/* Filter bar — view the roster one team at a time. Stays in sync with the
+          colored scoring boxes: clicking a box sets the same filter. */}
+      {onFilterChange && (
+        <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50/70 px-2.5 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-500">
+            <Filter className="h-3 w-3" /> Filter
+          </span>
           <button
             type="button"
             onClick={() => onFilterChange('ALL')}
-            className="ml-auto inline-flex items-center gap-1 rounded font-mono text-[10px] text-zinc-500 underline-offset-2 outline-none transition-colors hover:text-zinc-900 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:text-zinc-200"
+            aria-pressed={activeFilter === 'ALL'}
+            className={cn(
+              'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-all duration-200',
+              activeFilter === 'ALL'
+                ? 'bg-zinc-800 text-white shadow-sm dark:bg-zinc-200 dark:text-zinc-900'
+                : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:text-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800 dark:hover:text-zinc-200',
+            )}
           >
-            <X className="h-3 w-3" aria-hidden /> Clear
+            All
+            <span className={cn('tabular-nums', activeFilter === 'ALL' ? 'opacity-80' : 'opacity-60')}>{allEntries.length}</span>
+          </button>
+          {SUB_TEAM_NAMES.map((name) => {
+            const palette = SUB_TEAM_PALETTE[name];
+            const active = activeFilter === name;
+            const count = memberCounts[name] ?? 0;
+            return (
+              <button
+                key={name}
+                type="button"
+                onClick={() => onFilterChange(active ? 'ALL' : name)}
+                aria-pressed={active}
+                title={active ? `Showing ${name} only — click to show all` : `Show ${name} only`}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-all duration-200',
+                  active
+                    ? `${palette.headerBg} ${palette.headerText} scale-105 shadow-sm`
+                    : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:text-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800 dark:hover:text-zinc-200',
+                )}
+              >
+                <span className={cn('h-1.5 w-1.5 rounded-full transition-colors', active ? 'bg-white/85' : palette.dotOn)} />
+                {name}
+                <span className={cn('tabular-nums', active ? 'opacity-80' : 'opacity-60')}>{count}</span>
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => onFilterChange(activeFilter === 'NONE' ? 'ALL' : 'NONE')}
+            aria-pressed={activeFilter === 'NONE'}
+            title={activeFilter === 'NONE' ? 'Showing unassigned only — click to show all' : 'Show unassigned only'}
+            className={cn(
+              'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-all duration-200',
+              activeFilter === 'NONE'
+                ? 'bg-zinc-600 text-white shadow-sm dark:bg-zinc-400 dark:text-zinc-900'
+                : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:text-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800 dark:hover:text-zinc-200',
+            )}
+          >
+            <span className={cn('h-1.5 w-1.5 rounded-full', activeFilter === 'NONE' ? 'bg-white/85' : 'bg-zinc-300 dark:bg-zinc-600')} />
+            Unassigned
+            <span className={cn('tabular-nums', activeFilter === 'NONE' ? 'opacity-80' : 'opacity-60')}>{unassignedCount}</span>
+          </button>
+          {activeFilter !== 'ALL' && (
+            <button
+              type="button"
+              onClick={() => onFilterChange('ALL')}
+              className="ml-auto inline-flex items-center gap-0.5 font-mono text-[10px] text-zinc-500 underline-offset-2 transition-colors hover:text-zinc-800 hover:underline dark:hover:text-zinc-200"
+            >
+              <X className="h-3 w-3" /> clear
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Bulk-assign bar */}
+      <div
+        className={cn(
+          'flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-2 transition-colors',
+          selected.size > 0
+            ? 'border-blue-300 bg-blue-50/70 dark:border-blue-800/70 dark:bg-blue-950/30'
+            : 'border-zinc-200 bg-zinc-50/70 dark:border-zinc-800 dark:bg-zinc-900/40',
+        )}
+      >
+        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-500">
+          {selected.size > 0 ? (
+            <span className="font-semibold text-blue-700 dark:text-blue-300">{selected.size} selected</span>
+          ) : (
+            'Tick rows to bulk-assign'
+          )}
+        </span>
+        <span className="font-mono text-[10px] text-zinc-400">→ assign to</span>
+        <div className="flex flex-wrap items-center gap-1">
+          {SUB_TEAM_NAMES.map((name) => {
+            const palette = SUB_TEAM_PALETTE[name];
+            return (
+              <button
+                key={name}
+                type="button"
+                disabled={isLocked || selected.size === 0}
+                onClick={() => bulkAssign(name)}
+                title={`Assign ${selected.size} selected to ${name}`}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-all',
+                  selected.size > 0
+                    ? `${palette.headerBg} ${palette.headerText} shadow-sm hover:brightness-105`
+                    : 'bg-white text-zinc-400 ring-1 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-600 dark:ring-zinc-800',
+                  (isLocked || selected.size === 0) && 'cursor-not-allowed opacity-50',
+                )}
+              >
+                <span className={cn('h-1.5 w-1.5 rounded-full', selected.size > 0 ? 'bg-white/85' : palette.dotOn)} />
+                {name}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            disabled={isLocked || selected.size === 0}
+            onClick={() => bulkAssign('')}
+            title={`Clear sub-team for ${selected.size} selected`}
+            className={cn(
+              'rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider transition-colors',
+              'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:text-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800',
+              (isLocked || selected.size === 0) && 'cursor-not-allowed opacity-50',
+            )}
+          >
+            none
+          </button>
+        </div>
+        {selected.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setSelected(new Set())}
+            className="ml-auto font-mono text-[10px] text-zinc-500 underline-offset-2 hover:text-zinc-800 hover:underline dark:hover:text-zinc-200"
+          >
+            clear
           </button>
         )}
       </div>
 
-      {/* Bulk-assign bar — present only when there is something to assign. */}
-      <AnimatePresence initial={false}>
-        {selected.size > 0 && (
-          <motion.div
-            key="ssd-bulk"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{
-              height: { duration: 0.24, ease: COLLAPSE_EASE },
-              opacity: { duration: 0.16 },
-            }}
-            className="overflow-hidden border-b border-zinc-200 bg-blue-50/80 dark:border-zinc-800 dark:bg-blue-950/25"
-          >
-            <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-              <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-blue-800 dark:text-blue-300">
-                <span className="font-bold tabular-nums">{selected.size}</span> selected · assign to
-              </span>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button
-                  type="button"
-                  disabled={isLocked}
-                  onClick={() => bulkAssign('')}
-                  className={cn(chipBase, chipIdle, isLocked && 'cursor-not-allowed opacity-50')}
-                >
-                  Unassigned
-                </button>
-                {SSD_TEAMS.map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    style={teamVars(name)}
-                    disabled={isLocked}
-                    onClick={() => bulkAssign(name)}
-                    title={`Move ${selected.size} ${selected.size === 1 ? 'person' : 'people'} to ${name}`}
-                    className={cn(
-                      chipBase,
-                      'border-[color-mix(in_srgb,var(--team)_60%,transparent)] bg-white text-[var(--team-text)] hover:bg-[color-mix(in_srgb,var(--team)_12%,transparent)] dark:bg-zinc-950/60',
-                      isLocked && 'cursor-not-allowed opacity-50',
-                    )}
-                  >
-                    <span
-                      aria-hidden
-                      className="h-1.5 w-1.5 rounded-full"
-                      style={{ backgroundColor: 'var(--team)' }}
-                    />
-                    {name}
-                  </button>
-                ))}
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelected(new Set())}
-                className="ml-auto rounded font-mono text-[10px] text-zinc-600 underline-offset-2 outline-none transition-colors hover:text-zinc-900 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-zinc-400 dark:hover:text-zinc-200"
-              >
-                Clear
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <div className="min-h-0 flex-1 overflow-x-auto">
-        <table className="table-keep w-full min-w-[560px] text-xs">
+      <div className="min-h-0 flex-1 overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+        <table className="table-keep w-full min-w-[600px] text-xs">
           <thead>
-            <tr className="border-b border-zinc-200 bg-zinc-50/70 dark:border-zinc-800 dark:bg-zinc-900/40">
-              <th scope="col" className="w-9 px-2 py-2 text-center">
+            <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
+              <th className="w-9 px-2 py-2 text-center">
                 <input
                   ref={selectAllRef}
                   type="checkbox"
@@ -3096,29 +2824,23 @@ function SsdRoster({
                   checked={allPageSelected}
                   disabled={isLocked || pageEmails.length === 0}
                   onChange={toggleAllOnPage}
-                  aria-label="Select every person shown"
+                  aria-label="Select all on this page"
                 />
               </th>
-              <th scope="col" className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-                Employee
-              </th>
-              <th scope="col" className="w-[190px] px-2 py-2 text-left font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-                Sub-team
-              </th>
-              <th scope="col" className="w-[110px] px-3 py-2 text-right font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-                Share
-              </th>
+              <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Employee</th>
+              <th className="px-2 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Sub-Team</th>
+              <th className="px-3 py-2 text-right font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Share</th>
             </tr>
           </thead>
           <tbody>
             {entries.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-3 py-10 text-center font-mono text-[11px] text-zinc-500">
+                <td colSpan={4} className="px-3 py-6 text-center font-mono text-[10px] text-zinc-500">
                   {activeFilter === 'NONE'
-                    ? 'Everyone has a sub-team.'
+                    ? 'Everyone has a team — nothing unassigned.'
                     : activeFilter !== 'ALL'
-                      ? `No ${activeFilter} members on this page.`
-                      : 'No employees on this page.'}
+                    ? `No ${activeFilter} members on this page.`
+                    : 'No employees on this page.'}
                 </td>
               </tr>
             )}
@@ -3126,24 +2848,18 @@ function SsdRoster({
               const subTeam = String(e.kpi_data.sub_team ?? '') as SubTeamName | '';
               const memberCount = subTeam ? (memberCounts[subTeam] ?? 0) : 0;
               const share = subTeam ? ssdShareForTeam(subTeam, memberCount) : 0;
+              const palette = subTeam ? SUB_TEAM_PALETTE[subTeam] : null;
               const isSel = selected.has(e.employee_email);
-              const isExternal = !!rosterEmails && !rosterEmails.has(e.employee_email);
               return (
                 <tr
-                  // The filter is part of the key so rows remount and replay the
-                  // cascade every time the roster is re-sliced.
+                  // Key includes the active filter so rows remount — and replay the
+                  // staggered cascade — every time the filter changes.
                   key={`${activeFilter}-${e.employee_email}`}
-                  // `--team*` is set on the row, not the cells, so the picker and
-                  // the share figure below it read the same hue from one place.
-                  style={{
-                    animation: `ssd-row-in 0.28s cubic-bezier(0.2,0.7,0.3,1) ${Math.min(i * 26, 260)}ms both`,
-                    ...(subTeam ? teamVars(subTeam) : {}),
-                  }}
+                  style={{ animation: `pab-row-in 0.32s cubic-bezier(0.22,1,0.36,1) ${Math.min(i * 35, 300)}ms both` }}
                   className={cn(
-                    'ssd-roster-row border-b border-zinc-100 transition-colors duration-150 last:border-b-0 dark:border-zinc-800/60',
-                    isSel
-                      ? 'bg-blue-50/80 dark:bg-blue-950/30'
-                      : 'hover:bg-zinc-50 dark:hover:bg-zinc-900/50',
+                    'border-b border-zinc-100 transition-colors hover:bg-zinc-50/60 dark:border-zinc-800/60 dark:hover:bg-zinc-900/40',
+                    palette && palette.bodyBg,
+                    isSel && 'bg-blue-50/70 dark:bg-blue-950/30',
                   )}
                 >
                   <td className="px-2 py-2 text-center">
@@ -3158,51 +2874,39 @@ function SsdRoster({
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1.5">
-                      {!subTeam && (
-                        <span
-                          aria-hidden
-                          title="No sub-team — this person earns nothing until assigned"
-                          className="h-1.5 w-1.5 flex-none rounded-full bg-amber-500"
-                        />
-                      )}
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 font-medium text-zinc-900 dark:text-zinc-100">
                           <span className="truncate">{e.employee_name}</span>
-                          {isExternal && (
+                          {!!rosterEmails && !rosterEmails.has(e.employee_email) && (
                             <ExtChip email={e.employee_email} offboardedEmails={offboardedEmails} />
                           )}
                         </div>
-                        <div className="truncate font-mono text-[10px] text-zinc-500">
-                          {e.employee_email}
-                        </div>
+                        <div className="font-mono text-[10px] text-zinc-500">{e.employee_email}</div>
                       </div>
-                      {isExternal && onRemoveMember && !isLocked && (
+                      {!!rosterEmails && !rosterEmails.has(e.employee_email) && onRemoveMember && !isLocked && (
                         <button
                           type="button"
                           onClick={() => onRemoveMember(e.employee_email)}
                           title="Remove external member"
                           aria-label={`Remove ${e.employee_name}`}
-                          className="ml-auto shrink-0 rounded p-1 text-zinc-500 outline-none transition-colors hover:bg-red-50 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                          className="ml-auto shrink-0 rounded p-1 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400"
                         >
-                          <Trash2 className="h-3 w-3" aria-hidden />
+                          <Trash2 className="h-3 w-3" />
                         </button>
                       )}
                     </div>
                   </td>
                   <td className="px-2 py-2">
-                    <div className="flex">
-                      <SubTeamSelect
-                        value={subTeam}
-                        isLocked={isLocked}
-                        employeeName={e.employee_name}
-                        onChange={(v) => onSubTeamAssign(e.employee_email, v)}
-                      />
-                    </div>
+                    <SubTeamChips
+                      value={subTeam}
+                      isLocked={isLocked}
+                      onChange={(v) => onSubTeamAssign(e.employee_email, v)}
+                    />
                   </td>
                   <td
                     className={cn(
                       'px-3 py-2 text-right font-mono font-bold tabular-nums',
-                      subTeam ? 'text-[var(--team-text)]' : 'text-zinc-400 dark:text-zinc-600',
+                      palette ? palette.accent : 'text-zinc-300 dark:text-zinc-700',
                     )}
                   >
                     {subTeam ? <AnimatedPeso amount={share} /> : '—'}
@@ -3213,185 +2917,6 @@ function SsdRoster({
           </tbody>
         </table>
       </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 px-3 py-2 dark:border-zinc-800">
-        <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-zinc-500">
-          {entries.length} of {allEntries.length} shown
-        </span>
-        {pager}
-      </div>
-    </div>
-  );
-}
-
-// ── Workspace ─────────────────────────────────────────────────────────────────
-
-interface SsdWorkspaceProps {
-  subTeams: Record<SubTeamName, SubTeamState>;
-  isLocked: boolean;
-  onSubTeamChange: (subTeam: SubTeamName, field: 'pct' | 'records' | 'rfc', val: string) => void;
-  ssdShareForTeam: (subTeam: SubTeamName, memberCount: number) => number;
-  subTeamMemberCount: (subTeam: SubTeamName) => number;
-  /** Rows currently on screen (already searched, filtered and paged). */
-  entries: EntryRow[];
-  /** Every row in the department — counts and totals must not follow the page. */
-  allEntries: EntryRow[];
-  onSubTeamAssign: (email: string, subTeam: SubTeamName | '') => void;
-  /** Controlled roster filter. Omit to let the workspace own it (edit modal). */
-  activeFilter?: SubTeamFilter;
-  onFilterChange?: (f: SubTeamFilter) => void;
-  rosterEmails?: Set<string>;
-  offboardedEmails?: Set<string>;
-  onRemoveMember?: (email: string) => void;
-  pager?: React.ReactNode;
-}
-
-/** The whole SSD scoring surface: status strip, one team card, full-width
- *  roster. Owns which team is open; the roster filter is either controlled by
- *  the parent (so its search and paging can honour the same slice) or local. */
-export function SsdWorkspace({
-  subTeams, isLocked, onSubTeamChange, ssdShareForTeam, subTeamMemberCount,
-  entries, allEntries, onSubTeamAssign, activeFilter, onFilterChange,
-  rosterEmails, offboardedEmails, onRemoveMember, pager,
-}: SsdWorkspaceProps) {
-  const [activeTeam, setActiveTeam] = useState<SubTeamName>('BLUE');
-  const [ownFilter, setOwnFilter] = useState<SubTeamFilter>('ALL');
-  const filter = activeFilter ?? ownFilter;
-  const setFilter = onFilterChange ?? setOwnFilter;
-
-  const splitRule = HSL_DEPTS.ssd_medical_records.rules.find(
-    (r): r is TeamSplitRule => r.type === 'team_split',
-  );
-  const poolRule = HSL_DEPTS.ssd_medical_records.rules.find(
-    (r): r is TeamPoolRule => r.type === 'team_pool',
-  );
-
-  // A team whose inputs are blank but whose members carry a non-zero saved share
-  // was scored in an earlier session — see `ssdTeamStatus`.
-  const statuses = useMemo(() => {
-    const savedByTeam: Record<string, boolean> = {};
-    for (const e of allEntries) {
-      const st = String(e.kpi_data.sub_team ?? '');
-      if (st && e.calculated_bonus !== 0) savedByTeam[st] = true;
-    }
-    return Object.fromEntries(
-      SSD_TEAMS.map((t) => [t, ssdTeamStatus(subTeams[t], !!savedByTeam[t])]),
-    ) as Record<SubTeamName, SsdTeamStatus>;
-  }, [subTeams, allEntries]);
-
-  const unassignedCount = useMemo(
-    () => allEntries.filter((e) => !String(e.kpi_data.sub_team ?? '')).length,
-    [allEntries],
-  );
-
-  const blanks = SSD_TEAMS.filter((t) => statuses[t] === 'empty');
-  const partials = SSD_TEAMS.filter((t) => statuses[t] === 'partial');
-  const members = subTeamMemberCount(activeTeam);
-
-  return (
-    <div className="flex min-w-0 flex-col gap-4">
-      <SsdTeamTabs
-        statuses={statuses}
-        memberCount={subTeamMemberCount}
-        activeTeam={activeTeam}
-        onSelect={setActiveTeam}
-        unassignedCount={unassignedCount}
-        onShowUnassigned={() => setFilter('NONE')}
-      />
-
-      <div className="grid min-w-0 items-stretch gap-4 lg:grid-cols-[minmax(0,620px)_minmax(230px,1fr)]">
-        {/* Keyed by team so the card remounts and replays its entrance — two
-            teams can score identically and the switch still reads. */}
-        <SsdTeamCard
-          key={activeTeam}
-          name={activeTeam}
-          state={subTeams[activeTeam]}
-          status={statuses[activeTeam]}
-          members={members}
-          share={ssdShareForTeam(activeTeam, members || 1)}
-          splitRule={splitRule}
-          poolRule={poolRule}
-          isLocked={isLocked}
-          onChange={(field, val) => onSubTeamChange(activeTeam, field, val)}
-        />
-
-        {/* The rules, stated once, read off the live schema. The handoff left
-            these as invented placeholders and asked for the real ones. */}
-        <aside className="flex min-w-0 flex-col gap-2.5 rounded-xl border border-zinc-200 bg-zinc-50/60 px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/30">
-          <h4 className="font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-            How a share is built
-          </h4>
-          <div>
-            <p className="font-mono text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">
-              {splitRule?.label ?? 'Team Accuracy Bonus'}
-            </p>
-            <ul className="mt-1 space-y-0.5">
-              {(splitRule?.thresholds ?? []).map((t) => (
-                <li
-                  key={t.minPct}
-                  className="flex justify-between gap-2 font-mono text-[10px] text-zinc-600 dark:text-zinc-400"
-                >
-                  <span>
-                    {t.minPct}%{t.maxPct === null ? '+' : `–${t.maxPct}%`}
-                  </span>
-                  <span className="tabular-nums">
-                    {t.ratePerRecord === 0 ? 'no bonus' : `${formatPeso(t.ratePerRecord)}/record`}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            <p className="mt-1 font-mono text-[10px] text-zinc-500">records × rate ÷ headcount</p>
-          </div>
-          <div className="border-t border-zinc-200 pt-2.5 dark:border-zinc-800">
-            <p className="font-mono text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">
-              {poolRule?.label ?? 'RFC'} pool
-            </p>
-            <p className="mt-1 font-mono text-[10px] leading-relaxed text-zinc-600 dark:text-zinc-400">
-              {formatPeso(poolRule?.ratePerRecord ?? 0)} per RFC, pooled and split evenly. No
-              accuracy tiering — it stacks on top of the bonus above.
-            </p>
-          </div>
-
-          {/* Why the run is not finished, stated plainly rather than left for the
-              operator to infer from six tab glyphs. */}
-          <div className="mt-auto border-t border-zinc-200 pt-2.5 dark:border-zinc-800">
-            {blanks.length === 0 && partials.length === 0 && unassignedCount === 0 ? (
-              <p className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-emerald-700 dark:text-emerald-400">
-                <CheckCircle2 className="h-3 w-3 flex-none" aria-hidden /> All teams scored ·
-                everyone assigned
-              </p>
-            ) : (
-              <p className="inline-flex items-start gap-1.5 font-mono text-[10px] uppercase leading-relaxed tracking-[0.1em] text-amber-700 dark:text-amber-400">
-                <AlertTriangle className="mt-px h-3 w-3 flex-none" aria-hidden />
-                <span>
-                  {[
-                    blanks.length > 0 &&
-                      `${blanks.length} ${blanks.length === 1 ? 'team' : 'teams'} not started`,
-                    partials.length > 0 && `${partials.length} incomplete`,
-                    unassignedCount > 0 && `${unassignedCount} unassigned`,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </span>
-              </p>
-            )}
-          </div>
-        </aside>
-      </div>
-
-      <SsdRoster
-        entries={entries}
-        allEntries={allEntries}
-        isLocked={isLocked}
-        ssdShareForTeam={ssdShareForTeam}
-        onSubTeamAssign={onSubTeamAssign}
-        activeFilter={filter}
-        onFilterChange={setFilter}
-        rosterEmails={rosterEmails}
-        offboardedEmails={offboardedEmails}
-        onRemoveMember={onRemoveMember}
-        pager={pager}
-      />
     </div>
   );
 }
