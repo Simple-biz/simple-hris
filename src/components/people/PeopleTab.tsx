@@ -21,6 +21,7 @@ import EmployeePabCalendar from '@/components/employee/EmployeePabCalendar';
 import PabCalendarLoader from '@/components/employee/PabCalendarLoader';
 import { DatePicker, DateRangePicker, type DateRange } from '@/components/ui/date-picker';
 import PeopleBankChanges from './PeopleBankChanges';
+import PeopleOffboarded, { ActiveHolderWarning, type OffboardedPayPerson } from './PeopleOffboarded';
 import type { RailMix } from '@/lib/people/rail-mix';
 import { BankChangeDetailDialog, timeAgo, type BankChangeEntry } from './bank-change-detail';
 import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
@@ -543,7 +544,9 @@ export default function PeopleTab({
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<RosterRow | null>(null);
   // The person a one-off payment is being filed for (Pay dialog open when set).
-  const [payTarget, setPayTarget] = useState<RosterRow | null>(null);
+  // Minimal shape on purpose: roster rows satisfy it structurally, and the
+  // Offboarded tab files people who have no roster row at all.
+  const [payTarget, setPayTarget] = useState<OffboardedPayPerson | null>(null);
   const [showExcluded, setShowExcluded] = useState(false);
   const [showNoBanking, setShowNoBanking] = useState(false);
   const [deptFilter, setDeptFilter] = useState<string>('all');
@@ -564,7 +567,7 @@ export default function PeopleTab({
   const rangeMode = range != null;
   // Top-level mode: the roster, the weekly Statistics graph, or the live
   // Bank-changes feed (self-service payout edits via the external link).
-  const [mode, setMode] = useState<'roster' | 'stats' | 'changes'>('roster');
+  const [mode, setMode] = useState<'roster' | 'stats' | 'changes' | 'offboarded'>('roster');
   const [statsSeries, setStatsSeries] = useState<StatsSeries | null>(null);
   const [statsLeaders, setStatsLeaders] = useState<StatsLeader[] | null>(null);
   const [statsDepts, setStatsDepts] = useState<StatsDept[] | null>(null);
@@ -884,9 +887,9 @@ export default function PeopleTab({
             </Button>
           </div>
         </div>
-        {/* Top-level tabs: Roster · Statistics · live Bank-changes feed. */}
+        {/* Top-level tabs: Roster · Statistics · live Bank-changes feed · Offboarded search. */}
         <div role="tablist" className="mt-3 flex gap-1 border-b border-zinc-200 dark:border-zinc-800">
-          {([['roster', 'Roster'], ['stats', 'Statistics'], ['changes', 'Bank changes']] as const).map(([id, label]) => (
+          {([['roster', 'Roster'], ['stats', 'Statistics'], ['changes', 'Bank changes'], ['offboarded', 'Offboarded']] as const).map(([id, label]) => (
             <button
               key={id}
               type="button"
@@ -982,6 +985,13 @@ export default function PeopleTab({
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
         {mode === 'stats' ? (
           <PeopleStatsChart series={statsSeries} leaders={statsLeaders} depts={statsDepts} periods={periods} loading={statsLoading} error={statsError} accent={accent} />
+        ) : mode === 'offboarded' ? (
+          <PeopleOffboarded
+            accent={accent}
+            canPay={canPay}
+            canEdit={canEdit}
+            onPay={setPayTarget}
+          />
         ) : mode === 'changes' ? (
           <PeopleBankChanges
             accent={accent}
@@ -2768,17 +2778,18 @@ function snoozeEditWarning(): void {
 }
 
 /**
- * One-off payment dialog (People tab "Pay" action). The user enters a PHP amount
- * (and optional note); on submit it files a PENDING urgent_payment_requests row
- * via POST /api/people/pay, which surfaces in Payment Dispatch → Urgent →
- * One-off Payments for a clerk to actually send. No money moves here.
+ * One-off payment dialog (People tab "Pay" action — roster AND Offboarded tab).
+ * The user enters a PHP amount (and optional note); on submit it files a
+ * PENDING urgent_payment_requests row via POST /api/people/pay, which surfaces
+ * in Payment Dispatch under the person's processor bucket (unrouted people
+ * under "All pending") for a clerk to actually send. No money moves here.
  */
 function PayDialog({
   row,
   accent,
   onClose,
 }: {
-  row: RosterRow;
+  row: OffboardedPayPerson;
   accent: Accent;
   onClose: () => void;
 }) {
@@ -2812,7 +2823,7 @@ function PayDialog({
       });
       const json = (await res.json()) as { success?: boolean; error?: string };
       if (!res.ok || !json.success) throw new Error(json.error || `Request failed (${res.status})`);
-      toast.success('Payment request sent to Urgent dispatch.');
+      toast.success('Payment request filed — it appears in Payment Dispatch for a clerk to send.');
       onClose();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not send the payment request.');
@@ -2829,12 +2840,13 @@ function PayDialog({
             <Banknote className="h-4 w-4 text-amber-500" /> Send a payment
           </DialogTitle>
           <DialogDescription>
-            Files an <span className="font-medium text-amber-600 dark:text-amber-400">Urgent</span> one-off
-            payment to {row.name ?? 'this person'}. It appears in Payment Dispatch → Urgent for a clerk to send.
+            Files a one-off payment to {row.name ?? 'this person'}. It appears in Payment
+            Dispatch under their payout processor for a clerk to send.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-1">
+          {row.activeHolder && <ActiveHolderWarning holder={row.activeHolder} />}
           {/* Recipient */}
           <div className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50/60 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
             <TeamAvatar name={row.name ?? ''} email={row.work_email} />

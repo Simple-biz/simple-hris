@@ -13,7 +13,6 @@ import {
   RotateCcw,
   Send,
   Trash2,
-  Wallet,
   Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -53,26 +52,15 @@ export interface UrgentPaymentRow {
   details: QueueRow['details'];
 }
 
-/** A one-off payment filed from the People tab "Pay" action. */
-export interface UrgentOneOffRow {
-  id: string;
-  work_email: string;
-  full_name: string;
-  department: string | null;
-  amount_php: number | null;
-  /** USD equivalent of `amount_php`, converted server-side at the active FX rate. */
-  amount_usd: number | null;
-  note: string | null;
-  requested_by: string | null;
-  requested_at: string;
-  /** Recipient's saved preferred processor (defaults to 'wise'). */
-  processor: ProcessorId;
-  /** Per-processor payout detail so Mark Paid pre-fills for the chosen processor. */
-  details: QueueRow['details'];
-}
+// One-off payments (People tab "Pay") moved OUT of this queue on 2026-09-01 —
+// their pending cards and this week's dispatched rows render inside the
+// PROCESSOR buckets via OneOffPaymentsSection.tsx, keyed on the feed's
+// `is_one_off` flag. This queue keeps MESA disbursements + orphanage budget
+// requests only, and filters one-off rows out of its log views so a payment
+// never shows in two places.
 
 interface Props {
-  /** Called whenever the count of pending urgent items changes (MESA + one-off + budget). */
+  /** Called whenever the count of pending urgent items changes (MESA + budget). */
   onCountChange?: (n: number) => void;
   /**
    * Called whenever the count of urgent payouts ALREADY dispatched this Sun→Sat
@@ -85,9 +73,9 @@ interface Props {
 
 /**
  * Sub-views of the Urgent bucket. 'pending' is the live payable queue (MESA +
- * one-off + orphanage budget requests); the rest are this week's dispatch-log
- * views, one per recorded outcome — the same rail every processor bucket has,
- * so a paid urgent stays inspectable here instead of only in weekly Reports.
+ * orphanage budget requests); the rest are this week's dispatch-log views, one
+ * per recorded outcome — the same rail every processor bucket has, so a paid
+ * urgent stays inspectable here instead of only in weekly Reports.
  */
 type UrgentView = 'pending' | PaymentDispatchStatus;
 
@@ -163,15 +151,12 @@ function formatDateOnly(iso: string | null | undefined): string | null {
 }
 
 /**
- * A queue item the clerk asked to remove, held while the confirm dialog is open.
- * `kind` picks the endpoint AND the wording, because the two sources are removed
- * by different sanctioned paths: a MESA disbursement request is deleted outright
- * (MESA's own DELETE, which refuses anything already paid), while a one-off
- * payment is cancelled — its table carries a 'cancelled' status so the money
- * request keeps its paper trail. Both leave the Urgent bucket.
+ * A MESA disbursement the clerk asked to remove, held while the confirm dialog
+ * is open. Removal is MESA's own DELETE, which refuses anything already paid.
+ * (One-off payments moved to the processor buckets — their cancel flow lives in
+ * OneOffPaymentsSection.tsx.)
  */
 type RemoveTarget = {
-  kind: 'mesa' | 'oneoff';
   id: string;
   name: string;
   amountPhp: number | null;
@@ -229,45 +214,11 @@ function toQueueRow(r: UrgentPaymentRow, processor: ProcessorId): QueueRow {
   };
 }
 
-// Build a QueueRow compatible with MarkPaidDialog from a one-off payment request.
-function toQueueRowOneOff(r: UrgentOneOffRow, processor: ProcessorId): QueueRow {
-  return {
-    id: r.id,
-    processor,
-    name: r.full_name,
-    email: r.work_email,
-    // Filed in PHP; USD equivalent supplied by the feed (see toQueueRow).
-    amountUSD: r.amount_usd,
-    amountPHP: r.amount_php,
-    amountCOP: null,
-    payCurrency: 'PHP',
-    initialPayUSD: r.amount_usd,
-    initialPayPHP: r.amount_php,
-    // Same as toQueueRow: a one-off is not a payroll row (see above).
-    pabBonusPHP: 0,
-    techBonusPHP: 0,
-    otherBonusesPHP: 0,
-    adjustmentPHP: 0,
-    bonusTotalPHP: 0,
-    orphanagePayPHP: 0,
-    mesaDeductionPHP: 0,
-    mesaDisbursementPHP: 0,
-    totalHours: null,
-    otHours: null,
-    bankPreferredRaw: PROCESSOR_LABEL[processor] ?? null,
-    // One-off payments aren't tied to a payroll department.
-    departmentKey: null,
-    departmentName: null,
-    details: r.details ?? { email: r.work_email },
-  };
-}
-
 export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountChange }: Props) {
   const { data: session } = useSession();
   const userEmail = session?.user?.email ?? null;
 
   const [rows, setRows] = useState<UrgentPaymentRow[]>([]);
-  const [oneOffRows, setOneOffRows] = useState<UrgentOneOffRow[]>([]);
   const [budgetItems, setBudgetItems] = useState<OrphanagePendingItem[]>([]);
   // Which sub-view is showing: the live pending queue or one of this week's
   // dispatch-log views (paid / not paid / threshold / problem).
@@ -279,13 +230,10 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [markRow, setMarkRow] = useState<UrgentPaymentRow | null>(null);
-  const [markOneOff, setMarkOneOff] = useState<UrgentOneOffRow | null>(null);
   const [markBudget, setMarkBudget] = useState<OrphanagePendingItem | null>(null);
   // Per-row processor override the clerk picks on each MESA card. Defaults to
   // the recipient's preferred processor returned by the API.
   const [processorByRow, setProcessorByRow] = useState<Record<string, ProcessorId>>({});
-  // Same, but for one-off payment cards.
-  const [oneOffProcessorByRow, setOneOffProcessorByRow] = useState<Record<string, ProcessorId>>({});
   // Top filter rail — narrow the MESA queue to one processor.
   const [filter, setFilter] = useState<ProcessorId | 'all'>('all');
   // Pending removal awaiting confirmation (null = dialog closed).
@@ -298,9 +246,8 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true); else setRefreshing(true);
     try {
-      const [mesaRes, oneOffRes, orphRes, dispatchedRes] = await Promise.all([
+      const [mesaRes, orphRes, dispatchedRes] = await Promise.all([
         fetch('/api/urgent-payments', { cache: 'no-store' }),
-        fetch('/api/urgent-payments/requests', { cache: 'no-store' }),
         fetch('/api/orphanage-dispatches?pending=1', { cache: 'no-store' }),
         fetch('/api/urgent-payments/dispatches', { cache: 'no-store' }),
       ]);
@@ -309,17 +256,6 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
       if (mesaJson.error) throw new Error(mesaJson.error);
       const mesa = mesaJson.rows ?? [];
       setRows(mesa);
-
-      // One-off payments (People tab "Pay") — best-effort: a failure here must
-      // not break the MESA queue.
-      let oneOff: UrgentOneOffRow[] = [];
-      try {
-        const oneOffJson = (await oneOffRes.json()) as { rows?: UrgentOneOffRow[]; error?: string };
-        if (oneOffRes.ok && !oneOffJson.error) oneOff = oneOffJson.rows ?? [];
-      } catch {
-        /* ignore — one-off section silently omitted */
-      }
-      setOneOffRows(oneOff);
 
       // Orphanage budget requests — best-effort: a failure here must not break
       // the MESA queue. Gift purchases are NOT urgent, so we filter to budgets.
@@ -333,19 +269,21 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
         /* ignore — budget section silently omitted */
       }
       setBudgetItems(budget);
-      onCountChange?.(mesa.length + oneOff.length + budget.length);
+      onCountChange?.(mesa.length + budget.length);
 
       // This week's dispatch log — best-effort: a failure here must not break
       // the pending queue. On failure we keep the previous rows rather than
-      // blanking the Paid/Not paid views.
+      // blanking the Paid/Not paid views. One-off rows (`is_one_off`) belong to
+      // the processor buckets now (OneOffPaymentsSection) and are filtered out
+      // so a dispatched one-off never shows in two places.
       try {
         const dispatchedJson = (await dispatchedRes.json()) as {
-          rows?: PaymentDispatchRow[];
+          rows?: (PaymentDispatchRow & { is_one_off?: boolean })[];
           week?: { start: string; end: string } | null;
           error?: string;
         };
         if (dispatchedRes.ok && !dispatchedJson.error) {
-          const dispatched = dispatchedJson.rows ?? [];
+          const dispatched = (dispatchedJson.rows ?? []).filter((r) => r.is_one_off !== true);
           setDispatchedRows(dispatched);
           setWeekRange(dispatchedJson.week ?? null);
           onDispatchedCountChange?.(dispatched.length);
@@ -376,16 +314,6 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
 
   const setProcessorFor = useCallback((rowId: string, processor: ProcessorId) => {
     setProcessorByRow((prev) => ({ ...prev, [rowId]: processor }));
-  }, []);
-
-  // Same resolution for one-off payment rows.
-  const processorForOneOff = useCallback(
-    (r: UrgentOneOffRow): ProcessorId | null => oneOffProcessorByRow[r.id] ?? r.processor ?? null,
-    [oneOffProcessorByRow],
-  );
-
-  const setOneOffProcessorFor = useCallback((rowId: string, processor: ProcessorId) => {
-    setOneOffProcessorByRow((prev) => ({ ...prev, [rowId]: processor }));
   }, []);
 
   // Count MESA rows per processor (using the chosen processor) for the filter rail.
@@ -428,7 +356,7 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
     // Optimistically remove from list
     const nextRows = rows.filter((r) => r.id !== payload.rowId);
     setRows(nextRows);
-    onCountChange?.(nextRows.length + oneOffRows.length + budgetItems.length);
+    onCountChange?.(nextRows.length + budgetItems.length);
     setMarkRow(null);
 
     try {
@@ -463,59 +391,7 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
       // we'd duplicate it and desync the badge from the visible cards.
       setRows((prev) => {
         const next = prev.some((r) => r.id === target.id) ? prev : [target, ...prev];
-        onCountChange?.(next.length + oneOffRows.length + budgetItems.length);
-        return next;
-      });
-      toast.error(e instanceof Error ? e.message : 'Dispatch failed');
-    }
-  };
-
-  const handleConfirmOneOff = async (payload: MarkPaidPayload) => {
-    const target = oneOffRows.find((r) => r.id === payload.rowId);
-    if (!target) return;
-    const processor = processorForOneOff(target);
-    if (!processor) {
-      toast.error(`${target.full_name} has no payment rail on file — pick one before sending.`);
-      return;
-    }
-
-    // Optimistically remove from list
-    const nextRows = oneOffRows.filter((r) => r.id !== payload.rowId);
-    setOneOffRows(nextRows);
-    onCountChange?.(rows.length + nextRows.length + budgetItems.length);
-    setMarkOneOff(null);
-
-    try {
-      const res = await fetch(`/api/urgent-payments/requests/${payload.rowId}/dispatch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          recipient_email: target.work_email,
-          recipient_name: target.full_name,
-          amount_php: target.amount_php,
-          processor,
-          transaction_id: payload.transactionId,
-          bank_used: payload.bankUsed,
-          sent_date: payload.sentDate,
-          arrival_date: payload.arrivalDate || null,
-          recipient_preferred_bank: payload.recipientPreferredBank || null,
-          recipient_account_number: payload.recipientAccountNumber || null,
-          recipient_account_holder: payload.recipientAccountHolder || null,
-          recipient_swift_code: payload.recipientSwiftCode || null,
-          status: payload.status,
-          note: payload.note || null,
-        }),
-      });
-      const json = (await res.json()) as { error?: string };
-      if (!res.ok || json.error) throw new Error(json.error ?? 'Dispatch failed');
-      toast.success(`${target.full_name} — payment sent via ${PROCESSOR_LABEL[processor]}`);
-      void load(true);
-    } catch (e) {
-      // Rollback optimistic removal. Recompute from the ACTUAL restored list and
-      // skip re-adding if a concurrent refresh already restored this row.
-      setOneOffRows((prev) => {
-        const next = prev.some((r) => r.id === target.id) ? prev : [target, ...prev];
-        onCountChange?.(rows.length + next.length + budgetItems.length);
+        onCountChange?.(next.length + budgetItems.length);
         return next;
       });
       toast.error(e instanceof Error ? e.message : 'Dispatch failed');
@@ -533,27 +409,15 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
     const target = removeTarget;
     setRemoving(true);
     try {
-      const url =
-        target.kind === 'mesa'
-          ? `/api/mesa-requests/${encodeURIComponent(target.id)}`
-          : `/api/urgent-payments/requests/${encodeURIComponent(target.id)}`;
-      const res = await fetch(url, { method: 'DELETE' });
+      const res = await fetch(`/api/mesa-requests/${encodeURIComponent(target.id)}`, { method: 'DELETE' });
       const json = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Could not remove this payment');
 
-      if (target.kind === 'mesa') {
-        setRows((prev) => {
-          const next = prev.filter((r) => r.id !== target.id);
-          onCountChange?.(next.length + oneOffRows.length + budgetItems.length);
-          return next;
-        });
-      } else {
-        setOneOffRows((prev) => {
-          const next = prev.filter((r) => r.id !== target.id);
-          onCountChange?.(rows.length + next.length + budgetItems.length);
-          return next;
-        });
-      }
+      setRows((prev) => {
+        const next = prev.filter((r) => r.id !== target.id);
+        onCountChange?.(next.length + budgetItems.length);
+        return next;
+      });
       setRemoveTarget(null);
       toast.success(`Removed — ${target.name} will not be paid from this queue.`);
     } catch (e) {
@@ -631,11 +495,11 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
     setMarkBudget(null);
     const nextBudget = budgetItems.filter((i) => i.sourceId !== item.sourceId);
     setBudgetItems(nextBudget);
-    onCountChange?.(rows.length + oneOffRows.length + nextBudget.length);
+    onCountChange?.(rows.length + nextBudget.length);
   };
 
-  const hasAny = rows.length > 0 || oneOffRows.length > 0 || budgetItems.length > 0;
-  const pendingCount = rows.length + oneOffRows.length + budgetItems.length;
+  const hasAny = rows.length > 0 || budgetItems.length > 0;
+  const pendingCount = rows.length + budgetItems.length;
 
   // Per-outcome counts for the view rail, from this week's dispatch log.
   const statusCounts = useMemo(() => {
@@ -670,11 +534,6 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
     const p = processorFor(markRow);
     return p ? toQueueRow(markRow, p) : null;
   }, [markRow, processorFor]);
-  const markOneOffQueue = useMemo(() => {
-    if (!markOneOff) return null;
-    const p = processorForOneOff(markOneOff);
-    return p ? toQueueRowOneOff(markOneOff, p) : null;
-  }, [markOneOff, processorForOneOff]);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-gradient-to-br from-white via-amber-50/30 to-orange-50/20 p-4 sm:p-6 dark:bg-none dark:bg-[#0d1117]">
@@ -694,8 +553,9 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
                 Urgent Payments
               </h2>
               <p className="mt-1 max-w-xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-                MESA disbursements, one-off payments, and approved orphanage budget requests awaiting
-                immediate payout. These bypass the weekly payroll cycle and reconcile in the weekly report.
+                MESA disbursements and approved orphanage budget requests awaiting immediate payout.
+                These bypass the weekly payroll cycle and reconcile in the weekly report. One-off
+                payments from the People tab live in their recipient&apos;s processor bucket.
                 Payouts already dispatched stay under Paid / Not paid until the week rolls over.
               </p>
             </div>
@@ -788,7 +648,7 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
             <div>
               <p className="font-semibold text-zinc-900 dark:text-white">All clear</p>
               <p className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">
-                No MESA disbursements, one-off payments, or orphanage budget requests pending dispatch.
+                No MESA disbursements or orphanage budget requests pending dispatch.
               </p>
             </div>
           </div>
@@ -833,7 +693,6 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
                         onSend={() => setMarkRow(r)}
                         onRemove={() =>
                           setRemoveTarget({
-                            kind: 'mesa',
                             id: r.id,
                             name: r.full_name,
                             amountPhp: r.amount_needed,
@@ -843,32 +702,6 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
                     ))}
                   </div>
                 )}
-              </section>
-            )}
-
-            {/* ── One-off payments (People tab "Pay") ── */}
-            {oneOffRows.length > 0 && (
-              <section className="space-y-3">
-                <SectionHeader Icon={Wallet} title="One-off Payments" count={oneOffRows.length} />
-                <div className="space-y-3">
-                  {oneOffRows.map((r) => (
-                    <OneOffCard
-                      key={r.id}
-                      row={r}
-                      processor={processorForOneOff(r)}
-                      onProcessorChange={(p) => setOneOffProcessorFor(r.id, p)}
-                      onSend={() => setMarkOneOff(r)}
-                      onRemove={() =>
-                        setRemoveTarget({
-                          kind: 'oneoff',
-                          id: r.id,
-                          name: r.full_name,
-                          amountPhp: r.amount_php,
-                        })
-                      }
-                    />
-                  ))}
-                </div>
               </section>
             )}
 
@@ -892,11 +725,6 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
         onClose={() => setMarkRow(null)}
         onConfirm={handleConfirm}
       />
-      <MarkPaidDialog
-        row={markOneOffQueue}
-        onClose={() => setMarkOneOff(null)}
-        onConfirm={handleConfirmOneOff}
-      />
       <OrphanageMarkPaidDialog
         item={markBudget}
         onClose={() => setMarkBudget(null)}
@@ -913,7 +741,7 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
             <span className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400">
               <Trash2 className="h-4 w-4" />
             </span>
-            {removeTarget?.kind === 'mesa' ? 'Delete disbursement?' : 'Delete payment?'}
+            Delete disbursement?
           </DialogTitle>
           <DialogDescription className="text-[13px] leading-relaxed">
             {removeTarget && (
@@ -929,9 +757,8 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
                     </span>
                   </>
                 )}
-                {removeTarget.kind === 'mesa'
-                  ? '. This removes the approved MESA disbursement request entirely — nothing is paid, and it will not come back to this queue.'
-                  : '. This cancels the one-off payment request — nothing is paid, and it leaves this queue for good.'}
+                . This removes the approved MESA disbursement request entirely — nothing is paid,
+                and it will not come back to this queue.
               </>
             )}
           </DialogDescription>
@@ -1205,83 +1032,6 @@ function UrgentCard({
             Send
           </Button>
           <RemoveButton onClick={onRemove} title="Delete this disbursement" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function OneOffCard({
-  row,
-  processor,
-  onProcessorChange,
-  onSend,
-  onRemove,
-}: {
-  row: UrgentOneOffRow;
-  /** Null when the recipient has no rail on file — see UrgentCard. */
-  processor: ProcessorId | null;
-  onProcessorChange: (p: ProcessorId) => void;
-  onSend: () => void;
-  onRemove: () => void;
-}) {
-  const requestedDate = new Date(row.requested_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
-  return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-amber-200/70 bg-white p-4 shadow-sm transition-shadow hover:shadow-md sm:flex-row sm:items-center sm:gap-4 dark:border-amber-800/30 dark:bg-zinc-900/60">
-      {/* Icon */}
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600 ring-1 ring-amber-100 dark:bg-amber-950/30 dark:text-amber-300 dark:ring-amber-900/40">
-        <Wallet className="h-5 w-5" />
-      </div>
-
-      {/* Info */}
-      <div className="min-w-0 flex-1 space-y-0.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold text-zinc-900 dark:text-zinc-100">{row.full_name}</span>
-          {row.department && <span className="text-xs text-zinc-400 dark:text-zinc-500" title={row.department}>{formatDeptLabel(row.department)}</span>}
-        </div>
-        <div className="font-mono text-[11px] text-zinc-500 dark:text-zinc-500">{row.work_email}</div>
-        {row.note && (
-          <p className="line-clamp-1 pt-1 text-[11px] text-zinc-500 dark:text-zinc-400">{row.note}</p>
-        )}
-        <div className="flex flex-wrap gap-3 pt-1">
-          <span className="flex items-center gap-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-            <Clock className="h-3 w-3" />
-            Requested {requestedDate}
-            {row.requested_by && <span className="text-zinc-400 dark:text-zinc-500">by {row.requested_by.split('@')[0]}</span>}
-          </span>
-        </div>
-      </div>
-
-      {/* Amount + processor + action */}
-      <div className="flex items-center gap-3 sm:flex-col sm:items-end sm:gap-2">
-        <AmountBlock php={row.amount_php} usd={row.amount_usd} />
-        <div className="flex items-center gap-2">
-          <label className="sr-only" htmlFor={`oneoff-proc-${row.id}`}>Payment processor</label>
-          <select
-            id={`oneoff-proc-${row.id}`}
-            value={processor ?? ''}
-            onChange={(e) => onProcessorChange(e.target.value as ProcessorId)}
-            className="h-8 rounded-md border border-amber-200 bg-amber-50/60 px-2 text-[12px] font-medium text-amber-800 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-200 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-200"
-            title="Choose which processor to pay through"
-          >
-            {!processor && <option value="" disabled>No rail on file — choose one</option>}
-            {DISPATCH_PROCESSORS.map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
-          <Button
-            type="button"
-            size="sm"
-            onClick={onSend}
-            disabled={!processor}
-            title={processor ? undefined : 'Choose a payment rail first — this recipient has none on file.'}
-            className="gap-1.5 bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 dark:bg-amber-600 dark:hover:bg-amber-500"
-          >
-            <Send className="h-3.5 w-3.5" />
-            Send
-          </Button>
-          <RemoveButton onClick={onRemove} title="Delete this payment" />
         </div>
       </div>
     </div>

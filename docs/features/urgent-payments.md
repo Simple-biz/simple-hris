@@ -1,6 +1,14 @@
 # Urgent Payments
 
 > **Status:** Implemented 2026-06-04. Extends the MESA scaffolding (queue + dispatch route) that pre-existed; adds per-recipient processor selection, the URGENT card in the accounting Payment Dispatch rail, weekly-bucket reports, and orphanage **budget requests** as a second urgent source.
+>
+> **2026-09-01 — One-off payments moved OUT of the Urgent tab.** Their pending cards
+> and this week's dispatched rows now render inside the recipient's **processor
+> bucket** (`OneOffPaymentsSection.tsx`, split on the dispatches feed's `is_one_off`
+> flag). The Urgent tab keeps MESA + orphanage budgets. Everything below about the
+> one-off DATA FLOW (the `urgent_payment_requests` table, the dispatch route, the
+> `urgent_` marker, undo, the weekly reports) is unchanged — only the card placement
+> moved. See `people-offboarded-pay.md` for the rules that must not regress.
 
 Urgent payments are non-weekly payouts that must be sent **immediately upon approval** and bypass the regular weekly Payroll Wizard cycle, then reconcile into a weekly report. Per the Carla/Kentshin meeting (`docs/meetings/meeting-with-carla-and-kentshin2.md` §4.1), urgent payments cover **MESA account disbursements** (e.g. medical emergencies) **and orphanage budget requests**.
 
@@ -71,10 +79,11 @@ On mount it fetches both sources in parallel and renders two sections. `onCountC
 
 `OrphanageMarkPaidDialog` was extracted from `OrphanageQueue.tsx` into its own file (`src/components/payroll-clerk/OrphanageMarkPaidDialog.tsx`) so the Orphanage tab and the Urgent queue share one implementation.
 
-### Section 3 — One-off Payments
+### Section 3 — One-off Payments *(moved to the processor buckets, 2026-09-01)*
 
-- **Source:** `GET /api/urgent-payments/requests` — `pending` `urgent_payment_requests`, filed by the People tab's "Pay" action. Enriched with the same preferred-processor + `details` pre-fill as MESA.
-- **Send →** the shared `MarkPaidDialog` → `POST /api/urgent-payments/requests/[id]/dispatch`.
+- **Source:** `GET /api/urgent-payments/requests` — `pending` `urgent_payment_requests`, filed by the People tab's "Pay" action (roster AND the Offboarded search tab). Enriched with the same preferred-processor + `details` pre-fill as MESA.
+- **Where:** no longer this queue — the cards render inside the recipient's processor bucket (`OneOffPaymentsSection.tsx`, mounted by `ProcessorQueue.renderExtras`); unrouted recipients under "All pending" flagged "No bank".
+- **Send →** the shared `MarkPaidDialog` → `POST /api/urgent-payments/requests/[id]/dispatch` (unchanged).
 
 ### Amounts on the cards
 

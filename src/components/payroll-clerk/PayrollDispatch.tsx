@@ -40,6 +40,7 @@ import ExcludedQueue from './ExcludedQueue';
 import DoneQueue from './DoneQueue';
 import OrphanageQueue from './OrphanageQueue';
 import UrgentPaymentsQueue from './UrgentPaymentsQueue';
+import OneOffPaymentsSection from './OneOffPaymentsSection';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
 import { useManualValidations } from '@/components/payroll/useManualValidations';
 import { PayStubModal } from '@/components/paystub/PayStubModal';
@@ -412,7 +413,12 @@ export default function PayrollDispatch() {
         try {
           const dispatchedJson = (await dispatchedRes.json()) as { rows?: unknown[]; error?: string };
           if (dispatchedRes.ok && !dispatchedJson.error && !cancelled) {
-            setUrgentDispatchedCount(dispatchedJson.rows?.length ?? 0);
+            // One-off dispatches live in the PROCESSOR buckets now — only
+            // MESA/orphanage rows keep the Urgent card alive.
+            const urgentRows = (dispatchedJson.rows ?? []).filter(
+              (r) => (r as { is_one_off?: boolean }).is_one_off !== true,
+            );
+            setUrgentDispatchedCount(urgentRows.length);
           }
         } catch {
           /* leave dispatched count unknown */
@@ -1220,6 +1226,16 @@ export default function PayrollDispatch() {
         // tab stays scoped to its own dispatches.
         paidRecords={activeTab === 'all' ? paid : paidByProcessor[activeTab]}
         deptByEmail={deptByEmail}
+        // One-off payments (People tab "Pay") render inside the bucket of the
+        // recipient's server-resolved rail — pending cards above the worksheet,
+        // this week's dispatched one-offs above the log views. They are NOT
+        // QueueRows and NOT in paidRecords (see OneOffPaymentsSection's doc).
+        renderExtras={(view) => (
+          <OneOffPaymentsSection
+            processor={activeTab === 'all' ? null : activeTab}
+            view={view}
+          />
+        )}
       />
     );
   };

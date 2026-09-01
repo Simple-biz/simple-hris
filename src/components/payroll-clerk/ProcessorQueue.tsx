@@ -163,6 +163,16 @@ interface ProcessorQueueProps {
    */
   txnRecords?: PaymentDispatchRow[];
   /**
+   * Extra content rendered inside the queue body for the CURRENT sub-view —
+   * the one-off payments section (OneOffPaymentsSection), which lives above the
+   * pending worksheet and above the log panel. A render prop because the
+   * sub-view is this component's own state; the section filters by it. One-off
+   * cards are deliberately NOT QueueRows (they must never reach the pending CSV
+   * export) and their paid rows are NOT in `paidRecords` (PaidRecordsPanel's
+   * undo would strand the source request — one-offs undo via their own route).
+   */
+  renderExtras?: (view: 'pending' | PaymentDispatchStatus) => React.ReactNode;
+  /**
    * Lowercased email → department for this cycle
    * (`useDispatchQueue().deptByEmail`). Handed to the log sub-views, which have no
    * `QueueRow` to read a department off: the pending rows carry their own
@@ -389,7 +399,7 @@ function initials(name: string) {
   return (parts[0]?.[0] || '?').toUpperCase();
 }
 
-function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStart, periodEnd, onRefresh, allLabel, nativeCurrency, paidRecords, txnRecords, deptByEmail }: ProcessorQueueProps) {
+function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStart, periodEnd, onRefresh, allLabel, nativeCurrency, paidRecords, txnRecords, deptByEmail, renderExtras }: ProcessorQueueProps) {
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 250);
   // '' = all departments; NO_DEPT = rows without a department; else exact name.
@@ -709,8 +719,10 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15, ease: 'easeOut' }}
-          className="min-h-0 flex-1"
+          className="flex min-h-0 flex-1 flex-col"
         >
+          {renderExtras && <div className="shrink-0 pb-1">{renderExtras(view)}</div>}
+          <div className="min-h-0 flex-1">
           <PaidRecordsPanel
             records={paidRecords ?? []}
             deptByEmail={deptByEmail}
@@ -734,6 +746,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
                 : 'Log a dispatch with this outcome from the Mark Paid dialog to see it here.'
             }
           />
+          </div>
         </motion.div>
       ) : (
       /* Horizontal scroll lives on the SAME element as the vertical scroll so the
@@ -746,6 +759,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
         exit={{ opacity: 0 }}
         transition={{ duration: 0.15, ease: 'easeOut' }}
         className="min-h-0 flex-1 overflow-y-auto overflow-x-auto bg-gradient-to-b from-white via-orange-50/10 to-white dark:from-[#0d1117] dark:via-[#0d1117] dark:to-[#0d1117]">
+        {renderExtras && <div className="pb-1">{renderExtras(view)}</div>}
         {filtered.length > 0 && (
           <div
             className={cn(
