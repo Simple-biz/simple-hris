@@ -4,9 +4,9 @@ A fourth mode on the People tab (Accounting AND CEO): a search-first view over t
 **whole `offboarded_sheet` ledger** (~4,000 records). Search by name or work email,
 see Name / Work Email / Personal Email / Start Date / off date per record, a bank
 chip, a **Pay** button that files the existing one-off payment flow, and **Set/Edit
-bank** via the shared SetBankDialog. Shipped 2026-09-01 with the companion change
-that moved one-off payment cards out of Payment Dispatch → Urgent and into the
-recipient's **processor bucket**.
+bank** via the shared SetBankDialog. Shipped 2026-09-01, commit `5a7c066b`, with the
+companion change that moved one-off payment cards out of Payment Dispatch → Urgent
+and into the recipient's **processor bucket**.
 
 Approved brief 2026-09-01 (Kane): Q1 recycled emails = **warn-and-allow** ·
 Q2 unrouted one-offs = **fileable, flagged, live under "All pending"** ·
