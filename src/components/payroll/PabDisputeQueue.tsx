@@ -339,14 +339,19 @@ export default function PabDisputeQueue() {
   // Approve/deny a Bank Preferred change request. The PATCH is the real gate —
   // it re-checks the 1:1 rule against the employee's LIVE receiving bank and
   // fails closed, so the row never pre-judges approvability (advisory only).
-  // Same action set as the dispute rows: immediate Approve, Deny through a
-  // note dialog, View detail modal. (Edit/Revoke after a decision don't exist
-  // for bank requests — the API is decide-once by design; an approved value
-  // is corrected in People → Banking or by a new change request.)
+  // Same action set as the dispute rows (2026-09-01): immediate Approve, Deny
+  // through a note dialog, View detail modal, Edit on decided rows (an
+  // approved→denied flip REVERTS the applied value, server-guarded), and a
+  // role-gated Delete of the record (which never changes the live value).
   const [bankActingId, setBankActingId] = useState<string | null>(null);
   const [bankDecideDialog, setBankDecideDialog] = useState<{ request: BankPreferredRequestRow; action: 'approved' | 'denied' } | null>(null);
   const [bankDecisionNote, setBankDecisionNote] = useState('');
   const [viewBankTarget, setViewBankTarget] = useState<BankPreferredRequestRow | null>(null);
+  const [bankEditDialog, setBankEditDialog] = useState<BankPreferredRequestRow | null>(null);
+  const [bankEditStatus, setBankEditStatus] = useState<'approved' | 'denied'>('approved');
+  const [bankEditNote, setBankEditNote] = useState('');
+  const [bankDeleteTarget, setBankDeleteTarget] = useState<BankPreferredRequestRow | null>(null);
+  const [bankDeleting, setBankDeleting] = useState(false);
   const decideBankRequest = useCallback(
     async (row: BankPreferredRequestRow, status: 'approved' | 'denied', note?: string): Promise<boolean> => {
       setBankActingId(row.id);
@@ -358,10 +363,17 @@ export default function PabDisputeQueue() {
         });
         const json = (await res.json()) as { success?: boolean; error?: string };
         if (!res.ok || json.error) throw new Error(json.error ?? 'Action failed');
+        const who = row.employee_name || row.work_email;
+        const noteOnly = row.status === status;
+        const reverted = row.status === 'approved' && status === 'denied';
         toast.success(
-          status === 'approved'
-            ? `Approved — ${bankLabel(row.to_value)} is now active for ${row.employee_name || row.work_email}.`
-            : `Denied ${row.employee_name || row.work_email}'s Bank Preferred change.`,
+          noteOnly
+            ? 'Decision note updated.'
+            : status === 'approved'
+              ? `Approved — ${bankLabel(row.to_value)} is now active for ${who}.`
+              : reverted
+                ? `Reversed — ${who}'s Bank Preferred is back to ${bankLabel(row.from_value)}.`
+                : `Denied ${who}'s Bank Preferred change.`,
         );
         fetchDisputes();
         return true;
@@ -374,6 +386,29 @@ export default function PabDisputeQueue() {
     },
     [fetchDisputes],
   );
+
+  const openBankEdit = useCallback((row: BankPreferredRequestRow) => {
+    setBankEditDialog(row);
+    setBankEditStatus(row.status === 'denied' ? 'denied' : 'approved');
+    setBankEditNote(row.review_notes ?? '');
+  }, []);
+
+  const handleBankDelete = useCallback(async () => {
+    if (!bankDeleteTarget) return;
+    setBankDeleting(true);
+    try {
+      const res = await fetch(`/api/bank-preferred-requests/${bankDeleteTarget.id}`, { method: 'DELETE' });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed');
+      toast.success('Bank Preferred request deleted');
+      setBankDeleteTarget(null);
+      fetchDisputes();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete request');
+    } finally {
+      setBankDeleting(false);
+    }
+  }, [bankDeleteTarget, fetchDisputes]);
 
   const handleApprove = useCallback(async (d: PabDayDisputeRow) => {
     setApprovingId(d.id);
@@ -827,7 +862,7 @@ export default function PabDisputeQueue() {
                               <Eye className="mr-1 h-3 w-3" />
                               View
                             </Button>
-                            {r.status === 'pending' && (
+                            {r.status === 'pending' ? (
                               <>
                                 <Button
                                   size="sm"
@@ -853,6 +888,41 @@ export default function PabDisputeQueue() {
                                   Deny
                                 </Button>
                               </>
+                            ) : r.status !== 'superseded' ? (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={acting}
+                                  className="h-7 border-zinc-300 px-2 text-[11px] text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300"
+                                  onClick={() => openBankEdit(r)}
+                                >
+                                  <Pencil className="mr-1 h-3 w-3" />
+                                  Edit
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={!canDelete}
+                                  title={!canDelete ? 'Requires admin or accounting' : 'Delete this request record'}
+                                  className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
+                                  onClick={() => setBankDeleteTarget(r)}
+                                >
+                                  Revoke
+                                </Button>
+                              </>
+                            ) : null}
+
+                            {canDelete && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                title="Permanently delete this request record (admin / accounting only) — does not change the live Bank Preferred"
+                                className="h-7 w-7 border-zinc-200 p-0 text-rose-500 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 dark:border-zinc-700 dark:text-rose-400 dark:hover:border-rose-800 dark:hover:bg-rose-950/40"
+                                onClick={() => setBankDeleteTarget(r)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
                             )}
                           </div>
                         </TableCell>
@@ -1258,6 +1328,168 @@ export default function PabDisputeQueue() {
               >
                 {bankActingId === bankDecideDialog.request.id && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
                 {bankDecideDialog.action === 'denied' ? 'Deny' : 'Approve'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Bank Preferred edit dialog — flip a decided request. approved→denied
+          REVERTS the applied value (server refuses if the live value has since
+          changed, and re-runs the 1:1 + dispatch-lock gates either way). */}
+      {bankEditDialog && (
+        <Dialog
+          open
+          onOpenChange={(open) => { if (!open) setBankEditDialog(null); }}
+        >
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="text-sm">Edit Bank Preferred decision</DialogTitle>
+              <DialogDescription className="text-xs">
+                {bankEditDialog.employee_name || bankEditDialog.work_email} —{' '}
+                {bankLabel(bankEditDialog.from_value)} → {bankLabel(bankEditDialog.to_value)}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Status</Label>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={bankEditStatus === 'approved' ? 'default' : 'outline'}
+                    onClick={() => setBankEditStatus('approved')}
+                    className={cn('flex-1 h-8 text-xs', bankEditStatus === 'approved' && 'bg-emerald-600 hover:bg-emerald-700')}
+                  >
+                    Approved
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={bankEditStatus === 'denied' ? 'default' : 'outline'}
+                    onClick={() => setBankEditStatus('denied')}
+                    className={cn('flex-1 h-8 text-xs', bankEditStatus === 'denied' && 'bg-rose-600 hover:bg-rose-700')}
+                  >
+                    Denied
+                  </Button>
+                </div>
+              </div>
+              {bankEditDialog.status === 'approved' && bankEditStatus === 'denied' && (
+                <p className="rounded-md border border-amber-200/90 bg-amber-50/80 px-2.5 py-2 text-[11px] leading-snug text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100/95">
+                  This reverses the applied approval: their Bank Preferred goes back to{' '}
+                  <span className="font-semibold">{bankLabel(bankEditDialog.from_value)}</span>. The save is refused if
+                  their setting has since changed elsewhere, or if the restored rail would break the 1:1 rule.
+                </p>
+              )}
+              {bankEditDialog.status === 'denied' && bankEditStatus === 'approved' && (
+                <p className="rounded-md border border-zinc-200 bg-zinc-50/80 px-2.5 py-2 text-[11px] leading-snug text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+                  This applies <span className="font-semibold">{bankLabel(bankEditDialog.to_value)}</span> now — checked
+                  against their live receiving bank (1:1 rule), and only allowed on the employee&apos;s latest request.
+                </p>
+              )}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Decision note</Label>
+                <textarea
+                  value={bankEditNote}
+                  onChange={e => setBankEditNote(e.target.value)}
+                  rows={2}
+                  placeholder="Optional note…"
+                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                />
+              </div>
+            </div>
+            <DialogFooter className="gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setBankEditDialog(null)}
+                disabled={bankActingId === bankEditDialog.id}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={bankActingId === bankEditDialog.id}
+                className={bankEditStatus === 'approved' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}
+                onClick={async () => {
+                  const ok = await decideBankRequest(bankEditDialog, bankEditStatus, bankEditNote);
+                  if (ok) setBankEditDialog(null);
+                }}
+              >
+                {bankActingId === bankEditDialog.id && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+                Save changes
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Bank Preferred delete confirmation — removes the RECORD only. */}
+      {bankDeleteTarget && (
+        <Dialog open onOpenChange={(open) => { if (!open && !bankDeleting) setBankDeleteTarget(null); }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <div className="flex items-center gap-3">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-rose-100 dark:bg-rose-950/60">
+                  <Trash2 className="size-4 text-rose-600 dark:text-rose-400" />
+                </div>
+                <div className="min-w-0">
+                  <DialogTitle className="text-sm">Delete Bank Preferred request</DialogTitle>
+                  <DialogDescription className="mt-0.5 text-xs">
+                    This permanently removes the record. Cannot be undone.
+                  </DialogDescription>
+                </div>
+              </div>
+            </DialogHeader>
+            <div className="space-y-2 text-[12.5px] text-zinc-700 dark:text-zinc-300">
+              <p>
+                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Employee</span>{' '}
+                <span className="font-medium">{bankDeleteTarget.employee_name || bankDeleteTarget.work_email}</span>
+              </p>
+              <p>
+                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Change</span>{' '}
+                <span className="font-medium">
+                  {bankLabel(bankDeleteTarget.from_value)} → {bankLabel(bankDeleteTarget.to_value)}
+                </span>
+              </p>
+              <p>
+                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Status</span>{' '}
+                <span className="font-medium">
+                  {STATUS_BADGE[bankDeleteTarget.status]?.label ?? bankDeleteTarget.status}
+                </span>
+              </p>
+              <p className="rounded-md border border-amber-200/60 bg-amber-50/70 px-2.5 py-1.5 text-[11.5px] leading-snug text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                Deleting removes the request record only — it does <span className="font-semibold">not</span> change the
+                employee&apos;s current Bank Preferred. To reverse an applied approval, use Edit instead. The deletion is
+                logged as <code className="font-mono">bank_preferred.request.deleted</code>.
+              </p>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={bankDeleting}
+                onClick={() => setBankDeleteTarget(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={bankDeleting}
+                onClick={handleBankDelete}
+                className="gap-1.5 bg-rose-600 text-white hover:bg-rose-700 dark:bg-rose-700 dark:hover:bg-rose-600"
+              >
+                {bankDeleting ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Deleting…
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-3 w-3" />
+                    Delete
+                  </>
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>

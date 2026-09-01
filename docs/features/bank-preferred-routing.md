@@ -162,6 +162,23 @@ Requests workflow.
    employee (`bank_preferred.decided`); **Deny** leaves the value untouched.
    Same PATCH endpoint as before — the merge changed no write path and no
    authorization.
+5. **Decided rows are editable and deletable (2026-09-01, Kane's ask —
+   supersedes the original decide-once 409).** The PATCH now accepts:
+   - `denied → approved`: applies the value now — **only for the employee's
+     LATEST request** (409 otherwise, so a stale ask can't be resurrected over
+     a newer one), through the same dispatch-lock (423) and live 1:1 gates.
+   - `approved → denied`: **REVERTS** the applied value back to `from_value` —
+     **only while the live `bank_preferred` still equals this request's
+     `to_value`** (409 otherwise: something newer landed, fix it in People →
+     Banking), and only if the restored rail passes the live 1:1 check (400).
+     Both mirrors/gates identical to an approve; fail closed on a read error.
+   - same status: note-only edit (`review_notes` refreshed).
+   - `superseded` rows stay immutable (409).
+   **DELETE** removes the request RECORD only — it **never** touches
+   `employee_ids` (reversing an applied approval is the `approved → denied`
+   edit, not delete). Role bar mirrors the dispute admin delete
+   (`DISPUTE_DELETE_ROLES`) on top of the feature gate; logged as
+   `bank_preferred.request.deleted` with a full row snapshot.
 
 API routes: [`app/api/bank-preferred-requests/route.ts`](../../app/api/bank-preferred-requests/route.ts)
 and [`[id]/route.ts`](../../app/api/bank-preferred-requests/[id]/route.ts).
