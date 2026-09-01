@@ -9,6 +9,7 @@ import {
   Upload,
   Calculator,
   CalendarCheck,
+  ClipboardCheck,
   ShieldCheck,
   Send,
   AlertCircle,
@@ -313,6 +314,7 @@ import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { buildCatalogDeptNameMap } from '@/lib/departments/dept-identity';
 import { computePabIneligibility, groupFailedDaysByHslWeek, pabSeverityBand, type PabDayEntry } from '@/lib/payroll/pab-ineligibility';
 import PabIneligibleTable, { type PabIneligibleRow } from '@/components/payroll/PabIneligibleTable';
+import PabDoneTable, { type PabDoneRow } from '@/components/payroll/PabDoneTable';
 import { TransferKpiCard } from '@/components/transfers/TransferToolbar';
 
 function findHeaderColumn(header: string[], ...labels: string[]): number {
@@ -2464,6 +2466,23 @@ export default function PayrollWizard({
   const [pabForgivingEmail, setPabForgivingEmail] = useState<string | null>(null);
   /** Email mid-ignore (month exclusion write) on step 6 — same one-row-spins rule. */
   const [pabIgnoringEmail, setPabIgnoringEmail] = useState<string | null>(null);
+  /** Step 6's inner tab: the exceptions list, or the receipts ("Done") list. */
+  const [pabStepSection, setPabStepSection] = useState<'review' | 'done'>('review');
+  /** The PAB-decisions broadcast channel — subscribed further down, once the
+   *  dispute state it patches exists. Declared here so every decision handler
+   *  (including `togglePabExclusion`, defined early) can list the sender in its
+   *  deps without a TDZ trap. */
+  const pabRealtimeRef = useRef<ReturnType<NonNullable<ReturnType<typeof getSupabaseBrowserClient>>['channel']> | null>(null);
+  /** Fire-and-forget decision broadcast — the write has already succeeded. */
+  const broadcastPabDecision = useCallback((payload: Record<string, unknown>) => {
+    const ch = pabRealtimeRef.current;
+    if (!ch) return;
+    try {
+      void ch.send({ type: 'broadcast', event: 'pab_decision', payload });
+    } catch {
+      // Never let a realtime hiccup surface as a failed decision.
+    }
+  }, []);
   const [pabForgiveActiveIso, setPabForgiveActiveIso] = useState<string | null>(null);
   const [pabForgiveNote, setPabForgiveNote] = useState('');
   const [pabForgiveLoadingIso, setPabForgiveLoadingIso] = useState<string | null>(null);
@@ -3538,6 +3557,7 @@ export default function PayrollWizard({
         };
         if (!res.ok || json.error) throw new Error(json.error || `HTTP ${res.status}`);
         await pabPeriodSettings.refresh();
+        broadcastPabDecision({ kind: 'exclusion_changed', email: norm, monthKey: editMonthKey, excluded });
         setPabSaveState('saved');
         const stateChanged = json.wasExcluded !== undefined && json.wasExcluded !== excluded;
         if (stateChanged && json.notified === false) {
@@ -3552,7 +3572,7 @@ export default function PayrollWizard({
         setTimeout(() => setPabSaveState('idle'), 3000);
       }
     },
-    [pabPeriodSettings, editMonthKey, isReplay],
+    [pabPeriodSettings, editMonthKey, isReplay, broadcastPabDecision],
   );
 
   /** Switch which month the Additions tab evaluates. */
@@ -4948,6 +4968,12 @@ export default function PayrollWizard({
     };
   }, [effectiveMonth.year, effectiveMonth.month, effectiveMonthRange.start, effectiveMonthRange.end]);
 
+  /** `YYYY-MM` of the step's evaluated PAB month — the key every step-6 write
+   *  and broadcast is addressed to. '' while no month resolves. */
+  const pabMonthKey = pabMonthRange
+    ? `${pabMonthRange.year}-${String(pabMonthRange.month + 1).padStart(2, '0')}`
+    : '';
+
   /**
    * HSL week model for the viewed PAB month. Resolved from the STABLE PAB-month
    * start (never a week-shape-dependent value) against the effective cutover
@@ -5323,6 +5349,89 @@ export default function PayrollWizard({
       })
       .catch(() => { setApprovedDisputeDates(new Map()); setApprovedDisputeIds(new Map()); });
   }, [pabMonthRange]);
+
+  // ── PAB decisions realtime ────────────────────────────────────────────────
+  // Several accountants work the PAB step at once (Kane 2026-09-01), so every
+  // decision converges the other open wizards: forgive/revoke patches land in
+  // the same local maps the actor patches, and an exclusion change refreshes
+  // the settings. Realtime **Broadcast**, never `postgres_changes` — anon + RLS
+  // means row events never reach the browser (payment-dispatch.md rule).
+  // Best-effort by design: a missed message costs freshness until the next
+  // fetch, never correctness — the stores stay the source of truth.
+  const pabMonthKeyRef = useRef(pabMonthKey);
+  useEffect(() => { pabMonthKeyRef.current = pabMonthKey; }, [pabMonthKey]);
+  const pabSettingsRefresh = pabPeriodSettings.refresh;
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    const channel = supabase
+      .channel('payroll-wizard-pab-decisions', { config: { broadcast: { self: false } } })
+      .on('broadcast', { event: 'pab_decision' }, ({ payload }) => {
+        const p = payload as {
+          kind?: string;
+          email?: string;
+          monthKey?: string;
+          days?: { iso: string; id?: string }[];
+          iso?: string;
+          override?: number | null;
+        };
+        const email = (p.email ?? '').trim().toLowerCase();
+        if (!email) return;
+        if (p.kind === 'exclusion_changed') {
+          // The exclusions map is month-keyed globally, so refresh regardless of
+          // which month the sender was on — the route owns the write; this only
+          // re-reads it.
+          void pabSettingsRefresh();
+          return;
+        }
+        // Dispute patches are only safe on the month this client has fetched —
+        // `approvedDisputeDates` is period-scoped, and seeding stray months
+        // would pollute every consumer keyed off it. A viewer on another month
+        // refetches on month switch anyway.
+        if (p.monthKey && pabMonthKeyRef.current && p.monthKey !== pabMonthKeyRef.current) return;
+        if (p.kind === 'days_forgiven' && Array.isArray(p.days)) {
+          setApprovedDisputeDates((prev) => {
+            const next = new Map(prev);
+            const dates = new Map(next.get(email) ?? new Map<string, number | null>());
+            for (const d of p.days!) {
+              if (d?.iso) dates.set(d.iso, p.override ?? 7);
+            }
+            next.set(email, dates);
+            return next;
+          });
+          setApprovedDisputeIds((prev) => {
+            const withIds = p.days!.filter((d) => d?.iso && d.id);
+            if (withIds.length === 0) return prev;
+            const next = new Map(prev);
+            const ids = new Map(next.get(email) ?? new Map<string, string>());
+            for (const d of withIds) ids.set(d.iso, d.id!);
+            next.set(email, ids);
+            return next;
+          });
+        } else if (p.kind === 'day_revoked' && p.iso) {
+          setApprovedDisputeDates((prev) => {
+            const next = new Map(prev);
+            const dates = new Map(next.get(email) ?? new Map<string, number | null>());
+            dates.delete(p.iso!);
+            next.set(email, dates);
+            return next;
+          });
+          setApprovedDisputeIds((prev) => {
+            const next = new Map(prev);
+            const ids = new Map(next.get(email) ?? new Map<string, string>());
+            ids.delete(p.iso!);
+            next.set(email, ids);
+            return next;
+          });
+        }
+      })
+      .subscribe();
+    pabRealtimeRef.current = channel;
+    return () => {
+      pabRealtimeRef.current = null;
+      void supabase.removeChannel(channel);
+    };
+  }, [pabSettingsRefresh]);
 
   // TEMPORARY orphanage → PAB coverage: load every week's locked-in orphanage
   // hours (accounting-gated ?all=1) so a visit from ANY week of the PAB month
@@ -7707,6 +7816,52 @@ export default function PayrollWizard({
     pabMemberNames, pabScoredEmails, pausedDeptKeys,
   ]);
   const pabIneligibleRows = pabIneligible.rows;
+
+  /**
+   * Step 6's "Done" tab — the receipts. Everyone acted on this PAB period,
+   * folded from the TWO existing stores (no new one): approved forgiven days
+   * (`approvedDisputeDates`, already period-fetched, patched live by both
+   * forgive paths and the realtime channel) and the month's exclusions
+   * (`pabExcludedActiveMonth`). No population gates: this is an action log, not
+   * an attendance ranking, so an off-roster person someone excluded still
+   * shows. Name resolution is the same three tiers as the review list.
+   */
+  const pabDoneRows = useMemo<PabDoneRow[]>(() => {
+    if (!pabMonthRange) return [];
+    const emails = new Set<string>();
+    for (const em of pabExcludedActiveMonth) emails.add(em);
+    for (const [em, dates] of approvedDisputeDates) {
+      if (dates.size > 0) emails.add(em);
+    }
+    const rows: PabDoneRow[] = [];
+    for (const email of emails) {
+      const forgivenDays = [...(approvedDisputeDates.get(email)?.keys() ?? [])].sort();
+      const ignored = pabExcludedActiveMonth.has(email);
+      if (!ignored && forgivenDays.length === 0) continue;
+      const master =
+        masterIndex.byWorkEmail.get(email) ?? masterIndex.byPersonalEmail.get(email) ?? null;
+      const calcRow = master
+        ? null
+        : calcResults.find(
+            (e) => e.email === email || (normEmail(e.email) ?? e.email.toLowerCase()) === email,
+          );
+      const deptKey = employeeDepts[email] ?? employeeDepts[email.toLowerCase()] ?? null;
+      rows.push({
+        email,
+        name: master?.name?.trim() || calcRow?.name?.trim() || pabMemberNames.get(email) || null,
+        employeeId: master?.employee_id?.trim() || null,
+        workEmail:
+          master?.work_email?.trim()
+          || (normEmail(master?.personal_email ?? null) === email ? null : email),
+        departmentKey: deptKey,
+        isHsl: deptKey === 'hogan_smith_law',
+        ignored,
+        forgivenDays,
+      });
+    }
+    rows.sort((a, b) => (a.name ?? '￿').localeCompare(b.name ?? '￿'));
+    return rows;
+  }, [pabMonthRange, pabExcludedActiveMonth, approvedDisputeDates, masterIndex, calcResults, employeeDepts, pabMemberNames]);
 
   /** The 1–2-day cohort, MASTER-LIST scoped so it matches the KPI strip's
    *  "Ineligible" card rather than the table's unfiltered headline pill. */
@@ -17282,6 +17437,15 @@ export default function PayrollWizard({
               next.set(row.email, existing);
               return next;
             });
+            // Converge the other open wizards — several accountants work this
+            // step at once, and B re-deciding A's person is the failure mode.
+            broadcastPabDecision({
+              kind: 'days_forgiven',
+              email: row.email,
+              monthKey: pabMonthKey,
+              days: (json.forgiven ?? []).map((iso: string) => ({ iso })),
+              override: 7,
+            });
             toast.success(`${row.name} — PAB restored for ${monthLabelPab}`, {
               description: `${dayCount} day${dayCount === 1 ? '' : 's'} forgiven.`,
             });
@@ -17340,8 +17504,9 @@ export default function PayrollWizard({
             const json = (await res.json()) as { error: string | null; notified?: boolean };
             if (!res.ok || json.error) throw new Error(json.error || `HTTP ${res.status}`);
             // The refresh re-feeds `isPabExcluded`, which the row builder reads —
-            // the row re-renders with the Excluded chip and a disabled Forgive.
+            // the row leaves the review list and lands on the Done tab.
             await pabPeriodSettings.refresh();
+            broadcastPabDecision({ kind: 'exclusion_changed', email: norm, monthKey: pabMonthKey, excluded: true });
             toast.success(`${row.name ?? 'Person'} — PAB ignored for ${monthLabelPab}`, {
               description: json.notified === false
                 ? '₱0 for this period. They could not be matched to an active roster email — tell them directly.'
@@ -17470,25 +17635,68 @@ export default function PayrollWizard({
               )}
             </div>
 
+            {/* Review | Done. Review is the exceptions list; Done is the receipts —
+                both decisions, live across every open wizard, so two accountants
+                working the list see each other's calls instead of repeating them. */}
+            <div className="flex w-fit items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-100/80 p-1 dark:border-zinc-800 dark:bg-zinc-900/40" role="tablist">
+              {([
+                { key: 'review' as const, label: 'Needs review', count: pabIneligibleRows.length },
+                { key: 'done' as const, label: 'Done', count: pabDoneRows.length },
+              ]).map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={pabStepSection === tab.key}
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                    pabStepSection === tab.key
+                      ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-white'
+                      : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+                  )}
+                  onClick={() => setPabStepSection(tab.key)}
+                >
+                  {tab.key === 'done' ? <ClipboardCheck className="h-3.5 w-3.5" /> : <CalendarCheck className="h-3.5 w-3.5" />}
+                  {tab.label}
+                  <span className={cn(
+                    'rounded-full px-1.5 py-px font-mono text-[10px] font-bold',
+                    tab.key === 'review'
+                      ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300'
+                      : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300',
+                  )}>
+                    {tab.count.toLocaleString()}
+                  </span>
+                </button>
+              ))}
+            </div>
+
             <Card>
               <CardContent className="p-4">
-                <PabIneligibleTable
-                  rows={pabIneligibleRows}
-                  deptNames={catalogDeptNames}
-                  monthLabel={monthLabelPab}
-                  onOpenCalendar={setPabCalendarModalEmail}
-                  onForgiveMonth={forgiveMonth}
-                  forgivingEmail={pabForgivingEmail}
-                  onIgnoreMonth={ignoreMonth}
-                  ignoringEmail={pabIgnoringEmail}
-                  readOnly={isReplay}
-                  // `pabMergeLoaded` is the one signal that the month's hours are
-                  // actually in. Without it an empty list renders as "nobody is
-                  // ineligible", which is the all-clear that hides the people this
-                  // step exists to surface.
-                  loading={!pabMergeLoaded}
-                  evaluatedCount={effectivePabStatus.size}
-                />
+                {pabStepSection === 'review' ? (
+                  <PabIneligibleTable
+                    rows={pabIneligibleRows}
+                    deptNames={catalogDeptNames}
+                    monthLabel={monthLabelPab}
+                    onOpenCalendar={setPabCalendarModalEmail}
+                    onForgiveMonth={forgiveMonth}
+                    forgivingEmail={pabForgivingEmail}
+                    onIgnoreMonth={ignoreMonth}
+                    ignoringEmail={pabIgnoringEmail}
+                    readOnly={isReplay}
+                    // `pabMergeLoaded` is the one signal that the month's hours are
+                    // actually in. Without it an empty list renders as "nobody is
+                    // ineligible", which is the all-clear that hides the people this
+                    // step exists to surface.
+                    loading={!pabMergeLoaded}
+                    evaluatedCount={effectivePabStatus.size}
+                  />
+                ) : (
+                  <PabDoneTable
+                    rows={pabDoneRows}
+                    deptNames={catalogDeptNames}
+                    monthLabel={monthLabelPab}
+                  />
+                )}
               </CardContent>
             </Card>
           </div>
@@ -21243,6 +21451,7 @@ export default function PayrollWizard({
                 next.set(normModalEmail, ids);
                 return next;
               });
+              broadcastPabDecision({ kind: 'day_revoked', email: normModalEmail, monthKey: pabMonthKey, iso });
               setPabRevokeActiveIso(null);
             } catch (err) {
               setPabRevokeError(err instanceof Error ? err.message : 'An error occurred');
@@ -21308,6 +21517,13 @@ export default function PayrollWizard({
                 updated.set(iso, createData.id);
                 next.set(em, updated);
                 return next;
+              });
+              broadcastPabDecision({
+                kind: 'days_forgiven',
+                email: em,
+                monthKey: pabMonthKey,
+                days: [{ iso, id: createData.id }],
+                override: overrideHours,
               });
               setPabForgiveActiveIso(null);
               setPabForgiveNote('');

@@ -26,6 +26,7 @@ Shipped **2026-08-28**; Ignore + payout-week gate **2026-09-01**. Source:
 | Forgive-the-month batch write | `app/api/payroll-wizard/pab-forgive-month/route.ts` |
 | Ignore-the-month write (exclusion) | `app/api/pab-exclusions/route.ts` — pre-existing, see `pab-exclusions.md` |
 | The table | `src/components/payroll/PabIneligibleTable.tsx` |
+| The Done tab (receipts) | `src/components/payroll/PabDoneTable.tsx` |
 | Row builder + step body | `src/components/PayrollWizard.tsx` (`pabIneligibleRows`, `case 6`) |
 | The verdict this step explains | `src/lib/payroll/dispatch-bonuses.ts` (`computePabEligibleEmails`) |
 
@@ -126,6 +127,51 @@ using the **same dept-key resolution as that filter** (`employeeDepts[email] ??
 employeeDepts[lowercased]`). Counted and disclosed on the strip's line as "in departments not
 paid this week", never silently dropped. Display-only — pausing a department already keeps its
 people out of dispatch; this makes the review list agree with the run.
+
+## The Done tab — receipts for both decisions
+
+The step carries a `Needs review | Done` strip (Kane 2026-09-01 PM, same ask as the realtime
+below). **Done is an action log, not an attendance ranking**: everyone acted on this PAB
+period, folded from the TWO existing stores and nothing new — forgiven = approved
+`pab_day_disputes` days (`approvedDisputeDates`, already period-fetched; all three forgive
+paths write the same rows so month-batch, calendar-modal and Attendance-Issues forgiveness all
+land here), ignored = the month's `pab_period_exclusions` entries. **No population gates** —
+an off-roster person someone excluded still shows, unlike the review list. A person can carry
+BOTH chips (days forgiven, then ignored); the exclusion is what pays (₱0). Filters: decision
+(All / Forgiven / Ignored — the filter Kane asked for), department, search; same
+never-strand/never-hide rules as the review tab. Its empty state is honest by nature: an empty
+receipts list claims only that nobody has acted yet, so it carries no all-clear hazard.
+
+## Realtime — several accountants work this step at once
+
+Decisions converge every open wizard live (Kane 2026-09-01: "multiple persons are working on
+this PAB section"). One Supabase channel, `payroll-wizard-pab-decisions`, **Broadcast, never
+`postgres_changes`** — anon + RLS means row events never reach the browser
+(`payment-dispatch.md` rule). Senders fire AFTER their write succeeds, fire-and-forget:
+
+| Action | Event payload |
+| --- | --- |
+| Forgive month (step 6) | `days_forgiven` + the re-read day list |
+| Forgive day (calendar modal) | `days_forgiven` + the dispute id |
+| Revoke day (calendar modal) | `day_revoked` |
+| Ignore (step 6) / exclusion toggle (System Bonus modal) | `exclusion_changed` |
+
+Receivers patch the SAME local maps the actor patches (`approvedDisputeDates` /
+`approvedDisputeIds`) so the row leaves B's review list exactly as it left A's;
+`exclusion_changed` triggers `pabPeriodSettings.refresh()` instead, because the exclusions
+blob is month-keyed globally and the route owns the write. Dispute patches are **guarded by
+`monthKey`** — `approvedDisputeDates` is period-scoped, and seeding stray months would pollute
+every consumer keyed off it; a viewer on another month refetches on month switch anyway.
+Best-effort by design: a missed message costs freshness until the next fetch, never
+correctness — the stores stay the source of truth. The channel subscribes for the wizard's
+whole life (the wizard stays mounted across app tabs), so events are not missed while the
+operator sits on another step.
+
+**OPEN — `/api/pab-exclusions` is read-patch-write with no CAS.** Two accountants ignoring two
+different people at the same moment can lose one entry silently (the same last-write-wins
+shape `payroll.wizard.exclusions` still has; MV solved it with `casUpdateAppSetting`).
+Multi-operator use makes this window live now. Flagged 2026-09-01; the fix belongs in the
+route, not the wizard.
 
 ## HSL failures display as WHOLE WEEKS
 
