@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { normEmail } from '@/lib/email/norm-email';
 import {
   AlertCircle,
+  ArrowRight,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -12,6 +13,7 @@ import {
   Clock,
   Eye,
   Gavel,
+  Landmark,
   Loader2,
   Pencil,
   RefreshCw,
@@ -52,6 +54,12 @@ import {
   disputeGrantsPabForgiveness,
   isOrphanageStyleReason,
 } from '@/lib/supabase/pab-day-disputes';
+import type { BankPreferredRequestRow } from '@/lib/supabase/bank-preferred-requests';
+import {
+  bankPreferredLabelForProcessor,
+  isWiresPreferred,
+  type ProcessorId,
+} from '@/lib/employee-payment-processors';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 
@@ -67,8 +75,15 @@ function formatHours(hours: number | null | undefined): string | null {
   return `${m}m`;
 }
 
+/** Human label for a Bank Preferred processor id ('None' for a first-time set). */
+function bankLabel(v: string | null): string {
+  if (!v) return 'None';
+  return bankPreferredLabelForProcessor(v as ProcessorId) || v;
+}
+
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   pending: { label: 'Pending', className: 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-600 dark:bg-amber-950/40 dark:text-amber-400' },
+  superseded: { label: 'Superseded', className: 'border-zinc-300 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400' },
   pending_orphanage_manager: { label: 'Awaiting orphanage review', className: 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-600 dark:bg-amber-950/40 dark:text-amber-400' },
   orphanage_manager_approved: { label: 'Awaiting accounting', className: 'border-sky-400 bg-sky-50 text-sky-800 dark:border-sky-600 dark:bg-sky-950/40 dark:text-sky-300' },
   orphanage_manager_denied: { label: 'Orph. mgr denied', className: 'border-rose-400 bg-rose-50 text-rose-700 dark:border-rose-600 dark:bg-rose-950/40 dark:text-rose-400' },
@@ -119,6 +134,12 @@ function StatCard({
   );
 }
 
+/** One row of the merged Issues table — a PAB short-day dispute or a Bank
+ *  Preferred change request. Both are a yes/no for Accounting. */
+type IssueRow =
+  | { kind: 'dispute'; dispute: PabDayDisputeRow }
+  | { kind: 'bank'; request: BankPreferredRequestRow };
+
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -167,6 +188,12 @@ export default function PabDisputeQueue() {
   const [disputes, setDisputes] = useState<PabDayDisputeRow[]>(
     () => getTabCache<PabDayDisputeRow[]>(TAB_CACHE_KEYS.pabDisputes('pending')) ?? [],
   );
+  // Bank Preferred change requests live in the same table (merged 2026-09-01,
+  // they're a yes/no like every other issue). Cached per filter like disputes.
+  const [bankRequests, setBankRequests] = useState<BankPreferredRequestRow[]>(
+    () => getTabCache<BankPreferredRequestRow[]>(TAB_CACHE_KEYS.bankPreferredRequests('pending')) ?? [],
+  );
+  const [bankError, setBankError] = useState<string | null>(null);
   const [reasonCodes, setReasonCodes] = useState<PabDisputeReasonCode[]>(
     () => getTabCache<PabDisputeReasonCode[]>(TAB_CACHE_KEYS.pabReasonCodes) ?? [],
   );
@@ -217,7 +244,9 @@ export default function PabDisputeQueue() {
 
   const fetchDisputes = useCallback(async () => {
     const cacheKey = TAB_CACHE_KEYS.pabDisputes(statusFilter);
+    const bankCacheKey = TAB_CACHE_KEYS.bankPreferredRequests(statusFilter);
     const cached = getTabCache<PabDayDisputeRow[]>(cacheKey);
+    const cachedBank = getTabCache<BankPreferredRequestRow[]>(bankCacheKey);
     if (cached) {
       // Paint the cached rows for this filter immediately (covers switching
       // filters too) and revalidate quietly without a spinner.
@@ -226,6 +255,26 @@ export default function PabDisputeQueue() {
     } else {
       setLoading(true);
     }
+    if (cachedBank) setBankRequests(cachedBank);
+
+    // Bank Preferred requests load alongside the disputes; a failure on one
+    // never blanks the other (each keeps its cached rows).
+    const bankPromise = (async () => {
+      try {
+        const qs = statusFilter === 'all' ? '' : `?status=${statusFilter}`;
+        const res = await fetch(`/api/bank-preferred-requests${qs}`, { cache: 'no-store' });
+        const json = (await res.json()) as { rows?: BankPreferredRequestRow[]; error?: string | null };
+        if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load Bank Preferred requests');
+        const rows = json.rows ?? [];
+        setTabCache(bankCacheKey, rows);
+        setBankRequests(rows);
+        setBankError(null);
+      } catch (e) {
+        if (!hasTabCache(bankCacheKey)) setBankRequests([]);
+        setBankError(e instanceof Error ? e.message : 'Failed to load Bank Preferred requests');
+      }
+    })();
+
     try {
       const params = new URLSearchParams();
       params.set('limit', '500');
@@ -248,11 +297,42 @@ export default function PabDisputeQueue() {
       // Keep the cached rows on a background-refresh failure.
       if (!hasTabCache(cacheKey)) setDisputes([]);
     } finally {
+      await bankPromise;
       setLoading(false);
     }
   }, [statusFilter]);
 
   useEffect(() => { fetchDisputes(); }, [fetchDisputes]);
+
+  // Approve/deny a Bank Preferred change request. The PATCH is the real gate —
+  // it re-checks the 1:1 rule against the employee's LIVE receiving bank and
+  // fails closed, so the row never pre-judges approvability (advisory only).
+  const [bankActingId, setBankActingId] = useState<string | null>(null);
+  const decideBankRequest = useCallback(
+    async (row: BankPreferredRequestRow, status: 'approved' | 'denied') => {
+      setBankActingId(row.id);
+      try {
+        const res = await fetch(`/api/bank-preferred-requests/${row.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status }),
+        });
+        const json = (await res.json()) as { success?: boolean; error?: string };
+        if (!res.ok || json.error) throw new Error(json.error ?? 'Action failed');
+        toast.success(
+          status === 'approved'
+            ? `Approved — ${bankLabel(row.to_value)} is now active for ${row.employee_name || row.work_email}.`
+            : `Denied ${row.employee_name || row.work_email}'s Bank Preferred change.`,
+        );
+        fetchDisputes();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Action failed');
+      } finally {
+        setBankActingId(null);
+      }
+    },
+    [fetchDisputes],
+  );
 
   const handleApprove = useCallback(async (d: PabDayDisputeRow) => {
     setApprovingId(d.id);
@@ -295,14 +375,26 @@ export default function PabDisputeQueue() {
     return reasonCodes.find(r => r.code === code)?.label ?? code;
   }, [reasonCodes]);
 
-  const filtered = useMemo(() => {
+  const filtered = useMemo<IssueRow[]>(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return disputes;
-    return disputes.filter(d => {
-      const blob = [d.work_email, d.reason, d.dispute_date, d.explanation ?? '', d.decided_by ?? ''].join(' ').toLowerCase();
-      return blob.includes(q);
-    });
-  }, [disputes, searchQuery]);
+    const bank: IssueRow[] = bankRequests
+      .filter(r => {
+        if (!q) return true;
+        const blob = [r.work_email, r.employee_name ?? '', bankLabel(r.from_value), bankLabel(r.to_value), r.reviewed_by ?? '', 'bank preferred'].join(' ').toLowerCase();
+        return blob.includes(q);
+      })
+      .map(r => ({ kind: 'bank' as const, request: r }));
+    const disp: IssueRow[] = disputes
+      .filter(d => {
+        if (!q) return true;
+        const blob = [d.work_email, d.reason, d.dispute_date, d.explanation ?? '', d.decided_by ?? ''].join(' ').toLowerCase();
+        return blob.includes(q);
+      })
+      .map(d => ({ kind: 'dispute' as const, dispute: d }));
+    // Bank rows first — a pending request holds the employee's payout routing
+    // until it's decided (same slot they occupied as a card above the table).
+    return [...bank, ...disp];
+  }, [disputes, bankRequests, searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -311,12 +403,16 @@ export default function PabDisputeQueue() {
   useEffect(() => { setPage(1); }, [searchQuery, statusFilter]);
 
   const pendingCount = useMemo(
-    () => disputes.filter((d) => d.status === 'pending' || d.status === 'orphanage_manager_approved').length,
-    [disputes],
+    () =>
+      disputes.filter((d) => d.status === 'pending' || d.status === 'orphanage_manager_approved').length +
+      bankRequests.filter((r) => r.status === 'pending').length,
+    [disputes, bankRequests],
   );
   const approvedCount = useMemo(
-    () => disputes.filter((d) => d.status === 'approved' || d.status === 'accounting_approved').length,
-    [disputes],
+    () =>
+      disputes.filter((d) => d.status === 'approved' || d.status === 'accounting_approved').length +
+      bankRequests.filter((r) => r.status === 'approved').length,
+    [disputes, bankRequests],
   );
   const deniedCount = useMemo(
     () =>
@@ -325,8 +421,9 @@ export default function PabDisputeQueue() {
           d.status === 'denied' ||
           d.status === 'orphanage_manager_denied' ||
           d.status === 'accounting_denied',
-      ).length,
-    [disputes],
+      ).length +
+      bankRequests.filter((r) => r.status === 'denied').length,
+    [disputes, bankRequests],
   );
 
   const handleEdit = useCallback(async () => {
@@ -498,7 +595,7 @@ export default function PabDisputeQueue() {
               Issues
             </h2>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-              Approval queue for short-day issues. Any Accounting user can approve or deny.
+              Approval queue for short-day issues and Bank Preferred changes. Any Accounting user can approve or deny.
             </p>
           </div>
         </div>
@@ -531,7 +628,7 @@ export default function PabDisputeQueue() {
 
       {/* KPI cards */}
       <div className="grid shrink-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Total" value={disputes.length} tone="indigo" icon={ClipboardList} />
+        <StatCard label="Total" value={disputes.length + bankRequests.length} tone="indigo" icon={ClipboardList} />
         <StatCard label="Pending" value={pendingCount} tone="amber" icon={Clock} />
         <StatCard label="Approved" value={approvedCount} tone="emerald" icon={CheckCircle2} />
         <StatCard label="Denied" value={deniedCount} tone="rose" icon={XCircle} />
@@ -569,6 +666,13 @@ export default function PabDisputeQueue() {
         </div>
       </div>
 
+      {/* Bank Preferred rows failed to refresh — the dispute rows still stand. */}
+      {bankError && (
+        <div className="shrink-0 rounded-md border border-rose-200 bg-rose-50/60 px-3 py-2 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+          Bank Preferred change requests couldn&apos;t be refreshed: {bankError}
+        </div>
+      )}
+
       {/* Table */}
       {loading ? (
         <div className="flex flex-1 items-center justify-center gap-2 py-8 text-sm text-zinc-500">
@@ -578,7 +682,7 @@ export default function PabDisputeQueue() {
         <div className="flex flex-1 flex-col items-center justify-center gap-2 py-12 text-center">
           <AlertCircle className="h-8 w-8 text-zinc-300 dark:text-zinc-700" />
           <p className="text-sm text-zinc-500">
-            {disputes.length === 0 ? 'No issues filed yet.' : 'No issues match your filters.'}
+            {disputes.length === 0 && bankRequests.length === 0 ? 'No issues filed yet.' : 'No issues match your filters.'}
           </p>
         </div>
       ) : (
@@ -612,7 +716,98 @@ export default function PabDisputeQueue() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {pageRows.map(d => (
+                {pageRows.map((row) => {
+                  if (row.kind === 'bank') {
+                    const r = row.request;
+                    const acting = bankActingId === r.id;
+                    // ADVISORY only, under the 1:1 rule (2026-08-31 PM): whether a
+                    // wallet send-from is approvable depends on the employee's LIVE
+                    // receiving bank, which this row does not carry. The approve
+                    // PATCH is the real gate (re-checks live, fails closed) — so the
+                    // row hints at a rail change but never disables Approve.
+                    const railChange = isWiresPreferred(r.from_value) !== isWiresPreferred(r.to_value);
+                    return (
+                      <TableRow key={`bank-${r.id}`} className="border-indigo-100/70 transition-colors hover:bg-indigo-50/50 dark:border-indigo-900/30 dark:hover:bg-indigo-950/20">
+                        <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300" title={r.employee_name ?? undefined}>
+                          {r.work_email}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-sm text-zinc-700 dark:text-zinc-300">
+                          {new Date(r.created_at).toLocaleDateString()}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="gap-1 border-amber-300 bg-amber-50 text-[10px] text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                            <Landmark className="h-3 w-3" />
+                            Bank Preferred
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="min-w-[200px] align-top text-xs text-zinc-600 dark:text-zinc-400">
+                          <div className="flex items-center gap-1.5">
+                            <span className="rounded-md bg-zinc-200/70 px-1.5 py-0.5 text-[11px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                              {bankLabel(r.from_value)}
+                            </span>
+                            <ArrowRight className="h-3 w-3 shrink-0 text-zinc-400" />
+                            <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                              {bankLabel(r.to_value)}
+                            </span>
+                          </div>
+                          {railChange && (
+                            <p className="mt-1 text-[10px] font-medium leading-snug text-amber-600 dark:text-amber-400">
+                              Rail change — approval is checked against the live receiving bank (1:1 rule).
+                            </p>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={cn('text-[10px]', STATUS_BADGE[r.status]?.className)}>
+                            {STATUS_BADGE[r.status]?.label ?? r.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-xs">
+                          <span className="text-[10px] text-zinc-400">—</span>
+                        </TableCell>
+                        <TableCell className="text-xs text-zinc-500 dark:text-zinc-400">
+                          {r.reviewed_by ? (
+                            <div className="flex flex-col gap-0.5">
+                              <span>{r.reviewed_by}</span>
+                              {r.review_notes && <span className="text-[10px] italic">{r.review_notes}</span>}
+                            </div>
+                          ) : '—'}
+                        </TableCell>
+                        <TableCell className="min-w-[260px] text-right align-top">
+                          {r.status === 'pending' ? (
+                            <div className="flex flex-wrap justify-end gap-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={acting}
+                                className="h-7 border-emerald-300 px-2 text-[11px] text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-400"
+                                title={
+                                  railChange
+                                    ? 'The save verifies the sending rail against this employee’s live receiving bank and refuses a mismatch.'
+                                    : undefined
+                                }
+                                onClick={() => void decideBankRequest(r, 'approved')}
+                              >
+                                {acting ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Approve'}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={acting}
+                                className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
+                                onClick={() => void decideBankRequest(r, 'denied')}
+                              >
+                                Deny
+                              </Button>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-zinc-400">—</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  }
+                  const d = row.dispute;
+                  return (
                   <TableRow key={d.id} className="border-indigo-100/70 transition-colors hover:bg-indigo-50/50 dark:border-indigo-900/30 dark:hover:bg-indigo-950/20">
                     <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">{d.work_email}</TableCell>
                     <TableCell className="whitespace-nowrap text-sm text-zinc-700 dark:text-zinc-300">{d.dispute_date}</TableCell>
@@ -770,7 +965,8 @@ export default function PabDisputeQueue() {
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </div>

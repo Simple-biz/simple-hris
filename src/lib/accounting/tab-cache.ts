@@ -96,6 +96,9 @@ export const TAB_CACHE_KEYS = {
   pabReasonCodes: 'pab-disputes:reason-codes',
   // PAB disputes are cached per status filter, e.g. `pab-disputes:pending`.
   pabDisputes: (statusFilter: string) => `pab-disputes:${statusFilter}`,
+  // Bank Preferred change requests render as rows in the same Issues table and
+  // are cached per status filter alongside the disputes they sit with.
+  bankPreferredRequests: (statusFilter: string) => `bank-preferred-requests:${statusFilter}`,
   overviewPayouts: 'overview:payouts',
   overviewPabMetrics: 'overview:pab-metrics',
   peopleRoster: 'people:list',

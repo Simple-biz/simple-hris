@@ -17,7 +17,6 @@ import PayrollWizard from './components/PayrollWizard';
 import { Toaster } from '@/components/ui/sonner';
 import SystemSettings from './components/SystemSettings';
 import PabDisputeQueue from './components/payroll/PabDisputeQueue';
-import { BankPreferredApprovals } from './components/payroll/BankPreferredApprovals';
 import PayrollDispatch from './components/payroll-clerk/PayrollDispatch';
 import { normEmail } from '@/lib/email/norm-email';
 import { cn } from '@/lib/utils';
@@ -345,12 +344,9 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
       case 'payment-dispatch':
         return <PayrollDispatch />;
       case 'disputes':
-        return (
-          <div className="space-y-4">
-            <BankPreferredApprovals />
-            <PabDisputeQueue />
-          </div>
-        );
+        // Bank Preferred change requests render as rows inside the Issues
+        // table itself (merged 2026-09-01) — no stacked card above it.
+        return <PabDisputeQueue />;
       case 'transfers':
         return <AccountingTransfers />;
       case 'mesa':

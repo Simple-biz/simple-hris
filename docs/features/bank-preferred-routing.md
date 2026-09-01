@@ -150,11 +150,18 @@ Requests workflow.
    the previous pending row; two near-simultaneous submits that trip the index
    (Postgres `23505`) are retried once instead of surfacing a raw 500.
 4. Accounting approves/denies in the **Issues tab** (internal id `disputes`,
-   gated by `requireFeatureEditAnyView('disputes')`) via
-   [`BankPreferredApprovals.tsx`](../../src/components/payroll/BankPreferredApprovals.tsx),
-   rendered above the PAB dispute queue. **Approve** writes
+   gated by `requireFeatureEditAnyView('disputes')`). Since 2026-09-01 the
+   requests render as **rows inside the Issues table itself**
+   ([`PabDisputeQueue.tsx`](../../src/components/payroll/PabDisputeQueue.tsx))
+   — the separate `BankPreferredApprovals` card above the table was removed
+   (Kane: it's a yes/no like every other issue, and the card had no tab-cache
+   so it re-spun a loader on every tab switch). Bank rows sort first, ride the
+   same per-filter stale-while-revalidate cache as the disputes, and keep the
+   advisory rail-change note (§4.1). **Approve** writes
    `employee_ids.bank_preferred` (bootstrapping a row if none) and notifies the
    employee (`bank_preferred.decided`); **Deny** leaves the value untouched.
+   Same PATCH endpoint as before — the merge changed no write path and no
+   authorization.
 
 API routes: [`app/api/bank-preferred-requests/route.ts`](../../app/api/bank-preferred-requests/route.ts)
 and [`[id]/route.ts`](../../app/api/bank-preferred-requests/[id]/route.ts).
@@ -220,7 +227,7 @@ exception for those two employee surfaces only;
 | Approval **PATCH** | re-checks the 1:1 rule against the **live** stored receiving channel at approve time; **fails closed** (a read error is a 503, never an applied approval) |
 | People → Banking save | 1:1 check → **400**, then BOTH mirrors apply **immediately** (Accounting's edit is the approval, §8) |
 | Employee Profile UI | options pinned by the live receiving pick (`selectableBankPreferredOptions`); the radios mirror a wallet pick into the Bank Preferred field in-form |
-| Accounting approvals row | **advisory only** — a rail-change note; Approve stays enabled because approvability depends on the live receiving bank, which the queue row does not carry. The PATCH is the gate. |
+| Accounting approvals row (Issues-table bank rows since 2026-09-01) | **advisory only** — a rail-change note; Approve stays enabled because approvability depends on the live receiving bank, which the queue row does not carry. The PATCH is the gate. |
 
 ### 4.2 History
 
@@ -588,7 +595,7 @@ breaks other notification inserts).
 | `src/lib/supabase/bank-preferred-requests.ts` | approval-gate data layer |
 | `app/api/update-employee-ids/route.ts` | `interceptBankPreferred` (fail-closed) |
 | `app/api/bank-preferred-requests/route.ts` + `[id]/route.ts` | list / approve / deny |
-| `src/components/payroll/BankPreferredApprovals.tsx` | Issues-tab approval UI |
+| `src/components/payroll/PabDisputeQueue.tsx` | Issues-tab approval UI — bank rows merged into the Issues table (2026-09-01; `BankPreferredApprovals.tsx` deleted) |
 | `src/lib/supabase/employee-ids.ts` | `EmployeeIdRow` + select strings (must list `bank_preferred`) |
 | `app/api/payment-dispatch/bank-override/route.ts` | Mark Paid receiving-detail override |
 | `src/lib/payroll/bank-override-mapping.ts` | slot-aware override column mapping (+ tests) |
