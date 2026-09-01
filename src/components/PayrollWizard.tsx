@@ -235,6 +235,7 @@ import {
   buildPayrollExportRows,
   payrollExportRowToAoa,
 } from '@/lib/payroll-wizard/report-rows';
+import { overlayReplayFinal, type ReplayFinalEntry } from '@/lib/payroll-wizard/replay-finals-overlay';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import type { OffboardedRosterRow } from '@/lib/roster/offboarded-roster-row';
@@ -2359,13 +2360,16 @@ export default function PayrollWizard({
   /** True when the replayed period already has a dispatched final-pay snapshot on file. */
   const [replayDispatched, setReplayDispatched] = useState(false);
   /** The dispatched per-employee finals saved for the replayed period (keyed by lowercased
-   *  work/personal email). Overlaid onto the recomputed Reports rows so salary figures match
-   *  exactly what was dispatched, even if rates have since changed. Null when none on file. */
-  const [replaySnapshotFinals, setReplaySnapshotFinals] = useState<Record<string, {
-    final: number; regularPay: number | null; otPay: number | null;
-    regularHours: number; otHours: number; totalHours: number; initial: number | null;
-    mesaDeduction?: number; mesaDisbursement?: number;
-  }> | null>(null);
+   *  work/personal email). Overlaid onto the recomputed Reports rows — the FULL itemized
+   *  split, not just the final (overlayReplayFinal) — so every figure matches exactly what
+   *  was dispatched, even if rates/catalog/MESA have since changed, and every exported row
+   *  still reconciles against its own columns. Null when none on file. */
+  const [replaySnapshotFinals, setReplaySnapshotFinals] = useState<Record<string, ReplayFinalEntry> | null>(null);
+  /** The FX rate the replayed period's snapshot was published with (fx_rate on the
+   *  final_pay blob). Used ONLY to price the Reports step's USD figures for a replay —
+   *  never written anywhere — so a pre-fx-record cycle's USD column shows the rate it
+   *  was paid at instead of today's global. Null when the snapshot has none. */
+  const [replayFxRate, setReplayFxRate] = useState<number | null>(null);
   /** True while fetching unfiltered hubstaff_hours (no source_file column / replace-only uploads). */
   const [unfilteredHubstaffLoading, setUnfilteredHubstaffLoading] = useState(false);
 
@@ -4425,7 +4429,7 @@ export default function PayrollWizard({
   // When replaying a past period, surface whether it was already dispatched (its
   // final-pay snapshot exists) so the replay banner can label it accordingly.
   useEffect(() => {
-    if (!isReplay || !calcSourceFile) { setReplayDispatched(false); setReplaySnapshotFinals(null); return; }
+    if (!isReplay || !calcSourceFile) { setReplayDispatched(false); setReplaySnapshotFinals(null); setReplayFxRate(null); return; }
     let cancelled = false;
     (async () => {
       try {
@@ -4433,15 +4437,24 @@ export default function PayrollWizard({
         const json = await res.json();
         if (cancelled) return;
         if (json.value) {
-          const parsed = JSON.parse(json.value) as { finals?: NonNullable<typeof replaySnapshotFinals> };
+          const parsed = JSON.parse(json.value) as {
+            finals?: NonNullable<typeof replaySnapshotFinals>;
+            fx_rate?: number;
+          };
           setReplayDispatched(true);
           setReplaySnapshotFinals(parsed.finals ?? null);
+          setReplayFxRate(
+            typeof parsed.fx_rate === 'number' && Number.isFinite(parsed.fx_rate) && parsed.fx_rate > 0
+              ? parsed.fx_rate
+              : null,
+          );
         } else {
           setReplayDispatched(false);
           setReplaySnapshotFinals(null);
+          setReplayFxRate(null);
         }
       } catch {
-        if (!cancelled) { setReplayDispatched(false); setReplaySnapshotFinals(null); }
+        if (!cancelled) { setReplayDispatched(false); setReplaySnapshotFinals(null); setReplayFxRate(null); }
       }
     })();
     return () => { cancelled = true; };
@@ -18902,25 +18915,18 @@ export default function PayrollWizard({
       case 9: {
         // Replaying a past period: reconstruct the report from that period's recomputed
         // data (hours, additions, monthly sections all follow the selected file) and
-        // overlay the dispatched per-employee finals saved in the snapshot so salary
-        // figures match exactly what was paid. Treated as a real report (not a draft)
-        // when the period was actually dispatched.
+        // overlay the dispatched per-employee figures saved in the snapshot — the FULL
+        // itemized split (bonuses, adjustment, orphanage, both MESA legs), not just the
+        // final, so every row on screen and in the exports reconciles against its own
+        // columns and no live-recomputed component leaks in beside a saved final.
+        // Absent saved fields (legacy snapshots) keep the live figure — never ₱0.
+        // Treated as a real report (not a draft) when the period was actually dispatched.
         const replayEmployees = isReplay && replaySnapshotFinals
           ? dispatchData.rows.map((e) => {
               const saved = replaySnapshotFinals[e.email?.trim().toLowerCase() ?? '']
                 ?? replaySnapshotFinals[e.personal_email?.trim().toLowerCase() ?? ''];
               if (!saved) return e;
-              return {
-                ...e,
-                hours: { total: saved.totalHours, regular: saved.regularHours, ot: saved.otHours },
-                pay_php: {
-                  ...e.pay_php,
-                  regular: saved.regularPay,
-                  ot: saved.otPay,
-                  initial: saved.initial,
-                  final: saved.final,
-                },
-              };
+              return overlayReplayFinal(e, saved);
             })
           : null;
 
@@ -18933,7 +18939,11 @@ export default function PayrollWizard({
               startedAt: wizardStartedAt,
               dispatchedAt: new Date(),
               employees: replayEmployees ?? dispatchData.rows,
-              usdToPhpRate,
+              // Price USD at the rate the snapshot was PUBLISHED with when we have
+              // it — a pre-fx-record cycle otherwise falls back to today's globals
+              // and exports a USD column the week was never paid at. Display and
+              // export only; never written back anywhere.
+              usdToPhpRate: replayDispatched && replayFxRate != null ? replayFxRate : usdToPhpRate,
             }
           : reportSnapshot ?? {
               startedAt: wizardStartedAt,
@@ -19087,6 +19097,11 @@ export default function PayrollWizard({
                   // as an "Audit Log" sheet alongside the other three. Best-effort:
                   // if the fetch fails the rest of the workbook still downloads.
                   let auditAoa: (string | number | null)[][] = [];
+                  // A failed fetch and a genuinely empty audit log must not produce
+                  // the same sheet — a header-only "Audit Log" would silently read
+                  // as "no events". Non-fatal either way: the salary sheet is the
+                  // validation artifact and always downloads.
+                  let auditFetchFailed = false;
                   if (auditCycle.source_file) {
                     try {
                       const params = new URLSearchParams({ source_file: auditCycle.source_file });
@@ -19094,15 +19109,20 @@ export default function PayrollWizard({
                       if (auditCycle.period_end) params.set('period_end', auditCycle.period_end);
                       const res = await fetch(`/api/payroll-wizard/audit?${params.toString()}`, { cache: 'no-store' });
                       const json = (await res.json()) as { bundle?: { events?: ClientAuditEvent[] }; error?: string | null };
-                      if (!json.error && json.bundle?.events) {
+                      if (!res.ok || json.error || !json.bundle?.events) {
+                        auditFetchFailed = true;
+                      } else {
                         auditAoa = auditEventsToAoa(json.bundle.events);
                       }
                     } catch {
-                      // non-fatal — XLSX still gets a header-only Audit Log sheet below
+                      auditFetchFailed = true;
                     }
                   }
                   if (auditAoa.length === 0) {
                     auditAoa = auditEventsToAoa([]); // header-only fallback
+                    if (auditFetchFailed) {
+                      auditAoa.push(['(audit log could not be fetched — this sheet is NOT proof of zero events)']);
+                    }
                   }
 
                   const wb = XLSX.utils.book_new();
@@ -19115,10 +19135,16 @@ export default function PayrollWizard({
                   const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
                   const filename = `Payroll Wizard - ${isDraft ? 'Draft' : 'Official'} - ${stamp}.xlsx`;
                   XLSX.writeFile(wb, filename);
-                  const auditCount = Math.max(0, auditAoa.length - 1);
-                  toast.success(`Downloaded ${filename}`, {
-                    description: `Includes Audit Log sheet (${auditCount} event${auditCount === 1 ? '' : 's'})`,
-                  });
+                  if (auditFetchFailed) {
+                    toast.warning(`Downloaded ${filename}`, {
+                      description: 'Audit log could not be fetched — the Audit Log sheet is a placeholder, not proof of zero events.',
+                    });
+                  } else {
+                    const auditCount = Math.max(0, auditAoa.length - 1);
+                    toast.success(`Downloaded ${filename}`, {
+                      description: `Includes Audit Log sheet (${auditCount} event${auditCount === 1 ? '' : 's'})`,
+                    });
+                  }
                 }}
               >
                 <Download className="size-3.5" />

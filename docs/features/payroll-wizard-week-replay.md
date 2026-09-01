@@ -54,7 +54,7 @@ Per-`sourceFile` state, hydrated on every selector change:
 | Do-not-pay exclusions | `payroll.wizard.exclusions.<sourceFile>` |
 | Pay-this-week / OT config | `payroll.wizard.dept_pay_paused.<sourceFile>` |
 | Cycle FX legs | `payroll.wizard.fx.<sourceFile>` (read-only on replay) |
-| Reports salary figures | `payroll.wizard.final_pay.<sourceFile>` overlay |
+| Reports salary figures | `payroll.wizard.final_pay.<sourceFile>` overlay — the FULL itemized split (bonuses, Adj., orphanage, both MESA legs), not just the final; `overlayReplayFinal` |
 | Manager KPI amounts | `bonus_catalog_applied`, pinned to the file's week |
 | HSL KPI amounts | `hsl_bonus_entries`, pinned to the file's week |
 | Hours, rates | the file's own `hubstaff_hours` + `employee_rate_history` (the catalog overlay is skipped while `isReplay`) |
@@ -209,22 +209,39 @@ holding the previous snapshot is better than overwriting it with a KPI-less tota
 that understates pay. Step 8's dispatch stages its own payload
 (`paystub_dispatch_queue`) and is not blocked by this.
 
-## Known gap — bonus AMOUNTS are still today's
+## Known gap — bonus AMOUNTS are still today's (mid-wizard steps only)
 
 PAB / Tech **amounts** and per-department eligibility resolve from `sysBonusCfg`
 — the live Payment Catalog System Bonuses tab — on replay as on the live week.
 The additions blob stores *toggles*, not amounts.
 
 So after this hardening a replayed week's toggles are the week's own, but if a
-catalog amount or dept allowlist changed since, the ₱ figure shown is today's.
+catalog amount or dept allowlist changed since, the ₱ figure shown **on steps
+2–7** is today's.
 
-Closing it properly is its own change, not a one-liner:
-`payroll.wizard.final_pay.<sourceFile>` **already carries** the dispatched
-`perfectAttendanceBonus` / `techBonus` per employee, and `replaySnapshotFinals`
-already loads it on replay (today only the Reports step consumes it) — but that
-map is email-keyed while `bonusTotals` resolves amounts per *dept*, and the pills
-read a third source (`effectivePabStatus`). Making those three agree needs one
-deliberate pass with the live path held byte-identical.
+**The Reports step (9) and both of its exports are CLOSED since 2026-09-01**:
+`overlayReplayFinal` (`src/lib/payroll-wizard/replay-finals-overlay.ts`) merges
+the snapshot's full dispatched split — PAB, Tech, other bonuses, the signed
+Adj., orphanage, both MESA legs — over the recomputed rows, recomputing
+`bonuses_total` from the effective components so every replayed row satisfies
+the reconciliation identity (`report-rows.ts`) against its SAVED final. Before
+this, only hours/regular/OT/initial/final were overlaid, so a replayed export
+carried today's components beside the paid final and could not reconcile.
+Absent fields (legacy snapshots) keep the live figure — never ₱0 (rule 3
+above) — pinned by `replay-finals-overlay.test.ts`. The replay `snap` also
+prefers the snapshot's stored `fx_rate` for its USD figures, so a
+pre-fx-record cycle no longer prices Net (USD) at today's global rate
+(display/export only, never written back).
+
+Closing the mid-wizard steps properly is its own change, not a one-liner: the
+finals map is email-keyed while `bonusTotals` resolves amounts per *dept*, and
+the pills read a third source (`effectivePabStatus`). Making those three agree
+needs one deliberate pass with the live path held byte-identical.
+
+Remaining Reports-step gap: rows come from the recompute and the overlay only
+patches them — a person present in the saved snapshot but absent from today's
+recompute of the same file would be missing from a replayed report entirely.
+Synthesizing rows from the snapshot is its own change.
 
 ## Files
 
@@ -232,6 +249,7 @@ deliberate pass with the live path held byte-identical.
 | --- | --- |
 | Selector, `isReplay`, banner, both auto-toggle effects, publisher gate | `src/components/PayrollWizard.tsx` |
 | Freeze + gap-fill + week-marker rules (pure, unit-tested) | `src/lib/payroll/replay-bonus-toggles.ts` (+ `.test.ts`) |
+| Reports-step full-split finals overlay (pure, unit-tested) | `src/lib/payroll-wizard/replay-finals-overlay.ts` (+ `.test.ts`) |
 | Month-ownership + monthly-period scoping (pure, unit-tested) | `src/lib/payroll/bonus-cadence.ts` (+ `.test.ts`) |
 | Payment-side KPI dept set | `src/lib/payroll/department-bonus.ts` (`WIZARD_PAYABLE_KPI_DEPT_KEYS`) |
 | Dept-set invariants | `src/lib/payroll/kpi-calculator-depts.test.ts` |
