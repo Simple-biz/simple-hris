@@ -118,6 +118,13 @@ The write is keyed to the **step's evaluated month** (`pabMonthRange`) — delib
 different month. Forgive and Ignore are opposite verdicts on the same month, so one in-flight
 write freezes both buttons on the row.
 
+**Both confirmations are the in-app dialog, never `window.confirm`** (Kane 2026-09-01,
+`PabDecisionConfirmDialog.tsx`): shadcn Dialog in the `LockToggleConfirmDialog` vocabulary —
+icon-in-title, verb+object confirm button in the action's color (emerald Forgive / amber
+Ignore), outline Cancel. Display-only: the write stays in the wizard's handlers, the dialog
+triggers them, cannot be dismissed mid-write, and closes when the write settles (the toasts
+carry the outcome).
+
 ## Step 1 Configuration's "Pay this week" also empties this list
 
 A department toggled OFF in Step 1 → Configuration is filtered out of every downstream step

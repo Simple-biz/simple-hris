@@ -315,6 +315,7 @@ import { buildCatalogDeptNameMap } from '@/lib/departments/dept-identity';
 import { computePabIneligibility, groupFailedDaysByHslWeek, pabSeverityBand, type PabDayEntry } from '@/lib/payroll/pab-ineligibility';
 import PabIneligibleTable, { type PabIneligibleRow } from '@/components/payroll/PabIneligibleTable';
 import PabDoneTable, { type PabDoneRow } from '@/components/payroll/PabDoneTable';
+import PabDecisionConfirmDialog, { type PabDecisionTarget } from '@/components/payroll/PabDecisionConfirmDialog';
 import { TransferKpiCard } from '@/components/transfers/TransferToolbar';
 
 function findHeaderColumn(header: string[], ...labels: string[]): number {
@@ -2468,6 +2469,9 @@ export default function PayrollWizard({
   const [pabIgnoringEmail, setPabIgnoringEmail] = useState<string | null>(null);
   /** Step 6's inner tab: the exceptions list, or the receipts ("Done") list. */
   const [pabStepSection, setPabStepSection] = useState<'review' | 'done'>('review');
+  /** The Forgive/Ignore confirmation dialog's target; null = closed. Replaced
+   *  `window.confirm` (Kane 2026-09-01) — the write handlers no longer prompt. */
+  const [pabDecisionConfirm, setPabDecisionConfirm] = useState<PabDecisionTarget | null>(null);
   /** The PAB-decisions broadcast channel — subscribed further down, once the
    *  dispute state it patches exists. Declared here so every decision handler
    *  (including `togglePabExclusion`, defined early) can list the sender in its
@@ -17401,16 +17405,11 @@ export default function PayrollWizard({
          * ineligible, and nobody can see which days are missing. So a partial
          * result surfaces as an error here rather than a success toast.
          */
+        // Confirmation lives in PabDecisionConfirmDialog (the in-app dialog that
+        // replaced window.confirm) — by the time these run, the user confirmed.
         const forgiveMonth = async (row: PabIneligibleRow) => {
           if (pabForgivingEmail) return;
           const dayCount = row.failedDays.length;
-          const ok = window.confirm(
-            `Forgive all ${dayCount} missed day${dayCount === 1 ? '' : 's'} for ${row.name ?? 'this person'} ` +
-            `in ${monthLabelPab}?\n\nThis restores their Perfect Attendance Bonus and is ` +
-            `visible on their own dashboard.`,
-          );
-          if (!ok) return;
-
           setPabForgivingEmail(row.email);
           try {
             const res = await fetch('/api/payroll-wizard/pab-forgive-month', {
@@ -17476,14 +17475,6 @@ export default function PayrollWizard({
          */
         const ignoreMonth = async (row: PabIneligibleRow) => {
           if (pabIgnoringEmail || pabForgivingEmail) return;
-          const ok = window.confirm(
-            `Ignore ${row.name ?? 'this person'}'s PAB eligibility for ${monthLabelPab}?\n\n` +
-            `They will earn ₱0 Perfect Attendance Bonus for this period regardless of ` +
-            `attendance, they will be notified, and Forgive stays disabled until the ` +
-            `exclusion is lifted in System Bonus → PAB settings.`,
-          );
-          if (!ok) return;
-
           const norm = normEmail(row.email) ?? row.email.toLowerCase();
           setPabIgnoringEmail(row.email);
           try {
@@ -17719,9 +17710,9 @@ export default function PayrollWizard({
                         deptNames={catalogDeptNames}
                         monthLabel={monthLabelPab}
                         onOpenCalendar={setPabCalendarModalEmail}
-                        onForgiveMonth={forgiveMonth}
+                        onForgiveMonth={(row) => setPabDecisionConfirm({ action: 'forgive', row })}
                         forgivingEmail={pabForgivingEmail}
-                        onIgnoreMonth={ignoreMonth}
+                        onIgnoreMonth={(row) => setPabDecisionConfirm({ action: 'ignore', row })}
                         ignoringEmail={pabIgnoringEmail}
                         readOnly={isReplay}
                         // `pabMergeLoaded` is the one signal that the month's hours are
@@ -17742,6 +17733,26 @@ export default function PayrollWizard({
                 </AnimatePresence>
               </CardContent>
             </Card>
+
+            <PabDecisionConfirmDialog
+              target={pabDecisionConfirm}
+              monthLabel={monthLabelPab}
+              busy={
+                pabDecisionConfirm !== null &&
+                (pabForgivingEmail === pabDecisionConfirm.row.email ||
+                  pabIgnoringEmail === pabDecisionConfirm.row.email)
+              }
+              onCancel={() => setPabDecisionConfirm(null)}
+              onConfirm={() => {
+                const t = pabDecisionConfirm;
+                if (!t) return;
+                // Close after the write settles either way — success and failure
+                // both already speak through their toasts.
+                void (t.action === 'forgive' ? forgiveMonth(t.row) : ignoreMonth(t.row)).finally(
+                  () => setPabDecisionConfirm(null),
+                );
+              }}
+            />
           </div>
         );
       }
