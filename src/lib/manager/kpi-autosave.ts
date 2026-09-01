@@ -129,6 +129,36 @@ export function shouldRearmAutosave(
 }
 
 /**
+ * Whether a department's on-screen state is a person's own unsaved work, and so
+ * must not be overwritten by a load that lands underneath it.
+ *
+ * Both calculators guard their load's `setState` with this question, because a
+ * fetch can land after the manager has since typed — the live-refresh dispatch
+ * checks `dirty` when it *dispatches*, which is too early.
+ *
+ * The subtlety is `seeded`. A never-saved draft week arrives with dept-common
+ * bonuses pre-ticked, flagged `dirty` on purpose so the manager's first edit
+ * carries them along — but **nobody typed it**, and every mutator clears `seeded`
+ * in the same state update that sets `dirty` (see `DeptState.seeded`), so
+ * `seeded` is a reliable "untouched". Treating that as local work would mean a
+ * department that arrived pre-applied never accepts a later load at all: not
+ * another scorer's change, and not its own live re-fetch after the tab cache has
+ * painted the same pre-applied shape. Stale-and-stop, which is the one outcome
+ * the cache is built to avoid.
+ *
+ * So: dirty **and touched**, or a write in flight.
+ */
+export function isUnsavedLocalWork(s: {
+  dirty: boolean;
+  saving: boolean;
+  /** Absent on surfaces that never pre-apply anything (HSL branches). */
+  seeded?: boolean;
+}): boolean {
+  if (s.saving) return true;
+  return s.dirty && !s.seeded;
+}
+
+/**
  * SSD Medical Records only: whether a sub-team has NO team-level input at all.
  *
  * `ssd_medical_records` scores from team-level accuracy %, record count and RFC

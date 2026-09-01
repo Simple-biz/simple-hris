@@ -28,6 +28,13 @@ import {
 import HslBonusReadyPreview from './HslBonusReadyPreview';
 import KpiCalculatorLoading from './KpiCalculatorLoading';
 import { kpiCalculatorRevealed } from '@/lib/manager/kpi-calculator-reveal';
+import {
+  KPI_CACHE_KEYS,
+  getKpiCache,
+  readKpiCacheStamp,
+  setKpiCache,
+} from '@/lib/manager/kpi-cache';
+import { useKpiCacheIdentity } from '@/hooks/useKpiCacheIdentity';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { slugifyDeptKey } from '@/lib/departments/registry';
@@ -300,6 +307,121 @@ interface HslMember {
   sub_team: SubTeamName | null;
 }
 
+// ── One branch's raw server payload, and the single way it becomes state ──────
+
+/**
+ * The three routes a branch loads, exactly as they answered.
+ *
+ * This is what goes in the tab cache — never the derived `DeptState`. `DeptState`
+ * holds a `Set` (`rosterEmails`), which `JSON.stringify` turns into `{}`: an
+ * empty roster reads as "everyone here is an external member", which paints a
+ * removable ✕ against every real member of the branch. Caching the raw rows and
+ * re-deriving through {@link mergeHslBranchPayload} means the seeded path and the
+ * fetched path cannot diverge — the same rule
+ * `docs/features/employee-dashboard-cache.md` sets out under *Shapes that do not
+ * survive JSON.stringify*.
+ */
+export interface HslBranchPayload {
+  entries: {
+    id: string;
+    employee_email: string;
+    employee_name: string | null;
+    is_manager: boolean;
+    kpi_data: KpiData;
+    calculated_bonus: number;
+  }[];
+  status: { status: BonusStatus }[];
+  members: HslMember[];
+}
+
+/**
+ * Merge a branch's saved entries with its roster into the rows the tables render.
+ *
+ * Pure and module-scope on purpose: it is called once by the live load and once
+ * by the cache seed, and if those two ever produced different shapes the cached
+ * paint would be a quiet lie rather than a head start.
+ *
+ * Note what it does NOT take: the SSD team-level inputs. Those are deliberately
+ * never persisted (`docs/features/hsl-kpi-calculator-2026-07.md` → *SSD sub-team
+ * inputs are still NOT saved*), so both paths recompute against blank inputs,
+ * where `recomputeSsdEntries` holds each saved share rather than zeroing it —
+ * which is what produces the `restored` team state.
+ */
+export function mergeHslBranchPayload(
+  key: HslDeptKey,
+  payload: HslBranchPayload,
+  subTeams: Record<SubTeamName, SubTeamState>,
+): { entries: EntryRow[]; status: BonusStatus; rosterEmails: Set<string> } {
+  const dept = HSL_DEPTS[key];
+
+  // DB entries (existing scored data) — these win over roster defaults.
+  const byEmail = new Map<string, EntryRow>();
+  (payload.entries ?? []).forEach((r) => {
+    byEmail.set(r.employee_email.toLowerCase(), {
+      id: r.id,
+      employee_email: r.employee_email.toLowerCase(),
+      employee_name: r.employee_name ?? r.employee_email,
+      is_manager: r.is_manager,
+      kpi_data: r.kpi_data ?? {},
+      calculated_bonus: r.calculated_bonus ?? 0,
+    });
+  });
+
+  // Seed any roster members from hsl_team_members who aren't in entries yet.
+  // Pre-fill kpi_data.sub_team for SSD so the dropdown reflects the seeded
+  // assignment. rosterEmails tracks the true roster so manually-added external
+  // members (email not in the roster) can be tagged + removed.
+  const rosterEmails = new Set<string>();
+  (payload.members ?? []).forEach((m) => {
+    const email = m.email.toLowerCase();
+    if (!email) return;
+    rosterEmails.add(email);
+    if (byEmail.has(email)) return;
+    const kpi: KpiData = {};
+    if (m.sub_team) (kpi as unknown as Record<string, string>).sub_team = m.sub_team;
+    byEmail.set(email, {
+      employee_email: email,
+      employee_name: m.full_name ?? m.hsl_name ?? email,
+      is_manager: m.is_manager,
+      kpi_data: kpi,
+      calculated_bonus: 0,
+    });
+  });
+
+  // Managers Weekly dept: the roster is the hardcoded HSL_MANAGERS cohort, not
+  // hsl_team_members. Seed any manager not already present so the dept always
+  // shows its full lineup even before anything has been scored.
+  if (dept.perEmployee) {
+    HSL_MANAGERS.forEach((mgr) => {
+      const email = mgr.email.toLowerCase();
+      rosterEmails.add(email);
+      if (byEmail.has(email)) return;
+      byEmail.set(email, {
+        employee_email: email,
+        employee_name: mgr.name,
+        is_manager: true,
+        kpi_data: {},
+        calculated_bonus: 0,
+      });
+    });
+  }
+
+  const sorted = Array.from(byEmail.values()).sort((a, b) =>
+    a.employee_name.localeCompare(b.employee_name),
+  );
+  // Recompute per-employee amounts (SSD team-split shares and Managers Weekly
+  // component sums) so the dept total + table read the right values (the DB
+  // persists 0 for legacy/unscored entries).
+  let entries = recomputeSsdEntries(key, sorted, subTeams);
+  entries = recomputeManagerEntries(key, entries);
+
+  return {
+    entries,
+    status: payload.status?.[0]?.status ?? 'draft',
+    rosterEmails,
+  };
+}
+
 // ── Shared entry primitives ───────────────────────────────────────────────────
 
 /** Peso amount that gives a quick "counted" pop whenever it changes, so the
@@ -447,8 +569,29 @@ export default function HslBonusCalculator({
   initialFilter,
   submissionSource,
 }: HslBonusCalculatorProps) {
+  // Bind the tab cache to this manager BEFORE any seeding below reads it. Two
+  // managers on one machine must never paint each other's branches, and the
+  // cache is inert until this runs.
+  useKpiCacheIdentity(viewerEmail);
+
+  /**
+   * The payroll week the last live resolve produced in this tab, if any.
+   *
+   * **Paint only.** It picks WHICH cached week to show while the Hubstaff resolve
+   * below is in flight; it does not make the week resolved, so nothing becomes
+   * writable on the strength of it (see `weekResolved`). If the live answer turns
+   * out to be a different week, that is simply a different cache key and the
+   * seeded paint is replaced by that week's load.
+   *
+   * Seeding `weekStart` from it is strictly better than the local-clock guess it
+   * replaces: this value is a real Sunday-anchored upload week, and the guess is
+   * Monday-anchored — the exact mismatch that stranded rows before.
+   */
+  const [cachedWeek] = useState<string | null>(
+    () => getKpiCache<string>(KPI_CACHE_KEYS.presumedWeek('hsl')) ?? null,
+  );
   const today = new Date();
-  const [weekStart, setWeekStart] = useState(() => isoWeekStart(today));
+  const [weekStart, setWeekStart] = useState(() => cachedWeek ?? isoWeekStart(today));
   /**
    * Whether `weekStart` is the REAL payroll week (the Hubstaff upload's Sun–Sat
    * range start) rather than the local-clock guess it's seeded with.
@@ -474,19 +617,53 @@ export default function HslBonusCalculator({
     [managedDepts, isElevated],
   );
 
+  /** True when at least one branch painted from the tab cache on this mount. */
+  const seededFromCache = useRef(false);
+
   const [deptState, setDeptState] = useState<AllDeptState>(() => {
     const init = {} as AllDeptState;
     for (const k of HSL_DEPT_KEYS) {
+      // Seeded from the last visit's raw payload for THIS branch and THIS week,
+      // so the numbers are on screen before the three fetches below have even
+      // been sent. Three things this deliberately does not do:
+      //   - it never seeds `subTeams`: the SSD team inputs have no persistence
+      //     home by ruling, and blank-after-remount is what stops a recompute
+      //     zeroing banked shares (`subTeamInputsBlank`);
+      //   - it never sets `dirty`: this payload came out of the database, and a
+      //     dirty seed would let merely opening the tab autosave it;
+      //   - it never touches `weekResolved`, so nothing here unlocks a write.
+      const cached = cachedWeek
+        ? getKpiCache<HslBranchPayload>(KPI_CACHE_KEYS.hslBranch(k, cachedWeek))
+        : undefined;
+      const seeded = cached
+        ? mergeHslBranchPayload(k, cached, DEFAULT_SUB_TEAMS)
+        : null;
+      if (seeded) seededFromCache.current = true;
       init[k] = {
-        entries: [],
-        status: 'draft',
+        entries: seeded?.entries ?? [],
+        status: seeded?.status ?? 'draft',
         subTeams: { ...DEFAULT_SUB_TEAMS },
         dirty: false,
         saving: false,
-        rosterEmails: new Set(),
+        rosterEmails: seeded?.rosterEmails ?? new Set(),
       };
     }
     return init;
+  });
+
+  /**
+   * When the seeded paint was fetched, for the "as of" line — cleared the moment
+   * the live loads settle, so the label is only ever on screen while what is
+   * being shown really is the previous visit's data.
+   */
+  const [cacheAsOf, setCacheAsOf] = useState<number | null>(() => {
+    if (!cachedWeek) return null;
+    let newest: number | null = null;
+    for (const k of HSL_DEPT_KEYS) {
+      const at = readKpiCacheStamp(KPI_CACHE_KEYS.hslBranch(k, cachedWeek));
+      if (at !== undefined && (newest === null || at > newest)) newest = at;
+    }
+    return newest;
   });
 
   // Autosave bookkeeping. Scoring persists as the manager types (no Save
@@ -736,72 +913,21 @@ export default function HslBonusCalculator({
         fetch(`/api/hsl-bonus/period-status?dept=${key}&period_start=${start}`, { cache: 'no-store' }),
         fetch(`/api/hsl-bonus/team-members?dept=${key}`, { cache: 'no-store' }),
       ]);
-      const entriesJson = (await entriesRes.json()) as { rows?: {
-        id: string; employee_email: string; employee_name: string | null;
-        is_manager: boolean; kpi_data: KpiData; calculated_bonus: number;
-      }[] };
+      const entriesJson = (await entriesRes.json()) as { rows?: HslBranchPayload['entries'] };
       const statusJson = (await statusRes.json()) as { rows?: { status: BonusStatus }[] };
       const membersJson = (await membersRes.json()) as { rows?: HslMember[] };
 
-      // DB entries (existing scored data) — these win over roster defaults
-      const byEmail = new Map<string, EntryRow>();
-      (entriesJson.rows ?? []).forEach((r) => {
-        byEmail.set(r.employee_email.toLowerCase(), {
-          id: r.id,
-          employee_email: r.employee_email.toLowerCase(),
-          employee_name: r.employee_name ?? r.employee_email,
-          is_manager: r.is_manager,
-          kpi_data: r.kpi_data ?? {},
-          calculated_bonus: r.calculated_bonus ?? 0,
-        });
-      });
+      const payload: HslBranchPayload = {
+        entries: entriesJson.rows ?? [],
+        status: statusJson.rows ?? [],
+        members: membersJson.rows ?? [],
+      };
+      // Cache the RAW payload, keyed on this branch AND this resolved week, so
+      // the next mount paints it instantly. Never the derived state: that holds
+      // a Set. Written before the state update so a branch whose local work
+      // blocks the paint below is still cached for next time.
+      setKpiCache(KPI_CACHE_KEYS.hslBranch(key, start), payload);
 
-      // Seed any roster members from hsl_team_members who aren't in entries yet.
-      // Pre-fill kpi_data.sub_team for SSD so the dropdown reflects the seeded assignment.
-      // rosterEmails tracks the true roster so manually-added external members
-      // (email not in the roster) can be tagged + removed.
-      const rosterEmails = new Set<string>();
-      (membersJson.rows ?? []).forEach((m) => {
-        const email = m.email.toLowerCase();
-        if (!email) return;
-        rosterEmails.add(email);
-        if (byEmail.has(email)) return;
-        const kpi: KpiData = {};
-        if (m.sub_team) (kpi as unknown as Record<string, string>).sub_team = m.sub_team;
-        byEmail.set(email, {
-          employee_email: email,
-          employee_name: m.full_name ?? m.hsl_name ?? email,
-          is_manager: m.is_manager,
-          kpi_data: kpi,
-          calculated_bonus: 0,
-        });
-      });
-
-      // Managers Weekly dept: the roster is the hardcoded HSL_MANAGERS cohort,
-      // not hsl_team_members. Seed any manager not already present so the dept
-      // always shows its full lineup even before anything has been scored.
-      if (dept.perEmployee) {
-        HSL_MANAGERS.forEach((mgr) => {
-          const email = mgr.email.toLowerCase();
-          rosterEmails.add(email);
-          if (byEmail.has(email)) return;
-          byEmail.set(email, {
-            employee_email: email,
-            employee_name: mgr.name,
-            is_manager: true,
-            kpi_data: {},
-            calculated_bonus: 0,
-          });
-        });
-      }
-
-      const sortedEntries = Array.from(byEmail.values()).sort((a, b) =>
-        a.employee_name.localeCompare(b.employee_name),
-      );
-      const status: BonusStatus = statusJson.rows?.[0]?.status ?? 'draft';
-      // After load, recompute per-employee amounts (SSD team-split shares and
-      // Managers Weekly component sums) so the dept total + table read the right
-      // values (DB persists 0 for legacy/unscored entries).
       setDeptState((prev) => {
         const cur = prev[key]!;
         // Never clobber in-flight local work: refreshAll checks `dirty` when it
@@ -809,11 +935,19 @@ export default function HslBonusCalculator({
         // added a member (parent re-renders also re-run the boot effect). Guard
         // at write time so unsaved entries survive any reload path.
         if (cur.dirty || cur.saving) return prev;
-        let recomputed = recomputeSsdEntries(key, sortedEntries, cur.subTeams);
-        recomputed = recomputeManagerEntries(key, recomputed);
+        // Same merge the cache seed runs, against the sub-team inputs currently
+        // on screen — one derivation, so a seeded branch and a fetched branch
+        // can never disagree about what a row is worth.
+        const merged = mergeHslBranchPayload(key, payload, cur.subTeams);
         return {
           ...prev,
-          [key]: { ...cur, entries: recomputed, status, dirty: false, rosterEmails },
+          [key]: {
+            ...cur,
+            entries: merged.entries,
+            status: merged.status,
+            dirty: false,
+            rosterEmails: merged.rosterEmails,
+          },
         };
       });
     } catch {
@@ -837,7 +971,13 @@ export default function HslBonusCalculator({
       // Stay on the loading screen until the payroll week is known either way —
       // weekly branches skip their fetch while it's unresolved, so flipping this
       // first would flash an empty calculator that looks like "no scores".
-      if (!cancelled && weekResolved) setLoadsSettled(true);
+      if (!cancelled && weekResolved) {
+        setLoadsSettled(true);
+        // Live data is on screen now, so the "as of" line has nothing left to
+        // disclose. Clearing it here rather than on the first response keeps it
+        // honest for a branch whose own load failed.
+        setCacheAsOf(null);
+      }
     })();
     return () => {
       cancelled = true;
@@ -858,7 +998,16 @@ export default function HslBonusCalculator({
   // construction, not by care: every branch is held on `weekResolved` (still
   // false) at each read and write site, and `kpiAutosaveGate` refuses on the
   // same flag. What appears is the chrome plus the rose alert below.
-  const booted = kpiCalculatorRevealed({ dataSettled: loadsSettled, weekError });
+  // A branch painted from the tab cache already has everything the cards need to
+  // mean something, so it reveals without waiting for the round trip — the same
+  // question `loadsSettled` answers, answered earlier. It unlocks nothing: the
+  // week is still unresolved, so every read and write stays held exactly where
+  // it was, and the inputs stay read-only until the live resolve lands
+  // (`weekPending` below).
+  const booted = kpiCalculatorRevealed({
+    dataSettled: loadsSettled || seededFromCache.current,
+    weekError,
+  });
 
   // ── Live refresh ───────────────────────────────────────────────────────────
   // Reload every visible dept, but skip any with unsaved local edits (`dirty`)
@@ -917,6 +1066,9 @@ export default function HslBonusCalculator({
             setWeekStart(iso);
             setWeekResolved(true);
             setWeekError(false);
+            // Remember which week this was, so the next mount knows which
+            // week's cached branches it may paint while this resolve re-runs.
+            setKpiCache(KPI_CACHE_KEYS.presumedWeek('hsl'), iso);
             return;
           }
         } catch {
@@ -1353,6 +1505,7 @@ export default function HslBonusCalculator({
             onMarkUnready={() => void reopenToDraft(key)}
             onView={() => setViewingDept(key)}
             payrollLocked={payrollLocked}
+            weekPending={!weekResolved && !weekError}
             markUnreadySubmitting={reopenSubmitting}
             onSubTeamChange={(subTeam, field, val) => {
               setDeptState((prev) => {
@@ -1447,6 +1600,23 @@ export default function HslBonusCalculator({
             {/* Sets how the next "Open" presents; also switchable from inside
                 the overlay, so the choice is never a dead end. */}
             <ViewSwitch mode={openMode} onChange={setOpenMode} />
+            {/* What is on screen right now is the previous visit's data, still
+                being re-pulled. Say when it was fetched rather than let a figure
+                that another scorer has since changed pass for live. Neutral, not
+                amber — amber is reserved for warnings. */}
+            {cacheAsOf !== null && (
+              <span
+                className="hidden items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 font-mono text-[10px] text-zinc-500 shadow-sm sm:flex dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400"
+                title="Showing the scores this tab already had. Reloading from the database now."
+              >
+                <RefreshCw className="h-3 w-3 animate-spin" aria-hidden />
+                as of{' '}
+                {new Date(cacheAsOf).toLocaleTimeString('en-US', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </span>
+            )}
             <Button
               size="sm"
               variant="outline"
@@ -1910,6 +2080,21 @@ interface DeptBlockProps {
   onSubTeamChange: (subTeam: SubTeamName, field: 'pct' | 'records' | 'rfc', val: string) => void;
   ssdShareForTeam?: (subTeam: SubTeamName, memberCount: number) => number;
   payrollLocked: boolean;
+  /**
+   * The payroll week has not been confirmed live yet on this mount.
+   *
+   * Only ever true while cached scores are on screen ahead of the Hubstaff
+   * resolve. Scoring is held for those few hundred milliseconds because a KPI
+   * row's only address is `(department, period_start)`: if the live answer is a
+   * different week, this branch's rows are about to be replaced, and an edit
+   * typed against the old ones would survive that replacement
+   * (`loadDept` refuses to overwrite a dirty branch) and then save last week's
+   * numbers under this week's key.
+   *
+   * Nothing is loosened by this: before the cache existed, this window showed a
+   * loading skeleton, which was not editable either.
+   */
+  weekPending: boolean;
   markUnreadySubmitting: boolean;
   rosterEmails: Set<string>;
   /** Identity emails of week-relevant offboarded people — tags their table
@@ -1932,7 +2117,7 @@ function DeptBlock({
   chromeless, onOpen, periodStartStr,
   onKpiChange, onToggleManager,
   savedAtMs, autosaveError, onMarkReady, onMarkUnready, onView, onSubTeamChange, ssdShareForTeam,
-  payrollLocked, markUnreadySubmitting,
+  payrollLocked, weekPending, markUnreadySubmitting,
   rosterEmails, offboardedEmails, onAddMember, offboardedSuggestions, onQuickAddOffboarded, onRemoveMember,
 }: DeptBlockProps) {
   const dept = HSL_DEPTS[deptKey];
@@ -1943,7 +2128,8 @@ function DeptBlock({
   // Scoring is editable only in draft. Once a period is 'ready' (sent to
   // Accounting) or 'locked', inputs go read-only until it's reopened — this stops
   // silent edits that never get saved to the DB Accounting actually reads.
-  const readOnly = state.status !== 'draft' || payrollLocked;
+  // Also held while the payroll week is still being confirmed — see `weekPending`.
+  const readOnly = state.status !== 'draft' || payrollLocked || weekPending;
 
   function subTeamMemberCount(subTeam: SubTeamName): number {
     return state.entries.filter((e) => (e.kpi_data.sub_team as unknown as string) === subTeam).length;

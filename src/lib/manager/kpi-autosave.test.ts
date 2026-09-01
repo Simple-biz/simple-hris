@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  isUnsavedLocalWork,
   kpiAutosaveGate,
   shouldRearmAutosave,
   subTeamInputsBlank,
@@ -170,4 +171,48 @@ test('any one field present makes the sub-team non-blank', () => {
   assert.equal(subTeamInputsBlank({ pct: '95', records: '', rfc: '' }), false);
   assert.equal(subTeamInputsBlank({ pct: '', records: '13', rfc: '' }), false);
   assert.equal(subTeamInputsBlank({ pct: '', records: '', rfc: '13' }), false);
+});
+
+// ── What a load may overwrite (stops both a clobber and a stale-and-stop) ────
+
+test('typing by a person is local work and a load must not overwrite it', () => {
+  assert.equal(isUnsavedLocalWork({ dirty: true, saving: false, seeded: false }), true);
+});
+
+test('a write in flight is local work whatever the flags say', () => {
+  assert.equal(isUnsavedLocalWork({ dirty: false, saving: true, seeded: true }), true);
+  assert.equal(isUnsavedLocalWork({ dirty: true, saving: true, seeded: true }), true);
+});
+
+test('a SEEDED dept is dirty but untouched, so a load may overwrite it', () => {
+  // Pre-applied common bonuses / the QC first-pass. Refusing here would freeze a
+  // never-saved draft on whatever painted first — including the tab cache's copy
+  // of that same pre-applied shape — and it would never see another scorer again.
+  assert.equal(isUnsavedLocalWork({ dirty: true, saving: false, seeded: true }), false);
+});
+
+test('a clean dept is never local work', () => {
+  assert.equal(isUnsavedLocalWork({ dirty: false, saving: false, seeded: false }), false);
+  assert.equal(isUnsavedLocalWork({ dirty: false, saving: false, seeded: true }), false);
+});
+
+test('a surface with no seeded concept (HSL branches) reads dirty as touched', () => {
+  // HSL never pre-applies anything, so `dirty` there always means somebody typed.
+  assert.equal(isUnsavedLocalWork({ dirty: true, saving: false }), true);
+  assert.equal(isUnsavedLocalWork({ dirty: false, saving: false }), false);
+});
+
+test('autosave still refuses a seeded state — overwritable is not the same as writable', () => {
+  // The two questions must not collapse into one: a load MAY replace a seeded
+  // dept, and autosave must still never PERSIST it (that is what would attribute
+  // pre-applied rows to whoever opened the tab).
+  const base = {
+    loaded: true, weekResolved: true, editable: true, payrollLocked: false,
+    saving: false, dirty: true, failedUnchanged: false,
+  };
+  assert.equal(isUnsavedLocalWork({ dirty: true, saving: false, seeded: true }), false);
+  assert.deepEqual(kpiAutosaveGate({ ...base, seededOnly: true }), {
+    save: false,
+    reason: 'seeded-only',
+  });
 });

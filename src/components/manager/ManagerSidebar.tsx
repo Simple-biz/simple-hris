@@ -3,6 +3,7 @@
 import React from 'react';
 import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
+import { clearAllKpiCache } from '@/lib/manager/kpi-cache';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
   Bell,
@@ -267,6 +268,11 @@ export default function ManagerSidebar({
             } catch {
               /* ignore */
             }
+            // The KPI Calculator's tab cache holds this manager's scored bonus
+            // rows. It must not still be on disk when the next person signs in
+            // on this tab — bindKpiCacheIdentity would purge it anyway, but only
+            // once they get far enough to resolve an identity.
+            clearAllKpiCache();
             void signOut({ callbackUrl: '/login' });
           }}
         >

@@ -453,6 +453,114 @@ present an empty week as a scored one.
 *filename*; an undatable name resolves to nothing. That is now refused at ingest
 — see `csv-imports.md` §4 → Hubstaff → *Filename contract*.
 
+## Tab-switch & reload cache *(2026-09-01)*
+
+Kane: *"add proper caching practices where I don't have to hit the database again
+to pick up the data."*
+
+`ManagerApp` renders its content pane inside an `AnimatePresence mode="wait"`
+keyed on `activeTab` (`ManagerApp.tsx:404`), so **leaving the KPI Calculator tab
+unmounts both calculators**. That unmount is load-bearing and stays — it is what
+flushes a pending autosave (see *Autosave*, point 3). What it cost was every
+fetch re-running from cold on the way back:
+
+| calculator | per visit |
+|---|---|
+| HSL | 1 week-resolve + **3 per branch** (entries · period-status · team-members) |
+| Departments | 1 week-resolve + catalog + FX + **2–3 per dept** |
+
+all `cache: 'no-store'`. Six branches is nineteen round trips to look at a number
+you were looking at ten seconds ago. Listed as still-open in
+`memory/dashboard-switch-performance` ("/manager re-fetches on every tab switch").
+
+The store is `src/lib/manager/kpi-cache.ts` (+ `kpi-cache.test.ts`), bound to the
+viewer by `src/hooks/useKpiCacheIdentity.ts`. It mirrors
+`src/lib/employee/tab-cache.ts`: in-memory Map plus a `sessionStorage` mirror,
+**never `localStorage`**, identity-stamped, schema-versioned, 12h age ceiling,
+and a capacity trim (the department week picker mints a key per dept-week).
+
+### A cached value paints. It never decides.
+
+Every consumer seeds its state, then runs its **existing, unconditional** fetch
+and overwrites it. There is deliberately **no skip-fetch flag** — Accounting's
+`tab-cache.ts` exports `hasFetchedThisSession` and copying it here would be a bug:
+other scorers edit the same dept-week and `useLiveRefresh` re-pulls it, so a
+skipped fetch freezes one manager's view of a week somebody else has changed. A
+`no-skip-flag` test greps the module's own exports so it cannot return by
+copy-paste.
+
+Three consequences, none of which may be undone:
+
+1. **`weekResolved` is never seeded from the cache.** `KPI_CACHE_KEYS.presumedWeek`
+   only decides *which* cached week may be painted while the live Hubstaff
+   resolve is in flight. Every read and write stays held on the live answer, and
+   `kpiAutosaveGate` still refuses on `week-unresolved` — see *First-load reveal*.
+   Seeding the *view* week from it is strictly better than what it replaces: a
+   real Sunday-anchored upload week instead of the Monday-anchored clock guess.
+2. **Nothing seeded is `dirty`.** A cached payload came out of the database. On
+   the department side the seed runs the same `applyDeptPayload` as the fetch, so
+   a never-saved draft still arrives pre-applied and flagged `seeded` — which
+   autosave still refuses (`seeded-only`).
+3. **Only RAW payloads are cached** — `HslBranchPayload` and `DeptAppliedPayload`,
+   both re-derived through the one merge each surface has (`mergeHslBranchPayload`
+   / `applyDeptPayload`). Never `DeptState`: it holds a `Set` (`rosterEmails`),
+   which `JSON.stringify` turns into `{}` — an empty roster reads as "everyone is
+   an external member" and paints a removable ✕ against every real member. And
+   `subTeams` is **never** cached: blank-after-remount is exactly what makes
+   `subTeamInputsBlank` hold a banked SSD share instead of zeroing it, and what
+   produces the `restored` team state.
+
+### Scoring is held until every write input is confirmed live
+
+`weekPending` (departments) / the `weekPending` prop (HSL branches) makes the
+surface read-only until, on **this mount**, the payroll week has resolved (or
+failed), the catalog is in, and the FX lookup has settled.
+
+This loosens nothing — before the cache, that window was a loading skeleton,
+which was not editable either. It closes two things:
+
+- an edit typed against a cache-painted week that the live resolve is about to
+  replace would survive that replacement (`loadDept` will not overwrite a dirty
+  department) and then save under the **new** week's key;
+- a USD/COP bonus scored before `/api/app-settings` answers banks the **fallback**
+  rate, because the peso figure is snapshotted at save time and nothing
+  downstream re-converts (`bonus-catalog.md` → *FX at save time*). `fxSettled`
+  means the lookup finished, not that it succeeded — a failed lookup has a
+  documented answer (the official rates) and must not block scoring forever.
+
+### What a load may overwrite
+
+`isUnsavedLocalWork` (`kpi-autosave.ts`, tested) replaces the departments' old
+`cur?.dirty || cur?.saving` write-time guard. A `seeded` state is dirty but
+**untouched** — every mutator clears `seeded` in the same update that sets
+`dirty` — so treating it as local work would leave a pre-applied department
+frozen on whatever painted first, accepting neither another scorer's change nor
+its own live re-fetch. Overwritable and writable are separate questions: a load
+may replace a seeded department, and autosave must still never persist it.
+
+A department's load **failure** no longer blanks rows that are already on screen,
+matching the Payroll Notes panes' background-guard rule
+(`memory/payroll-notes-panes-cache-live-freshness`).
+
+### Disclosure
+
+While cached rows are on screen ahead of the live answer, both toolbars carry a
+neutral **"as of HH:MM"** chip stamped with the cache write time (not the paint
+time), cleared once the live loads settle — and kept if one of them failed, so
+the label stays honest. Neutral, not amber: amber is reserved for warnings.
+
+### Not cached, on purpose
+
+- **The bonus catalog and the FX rates.** Both are *write* inputs — they decide
+  the peso figure a save stores — not paint. They are one small request each.
+- **SSD sub-team inputs** (above).
+- **Nothing server-side changed.** Every route keeps `cache: 'no-store'`.
+
+### Not verified in a browser
+
+`tsc` is clean and 2176 tests pass. The live tab-switch and reload behaviour was
+not clicked through (needs Google SSO + Supabase auth).
+
 ## Known gap (low, not fixed)
 
 - **Removed depts still show on Employee Dashboard.** `getEmployeeKpiResults` has no

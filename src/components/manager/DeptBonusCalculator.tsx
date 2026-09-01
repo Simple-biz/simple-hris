@@ -77,7 +77,12 @@ import { slugifyDeptKey } from '@/lib/departments/registry';
 import { DEPARTMENTS, DEPT_DESCRIPTION, MANAGER_BONUS_DEPT_KEYS, isKpiCalculatorDeptKey } from '@/lib/payroll/department-bonus';
 import { catalogDeptColor as deptColor, humanizeDeptKey } from '@/lib/departments/dept-identity';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
-import { KPI_AUTOSAVE_DEBOUNCE_MS, kpiAutosaveGate, shouldRearmAutosave } from '@/lib/manager/kpi-autosave';
+import {
+  KPI_AUTOSAVE_DEBOUNCE_MS,
+  isUnsavedLocalWork,
+  kpiAutosaveGate,
+  shouldRearmAutosave,
+} from '@/lib/manager/kpi-autosave';
 import { QC_DEPT_KEYS, isQcDeptKey } from '@/lib/qc/constants';
 import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
 import {
@@ -88,6 +93,14 @@ import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import KpiCalculatorLoading from './KpiCalculatorLoading';
 import { kpiCalculatorRevealed } from '@/lib/manager/kpi-calculator-reveal';
+import {
+  KPI_CACHE_KEYS,
+  deptSurface,
+  getKpiCache,
+  readKpiCacheStamp,
+  setKpiCache,
+} from '@/lib/manager/kpi-cache';
+import { useKpiCacheIdentity } from '@/hooks/useKpiCacheIdentity';
 import { validateFormula, evaluateFormula } from '@/lib/bonus-catalog/formula';
 import type { BonusDef, BonusAssignment } from '@/lib/bonus-catalog/types';
 import { effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
@@ -168,6 +181,27 @@ interface DeptState {
   seeded: boolean;
   saving: boolean;
   loaded: boolean;
+}
+
+/**
+ * One dept-week's server answer, after the QC first-pass substitution has been
+ * decided but before any of it becomes `DeptState`.
+ *
+ * This is the shape the tab cache holds. Never `DeptState` itself: that is a
+ * derived render shape, and re-deriving it from the raw rows through the one
+ * `applyDeptPayload` is what stops a cached paint and a fresh fetch disagreeing
+ * about which bonuses a member has applied.
+ */
+interface DeptAppliedPayload {
+  rows: {
+    employee_email: string;
+    employee_name: string | null;
+    bonus_id: string;
+    vars: Record<string, number> | null;
+  }[];
+  status: BonusStatus;
+  /** The rows above came from `qc_kpi_submissions`, not the manager's own table. */
+  seededFromQc: boolean;
 }
 
 type AllState = Record<string, DeptState>;
@@ -696,6 +730,11 @@ export default function DeptBonusCalculator({
   initialOpenDept = null,
   submissionSource,
 }: DeptBonusCalculatorProps) {
+  // Bind the tab cache to this viewer BEFORE any seeding below reads it. Two
+  // people on one machine must never paint each other's departments, and the
+  // cache is inert until this runs.
+  useKpiCacheIdentity(viewerEmail);
+
   // QC officer's first-pass calculator vs the manager's official one. QC writes
   // a separate staging table and never touches `bonus_catalog_applied` /
   // `hsl_bonus_period_status` (payroll) directly.
@@ -729,7 +768,30 @@ export default function DeptBonusCalculator({
   // there is no state-sync effect to ping-pong against `onWeekChange`. Otherwise
   // the calculator manages it locally (the manager view).
   const weekIsControlled = controlledWeek != null;
-  const [internalWeek, setInternalWeek] = useState(() => isoWeekStart(new Date()));
+  /**
+   * The payroll week the last live resolve produced in this tab, if any.
+   *
+   * **Paint only** — it decides WHICH cached dept-week may be shown while the
+   * Hubstaff resolve is in flight, and nothing else. `weekResolvedFromUploads`
+   * stays false until the live answer lands, so no read or write is unlocked by
+   * it. Seeding the view week from it is also more honest than the value it
+   * replaces: this is a real Sunday-anchored upload week, while `isoWeekStart`
+   * is the Monday-anchored guess that stranded rows before.
+   */
+  const [cachedWeek] = useState<string | null>(
+    () => getKpiCache<string>(KPI_CACHE_KEYS.presumedWeek(deptSurface(variant))) ?? null,
+  );
+  const [internalWeek, setInternalWeek] = useState(() => cachedWeek ?? isoWeekStart(new Date()));
+  /**
+   * The week this mount started on before anyone touched the picker.
+   *
+   * The resolver re-points the view at the live week only while the manager is
+   * still on that automatic seed — picking a week by hand must survive. Held in
+   * a ref rather than re-derived, because the seed is now either the clock guess
+   * or a cached week, and comparing against only the former would leave a
+   * cache-seeded view pinned to last week after the batch moved on.
+   */
+  const autoSeedWeekRef = useRef(cachedWeek ?? isoWeekStart(new Date()));
   const weekStart = weekIsControlled ? (controlledWeek as string) : internalWeek;
   /**
    * Whether `weekStart` is a real payroll week rather than the local-clock seed
@@ -797,6 +859,19 @@ export default function DeptBonusCalculator({
   // same benign app_settings keys the Payroll Wizard uses, falling back to the
   // official rates.
   const [fx, setFx] = useState<FxRates>(officialFxRates());
+  /**
+   * The FX lookup has finished — with live rates, or having fallen back to the
+   * official ones. NOT "we got live rates": a failed lookup has a documented
+   * answer, and blocking scoring on an unreachable settings route would be worse
+   * than scoring at the official rate.
+   *
+   * Editing is held until this settles because `saveDept` converts a non-PHP
+   * bonus **at write time** and stores the peso figure the Payroll Wizard pays
+   * (`docs/features/bonus-catalog.md` → *FX at save time*). Without the hold, a
+   * manager scoring a USD bonus in the first moments after mount banks it at the
+   * fallback rate — and nothing downstream re-converts.
+   */
+  const [fxSettled, setFxSettled] = useState(false);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -812,6 +887,8 @@ export default function DeptBonusCalculator({
         }
       } catch {
         /* keep the official fallback */
+      } finally {
+        if (!cancelled) setFxSettled(true);
       }
     })();
     return () => {
@@ -1202,56 +1279,71 @@ export default function DeptBonusCalculator({
 
   // -- Load existing applied rows + status for a department ----------------------
 
-  const loadDept = useCallback(
-    async (key: string) => {
-      // Hold off until the week is a real payroll week: reading with the
-      // local-clock seed queries a dept-week nothing was saved under, which is
-      // what made another manager's applied bonuses look absent. Re-runs on its
-      // own when `weekResolved` flips (it's in this callback's deps).
-      if (!weekResolved) return;
+  /**
+   * Everything the two or three routes for one dept-week answered, after the
+   * QC first-pass substitution has been decided.
+   *
+   * This — never the derived `DeptState` — is what goes in the tab cache, so the
+   * seeded path and the fetched path both run {@link applyDeptPayload} and cannot
+   * drift apart on what a member's applied set is.
+   */
+  const fetchDeptPayload = useCallback(
+    async (key: string): Promise<DeptAppliedPayload> => {
+      // Manager mode reads the official applied rows + payroll status. QC mode
+      // reads its own staging table and has no payroll status (the officer's
+      // lock is a separate, officer-level concept).
+      const appliedRes = await fetch(`${appliedEndpoint}?dept=${key}&period_start=${weekStart}`, { cache: 'no-store' });
+      const appliedJson = (await appliedRes.json()) as { rows?: DeptAppliedPayload['rows'] };
+      let savedRows = appliedJson.rows ?? [];
+
+      let status: BonusStatus = 'draft';
+      if (!isQc) {
+        const statusRes = await fetch(`/api/hsl-bonus/period-status?dept=${key}&period_start=${weekStart}`, { cache: 'no-store' });
+        const statusJson = (await statusRes.json()) as { rows?: { status: BonusStatus }[] };
+        status = statusJson.rows?.[0]?.status ?? 'draft';
+      }
+
+      // Manager mode, QC department, never-saved draft → pre-fill the manager's
+      // inputs from the QC officers' first-pass so they appear ready to review
+      // and finalize. Once the manager saves, their own rows are authoritative.
+      let seededFromQc = false;
+      if (!isQc && isQcDeptKey(key) && savedRows.length === 0 && status === 'draft') {
+        try {
+          const qcRes = await fetch(`/api/qc/submissions?dept=${key}&period_start=${weekStart}`, { cache: 'no-store' });
+          const qcJson = (await qcRes.json()) as { rows?: typeof savedRows };
+          if (qcJson.rows && qcJson.rows.length > 0) {
+            savedRows = qcJson.rows;
+            seededFromQc = true;
+          }
+        } catch {
+          /* ignore — fall back to the empty/pre-apply path */
+        }
+      }
+      return { rows: savedRows, status, seededFromQc };
+    },
+    [appliedEndpoint, weekStart, isQc],
+  );
+
+  /**
+   * Turn one dept-week's payload into the department's on-screen state.
+   *
+   * Called by the live load and by the cache seed, which is the point: the
+   * pre-apply pass below reads the catalog, so both callers must be gated on
+   * `catalogLoaded` and both must run the same code — a cached paint that
+   * pre-applied a different set of common bonuses would be a quiet lie, not a
+   * head start.
+   */
+  const applyDeptPayload = useCallback(
+    (key: string, payload: DeptAppliedPayload) => {
       // QC mode: the roster IS the officer's assigned slots for this dept (which
       // includes transferred people under their old dept). Manager mode groups
       // the live team roster by department as usual.
       const roster = isQc ? (qcRosterByDept.get(key) ?? []) : (rosterByDept.get(key) ?? []);
       const qcDeptEmails = isQc ? qcEmailsByDept.get(key) : undefined;
-      try {
-        // Manager mode reads the official applied rows + payroll status. QC mode
-        // reads its own staging table and has no payroll status (the officer's
-        // lock is a separate, officer-level concept).
-        const appliedRes = await fetch(`${appliedEndpoint}?dept=${key}&period_start=${weekStart}`, { cache: 'no-store' });
-        const appliedJson = (await appliedRes.json()) as {
-          rows?: {
-            employee_email: string;
-            employee_name: string | null;
-            bonus_id: string;
-            vars: Record<string, number> | null;
-          }[];
-        };
-        let savedRows = appliedJson.rows ?? [];
-
-        let status: BonusStatus = 'draft';
-        if (!isQc) {
-          const statusRes = await fetch(`/api/hsl-bonus/period-status?dept=${key}&period_start=${weekStart}`, { cache: 'no-store' });
-          const statusJson = (await statusRes.json()) as { rows?: { status: BonusStatus }[] };
-          status = statusJson.rows?.[0]?.status ?? 'draft';
-        }
-
-        // Manager mode, QC department, never-saved draft → pre-fill the manager's
-        // inputs from the QC officers' first-pass so they appear ready to review
-        // and finalize. Once the manager saves, their own rows are authoritative.
-        let seededFromQc = false;
-        if (!isQc && isQcDeptKey(key) && savedRows.length === 0 && status === 'draft') {
-          try {
-            const qcRes = await fetch(`/api/qc/submissions?dept=${key}&period_start=${weekStart}`, { cache: 'no-store' });
-            const qcJson = (await qcRes.json()) as { rows?: typeof savedRows };
-            if (qcJson.rows && qcJson.rows.length > 0) {
-              savedRows = qcJson.rows;
-              seededFromQc = true;
-            }
-          } catch {
-            /* ignore — fall back to the empty/pre-apply path */
-          }
-        }
+      {
+        const savedRows = payload.rows;
+        const status = payload.status;
+        const seededFromQc = payload.seededFromQc;
 
         // Seed members from roster, then overlay anyone who has saved applied rows.
         const byEmail = new Map<string, MemberState>();
@@ -1332,12 +1424,15 @@ export default function DeptBonusCalculator({
           members = members.filter((m) => qcDeptEmails.has(m.email.toLowerCase()));
         }
         setState((prev) => {
-          // Never clobber in-flight local work: the live refresh checks `dirty`
-          // when it DISPATCHES, but this fetch can land after the user has since
-          // edited or added a member (parent re-renders also re-run the boot
-          // effect). Guard at write time so unsaved state survives any reload.
+          // Never clobber a person's own unsaved work: the live refresh checks
+          // `dirty` when it DISPATCHES, but this load can land after the user has
+          // since edited or added a member (parent re-renders also re-run the
+          // boot effect). Guard at write time so unsaved state survives any
+          // reload path. A merely SEEDED state is not local work — see
+          // `isUnsavedLocalWork`; refusing there would leave a pre-applied
+          // department frozen on whatever painted first.
           const cur = prev[key];
-          if (cur?.dirty || cur?.saving) return prev;
+          if (cur && isUnsavedLocalWork(cur)) return prev;
           return {
             // Pre-applied defaults — and QC-seeded values — are unsaved, so mark
             // dirty: in QC mode the officer's Save (then Lock) persists them into
@@ -1356,33 +1451,108 @@ export default function DeptBonusCalculator({
             },
           };
         });
-      } catch {
-        setState((prev) => {
-          const cur = prev[key];
-          if (cur?.dirty || cur?.saving) return prev;
-          return {
-            ...prev,
-            [key]: {
-              members: roster.map((e) => ({ email: e.email, name: e.name, applied: {} })),
-              shared: {},
-              status: 'draft',
-              dirty: false,
-              seeded: false,
-              saving: false,
-              loaded: true,
-            },
-          };
-        });
       }
     },
-    [rosterByDept, individualByDept, commonByDept, commonExclusionsByDept, sharedCommonByDept, weekStart, weekResolved, canonEmail, isQc, qcRosterByDept, qcEmailsByDept, appliedEndpoint],
+    [rosterByDept, individualByDept, commonByDept, commonExclusionsByDept, sharedCommonByDept, canonEmail, isQc, qcRosterByDept, qcEmailsByDept],
   );
+
+  /**
+   * The empty-but-loaded shape a department falls back to when its fetch fails.
+   *
+   * A department that already has rows on screen keeps them: blanking a visible
+   * roster down to "no bonuses applied" on a dropped request reads as a week
+   * nobody scored, which is the more expensive lie. Same rule the Payroll Notes
+   * panes settled on — a failed background refresh keeps the last good data and
+   * the honest "as of" time (memory `payroll-notes-panes-cache-live-freshness`).
+   */
+  const applyDeptLoadFailure = useCallback(
+    (key: string) => {
+      const roster = isQc ? (qcRosterByDept.get(key) ?? []) : (rosterByDept.get(key) ?? []);
+      setState((prev) => {
+        const cur = prev[key];
+        if (cur && isUnsavedLocalWork(cur)) return prev;
+        if (cur?.loaded) return prev;
+        return {
+          ...prev,
+          [key]: {
+            members: roster.map((e) => ({ email: e.email, name: e.name, applied: {} })),
+            shared: {},
+            status: 'draft',
+            dirty: false,
+            seeded: false,
+            saving: false,
+            loaded: true,
+          },
+        };
+      });
+    },
+    [isQc, qcRosterByDept, rosterByDept],
+  );
+
+  const loadDept = useCallback(
+    async (key: string) => {
+      // Hold off until the week is a real payroll week: reading with the
+      // local-clock seed queries a dept-week nothing was saved under, which is
+      // what made another manager's applied bonuses look absent. Re-runs on its
+      // own when `weekResolved` flips (it's in this callback's deps).
+      if (!weekResolved) return;
+      try {
+        const payload = await fetchDeptPayload(key);
+        // Cache the RAW payload against this dept AND this resolved week, so the
+        // next mount paints it without the round trip. Written before the state
+        // update so a dept whose local edits block the paint is still cached.
+        setKpiCache(KPI_CACHE_KEYS.deptApplied(deptSurface(variant), key, weekStart), payload);
+        applyDeptPayload(key, payload);
+      } catch {
+        applyDeptLoadFailure(key);
+      }
+    },
+    [weekResolved, weekStart, variant, fetchDeptPayload, applyDeptPayload, applyDeptLoadFailure],
+  );
+
+  /** Set once when a mount paints departments from the tab cache, and cleared
+   *  the moment the live loads have all settled. */
+  const cacheSeeded = useRef(false);
+  const [cacheAsOf, setCacheAsOf] = useState<number | null>(null);
 
   useEffect(() => {
     if (!catalogLoaded) return;
-    visibleDeptKeys.forEach((k) => void loadDept(k));
+    void (async () => {
+      await Promise.all(visibleDeptKeys.map((k) => loadDept(k)));
+      // Live rows are on screen now, so the "as of" line has nothing left to
+      // disclose. Cleared only once every department has settled, so a dept
+      // whose own load failed keeps the label that explains what it is showing.
+      if (weekResolved) setCacheAsOf(null);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleDeptKeys, loadDept, catalogLoaded]);
+
+  /**
+   * Paint each visible department from the last visit, before its own fetch.
+   *
+   * Runs once the catalog is in (the pre-apply pass inside `applyDeptPayload`
+   * reads it) and only for the week the cache was written under. It sets no flag
+   * the live load consults: `loadDept` still runs unconditionally for every dept
+   * and overwrites this, which is what keeps stale-while-revalidate true by
+   * construction rather than by care.
+   */
+  useEffect(() => {
+    if (cacheSeeded.current || !catalogLoaded || !cachedWeek) return;
+    // A picked week that is not the cached one has nothing to seed from, and
+    // seeding after the live loads have landed would repaint them backwards.
+    if (weekStart !== cachedWeek || weekResolved) return;
+    cacheSeeded.current = true;
+    let newest: number | null = null;
+    for (const key of visibleDeptKeys) {
+      const cacheKey = KPI_CACHE_KEYS.deptApplied(deptSurface(variant), key, cachedWeek);
+      const payload = getKpiCache<DeptAppliedPayload>(cacheKey);
+      if (!payload) continue;
+      applyDeptPayload(key, payload);
+      const at = readKpiCacheStamp(cacheKey);
+      if (at !== undefined && (newest === null || at > newest)) newest = at;
+    }
+    setCacheAsOf(newest);
+  }, [catalogLoaded, cachedWeek, weekStart, weekResolved, visibleDeptKeys, variant, applyDeptPayload]);
 
   // Live: a teammate authoring/assigning a bonus, or another manager applying one,
   // refetches the catalog and reloads the open departments.
@@ -1459,10 +1629,28 @@ export default function DeptBonusCalculator({
   // optional-chained off `d?`), the autosave loop skips a dept with no state,
   // and `kpiAutosaveGate` still sees `weekResolved: false`. Three independent
   // holds, none of them this gate.
+  // A department seeded from the tab cache is `loaded`, so it satisfies this gate
+  // without its round trip — the same question, answered earlier. It unlocks
+  // nothing: the week is still unresolved, so every read and write stays held,
+  // and `weekPending` below keeps the inputs read-only until it lands.
   const ready = kpiCalculatorRevealed({
     dataSettled: catalogLoaded && visibleDeptKeys.every((k) => state[k]?.loaded),
     weekError,
   });
+
+  /**
+   * Every input a write depends on has been confirmed live on THIS mount:
+   * the payroll week (a KPI row's only address), the catalog (which defines what
+   * a bonus is worth), and the FX lookup (whose rate is snapshotted into the
+   * stored peso amount at save time). Until all three are in, scoring is
+   * read-only.
+   *
+   * Only reachable at all because the cache paints ahead of them; before it, this
+   * window was a loading skeleton, which was not editable either. So this holds
+   * the surface exactly where it already was, and additionally closes the case
+   * where `weekError` released the reveal with the catalog or FX still in flight.
+   */
+  const weekPending = !((weekResolved || weekError) && catalogLoaded && fxSettled);
 
   // One-shot: land directly on the caller-requested department once data is in
   // (the Payroll Readiness "fix it from here" modal). Consumed once so closing
@@ -1514,9 +1702,12 @@ export default function DeptBonusCalculator({
       // Default the view to the live week (only while still on today's auto-week).
       // Skipped when the shell controls the week — it does its own defaulting,
       // and overriding here would fight the controlled value on mount.
-      if (!weekIsControlled) setInternalWeek((cur) => (cur === isoWeekStart(new Date()) ? iso : cur));
+      if (!weekIsControlled) setInternalWeek((cur) => (cur === autoSeedWeekRef.current ? iso : cur));
       setWeekResolvedFromUploads(true);
       setWeekError(false);
+      // Remember which week this was, so the next mount knows which week's
+      // cached departments it may paint while this resolve re-runs.
+      setKpiCache(KPI_CACHE_KEYS.presumedWeek(deptSurface(variant)), iso);
       return true;
     };
     (async () => {
@@ -1592,7 +1783,9 @@ export default function DeptBonusCalculator({
       const color = deptColor(key);
       // QC mode freezes inputs once the officer has locked their week's batch;
       // manager mode freezes once the dept is submitted (status != draft).
-      const readOnly = isQc ? !!qcLocked : d ? d.status !== 'draft' : false;
+      // Both also freeze while a write input is still unconfirmed — `weekPending`.
+      const readOnly =
+        weekPending || (isQc ? !!qcLocked : d ? d.status !== 'draft' : false);
       const total = deptTotal(key, d);
       const common = commonByDept.get(key) ?? [];
       const sharedSet = sharedCommonByDept.get(key);
@@ -1681,6 +1874,7 @@ export default function DeptBonusCalculator({
     [
       state, cardSearch, deptTotal, commonByDept, sharedCommonByDept,
       individualByDept, applicableBonuses, fx, memberMatchesQuery, isQc, qcLocked,
+      weekPending,
     ],
   );
 
@@ -3446,6 +3640,23 @@ export default function DeptBonusCalculator({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* What is on screen right now is the previous visit's data, still
+                being re-pulled. Say when it was fetched rather than let a figure
+                another scorer has since changed pass for live. Neutral, not
+                amber — amber is reserved for warnings. */}
+            {cacheAsOf !== null && (
+              <span
+                className="hidden items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 font-mono text-[10px] text-zinc-500 shadow-sm sm:flex dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400"
+                title="Showing the bonuses this tab already had. Reloading from the database now."
+              >
+                <RefreshCw className="h-3 w-3 animate-spin" aria-hidden />
+                as of{' '}
+                {new Date(cacheAsOf).toLocaleTimeString('en-US', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </span>
+            )}
             <Button
               size="sm"
               variant="outline"
