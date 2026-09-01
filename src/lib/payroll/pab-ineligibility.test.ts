@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 import {
   computeHslWeekInfo,
   computePabIneligibility,
+  groupFailedDaysByHslWeek,
   hslCoverageStart,
   hslWeekStartIso,
   pabSeverityBand,
@@ -327,4 +328,40 @@ test('no tracked time is NOT the worst attendance in the company', () => {
   assert.equal(pabSeverityBand(0, false), 'no-hours');
   // hasHours defaults true so existing callers are unchanged.
   assert.equal(pabSeverityBand(15), 'high');
+});
+
+test('groupFailedDaysByHslWeek: week ranges span Sun–Sat and surface the period boundaries', () => {
+  // The 2026-08 period runs Sun Aug 2 → Sat Aug 29. Failures in the first and
+  // last weeks must render as "Aug 2 – Aug 8" and "Aug 23 – Aug 29" — the
+  // boundary days Kane named are the START and END of their weeks.
+  const days = [
+    { iso: '2026-08-04', seconds: 3600, shortfallSec: 6 * 3600 }, // Tue, week of Aug 2
+    { iso: '2026-08-06', seconds: 0, shortfallSec: 7 * 3600 },    // Thu, week of Aug 2
+    { iso: '2026-08-26', seconds: 5 * 3600, shortfallSec: 2 * 3600 }, // Wed, week of Aug 23
+  ];
+  const weeks = groupFailedDaysByHslWeek(days, true);
+  assert.equal(weeks.length, 2);
+  assert.deepEqual(
+    weeks.map((w) => [w.startIso, w.endIso]),
+    [['2026-08-02', '2026-08-08'], ['2026-08-23', '2026-08-29']],
+  );
+  assert.deepEqual(weeks[0].days.map((d) => d.iso), ['2026-08-04', '2026-08-06']);
+  assert.deepEqual(weeks[1].days.map((d) => d.iso), ['2026-08-26']);
+});
+
+test('groupFailedDaysByHslWeek: display-only — the days come back verbatim, so severity cannot move', () => {
+  const days = [
+    { iso: '2026-08-04', seconds: 3600, shortfallSec: 6 * 3600 },
+    { iso: '2026-08-26', seconds: 0, shortfallSec: 7 * 3600 },
+  ];
+  const weeks = groupFailedDaysByHslWeek(days, true);
+  const flattened = weeks.flatMap((w) => w.days);
+  assert.equal(flattened.length, days.length);
+  for (const d of days) assert.ok(flattened.includes(d), 'same objects, not copies');
+});
+
+test('groupFailedDaysByHslWeek: legacy mon_sun months group on Monday weeks', () => {
+  const days = [{ iso: '2026-08-04', seconds: 0, shortfallSec: 7 * 3600 }]; // Tue
+  const weeks = groupFailedDaysByHslWeek(days, false);
+  assert.deepEqual(weeks.map((w) => [w.startIso, w.endIso]), [['2026-08-03', '2026-08-09']]);
 });

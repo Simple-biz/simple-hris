@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useMemo, useTransition, useCallback } from 'react';
+import React, { Fragment, useState, useRef, useEffect, useMemo, useTransition, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import * as XLSX from 'xlsx';
@@ -311,7 +311,7 @@ import {
 } from '@/lib/payroll/validation-breakdown';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { buildCatalogDeptNameMap } from '@/lib/departments/dept-identity';
-import { computePabIneligibility, pabSeverityBand, type PabDayEntry } from '@/lib/payroll/pab-ineligibility';
+import { computePabIneligibility, groupFailedDaysByHslWeek, pabSeverityBand, type PabDayEntry } from '@/lib/payroll/pab-ineligibility';
 import PabIneligibleTable, { type PabIneligibleRow } from '@/components/payroll/PabIneligibleTable';
 import { TransferKpiCard } from '@/components/transfers/TransferToolbar';
 
@@ -7562,9 +7562,17 @@ export default function PayrollWizard({
     };
   }, [effectivePabStatus, masterIndex, pabMonthRange, pabScoredEmails]);
 
-  const pabIneligibleRows = useMemo<PabIneligibleRow[]>(() => {
-    if (!pabMonthRange) return [];
+  const pabIneligible = useMemo<{
+    rows: PabIneligibleRow[];
+    /** Ineligible people ALREADY acted on — PAB-excluded (Ignored / modal). */
+    ignoredCount: number;
+    /** Ineligible people whose department is "Pay this week" OFF in step 1. */
+    pausedDeptCount: number;
+  }>(() => {
+    if (!pabMonthRange) return { rows: [], ignoredCount: 0, pausedDeptCount: 0 };
     const rows: PabIneligibleRow[] = [];
+    let ignoredCount = 0;
+    let pausedDeptCount = 0;
     for (const [email, status] of effectivePabStatus.entries()) {
       if (status !== 'ineligible') continue;
       // PAB covers people ACTIVE on the Global Master List who have hours (Kane,
@@ -7574,7 +7582,21 @@ export default function PayrollWizard({
         masterIndex.byWorkEmail.has(email) || masterIndex.byPersonalEmail.has(email);
       if (!onRoster || !pabScoredEmails.has(email)) continue;
 
+      // An acted-on person leaves the list (Kane 2026-09-01 PM — supersedes the
+      // same-day "row stays with an Excluded chip" design): Ignore/exclude means
+      // the decision is made, and keeping the row invites a second one. Managed
+      // in System Bonus → PAB settings; COUNTED and disclosed under the KPI
+      // strip, never silently dropped.
+      if (isPabExcluded(email)) { ignoredCount += 1; continue; }
+
       const deptKey = employeeDepts[email] ?? employeeDepts[email.toLowerCase()] ?? null;
+
+      // Step 1 → Configuration: a department with "Pay this week" OFF is filtered
+      // out of every downstream step (`effectiveCalcResults`), so its people take
+      // no PAB decision this run either — same predicate as that filter, same
+      // dept-key resolution, counted and disclosed like every other exclusion.
+      if (deptKey && pausedDeptKeys.has(deptKey)) { pausedDeptCount += 1; continue; }
+
       const isHsl = deptKey === 'hogan_smith_law';
       const breakdown = isHsl
         ? (employeeAllDaysHours.get(email) ?? [])
@@ -7661,6 +7683,12 @@ export default function PayrollWizard({
         isHsl,
         severity,
         failedDays,
+        // HSL PAB is won week-by-week, so HSL failures display as whole Sun–Sat
+        // week ranges (Kane 2026-09-01) — display-only grouping of the same days.
+        failedWeeks: isHsl ? groupFailedDaysByHslWeek(failedDays, hslWeekModel === 'sun_sat') : null,
+        // Always false for a LISTED row since the excluded skip above — kept so
+        // the table's defensive guards (chip, disabled Forgive) stay armed if
+        // the population rule is ever relaxed.
         excluded: isPabExcluded(email),
       });
     }
@@ -7672,12 +7700,13 @@ export default function PayrollWizard({
       Number(b.hasHours) - Number(a.hasHours)
       || b.severity - a.severity
       || (a.name ?? '￿').localeCompare(b.name ?? '￿'));
-    return rows;
+    return { rows, ignoredCount, pausedDeptCount };
   }, [
     effectivePabStatus, employeeDepts, employeeAllDaysHours, employeeWeekdayHours,
     pabMonthRange, hslWeekModel, hslAdjustedPabEnd, calcResults, isPabExcluded, masterIndex,
-    pabMemberNames, pabScoredEmails,
+    pabMemberNames, pabScoredEmails, pausedDeptKeys,
   ]);
+  const pabIneligibleRows = pabIneligible.rows;
 
   /** The 1–2-day cohort, MASTER-LIST scoped so it matches the KPI strip's
    *  "Ineligible" card rather than the table's unfiltered headline pill. */
@@ -17389,27 +17418,52 @@ export default function PayrollWizard({
                       hint={`active on the master list with hours, of ${masterEmployees.length.toLocaleString()} on the roster`}
                     />
                   </div>
-                  {(pabGmlCounts.offRoster > 0 || pabGmlCounts.noHours > 0) && (
+                  {(pabGmlCounts.offRoster > 0 || pabGmlCounts.noHours > 0
+                    || pabIneligible.ignoredCount > 0 || pabIneligible.pausedDeptCount > 0) && (
                     <p className="flex items-start gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
                       <AlertCircle className="mt-px h-3 w-3 shrink-0" />
                       {/* Disclosed, never silent. PAB covers active master-list people
-                          WITH hours; everyone the rule excludes is named here so a
-                          shrinking list is always explained. */}
-                      Not covered by PAB this period:{' '}
-                      {pabGmlCounts.offRoster > 0 && (
-                        <>
-                          <strong>{pabGmlCounts.offRoster.toLocaleString()}</strong> not active on the
-                          Global Master List
-                        </>
-                      )}
-                      {pabGmlCounts.offRoster > 0 && pabGmlCounts.noHours > 0 && ' · '}
-                      {pabGmlCounts.noHours > 0 && (
-                        <>
-                          <strong>{pabGmlCounts.noHours.toLocaleString()}</strong> with no hours in
-                          the period
-                        </>
-                      )}
-                      .
+                          WITH hours; everyone a rule OR a decision removes from the
+                          list is counted here so a shrinking list is always explained
+                          — Ignored people leave the table (Kane 2026-09-01) but their
+                          count may not. */}
+                      <span>
+                        Not listed this period:{' '}
+                        {[
+                          pabGmlCounts.offRoster > 0 && (
+                            <Fragment key="off-roster">
+                              <strong>{pabGmlCounts.offRoster.toLocaleString()}</strong> not active on
+                              the Global Master List
+                            </Fragment>
+                          ),
+                          pabGmlCounts.noHours > 0 && (
+                            <Fragment key="no-hours">
+                              <strong>{pabGmlCounts.noHours.toLocaleString()}</strong> with no hours in
+                              the period
+                            </Fragment>
+                          ),
+                          pabIneligible.ignoredCount > 0 && (
+                            <Fragment key="ignored">
+                              <strong>{pabIneligible.ignoredCount.toLocaleString()}</strong> ignored
+                              (PAB excluded — managed in System Bonus&nbsp;→ PAB settings)
+                            </Fragment>
+                          ),
+                          pabIneligible.pausedDeptCount > 0 && (
+                            <Fragment key="paused">
+                              <strong>{pabIneligible.pausedDeptCount.toLocaleString()}</strong> in
+                              departments not paid this week (Step 1 → Configuration)
+                            </Fragment>
+                          ),
+                        ]
+                          .filter(Boolean)
+                          .map((part, i) => (
+                            <Fragment key={i}>
+                              {i > 0 && ' · '}
+                              {part}
+                            </Fragment>
+                          ))}
+                        .
+                      </span>
                     </p>
                   )}
                 </>

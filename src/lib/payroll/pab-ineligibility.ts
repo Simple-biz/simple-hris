@@ -319,6 +319,55 @@ function parseIso(iso: string): Date | null {
 }
 
 /**
+ * One failed HSL WEEK: the Sun–Sat (or legacy Mon–Sun) block a failed day
+ * belongs to, with the short days inside it.
+ */
+export type PabFailedWeek = {
+  /** ISO of the day that STARTS the week — a Sunday post-cutover. */
+  startIso: string;
+  /** ISO of the day that ENDS it — start + 6, a Saturday post-cutover. */
+  endIso: string;
+  days: PabFailedDay[];
+};
+
+/**
+ * Group failed days into their HSL weeks, for display.
+ *
+ * HSL PAB is won week-by-week, so the review table shows an HSL person's
+ * failures at WEEK granularity — "Aug 2 – Aug 8", not four scattered dates
+ * (Kane 2026-09-01: the period's own boundary days, e.g. Aug 2 and Aug 29,
+ * must be visible as the start/end of their weeks). Display-only: the days
+ * inside are `computePabIneligibility`'s verbatim output, so severity — and
+ * therefore the identity with `computePabEligibleEmails` — is untouched.
+ *
+ * The anchor is {@link hslWeekStartIso}, the same one the quota walk uses, so
+ * a chip's range is exactly the week the verdict scored. `hslSunSat` is
+ * required, not defaulted, for the same reason it is everywhere else
+ * (memory pab-calendars-sun-sat-sweep).
+ */
+export function groupFailedDaysByHslWeek(
+  failedDays: PabFailedDay[],
+  hslSunSat: boolean,
+): PabFailedWeek[] {
+  const byWeek = new Map<string, PabFailedDay[]>();
+  for (const day of failedDays) {
+    const d = parseIso(day.iso);
+    if (!d) continue;
+    const startIso = hslWeekStartIso(d, hslSunSat);
+    const list = byWeek.get(startIso);
+    if (list) list.push(day);
+    else byWeek.set(startIso, [day]);
+  }
+  return [...byWeek.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([startIso, days]) => {
+      const start = parseIso(startIso)!;
+      const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+      return { startIso, endIso: isoOf(end), days };
+    });
+}
+
+/**
  * Severity bands for the review table.
  *
  * `review` is the cohort the step exists for: one or two missed days is usually a

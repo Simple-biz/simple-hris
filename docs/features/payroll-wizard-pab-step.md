@@ -100,13 +100,43 @@ Money effect, stated plainly: an ignored person earns **₱0 PAB for the period 
 time adjustment would have rescued a failed day**, until the exclusion is lifted (System Bonus →
 PAB settings). That is the decision the button records.
 
-Consequences already built into the table and kept: the row **stays listed** with the Excluded
-chip (a decision that vanishes its row is the all-clear that hides people), **Forgive goes
-disabled** on it ("lift the exclusion first"), and it lands in the "Excluded from PAB" status
-filter. The write is keyed to the **step's evaluated month** (`pabMonthRange`) — deliberately
-not `editMonthKey`, which follows the System Bonus modal's month picker and can point at a
+**A decided row LEAVES the list** (Kane 2026-09-01 PM — supersedes the same-morning "row stays
+with an Excluded chip" design). Forgive flips the verdict, Ignore trips the excluded skip in
+`pabIneligible`; either way the row exits with a slide-out animation (`AnimatePresence` +
+`motion.tr`, exit-only — page flips play no entrances) so the click has a visible receipt. This
+is NOT the all-clear-that-hides-people failure, because removal follows an **explicit decision**
+and the count survives: the KPI strip's disclosure line names how many ineligible people are
+ignored (managed in System Bonus → PAB settings, where the exclusion is lifted). The table's
+Excluded chip / disabled-Forgive / "Excluded from PAB" filter guards are kept but normally
+unreachable — defensive, like the `no-hours` band, in case the population rule is ever relaxed.
+Row removal also stopped resetting the pager: only filter/search changes reset to page 1, and
+`safePage` clamps when the page count shrinks.
+
+The write is keyed to the **step's evaluated month** (`pabMonthRange`) — deliberately not
+`editMonthKey`, which follows the System Bonus modal's month picker and can point at a
 different month. Forgive and Ignore are opposite verdicts on the same month, so one in-flight
 write freezes both buttons on the row.
+
+## Step 1 Configuration's "Pay this week" also empties this list
+
+A department toggled OFF in Step 1 → Configuration is filtered out of every downstream step
+(`effectiveCalcResults` — its people take no pay this run), so they take no PAB decision here
+either (Kane 2026-09-01): `pabIneligible` skips anyone whose dept key is in `pausedDeptKeys`,
+using the **same dept-key resolution as that filter** (`employeeDepts[email] ??
+employeeDepts[lowercased]`). Counted and disclosed on the strip's line as "in departments not
+paid this week", never silently dropped. Display-only — pausing a department already keeps its
+people out of dispatch; this makes the review list agree with the run.
+
+## HSL failures display as WHOLE WEEKS
+
+HSL PAB is won week-by-week, so an HSL row's chips show the full Sun–Sat week each failure
+sits in — "Aug 2 – Aug 8" … "Aug 23 – Aug 29", the period's own boundary days appearing as the
+start/end of their weeks (Kane 2026-09-01) — with the short days and shortfalls in the chip's
+hover title. `groupFailedDaysByHslWeek` (`pab-ineligibility.ts`, tested) groups
+`computePabIneligibility`'s verbatim output on the same `hslWeekStartIso` anchor the quota walk
+uses; **severity stays the day count** and the engine identity is untouched. Non-HSL rows keep
+per-day chips — their bonus is won day-by-day. Legacy Mon→Sun months group on Monday weeks
+automatically, since the model rides the same required `hslSunSat` flag as everything else.
 
 ## The tab only exists on the payout week
 

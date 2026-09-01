@@ -1,13 +1,14 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight, EyeOff, Loader2, ShieldCheck, Search } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
-import { pabSeverityBand, type PabFailedDay, type PabSeverityBand } from '@/lib/payroll/pab-ineligibility';
+import { pabSeverityBand, type PabFailedDay, type PabFailedWeek, type PabSeverityBand } from '@/lib/payroll/pab-ineligibility';
 import { catalogDeptNameFrom } from '@/lib/departments/dept-identity';
 
 /**
@@ -58,6 +59,13 @@ export type PabIneligibleRow = {
   isHsl: boolean;
   severity: number;
   failedDays: PabFailedDay[];
+  /**
+   * HSL only, else null: the same failed days grouped into their Sun–Sat weeks
+   * (`groupFailedDaysByHslWeek`). HSL PAB is won week-by-week, so HSL chips show
+   * the whole week range ("Aug 2 – Aug 8") with the short days on hover —
+   * display-only, severity stays the day count.
+   */
+  failedWeeks: PabFailedWeek[] | null;
   /** Already zeroed for the month by an accountant — a forgive here would be undone. */
   excluded: boolean;
 };
@@ -216,8 +224,12 @@ export default function PabIneligibleTable({
   }, [rows, query, deptFilter, bandFilter, deptNames]);
 
   // Page follows the filter: narrowing the search on page 4 of an unfiltered list
-  // would otherwise land on an empty page that looks like "no matches".
-  useEffect(() => { setPage(1); }, [query, deptFilter, bandFilter, rows]);
+  // would otherwise land on an empty page that looks like "no matches". Row-array
+  // changes are deliberately NOT a reset — decided rows now leave the list, and
+  // yanking the operator from page 3 back to page 1 after every Forgive/Ignore
+  // would make working through a long list impossible. `safePage` already clamps
+  // when the page count shrinks under the current page.
+  useEffect(() => { setPage(1); }, [query, deptFilter, bandFilter]);
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
   const paged = visible.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
@@ -359,6 +371,11 @@ export default function PabIneligibleTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/70">
+            {/* Rows leave the table when a decision lands (forgive → verdict flips,
+                ignore → excluded skip): AnimatePresence plays the exit before the
+                DOM row goes. `initial={false}` so page flips and filter changes
+                don't play 25 entrances. */}
+            <AnimatePresence initial={false}>
             {paged.map((row) => {
               const band = pabSeverityBand(row.severity, row.hasHours);
               const style = BAND_STYLES[band];
@@ -369,7 +386,14 @@ export default function PabIneligibleTable({
               // racing them would leave whichever write lands last as the truth.
               const busy = forgiving || ignoring;
               return (
-                <tr key={row.email} className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40">
+                <motion.tr
+                  key={row.email}
+                  className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40"
+                  // Exit only: a decided row slides out to the right and fades —
+                  // the visible receipt that the click landed. Entrances stay off
+                  // (see AnimatePresence above).
+                  exit={{ opacity: 0, x: 48, transition: { duration: 0.28, ease: 'easeOut' } }}
+                >
                   <td className="px-4 py-2.5">
                     {/* Blank when the ACTIVE roster has no row for them. Never
                         synthesised — a made-up id on a payroll screen is worse
@@ -418,9 +442,11 @@ export default function PabIneligibleTable({
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-2">
                       <span
-                        title={row.hasHours
-                          ? `${row.severity} day${row.severity === 1 ? '' : 's'} under 7 hours`
-                          : 'No tracked time anywhere in this period — never scored, not a missed day'}
+                        title={!row.hasHours
+                          ? 'No tracked time anywhere in this period — never scored, not a missed day'
+                          : row.isHsl && row.failedWeeks
+                            ? `${row.severity} short day${row.severity === 1 ? '' : 's'} across ${row.failedWeeks.length} failed week${row.failedWeeks.length === 1 ? '' : 's'}`
+                            : `${row.severity} day${row.severity === 1 ? '' : 's'} under 7 hours`}
                         className={cn(
                           'shrink-0 font-mono text-base font-bold leading-none',
                           row.hasHours ? 'text-rose-700 dark:text-rose-300' : 'text-zinc-400 dark:text-zinc-500',
@@ -428,27 +454,61 @@ export default function PabIneligibleTable({
                       >
                         {row.hasHours ? row.severity : '—'}
                       </span>
-                      <div className="flex flex-wrap gap-1">
-                        {row.hasHours && row.failedDays.slice(0, 3).map((d) => (
-                          <span
-                            key={d.iso}
-                            title={`${formatShortfall(d.shortfallSec)} short of 7h`}
-                            className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-px font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
-                          >
-                            {formatDay(d.iso)}
-                          </span>
-                        ))}
-                        {row.hasHours && row.failedDays.length > 3 && (
-                          <span
-                            // Every date stays reachable on hover — the cap is a
-                            // layout limit, never a claim that the rest do not exist.
-                            title={row.failedDays.map((d) => formatDay(d.iso)).join(', ')}
-                            className="px-1 text-[10px] text-zinc-400"
-                          >
-                            +{row.failedDays.length - 3} more
-                          </span>
-                        )}
-                      </div>
+                      {/* HSL PAB is won week-by-week, so HSL chips show the WHOLE
+                          Sun–Sat week each failure sits in — "Aug 2 – Aug 8" …
+                          "Aug 23 – Aug 29" — with the short days on hover (Kane
+                          2026-09-01). Everyone else keeps per-day chips: their
+                          bonus is won day-by-day. Display-only — severity stays
+                          the engine-pinned day count either way. */}
+                      {row.hasHours && row.isHsl && row.failedWeeks && row.failedWeeks.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {row.failedWeeks.slice(0, 3).map((w) => (
+                            <span
+                              key={w.startIso}
+                              title={`Week failed — ${w.days.length} short day${w.days.length === 1 ? '' : 's'}: ${w.days
+                                .map((d) => `${formatDay(d.iso)} (${formatShortfall(d.shortfallSec)} short)`)
+                                .join(', ')}`}
+                              className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-px font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
+                            >
+                              {formatDay(w.startIso)} – {formatDay(w.endIso)}
+                            </span>
+                          ))}
+                          {row.failedWeeks.length > 3 && (
+                            <span
+                              // Every week stays reachable on hover — the cap is a
+                              // layout limit, never a claim that the rest do not exist.
+                              title={row.failedWeeks
+                                .map((w) => `${formatDay(w.startIso)} – ${formatDay(w.endIso)}`)
+                                .join(', ')}
+                              className="px-1 text-[10px] text-zinc-400"
+                            >
+                              +{row.failedWeeks.length - 3} more
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {row.hasHours && row.failedDays.slice(0, 3).map((d) => (
+                            <span
+                              key={d.iso}
+                              title={`${formatShortfall(d.shortfallSec)} short of 7h`}
+                              className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-px font-mono text-[10px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
+                            >
+                              {formatDay(d.iso)}
+                            </span>
+                          ))}
+                          {row.hasHours && row.failedDays.length > 3 && (
+                            <span
+                              // Every date stays reachable on hover — the cap is a
+                              // layout limit, never a claim that the rest do not exist.
+                              title={row.failedDays.map((d) => formatDay(d.iso)).join(', ')}
+                              className="px-1 text-[10px] text-zinc-400"
+                            >
+                              +{row.failedDays.length - 3} more
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </td>
                   <td className="px-3 py-2.5">
@@ -506,9 +566,10 @@ export default function PabIneligibleTable({
                       </Button>
                     </div>
                   </td>
-                </tr>
+                </motion.tr>
               );
             })}
+            </AnimatePresence>
           </tbody>
         </table>
       </div>
