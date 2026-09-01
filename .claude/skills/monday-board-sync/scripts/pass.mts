@@ -703,8 +703,8 @@ import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from
 import type { TaskStatus } from './monday.mts';
 
 export const PASS_DATE = '2026-09-01';
-export const AUDIT_RANGE = 'no code range — Sprint 27 → Sprint 28 rollover, sprint moves only';
-export const AUDIT_COMMITS = 0;
+export const AUDIT_RANGE = '6ae82ac5..bf43c86a (Aug 28 pm – Sep 1)';
+export const AUDIT_COMMITS = 48;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -731,34 +731,127 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // ── PASS 20 · 2026-09-01 · Sprint 27 → 28 rollover — GROOMING ONLY, ROWS is deliberately EMPTY ──
-  // Kane: "All pending or not yet scored Sprint tasks lets move them to Sprint 28 … all pending with
-  // no Actual SP … lets put them in 28 and we will finish them from there."
-  //
-  // Sprint 28 was added ON THE BOARD BY HAND first (group_mm6nv017 "Sprint 28 · Sep 1-Sep 12 ·
-  // Backlog Pull", sprint label index 104 — read off settings_str, not guessed) and mirrored into all
-  // FOUR plan maps the same day. Adding S28's window re-bounds S27's attribution to Aug 18-31.
-  //
-  // THE MOVE IS FIVE PLAN ROWS FLIPPED sprint:'S27' → 'S28' (18 SP), executed by the reconciler as
-  // label + group. Board state measured 2026-09-01: Sprint 27 held 71 rows / 258 SP, 66 of them Done
-  // with an Actual SP and an in-window Completed Date — those STAY in S27, per the 2b rule that Done
-  // rows are filed where they finished. The five open rows, none carrying an Actual SP:
-  //   · Google Sheet sync crons (5 SP, Ready to Start)             — HRIS-14
-  //   · Legacy rates-sheet null-preferred → hurupay (2 SP, Ready)  — HRIS-19
-  //   · Deletion cron never re-checks live roster (3 SP, Ready)    — HRIS-01a, Critical
-  //   · Audit writes fail silently (3 SP, Ready)                   — HRIS-15
-  //   · Tickets board notifies the requester (5 SP, PENDING DEPLOY) — HRIS-17
-  //
-  // WHY ROWS IS EMPTY: a sprint move asserts nothing about progress, so there is NO status change,
-  // NO Actual SP and NO Completed Date to correct — and the tickets row explicitly KEEPS Pending
-  // Deploy rather than being knocked back to Ready to Start by the reschedule (the 2b rule: statuses
-  // only ever move forward on evidence). The five moves are named and bound in the hashed proposal
-  // via sprintMoves, which is exactly the hole the 08-19 hash fix closed.
-  //
-  // NOT IN THE PULL: the two Backlog rows (lawangc@ rate-shadow cleanup, 5 SP total) — both blocked
-  // on Kane running the --apply scripts, and he scoped this pull to Sprint 27's pending rows.
-  // VELOCITY NOTE: an 18 SP pull against S25/S26/S27 velocity is a thin start — S28 needs scope from
-  // somewhere other than this rollover.
+  // ── PASS 21 · 2026-09-01 · 14 new rows off 6ae82ac5..bf43c86a — the first real S28 scope ────────
+  // Pass 20 (same day, earlier) was grooming only; this is the declaration pass for everything
+  // shipped since pass 18 closed its range on 08-28 midday. Clustered by file overlap: e8e8c6ae
+  // ("PAB TAB Ignore") is the Termination Documents feature and carries zero PAB files. origin/main
+  // is 7424aa7a at audit time, so the four commits after it (Generate COE + termination-docs polish)
+  // are LOCAL ONLY — the COE row is capped at In Progress and the two polish shas stay out of the
+  // termination row's evidence. Both migrations in the range were probed live (plain .limit(1),
+  // never head:true, negative control included): payroll_rate_exemptions EXISTS with a row,
+  // termination_documents EXISTS with a row — so neither feature is migration-blocked.
+  {
+    name: 'PAB step shows the 1,557 people it hid — names, Employee IDs, Catalog departments, status filters and a KPI strip',
+    status: 'Done',
+    completed: '2026-08-28',
+    shas: ['3363e590', '8f85e3be', '119129b6', '1641f91b', '8b3d7de1', '2def4f07', '7843a508', '5fdff012', 'ad8c5839', 'd6036145', 'd3486661', 'ac94b91a'],
+    basis:
+      'Twelve commits in one afternoon on one surface (PayrollWizard.tsx + PabIneligibleTable.tsx + pab-ineligibility.ts). The headline bug: the step said "nobody is ineligible" over 1,557 ineligible people — scripts/diagnose-pab-step6.mts measured it before the fix. Then the table earned the surface: names instead of emails, Employee ID and work email columns, department + status filters that read the Payment Catalog rather than raw keys (dept-identity.ts, tested), a KPI strip replacing the banner, coverage pinned to active Global Master List people WITH hours, a leaver with no hours no longer ranked the worst attendance in the company (tested), an eligible count with checkable arithmetic, and the calendar modal gone wide with the verdict in a right rail. All twelve shas are ancestors of origin/main and the surface has been driven in the wizard since. Scored 5, not 8: one step, no new table, no money path — the verdict semantics are the separate S28 row.',
+  },
+  {
+    name: 'Wizard HSL step drops the banner and the weekly KPI period cards',
+    status: 'Done',
+    completed: '2026-08-28',
+    shas: ['a84146cb'],
+    basis:
+      'One commit, chrome not calculation: the HSL step loses its banner and its WEEKLY KPI period cards. The hand-keyed MONTHLY bonus cards stay, per the standing hsl-monthly-bonus-cards-only rule — nothing about pay or scoring moved. On origin/main.',
+  },
+  {
+    name: 'Missing-CSV dialog stops claiming an auto-sync it never performs',
+    status: 'Done',
+    completed: '2026-08-29',
+    shas: ['cc10258a'],
+    basis:
+      'A truthfulness fix in one component: the wizard’s missing-CSV dialog claimed an auto-sync that does not exist. It now says less and stops lying. Scored 1 — one dialog, no behavior change beyond the copy.',
+  },
+  {
+    name: 'Team Rankings is Kane’s alone — admin roles confer nothing',
+    status: 'Done',
+    completed: '2026-08-29',
+    shas: ['50c05777'],
+    basis:
+      'A new rankings-viewers RBAC module with tests plus the API-route gate: the Rankings tier flags in the Team directory are visible to kaner@ alone, and holding an admin dashboard role confers nothing — the same dedicated-grant shape the tickets role uses. Enforced server-side in app/api/team-rankings, not hidden client-side. On origin/main.',
+  },
+  {
+    name: 'The red double-pay guard was right — its test was wrong, and three undocumented surfaces got their docs',
+    status: 'Done',
+    completed: '2026-08-31',
+    shas: ['3bac1ff6', '47ed47ef'],
+    basis:
+      'One row on file overlap: both commits touch hsl-catalog-migration.md and INDEX.md two days apart and are one story. The docs sweep (3bac1ff6) found a RED double-pay guard and wrote the three missing feature docs (salaried-pay-basis, pay-structure-no-department, hsl-kpi-calculator-2026-07) plus an audit script; the follow-up (47ed47ef) proved the guard itself was RIGHT and the TEST was wrong, and fixed the test. Nothing was loosened — the guard never moved, which is the point of recording it as a Bug row.',
+  },
+  {
+    name: 'The 1:1 rule — the receiving bank drives the send-from rail, gated on both sides',
+    status: 'Done',
+    completed: '2026-08-31',
+    shas: ['ce4f2302', 'debac13d', 'b8b1f3fc'],
+    basis:
+      'Three commits rewriting the same tested modules (employee-payment-processors.ts, wallet-rail-lock.ts) in one evening, superseding the 08-31 wires lock: the rail pickers judge the EFFECTIVE rail rather than tier 1, the RECEIVING side is gated with the coupling kept one-way, and then THE 1:1 RULE lands — the receiving bank drives the send-from rail across the employee profile, People, Bank Preferred approvals and the OTP bank-update form. Scored 5 as the peer of the S27 Kolan/HiGlobe assignability row: it changes who can be routed where, on the rail, while repricing nothing. On origin/main.',
+  },
+  {
+    name: 'Start Processing plays a real engine — truckstart.mp3 in both the Wizard and Dispatch',
+    status: 'Done',
+    completed: '2026-09-01',
+    shas: ['e3613f41', '449f8d62', '9306ee19', '978500d7'],
+    basis:
+      'The cue that killed the "every sound is Web Audio" rule: after a synthesized V12 (e3613f41) and a three-candidate bench in the sound tester that left the shipped cue untouched (449f8d62), Start Processing now plays a real recording — public/sounds/truckstart.mp3 — in both the Payroll Wizard and Payment Dispatch, with its tail faded (978500d7). Kane auditioned the candidates himself on the bench, which is what picked the recording. On origin/main.',
+  },
+  {
+    name: 'Preview Emails wears the wizard’s chrome and shows the WORK email',
+    status: 'Done',
+    completed: '2026-09-01',
+    shas: ['541b6dfb'],
+    basis:
+      'The wizard’s Preview Emails dialog leaves the stock look for the wizard’s own chrome and displays the WORK email. Display only: delivery still goes to the personal address — the standing preview-emails-work-email rule, now stated by the UI instead of contradicted by it. On origin/main.',
+  },
+  {
+    name: 'PAB verdicts — the payout week owns the tab, Ignore joins Forgive, decided rows leave to a realtime Done tab, and PAB becomes step 4',
+    status: 'Done',
+    completed: '2026-09-01',
+    shas: ['7428e866', 'a2b428db', '377834e5', '7ca5ceaf', '7cd45fa2', '3b21a7ce', 'bc731dd6', '1f7a631d'],
+    basis:
+      'The verdict layer over the S27 table row, eight commits on the same files in one morning: the payout week owns the tab (the payout-week gate — PAB pays only the week containing the period end), Ignore joins Forgive as the other verdict, decided rows LEAVE the list into a Done tab of receipts with realtime decisions visible across open wizards, paused departments skip the step, HSL failures aggregate as weeks, a no-hours day reads amber and never grey, confirms use the app’s dialog instead of window.confirm, and PAB moves BEFORE Additions so the rail is 4 PAB · 5 Additions · 6 Contractors (tutorial guide re-pinned, tested). e8e8c6ae sits inside this commit window but carries ZERO PAB files — it is the Termination Documents feature and is excluded from this row’s evidence deliberately. Scored 5, not 8: decisions ride the existing exclusions path, no new table.',
+  },
+  {
+    name: 'Readiness No Pay Rate rows can be Ignored for one week, backed by a payroll_rate_exemptions table',
+    status: 'Done',
+    completed: '2026-09-01',
+    shas: ['225481a2'],
+    basis:
+      'A No Pay Rate readiness blocker can be Ignored for exactly one week: a NEW payroll_rate_exemptions table, an API route, a tested readiness-rate-ignore module and the Notes-FAB wiring. THE MIGRATION IS NOT PENDING: probed live 2026-09-01 with a plain .limit(1) (never head:true, negative control alongside) — the table EXISTS and already holds a row, which also means the route has run against production. That measurement supersedes the payroll-notes-no-pay-rate-ignore memory’s "migration PENDING Kane" claim, which described the plan, not the outcome.',
+  },
+  {
+    name: 'Bank Preferred requests are rows in the Issues table, and decided rows gain Edit and Delete',
+    status: 'Done',
+    completed: '2026-09-01',
+    shas: ['5f638846', 'fba536de', '9b2efb88'],
+    basis:
+      'Bank Preferred requests stop being a card floating above the Issues table and become ROWS in it; the default filter is All and the KPI cards always count ALL data rather than the filtered slice; and decided bank rows gain Edit and Delete through a new per-id API route — a decision is no longer immutable. The approval gate itself is unchanged: rows still hold for Accounting approval. On origin/main.',
+  },
+  {
+    name: 'People Offboarded search tab — search · pay · bank in one surface, one-off cards join the processor buckets',
+    status: 'Done',
+    completed: '2026-09-01',
+    shas: ['5a7c066b', '2c0f7666', 'd1dc97d4', 'dc1b6260'],
+    basis:
+      'The People → Offboarded tab becomes a search-first surface (search · pay · bank): a new /api/people/offboarded route, a tested offboarded-search module, ROW grain with recycled emails warn-and-allow, and the one-off payment cards MOVE off the tab into the processor buckets on Payment Dispatch (urgent-payments route reworked to match). Then the console treatment: live search readout that speaks the query term, phase messages, an Employee ID column and a typing-only debounce. Shipped with its feature doc and the ship sha stamped into it. Scored 5: a new API + module + a cross-surface move of the one-off cards. On origin/main.',
+  },
+  {
+    name: 'Termination Documents — a generated packet per leaver with its own table, personal-email search and undo on the doc row',
+    status: 'Done',
+    completed: '2026-09-01',
+    shas: ['e8e8c6ae'],
+    basis:
+      'The commit message says "PAB TAB Ignore"; the files say otherwise — this sha carries the entire Termination Documents feature and zero PAB files (the file-overlap rule’s best specimen yet). Its own termination_documents table, four API routes (list, facts, search, per-id), the Accounting panel where the personal email SEARCHES and the work email IDENTIFIES, undo on the doc row, and a revert-writebacks script. THE MIGRATION IS APPLIED: probed live 2026-09-01 with a plain .limit(1) — the table EXISTS and already holds a generated document, so the surface has run against production. Two polish commits (90812026 scan-line search console, bf43c86a results pop-in) are committed LOCALLY and not yet on origin/main; they are cosmetic, ride the next push, and are deliberately NOT in this row’s evidence so every listed sha stays ancestor-verifiable.',
+  },
+  {
+    name: 'Generate COE from the Signing Queue — accounting issues and signs on the employee’s behalf',
+    status: 'In Progress',
+    shas: ['6d16bd70', '604abd10'],
+    basis:
+      'CODE-COMPLETE BUT LOCAL ONLY: both shas are committed on local main and are NOT ancestors of origin/main at audit time (origin/main is 7424aa7a), and Kane pushes — so the honesty gate caps this at In Progress no matter how finished it looks. What exists: Generate COE from the Signing Queue, where accounting issues the certificate and signs on the employee’s behalf — active-Global-Master-List-only and failing CLOSED, preview + issue + search routes, a tested coe-admin module, and the audit trail naming the ADMIN who generated it. Moves to Pending Deploy on push, Done when Kane confirms it live.',
+    blockers: ['6d16bd70 and 604abd10 are not on origin/main — Kane pushes'],
+  },
 ];
 
 const FIB = new Set([1, 2, 3, 5, 8]);

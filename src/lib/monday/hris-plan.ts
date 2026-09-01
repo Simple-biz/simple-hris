@@ -1300,4 +1300,77 @@ export const PLAN_TASKS: PlanTask[] = [
   // blueprint run that split Workforce Coverage into three surfaces, hardening-skill-and-open-gaps names
   // a hardening run, and two separate sessions on 2026-08-28 entered blueprint before writing any code.
   { epic: 'HRIS-15', name: 'The blueprint and hardening skills — every code change routes through one of them before it is written', type: 'Chore', sp: 3, done: true, sprint: 'S26', priority: 'Medium' },
+  // ── PASS 21 · 2026-09-01 · the range 6ae82ac5..bf43c86a (48 commits, Aug 28 pm – Sep 1) ────────
+  // Clustered by FILE OVERLAP, not message — this range carries the trap's best specimen yet:
+  // e8e8c6ae says "PAB TAB Ignore" and contains ZERO PAB files; it is the entire Termination
+  // Documents feature (4 API routes, the panel, its migration and three plan docs). Sprint split is
+  // by Completed Date against the windows: Aug 28-31 → S27 (its attribution absorbs the Aug 30-31
+  // gap days), Sep 1 → S28.
+  //
+  // 5 SP: twelve commits on one surface in one afternoon. The step said "nobody is ineligible" over
+  // 1,557 ineligible people (the diagnose script measured it); the fix, then the table earns the
+  // surface: names not emails, Employee ID + work email columns, department + status filters reading
+  // the Payment Catalog (not raw keys), a KPI strip, coverage pinned to active GML people WITH hours,
+  // a leaver-with-no-hours no longer ranked worst attendance, an eligible count with checkable
+  // arithmetic, and the calendar modal gone wide with the verdict in a right rail. Not 8: one step,
+  // no new table, no money path — the verdict semantics shipped separately (the S28 row).
+  { epic: 'HRIS-02b', name: 'PAB step shows the 1,557 people it hid — names, Employee IDs, Catalog departments, status filters and a KPI strip', type: 'Feature', sp: 5, done: true, sprint: 'S27', priority: 'High' },
+  // 2 SP: the HSL wizard step loses its banner and the weekly KPI period cards (hand-keyed monthly
+  // cards STAY, per the hsl-monthly-bonus-cards-only rule). One commit, chrome not calculation.
+  { epic: 'HRIS-02a', name: 'Wizard HSL step drops the banner and the weekly KPI period cards', type: 'Feature', sp: 2, done: true, sprint: 'S27', priority: 'Low' },
+  // 1 SP: the missing-CSV dialog claimed an auto-sync that does not exist; it now says less and
+  // stops lying. A truthfulness fix in one component.
+  { epic: 'HRIS-02a', name: 'Missing-CSV dialog stops claiming an auto-sync it never performs', type: 'Bug', sp: 1, done: true, sprint: 'S27', priority: 'Low' },
+  // 2 SP: a new rankings-viewers RBAC module with tests — the Rankings tier flags are kaner@ alone,
+  // and being an admin confers nothing (the tickets-dedicated-role-only shape, applied to rankings).
+  { epic: 'HRIS-09', name: 'Team Rankings is Kane’s alone — admin roles confer nothing', type: 'Feature', sp: 2, done: true, sprint: 'S27', priority: 'Medium' },
+  // 2 SP, one row on file overlap (both touch hsl-catalog-migration.md + INDEX.md, two days apart,
+  // one story): the docs sweep found a RED double-pay guard; the follow-up proved the guard was
+  // RIGHT and the TEST was wrong, and fixed the test — the guard itself never moved. Also wrote the
+  // salaried-pay-basis and pay-structure-no-department docs plus an audit script.
+  { epic: 'HRIS-06', name: 'The red double-pay guard was right — its test was wrong, and three undocumented surfaces got their docs', type: 'Bug', sp: 2, done: true, sprint: 'S27', priority: 'Medium' },
+  // 5 SP: THE 1:1 RULE — the receiving bank drives the send-from rail, superseding the 08-31 wires
+  // lock. Three commits rewriting the same tested modules (employee-payment-processors,
+  // wallet-rail-lock): pickers judge the EFFECTIVE rail not tier 1, the RECEIVING side is gated with
+  // the coupling one-way, then the rule lands across profile, People, approvals and the OTP form.
+  // Peer of the 5-SP Kolan/HiGlobe assignability row: who can be routed where, on the rail.
+  { epic: 'HRIS-19', name: 'The 1:1 rule — the receiving bank drives the send-from rail, gated on both sides', type: 'Feature', sp: 5, done: true, sprint: 'S27', priority: 'High' },
+  // 2 SP: Start Processing stopped being synthesized (the "every cue is Web Audio" rule died here) —
+  // a real engine recording, truckstart.mp3, plays in both the Wizard and Dispatch, with a tail
+  // fade and a sound-tester bench that auditioned three candidates without touching the shipped cue.
+  { epic: 'HRIS-02a', name: 'Start Processing plays a real engine — truckstart.mp3 in both the Wizard and Dispatch', type: 'Feature', sp: 2, done: true, sprint: 'S28', priority: 'Low' },
+  // 2 SP: Preview Emails leaves the stock dialog for the wizard's chrome and shows the WORK email —
+  // display only, delivery still goes to the personal address (preview-emails-work-email rule).
+  { epic: 'HRIS-03b', name: 'Preview Emails wears the wizard’s chrome and shows the WORK email', type: 'Feature', sp: 2, done: true, sprint: 'S28', priority: 'Low' },
+  // 5 SP: the verdict layer on top of the S27 table row. The payout week owns the tab (the
+  // pab-payout-week gate), Ignore joins Forgive as the other verdict, decided rows LEAVE the list
+  // into a Done tab of receipts with realtime decisions across open wizards, paused departments skip
+  // the step, HSL failures aggregate as weeks, a no-hours day reads amber never grey, confirms use
+  // the app's dialog, and PAB moves BEFORE Additions — the rail is 4 PAB, 5 Additions, 6 Contractors.
+  // Not 8: no new table — decisions ride the existing exclusions path; the surface was the S27 row.
+  { epic: 'HRIS-02b', name: 'PAB verdicts — the payout week owns the tab, Ignore joins Forgive, decided rows leave to a realtime Done tab, and PAB becomes step 4', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
+  // 3 SP: a No Pay Rate readiness row can be Ignored for exactly one week, backed by a NEW
+  // payroll_rate_exemptions table (migration MEASURED APPLIED 2026-09-01 — the table exists and
+  // already holds a row), an API route, a tested readiness-rate-ignore module, and the FAB wiring.
+  { epic: 'HRIS-20', name: 'Readiness No Pay Rate rows can be Ignored for one week, backed by a payroll_rate_exemptions table', type: 'Feature', sp: 3, done: true, sprint: 'S28', priority: 'Medium' },
+  // 3 SP: Bank Preferred requests stop being a card above the Issues table and become ROWS in it,
+  // the default filter is All with KPI cards always counting ALL data, and decided bank rows gain
+  // Edit and Delete — decisions are no longer immutable (a new [id] API route).
+  { epic: 'HRIS-19', name: 'Bank Preferred requests are rows in the Issues table, and decided rows gain Edit and Delete', type: 'Feature', sp: 3, done: true, sprint: 'S28', priority: 'Medium' },
+  // 5 SP: the People → Offboarded tab becomes a search-first surface (search · pay · bank), with a
+  // new API route and a tested offboarded-search module; the one-off payment cards MOVE into the
+  // processor buckets on Payment Dispatch; live search console treatment, phase messages, Employee
+  // ID column and a typing-only debounce. ROW grain, recycled emails warn-and-allow.
+  { epic: 'HRIS-23', name: 'People Offboarded search tab — search · pay · bank in one surface, one-off cards join the processor buckets', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
+  // 5 SP: the Termination Documents surface — its own termination_documents table (migration
+  // MEASURED APPLIED 2026-09-01: the table exists and holds a row), four API routes (list, facts,
+  // search, per-id), the Accounting panel with a scan-line search where the personal email SEARCHES
+  // and the work email IDENTIFIES, undo on the doc row, and a revert-writebacks script. Shipped in
+  // e8e8c6ae, whose message — "PAB TAB Ignore" — names a different feature entirely.
+  { epic: 'HRIS-18', name: 'Termination Documents — a generated packet per leaver with its own table, personal-email search and undo on the doc row', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
+  // 3 SP, done:false — the code is COMMITTED LOCALLY ONLY (6d16bd70 + 604add10 are not ancestors of
+  // origin/main), so this cannot pass In Progress until Kane pushes. Generate COE from the Signing
+  // Queue: accounting issues the certificate and signs on the employee’s behalf, active-GML-only and
+  // failing CLOSED, with the audit naming the ADMIN who generated it.
+  { epic: 'HRIS-18', name: 'Generate COE from the Signing Queue — accounting issues and signs on the employee’s behalf', type: 'Feature', sp: 3, done: false, sprint: 'S28', priority: 'Medium' },
 ];
