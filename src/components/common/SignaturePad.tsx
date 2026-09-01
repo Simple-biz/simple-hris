@@ -322,7 +322,7 @@ function DrawMode({
     <div className="space-y-2">
       <div
         className={cn(
-          'relative overflow-hidden rounded-xl border-2 border-dashed border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-100',
+          'relative overflow-hidden rounded-xl border-2 border-dashed border-zinc-300 bg-white dark:border-zinc-700 dark:bg-white',
           heightClassName,
         )}
       >

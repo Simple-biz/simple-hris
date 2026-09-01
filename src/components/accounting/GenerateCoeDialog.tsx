@@ -7,7 +7,6 @@ import {
   FileSignature,
   Loader2,
   Search,
-  UserRound,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -34,6 +33,40 @@ interface Candidate {
   workEmail: string;
   name: string | null;
   department: string | null;
+}
+
+/** Two letters for the avatar tile: first + last word of the display name
+ *  (master names are surname-first with a quoted nickname, so strip the
+ *  punctuation first), falling back to the email. */
+function initialsOf(name: string | null, email: string): string {
+  const source = (name ?? '').replace(/["“”().,]/g, ' ').trim() || email;
+  const words = source.split(/\s+/).filter((w) => /[a-z0-9]/i.test(w));
+  if (words.length === 0) return email.slice(0, 2).toUpperCase();
+  return (words[0][0] + (words.length > 1 ? words[words.length - 1][0] : '')).toUpperCase();
+}
+
+/**
+ * Optimistic load progress for the facts fetch: ramps quickly, eases toward
+ * ~92% and NEVER reaches 100 on prediction alone — the data landing completes
+ * it by replacing the bar with the facts card (the payroll wizard's step-load
+ * rule: a bar may not fill on prediction).
+ */
+function useOptimisticProgress(active: boolean): number {
+  const [progress, setProgress] = useState(0);
+  useEffect(() => {
+    if (!active) {
+      setProgress(0);
+      return;
+    }
+    let p = 8;
+    setProgress(p);
+    const id = setInterval(() => {
+      p += (92 - p) * 0.07;
+      setProgress(p);
+    }, 90);
+    return () => clearInterval(id);
+  }, [active]);
+  return progress;
 }
 
 interface SearchResponse {
@@ -81,6 +114,8 @@ export default function GenerateCoeDialog({
   const [facts, setFacts] = useState<CoePreviewFacts | null>(null);
 
   const [generating, setGenerating] = useState(false);
+
+  const factsProgress = useOptimisticProgress(factsLoading);
 
   const signingBlocked = !signature || !signature.enabled;
 
@@ -214,22 +249,25 @@ export default function GenerateCoeDialog({
         <DialogHeader>
           <DialogTitle>Generate a Certificate of Engagement</DialogTitle>
           <DialogDescription>
-            Search an active employee, review what the certificate will state, then generate and
-            sign it in one step. The signed copy is returned to their profile as if they had
-            requested it — only active Global Master List people can be issued one.
+            Issue and sign a COE in one step. The signed copy goes to the employee&rsquo;s profile.
           </DialogDescription>
         </DialogHeader>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
           {/* ── Person picker ─────────────────────────────────────────────── */}
           {selected ? (
-            <div className="flex items-center gap-2.5 rounded-xl border border-orange-200 bg-orange-50/70 px-3.5 py-2.5 dark:border-orange-500/30 dark:bg-orange-500/10">
-              <UserRound className="h-4 w-4 shrink-0 text-orange-600 dark:text-orange-300" />
-              <div className="min-w-0 flex-1 text-[12.5px]">
-                <span className="font-medium text-orange-950 dark:text-orange-100">
+            <div className="flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50/70 px-3 py-2 dark:border-orange-500/30 dark:bg-orange-500/10">
+              <span
+                aria-hidden
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-orange-500/90 text-[11px] font-semibold text-white dark:bg-orange-500/80"
+              >
+                {initialsOf(selected.name, selected.workEmail)}
+              </span>
+              <div className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-medium text-orange-950 dark:text-orange-100">
                   {selected.name || selected.workEmail}
                 </span>
-                <span className="ml-1.5 text-orange-900/60 dark:text-orange-200/60">
+                <span className="block truncate text-[11.5px] text-orange-900/70 dark:text-orange-200/70">
                   {selected.workEmail}
                   {/* Server-formatted already; formatDeptLabel is the unconditional
                       render chokepoint and a no-op on non-HSL labels. */}
@@ -245,7 +283,7 @@ export default function GenerateCoeDialog({
                 }}
                 disabled={generating}
                 aria-label="Pick a different employee"
-                className="shrink-0 rounded-md p-1 text-orange-700/60 transition-colors hover:bg-orange-100 hover:text-orange-800 dark:text-orange-300/60 dark:hover:bg-orange-500/20"
+                className="shrink-0 rounded-md p-1 text-orange-700/70 transition-colors hover:bg-orange-100 hover:text-orange-900 dark:text-orange-300/70 dark:hover:bg-orange-500/20"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -258,46 +296,51 @@ export default function GenerateCoeDialog({
                   autoFocus
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search by name or email…"
+                  placeholder="Name or email…"
                   aria-label="Search active employees"
-                  className="h-9 pl-9 text-sm focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
+                  className="h-9 pl-9 pr-8 text-sm focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
                 />
+                {searching && (
+                  <Loader2
+                    aria-label="Searching"
+                    className="absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-orange-500"
+                  />
+                )}
               </div>
-              {searching ? (
-                <div className="flex items-center gap-2 py-2 text-[12.5px] text-zinc-500 dark:text-zinc-400">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Searching…
-                </div>
-              ) : result?.error ? (
+              {result?.error ? (
                 <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50/70 px-3 py-2.5 text-xs text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                   <span>{result.error}</span>
                 </div>
               ) : result?.tooShort ? (
-                <p className="px-1 text-[12px] text-zinc-400 dark:text-zinc-500">
-                  Type at least two characters to search.
-                </p>
-              ) : result && candidates.length === 0 ? (
                 <p className="px-1 text-[12px] text-zinc-500 dark:text-zinc-400">
-                  No active employee matches &ldquo;{query.trim()}&rdquo;. Only active Global
-                  Master List people are listed here.
+                  Keep typing, at least two characters.
+                </p>
+              ) : result && candidates.length === 0 && !searching ? (
+                <p className="px-1 text-[12px] text-zinc-500 dark:text-zinc-400">
+                  No match for &ldquo;{query.trim()}&rdquo;. Only active employees are listed.
                 </p>
               ) : candidates.length > 0 ? (
                 <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
-                  <ul className="max-h-56 divide-y divide-zinc-100 overflow-y-auto dark:divide-zinc-800/70">
+                  <ul className="max-h-60 divide-y divide-zinc-100 overflow-y-auto dark:divide-zinc-800/70">
                     {candidates.map((c) => (
                       <li key={c.workEmail}>
                         <button
                           type="button"
                           onClick={() => void loadFacts(c)}
-                          className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-orange-50/70 dark:hover:bg-orange-500/10"
+                          className="flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-orange-50/70 focus-visible:bg-orange-50/70 focus-visible:outline-none dark:hover:bg-orange-500/10 dark:focus-visible:bg-orange-500/10"
                         >
-                          <UserRound className="h-4 w-4 shrink-0 text-zinc-400" />
-                          <span className="min-w-0 flex-1 text-[12.5px]">
-                            <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                          <span
+                            aria-hidden
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-orange-100 text-[11px] font-semibold text-orange-700 dark:bg-orange-500/15 dark:text-orange-300"
+                          >
+                            {initialsOf(c.name, c.workEmail)}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[13px] font-medium text-zinc-800 dark:text-zinc-100">
                               {c.name || c.workEmail}
                             </span>
-                            <span className="ml-1.5 text-zinc-500 dark:text-zinc-400">
+                            <span className="block truncate text-[11.5px] text-zinc-500 dark:text-zinc-400">
                               {c.workEmail}
                               {c.department ? ` · ${formatDeptLabel(c.department)}` : ''}
                             </span>
@@ -308,7 +351,7 @@ export default function GenerateCoeDialog({
                   </ul>
                   {result?.truncated && (
                     <p className="border-t border-zinc-100 bg-zinc-50/70 px-3.5 py-1.5 text-[11px] text-zinc-500 dark:border-zinc-800/70 dark:bg-zinc-900/40 dark:text-zinc-400">
-                      Showing {candidates.length} of {result.matched} matches — keep typing to narrow it.
+                      Showing {candidates.length} of {result.matched}. Keep typing to narrow it.
                     </p>
                   )}
                 </div>
@@ -320,9 +363,26 @@ export default function GenerateCoeDialog({
           {selected && (
             <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
               {factsLoading ? (
-                <div className="flex items-center gap-2 py-1 text-[12.5px] text-zinc-500 dark:text-zinc-400">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Loading certificate details…
+                <div className="py-1">
+                  <div className="flex items-baseline justify-between text-[11.5px] text-zinc-500 dark:text-zinc-400">
+                    <span>Preparing certificate details…</span>
+                    <span className="tabular-nums">{Math.round(factsProgress)}%</span>
+                  </div>
+                  <div
+                    role="progressbar"
+                    aria-label="Loading certificate details"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(factsProgress)}
+                    className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
+                  >
+                    {/* Optimistic ramp, capped under 100 — the facts card landing is
+                        what completes it (wizard step-load rule). */}
+                    <div
+                      className="h-full rounded-full bg-orange-500 transition-[width] duration-200 ease-out motion-reduce:transition-none"
+                      style={{ width: `${factsProgress}%` }}
+                    />
+                  </div>
                 </div>
               ) : factsBlocked ? (
                 <div className="flex items-start gap-2.5">
@@ -338,10 +398,10 @@ export default function GenerateCoeDialog({
                 </div>
               ) : facts ? (
                 <>
-                  <div className="flex items-start gap-2.5">
-                    <FileCheck2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                  <div className="flex items-center gap-2.5">
+                    <FileCheck2 className="h-4 w-4 shrink-0 text-emerald-500" />
                     <p className="text-[12.5px] font-medium text-zinc-800 dark:text-zinc-200">
-                      The signed certificate will state these figures
+                      The certificate will state
                     </p>
                   </div>
                   <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-zinc-200/70 pt-3 dark:border-zinc-800/70 sm:grid-cols-[auto_1fr]">
@@ -405,16 +465,22 @@ export default function GenerateCoeDialog({
                 </span>
               </div>
             ) : (
-              <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 dark:border-zinc-700 dark:bg-transparent">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={signature!.image_data_url}
-                  alt="Your signature"
-                  className="h-10 w-auto max-w-[160px] object-contain"
-                />
-                <div className="text-[11px] leading-tight text-zinc-500">
-                  <div className="font-medium text-zinc-700 dark:text-zinc-300">{signature!.owner_name}</div>
-                  <div>{signature!.title || 'Accounting Head'}</div>
+              <div className="flex items-center gap-3 rounded-xl border border-zinc-200 px-2 py-2 dark:border-zinc-700">
+                {/* Signature ink is dark navy — the plate stays WHITE in dark mode
+                    or the ink disappears (same rule as the signature manager card). */}
+                <div className="rounded-lg bg-white px-3 py-1.5">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={signature!.image_data_url}
+                    alt="Your signature"
+                    className="h-9 w-auto max-w-[150px] object-contain"
+                  />
+                </div>
+                <div className="min-w-0 text-[11px] leading-tight text-zinc-500 dark:text-zinc-400">
+                  <div className="truncate font-medium text-zinc-700 dark:text-zinc-300">
+                    Signing as {signature!.owner_name}
+                  </div>
+                  <div className="truncate">{signature!.title || 'Accounting Head'}</div>
                 </div>
               </div>
             )
