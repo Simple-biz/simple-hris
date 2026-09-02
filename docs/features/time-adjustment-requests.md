@@ -218,25 +218,148 @@ Status labels are human-readable:
 
 ### Manager dashboard — Time adjustments tab
 
-**File:** `src/components/manager/ManagerApp.tsx` → `ManagerTimeAdjustments` component (replaced the placeholder stub on 2026-06-02).
+**Files:** `src/components/manager/ManagerTimeAdjustments.tsx` (the workspace) and
+`src/lib/manager/time-adjustment-queue.ts` (every derivation, pure and unit-tested).
+Extracted out of `ManagerApp.tsx` on 2026-09-02, which lost 1,051 lines in the move; the
+shell keeps only `TA_REASON_LABEL`, which its Overview approvals gallery also reads.
+
+**Rebuilt 2026-09-02** from the handoff in `references/design_handoff_time_adjustments/`
+(`README.md` is the spec, `Time Adjustments.dc.html` the prototype, `original-ui.png` the
+screen it replaced). It is a review workspace, not a list: a KPI row, a filter bar, a
+master-detail split, and one merged decision trail. **The theme is Accounting → MESA in
+blue** (Kane) — see [Look and feel](#look-and-feel-mesa-in-blue).
 
 The tab fetches from `GET /api/manager/time-adjustments` — scoped to the manager's departments via `department_managers` **plus any request naming the viewer as second approver**, with **no date restriction** (requests from any past period appear). A `useEffect` keyed on `activeTab` keeps the sidebar count badge live on a tab switch, and while the tab is open the live refresh below keeps it live too; that count is **things waiting on this person under either hat**. See [Staying live](#staying-live--the-refresh-must-be-on-a-timer-never-on-a-render) — a render-driven refetch here is a loop, not a refresh.
 
-The tab renders **three** sections, because one viewer can wear two hats at once (never on the same row — a manager cannot name themselves):
+#### The five queues
 
-**1. Awaiting your approval** — rows the viewer owes a decision on *as the department manager* (`status = pending`, `manager_decision` null, and the id is in the response's `managedIds`). Each card shows:
-- Employee email, adjust date, reason, requested hours, period label.
-- Explanation paragraph.
-- Evidence thumbnails (signed URLs).
-- **Second approver dropdown** (required) — fed by `GET /api/manager/approver-candidates?requestId=…`, **one fetch per request** because the pool is that request's own team and a manager of two departments gets a different list per row. Lists every ACTIVE member of the team, minus the filer and the manager themselves. The label names the team it is showing; an empty list says *nobody else is active on that team*, which since 2026-08-27 is the only way it can be empty — there is no longer an access grant to go and ask an admin for.
-- Optional manager note field.
-- **Approve & send to second approver** → `PATCH .../[id]` with `action: manager_approve` **and `second_approver_email`** in the same body, so the row can never land approved-but-uncountersigned. Disabled until someone is picked.
-- **Decline** → `action: manager_deny`.
+The three stacked sections became **one table behind a segmented control**, because a
+viewer can wear two hats at once (never on the same row — a manager cannot name
+themselves). `bucketOfRequest` puts every row in exactly one segment, and the two
+"owed by me" buckets outrank the status buckets:
 
-**2. Awaiting your second approval** — rows naming the viewer in `second_approver_email` with no `second_decision` yet. No picker (that is the manager's call); a banner names who asked and whether the manager has already signed off.
-- **Approve** → `action: second_approve` · **Decline** → `action: second_deny`.
+| Segment | What it holds |
+|---|---|
+| **Needs you** | owed a decision *as the department manager* — `pending`, `manager_decision` null, and the id is in the response's `managedIds` |
+| **Countersign** | names the viewer in `second_approver_email` with no `second_decision` yet (keyed on the assignment, not the status: they may act before the manager) |
+| **In review** | in flight, waiting on somebody who is not this viewer — `awaiting_second_approval`, `manager_approved` (with Accounting), or a `pending` row this viewer already countersigned |
+| **Approved** | `approved` |
+| **Declined** | `manager_denied` (a reviewer said no) or `denied` (Accounting said no) |
 
-**3. History** — everything else: decided rows, plus rows in flight waiting on somebody *other than* the viewer. A request the manager already approved sits here as `awaiting_second_approval` — not their move any more, but not finished either, so the pill says so and **Retrieve** stays available. The expanded detail carries the full trail: manager decision, **second approver** (shown as soon as one is named, including "Has not decided yet", so a parked request says who it is parked on), and Accounting decision.
+**The landing segment is load-bearing, not a nicety.** `defaultBucketFor` opens on the
+first segment with outstanding work — Needs you, then Countersign, then All. There is
+deliberately **no** "you were named second approver" notification (a new
+`employee_notifications.type` means restating a closed CHECK allowlist), so this tab plus
+the sidebar count ARE the discovery path for a countersign duty. A default that hid it
+would remove the only way those people find their work. Pinned by a test.
+
+**The segments are coarse; the per-row chip is not.** An `in-review` row says whether it
+is parked on the manager, on a countersignature, or on Accounting (`rowStatusChip`), so a
+coarse bucket never makes a row lie. Chip tone follows the handoff's rule — blue for what
+needs action, amber for in flight, neutral for anything resolved — so the queue triages at
+a glance.
+
+#### The table
+
+Six columns: Employee (status dot + email), Work date, Reason, Hours (right, tabular),
+Submitted, Status. Clicking anywhere in a row opens it in the detail panel; the open row
+takes a blue fill and a 2px inset left bar.
+
+**Hours are rounded to 2dp for display and never for math** (`fmtAdjustmentHours`). The UI
+this replaced printed `requested_hours` verbatim, so a manager read
+`+4.566666666666666h req` on screen — visible in `original-ui.png`. The raw value is
+untouched for payroll. The Overview approvals gallery in `ManagerApp.tsx` had the same
+defect on the same field and was fixed with it.
+
+Search (email, reason label **and** stored code, explanation, all three decision notes,
+request id), a reason filter, and a pay-period filter, all AND-combined client-side over
+the rows already fetched — the same shape as the Transfers tab. `periodOf` falls back to
+the adjusted date's own month when `period_label` is unstamped, so a legacy row is never
+hidden from a filter that claims to cover every period. The card header carries
+"Showing N of M".
+
+#### The detail panel
+
+Docked beside the table at ≥1100px, a right-hand drawer below it (Escape closes the
+lightbox first, then the panel). It carries the request's short id, the employee, a facts
+grid (hours, pay period, **every** missed-time range, reason), the explanation, the real
+evidence with a lightbox, and the decision trail.
+
+**The trail is ONE chronology** — submission, the second-approver assignment, the
+manager's sign-off, the countersignature, then Accounting — replacing the old separate
+"Manager decision" / "Second approver" blocks. An **undated** decision is dropped rather
+than dated today: an undated event placed in a chronology is a fabricated fact.
+
+Actions, when the viewer owes a decision:
+- as the **manager**: a **required** second-approver picker fed by
+  `GET /api/manager/approver-candidates?requestId=…`, **one fetch per request** because
+  the pool is that request's own team and a manager of two departments gets a different
+  list per row. It lists every ACTIVE member of the team minus the filer and the manager,
+  names the team it is showing, and an empty list says *nobody else is active on that
+  team* — since 2026-08-27 the only way it can be empty, there being no access grant to
+  go and ask an admin for. Then an optional note, **Approve {h}** (`action:
+  manager_approve` **with `second_approver_email` in the same body**, so a row can never
+  land approved-but-uncountersigned; disabled until someone is picked) and **Decline**
+  (`manager_deny`).
+- as the **second approver**: the note plus **Approve {h}** (`second_approve`) and
+  **Decline** (`second_deny`). No picker — that is the manager's call.
+- A failed action renders **inline above the buttons**, never as a modal, and leaves the
+  row in its previous state.
+
+**Deliberately not built:** the handoff's **bulk action bar** (Approve / Forward /
+Decline on checked rows) and its **Export CSV** button. Kane dropped both on 2026-09-02.
+Bulk approve cannot exist as designed — every approval needs an approver drawn from *that
+request's own team*, the pool is fetched per request, and there is no bulk endpoint, so it
+could only work by applying one approver across teams, which the server would refuse. Its
+`Forward to accounting` is also not a third button here: approving **is** forwarding.
+
+#### Look and feel: MESA in blue
+
+The theme is lifted from Accounting → MESA (`src/components/payroll/AccountingMesa.tsx`)
+with teal swapped for blue, so the two surfaces read as one product: a soft tinted page
+wash in light mode and flat `#0d1117` in dark, a gradient icon tile with a tracked
+uppercase eyebrow above a `text-2xl` heading, stat tiles as separate `rounded-xl` cards
+with a `from-blue-50 to-white` gradient and `font-mono tabular-nums` values, a segmented
+control whose active pill is a `from-blue-500 to-sky-500` gradient with a white label,
+`Card`/`CardHeader` chrome on tinted borders and header fills, a blue-tinted `thead` with
+blue dividers and row hovers, and inputs focusing to `border-blue-500 ring-blue-500/20`.
+Only the first stat tile is accented: it is the manager's actual to-do number, and it
+counts **both** hats because that is what the sidebar badge means too.
+
+Four stat tiles: *Needs your review* (both hats, plus the requested hours), *Awaiting
+second approver* (rows parked on somebody else's countersignature — the viewer's own are
+excluded so one request is never counted twice on one strip), *Decided last 30 days* with
+its approval rate, and *Median time to decide*. **Median, never mean** — one request left
+for three months would drag an average far enough to make a healthy queue look broken. An
+empty window reports `null`, never `0%`: "nothing decided yet" and "0% approved" are
+different facts. The handoff's *"Target: under 2 days"* sub-line is **not** shipped;
+nobody set that SLA, so the line states the sample the median is drawn from instead.
+
+#### Responsive, verified in a browser
+
+Every band below was measured in Chromium against a mocked payload, not eyeballed:
+
+| Width | Layout |
+|---|---|
+| **≥1400px, panel open** | docked panel + 5 columns (Reason returns) |
+| **1100–1399px, panel open** | docked panel + 4 columns; Reason and Submitted stand down or the Employee cell gets ~60px and the headers collide |
+| **≥1024px, panel closed** | all 6 columns |
+| **768–1023px** | Submitted stands down |
+| **640–767px** | Reason stands down and reappears under the email |
+| **<640px** | **not a table.** `src/index.css:1055` collapses every `<table>` in the app into stacked label/value cards, taking its labels from `data-label`, so every cell carries one and nothing is lost on a phone |
+
+Two traps are recorded here because both cost a build:
+
+1. **A Tailwind variant composed from a constant is never generated.** The first build
+   wrote `` `${SPLIT_AT}:block` ``; Tailwind scans source text statically, so
+   `min-[1100px]:block` never existed and the panel rendered as a drawer at every width,
+   backdrop and all. Every variant is spelled out literally.
+2. **Two rival `display` rules that both match are a coin flip.** `md:table-cell` and
+   `min-[1100px]:hidden` both match at 1100px and the winner is whichever Tailwind emitted
+   last, which is not a contract. Column visibility is expressed so that only ONE rule
+   ever turns a cell on (`md:max-[1099px]:table-cell min-[1400px]:table-cell`), over a
+   base `hidden`. The global `<640px` rule additionally forces `display:flex` on every
+   `td`, so a Tailwind `hidden` cannot be relied on to remove a cell down there at all.
 
 **Retrieve (recall)** → `action: recall`, on rows at `manager_approved` **or** `awaiting_second_approval`, and only for ids in `managedIds` (the server enforces the same department scope; hiding the button just avoids offering a 403). It returns the row to `pending` and clears **all three** decision sets plus the second-approver assignment, so the review restarts from scratch — including the choice of who countersigns.
 
@@ -489,3 +612,14 @@ Private. Object path: `{sanitized_email}/{requestKey}/{idx}-{timestamp}.{ext}`. 
 | `src/components/employee/EmployeeSidebar.tsx` | **Edited** — Approvals nav item, rendered only when `secondApprovalCount > 0` |
 | `src/lib/pages/visibility.ts` | **Edited** — `approvals` added to the employee page registry |
 | `src/components/manager/ManagerApp.tsx` | **Edited** — per-request candidate pools (`poolByRow`) replacing the single global list; picker names the team; empty-state copy no longer sends the manager to an admin |
+
+### 2026-09-02 — the review workspace
+
+| Path | Change |
+|---|---|
+| `src/lib/manager/time-adjustment-queue.ts` | **New** — every derivation, pure: buckets, filters, KPIs, median, trail, 2dp hours, `deriveQueue` |
+| `src/lib/manager/time-adjustment-queue.test.ts` | **New** — 40 tests, failure-direction first |
+| `src/components/manager/ManagerTimeAdjustments.tsx` | **New** — the workspace, extracted from the shell and rebuilt on the handoff + the MESA-in-blue theme |
+| `src/components/manager/ManagerApp.tsx` | **Edited** — 1,051 lines removed; keeps `TA_REASON_LABEL` for the Overview gallery, whose raw-hours bug is fixed with it |
+| `src/lib/manager/tab-cache.ts` | **Edited** — `timeAdjustmentQueue` key (the tab's RAW payload, distinct from the shell's pending-only copy) |
+| `src/lib/manager/manager-time-adjustments-live.test.ts` | **Edited** — repointed at the extracted file; 9 guards |

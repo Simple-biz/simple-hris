@@ -11,6 +11,15 @@
         ],
         "createdAt": "2026-08-21T19:48:29.935Z",
         "reason": "User confirmed the Welcome-back orange-to-rose fill is intentional; documented in docs/features/payment-dispatch.md:39"
+      },
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "src/components/manager/ManagerTimeAdjustments.tsx"
+        ],
+        "createdAt": "2026-09-02T16:16:48.019Z",
+        "reason": "Claude: evidence <img> src is a runtime Supabase Storage signed URL passed as a prop; every call site filters falsy URLs (.filter(Boolean)) so no empty/placeholder src can ship. No literal src exists in this file to inspect."
       }
     ]
   }

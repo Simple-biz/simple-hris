@@ -413,6 +413,21 @@ export const MANAGER_CACHE_KEYS = {
    */
   timeAdjustmentRows: 'shell:time-adjustment-rows',
   /**
+   * The Time Adjustments TAB's own `/api/manager/time-adjustments` payload —
+   * `{ rows, viewerEmail, managedIds }`, raw and complete.
+   *
+   * Separate from `timeAdjustmentRows` above, which is the SHELL's copy and holds
+   * only the `status === 'pending'` subset the Overview gallery cycles through.
+   * The tab needs every status plus the viewer identity and the managed-id list,
+   * because those decide which of the two approver hats each row renders.
+   *
+   * RAW on purpose: `managedIds` is derived into a `Set` at render time, since
+   * `JSON.stringify(new Set())` is `{}` and the mirror is JSON
+   * (`time-adjustment-queue.ts` → `deriveQueue`). `signedUrls` is excluded here
+   * for the same reason as above — the URLs expire.
+   */
+  timeAdjustmentQueue: 'shell:time-adjustment-queue',
+  /**
    * The pending-approvals badge count.
    *
    * Its own key rather than `timeAdjustmentRows.length`, because the two are
