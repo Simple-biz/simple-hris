@@ -20,6 +20,15 @@
         ],
         "createdAt": "2026-09-02T16:16:48.019Z",
         "reason": "Claude: evidence <img> src is a runtime Supabase Storage signed URL passed as a prop; every call site filters falsy URLs (.filter(Boolean)) so no empty/placeholder src can ship. No literal src exists in this file to inspect."
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/components/manager/ManagerTimeAdjustments.tsx"
+        ],
+        "createdAt": "2026-09-02T17:02:46.763Z",
+        "reason": "Claude: the 2 remaining hits are false positives - both are the inactive segment tab's base text paired with hover:bg-blue-50/70, and the same hover sets hover:text-blue-700 / dark:hover:text-blue-200, so grey never sits on blue. The detector cannot see the hover: prefix. Verbatim from AccountingMesa's ViewTabButton, the theme Kane asked for. The one REAL hit in this file (explanation block, text-zinc-700 on bg-blue-50/50) was FIXED to text-blue-950, not suppressed."
       }
     ]
   }

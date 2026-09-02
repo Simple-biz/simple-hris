@@ -920,7 +920,10 @@ function RequestDetail({
       <div className="border-t border-blue-100/60 pt-3 dark:border-blue-900/40">
         <FieldLabel className="mb-2">Employee explanation</FieldLabel>
         {row.explanation?.trim() ? (
-          <p className="whitespace-pre-wrap rounded-xl bg-blue-50/50 px-3 py-2.5 text-sm text-zinc-700 dark:bg-blue-950/20 dark:text-zinc-300">
+          // Ink tinted to the fill's own hue rather than neutral grey: this is the
+          // employee's own words and the most-read text in the panel, and grey on a
+          // tint reads washed out next to the neutral copy around it.
+          <p className="whitespace-pre-wrap rounded-xl bg-blue-50/50 px-3 py-2.5 text-sm text-blue-950 dark:bg-blue-950/20 dark:text-blue-50">
             {row.explanation}
           </p>
         ) : (
