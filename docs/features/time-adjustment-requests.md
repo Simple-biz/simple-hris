@@ -220,7 +220,7 @@ Status labels are human-readable:
 
 **File:** `src/components/manager/ManagerApp.tsx` → `ManagerTimeAdjustments` component (replaced the placeholder stub on 2026-06-02).
 
-The tab fetches from `GET /api/manager/time-adjustments` — scoped to the manager's departments via `department_managers` **plus any request naming the viewer as second approver**, with **no date restriction** (requests from any past period appear). A `useEffect` keyed on `activeTab` keeps the sidebar count badge live; that count is **things waiting on this person under either hat**.
+The tab fetches from `GET /api/manager/time-adjustments` — scoped to the manager's departments via `department_managers` **plus any request naming the viewer as second approver**, with **no date restriction** (requests from any past period appear). A `useEffect` keyed on `activeTab` keeps the sidebar count badge live on a tab switch, and while the tab is open the live refresh below keeps it live too; that count is **things waiting on this person under either hat**. See [Staying live](#staying-live--the-refresh-must-be-on-a-timer-never-on-a-render) — a render-driven refetch here is a loop, not a refresh.
 
 The tab renders **three** sections, because one viewer can wear two hats at once (never on the same row — a manager cannot name themselves):
 
@@ -239,6 +239,57 @@ The tab renders **three** sections, because one viewer can wear two hats at once
 **3. History** — everything else: decided rows, plus rows in flight waiting on somebody *other than* the viewer. A request the manager already approved sits here as `awaiting_second_approval` — not their move any more, but not finished either, so the pill says so and **Retrieve** stays available. The expanded detail carries the full trail: manager decision, **second approver** (shown as soon as one is named, including "Has not decided yet", so a parked request says who it is parked on), and Accounting decision.
 
 **Retrieve (recall)** → `action: recall`, on rows at `manager_approved` **or** `awaiting_second_approval`, and only for ids in `managedIds` (the server enforces the same department scope; hiding the button just avoids offering a 403). It returns the row to `pending` and clears **all three** decision sets plus the second-approver assignment, so the review restarts from scratch — including the choice of who countersigns.
+
+### Staying live — the refresh must be on a timer, never on a render
+
+Added 2026-09-02, after Kane reported the tab **flickering**. It was a fetch loop.
+
+The shell handed the tab a fresh inline arrow every render
+(`onCountChange={(n) => setPendingApprovals(n)}`); the tab folded that prop into
+`fetchRows = useCallback(…, [onCountChange])` and mounted it with
+`useEffect(() => fetchRows(), [fetchRows])`. Each answered fetch called the callback,
+and `useManagerCachedState`'s setter returns a **new `{key, value}` object on every
+call** (value and key are one piece of state), so React could never bail out on an
+unchanged count — the shell re-rendered, the arrow changed identity, `fetchRows`
+changed with it, and the mount effect refired. One `GET /api/manager/time-adjustments`
+per lap (Supabase reads **plus** Storage signing for every evidence image) for as long
+as the tab was open, and because `fetchRows` opened with `setLoading(true)` the list
+was swapped for the spinner several times a second. That was the flicker.
+
+Three rules now hold it closed, all pinned by
+`src/lib/manager/manager-time-adjustments-live.test.ts` (each assertion confirmed
+failing against the pre-fix source first):
+
+1. **Nothing render-unstable reaches the fetch closure.** `onCountChange` is read
+   through `countChangeRef` only — allowed in the signature and the ref assignment,
+   nowhere else — so `fetchRows` carries an **empty** dependency array and the mount
+   effect is genuinely once per mount. The shell's callback is additionally memoized
+   (`handleApprovalCountChange`), so either half alone keeps the loop shut. Same
+   pattern, same reason as `useLiveRefresh` refing its own `onRefresh`.
+2. **The spinner is derived, never stored** — `const loading = !settled && rows.length === 0`,
+   and `settled` is never reset. This is `manager-dashboard-cache.md` §
+   *"Loading flags are part of the rule"*; without it the poll below would flash the
+   list every 60s exactly as the loop did.
+3. **The queue is kept live by `useLiveRefresh`**, like every other manager queue
+   (Transfers, both bonus calculators): Realtime on `time_adjustment_requests`, a
+   **60s poll** backstop, and a focus/visibility refresh. Before this the tab had **no
+   refresh at all** — a co-manager's decision, the second approver's signature,
+   Accounting's verdict, or a request filed while you sat there stayed invisible until
+   you switched tabs. `manager-dashboard-cache.md` is explicit that a queue other
+   people change must not be stale-and-stop: *"that is how two managers approve the
+   same request twice."* The refresh also re-signs the evidence URLs, which expire on
+   a long-open tab.
+
+The refresh reuses `fetchRows` itself, so the mount and refresh paths cannot diverge,
+and the route keeps `cache: 'no-store'` — this changed no endpoint's freshness.
+
+> **OPEN — one badge, two meanings.** The shell writes `pendingApprovals =
+> pendingRows.length` (every pending row in the manager's departments,
+> `ManagerApp.tsx:358`) and the tab writes *things waiting on ME under either hat*
+> (`ManagerApp.tsx:1821`) into the **same** `pendingApprovalCount` cache key. So the
+> sidebar number means one thing while you are on the tab and another while you are
+> elsewhere, depending on which fetch answered last. Pre-existing, not a polling
+> defect, and left alone deliberately: picking a winner changes a number on screen.
 
 ### Authorization for manager approval
 

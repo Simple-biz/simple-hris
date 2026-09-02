@@ -337,6 +337,17 @@ export default function ManagerApp() {
   // a broken image where an uncached one paints nothing, so they are re-fetched
   // cold every time and the rows above carry the paint on their own.
   const [pendingSignedUrls, setPendingSignedUrls] = useState<Record<string, string>>({});
+  // MUST stay referentially stable. `ManagerTimeAdjustments` folds this callback
+  // into its fetch closure, so an inline arrow here re-created the closure on
+  // every render of this shell — and because `useManagerCachedState`'s setter
+  // returns a fresh `{key, value}` object on every call (React can never bail
+  // out), each answered fetch re-rendered the shell, which refired the fetch.
+  // That loop hammered the endpoint for as long as the tab was open and flashed
+  // the tab's skeleton over the list several times a second.
+  const handleApprovalCountChange = React.useCallback(
+    (n: number) => setPendingApprovals(n),
+    [setPendingApprovals],
+  );
   /** Whether the fetch below has answered at least once in this page load. */
   const [requestsSettled, setRequestsSettled] = useState(false);
   // Show the skeleton only when there is genuinely nothing to paint. This effect
@@ -597,7 +608,7 @@ export default function ManagerApp() {
               )}
               {activeTab === 'time-adjustments' && (
                 <ManagerTimeAdjustments
-                  onCountChange={(n) => setPendingApprovals(n)}
+                  onCountChange={handleApprovalCountChange}
                 />
               )}
               {activeTab === 'leaves' && <LeaveRequestsPanel />}
@@ -1692,6 +1703,7 @@ function ManagerAnnouncementsTab({
 
 import type { TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
 import { TIME_ADJUSTMENT_REASONS, fmtAdjustmentSegments } from '@/lib/supabase/time-adjustments';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 
 const TA_REASON_LABEL = (code: string) =>
   TIME_ADJUSTMENT_REASONS.find((r) => r.code === code)?.label ?? code;
@@ -1772,15 +1784,23 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
   const [managedIds, setManagedIds] = useState<Set<string>>(new Set());
   const [poolByRow, setPoolByRow] = useState<Record<string, ApproverPool>>({});
   const [approverDraft, setApproverDraft] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
+  /** Whether the fetch has answered at least once in this mount. Never reset. */
+  const [settled, setSettled] = useState(false);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [recallingId, setRecallingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState<Record<string, string>>({});
   const [lightbox, setLightbox] = useState<{ urls: string[]; idx: number } | null>(null);
 
+  // The badge callback lives in a ref so `fetchRows` below can be `[]`-stable.
+  // Same reason `useLiveRefresh` refs its `onRefresh`: this closure is what a
+  // mount effect and a poll are keyed on, and anything that can change its
+  // identity turns a one-shot fetch into a fetch-per-render loop. Refing it here
+  // closes that class at the consumer, so a future unstable prop cannot reopen it.
+  const countChangeRef = useRef(onCountChange);
+  countChangeRef.current = onCountChange;
+
   const fetchRows = React.useCallback(() => {
-    setLoading(true);
     fetch('/api/manager/time-adjustments', { cache: 'no-store' })
       .then((r) => r.json())
       .then((json: {
@@ -1798,15 +1818,21 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
         setManagedIds(managed);
         // The sidebar badge is "things waiting on ME" — both hats. A request naming
         // this person as second approver is as much their queue as one from their team.
-        onCountChange(
+        countChangeRef.current(
           r.filter(
             (x) => taNeedsMyManagerDecision(x, managed) || taNeedsMySecondDecision(x, me),
           ).length,
         );
       })
-      .catch(() => { setRows([]); setManagedIds(new Set()); onCountChange(0); })
-      .finally(() => setLoading(false));
-  }, [onCountChange]);
+      .catch(() => { setRows([]); setManagedIds(new Set()); countChangeRef.current(0); })
+      .finally(() => setSettled(true));
+  }, []);
+
+  // The spinner is for having NOTHING to paint, not for having a request in
+  // flight — `manager-dashboard-cache.md` § "Loading flags are part of the rule".
+  // Storing it and re-asserting it per fetch is what made the live refresh below
+  // flash the list; `settled` is never reset, so a refresh repaints in place.
+  const loading = !settled && rows.length === 0;
 
   // Ids the viewer owes a MANAGER decision on — the only rows that render a picker, so
   // the only rows worth a pool fetch. Sorted so the effect key is stable across refetches
@@ -1871,7 +1897,23 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
     return () => { cancelled = true; };
   }, [pendingIdsKey]);
 
+  // `fetchRows` is `[]`-stable, so this is genuinely once per mount.
   useEffect(() => { fetchRows(); }, [fetchRows]);
+
+  // Keep the queue live the way every other manager queue is (Transfers, both
+  // bonus calculators). This tab had NO refresh at all: a co-manager's decision,
+  // the second approver's signature, Accounting's verdict, or a request filed
+  // while you sat here stayed invisible until you switched tabs — and
+  // `manager-dashboard-cache.md` is explicit that a queue other people change
+  // must never be stale-and-stop. The 60s poll + focus refresh are the backstop
+  // if `time_adjustment_requests` is not in the `supabase_realtime` publication.
+  // A refresh also re-signs the evidence URLs, which expire on a long-open tab.
+  useLiveRefresh({
+    tables: ['time_adjustment_requests'],
+    onRefresh: fetchRows,
+    channel: 'manager-time-adjustments',
+    pollMs: 60_000,
+  });
 
   // Close lightbox on Escape, navigate with arrow keys
   useEffect(() => {
