@@ -44,3 +44,20 @@ a Broadcast topic.
 - [x] 6. Typecheck (`tsc --noEmit`; dev server is live so no `next build`) + tests.
 - [x] 7. Docs: `docs/features/dispatch-paid-toast.md`, INDEX row, memory
       `dispatch-paid-toast` + MEMORY.md pointer. One commit with the code.
+
+## Follow-up, same day — poll fallback (hardening)
+
+First live test: Kane on localhost, Lenny paying from the production build → nothing appeared.
+Broadcast needs the PAYER's browser on this code. Fix: a server poll that does not.
+
+- [x] 8. `listRecentPaidDispatches(sinceIso | null)` in `src/lib/supabase/payment-dispatches.ts` —
+      null = watermark only; else PAID rows after `since`, oldest first, `RECENT_PAID_LIMIT` 50 +
+      `truncated`, server `now`.
+- [x] 9. `app/api/payment-dispatches/recent-paid/route.ts` — GET, same gate as the dispatch list.
+- [x] 10. `foldRecentPaidRows` in the toast lib (+ 4 tests): own rows skipped, stale (>90 s by
+      server clock) skipped, nobody-rows dropped, oldest first.
+- [x] 11. Hook: poll effect while locked + visible, 10 s, immediate on visibilitychange,
+      continue-at-once on `truncated` only if the watermark moved, 401/403 stops. `selfEmail`
+      threaded from App.tsx through the component.
+- [x] 12. Docs rewritten: the "missed toasts are accepted" stance is gone.
+

@@ -176,3 +176,79 @@ export function pushPaidToast(
   const next = [...stack, evt];
   return next.length > max ? next.slice(next.length - max) : next;
 }
+
+// ── Poll fallback ─────────────────────────────────────────────────────────────
+// Broadcast only reaches a screen while the PAYER's browser runs this code and
+// the receiver's socket is up. A clerk on an older production build never
+// broadcasts, so the shell also polls `GET /api/payment-dispatches/recent-paid`
+// while processing is on and folds new PAID rows into the same stack.
+
+/** Poll cadence while the tab is visible. */
+export const PAID_TOAST_POLL_MS = 10_000;
+/** A polled row older than this (by the SERVER clock) is history, not news: a
+ *  tab hidden for an hour advances its watermark silently instead of replaying
+ *  sixty payments. */
+export const PAID_TOAST_FRESH_MS = 90_000;
+
+/** Wire shape of one row from the recent-paid route. Kept `unknown`-tolerant:
+ *  the fold below validates, the route type is not trusted across builds. */
+export interface RecentPaidRowLike {
+  id?: unknown;
+  created_by?: unknown;
+  recipient_email?: unknown;
+  recipient_name?: unknown;
+  amount_usd?: unknown;
+  amount_php?: unknown;
+  amount_cop?: unknown;
+  processor?: unknown;
+  cycle_source_file?: unknown;
+  created_at?: unknown;
+}
+
+/**
+ * Turn polled rows into toast events, oldest first.
+ *  - OWN rows are skipped: the paying browser already showed and chimed them
+ *    from its local path; the poll must never mint a second card.
+ *  - Stale rows (older than `freshMs` against `serverNow`) are skipped: the
+ *    caller still advances its watermark past them.
+ *  - Rows without an id or recipient are dropped (a toast naming nobody).
+ */
+export function foldRecentPaidRows(
+  rows: readonly RecentPaidRowLike[],
+  opts: { selfEmail: string | null | undefined; serverNow: number; freshMs?: number },
+): { events: PaidToastEvent[]; skippedOwn: number; skippedStale: number } {
+  const self = (opts.selfEmail ?? '').trim().toLowerCase() || null;
+  const freshMs = opts.freshMs ?? PAID_TOAST_FRESH_MS;
+  const events: PaidToastEvent[] = [];
+  let skippedOwn = 0;
+  let skippedStale = 0;
+  for (const r of rows) {
+    const id = str(r.id);
+    const recipientEmail = str(r.recipient_email);
+    if (!id || !recipientEmail) continue;
+    const ts = typeof r.created_at === 'string' ? Date.parse(r.created_at) : NaN;
+    if (Number.isFinite(ts) && opts.serverNow - ts > freshMs) {
+      skippedStale += 1;
+      continue;
+    }
+    const by = normalizeActorEmail(str(r.created_by));
+    if (self && by === self) {
+      skippedOwn += 1;
+      continue;
+    }
+    events.push({
+      id,
+      by,
+      recipientEmail: recipientEmail.toLowerCase(),
+      recipientName: str(r.recipient_name),
+      amountUsd: num(r.amount_usd),
+      amountPhp: num(r.amount_php),
+      amountCop: num(r.amount_cop),
+      processor: str(r.processor),
+      sourceFile: str(r.cycle_source_file),
+      ts: Number.isFinite(ts) ? ts : opts.serverNow,
+    });
+  }
+  events.sort((a, b) => a.ts - b.ts);
+  return { events, skippedOwn, skippedStale };
+}

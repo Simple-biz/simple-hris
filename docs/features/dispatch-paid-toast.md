@@ -4,7 +4,10 @@ While the global dispatch lock is ON, every open Accounting dashboard shows one 
 lower-left per **Paid** dispatch row — `lenny@simple.biz paid kaner@simple.biz  $2,700.00`
 (₱ small beneath) — sliding in from the left edge, resting ~6 s, then leaving to the right. The
 paying browser shows it from its own Mark Paid handler; every other Accounting screen hears it
-over a Supabase Realtime **Broadcast** topic and also plays the payment-confirmed chime. It is
+over a Supabase Realtime **Broadcast** topic — and, since 2026-09-02 evening, also by **polling
+the server** every 10 s, so a payment logged by a clerk on an older production build (Lenny on
+prod while Kane ran localhost — the first live test showed nothing) still lands as a card. Remote
+arrivals play the payment-confirmed chime. It is
 visible on every tab, to every permission level, because it names no amount the viewer could
 not already read on the Payment Dispatch tab. Shipped 2026-09-02 (Kane approved the brief the
 same day: every tab, every permission; chime on remote screens).
@@ -17,6 +20,8 @@ same day: every tab, every permission; chime on remote screens).
 | Live half — local CustomEvent in, Broadcast out/in, timers, chime, lock reset | `src/hooks/useDispatchPaidToasts.ts` |
 | The cards — fixed bottom-left stack, `motion/react` slide | `src/components/accounting/DispatchPaidToasts.tsx` |
 | Announce point — after each successful `paid` POST leg | `src/components/payroll-clerk/PayrollDispatch.tsx` (`handleConfirmPaid`) |
+| Poll route — watermark + PAID rows after `since`, same gate as the dispatch list | `app/api/payment-dispatches/recent-paid/route.ts` |
+| Poll read — bounded, oldest-first, `truncated` continuation | `listRecentPaidDispatches` in `src/lib/supabase/payment-dispatches.ts` |
 | Mount — beside `<Toaster>`, fed `dispatchLock.locked` | `src/App.tsx` |
 
 ## Broadcast, never `postgres_changes` — and on its OWN topic
@@ -32,10 +37,30 @@ repeated topic, so publishing on the queue's `payment-dispatch-sync` would let t
 `removeChannel` tear down the queue's live sync (and vice versa). A test pins the topic away
 from both `payment-dispatch-sync` and `payments-live`.
 
-Consequence to know, not a bug: a remote screen whose socket is down **misses** those toasts.
-Broadcast has no replay and this surface adds no poll — it is cosmetic, the queue and the
-money have their own sync. If a poll is ever wanted, it goes through
-`GET /api/payment-dispatches?signature=1`, never a full page of rows.
+Broadcast alone was not enough — it only works while the **payer's** browser runs this code and
+the receiver's socket is up. The first live test (Kane on localhost, Lenny paying from the
+production build) showed nothing, because Lenny's build had nothing to send. Hence the poll below.
+
+## The poll is the path that does not depend on the payer
+
+While locked and the tab is visible, the hook calls `GET /api/payment-dispatches/recent-paid`
+every 10 s and folds new PAID rows into the same stack (`foldRecentPaidRows`, pure + tested):
+
+- **The server sets the watermark.** The first call carries no `since` and returns only the
+  newest paid `created_at`; the client never compares its own clock to the database's, and a
+  screen opened mid-cycle replays nothing. Every later call uses the returned `latest`.
+- **Bounded, not paged — on purpose.** `RECENT_PAID_LIMIT = 50` rows per tick with a
+  `truncated` flag; the client continues at once while the watermark moves. This is a rolling
+  cursor read, so it satisfies the 1000-row rule without ever paging a whole cycle.
+- **Own rows are skipped.** The paying browser already showed and chimed them from the local
+  path; the poll must never mint a second card (`selfEmail` comes from the shell).
+- **Stale rows only advance the watermark.** Older than 90 s by the server clock means history,
+  not news — a tab hidden for an hour does not replay sixty payments on return.
+- **Same gate as the dispatch list.** `requireRateVisibilityOrFeatureEdit("accounting",
+  "payment_dispatch")` — the ONE gate every dispatch-queue read shares
+  ([payment-dispatch.md](./payment-dispatch.md) §5.1, `authorize-feature.ts`). The Accounting
+  shell admits only `accounting` and `admin`, both rate-visible, so "every permission in the
+  shell" and this gate are the same set. A 401/403 stops the poll for that mount.
 
 ## Only a real `paid` row toasts
 
@@ -74,13 +99,19 @@ payee leads with `$COP`.
 
 ## What looks like a bug but isn't
 
-- **The actor is the paying browser's session email, not the server's `created_by`.** They are
-  the same value (`getSessionActor` lowercases `session.user.email`), but the toast is built
-  client-side so it can show before the paystub email round-trip finishes. If the session has
-  no email the card says `accounting`.
+- **Two actor sources, one value.** Local and broadcast cards carry the paying browser's session
+  email; polled cards carry `created_by`. `getSessionActor` lowercases `session.user.email`
+  into `created_by`, so they agree. A missing actor reads `accounting`.
+- **A remote card can lag up to 10 s.** That is the poll cadence when the payer's build cannot
+  broadcast. Once every clerk is on a build with this code, Broadcast delivers instantly and
+  the poll merely confirms.
 - **The standalone `/payroll-clerk` shell shows nothing.** Kane did not answer Q3 in the brief,
   so it stayed out. Mounting `<DispatchPaidToasts>` there is one line if wanted.
 
 ## Deploy notes
 
-**No migration.** No new route, no env var, no n8n. Broadcast needs no publication membership.
+**No migration.** One new read-only route (`/api/payment-dispatches/recent-paid`). No env var,
+no n8n. Broadcast needs no publication membership.
+
+**Rollout note:** the toast appears for a payment only when the VIEWER's build has this code.
+The payer's build no longer matters — that is what the poll is for.

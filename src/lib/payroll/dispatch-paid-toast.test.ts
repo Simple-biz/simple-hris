@@ -9,6 +9,8 @@ import {
   parsePaidToastPayload,
   pushPaidToast,
   shouldAnnouncePaid,
+  foldRecentPaidRows,
+  PAID_TOAST_FRESH_MS,
   type PaidToastEvent,
 } from './dispatch-paid-toast';
 
@@ -112,4 +114,62 @@ test('parsePaidToastPayload drops anything naming nobody', () => {
   assert.equal(ok.amountUsd, 2700);
   assert.equal(ok.amountPhp, null);
   assert.equal(ok.ts, 5);
+});
+
+const NOW = Date.parse('2026-09-02T12:00:00Z');
+const row = (id: string, secondsAgo: number, extra: Record<string, unknown> = {}) => ({
+  id,
+  created_by: 'lenny@simple.biz',
+  recipient_email: 'Kaner@Simple.biz',
+  recipient_name: 'Kane',
+  amount_usd: 2700,
+  amount_php: '151200',
+  amount_cop: null,
+  processor: 'hurupay',
+  cycle_source_file: 'f.csv',
+  created_at: new Date(NOW - secondsAgo * 1000).toISOString(),
+  ...extra,
+});
+
+test('foldRecentPaidRows: fresh remote rows become events, oldest first', () => {
+  const { events } = foldRecentPaidRows([row('b', 5), row('a', 20)], {
+    selfEmail: 'kane@simple.biz',
+    serverNow: NOW,
+  });
+  assert.deepEqual(events.map((e) => e.id), ['a', 'b']);
+  assert.equal(events[0].by, 'lenny@simple.biz');
+  assert.equal(events[0].recipientEmail, 'kaner@simple.biz');
+  assert.equal(events[0].amountPhp, 151200);
+  assert.equal(formatPaidLine(events[0]), 'lenny@simple.biz paid kaner@simple.biz $2,700.00');
+});
+
+test('foldRecentPaidRows: OWN rows are skipped — the local path already showed them', () => {
+  const { events, skippedOwn } = foldRecentPaidRows([row('a', 5, { created_by: 'LENNY@simple.biz' })], {
+    selfEmail: 'lenny@simple.biz',
+    serverNow: NOW,
+  });
+  assert.equal(events.length, 0);
+  assert.equal(skippedOwn, 1);
+});
+
+test('foldRecentPaidRows: stale rows are skipped, judged by the server clock', () => {
+  const { events, skippedStale } = foldRecentPaidRows(
+    [row('old', PAID_TOAST_FRESH_MS / 1000 + 1), row('new', 3)],
+    { selfEmail: null, serverNow: NOW },
+  );
+  assert.deepEqual(events.map((e) => e.id), ['new']);
+  assert.equal(skippedStale, 1);
+});
+
+test('foldRecentPaidRows: a row naming nobody is dropped; a missing actor reads "accounting"', () => {
+  const { events } = foldRecentPaidRows(
+    [
+      row('x', 1, { recipient_email: '' }),
+      { created_by: 'a@b.c', recipient_email: 'x@y.z' },
+      row('ok', 1, { created_by: null }),
+    ],
+    { selfEmail: null, serverNow: NOW },
+  );
+  assert.deepEqual(events.map((e) => e.id), ['ok']);
+  assert.equal(events[0].by, 'accounting');
 });

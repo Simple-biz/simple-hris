@@ -275,3 +275,78 @@ export async function deletePaymentDispatches(
   }
   return { deleted: deletedRows.length, deletedRows, error: null };
 }
+
+/** One PAID dispatch row as the lower-left "X paid Y $Z" toast needs it. */
+export interface RecentPaidDispatch {
+  id: string;
+  created_by: string | null;
+  recipient_email: string;
+  recipient_name: string | null;
+  amount_usd: number | null;
+  amount_php: number | null;
+  amount_cop: number | null;
+  processor: string | null;
+  cycle_source_file: string | null;
+  created_at: string;
+}
+
+/** Rows per poll tick. Deliberately BOUNDED, not paged: this is a rolling
+ *  watermark read — the client advances `since` to `latest` and, when
+ *  `truncated`, polls again at once, so nothing is lost and no tick ever
+ *  pages a whole cycle. */
+export const RECENT_PAID_LIMIT = 50;
+
+const RECENT_PAID_COLUMNS =
+  "id, created_by, recipient_email, recipient_name, amount_usd, amount_php, amount_cop, processor, cycle_source_file, created_at";
+
+/**
+ * PAID dispatch rows written strictly after `sinceIso`, oldest first, for the
+ * Accounting shell's toast poll (the fallback for a payer whose browser runs an
+ * older build or whose Realtime socket is down).
+ *
+ * `sinceIso === null` establishes the watermark: returns NO rows, only the
+ * newest paid `created_at`, so a screen that opens mid-cycle does not replay
+ * history and the client never trusts its own clock against the database's.
+ */
+export async function listRecentPaidDispatches(
+  sinceIso: string | null,
+): Promise<{
+  rows: RecentPaidDispatch[];
+  /** Newest `created_at` the caller now knows about — the next `since`. */
+  latest: string | null;
+  truncated: boolean;
+  /** Server clock, so freshness is judged against the database's timeline. */
+  now: string;
+  error: string | null;
+}> {
+  const now = new Date().toISOString();
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { rows: [], latest: null, truncated: false, now, error: "Supabase client unavailable" };
+  }
+
+  if (sinceIso === null) {
+    const { data, error } = await supabase
+      .from("payment_dispatches")
+      .select("created_at")
+      .eq("status", "paid")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (error) return { rows: [], latest: null, truncated: false, now, error: error.message };
+    const latest = ((data ?? [])[0] as { created_at?: string } | undefined)?.created_at ?? null;
+    return { rows: [], latest, truncated: false, now, error: null };
+  }
+
+  const { data, error } = await supabase
+    .from("payment_dispatches")
+    .select(RECENT_PAID_COLUMNS)
+    .eq("status", "paid")
+    .gt("created_at", sinceIso)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(RECENT_PAID_LIMIT);
+  if (error) return { rows: [], latest: sinceIso, truncated: false, now, error: error.message };
+  const rows = (data ?? []) as unknown as RecentPaidDispatch[];
+  const latest = rows.length > 0 ? rows[rows.length - 1].created_at : sinceIso;
+  return { rows, latest, truncated: rows.length >= RECENT_PAID_LIMIT, now, error: null };
+}

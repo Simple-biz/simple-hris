@@ -525,7 +525,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
       </main>
       {/* Lower-left "X paid Y $Z" cards while processing is on — every tab,
           every permission. Own stack, not sonner: the Toaster stays top-right. */}
-      <DispatchPaidToasts locked={dispatchLock.locked} />
+      <DispatchPaidToasts locked={dispatchLock.locked} selfEmail={sessionEmail} />
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </div>
   );

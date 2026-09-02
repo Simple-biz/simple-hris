@@ -18,8 +18,15 @@ import {
  *
  * Reduced motion: opacity only, same timing (ui-standards §14.5).
  */
-export default function DispatchPaidToasts({ locked }: { locked: boolean }) {
-  const { stack, dismiss } = useDispatchPaidToasts(locked);
+export default function DispatchPaidToasts({
+  locked,
+  selfEmail,
+}: {
+  locked: boolean;
+  /** The viewer — their own payments arrive from the local path, never the poll. */
+  selfEmail: string | null | undefined;
+}) {
+  const { stack, dismiss } = useDispatchPaidToasts(locked, selfEmail);
   const reduce = useReducedMotion() ?? false;
   if (!locked) return null;
 
