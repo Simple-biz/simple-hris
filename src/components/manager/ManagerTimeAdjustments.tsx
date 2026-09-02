@@ -71,6 +71,7 @@ import {
 import { cn } from '@/lib/utils';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SmoothSelect, type SmoothSelectOption } from '@/components/ui/smooth-select';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
@@ -112,13 +113,30 @@ const EMPTY_POOL: ApproverPool = { list: [], department: null, loading: true };
 type DecideAction = 'manager_approve' | 'manager_deny' | 'second_approve' | 'second_deny';
 
 /**
- * The master-detail split point is 1100px, straight from the handoff: side-by-side
- * above it, a right-hand drawer below.
+ * The detail opens in a MODAL (Kane, 2026-09-02), replacing the handoff's docked
+ * side panel and the drawer that stood in for it below 1100px.
  *
- * Every `min-[1100px]:` variant below is written out LITERALLY on purpose. Tailwind
- * scans source text statically, so a class composed from a constant
- * (`` `${SPLIT_AT}:block` ``) is never generated — the first build of this file did
- * exactly that and the panel rendered as a drawer at every width, backdrop and all.
+ * Why this is not the "modal as first thought" reflex: the inline panel was built,
+ * shipped and looked at first, and it cost real things. It took 400px out of the
+ * table, which forced Reason and Submitted to stand down through the whole
+ * 1100-1399px band just to keep the Employee cell legible, and it capped evidence
+ * at ~350px on the surface whose entire job is judging a photograph. Every record
+ * detail on this dashboard is already a dialog (`ManagerMemberDialog`,
+ * `ManagerTransferDialog`, `MesaReceiptDialog`), so the modal is also the
+ * consistent choice, not the lazy one. The table now keeps all six columns at every
+ * width and the `compact` machinery is gone.
+ *
+ * The animation is the shared primitive's, not a bespoke one: 320ms on
+ * `cubic-bezier(0.22,1,0.36,1)`, fade + `zoom-in-[0.94]` + a 6px rise, closing
+ * faster at 180ms. It honours `prefers-reduced-motion` through tw-animate-css.
+ *
+ * `DialogContent` declares **no max-height** and is centred with
+ * `-translate-y-1/2`, so a tall `p-0` dialog is clipped at BOTH ends and its footer
+ * becomes unreachable — there is no page scroll to recover it. All four rules from
+ * `docs/design/responsive-design.md` § "Dialogs and modals" are applied below: the
+ * `dvh` cap, `gap-0`, a width re-declared at `sm:` (the base `sm:max-w-sm` beats any
+ * base-only override), and `flex flex-col` with `shrink-0` chrome around one
+ * `min-h-0 flex-1 overflow-y-auto` body. See `memory/dialog-content-no-height-cap`.
  */
 
 // ── Small shared pieces ───────────────────────────────────────────────────────
@@ -467,7 +485,6 @@ function RequestTable({
   openId,
   onOpen,
   settled,
-  compact,
   total,
   filtered,
   onClearFilters,
@@ -478,14 +495,6 @@ function RequestTable({
   openId: string | null;
   onOpen: (id: string) => void;
   settled: boolean;
-  /**
-   * True while the detail panel is docked beside the table. The panel takes
-   * 400px, so at the 1100px split point six columns leave the Employee cell
-   * ~60px and the headers collide. Reason and Submitted stand down for as long
-   * as the panel is open, and only at the widths where it is actually docked —
-   * below 1100px it is a drawer over the table and the columns must stay.
-   */
-  compact: boolean;
   /** Unfiltered row count, for the "Showing N of M" line in the card header. */
   total: number;
   /** Whether any filter is active — decides WHICH empty state the card shows. */
@@ -559,18 +568,7 @@ function RequestTable({
               </th>
               <th
                 scope="col"
-                className={cn(
-                  'hidden px-4 py-2.5',
-                  // Both arms only ever turn the cell ON, so there is no rival
-                  // `display` to out-order. Two competing media rules
-                  // (md:table-cell vs min-[1100px]:hidden) both match at 1100px
-                  // and the winner is whichever Tailwind emitted last, which is
-                  // not a contract. Docked, Reason stands down through the
-                  // cramped 1100-1399 band and returns at 1400+.
-                  compact
-                    ? 'md:max-[1099px]:table-cell min-[1400px]:table-cell'
-                    : 'md:table-cell',
-                )}
+                className="hidden px-4 py-2.5 md:table-cell"
               >
                 Reason
               </th>
@@ -579,10 +577,7 @@ function RequestTable({
               </th>
               <th
                 scope="col"
-                className={cn(
-                  'hidden px-4 py-2.5 lg:w-[112px]',
-                  compact ? 'lg:max-[1099px]:table-cell' : 'lg:table-cell',
-                )}
+                className="hidden px-4 py-2.5 lg:table-cell lg:w-[112px]"
               >
                 Submitted
               </th>
@@ -651,12 +646,7 @@ function RequestTable({
                     </td>
                     <td
                       data-label="Reason"
-                      className={cn(
-                        'hidden truncate px-4 py-3 text-zinc-600 dark:text-zinc-400',
-                        compact
-                          ? 'md:max-[1099px]:table-cell min-[1400px]:table-cell'
-                          : 'md:table-cell',
-                      )}
+                          className="hidden truncate px-4 py-3 text-zinc-600 md:table-cell dark:text-zinc-400"
                     >
                       {reasonLabel(row.reason)}
                     </td>
@@ -668,10 +658,7 @@ function RequestTable({
                     </td>
                     <td
                       data-label="Submitted"
-                      className={cn(
-                        'hidden whitespace-nowrap px-4 py-3 font-mono text-[11px] text-zinc-500 dark:text-zinc-400',
-                        compact ? 'lg:max-[1099px]:table-cell' : 'lg:table-cell',
-                      )}
+                          className="hidden whitespace-nowrap px-4 py-3 font-mono text-[11px] text-zinc-500 lg:table-cell dark:text-zinc-400"
                     >
                       {(row.created_at ?? '').slice(0, 10)}
                     </td>
@@ -752,7 +739,7 @@ function EvidenceBlock({
         )}
       </FieldLabel>
       {featured ? (
-        <div className="group relative h-[150px] overflow-hidden rounded-xl border border-blue-100/80 bg-zinc-100 dark:border-blue-900/40 dark:bg-zinc-900">
+        <div className="group relative aspect-square w-full overflow-hidden rounded-xl border border-blue-100/80 bg-zinc-100 max-sm:max-w-[320px] dark:border-blue-900/40 dark:bg-zinc-900">
           <button
             type="button"
             onClick={() => onImageClick(urls, idx)}
@@ -795,7 +782,7 @@ function EvidenceBlock({
           )}
         </div>
       ) : (
-        <div className="flex h-[150px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+        <div className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 text-zinc-500 max-sm:max-w-[320px] dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-400">
           <ImageOff aria-hidden className="h-6 w-6" />
           <span className="text-[11px] font-medium">
             {row.image_paths.length > 0 ? 'Evidence could not be loaded' : 'No evidence attached'}
@@ -858,15 +845,15 @@ function RequestDetail({
   const window = fmtAdjustmentSegments(row.requested_segments ?? []);
 
   return (
-    <div>
-      <div className="flex items-start gap-3 border-b border-blue-100/80 bg-blue-50/30 px-5 py-3 dark:border-blue-900/40 dark:bg-blue-950/20">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-start gap-3 border-b border-blue-100/80 bg-blue-50/60 px-5 py-3.5 dark:border-blue-900/40 dark:bg-blue-950/30">
         <div className="min-w-0">
           <p className="font-mono text-[11px] font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-300">
             Request {requestRef(row.id)}
           </p>
-          <h3 className="mt-0.5 truncate text-base font-bold tracking-tight text-zinc-900 dark:text-white">
+          <DialogTitle className="mt-0.5 truncate text-base font-bold tracking-tight text-zinc-900 dark:text-white">
             {row.work_email}
-          </h3>
+          </DialogTitle>
         </div>
         <button
           type="button"
@@ -878,7 +865,16 @@ function RequestDetail({
         </button>
       </div>
 
-      <div className="flex flex-col gap-4 p-5">
+      {/*
+        Two columns so the whole request fits without scrolling: the facts stack on
+        the left and the square proof sits beside them. Stacked, the square pushed
+        the decision trail and the footer out of a 1000px window. The scroll region
+        stays as the safety net a long explanation or a long trail still needs — it
+        just does not engage on a normal request.
+      */}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div className="grid gap-x-5 gap-y-4 p-5 sm:grid-cols-[1fr_286px]">
+          <div className="flex min-w-0 flex-col gap-4">
       <div className="grid grid-cols-2 gap-3">
         <div>
           <FieldLabel>Hours requested</FieldLabel>
@@ -934,15 +930,21 @@ function RequestDetail({
       </div>
 
       <div className="border-t border-blue-100/60 pt-3 dark:border-blue-900/40">
-        <EvidenceBlock row={row} signedUrls={signedUrls} onImageClick={onImageClick} />
-      </div>
-
-      <div className="border-t border-blue-100/60 pt-3 dark:border-blue-900/40">
         <TrailList row={row} />
       </div>
+          </div>
 
+          <div className="min-w-0">
+            <EvidenceBlock row={row} signedUrls={signedUrls} onImageClick={onImageClick} />
+          </div>
+        </div>
+      </div>
+
+      {/* Pinned: the decision must stay reachable on a short window, which is the
+          exact failure the height-cap rule exists to prevent. */}
+      <div className="shrink-0 border-t border-blue-100/80 bg-blue-50/40 px-5 py-4 dark:border-blue-900/40 dark:bg-blue-950/20">
       {actionable ? (
-        <div className="flex flex-col gap-2.5 border-t border-blue-100/60 pt-3 dark:border-blue-900/40">
+        <div className="flex flex-col gap-2.5">
           {isManagerTurn && (
             <div>
               <FieldLabel className="mb-1.5">
@@ -990,12 +992,12 @@ function RequestDetail({
             </p>
           )}
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 sm:justify-end">
             <button
               type="button"
               disabled={busy !== null || approveBlocked}
               onClick={() => onDecide(isManagerTurn ? 'manager_approve' : 'second_approve')}
-              className="inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-blue-600 dark:hover:bg-blue-500"
+              className="inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 disabled:cursor-not-allowed disabled:opacity-45 sm:min-w-[11rem] sm:flex-none dark:bg-blue-600 dark:hover:bg-blue-500"
             >
               {busy === 'deciding' ? (
                 <Loader2 aria-hidden className="h-4 w-4 animate-spin" />
@@ -1010,7 +1012,7 @@ function RequestDetail({
               type="button"
               disabled={busy !== null}
               onClick={() => onDecide(isManagerTurn ? 'manager_deny' : 'second_deny')}
-              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300"
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300"
             >
               Decline
             </button>
@@ -1022,7 +1024,7 @@ function RequestDetail({
           </p>
         </div>
       ) : (
-        <div className="flex flex-wrap items-center gap-2 border-t border-blue-100/60 pt-3 dark:border-blue-900/40">
+        <div className="flex flex-wrap items-center gap-2">
           <StatusChip label={chip.label} tone={chip.tone} />
           {canRecall && (
             <button
@@ -1481,67 +1483,63 @@ export default function ManagerTimeAdjustments({
           periods={periods}
         />
 
-          <div className="flex min-h-0 items-start gap-5">
-            <div className="min-w-0 flex-1">
-              <RequestTable
-                rows={visible}
-                managedIds={managedIds}
-                viewerEmail={viewerEmail}
-                openId={openId}
-                onOpen={setOpenId}
-                settled={settled}
-                compact={detailProps !== null}
-                total={rows.length}
-                filtered={hasActiveTaFilter(filters)}
-                onClearFilters={() => setFilters(EMPTY_TA_FILTERS)}
-              />
-            </div>
-
-            {/* Docked from 1100px up. */}
-            {detailProps && (
-              <aside
-                className={cn(
-                  'hidden shrink-0 self-start overflow-hidden rounded-xl border border-blue-100/80 bg-white shadow-sm',
-                  'dark:border-blue-900/40 dark:bg-zinc-950',
-                  'min-[1100px]:sticky min-[1100px]:top-4 min-[1100px]:block min-[1100px]:w-[400px]',
-                )}
-                aria-label="Request detail"
-              >
-                <RequestDetail {...detailProps} />
-              </aside>
-            )}
-          </div>
+          <RequestTable
+            rows={visible}
+            managedIds={managedIds}
+            viewerEmail={viewerEmail}
+            openId={openId}
+            onOpen={setOpenId}
+            settled={settled}
+            total={rows.length}
+            filtered={hasActiveTaFilter(filters)}
+            onClearFilters={() => setFilters(EMPTY_TA_FILTERS)}
+          />
         </div>
       </div>
 
-      {/* Below 1100px the same panel is a right-hand drawer over the table. */}
-      <AnimatePresence>
-        {detailProps && (
-          <motion.div
-            key="ta-detail-drawer"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18, ease: 'easeOut' }}
-            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm min-[1100px]:hidden"
-            onClick={() => setOpenId(null)}
-          >
-            <motion.aside
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
-              className="absolute inset-y-0 right-0 w-full max-w-[420px] overflow-y-auto border-l border-blue-100/80 bg-white shadow-2xl dark:border-blue-900/40 dark:bg-[#0d1117]"
-              onClick={(e) => e.stopPropagation()}
-              role="dialog"
-              aria-modal="true"
-              aria-label="Request detail"
-            >
-              <RequestDetail {...detailProps} />
-            </motion.aside>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/*
+        The request detail. All four rules from `docs/design/responsive-design.md`
+        § "Dialogs and modals" are on the className below, because `DialogContent`
+        declares no max-height and is centred with `-translate-y-1/2`: without them
+        a tall dialog is clipped at BOTH ends and the decision buttons become
+        unreachable. `bg-none` is there to drop the primitive's default
+        orange-tinted gradient, which would fight the blue theme.
+
+        The animation is the primitive's own (320ms, cubic-bezier(0.22,1,0.36,1),
+        fade + zoom-in-[0.94] + a 6px rise; 180ms on the way out), so this modal
+        feels like every other dialog in the app.
+      */}
+      <Dialog
+        open={detailProps !== null}
+        onOpenChange={(next) => {
+          if (next) return;
+          // Escape and outside-press back out ONE layer. With the evidence
+          // lightbox open, that layer is the lightbox — closing the whole modal
+          // under it would throw away the note and the approver already picked.
+          if (lightbox) {
+            setLightbox(null);
+            return;
+          }
+          setOpenId(null);
+        }}
+      >
+        <DialogContent
+          showCloseButton={false}
+          className={cn(
+            'flex max-h-[calc(100dvh-1.5rem)] w-full max-w-[min(880px,calc(100%-1.5rem))] flex-col gap-0 overflow-hidden p-0',
+            'sm:max-h-[92dvh] sm:max-w-[min(880px,calc(100%-4rem))]',
+            'border-blue-100/80 bg-white bg-none dark:border-blue-900/40 dark:bg-[#0d1117]',
+          )}
+        >
+          {detailProps ? (
+            <RequestDetail {...detailProps} />
+          ) : (
+            // `DialogContent` needs an accessible name even on the closing frame,
+            // after the row has already gone.
+            <DialogTitle className="sr-only">Request detail</DialogTitle>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

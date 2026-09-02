@@ -278,12 +278,46 @@ the adjusted date's own month when `period_label` is unstamped, so a legacy row 
 hidden from a filter that claims to cover every period. The card header carries
 "Showing N of M".
 
-#### The detail panel
+#### The detail modal
 
-Docked beside the table at ≥1100px, a right-hand drawer below it (Escape closes the
-lightbox first, then the panel). It carries the request's short id, the employee, a facts
-grid (hours, pay period, **every** missed-time range, reason), the explanation, the real
-evidence with a lightbox, and the decision trail.
+**A modal since 2026-09-02** (Kane), replacing the handoff's docked side panel and the
+drawer that stood in for it below 1100px. The panel was built and shipped first and it
+cost real things: it took 400px out of the table, which forced Reason and Submitted to
+stand down through the whole 1100–1399px band just to keep the Employee cell legible, and
+it capped evidence at ~350px on the surface whose entire job is judging a photograph.
+Every other record detail on this dashboard is already a dialog (`ManagerMemberDialog`,
+`ManagerTransferDialog`, `MesaReceiptDialog`), so the modal is the consistent choice too.
+The table now keeps all six columns at every width and the `compact` machinery is gone.
+
+The animation is the shared primitive's, not a bespoke one: 320ms on
+`cubic-bezier(0.22,1,0.36,1)`, fade + `zoom-in-[0.94]` + a 6px rise, closing faster at
+180ms, honouring `prefers-reduced-motion` through tw-animate-css.
+
+**It fits without scrolling** (Kane). The body is two columns — the facts stack on the
+left, the **square** proof sits beside them on the right. Stacked, a square proof pushed
+the decision trail and the whole footer out of a 1000px window. The scroll region stays as
+the safety net a long explanation or a long trail still needs; it just does not engage on a
+normal request. On a phone the columns stack and the proof sits below the trail, one scroll
+down, because the pinned decision controls matter more than the thumbnail there.
+
+**All four rules from `docs/design/responsive-design.md` § "Dialogs and modals" apply** —
+`DialogContent` declares no `max-height` and is centred with `-translate-y-1/2`, so a tall
+`p-0` dialog is clipped at *both* ends and its footer becomes unreachable, there being no
+page scroll to recover it (`memory/dialog-content-no-height-cap`). So: the `dvh` cap,
+`gap-0`, a width re-declared at `sm:` (the base `sm:max-w-sm` beats any base-only
+override), and `flex flex-col` with `shrink-0` chrome around one
+`min-h-0 flex-1 overflow-y-auto` body. The header band and the decision footer are the
+pinned chrome; verified at a 620px-tall window, where it caps and the buttons stay
+reachable. `bg-none` drops the primitive's default orange-tinted gradient, which would
+fight the blue theme; its backdrop is left alone, being shared by every dialog in the app.
+
+**Escape and outside-press back out ONE layer.** With the evidence lightbox open that layer
+is the lightbox — closing the whole modal under it would throw away the note and the
+approver already picked.
+
+The modal carries the request's short id, the employee (as the dialog's accessible name), a
+facts grid (hours, pay period, **every** missed-time range, reason), the explanation, the
+real evidence with a lightbox, and the decision trail.
 
 **The trail is ONE chronology** — submission, the second-approver assignment, the
 manager's sign-off, the countersignature, then Accounting — replacing the old separate
@@ -341,25 +375,27 @@ Every band below was measured in Chromium against a mocked payload, not eyeballe
 
 | Width | Layout |
 |---|---|
-| **≥1400px, panel open** | docked panel + 5 columns (Reason returns) |
-| **1100–1399px, panel open** | docked panel + 4 columns; Reason and Submitted stand down or the Employee cell gets ~60px and the headers collide |
-| **≥1024px, panel closed** | all 6 columns |
+| **≥1024px** | all 6 columns; the modal is 880px with the proof beside the facts |
 | **768–1023px** | Submitted stands down |
-| **640–767px** | Reason stands down and reappears under the email |
+| **640–767px** | Reason stands down and reappears under the email; the modal's columns stack |
 | **<640px** | **not a table.** `src/index.css:1055` collapses every `<table>` in the app into stacked label/value cards, taking its labels from `data-label`, so every cell carries one and nothing is lost on a phone |
+
+The table's columns no longer depend on whether a detail is open — that was the docked
+panel's doing, and it went with it.
 
 Two traps are recorded here because both cost a build:
 
-1. **A Tailwind variant composed from a constant is never generated.** The first build
-   wrote `` `${SPLIT_AT}:block` ``; Tailwind scans source text statically, so
+1. **A Tailwind variant composed from a constant is never generated.** The docked-panel
+   build wrote `` `${SPLIT_AT}:block` ``; Tailwind scans source text statically, so
    `min-[1100px]:block` never existed and the panel rendered as a drawer at every width,
-   backdrop and all. Every variant is spelled out literally.
+   backdrop and all. Spell every variant out literally.
 2. **Two rival `display` rules that both match are a coin flip.** `md:table-cell` and
    `min-[1100px]:hidden` both match at 1100px and the winner is whichever Tailwind emitted
-   last, which is not a contract. Column visibility is expressed so that only ONE rule
-   ever turns a cell on (`md:max-[1099px]:table-cell min-[1400px]:table-cell`), over a
-   base `hidden`. The global `<640px` rule additionally forces `display:flex` on every
-   `td`, so a Tailwind `hidden` cannot be relied on to remove a cell down there at all.
+   last, which is not a contract. Express column visibility so only ONE rule ever turns a
+   cell on, over a base `hidden`. (The modal removed the case that needed this here, but
+   the trap is the reason the columns are written the way they are.) The global `<640px`
+   rule additionally forces `display:flex` on every `td`, so a Tailwind `hidden` cannot be
+   relied on to remove a cell down there at all.
 
 **Retrieve (recall)** → `action: recall`, on rows at `manager_approved` **or** `awaiting_second_approval`, and only for ids in `managedIds` (the server enforces the same department scope; hiding the button just avoids offering a 403). It returns the row to `pending` and clears **all three** decision sets plus the second-approver assignment, so the review restarts from scratch — including the choice of who countersigns.
 
