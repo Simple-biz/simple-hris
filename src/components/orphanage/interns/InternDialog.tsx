@@ -394,7 +394,10 @@ export default function InternDialog({
           )}
         </div>
 
-        <DialogFooter className="shrink-0 flex-row items-center gap-3 border-t border-pink-100/70 px-5 py-4 dark:border-pink-950/45 sm:justify-between">
+        {/* The shared footer ships `-mx-4 -mb-4` to cancel DialogContent's default
+            p-4; this dialog is p-0, so those margins would hang the buttons past
+            the card edge. Zero them and drop the orange/blue gradient — pink card. */}
+        <DialogFooter className="mx-0 mb-0 shrink-0 flex-row items-center gap-3 rounded-b-xl border-t border-pink-100/70 bg-none bg-white px-5 py-4 dark:border-pink-950/45 dark:bg-zinc-950 sm:justify-between">
           {/* Left: only speaks when there is something to fix. Silence is the default. */}
           <p
             role="status"
