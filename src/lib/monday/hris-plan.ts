@@ -775,7 +775,10 @@ export const PLAN_TASKS: PlanTask[] = [
   //
   // 2 SP: the bubble now rides every tab rather than the Overview alone. Deliberately NOT folded into
   // the Penny AI row — that row is the chat engine; this is placement. The GREETING stays Overview-only.
-  { epic: 'HRIS-09', name: 'Employee Penny chat bubble rides every tab, not just the Overview', type: 'Feature', sp: 2, done: false, sprint: 'S27' },
+  // done:false → true 2026-09-02: the board row (12863017153) has read Done with Actual SP 2 and a
+  // Completed Date of 2026-08-20 since pass 6, and the employee-penny-ai memory records the bubble on
+  // ALL tabs from that day. The plan was the stale side, and its done:false cost the rollup 2 SP.
+  { epic: 'HRIS-09', name: 'Employee Penny chat bubble rides every tab, not just the Overview', type: 'Feature', sp: 2, done: true, sprint: 'S27' },
   // 2 SP: the pre-flight IS the accomplished task — 77 queued deletions measured and 22 of them
   // colliding with CURRENT non-offboarded people, caught before anyone set CRON_SECRET.
   { epic: 'HRIS-01a', name: 'Deletion-cron pre-flight: 77 queued deletions measured, 22 colliding with current staff', type: 'Spike', sp: 2, done: true, sprint: 'S27' },
@@ -1368,9 +1371,45 @@ export const PLAN_TASKS: PlanTask[] = [
   // and the work email IDENTIFIES, undo on the doc row, and a revert-writebacks script. Shipped in
   // e8e8c6ae, whose message — "PAB TAB Ignore" — names a different feature entirely.
   { epic: 'HRIS-18', name: 'Termination Documents — a generated packet per leaver with its own table, personal-email search and undo on the doc row', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
-  // 3 SP, done:false — the code is COMMITTED LOCALLY ONLY (6d16bd70 + 604add10 are not ancestors of
-  // origin/main), so this cannot pass In Progress until Kane pushes. Generate COE from the Signing
-  // Queue: accounting issues the certificate and signs on the employee’s behalf, active-GML-only and
-  // failing CLOSED, with the audit naming the ADMIN who generated it.
+  // 3 SP, done:false — RE-DERIVED 2026-09-02: 6d16bd70 and 604abd10 (the earlier comment mistyped
+  // the second as 604add10) are BOTH ancestors of origin/main now, so the In Progress cap the staged
+  // pass wrote has expired and the row is Pending Deploy. It stays done:false — pushed is not
+  // confirmed-live, and Done needs a click-through. Generate COE from the Signing Queue: accounting
+  // issues the certificate and signs on the employee’s behalf, active-GML-only and failing CLOSED,
+  // with the audit naming the ADMIN who generated it.
   { epic: 'HRIS-18', name: 'Generate COE from the Signing Queue — accounting issues and signs on the employee’s behalf', type: 'Feature', sp: 3, done: false, sprint: 'S28', priority: 'Medium' },
+
+  // ── PASS 22 · 2026-09-02 · the range bf43c86a..0703c748 (12 commits, Sep 1 evening) ────────────
+  // Everything below is an ancestor of origin/main and NONE of it carries a migration, an apply
+  // script or an n8n workflow (checked: the range's diff has no .sql, no apply-*.mjs, no n8n json),
+  // so nothing here is code-complete-but-dead. Every row is therefore Pending Deploy and every one
+  // is done:false — pushed is not confirmed live, and Done waits on a click-through. Clustered by
+  // file overlap: 2547b719 says "ORPHANAGE UI" and touches ZERO orphanage files — it is 1,227 lines
+  // of HslBonusCalculator, the second specimen of the message trap in as many passes.
+  //
+  // 5 SP: two commits on the Orphanage step (shared PayrollWizard.tsx + orphanage-pay-step.md). The
+  // additions blob is written under CAS with Restore-from-record on the red panel, and deletes then
+  // wipe BOTH carriers — a Remove all button, record-only row deletes, and a snapshot-or-refuse
+  // audit. New tested wizard-additions module, a new confirm dialog, and the orphanage-pay-db layer.
+  { epic: 'HRIS-03c', name: 'Orphanage step deletes wipe both carriers, the additions blob is written under CAS, and the red panel restores from record', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  // 5 SP: the HSL KPI surface rebuilt off the design handoff — branches stop being cards and become
+  // a LIST that opens a Windowed/Half/Full overlay, SSD is rebuilt, and the first-load skeleton
+  // mirrors the branch list instead of the cards it replaced. Three commits, one component.
+  { epic: 'HRIS-30', name: 'HSL KPI branches become a list that opens a Windowed/Half/Full overlay, with SSD rebuilt and a matching first-load skeleton', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  // 5 SP: a new 439-line kpi-cache module with 418 lines of tests behind both calculators, plus a
+  // cache-identity hook — the KPI Calculator paints from cache across the tab-switch unmount and the
+  // bonus catalog is cached so Departments is instant. Scoring is HELD until week, catalog and FX
+  // are all live, so the cache PAINTS but never DECIDES (the kpi-calculator-tab-cache rule).
+  { epic: 'HRIS-06', name: 'KPI Calculator paints from cache across the tab-switch unmount, and holds scoring until week, catalog and FX are live', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  // 5 SP: the Manager shell gets the same treatment on its own module — a new tab-cache (471 lines,
+  // 354 of tests) and a cached-state hook across ManagerApp, Bonus History and Transfers, surviving
+  // both the tab-switch unmount and a reload, with the bonus-scoring queue reworked around it.
+  { epic: 'HRIS-10', name: 'Manager dashboard shell paints from cache across the tab-switch unmount and a reload', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  // 2 SP: Payroll Notes rows become shared — any wizard editor may delete or apply any row, not just
+  // its author — and the board pages past the PostgREST 1000-row cap that was hiding rows.
+  { epic: 'HRIS-21', name: 'Payroll Notes rows are shared — any wizard editor deletes or applies any row, and the board pages past 1000', type: 'Feature', sp: 2, done: false, sprint: 'S28', priority: 'Medium' },
+  // 3 SP: a replayed week's export carried a partial split, so rows did not reconcile against the
+  // paid final. A new tested replay-finals-overlay module makes a replayed export carry the FULL
+  // saved split — the wizard-week-replay-fidelity rule, turned into code.
+  { epic: 'HRIS-02a', name: 'Replayed wizard exports carry the FULL saved split, so every row reconciles against the paid final', type: 'Bug', sp: 3, done: false, sprint: 'S28', priority: 'High' },
 ];

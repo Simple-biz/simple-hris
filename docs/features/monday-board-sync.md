@@ -1258,3 +1258,77 @@ reconciler's 220-task patch still queues nothing on its own.
 `docs/features/INDEX.md` · memory `monday-hris-board-sync` · pass evidence
 `docs/audits/2026-08-11-monday-board-pass.csv` · plan
 `docs/superpowers/plans/2026-08-11-monday-board-sync-skill.md`
+
+## Pass 22 — 2026-09-02 — the staged pass lands, and the rollover was already finished
+
+Approved as hash `79d0868bbb8d` (Kane: *"Push everything in monday unless it is already exhausted"*).
+**20 rows created · 220 patched · 20 corrected · 0 sprint moves · VERIFY PASS on a board re-read.**
+
+### The withheld SP was never in the ledger
+
+`pending-sp.json` read **11 entries, 0 unflushed** — the ledger owed nothing. The withheld SP was
+**pass 21**, staged in `9d9ce8b6` with its own commit message saying *"STAGED, NOT APPLIED — budget
+dead until 00:00Z"*. The board held **220 of a declared 234**, which is the arithmetic that proves a
+staged pass never ran. **Two different waiting rooms, and only one of them is the ledger:** a row that
+is not on the board yet waits in `pass.mts`/`hris-plan.ts`; `pending-sp.json` is only for
+corrections to rows that already exist. Checking the ledger alone would have reported nothing owed.
+
+### The staged prose had decayed in exactly the predicted way
+
+Pass 21 was written when `origin/main` was `7424aa7a`. Overnight Kane pushed, so two rows were
+re-derived from git rather than carried forward:
+
+| Row | Staged claim | Re-derived 2026-09-02 |
+|---|---|---|
+| Termination Documents | `90812026` + `bf43c86a` "committed LOCALLY, deliberately NOT in this row's evidence" | both ancestors of `origin/main` → joined the evidence; `bf43c86a` now sets the Completed Date |
+| Generate COE | "CODE-COMPLETE BUT LOCAL ONLY" → **In Progress** + a blocker | `6d16bd70` + `604abd10` both ancestors → **Pending Deploy**, blocker cleared |
+
+Applying the staged wording verbatim would have written two false claims about where the code lives.
+**Never carry a staged `basis` forward** — re-run the ancestor check instead.
+
+### The Sprint 27 → 28 rollover needed no work
+
+Re-derived live before proposing anything, and both halves were already complete:
+
+- `tmp-move-s27-pending.mts` dry-run: **0 remaining targets, 85 in its progress ledger.** The run
+  that "died on the budget" had in fact drained its queue first.
+- Our side: the 5 open rows moved under `dd8f2aef9f0d`. Sprint 27 now holds **66 of our rows, every
+  one Done with an Actual SP and a Completed Date** — nothing open left to roll.
+- The review agreed independently: **0 sprint moves**.
+
+**An empty rollover is a finding.** Recording it stops the next session hunting a backlog that is not
+there — and the dry run cost 1 paging read, versus a blind re-run that would have re-moved nothing.
+
+### Six new rows, all held short of Done
+
+Off `bf43c86a..0703c748` (12 commits, Sep 1 evening): orphanage-step CAS + both-carrier deletes (5),
+HSL KPI branch list + Windowed/Half/Full overlay (5), KPI Calculator paint cache (5), Manager shell
+paint cache (5), Payroll Notes shared edit rights + paging past 1000 (2), replayed-export full split (3).
+
+Every sha is an ancestor of `origin/main`, and the range's diff carries **no `.sql`, no
+`apply-*.mjs` and no n8n JSON** — so none of it is code-complete-but-dead. That makes them
+**Pending Deploy**: pushed is not looked-at. Kane was asked which he had clicked through in prod and
+answered *"push everything"* — an instruction about the write, not a confirmation about the surfaces —
+so all seven (the six plus Generate COE) stayed Pending Deploy and **28 SP is still owed**.
+`SP Completed` did not move: **874, unchanged.**
+
+### The message trap fired twice in one range
+
+`e8e8c6ae` "PAB TAB Ignore" is the entire Termination Documents feature with **zero PAB files**, and
+`2547b719` "ORPHANAGE UI" is 1,227 lines of `HslBonusCalculator` with **zero orphanage files**. A
+message-clustered pass would have filed both under the wrong feature.
+
+### Plan-side drift closed, and one left open
+
+`Employee Penny chat bubble rides every tab` read `done: false` in the plan while board row
+`12863017153` has been Done / Actual SP 2 / 2026-08-20 since pass 6, and the `employee-penny-ai`
+memory records the bubble on all tabs from that day. **The plan was the stale side** — flipped to
+`done: true`. Still open: **HRIS-22** is `Shipped` in the plan and `Cancelled` on the board,
+costing 12 SP of the rollup.
+
+### Budget
+
+Probed alive with one cheap call before planning. Full apply + `verify-one` × 3 + a complete
+`verify.mts` all completed on one UTC day — a 20-row pass fits where the 28-row pass of 2026-08-20
+did not. A stale `.apply.lock` (pid 23996, dead in `tasklist`, 19h old, its pass `9d9ce8b6`
+already committed on a clean tree) was cleared on the three-way proof, not on age alone.

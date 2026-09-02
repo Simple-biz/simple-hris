@@ -702,9 +702,9 @@ import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-09-01';
-export const AUDIT_RANGE = '6ae82ac5..bf43c86a (Aug 28 pm – Sep 1)';
-export const AUDIT_COMMITS = 48;
+export const PASS_DATE = '2026-09-02';
+export const AUDIT_RANGE = '6ae82ac5..0703c748 (Aug 28 pm – Sep 1 evening)';
+export const AUDIT_COMMITS = 60;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -731,15 +731,30 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // ── PASS 21 · 2026-09-01 · 14 new rows off 6ae82ac5..bf43c86a — the first real S28 scope ────────
-  // Pass 20 (same day, earlier) was grooming only; this is the declaration pass for everything
-  // shipped since pass 18 closed its range on 08-28 midday. Clustered by file overlap: e8e8c6ae
-  // ("PAB TAB Ignore") is the Termination Documents feature and carries zero PAB files. origin/main
-  // is 7424aa7a at audit time, so the four commits after it (Generate COE + termination-docs polish)
-  // are LOCAL ONLY — the COE row is capped at In Progress and the two polish shas stay out of the
-  // termination row's evidence. Both migrations in the range were probed live (plain .limit(1),
-  // never head:true, negative control included): payroll_rate_exemptions EXISTS with a row,
-  // termination_documents EXISTS with a row — so neither feature is migration-blocked.
+  // ── PASS 22 · 2026-09-02 · pass 21's 14 staged rows RE-DERIVED, plus 6 more off bf43c86a..0703c748
+  // Pass 21 was staged in 9d9ce8b6 and NEVER APPLIED — the daily budget died before the write, so
+  // none of these 14 rows exist on the board (it holds 220 of a declared 234). The staged prose is
+  // therefore a snapshot of a claim, not a standing fact, and two rows have been re-derived from git
+  // rather than carried forward:
+  //
+  //   • the Termination Documents row was written when origin/main was 7424aa7a and deliberately
+  //     excluded 90812026 + bf43c86a as local-only. Both are ancestors of origin/main now, so they
+  //     join its evidence.
+  //   • the Generate COE row was capped at In Progress for the same reason. 6d16bd70 and 604abd10
+  //     are ancestors now, so the cap has expired: Pending Deploy, blocker cleared.
+  //
+  // Clustered by file overlap, and the range produced the trap's specimen twice: e8e8c6ae ("PAB TAB
+  // Ignore") is the entire Termination Documents feature with zero PAB files, and 2547b719
+  // ("ORPHANAGE UI") is 1,227 lines of HslBonusCalculator with zero orphanage files.
+  //
+  // Both migrations in the older half were probed live (plain .limit(1), never head:true, negative
+  // control included): payroll_rate_exemptions EXISTS with a row, termination_documents EXISTS with a
+  // row. The newer half (bf43c86a..0703c748) introduces NO .sql, no apply-*.mjs and no n8n workflow,
+  // so nothing in it is code-complete-but-dead either.
+  //
+  // The six new rows are Pending Deploy, not Done: every sha is on origin/main, which is necessary
+  // and not sufficient. They go Done in a follow-up correction the moment Kane says he has clicked
+  // through them in prod — that confirmation is the evidence, and it has not been given yet.
   {
     name: 'PAB step shows the 1,557 people it hid — names, Employee IDs, Catalog departments, status filters and a KPI strip',
     status: 'Done',
@@ -840,17 +855,62 @@ export const ROWS: PassRow[] = [
     name: 'Termination Documents — a generated packet per leaver with its own table, personal-email search and undo on the doc row',
     status: 'Done',
     completed: '2026-09-01',
-    shas: ['e8e8c6ae'],
+    shas: ['e8e8c6ae', '90812026', 'bf43c86a'],
     basis:
-      'The commit message says "PAB TAB Ignore"; the files say otherwise — this sha carries the entire Termination Documents feature and zero PAB files (the file-overlap rule’s best specimen yet). Its own termination_documents table, four API routes (list, facts, search, per-id), the Accounting panel where the personal email SEARCHES and the work email IDENTIFIES, undo on the doc row, and a revert-writebacks script. THE MIGRATION IS APPLIED: probed live 2026-09-01 with a plain .limit(1) — the table EXISTS and already holds a generated document, so the surface has run against production. Two polish commits (90812026 scan-line search console, bf43c86a results pop-in) are committed LOCALLY and not yet on origin/main; they are cosmetic, ride the next push, and are deliberately NOT in this row’s evidence so every listed sha stays ancestor-verifiable.',
+      'The commit message says "PAB TAB Ignore"; the files say otherwise — e8e8c6ae carries the entire Termination Documents feature and zero PAB files (the file-overlap rule’s best specimen yet). Its own termination_documents table, four API routes (list, facts, search, per-id), the Accounting panel where the personal email SEARCHES and the work email IDENTIFIES, undo on the doc row, and a revert-writebacks script. THE MIGRATION IS APPLIED: probed live 2026-09-01 with a plain .limit(1) — the table EXISTS and already holds a generated document, so the surface has run against production. RE-DERIVED 2026-09-02: the two polish commits the staged pass held back as local-only — 90812026 (live scan-line search console on Step 1) and bf43c86a (smoothed scan line, results pop in when data lands) — are BOTH ancestors of origin/main now, so they join the evidence and bf43c86a sets the Completed Date. Every listed sha is ancestor-verified.',
   },
   {
     name: 'Generate COE from the Signing Queue — accounting issues and signs on the employee’s behalf',
-    status: 'In Progress',
+    status: 'Pending Deploy',
     shas: ['6d16bd70', '604abd10'],
     basis:
-      'CODE-COMPLETE BUT LOCAL ONLY: both shas are committed on local main and are NOT ancestors of origin/main at audit time (origin/main is 7424aa7a), and Kane pushes — so the honesty gate caps this at In Progress no matter how finished it looks. What exists: Generate COE from the Signing Queue, where accounting issues the certificate and signs on the employee’s behalf — active-Global-Master-List-only and failing CLOSED, preview + issue + search routes, a tested coe-admin module, and the audit trail naming the ADMIN who generated it. Moves to Pending Deploy on push, Done when Kane confirms it live.',
-    blockers: ['6d16bd70 and 604abd10 are not on origin/main — Kane pushes'],
+      'RE-DERIVED 2026-09-02: the staged pass capped this at In Progress because neither sha was an ancestor of origin/main when it was written (origin/main was 7424aa7a). Both are ancestors now — re-checked with git merge-base --is-ancestor — so the cap has expired and the blocker is cleared. Pending Deploy, not Done: pushed means Vercel will deploy it, not that anyone has looked. What exists: Generate COE from the Signing Queue, where accounting issues the certificate and signs on the employee’s behalf — active-Global-Master-List-only and failing CLOSED, preview + issue + search routes, a tested coe-admin module, and the audit trail naming the ADMIN who generated it. Done the moment Kane confirms he has driven it in prod.',
+  },
+
+  // ── PASS 22 · new rows off bf43c86a..0703c748 (Sep 1 evening, 12 commits) ───────────────────────
+  // All Pending Deploy: every sha is an ancestor of origin/main, none of them needs a migration or an
+  // n8n import, and no one has yet said they clicked through the result in production.
+  {
+    name: 'Orphanage step deletes wipe both carriers, the additions blob is written under CAS, and the red panel restores from record',
+    status: 'Pending Deploy',
+    shas: ['27328af3', '28bea8ac'],
+    basis:
+      'Two commits, one surface — they share PayrollWizard.tsx and docs/features/orphanage-pay-step.md, which is why this is one row and not two. 27328af3 puts the additions blob behind a compare-and-set (a new tested wizard-additions module, an app-settings CAS path) and adds Restore-from-record to the red panel; 28bea8ac makes a delete wipe BOTH carriers rather than one, with a Remove all button, record-only row deletes, a new OrphanageClearConfirmDialog and a snapshot-or-refuse audit in orphanage-pay-db. Both are ancestors of origin/main and neither needs a migration — the CAS rides app_settings, which already exists. Not Done: nobody has confirmed the delete path in prod, and this one touches stored pay records, so the gate stays shut until Kane says he re-entered the data cleanly.',
+  },
+  {
+    name: 'HSL KPI branches become a list that opens a Windowed/Half/Full overlay, with SSD rebuilt and a matching first-load skeleton',
+    status: 'Pending Deploy',
+    shas: ['2547b719', '276e6d7f', 'db69b335'],
+    basis:
+      'Three commits on HslBonusCalculator.tsx and its feature doc, rebuilt off the design handoff under references/UI improvement request/. Branches stop being cards and become a LIST that opens a Windowed/Half/Full overlay, SSD Medical Records is rebuilt, and the first-load skeleton mirrors the branch list instead of the cards it replaced. 2547b719 is the second file-overlap specimen of the pass: its message is "ORPHANAGE UI" and it contains zero orphanage files. It also committed HslBonusCalculator.tsx.bak — 3,259 lines of dead backup that should be deleted, noted here rather than silently fixed. All three shas are on origin/main; no one has driven the new overlay in prod yet.',
+  },
+  {
+    name: 'KPI Calculator paints from cache across the tab-switch unmount, and holds scoring until week, catalog and FX are live',
+    status: 'Pending Deploy',
+    shas: ['9ddf772f', 'c502457c'],
+    basis:
+      'A new kpi-cache module (439 lines, 418 lines of tests) plus a useKpiCacheIdentity hook behind both HslBonusCalculator and DeptBonusCalculator, so the calculator repaints instantly across the tab-switch unmount, and c502457c extends it to the bonus catalog so switching to Departments is instant. The safety property is the point and it is tested: the cache PAINTS but never DECIDES — scoring is held until the week, the catalog and the FX rate are all live, and the cache key carries the week. Both shas are on origin/main. Not Done: a cache that decides too early would misprice a bonus, so this one wants a prod click-through before it closes.',
+  },
+  {
+    name: 'Manager dashboard shell paints from cache across the tab-switch unmount and a reload',
+    status: 'Pending Deploy',
+    shas: ['ad869220'],
+    basis:
+      'Its own module, not a reuse of the KPI cache: a new tab-cache (471 lines, 354 lines of tests) and a useManagerCachedState hook across ManagerApp, ManagerBonusHistory, ManagerSidebar and ManagerTransfers, with use-bonus-scoring-queue reworked around it and a new manager-dashboard-cache feature doc. The Manager shell unmounts on every tab switch, so the spinner has to be derived or the skeleton repaints; boundness is part of the cache key. On origin/main, not yet confirmed live.',
+  },
+  {
+    name: 'Payroll Notes rows are shared — any wizard editor deletes or applies any row, and the board pages past 1000',
+    status: 'Pending Deploy',
+    shas: ['e62f30e8'],
+    basis:
+      'One commit: the notes route drops its author check so any wizard editor may delete or apply any row, and the board pages past the PostgREST 1000-row cap that was hiding rows from the very people who needed them (the postgrest-1000-cap rule, applied). Small and self-contained — a route, the FAB, the payroll-wizard-notes db layer and the feature doc. On origin/main. Scored 2: no new table, no new surface, but it does widen who can delete a row, which is why it is not 1.',
+  },
+  {
+    name: 'Replayed wizard exports carry the FULL saved split, so every row reconciles against the paid final',
+    status: 'Pending Deploy',
+    shas: ['0703c748'],
+    basis:
+      'A replayed week exported a partial split, so its rows did not reconcile against the paid final — a reporting lie about money already sent. A new tested replay-finals-overlay module (98 lines, 110 of tests) makes the replay carry the FULL saved split, which is the wizard-week-replay-fidelity rule turned into code. On origin/main, and the last commit in the range. Not Done: a reconciliation fix is exactly the kind of thing that has to be seen reconciling before anyone credits it.',
   },
 ];
 
