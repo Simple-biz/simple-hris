@@ -35,6 +35,8 @@ import {
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
+import { announceDispatchPaid } from '@/hooks/useDispatchPaidToasts';
+import { buildPaidToastEvent, shouldAnnouncePaid } from '@/lib/payroll/dispatch-paid-toast';
 import ProcessorQueue from './ProcessorQueue';
 import ExcludedQueue from './ExcludedQueue';
 import DoneQueue from './DoneQueue';
@@ -1026,6 +1028,25 @@ export default function PayrollDispatch() {
         };
         if (!res.ok || json.error) throw new Error(json.error ?? `HTTP ${res.status}`);
         paidCycles += 1;
+        // Tell the Accounting shell's lower-left "X paid Y $Z" stack — and, through
+        // its broadcast, every other open Accounting screen. Only a real `paid`
+        // row: Problem / Not Paid / Threshold moved no money. One card per leg, so
+        // an arrears settle announces each cycle it cleared.
+        if (shouldAnnouncePaid(payload.status)) {
+          announceDispatchPaid(
+            buildPaidToastEvent({
+              id: (json.row as { id?: string } | null | undefined)?.id,
+              by: session?.user?.email,
+              recipientEmail: row.email,
+              recipientName: row.name,
+              amountUsd: c.amountUSD,
+              amountPhp: c.amountPHP,
+              amountCop: c.amountCOP,
+              processor: row.processor,
+              sourceFile: c.sourceFile,
+            }),
+          );
+        }
         const ps = json.paystub;
         if (ps?.sent) sent += 1;
         else if (ps?.staged && ps?.error) {
