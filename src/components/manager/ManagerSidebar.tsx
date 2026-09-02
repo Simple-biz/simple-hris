@@ -86,14 +86,30 @@ export default function ManagerSidebar({
     .toUpperCase()
     .slice(0, 2) || (viewerEmail || '?').slice(0, 2).toUpperCase();
 
+  /**
+   * One nav item. `ring` draws the payroll-processing rim around it — a rotating
+   * rose→amber line hugging the button edge (`.payroll-lock-ring` in index.css),
+   * the same colour story as the "Payroll is being processed" banner. Kane,
+   * 2026-09-02: the KPI Calculator tab should show it while the dispatch lock is
+   * on, so a manager knows before they click that the calculator is in its
+   * locked state. The rim is an absolutely positioned overlay, so it changes
+   * nothing about the button's own layout, active gradient or hover.
+   */
   const navBtn = (
     id: ManagerTab,
     label: string,
     Icon: React.ComponentType<{ className?: string }>,
     badge?: React.ReactNode,
+    ring = false,
   ) => (
+    <span key={id} className="relative block">
+      {ring && (
+        <span
+          aria-hidden
+          className="payroll-lock-ring pointer-events-none absolute -inset-px z-10 rounded-[7px]"
+        />
+      )}
     <button
-      key={id}
       type="button"
       onClick={() => setActiveTab(id)}
       title={collapsed ? label : undefined}
@@ -116,6 +132,7 @@ export default function ManagerSidebar({
       {isConstr(id) && <span className={cn('sb-collapse-fade')}><ConstructionMark active={activeTab === id} /></span>}
       {badge}
     </button>
+    </span>
   );
 
   const countBadge = (n: number, active: boolean) => {
@@ -208,7 +225,8 @@ export default function ManagerSidebar({
             </p>
           )}
           <nav className="flex flex-col gap-px">
-            {can('hsl-bonus') && navBtn('hsl-bonus', 'KPI Calculator', Calculator)}
+            {can('hsl-bonus') &&
+              navBtn('hsl-bonus', 'KPI Calculator', Calculator, undefined, lockState.locked)}
             {can('bonus-history') && navBtn('bonus-history', 'Bonus History', History)}
             {can('notifications') && navBtn(
               'notifications',

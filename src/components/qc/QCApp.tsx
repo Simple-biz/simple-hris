@@ -409,6 +409,7 @@ export default function QCApp() {
               {activeTab === 'qc-calculator' && (
                 <ReadOnlyTab readOnly={ready && !canEditCalc}>
                   <DeptBonusCalculator
+                    dispatchLock={payrollProcessing}
                     viewerEmail={viewerEmail}
                     teamMembers={qc.mine.members}
                     managedDepts={[]}

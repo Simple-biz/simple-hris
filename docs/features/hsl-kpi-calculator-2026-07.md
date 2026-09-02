@@ -153,7 +153,7 @@ product register (calm, familiar, motion conveys state):
 
 Two changes, one pass. Reference: `references/UI improvement request/design_handoff_bonus_run/`.
 
-### Branches are a list, not a stack of accordions
+### Branches are a two-column grid of rows, not a stack of accordions
 
 `HslBranchList` replaced the stack of collapsible dept cards. One row per branch:
 colour bar, name, cadence + period, status chip, headcount, total, chevron.
@@ -164,6 +164,165 @@ open, so two branches could never be compared without scrolling past a full
 roster, and the scoring surface was always squeezed into whatever width the
 stack left it. `manualOpen` / `isOpen` / `toggleOpen` / `gridMode` are gone, and
 `DeptBlock` no longer takes `collapsible` / `open` / `onToggleOpen`.
+
+**Two rows per line, not one** *(Kane, 2026-09-02)*. The first cut was one
+full-width row per branch. A manager with a dozen branches read them as a narrow
+column with two thirds of a desktop viewport empty beside it, and the last row
+sat well past the fold. `grid-cols-1 lg:grid-cols-2` — two columns from `lg`, one
+below it. **An `auto-fill` card grid was tried in between and reverted** (Kane,
+same day): the row is the presentation, the column count was the only problem
+with it. Don't re-derive the card version.
+
+The row was always built to wrap — that is what `basis-40` on the name block is
+for — so the narrow case degrades by dropping the figures onto a second line
+rather than crushing them. The figures' fixed widths came down with the column
+width (`sm:w-14` headcount, `sm:w-28` total) because half the width now carries
+the same four marks, and they stay fixed so each column still scans straight
+down. `h-full` on the button keeps the pair on a line the same height when one
+branch name wraps.
+
+Rows are **separate bordered boxes**, not one `divide-y` container: with an odd
+branch count a shared container leaves the bottom-right cell empty and its border
+half-drawn.
+
+**The skeleton mirrors the grid** — `KpiCalculatorLoading`'s `hsl` variant uses
+the same `grid-cols-1 lg:grid-cols-2` and `HslBranchRowSkeleton`. A
+single-column placeholder would reserve N rows where the data lands in N/2.
+
+### Status chips: Draft / Ready / Locked *(2026-09-02)*
+
+`src/components/manager/kpi-status-chip.tsx` — **shared by BOTH calculators**
+(the HSL branch grid, the `DeptBlock` header, and the Departments landing rows),
+so one status can never read two ways across the two tabs a manager switches
+between all day. The three states are a ladder — nothing entered yet, the manager
+has signed off, payroll has taken it — and are drawn as one:
+
+| Status | Chip | Glyph |
+| --- | --- | --- |
+| `draft` | hollow, `zinc-300` border, no fill | `CircleDashed` |
+| `ready` | filled `emerald-700`, white text | `CheckCircle2` |
+| `locked` | filled `zinc-900`, white (inverted in dark) | `Lock` |
+
+Before this they were three pale washes of the same weight at 9px, which made
+"draft" and "ready" the same shape at a glance across a wall of branches — and
+the two calculators disagreed with each other: HSL painted `ready` **amber**,
+Departments painted `locked` amber, and amber is reserved for warnings everywhere
+else in this app (see the cache chip in the same top bar, and
+`wizard-step2-header-cards`).
+
+**Ready is green** (Kane, 2026-09-02) — the manager's own sign-off, and the state
+they scan the list for. That pushes `locked` onto the terminal ink instead: green
+means *you* finished, black means payroll did and nothing moves now. Two greens a
+step apart would have been the amber problem again in a different hue. Each chip
+carries a glyph so the state survives being read at speed or in greyscale, and
+the green is `emerald-700` (4.6:1 on white) rather than `-600`/`-500`, which fall
+under 4.5:1 at this size.
+
+`StatusChip`'s `warn` prop replaces the **draft** chip with an amber "Action
+needed" — the deadline is close and the period is still editable. It is the only
+amber on either calculator, which is what lets amber keep meaning "a person has
+to do something". It never overrides `ready` or `locked`: once a period is signed
+off there is nothing left to act on. (This is the old Departments `HeroBadge`
+`warn` state, preserved through the merge.)
+
+### A background reload never announces itself *(2026-09-02)*
+
+`useLiveRefresh` falls back to a **30-second poll** plus a tab-focus refresh when
+Realtime isn't available for these tables. Every tick re-ran `loadDept` for every
+branch, so every branch flashed "loading…" twice a minute over figures that were
+already on screen, and the page read as permanently busy. Kane: *"Add caching so
+I dont have to see that loading — I think its polling time to time."*
+
+The **fetch is untouched.** The tab cache is PAINT-only by ruling and carries no
+skip-fetch flag (pinned by a test in `kpi-cache.ts`), so the way to stop showing
+a spinner is to stop showing it, never to stop asking the database. What changed:
+
+- `settledDepts` records every branch whose load has finished once on this mount,
+  success or failure. `pendingFirstLoad = loadingDepts − settledDepts` is what
+  the grid and the block header render, so only a branch with **nothing on
+  screen** says anything. (`loaded` on the Departments side was already
+  first-load-only and needed no equivalent.)
+- The `animate-spin` `RefreshCw` next to the top bar's "as of HH:MM" cache chip
+  is gone on **both** calculators — the timestamp was always the whole message.
+- **The Refresh button still spins.** That one is answering a click.
+
+`loadingDepts` itself is unchanged and still feeds the Payroll Readiness report's
+`loaded` flag, which is a correctness signal rather than an indicator.
+
+### The calculator switch lives in the toolbar *(2026-09-02)*
+
+The HSL-Branches / Departments tablist was its own bar in `ManagerApp`, stacked
+above whichever calculator was showing. It cost a full row of page height to hold
+two buttons directly above a toolbar, and read as shell chrome rather than as
+part of the screen. It now renders **inside** each calculator's own toolbar, in
+the row that already holds that screen's search box — on HSL beside the people
+search, on Departments where the "Department calculators" label was (that label
+named exactly the thing the switch now changes).
+
+`ManagerApp` still owns `kpiCalc` and renders the control **once**, passing it
+down to both as a `calculatorSwitch` **node** — not a mode plus a callback. Two
+independently rendered switches would drift; one node cannot. It is `null` when
+the manager owns only one calculator, and both calculators tolerate that (the HSL
+toolbar row now renders when *either* the switch or the multi-branch controls are
+present).
+
+It is also passed to **`KpiCalculatorLoading`**, drawn real rather than as a
+shimmer. It has nothing to load, and now that it lives inside the calculator a
+manager who landed on the slower of the two could otherwise not leave it for the
+whole first load.
+
+**Departments is the default, and comes first** (Kane, 2026-09-02). The switch
+used to scan `managed` in assignment order and open whichever calculator owned
+the first-assigned dept, so two managers with the same two calculators could land
+on different screens for a reason neither of them could see. `firstAssigned` and
+its "primary" marker are deleted; `active` is `kpiCalc ?? 'dept'` when a manager
+owns both. A fixed default is one less thing to explain now that the switch is in
+the toolbar. Departments is also the FIRST tab — a switch whose first tab is not
+the one you land on reads as a bug.
+
+**The indicator slides across the remount; the swap itself is a hard cut.**
+The switch lives inside the calculator it navigates away from, so every click
+unmounts it with the outgoing calculator and mounts a fresh one with the incoming
+— and the incoming side may mount **twice**: its loading skeleton for a frame,
+then the real calculator. Three versions shipped on 2026-09-02:
+
+1. A CSS `transition-transform` on an inline `translateX`. Could never play across
+   a remount — the new node is born at its final position — so the pill jumped.
+2. A motion `layoutId` inside the active button. Animated HSL → Departments but
+   **not** Departments → HSL (Kane: *"vice versa there is no animation"*).
+   Switching to HSL paints the HSL skeleton for a frame before the real
+   calculator, so the pill mounts twice and `layoutId` hands the second mount a
+   snapshot that is already at the destination; the travel is lost. Departments
+   has no such intermediate mount, hence the asymmetry.
+3. **This one** — `KpiCalculatorSwitch` (`kpi-calculator-switch.tsx`): the CSS
+   transition again, but the pill is *born* where the previous instance's pill
+   came to rest (`restingAt`, **module-scoped** so it outlives any instance) and
+   moves to the active tab on the next frame. A skeleton that mounts and unmounts
+   mid-flight never records a resting position, so the real calculator's pill
+   simply starts the same slide from the same place. `transitionend` records the
+   rest; a `TRAVEL_MS + 50` timeout is the fallback for when it never fires
+   (reduced motion, a hidden tab). Deterministic, no measurement, no library
+   snapshot to lose. Reduced motion is `motion-reduce:transition-none`.
+
+The buttons are `flex-1 basis-0` with **no gap**, which is what makes each exactly
+half the padded box so the pill travels a clean 100%.
+
+The crossfade is **gone**. It was covering for the jump the pill no longer makes,
+and both calculators now paint the identical header, so the only thing that
+visibly moves on a swap is the pill gliding to the other tab. No wrapper, no
+transform — a transformed ancestor re-anchors `position: fixed`, which is what
+forced the branch overlay into a portal in the first place.
+
+### The branch filter is a dropdown *(2026-09-02)*
+
+The rail of one pill per branch (plus "All") is replaced by a single
+`SmoothSelect`. With a dozen branches the rail wrapped to three rows and pushed
+the branches themselves below the fold. The pills' count badges survive as part
+of each option label (`Callback Team · 12`); the menu is `portal`led so the
+sticky, blurred top bar cannot clip it, and turns `searchable` above 8 branches.
+Picking a branch still clears the cross-branch people search — the two filters
+would otherwise fight over what is on screen.
+
 
 **A manager with ONE branch still gets the block directly** — a one-row list you
 must click through is pure ceremony, and it preserves what the Payroll Readiness
@@ -591,3 +750,191 @@ not clicked through (needs Google SSO + Supabase auth).
   dept-key filter, so historical ready/locked rows for the removed depts keep
   surfacing (labeled with the raw key). The migration's "inert" note is inaccurate
   for this one employee-facing path. Cosmetic; the data was already visible pre-change.
+
+## The Departments calculator adopts the branch row *(2026-09-02)*
+
+Kane: *"in the Departments — make it similar to the design of the HSL Branches
+please so its much simpler."* `DeptSummaryCard` became **`DeptSummaryRow`** in
+`DeptBonusCalculator.tsx`, the same shape as an HSL branch: colour bar, name over
+a meta line, then status / headcount / projected / chevron pushed right, two per
+line from `lg` (the grid there was already `grid-cols-1 lg:grid-cols-2`).
+
+What went is ornament, not information:
+
+| Was | Now |
+| --- | --- |
+| 64px monogram tile (`uniqueDeptAbbrevs`, `deptAbbrevByKey`) | the same 1px colour bar the branches use — the tile was ~¼ of the card's width to say what the colour already said |
+| `CompletionGauge` on the card | `entered/headcount ppl`, the numbers the gauge was drawing, in the slot a branch puts its headcount in; `toFill` moved to the `title` |
+| up to two per-person match pills | one `match` / `N matches` chip, names in its `title`, plus the branches' blue hit border |
+| `HeroBadge` | the shared `StatusChip` (above) |
+| hover lift (`whileHover y:-3`), boxed chevron | the branches' border-and-shadow hover |
+
+`uniqueDeptAbbrevs` and `deptAbbrevByKey` were deleted with the tile — nothing
+else used them. `initials()` stays (roster avatars) and `CompletionGauge` stays
+(it is still drawn inside an open department's panel, where there is room for
+it). The entrance/exit variants and `layout` stay too: the parent grid filters
+with `AnimatePresence mode="popLayout"`, and without them a narrowing search
+teleports the survivors.
+
+`KpiCalculatorLoading`'s `departments` variant mirrors it with `DeptRowSkeleton`
+— the same rule as the HSL side: a placeholder of the wrong shape reserves the
+wrong height and the page jumps when the data lands.
+
+### One header for both calculators *(2026-09-02)*
+
+Kane: *"make sure they use the same headers."* They were reading as two
+different products. The Departments bar had an **18px bold** title under a
+`0.22em` eyebrow, `px-4 sm:px-6` padding, and **two large stat tiles**
+("Projected · week" on an emerald gradient, "Headcount" beside it, both
+`text-xl`), with Refresh / "Open as" / the cache stamp down in the toolbar row.
+HSL had a **16px semibold** title under a `0.2em` eyebrow, `px-5`, and one quiet
+bordered pill carrying the figure and the headcount together, with the controls
+beside it.
+
+**The HSL bar won, verbatim** — container, eyebrow, title, and the single figure
+pill, then `ViewSwitch` → cache stamp → Refresh in that order. The twin tiles
+were the hero-metric template, and a projection nobody has locked yet is not the
+loudest thing on a scoring screen. Both second rows are now the same two things
+in the same order: the calculator switch, then that screen's search.
+
+**Second pass, same day** — Kane: *"Do you understand that the headers should
+be the same?"* The class names matched; the header did not, because three things
+inside it had no HSL counterpart:
+
+- **The `WeekPicker`** was a bordered button with a calendar glyph, a `12.5px`
+  semibold date, a Live/Past badge and two arrow buttons, sitting where HSL prints
+  `week of 2026-08-23` in `font-mono text-xs text-zinc-500`. It now renders as
+  **that exact span** — same classes, inside the `<h2>` — that happens to open the
+  week menu on click. A small `past` marker is the one addition. The prev/next
+  arrows became **←/→ on the trigger**; the menu still lists every week.
+- **`DeadlineBanner` / `PastWeekBanner`** (and the monthly-bonus note) rendered
+  INSIDE the sticky bar, making it a full band taller than HSL's on every scroll.
+  They moved **below** the bar, above the rows — the same slot HSL uses for a
+  banner. Same messages, same place a banner goes.
+- **The second row** had a `flex-1` wrapper, a `flex-1` search box and an emerald
+  focus ring. It is now byte-identical to HSL's: `{calculatorSwitch}` then a
+  `w-full max-w-[260px]` search with the blue ring. The `weekError` alert moved
+  from inside the title column to a sibling row, where HSL's sits.
+
+One deliberate difference remains: the pill reads **"Projected"** on Departments
+and **"Total"** on HSL. A shared shape is worth copying; a wrong label is not.
+
+`KpiCalculatorLoading`'s `departments` variant mirrors the new bar — same rule
+as everywhere else here: a placeholder of the wrong shape reserves the wrong
+height and the page jumps when the data lands.
+
+The **rows** were already identical: every shared class in `DeptSummaryRow` and
+the HSL branch row matches byte for byte. What Departments adds — the amber
+`dirty` dot, the loading skeletons, the `isOpen` ring in the department colour —
+are signals HSL has no equivalent for.
+
+### The payroll-processing banner, and an UNRESOLVED disagreement *(2026-09-02)*
+
+Kane: *"in the departments I cannot see the payroll is being processed lock UI."*
+It was not there, and it is not only a missing banner.
+
+`ManagerApp` swaps the whole `hsl-bonus` tab for `PayrollProcessingLock` once
+Accounting hits **Start processing** — but **admins bypass it**, matching
+`processing-guard.ts` server-side. So the only person who ever sees the inside of
+either calculator during a dispatch is an admin. From there the two disagree:
+
+| | HSL | Departments |
+| --- | --- | --- |
+| Reads the dispatch lock | yes (`useDispatchLock`) | **no** — `payrollLocked: false` is hard-coded into `kpiAutosaveGate` |
+| Mark ready / unready during processing | **blocked** | allowed |
+| Banner | red, *"You cannot mark ready or unready until processing is complete"* | none, until now |
+
+Both sides are argued in the code. HSL blocks. The Departments call site says
+reading the lock there *"would silently stop an admin's corrections from ever
+persisting, which is worse than the 423 they'd never see."*
+
+**What shipped is the banner only.** Departments now subscribes to the lock **for
+display**, and prints the same red bar in the same slot, worded to what is
+actually true there — *"Accounting is dispatching from these figures … changes
+you make here still save."* An admin was previously editing numbers a dispatch
+was reading with nothing on screen to say so. `kpiAutosaveGate` still receives
+`payrollLocked: false`; **no guard was touched.**
+
+**UNRESOLVED — Kane's call.** Either an admin may correct KPI figures mid-run or
+they may not, and today the answer depends on which calculator they happen to be
+in. Fixing it means changing behaviour on a money path in one direction or the
+other, so it was not settled by copying one into the other.
+
+### Readiness lives in the header; the lock banner is the employee shell's *(2026-09-02)*
+
+Kane: *"for the all departments submitted for this week put them at the header
+please, and the Payroll Is being processed should be the same from the Employee
+dashboard where there is a line running around."*
+
+**`KpiReadinessChip`** (`kpi-readiness-chip.tsx`) — the Departments
+`DeadlineBanner` folded into a chip and placed **first in the figure cluster on
+BOTH calculators**, so the headers stay the same header. Same `rounded-lg`
+bordered shape as the figure pill beside it; `N/M ready` (or `submitted`), tinted
+by the banner's own tiers (done → emerald, ≥4 days → neutral, ≤3 → amber, ≤1 or
+overdue → red), with the countdown as one more span **only where a deadline
+exists** — Departments' managers submit before the week's payroll; HSL's week is
+pinned to the Hubstaff batch and has none. HSL gained `readyBranches`
+(`ready` or `locked` branches ÷ visible) for it. `DeadlineBanner` is deleted; the
+`PastWeekBanner` and the monthly-bonus note stay below the bar and the wrapper
+that holds them now renders only when one of them does.
+
+**`PayrollLockBanner`** (`components/employee/PayrollLockBanner.tsx`) — the
+employee shell's banner, with its pulsing lock ring and the `payroll-lock-sweep`
+line along the bottom edge — now replaces both calculators' plain red bar. It
+gained two props: `detail` (the one-line consequence for THIS surface; the
+employee default is unchanged) and `dismissible` (the calculators pass `false`,
+because on them the lock changes what the viewer can do). The two calculators
+pass different `detail`s for the reason recorded above: HSL blocks mark
+ready/unready, Departments deliberately does not, and a shared banner must not
+say something untrue on one of them.
+
+### The dispatch lock comes from the shell *(2026-09-02)*
+
+Kane: *"When I switch tabs it disappears like it doesn't know that payroll is
+processing."* It didn't. Both calculators called `useDispatchLock()` themselves,
+and a fresh hook instance starts **unlocked** and only flips after its first
+fetch — so every tab switch remounted the calculator, the banner vanished, and it
+reappeared a round-trip later. The hook's own doc says to mount it once at the
+shell and pass the result down.
+
+Both calculators now take an optional **`dispatchLock?: PayrollDispatchLockState`**
+and prefer it over their own instance (`dispatchLockFromShell ?? fallback` — the
+fallback hook still exists because hooks cannot be conditional). `ManagerApp`
+passes the `payrollProcessing` state it already holds for the tab-level
+`PayrollProcessingLock`; `QCApp` passes its own. The Payroll Wizard's Readiness
+modal has no shell instance and takes the fallback, which is the pre-existing
+behaviour there. With the shell's already-resolved state handed in, the banner is
+on screen in the first frame of the mount, and `PayrollLockBanner`'s
+`AnimatePresence initial={false}` means it does not animate in either.
+
+### The sidebar tab wears the lock *(2026-09-02)*
+
+Kane: *"for the tab on the side bar 'KPI Calculator', if the Payroll is
+Processing let's add an outer border color running around on it."*
+
+`ManagerSidebar`'s `navBtn` gained a `ring` flag; the KPI Calculator item passes
+`lockState.locked` (the sidebar already held its own `useDispatchLock()` — it is a
+shell component that never remounts, so no flash). The rim is
+**`.payroll-lock-ring`** in `index.css`: the same masked-conic engine as
+`.urgent-ring` (reusing its registered `--urgent-angle` and `urgent-ring-spin`
+keyframes), in the payroll-lock banner's **rose → amber** palette, 3s per lap, so
+"payroll is running" is one colour story from the employee shell's banner to the
+manager nav. It is an absolutely positioned `-inset-px` overlay with
+`pointer-events-none`, so the button's own layout, active gradient and hover are
+untouched; the outer radius is `7px` — the button's `rounded-md` plus the 1px
+outset. Under reduced motion the rim stays and stops travelling — the rim is the
+signal, the motion is not.
+
+### Alphabetical, at the source *(2026-09-02)*
+
+Kane: *"for the Departments and HSL Branches alphabetical order them please."*
+Both calculators now sort by the **display name the row prints**, with
+`localeCompare('en', { sensitivity: 'base' })`, and they sort the **source list**
+rather than the rendered one — `visibleDepts` in HSL, `visibleDeptKeys` in
+Departments — so the grid, the overlay / focus-mode branch rail, the filter
+dropdown and the first-load order all agree. Before, HSL was `HSL_DEPT_KEYS`
+declaration order from `schema.ts` and Departments was catalog / assignment
+order — both history, neither something a manager could predict. Departments'
+sort uses the same name resolver as `DeptSummaryRow`
+(`DEPARTMENTS[..].name ?? deptLabelByKey ?? humanizeDeptKey`), so what sorts is
+what is read; `deptLabelByKey` joined that memo's deps for it.

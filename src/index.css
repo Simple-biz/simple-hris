@@ -236,6 +236,35 @@
   animation: urgent-ring-spin 4.2s linear infinite;
 }
 
+/* Payroll-processing rim for a nav item (manager sidebar → KPI Calculator).
+   Same masked-conic engine as `.urgent-ring` above, reusing its registered
+   `--urgent-angle` and `urgent-ring-spin` keyframes, in the payroll-lock banner's
+   rose→amber palette so "payroll is running" is one colour story from the
+   employee shell to the manager nav (Kane, 2026-09-02). Meant as an absolutely
+   positioned overlay hugging the button — see `navBtn` in ManagerSidebar. */
+.payroll-lock-ring {
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--urgent-angle),
+    transparent 0deg,
+    rgba(244, 63, 94, 0) 40deg,
+    #f43f5e 100deg,
+    #fbbf24 140deg,
+    #fde68a 165deg,
+    rgba(244, 63, 94, 0) 225deg,
+    transparent 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  animation: urgent-ring-spin 3s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* The rim stays — it is the signal — it just does not travel. */
+  .payroll-lock-ring { animation: none; }
+}
+
 /* (3) Energy sheen glinting diagonally across the surface, then resting. */
 @keyframes urgent-sheen {
   0%        { transform: translateX(-140%) skewX(-14deg); opacity: 0; }

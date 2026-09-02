@@ -1,7 +1,7 @@
 'use client';
 
-import type { CSSProperties } from 'react';
-import { AppWindow, ChevronRight, Maximize2, PanelRight, RefreshCw, Search, Users } from 'lucide-react';
+import type { CSSProperties, ReactNode } from 'react';
+import { AppWindow, ChevronRight, Maximize2, PanelRight, RefreshCw, Search } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
@@ -21,15 +21,18 @@ type Variant = 'departments' | 'hsl';
  * up with what replaces it.
  *
  * The HSL variant mirrors that calculator's split: several branches render as a
- * LIST (one row each, opening an overlay), a single branch renders as the
- * scoring block itself. Mirroring the wrong one is not a cosmetic miss — the
- * skeleton would reserve the wrong height and the page would jump on load.
+ * two-column grid of rows (one row each, opening an overlay), a single branch
+ * renders as the scoring block itself. Mirroring the wrong one is not a cosmetic
+ * miss — the skeleton would reserve the wrong height and the page would jump on
+ * load. The column count has to match the live one too, or the placeholder
+ * reserves N rows where the data lands in N/2.
  */
 export default function KpiCalculatorLoading({
   variant = 'departments',
   title = 'My Departments',
   cards = 4,
   teamSplit = false,
+  calculatorSwitch,
 }: {
   variant?: Variant;
   title?: string;
@@ -38,112 +41,104 @@ export default function KpiCalculatorLoading({
    *  workspace is far taller than a plain roster, so the placeholder has to be
    *  too — this is the shape the Payroll Readiness modal loads. */
   teamSplit?: boolean;
+  /** The HSL-Branches / Departments navigation, drawn REAL rather than as a
+   *  shimmer. It has nothing to load, and since it moved inside the calculators'
+   *  toolbars it would otherwise be unreachable for the whole first load —
+   *  a manager who landed on the slow one could not leave it. */
+  calculatorSwitch?: ReactNode;
 }) {
   const count = Math.min(Math.max(cards, 1), 8);
   return variant === 'hsl' ? (
-    <HslSkeleton title={title} count={count} teamSplit={teamSplit} />
+    <HslSkeleton title={title} count={count} teamSplit={teamSplit} calculatorSwitch={calculatorSwitch} />
   ) : (
-    <DeptSkeleton title={title} count={count} single={count <= 1} />
+    <DeptSkeleton title={title} count={count} single={count <= 1} calculatorSwitch={calculatorSwitch} />
   );
 }
 
 // -- Departments variant -------------------------------------------------------
 
-function DeptSkeleton({ title, count, single }: { title: string; count: number; single: boolean }) {
+function DeptSkeleton({
+  title, count, single, calculatorSwitch,
+}: { title: string; count: number; single: boolean; calculatorSwitch?: ReactNode }) {
   return (
     <div className="flex min-h-0 flex-col" aria-busy="true" aria-label="Loading KPI Calculator">
-      {/* Header + controls (mirrors the live sticky header) */}
-      <div className="sticky top-0 z-10 border-b border-zinc-200/80 bg-white/85 px-4 py-3 backdrop-blur-md dark:border-zinc-800 dark:bg-[#0d1117]/85 sm:px-6">
-        <div className="flex flex-wrap items-end justify-between gap-3">
+      {/* Header + controls. Mirrors the live sticky header, which is now the
+          SAME header the HSL calculator paints — one figure pill beside the
+          title, then the open-as switch and Refresh; the switch and the search
+          on a second row. */}
+      <div className="sticky top-0 z-10 flex flex-col gap-2.5 border-b border-zinc-200/80 bg-white/90 px-5 py-3 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/90">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
+            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
               KPI Calculator &middot; Departments
             </p>
-            <h2 className="mt-0.5 text-[18px] font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+            <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
               {title}
+              {/* The "week of <date>" text — same slot as the HSL skeleton. */}
+              <Skeleton className="h-3.5 w-24" />
             </h2>
-            <div className="mt-2">
-              <Skeleton className="h-8 w-[230px] rounded-lg" />
-            </div>
-          </div>
-          <div className="flex items-stretch gap-2.5">
-            <div className="flex flex-col justify-center gap-1.5 rounded-xl border border-emerald-200/80 bg-gradient-to-b from-emerald-50 to-white px-3.5 py-2 text-right dark:border-emerald-900/40 dark:from-emerald-950/30 dark:to-transparent">
-              <div className="font-mono text-[9px] uppercase tracking-[0.15em] text-emerald-600/80 dark:text-emerald-400/80">
-                Projected &middot; week
-              </div>
-              <Skeleton className="ml-auto h-5 w-24" />
-            </div>
-            <div className="flex flex-col justify-center gap-1.5 rounded-xl border border-zinc-200 bg-zinc-50/80 px-3.5 py-2 text-right dark:border-zinc-800 dark:bg-zinc-900/60">
-              <div className="font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-400">Headcount</div>
-              <div className="flex items-center justify-end gap-1">
-                <Users className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
-                <Skeleton className="h-5 w-8" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Deadline banner placeholder */}
-        <Skeleton className="mt-3 h-9 w-full rounded-lg" />
-
-        {/* Calculators toolbar: search + open-as toggle */}
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex min-w-0 flex-1 items-center gap-3">
-            <span className="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-400 sm:inline">
-              Department calculators
-            </span>
-            {!single && (
-              <div className="relative min-w-0 max-w-[260px] flex-1">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-300" aria-hidden />
-                <Skeleton className="h-8 w-full rounded-md" />
-              </div>
-            )}
           </div>
           <div className="flex items-center gap-2">
+            <Skeleton className="h-8 w-28 rounded-lg" />
+            <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
+              <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
+                Projected
+              </span>
+              <Skeleton className="h-4 w-20" />
+            </div>
+            <ViewSwitchGhost />
             <Skeleton className="flex h-8 w-24 items-center justify-center gap-1.5 rounded-md">
               <RefreshCw className="h-3.5 w-3.5 text-zinc-300 dark:text-zinc-600" aria-hidden />
             </Skeleton>
-            <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-400">Open as</span>
-            <Skeleton className="h-8 w-24 rounded-lg" />
           </div>
         </div>
+
+        {/* Calculator switch + this screen's search */}
+        <div className="flex flex-wrap items-center gap-2">
+          {calculatorSwitch}
+          {!single && (
+            <div className="relative w-full max-w-[260px]">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-300" aria-hidden />
+              <Skeleton className="h-8 w-full rounded-md" />
+            </div>
+          )}
+        </div>
       </div>
+
 
       {/* Department cards */}
       <div
         className={cn(
-          'grid gap-3.5 px-4 py-4 sm:px-6',
+          'grid gap-3 px-4 py-5 sm:px-6',
           single ? 'mx-auto w-full max-w-3xl grid-cols-1' : 'grid-cols-1 lg:grid-cols-2',
         )}
       >
         {Array.from({ length: count }).map((_, i) => (
-          <DeptCardSkeleton key={i} delay={i * 90} />
+          <DeptRowSkeleton key={i} delay={i * 90} />
         ))}
       </div>
     </div>
   );
 }
 
-/** Mirrors a `DeptSummaryCard`: thumbnail tile, identity lines, projected + chevron. */
-function DeptCardSkeleton({ delay }: { delay: number }) {
+/** Mirrors a `DeptSummaryRow`: colour bar, name over description, then status /
+ *  headcount / projected / chevron pushed right. Deliberately the same shape as
+ *  `HslBranchRowSkeleton` — the two calculators draw the same row now. */
+function DeptRowSkeleton({ delay }: { delay: number }) {
   const at = (ms: number): CSSProperties => ({ animationDelay: `${delay + ms}ms` });
   return (
-    <div className="relative flex items-center gap-3.5 overflow-hidden rounded-2xl border border-zinc-200/90 bg-white p-3.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/40">
-      <div className="absolute inset-x-0 top-0 h-1 bg-zinc-200 dark:bg-zinc-800" aria-hidden />
-      <Skeleton className="h-16 w-16 shrink-0 rounded-xl" style={at(0)} />
-      <div className="min-w-0 flex-1 space-y-2">
-        <Skeleton className="h-4 w-32" style={at(60)} />
-        <Skeleton className="h-3 w-[80%] max-w-[16rem]" style={at(120)} />
-      </div>
-      <div className="flex shrink-0 items-center gap-3">
-        <div className="space-y-1.5 text-right">
-          <Skeleton className="ml-auto h-2 w-12" style={at(80)} />
-          <Skeleton className="ml-auto h-4 w-16" style={at(140)} />
-        </div>
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-200 text-zinc-300 dark:border-zinc-700 dark:text-zinc-600">
-          <ChevronRight className="h-4 w-4" aria-hidden />
-        </span>
-      </div>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950/50">
+      <span className="h-8 w-1 flex-none rounded-full bg-zinc-200 dark:bg-zinc-800" aria-hidden />
+      <span className="flex min-w-0 flex-[2] basis-40 flex-col gap-1.5">
+        <Skeleton className="h-3.5 w-32 max-w-full" style={at(0)} />
+        <Skeleton className="h-2.5 w-[80%] max-w-[16rem]" style={at(60)} />
+      </span>
+      <span className="ml-auto flex flex-none items-center gap-3">
+        <Skeleton className="h-4 w-16 rounded-md" style={at(40)} />
+        <Skeleton className="h-2.5 w-10 sm:w-14" style={at(80)} />
+        <Skeleton className="h-4 w-20 sm:w-28" style={at(120)} />
+        <ChevronRight className="h-4 w-4 flex-none text-zinc-200 dark:text-zinc-700" aria-hidden />
+      </span>
     </div>
   );
 }
@@ -168,7 +163,9 @@ function ViewSwitchGhost() {
   );
 }
 
-function HslSkeleton({ title, count, teamSplit }: { title: string; count: number; teamSplit: boolean }) {
+function HslSkeleton({
+  title, count, teamSplit, calculatorSwitch,
+}: { title: string; count: number; teamSplit: boolean; calculatorSwitch?: ReactNode }) {
   const multi = count > 1;
   return (
     <div
@@ -189,6 +186,7 @@ function HslSkeleton({ title, count, teamSplit }: { title: string; count: number
             </h2>
           </div>
           <div className="flex items-center gap-2">
+            <Skeleton className="h-8 w-28 rounded-lg" />
             <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
               <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">Total</span>
               <Skeleton className="h-4 w-20" />
@@ -200,29 +198,31 @@ function HslSkeleton({ title, count, teamSplit }: { title: string; count: number
           </div>
         </div>
 
-        {/* People search + branch filter rail */}
-        {multi && (
+        {/* Calculator switch + people search + branch filter */}
+        {(multi || calculatorSwitch) && (
           <div className="flex flex-wrap items-center gap-2">
+            {calculatorSwitch}
+            {multi && (
             <div className="relative w-full max-w-[260px]">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 z-10 h-3.5 w-3.5 -translate-y-1/2 text-zinc-300 dark:text-zinc-600" aria-hidden />
               <Skeleton className="h-8 w-full rounded-md" />
             </div>
-            <div className="-mx-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto px-1 pb-0.5">
-              {Array.from({ length: Math.min(count + 1, 6) }).map((_, i) => (
-                <Skeleton key={i} className="h-7 w-20 shrink-0 rounded-full" style={{ animationDelay: `${i * 60}ms` }} />
-              ))}
-            </div>
+            )}
+            {/* The branch filter is one dropdown, not a rail of pills. */}
+            {multi && (
+              <Skeleton className="h-8 w-full max-w-[260px] rounded-md sm:w-[15rem]" style={{ animationDelay: '60ms' }} />
+            )}
           </div>
         )}
       </div>
 
-      {/* Branches. Mirrors the live split exactly: several branches are a list,
-          one branch is the scoring block itself. Getting this wrong is not a
-          cosmetic miss — the skeleton would reserve the wrong height and the
-          page would jump when the data lands. */}
+      {/* Branches. Mirrors the live split exactly: several branches are two
+          columns of rows, one branch is the scoring block itself. Getting this
+          wrong is not a cosmetic miss — the skeleton would reserve the wrong
+          height and the page would jump when the data lands. */}
       <div className="flex flex-col gap-4 px-4 py-5 sm:px-6">
         {multi ? (
-          <ul className="divide-y divide-zinc-200 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-950/50">
+          <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             {Array.from({ length: count }).map((_, i) => (
               <HslBranchRowSkeleton key={i} delay={i * 70} />
             ))}
@@ -236,19 +236,20 @@ function HslSkeleton({ title, count, teamSplit }: { title: string; count: number
 }
 
 /** Mirrors one `HslBranchList` row: colour bar, name over cadence + period,
- *  then status / headcount / total / chevron pushed right. */
+ *  then status / headcount / total / chevron pushed right. Two of these sit on a
+ *  line from `lg`, exactly as the live grid does. */
 function HslBranchRowSkeleton({ delay }: { delay: number }) {
   const at = (ms: number): CSSProperties => ({ animationDelay: `${delay + ms}ms` });
   return (
-    <li className="flex w-full flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-zinc-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950/50">
       <span className="h-8 w-1 flex-none rounded-full bg-zinc-200 dark:bg-zinc-800" aria-hidden />
       <span className="flex min-w-0 flex-[2] basis-40 flex-col gap-1.5">
         <Skeleton className="h-3.5 w-40 max-w-full" style={at(0)} />
         <Skeleton className="h-2.5 w-28 max-w-full" style={at(60)} />
       </span>
       <span className="ml-auto flex flex-none items-center gap-3">
-        <Skeleton className="h-4 w-14 rounded" style={at(40)} />
-        <Skeleton className="h-2.5 w-10 sm:w-16" style={at(80)} />
+        <Skeleton className="h-4 w-16 rounded-md" style={at(40)} />
+        <Skeleton className="h-2.5 w-10 sm:w-14" style={at(80)} />
         <Skeleton className="h-4 w-20 sm:w-28" style={at(120)} />
         <ChevronRight className="h-4 w-4 flex-none text-zinc-200 dark:text-zinc-700" aria-hidden />
       </span>

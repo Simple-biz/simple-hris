@@ -8,6 +8,19 @@ import type { PayrollDispatchLockState } from '@/lib/supabase/payroll-dispatch-l
 
 interface PayrollLockBannerProps {
   state: PayrollDispatchLockState;
+  /**
+   * The one-line consequence for THIS surface, after "Payroll is being
+   * processed". Defaults to the employee shell's. The manager KPI calculators
+   * pass their own (Kane, 2026-09-02: their red bar should be *"the same from
+   * the Employee dashboard where there is a line running around"*) — same
+   * banner, same sweep, different sentence, because what the lock means differs
+   * per surface and a shared banner must not say something untrue on one of
+   * them.
+   */
+  detail?: string;
+  /** The employee shell lets people dismiss the notice. Surfaces where the lock
+   *  changes what the viewer can DO keep it up. */
+  dismissible?: boolean;
 }
 
 function relativeTime(iso: string | null): string | null {
@@ -29,7 +42,11 @@ function relativeTime(iso: string | null): string | null {
  * shell. Animates in when the lock flips on, animates out when it flips off.
  * Doesn't render at all in the normal case so it's invisible until needed.
  */
-export default function PayrollLockBanner({ state }: PayrollLockBannerProps) {
+export default function PayrollLockBanner({
+  state,
+  detail = 'Issues are temporarily paused.',
+  dismissible = true,
+}: PayrollLockBannerProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [tick, setTick] = useState(0);
 
@@ -84,7 +101,7 @@ export default function PayrollLockBanner({ state }: PayrollLockBannerProps) {
                   Payroll is being processed
                 </span>
                 <span className="text-[11px] text-rose-700/80 dark:text-rose-300/80">
-                  Issues are temporarily paused.
+                  {detail}
                 </span>
               </div>
               {ago && (
@@ -94,18 +111,20 @@ export default function PayrollLockBanner({ state }: PayrollLockBannerProps) {
               )}
             </div>
 
-            <button
-              type="button"
-              onClick={() => setCollapsed(true)}
-              className={cn(
-                'shrink-0 rounded-md p-1 text-rose-700/70 transition-colors',
-                'hover:bg-rose-100 hover:text-rose-900',
-                'dark:text-rose-300/70 dark:hover:bg-rose-950/50 dark:hover:text-rose-100',
-              )}
-              aria-label="Dismiss banner"
-            >
-              <X className="h-4 w-4" />
-            </button>
+            {dismissible && (
+              <button
+                type="button"
+                onClick={() => setCollapsed(true)}
+                className={cn(
+                  'shrink-0 rounded-md p-1 text-rose-700/70 transition-colors',
+                  'hover:bg-rose-100 hover:text-rose-900',
+                  'dark:text-rose-300/70 dark:hover:bg-rose-950/50 dark:hover:text-rose-100',
+                )}
+                aria-label="Dismiss banner"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
 
           {/* Indeterminate progress line along the bottom edge. The track is always

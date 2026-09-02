@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/modernist-1d1ff938-fc63-49ec-8fc9-e1e921204ff7/styles.css">
+<style>
+  body { margin: 0; }
+  .ta-row:hover { background: color-mix(in srgb, #201e1d 4%, transparent); }
+  .ta-kpi { background: var(--color-surface); padding: 16px; border-left: 2px solid var(--color-divider); }
+</style>
+</helmet>
+<div style="min-height: 100vh; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); display: flex; flex-direction: column;">
+
+  <header class="nav" style="gap: 24px; background: var(--color-bg); position: sticky; top: 0; z-index: 5;">
+    <div class="nav-brand">Simple.biz</div>
+    <nav style="display: flex; gap: 20px; align-items: center;">
+      <a href="#" style="color: inherit; text-decoration: none; font-size: 14px;">Dashboard</a>
+      <a href="#" aria-current="page" style="color: var(--color-accent); text-decoration: none; font-size: 14px; font-weight: 600;">Time adjustments</a>
+      <a href="#" style="color: inherit; text-decoration: none; font-size: 14px;">Timesheets</a>
+      <a href="#" style="color: inherit; text-decoration: none; font-size: 14px;">People</a>
+    </nav>
+    <div style="margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 13px;">
+      <span class="text-muted">carla@simple.biz</span>
+      <span style="width: 30px; height: 30px; background: var(--color-accent); color: var(--color-bg); display: grid; place-items: center; font-size: 12px; font-weight: 800;">C</span>
+    </div>
+  </header>
+
+  <div style="padding: 24px 32px 8px; display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap;">
+    <div>
+      <div style="font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-accent);">Manager review</div>
+      <h2 style="margin: 4px 0 0;">Time adjustment requests</h2>
+    </div>
+    <div style="margin-left: auto; display: flex; gap: 8px;">
+      <button class="btn btn-secondary" style="justify-content: flex-start;">Export CSV</button>
+      <button class="btn btn-primary" style="justify-content: flex-start;" onClick="{{ openOldest }}">Review oldest pending</button>
+    </div>
+  </div>
+
+  <div style="padding: 16px 32px 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; border-top: 2px solid var(--color-divider); margin: 12px 32px 0; padding: 0;">
+    <div class="ta-kpi" style="border-left: 0;">
+      <div style="font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;" class="text-muted">Pending your review</div>
+      <div style="font-family: var(--font-heading); font-weight: 800; font-size: 34px; line-height: 1.1; color: var(--color-accent);">{{ kpiPending }}</div>
+      <div style="font-size: 12px;" class="text-muted">{{ kpiPendingHours }} h requested</div>
+    </div>
+    <div class="ta-kpi">
+      <div style="font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;" class="text-muted">Awaiting second approver</div>
+      <div style="font-family: var(--font-heading); font-weight: 800; font-size: 34px; line-height: 1.1;">{{ kpiSecond }}</div>
+      <div style="font-size: 12px;" class="text-muted">Sent to accounting</div>
+    </div>
+    <div class="ta-kpi">
+      <div style="font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;" class="text-muted">Decided last 30 days</div>
+      <div style="font-family: var(--font-heading); font-weight: 800; font-size: 34px; line-height: 1.1;">{{ kpiDecided }}</div>
+      <div style="font-size: 12px;" class="text-muted">{{ kpiApprovalRate }}% approved</div>
+    </div>
+    <div class="ta-kpi">
+      <div style="font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;" class="text-muted">Median time to decide</div>
+      <div style="font-family: var(--font-heading); font-weight: 800; font-size: 34px; line-height: 1.1;">{{ kpiMedian }}</div>
+      <div style="font-size: 12px;" class="text-muted">Target: under 2 days</div>
+    </div>
+  </div>
+
+  <div style="margin: 0 32px; border-top: 2px solid var(--color-divider); border-bottom: 2px solid var(--color-divider); padding: 12px 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+    <div style="position: relative; flex: 1 1 260px; max-width: 340px;">
+      <input class="input" placeholder="Search employee, reason or note" value="{{ query }}" onInput="{{ onQuery }}" style="padding-left: 30px;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position: absolute; left: 8px; top: 10px; opacity: 0.55;"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+    </div>
+    <div class="seg" role="tablist">
+      <label class="seg-opt"><input type="radio" name="ta-status" checked="{{ isAll }}" onChange="{{ setAll }}" style="position: absolute; opacity: 0;">All <span style="opacity: 0.6; margin-left: 6px;">{{ countAll }}</span></label>
+      <label class="seg-opt"><input type="radio" name="ta-status" checked="{{ isPending }}" onChange="{{ setPending }}" style="position: absolute; opacity: 0;">Pending <span style="opacity: 0.6; margin-left: 6px;">{{ kpiPending }}</span></label>
+      <label class="seg-opt"><input type="radio" name="ta-status" checked="{{ isForwarded }}" onChange="{{ setForwarded }}" style="position: absolute; opacity: 0;">Forwarded</label>
+      <label class="seg-opt"><input type="radio" name="ta-status" checked="{{ isApproved }}" onChange="{{ setApproved }}" style="position: absolute; opacity: 0;">Approved</label>
+      <label class="seg-opt"><input type="radio" name="ta-status" checked="{{ isDeclined }}" onChange="{{ setDeclined }}" style="position: absolute; opacity: 0;">Declined</label>
+    </div>
+    <select class="input" style="width: auto; min-width: 200px;" value="{{ reason }}" onChange="{{ onReason }}">
+      <option value="all">All reasons</option>
+      <option value="Forgot to start Hubstaff tracker">Forgot to start tracker</option>
+      <option value="Worked offline or untracked (meetings, calls, on-site)">Worked offline or untracked</option>
+      <option value="Other">Other</option>
+    </select>
+    <select class="input" style="width: auto; min-width: 150px;" value="{{ period }}" onChange="{{ onPeriod }}">
+      <option value="all">All periods</option>
+      <option value="2026-08">2026-08</option>
+      <option value="2026-07">2026-07</option>
+      <option value="2026-06">2026-06</option>
+      <option value="2026-05">2026-05</option>
+      <option value="2026-04">2026-04</option>
+    </select>
+    <button class="btn btn-ghost" onClick="{{ clearFilters }}">Clear</button>
+  </div>
+
+  <div style="margin: 0 32px; display: flex; align-items: stretch; gap: 0; flex: 1; min-height: 0;">
+
+    <div style="flex: 1 1 auto; min-width: 0; padding-bottom: 32px;">
+      <sc-if value="{{ hasSelection }}" hint-placeholder-val="{{ false }}">
+        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--color-accent-100); border-bottom: 1px solid var(--color-divider);">
+          <strong style="font-size: 13px;">{{ selectedCount }} selected</strong>
+          <div style="display: flex; gap: 8px; margin-left: auto;">
+            <button class="btn btn-primary" style="justify-content: flex-start;" onClick="{{ bulkApprove }}">Approve</button>
+            <button class="btn btn-secondary" style="justify-content: flex-start;" onClick="{{ bulkForward }}">Forward to accounting</button>
+            <button class="btn btn-secondary" style="justify-content: flex-start;" onClick="{{ bulkDecline }}">Decline</button>
+            <button class="btn btn-ghost" onClick="{{ clearChecks }}">Cancel</button>
+          </div>
+        </div>
+      </sc-if>
+
+      <table class="table" style="table-layout: fixed;">
+        <thead>
+          <tr>
+            <th style="width: 34px; padding-right: 0;"><input type="checkbox" checked="{{ allChecked }}" onChange="{{ toggleAll }}" style="accent-color: var(--color-accent); width: 14px; height: 14px;"></th>
+            <th>Employee</th>
+            <th style="width: 108px;">Work date</th>
+            <th>Reason</th>
+            <th style="width: 86px; text-align: right;">Hours</th>
+            <th style="width: 108px;">Submitted</th>
+            <th style="width: 180px;">Status</th>
+            <th style="width: 92px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <sc-for list="{{ rows }}" as="row" hint-placeholder-count="7">
+            <tr class="ta-row" style="{{ row.style }}">
+              <td style="padding-right: 0;"><input type="checkbox" checked="{{ row.checked }}" onChange="{{ row.onCheck }}" style="accent-color: var(--color-accent); width: 14px; height: 14px;"></td>
+              <td style="cursor: pointer;" onClick="{{ row.onOpen }}">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="width: 6px; height: 6px; border-radius: 50%; flex: none; background: {{ row.dot }};"></span>
+                  <span style="font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ row.email }}</span>
+                </div>
+              </td>
+              <td style="cursor: pointer;" onClick="{{ row.onOpen }}"><span class="text-muted" style="font-variant-numeric: tabular-nums;">{{ row.workDate }}</span></td>
+              <td style="cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" onClick="{{ row.onOpen }}">{{ row.reason }}</td>
+              <td style="text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer;" onClick="{{ row.onOpen }}">{{ row.hours }}</td>
+              <td style="cursor: pointer;" onClick="{{ row.onOpen }}"><span class="text-muted" style="font-variant-numeric: tabular-nums;">{{ row.submitted }}</span></td>
+              <td style="cursor: pointer;" onClick="{{ row.onOpen }}"><span class="{{ row.tagClass }}">{{ row.statusLabel }}</span></td>
+              <td style="text-align: right;"><button class="btn btn-ghost" style="font-size: 13px;" onClick="{{ row.onOpen }}">{{ row.actionLabel }}</button></td>
+            </tr>
+          </sc-for>
+        </tbody>
+      </table>
+
+      <sc-if value="{{ isEmpty }}" hint-placeholder-val="{{ false }}">
+        <div style="padding: 48px 12px; text-align: left;">
+          <h4 style="margin: 0 0 4px;">No requests match these filters</h4>
+          <p class="text-muted" style="font-size: 13px; margin: 0 0 12px;">Try clearing the search or widening the period.</p>
+          <button class="btn btn-secondary" style="justify-content: flex-start;" onClick="{{ clearFilters }}">Clear filters</button>
+        </div>
+      </sc-if>
+
+      <div style="display: flex; align-items: center; gap: 8px; padding: 12px 0; font-size: 12px;" class="text-muted">
+        Showing {{ shownCount }} of {{ countAll }} requests
+      </div>
+    </div>
+
+    <sc-if value="{{ hasDetail }}" hint-placeholder-val="{{ true }}">
+      <aside style="flex: 0 0 400px; border-left: 2px solid var(--color-divider); padding: 16px 0 32px 20px; margin-left: 20px; align-self: flex-start; position: sticky; top: 74px;">
+        <div style="display: flex; align-items: flex-start; gap: 12px;">
+          <div>
+            <div style="font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-accent);">Request {{ detail.ref }}</div>
+            <h4 style="margin: 2px 0 0;">{{ detail.email }}</h4>
+          </div>
+          <button class="btn btn-icon btn-secondary" style="margin-left: auto;" onClick="{{ closeDetail }}" aria-label="Close">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+          </button>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--color-divider);">
+          <div>
+            <div style="font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;" class="text-muted">Hours requested</div>
+            <div style="font-family: var(--font-heading); font-weight: 800; font-size: 22px;">{{ detail.hours }}</div>
+          </div>
+          <div>
+            <div style="font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;" class="text-muted">Pay period</div>
+            <div style="font-family: var(--font-heading); font-weight: 800; font-size: 22px; font-variant-numeric: tabular-nums;">{{ detail.period }}</div>
+          </div>
+          <div style="grid-column: 1 / -1;">
+            <div style="font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;" class="text-muted">Time window</div>
+            <div style="font-variant-numeric: tabular-nums;">{{ detail.window }} · {{ detail.workDate }}</div>
+          </div>
+          <div style="grid-column: 1 / -1;">
+            <div style="font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;" class="text-muted">Reason</div>
+            <div>{{ detail.reason }}</div>
+          </div>
+        </div>
+
+        <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--color-divider);">
+          <div style="font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 6px;" class="text-muted">Employee explanation</div>
+          <p style="margin: 0; font-size: 14px; background: var(--color-surface); padding: 10px 12px;">{{ detail.note }}</p>
+        </div>
+
+        <div style="margin-top: 16px;">
+          <div style="font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 6px;" class="text-muted">Proof attached</div>
+          <div class="grayscale" style="height: 150px; background: var(--color-neutral-200); border: 1px solid var(--color-divider); display: flex; align-items: flex-end; padding: 8px;">
+            <span class="tag tag-neutral" style="background: var(--color-bg);">Screenshot · {{ detail.proof }}</span>
+          </div>
+        </div>
+
+        <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--color-divider);">
+          <div style="font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 8px;" class="text-muted">Decision trail</div>
+          <sc-for list="{{ detail.trail }}" as="step" hint-placeholder-count="2">
+            <div style="display: grid; grid-template-columns: 84px 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px solid color-mix(in srgb, #201e1d 12%, transparent);">
+              <span class="text-muted" style="font-size: 12px; font-variant-numeric: tabular-nums;">{{ step.date }}</span>
+              <span style="font-size: 13px;"><strong>{{ step.who }}</strong> {{ step.what }}</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <sc-if value="{{ detail.actionable }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 16px; display: flex; flex-direction: column; gap: 8px;">
+            <textarea class="input" placeholder="Note to the employee (optional)" style="min-height: 64px;"></textarea>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-primary" style="flex: 1; justify-content: flex-start;" onClick="{{ approveDetail }}">Approve {{ detail.hours }}</button>
+              <button class="btn btn-secondary" style="justify-content: flex-start;" onClick="{{ declineDetail }}">Decline</button>
+            </div>
+            <button class="btn btn-secondary btn-block" style="margin-top: 0;" onClick="{{ forwardDetail }}">Forward to accounting for second approval</button>
+          </div>
+        </sc-if>
+        <sc-if value="{{ detail.closed }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top: 16px; display: flex; gap: 8px; align-items: center;">
+            <span class="{{ detail.tagClass }}">{{ detail.statusLabel }}</span>
+            <button class="btn btn-ghost" style="margin-left: auto;" onClick="{{ retrieveDetail }}">Retrieve request</button>
+          </div>
+        </sc-if>
+      </aside>
+    </sc-if>
+  </div>
+
+  <footer style="margin-top: auto; border-top: 2px solid var(--color-divider); padding: 14px 32px; font-size: 12px; display: flex; gap: 8px;" class="text-muted">
+    <span>Developed by AI/API Team</span><span>/</span><span>Simple.biz © 2026</span>
+  </footer>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1600,&quot;height&quot;:1000}}">
+const DATA = [
+  { id: "TA-2412", email: "mirav@simple.biz", workDate: "2026-08-31", submitted: "2026-09-01", reason: "Forgot to start Hubstaff tracker", hours: 1.5, period: "2026-08", window: "9:00 AM – 10:30 AM", note: "Client call ran long, tracker was closed on my second machine.", proof: "calendar invite", status: "pending", trail: [{ date: "2026-09-01", who: "mirav@simple.biz", what: "submitted the request" }] },
+  { id: "TA-2409", email: "kaner@simple.biz", workDate: "2026-08-29", submitted: "2026-08-30", reason: "Worked offline or untracked (meetings, calls, on-site)", hours: 3.25, period: "2026-08", window: "1:00 PM – 4:15 PM", note: "On-site at the warehouse audit, no laptop access.", proof: "site sign-in sheet", status: "pending", trail: [{ date: "2026-08-30", who: "kaner@simple.biz", what: "submitted the request" }] },
+  { id: "TA-2405", email: "earlv@simple.biz", workDate: "2026-08-27", submitted: "2026-08-28", reason: "Other", hours: 0.75, period: "2026-08", window: "6:15 PM – 7:00 PM", note: "Covered an escalation after hours.", proof: "ticket #8841", status: "pending", trail: [{ date: "2026-08-28", who: "earlv@simple.biz", what: "submitted the request" }] },
+  { id: "TA-2402", email: "adriant@simple.biz", workDate: "2026-08-26", submitted: "2026-08-26", reason: "Forgot to start Hubstaff tracker", hours: 2, period: "2026-08", window: "8:00 AM – 10:00 AM", note: "Tracker did not launch after the update.", proof: "app error screenshot", status: "pending", trail: [{ date: "2026-08-26", who: "adriant@simple.biz", what: "submitted the request" }] },
+  { id: "TA-2398", email: "vincib@simple.biz", workDate: "2026-08-25", submitted: "2026-08-25", reason: "Worked offline or untracked (meetings, calls, on-site)", hours: 4.57, period: "2026-08", window: "10:00 AM – 2:34 PM", note: "Full day of client onboarding sessions.", proof: "meeting notes", status: "pending", trail: [{ date: "2026-08-25", who: "vincib@simple.biz", what: "submitted the request" }] },
+  { id: "TA-2391", email: "carla@simple.biz", workDate: "2026-08-24", submitted: "2026-08-24", reason: "Forgot to start Hubstaff tracker", hours: 1, period: "2026-08", window: "2:01 AM – 3:01 AM", note: "test", proof: "screenshot", status: "declined", trail: [{ date: "2026-08-24", who: "carla@simple.biz", what: "submitted the request" }, { date: "2026-08-27", who: "carla@simple.biz", what: "declined — explanation not sufficient" }, { date: "2026-08-27", who: "aliviah@simple.biz", what: "confirmed the decline as second approver" }] },
+  { id: "TA-2380", email: "kaner@simple.biz", workDate: "2026-08-19", submitted: "2026-08-20", reason: "Other", hours: 1.73, period: "2026-08", window: "5:00 PM – 6:44 PM", note: "Recovered a failed payroll import.", proof: "run log", status: "forwarded", trail: [{ date: "2026-08-20", who: "kaner@simple.biz", what: "submitted the request" }, { date: "2026-08-20", who: "carla@simple.biz", what: "forwarded to accounting for second approval" }] },
+  { id: "TA-2376", email: "vincib@simple.biz", workDate: "2026-08-19", submitted: "2026-08-24", reason: "Forgot to start Hubstaff tracker", hours: 4.57, period: "2026-08", window: "9:00 AM – 1:34 PM", note: "Tracker stayed paused all morning.", proof: "none", status: "declined", trail: [{ date: "2026-08-24", who: "vincib@simple.biz", what: "submitted the request" }, { date: "2026-08-24", who: "carla@simple.biz", what: "declined — no proof attached" }] },
+  { id: "TA-2361", email: "earlv@simple.biz", workDate: "2026-08-14", submitted: "2026-08-17", reason: "Forgot to start Hubstaff tracker", hours: 0.38, period: "2026-08", window: "11:00 AM – 11:23 AM", note: "Short standup outside the tracker.", proof: "calendar invite", status: "approved", trail: [{ date: "2026-08-17", who: "earlv@simple.biz", what: "submitted the request" }, { date: "2026-08-17", who: "carla@simple.biz", what: "approved" }, { date: "2026-08-18", who: "accounting@simple.biz", what: "approved as second approver" }] },
+  { id: "TA-2344", email: "carla@simple.biz", workDate: "2026-07-08", submitted: "2026-07-10", reason: "Forgot to start Hubstaff tracker", hours: 11.5, period: "2026-07", window: "8:00 AM – 7:30 PM", note: "Whole shift untracked after a device swap.", proof: "IT ticket", status: "declined", trail: [{ date: "2026-07-10", who: "carla@simple.biz", what: "submitted the request" }, { date: "2026-07-10", who: "carla@simple.biz", what: "declined — exceeds the 8h single-entry cap" }] },
+  { id: "TA-2298", email: "adriant@simple.biz", workDate: "2026-06-11", submitted: "2026-06-11", reason: "Forgot to start Hubstaff tracker", hours: 7, period: "2026-06", window: "9:00 AM – 4:00 PM", note: "Offsite training day.", proof: "training agenda", status: "approved", trail: [{ date: "2026-06-11", who: "adriant@simple.biz", what: "submitted the request" }, { date: "2026-06-12", who: "carla@simple.biz", what: "approved" }, { date: "2026-06-13", who: "accounting@simple.biz", what: "approved as second approver" }] },
+  { id: "TA-2255", email: "carla@simple.biz", workDate: "2026-04-09", submitted: "2026-07-02", reason: "Worked offline or untracked (meetings, calls, on-site)", hours: 10.5, period: "2026-04", window: "7:30 AM – 6:00 PM", note: "Backfill for an old on-site week.", proof: "none", status: "declined", trail: [{ date: "2026-07-02", who: "carla@simple.biz", what: "submitted the request" }, { date: "2026-07-02", who: "carla@simple.biz", what: "declined — submitted outside the 30-day window" }] }
+];
+
+const META = {
+  pending: { label: "Pending review", tag: "tag tag-outline", dot: "var(--color-accent)", action: "Review" },
+  forwarded: { label: "Forwarded to accounting", tag: "tag tag-accent", dot: "var(--color-neutral-600)", action: "View" },
+  approved: { label: "Approved", tag: "tag tag-neutral", dot: "var(--color-neutral-400)", action: "View" },
+  declined: { label: "Declined by you", tag: "tag tag-neutral", dot: "var(--color-neutral-400)", action: "View" }
+};
+
+class Component extends DCLogic {
+  state = { query: "", status: "all", reason: "all", period: "all", checked: {}, openId: "TA-2412", data: DATA };
+
+  fmt(h) { return (Math.round(h * 100) / 100) + " h"; }
+
+  filtered() {
+    const q = this.state.query.trim().toLowerCase();
+    return this.state.data.filter(r => {
+      if (this.state.status !== "all" && r.status !== this.state.status) return false;
+      if (this.state.reason !== "all" && r.reason !== this.state.reason) return false;
+      if (this.state.period !== "all" && r.period !== this.state.period) return false;
+      if (q && !(r.email + " " + r.reason + " " + r.note + " " + r.id).toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }
+
+  setStatus(s) { this.setState({ status: s }); }
+  setField(k, v) { this.setState({ [k]: v }); }
+
+  act(ids, status, what) {
+    const set = new Set(ids);
+    this.setState(st => ({
+      checked: {},
+      data: st.data.map(r => set.has(r.id) ? { ...r, status, trail: r.trail.concat([{ date: "2026-09-02", who: "carla@simple.biz", what }]) } : r)
+    }));
+  }
+
+  checkedIds() { return Object.keys(this.state.checked).filter(k => this.state.checked[k]); }
+
+  renderVals() {
+    const rows = this.filtered();
+    const pending = this.state.data.filter(r => r.status === "pending");
+    const decided = this.state.data.filter(r => r.status !== "pending");
+    const approved = this.state.data.filter(r => r.status === "approved").length;
+    const sel = this.state.data.find(r => r.id === this.state.openId);
+    const checkedIds = this.checkedIds();
+    const m = sel ? META[sel.status] : null;
+
+    return {
+      kpiPending: pending.length,
+      kpiPendingHours: Math.round(pending.reduce((a, r) => a + r.hours, 0) * 10) / 10,
+      kpiSecond: this.state.data.filter(r => r.status === "forwarded").length,
+      kpiDecided: decided.length,
+      kpiApprovalRate: decided.length ? Math.round((approved / decided.length) * 100) : 0,
+      kpiMedian: "1.8 d",
+
+      query: this.state.query,
+      onQuery: e => this.setField("query", e.target.value),
+      reason: this.state.reason,
+      onReason: e => this.setField("reason", e.target.value),
+      period: this.state.period,
+      onPeriod: e => this.setField("period", e.target.value),
+      isAll: this.state.status === "all",
+      isPending: this.state.status === "pending",
+      isForwarded: this.state.status === "forwarded",
+      isApproved: this.state.status === "approved",
+      isDeclined: this.state.status === "declined",
+      setAll: () => this.setStatus("all"),
+      setPending: () => this.setStatus("pending"),
+      setForwarded: () => this.setStatus("forwarded"),
+      setApproved: () => this.setStatus("approved"),
+      setDeclined: () => this.setStatus("declined"),
+      clearFilters: () => this.setState({ query: "", status: "all", reason: "all", period: "all" }),
+
+      countAll: this.state.data.length,
+      shownCount: rows.length,
+      isEmpty: rows.length === 0,
+      openOldest: () => { const p = pending[pending.length - 1]; if (p) this.setState({ openId: p.id }); },
+
+      rows: rows.map(r => {
+        const meta = META[r.status];
+        const on = r.id === this.state.openId;
+        return {
+          email: r.email, workDate: r.workDate, submitted: r.submitted, reason: r.reason,
+          hours: this.fmt(r.hours), statusLabel: meta.label, tagClass: meta.tag, dot: meta.dot,
+          actionLabel: meta.action,
+          checked: !!this.state.checked[r.id],
+          style: on ? "background: var(--color-accent-100); box-shadow: inset 2px 0 0 var(--color-accent);" : "",
+          onCheck: e => { const v = e.target.checked; this.setState(st => ({ checked: { ...st.checked, [r.id]: v } })); },
+          onOpen: () => this.setState({ openId: r.id })
+        };
+      }),
+
+      allChecked: rows.length > 0 && rows.every(r => this.state.checked[r.id]),
+      toggleAll: e => {
+        const v = e.target.checked, next = {};
+        rows.forEach(r => { next[r.id] = v; });
+        this.setState(st => ({ checked: { ...st.checked, ...next } }));
+      },
+      hasSelection: checkedIds.length > 0,
+      selectedCount: checkedIds.length,
+      clearChecks: () => this.setState({ checked: {} }),
+      bulkApprove: () => this.act(checkedIds, "approved", "approved in bulk review"),
+      bulkDecline: () => this.act(checkedIds, "declined", "declined in bulk review"),
+      bulkForward: () => this.act(checkedIds, "forwarded", "forwarded to accounting"),
+
+      hasDetail: !!sel,
+      closeDetail: () => this.setState({ openId: null }),
+      detail: sel ? {
+        ref: sel.id, email: sel.email, hours: this.fmt(sel.hours), period: sel.period,
+        window: sel.window, workDate: sel.workDate, reason: sel.reason, note: sel.note,
+        proof: sel.proof, trail: sel.trail,
+        actionable: sel.status === "pending",
+        closed: sel.status !== "pending",
+        statusLabel: m.label, tagClass: m.tag
+      } : null,
+      approveDetail: () => this.act([this.state.openId], "approved", "approved"),
+      declineDetail: () => this.act([this.state.openId], "declined", "declined"),
+      forwardDetail: () => this.act([this.state.openId], "forwarded", "forwarded to accounting for second approval"),
+      retrieveDetail: () => this.act([this.state.openId], "pending", "retrieved the request for re-review")
+    };
+  }
+}
+
+</script>
+</body>
+</html>

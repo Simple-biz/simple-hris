@@ -62,7 +62,7 @@ import { HSL_DEPT_KEYS, canAccessHslDept, type HslDeptKey } from '@/lib/hsl-bonu
 import {
   isOutstanding,
   useBonusScoringQueue,
-  type BonusScoringQueue,
+  type BonusScoringItem,
   type ScoringState,
 } from '@/lib/manager/use-bonus-scoring-queue';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
@@ -89,6 +89,7 @@ import {
 } from '@/hooks/useManagerCachedState';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import PayrollProcessingLock from '@/components/payroll/PayrollProcessingLock';
+import { KpiCalculatorSwitch } from './kpi-calculator-switch';
 import { usePagesVisibility } from '@/hooks/usePagesVisibility';
 import { pageLabel } from '@/lib/pages/visibility';
 import UnderConstruction from '@/components/common/UnderConstruction';
@@ -702,61 +703,60 @@ export default function ManagerApp() {
                 }
 
                 // Both calculators have their own sticky toolbar; stacking them
-                // collides. When a manager owns both, show ONE at a time and
-                // default to whichever calculator owns their first-assigned dept
-                // (assignment order is preserved in `managed`).
+                // collides, so a manager who owns both sees ONE at a time.
+                //
+                // **Departments is the default, and comes first** (Kane,
+                // 2026-09-02). This used to scan `managed` in assignment order
+                // and open whichever calculator owned the first-assigned dept,
+                // which meant two managers with the same two calculators could
+                // land on different screens for a reason neither of them could
+                // see. A fixed default is one less thing to explain, and the
+                // switch is now right there in the toolbar. The old
+                // `firstAssigned` scan (and its "primary" marker) went with it.
                 const both = hslVisible && deptVisible;
-                const firstAssigned: 'hsl' | 'dept' = (() => {
-                  if (!both) return hslVisible ? 'hsl' : 'dept';
-                  for (const dStr of managed) {
-                    if (dStr.toLowerCase().startsWith('hsl:')) return 'hsl';
-                    const k = normalizeDeptToKey(dStr);
-                    if (k && k in DEPT_INPUT_CONFIG) return 'dept';
-                    if (!k && !dStr.includes(':') && isKpiCalculatorDeptKey(slugifyDeptKey(dStr))) return 'dept';
-                  }
-                  return 'hsl';
-                })();
-                const active: 'hsl' | 'dept' = both ? (kpiCalc ?? firstAssigned) : firstAssigned;
+                const active: 'hsl' | 'dept' = both
+                  ? (kpiCalc ?? 'dept')
+                  : deptVisible
+                    ? 'dept'
+                    : 'hsl';
+
+                // The switch used to be its own bar stacked above the
+                // calculator. It now rides INSIDE whichever calculator is
+                // showing, in the toolbar row that already holds that screen's
+                // search box (Kane, 2026-09-02) — a full row of page chrome to
+                // hold two buttons, directly above a toolbar, read as belonging
+                // to the shell rather than to the work. Rendered once here and
+                // handed to both, so the two calculators cannot drift into two
+                // different-looking navigations.
+                // Rendered once and handed to both calculators (and their
+                // skeletons), so the two cannot drift into two different-looking
+                // navigations. The component owns the sliding indicator — see
+                // `kpi-calculator-switch.tsx` for why it must be a `layoutId`.
+                const calculatorSwitch = both ? (
+                  <KpiCalculatorSwitch active={active} onChange={setKpiCalc} />
+                ) : null;
 
                 return (
                   <div className="flex min-h-0 flex-col">
-                    {both && (
-                      <div role="tablist" aria-label="KPI calculator views" className="flex items-center gap-2 border-b border-zinc-200/80 bg-white px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-950 sm:px-6">
-                        <span className="mr-1 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-400">
-                          Calculator
-                        </span>
-                        {([
-                          { id: 'hsl' as const, label: 'HSL Branches' },
-                          { id: 'dept' as const, label: 'Departments' },
-                        ]).map((t) => (
-                          <button
-                            key={t.id}
-                            type="button"
-                            role="tab"
-                            aria-selected={active === t.id}
-                            onClick={() => setKpiCalc(t.id)}
-                            className={cn(
-                              'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                              active === t.id
-                                ? 'border-transparent bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
-                                : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300 dark:hover:bg-zinc-800/60',
-                            )}
-                          >
-                            {t.label}
-                            {t.id === firstAssigned && (
-                              <span className={cn('ml-1.5 font-mono text-[9px]', active === t.id ? 'opacity-60' : 'text-zinc-400')}>
-                                primary
-                              </span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                    {/* A hard swap, on purpose. A crossfade was tried here and
+                        pulled (Kane, 2026-09-02: the switch "should not fade
+                        out"): the switch lives INSIDE the calculator's toolbar,
+                        so fading the calculator faded the navigation with it,
+                        and the fade was covering for a jump the indicator no
+                        longer makes. Both calculators now paint the identical
+                        header, so the only thing that visibly moves on a swap is
+                        the switch's pill gliding to the other tab — which its
+                        `layoutId` carries across this unmount/mount. No wrapper,
+                        no transform: a transformed ancestor re-anchors
+                        `position: fixed`, which is what forced the HSL branch
+                        overlay into a portal in the first place. */}
                     {active === 'hsl' && hslVisible && (
                       <HslBonusCalculator
                         viewerEmail={viewerEmail}
                         managedDepts={managed}
                         isElevated={elevated}
+                        calculatorSwitch={calculatorSwitch}
+                        dispatchLock={payrollProcessing}
                         initialFilter={
                           kpiFocus?.kind === 'hsl' ? (kpiFocus.key as HslDeptKey) : undefined
                         }
@@ -768,6 +768,8 @@ export default function ManagerApp() {
                         teamMembers={teamMembers}
                         managedDepts={managed}
                         isElevated={elevated}
+                        calculatorSwitch={calculatorSwitch}
+                        dispatchLock={payrollProcessing}
                         initialOpenDept={kpiFocus?.kind === 'catalog' ? kpiFocus.key : null}
                       />
                     )}
@@ -808,12 +810,13 @@ interface OverviewProps {
   teamMembers: EmployeeRow[];
   teamCount: number | null;
   teamGate: ManagerTeamGate;
-  /** Whether the KPI Calculator tab is available to this viewer — the "Bonuses
-   *  to score" box is hidden when it isn't (nothing to click through to). */
+  /** Whether the KPI Calculator tab is available to this viewer — the bonus
+   *  rows and the scoring stat are hidden when it isn't (nothing to click
+   *  through to). */
   canScoreBonuses: boolean;
   /** False while feature permissions / the department gate are still resolving.
-   *  `canScoreBonuses` isn't trustworthy until then, so the box holds a skeleton
-   *  rather than flashing "no access" at a manager who has it. */
+   *  `canScoreBonuses` isn't trustworthy until then, so the cell holds a
+   *  skeleton rather than flashing "no access" at a manager who has it. */
   scoringGateReady: boolean;
   onJumpToApprovals: () => void;
   onJumpToTeam: () => void;
@@ -822,6 +825,24 @@ interface OverviewProps {
   onJumpToScoring: (dept?: { kind: 'hsl' | 'catalog'; key: string }) => void;
 }
 
+/**
+ * The manager's front page, rebuilt 2026-09-02: a greeting, a divided band of
+ * four numbers, and then the only two questions this page answers — *what needs
+ * me* on the left, *who is on my roster* on the right.
+ *
+ * Two streams that used to be separate cards (pending approvals, bonus
+ * departments still owed to payroll) are merged into one ordered "Needs you"
+ * list, so the manager reads one queue instead of triaging across panels.
+ *
+ * The accent is the theme's own `--secondary` blue; `--primary` orange is
+ * reserved app-wide and, at 2.7:1 on these surfaces, could not carry small text
+ * at AA. Presence stays emerald because "online" is its own meaning, not an
+ * accent. Radii follow the app's `--radius`, matching the sibling tabs.
+ *
+ * Nothing here decides anything. Every row is a link into the surface that owns
+ * the decision — approvals to the Time Adjustments queue where the evidence
+ * photo lives, bonus rows to that department's KPI Calculator card.
+ */
 function Overview({
   viewerEmail,
   pendingApprovals,
@@ -875,105 +896,206 @@ function Overview({
   );
 
   // What the KPI Calculator still owes payroll for the live pay week. Shared by
-  // the tile and the "Bonuses to score" panel below so both read one fetch.
+  // the stat cell and the bonus rows below so both read one fetch.
   const scoring = useBonusScoringQueue({
     managedDepts: teamGate.kind === 'department' ? teamGate.departments : [],
     isElevated: teamGate.kind === 'elevated',
     ready: scoringGateReady && canScoreBonuses && teamGate.kind !== 'loading',
   });
-  // Keep the card's slot while the gate resolves; drop it once we know the
+  // Keep the cell's slot while the gate resolves; drop it once we know the
   // viewer has no KPI Calculator to click through to.
   const showScoring = !scoringGateReady || canScoreBonuses;
 
-  // Warm, time-of-day welcome. Computed only after mount so the first client
-  // render matches the server (UTC) and we don't trip the Manila-vs-UTC
-  // hydration mismatch (React #418).
-  const welcome = useMemo(() => {
-    if (!mounted) return "Here's everything you need to look after your team today.";
-    const h = new Date().getHours();
-    const part = h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening';
-    return `Good ${part} — here's everything you need to look after your team today.`;
-  }, [mounted]);
+  // Who on this roster is tracking time right now. One presence read feeds both
+  // the "Active right now" number and the finder's default list.
+  const onlineEmails = useOnlineEmails();
+  const isOnline = React.useCallback(
+    (m: EmployeeRow) => {
+      const w = normEmail(m.work_email ?? '');
+      const p = normEmail(m.personal_email ?? '');
+      return (!!w && onlineEmails.has(w)) || (!!p && onlineEmails.has(p));
+    },
+    [onlineEmails],
+  );
+  const activeMembers = useMemo(() => teamMembers.filter(isOnline), [teamMembers, isOnline]);
+
+  // The two to-do streams, merged into one ordered list. Approvals first: they
+  // are the only rows on this page that hold up somebody's pay.
+  const needsItems = useMemo<NeedsItem[]>(() => {
+    const out: NeedsItem[] = pendingRequests.map((r) => ({
+      kind: 'approval',
+      id: `approval:${r.id}`,
+      row: r,
+    }));
+    if (showScoring && !scoring.weekUnresolved) {
+      for (const d of scoring.items) {
+        // `nothing` means the department has no bonuses assigned this week —
+        // not a to-do, and listing it would read as a false debt.
+        if (d.state === 'nothing') continue;
+        out.push({ kind: 'bonus', id: `bonus:${d.kind}:${d.key}`, dept: d });
+      }
+    }
+    return out;
+  }, [pendingRequests, showScoring, scoring.items, scoring.weekUnresolved]);
+
+  const bonusCount = needsItems.filter((i) => i.kind === 'bonus').length;
+  const [filter, setFilter] = useState<NeedsFilter>('all');
+  // A filter must never be the reason a row is invisible: when the stream the
+  // manager picked empties out, fall back to everything rather than showing a
+  // bare "nothing here" over rows that do exist.
+  const effectiveFilter: NeedsFilter =
+    (filter === 'approvals' && pendingRequests.length === 0) ||
+    (filter === 'bonuses' && bonusCount === 0)
+      ? 'all'
+      : filter;
+  const visibleItems = useMemo(
+    () =>
+      effectiveFilter === 'all'
+        ? needsItems
+        : needsItems.filter((i) =>
+            effectiveFilter === 'approvals' ? i.kind === 'approval' : i.kind === 'bonus',
+          ),
+    [needsItems, effectiveFilter],
+  );
+
+  const payWeek =
+    showScoring && scoring.weekStart ? fmtPayWeek(scoring.weekStart, scoring.weekEnd) : null;
+
+  // One honest sentence about the state of the desk. Built from the same counts
+  // the band prints, so it can never contradict them.
+  const summary = useMemo(() => {
+    const parts: string[] = [];
+    parts.push(
+      pendingApprovals === 0
+        ? 'Nothing is waiting on your sign-off'
+        : `${pendingApprovals} ${pendingApprovals === 1 ? 'request is' : 'requests are'} waiting on your sign-off`,
+    );
+    if (showScoring && !scoring.loading) {
+      if (scoring.weekUnresolved) parts.push('bonus scoring opens once this week’s hours land');
+      else if (scoring.items.length > 0)
+        parts.push(
+          scoring.outstanding === 0
+            ? 'every bonus department is in'
+            : `${scoring.outstanding} bonus ${scoring.outstanding === 1 ? 'department still needs' : 'departments still need'} scoring`,
+        );
+    }
+    if (activeMembers.length > 0)
+      parts.push(
+        `${activeMembers.length} ${activeMembers.length === 1 ? 'person is' : 'people are'} tracking time right now`,
+      );
+    if (parts.length === 1) return `${parts[0]}.`;
+    return `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}.`;
+  }, [
+    pendingApprovals,
+    showScoring,
+    scoring.loading,
+    scoring.weekUnresolved,
+    scoring.items.length,
+    scoring.outstanding,
+    activeMembers.length,
+  ]);
+
+  const rosterHint =
+    teamGate.kind === 'loading'
+      ? 'Loading roster…'
+      : teamGate.kind === 'error'
+        ? 'Could not load roster'
+        : teamGate.kind === 'department' && teamGate.departments.length === 0
+          ? 'No departments assigned yet'
+          : teamGate.kind === 'department'
+            ? teamGate.departments.map(formatDeptLabel).join(', ')
+            : teamCount === 0
+              ? 'No matching employees'
+              : 'Active roster (org-wide)';
 
   return (
-    <div className="flex w-full flex-1 flex-col gap-4 px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
-      {/* Gradient hero — the whole greeting lives in one calm band */}
-      <header className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-900 px-5 py-7 shadow-lg shadow-blue-900/20 sm:px-8">
-        <style>{`
-          @keyframes wave {
-            0%, 60%, 100% { transform: rotate(0deg); }
-            10%, 30%      { transform: rotate(14deg); }
-            20%           { transform: rotate(-8deg); }
-            40%           { transform: rotate(10deg); }
-            50%           { transform: rotate(-4deg); }
-          }
-        `}</style>
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-sky-300/25 blur-3xl"
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -bottom-24 left-1/4 h-52 w-52 rounded-full bg-violet-400/20 blur-3xl"
-        />
-        <div className="relative flex items-start justify-between gap-4">
+    <div className="ov-root flex w-full flex-1 flex-col gap-3 px-4 py-4 sm:px-6 lg:min-h-0 lg:overflow-hidden lg:px-8 lg:py-5">
+      {/* Browser surfaces the page didn't draw — selection, caret, focus ring
+          and the finder's scrollbar — carry the accent instead of the UA
+          default. Scoped to this subtree so no other tab inherits it. */}
+      <style>{`
+        .ov-root ::selection { background: hsl(var(--secondary) / 0.2); color: inherit; }
+        .ov-root { caret-color: hsl(var(--secondary)); }
+        .ov-root :focus-visible {
+          outline: 2px solid hsl(var(--secondary));
+          outline-offset: 2px;
+          border-radius: 0.375rem;
+        }
+        .ov-scroll { scrollbar-width: thin; scrollbar-color: hsl(var(--secondary) / 0.3) transparent; }
+        .ov-scroll::-webkit-scrollbar { width: 6px; }
+        .ov-scroll::-webkit-scrollbar-track { background: transparent; }
+        .ov-scroll::-webkit-scrollbar-thumb {
+          background: hsl(var(--secondary) / 0.3);
+          border-radius: 999px;
+        }
+        .ov-scroll:hover::-webkit-scrollbar-thumb { background: hsl(var(--secondary) / 0.5); }
+      `}</style>
+
+      {/* ── Greeting ─────────────────────────────────────────────────────── */}
+      <header className="shrink-0 rounded-2xl border border-zinc-200/80 bg-secondary/[0.06] px-5 py-5 sm:px-8 sm:py-6 dark:border-zinc-800 dark:bg-secondary/[0.08]">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-10">
           <div className="min-w-0">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-blue-100/80">
-              Manager workspace
-            </div>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight text-white sm:text-3xl">
-              Hi {greeting}{' '}
-              <span className="inline-block origin-[70%_70%] motion-safe:animate-[wave_1.6s_ease-in-out_1]" aria-hidden>
-                👋
-              </span>
+            {/* A dateline, not a label: it names the pay week every number on
+                this page is scoped to. Omitted entirely when no week is
+                resolved — a decorative "Manager workspace" line would say
+                nothing the sidebar hasn't already said. */}
+            {payWeek && (
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-secondary">
+                Pay week · {payWeek}
+              </p>
+            )}
+            <h1 className="text-[clamp(1.5rem,2.9vw,2rem)] font-bold leading-[1.1] tracking-[-0.03em] text-slate-900 text-balance dark:text-slate-50">
+              Hi {greeting}
             </h1>
-            <p className="mt-1.5 max-w-lg text-sm text-blue-100/85">{welcome}</p>
+            <p className="mt-2 max-w-[52ch] text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+              {summary}
+            </p>
           </div>
-          <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-3 py-1.5 text-[11px] font-medium text-white backdrop-blur-sm sm:inline-flex">
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-300" />
-            Live
-          </span>
+
+          <div className="flex shrink-0 flex-col gap-2 sm:flex-row lg:w-[17rem] lg:flex-col">
+            <button
+              type="button"
+              onClick={onJumpToApprovals}
+              className="group inline-flex items-center justify-between gap-3 rounded-xl bg-secondary px-4 py-2.5 text-sm font-semibold text-secondary-foreground shadow-sm transition hover:brightness-110 sm:flex-1 lg:flex-none"
+            >
+              {pendingApprovals > 0 ? 'Work the queue' : 'Open approvals'}
+              <span className="inline-flex items-center gap-2">
+                {pendingApprovals > 0 && (
+                  <span className="tabular-nums opacity-80">{pendingApprovals}</span>
+                )}
+                <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+              </span>
+            </button>
+            {showScoring && (
+              <button
+                type="button"
+                onClick={() => onJumpToScoring()}
+                className="group inline-flex items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 sm:flex-1 lg:flex-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:hover:border-slate-600 dark:hover:bg-slate-900"
+              >
+                Open KPI calculator
+                <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
-      {/* Three numbers, nothing else */}
-      <section className="grid gap-3 sm:grid-cols-3">
-        <StatTile
+      {/* ── The four numbers ─────────────────────────────────────────────── */}
+      <section
+        aria-label="Your week at a glance"
+        className="grid shrink-0 grid-cols-2 overflow-hidden rounded-2xl border border-zinc-200/80 bg-white lg:grid-cols-4 dark:border-zinc-800 dark:bg-zinc-950"
+      >
+        <StatCell
           label="Pending approvals"
           value={pendingApprovals}
           hint={pendingApprovals === 0 ? 'Nothing in your queue' : 'Awaiting your sign-off'}
-          icon={ClipboardCheck}
-          accent="blue"
+          urgent={pendingApprovals > 0}
           onClick={onJumpToApprovals}
         />
-        <StatTile
-          label="My team"
-          value={teamCount === null ? '—' : teamCount}
-          hint={
-            teamGate.kind === 'loading'
-              ? 'Loading roster…'
-              : teamGate.kind === 'error'
-                ? 'Could not load roster'
-                : teamGate.kind === 'department' && teamGate.departments.length === 0
-                  ? 'No departments assigned yet — ask an admin'
-                  : teamGate.kind === 'department'
-                    ? teamGate.departments.join(', ')
-                    : teamCount === 0
-                      ? 'No matching employees in roster'
-                      : 'Active roster (org-wide)'
-          }
-          icon={Users}
-          accent="indigo"
-          onClick={onJumpToTeam}
-        />
-        <StatTile
+        <StatCell
           label="Bonuses to score"
           value={
-            !showScoring
-              ? '—'
-              : scoring.loading || scoring.weekUnresolved
-                ? '—'
-                : scoring.outstanding
+            !showScoring || scoring.loading || scoring.weekUnresolved ? '—' : scoring.outstanding
           }
           hint={
             !showScoring
@@ -981,245 +1103,599 @@ function Overview({
               : scoring.loading
                 ? 'Checking this pay cycle…'
                 : scoring.weekUnresolved
-                  ? 'Waiting on this week’s Hubstaff upload'
+                  ? 'Waiting on this week’s hours'
                   : scoring.items.length === 0
                     ? 'No bonus departments assigned'
                     : scoring.outstanding === 0
-                      ? `All submitted · ${fmtPayWeek(scoring.weekStart, scoring.weekEnd)}`
-                      : `${scoring.outstanding === 1 ? 'Department' : 'Departments'} left · ${fmtPayWeek(scoring.weekStart, scoring.weekEnd)}`
+                      ? `All ${scoring.items.length} submitted`
+                      : `of ${scoring.items.length} still open`
           }
-          icon={Sparkles}
-          accent={showScoring && scoring.outstanding > 0 ? 'amber' : 'slate'}
+          urgent={showScoring && !scoring.loading && scoring.outstanding > 0}
           onClick={showScoring ? () => onJumpToScoring() : undefined}
         />
+        <StatCell
+          label="Active right now"
+          value={teamGate.kind === 'loading' ? '—' : activeMembers.length}
+          hint={activeMembers.length === 0 ? 'Nobody tracking time' : 'Tracking time this hour'}
+          live={activeMembers.length > 0}
+        />
+        <StatCell
+          label="On your roster"
+          value={teamCount === null ? '—' : teamCount.toLocaleString('en-US')}
+          hint={rosterHint}
+          onClick={onJumpToTeam}
+        />
       </section>
 
-      {/* Plain panels — what needs you, who's around, and what payroll is still
-          waiting on. `flex-1` lets them stretch to the bottom of the viewport
-          instead of floating mid-page. */}
-      <section
-        className={cn('grid flex-1 gap-4 lg:grid-cols-2', showScoring && 'xl:grid-cols-3')}
-      >
-        <ApprovalsPanel
-          requests={pendingRequests}
+      {/* ── Work + finder ────────────────────────────────────────────────── */}
+      <div className="grid flex-1 grid-cols-1 gap-3 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_21rem] xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <NeedsYouPanel
+          items={visibleItems}
+          totalCount={needsItems.length}
+          approvalCount={pendingRequests.length}
+          bonusCount={bonusCount}
+          filter={effectiveFilter}
+          onFilter={setFilter}
           signedUrls={pendingSignedUrls}
-          loading={requestsLoading}
-          onReview={onJumpToApprovals}
+          loading={requestsLoading || (showScoring && scoring.loading)}
+          mounted={mounted}
+          weekUnresolved={showScoring && scoring.weekUnresolved}
+          scoringError={showScoring ? scoring.error : null}
+          onReviewApproval={onJumpToApprovals}
+          onOpenScoring={onJumpToScoring}
         />
-        <TeamGlancePanel
+        <PersonFinder
           members={teamMembers}
+          activeMembers={activeMembers}
+          totalCount={teamCount}
           loading={teamGate.kind === 'loading'}
-          onOpenTeam={onJumpToTeam}
           onViewEmployee={onViewEmployee}
+          onOpenTeam={onJumpToTeam}
         />
-        {showScoring && (
-          <BonusScoringPanel
-            queue={scoring}
-            // Third card in a two-column grid: span the row on lg so it doesn't
-            // sit as a lonely half-width box, then take its own column at xl.
-            className="lg:col-span-2 xl:col-span-1"
-            onOpenCalculator={onJumpToScoring}
-          />
-        )}
-      </section>
+      </div>
     </div>
   );
 }
 
-// ─── Overview: shared panel shell ────────────────────────────────────────────
+// ─── Overview: one number in the band ────────────────────────────────────────
 
-/** Plain card: gradient hairline, icon + title, body, one full-width action. */
-function OverviewPanel({
-  icon: Icon,
-  title,
-  meta,
-  gradient,
-  action,
-  className,
-  children,
+/**
+ * A cell in the stat band, not a card of its own: the band's hairlines separate
+ * it, so it carries no border or shadow. Numerals are tabular so the four values
+ * hold a common width as they change.
+ */
+function StatCell({
+  label,
+  value,
+  hint,
+  urgent,
+  live,
+  onClick,
 }: {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  meta?: React.ReactNode;
-  /** Tailwind `from-… to-…` pair, reused for the hairline, chip and button. */
-  gradient: string;
-  action?: { label: string; onClick: () => void };
-  /** Grid placement from the caller (column spans). */
-  className?: string;
-  children: React.ReactNode;
+  label: string;
+  value: number | string;
+  hint: string;
+  urgent?: boolean;
+  live?: boolean;
+  onClick?: () => void;
 }) {
+  const Wrapper = onClick ? 'button' : 'div';
   return (
-    <div
+    <Wrapper
+      type={onClick ? 'button' : undefined}
+      onClick={onClick}
       className={cn(
-        'flex min-h-[17rem] flex-col overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950',
-        className,
+        'group relative border-zinc-200/80 px-5 py-4 text-left transition-colors dark:border-zinc-800',
+        // Interior hairlines only — the band's own radius supplies the edges.
+        '[&:nth-child(odd)]:border-r [&:nth-child(-n+2)]:border-b',
+        'lg:[&:nth-child(n)]:border-b-0 lg:[&:nth-child(n)]:border-r lg:[&:last-child]:border-r-0',
+        onClick && 'cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900/60',
       )}
     >
-      <div className={cn('h-1 w-full shrink-0 bg-gradient-to-r', gradient)} />
-      <div className="flex shrink-0 items-center justify-between gap-2 px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <span
-            className={cn(
-              'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-white shadow-sm',
-              gradient,
-            )}
-          >
-            <Icon className="h-3.5 w-3.5" />
+      <div className="flex items-center gap-1.5">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600 dark:text-zinc-400">
+          {label}
+        </span>
+        {live && (
+          <span className="relative flex h-1.5 w-1.5" aria-hidden>
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
           </span>
-          <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            {title}
-          </span>
-        </div>
-        {meta}
+        )}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col px-4 pb-4">{children}</div>
-      {action && (
-        <div className="shrink-0 px-4 pb-4">
-          <button
-            type="button"
-            onClick={action.onClick}
-            className={cn(
-              'inline-flex w-full items-center justify-center gap-1 rounded-lg bg-gradient-to-r px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:brightness-110',
-              gradient,
-            )}
-          >
-            {action.label}
-            <ChevronRight className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
-    </div>
+      <div
+        className={cn(
+          'mt-1 text-[clamp(1.5rem,2.6vw,2rem)] font-bold leading-none tabular-nums tracking-[-0.035em]',
+          urgent ? 'text-secondary' : 'text-zinc-900 dark:text-zinc-50',
+        )}
+      >
+        {value}
+      </div>
+      <div className="mt-1 truncate text-[11px] text-zinc-600 dark:text-zinc-400" title={hint}>
+        {hint}
+      </div>
+    </Wrapper>
   );
 }
 
-// ─── Overview: pending approvals ─────────────────────────────────────────────
+// ─── Overview: what needs you ────────────────────────────────────────────────
 
-/** How many pending rows the Overview previews before deferring to the queue. */
-const APPROVALS_PREVIEW = 6;
+/** One row of the merged to-do list. Approvals and bonus scoring only. */
+type NeedsItem =
+  | { kind: 'approval'; id: string; row: TimeAdjustmentRow }
+  | { kind: 'bonus'; id: string; dept: BonusScoringItem };
 
-function ApprovalsPanel({
-  requests,
+type NeedsFilter = 'all' | 'approvals' | 'bonuses';
+
+/** How many rows the panel shows before deferring to the owning surface. */
+const NEEDS_PREVIEW = 8;
+
+/** "2 days waiting" / "Today" — how long a request has sat. Client-only. */
+function waitedLabel(iso: string): string | null {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return null;
+  const days = Math.floor((Date.now() - then) / 86_400_000);
+  if (days <= 0) return 'Today';
+  return `${days} ${days === 1 ? 'day' : 'days'} waiting`;
+}
+
+function NeedsYouPanel({
+  items,
+  totalCount,
+  approvalCount,
+  bonusCount,
+  filter,
+  onFilter,
   signedUrls,
   loading,
-  onReview,
+  mounted,
+  weekUnresolved,
+  scoringError,
+  onReviewApproval,
+  onOpenScoring,
 }: {
-  requests: TimeAdjustmentRow[];
+  items: NeedsItem[];
+  totalCount: number;
+  approvalCount: number;
+  bonusCount: number;
+  filter: NeedsFilter;
+  onFilter: (f: NeedsFilter) => void;
   signedUrls: Record<string, string>;
   loading: boolean;
-  onReview: () => void;
+  mounted: boolean;
+  weekUnresolved: boolean;
+  scoringError: string | null;
+  onReviewApproval: () => void;
+  onOpenScoring: (dept?: { kind: 'hsl' | 'catalog'; key: string }) => void;
 }) {
-  const rows = requests.slice(0, APPROVALS_PREVIEW);
-  const thumbFor = (r: TimeAdjustmentRow) =>
-    (r.image_paths ?? []).map((p) => signedUrls[p]).find(Boolean) ?? null;
+  const rows = items.slice(0, NEEDS_PREVIEW);
+  const hidden = items.length - rows.length;
+
+  const tabs: { id: NeedsFilter; label: string; count: number }[] = [
+    { id: 'all', label: 'All', count: totalCount },
+    { id: 'approvals', label: 'Approvals', count: approvalCount },
+    { id: 'bonuses', label: 'Bonuses', count: bonusCount },
+  ];
 
   return (
-    <OverviewPanel
-      icon={ClipboardCheck}
-      title="Pending approvals"
-      gradient="from-blue-500 to-indigo-600"
-      meta={
-        loading ? null : requests.length > 0 ? (
-          <span className="shrink-0 rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 px-2 py-0.5 text-[10px] font-bold tabular-nums text-white">
-            {requests.length}
-          </span>
-        ) : (
-          <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-            Clear
-          </span>
-        )
-      }
-      action={
-        requests.length > 0
-          ? { label: requests.length === 1 ? 'Review request' : 'Review all requests', onClick: onReview }
-          : undefined
-      }
+    <section
+      aria-label="What needs you"
+      className="flex min-w-0 flex-col rounded-2xl border border-zinc-200/80 bg-white px-4 py-5 sm:px-6 lg:min-h-0 dark:border-zinc-800 dark:bg-zinc-950"
     >
-      {loading ? (
-        <div className="space-y-1.5">
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="flex items-center gap-3 rounded-xl border border-zinc-100 px-2.5 py-2 dark:border-zinc-800"
-            >
-              <div className="h-9 w-9 shrink-0 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-800" />
-              <div className="min-w-0 flex-1 space-y-1.5">
-                <div className="h-2.5 w-2/3 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-                <div className="h-2 w-1/3 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : rows.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 pb-6 text-center">
-          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-600 text-white shadow-sm shadow-emerald-500/30">
-            <CheckCircle2 className="h-5 w-5" />
-          </span>
-          <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">All cleared</p>
-          <p className="max-w-[16rem] text-xs text-zinc-500 dark:text-zinc-500">
-            Nothing is waiting on you. New time adjustments from your team land here.
-          </p>
-        </div>
-      ) : (
-        <ul className="space-y-1.5">
-          {rows.map((r) => {
-            const thumb = thumbFor(r);
-            return (
-              <li key={r.id}>
-                <button
-                  type="button"
-                  onClick={onReview}
-                  className="flex w-full items-center gap-3 rounded-xl border border-zinc-100 bg-gradient-to-r from-blue-50/70 to-transparent px-2.5 py-2 text-left transition hover:border-blue-200 hover:from-blue-100/70 dark:border-zinc-800 dark:from-blue-950/25 dark:hover:border-blue-900"
-                >
-                  {thumb ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- signed storage URL
-                    <img
-                      src={thumb}
-                      alt=""
-                      className="h-9 w-9 shrink-0 rounded-lg object-cover"
-                    />
-                  ) : (
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-400 dark:bg-zinc-900 dark:text-zinc-600">
-                      <ImageOff className="h-3.5 w-3.5" />
-                    </span>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-                      {r.work_email}
-                    </p>
-                    <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                      {TA_REASON_LABEL(r.reason)}
-                      <span className="mx-1 text-zinc-300 dark:text-zinc-700">&middot;</span>
-                      <span className="font-mono">{r.adjust_date}</span>
-                      {r.requested_hours != null && (
-                        <>
-                          <span className="mx-1 text-zinc-300 dark:text-zinc-700">&middot;</span>
-                          {/* Rounded for display, like the review table. Raw, this
-                              printed `4.566666666666666h` on the Overview too. */}
-                          {fmtAdjustmentHours(r.requested_hours)}
-                        </>
-                      )}
-                    </p>
-                  </div>
-                  <ChevronRight className="h-4 w-4 shrink-0 text-zinc-300 dark:text-zinc-600" />
-                </button>
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <h2 className="min-w-0 text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+          Needs you
+        </h2>
+        {totalCount > 0 && (
+          <div
+            role="tablist"
+            aria-label="Filter what needs you"
+            className="flex shrink-0 overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800"
+          >
+            {tabs.map((t, i) => (
+              <button
+                key={t.id}
+                role="tab"
+                type="button"
+                aria-selected={filter === t.id}
+                disabled={t.count === 0 && t.id !== 'all'}
+                onClick={() => onFilter(t.id)}
+                className={cn(
+                  'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold transition',
+                  i > 0 && 'border-l border-zinc-200 dark:border-zinc-800',
+                  filter === t.id
+                    ? 'bg-secondary text-secondary-foreground'
+                    : 'bg-transparent text-zinc-600 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent dark:text-zinc-400 dark:hover:bg-zinc-900',
+                )}
+              >
+                {t.label}
+                <span className="tabular-nums opacity-70">{t.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 flex min-h-0 flex-1 flex-col">
+        <div className="ov-scroll -mx-1 flex min-h-0 flex-1 flex-col px-1 lg:overflow-y-auto">
+        {loading ? (
+          <ul className="space-y-1.5">
+            {[0, 1, 2].map((i) => (
+              <li
+                key={i}
+                className="flex items-start gap-3 rounded-xl border border-zinc-100 px-3 py-3 dark:border-zinc-800"
+              >
+                <div className="h-10 w-10 shrink-0 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-800" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="h-2.5 w-1/5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                  <div className="h-3 w-2/5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                  <div className="h-2.5 w-3/5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                </div>
               </li>
-            );
-          })}
-          {requests.length > rows.length && (
-            <li className="pt-0.5 text-center text-[11px] text-zinc-400 dark:text-zinc-500">
-              +{requests.length - rows.length} more waiting
-            </li>
-          )}
-        </ul>
-      )}
-    </OverviewPanel>
+            ))}
+          </ul>
+        ) : rows.length === 0 ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 py-12 text-center">
+            <span className="flex h-11 w-11 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400">
+              <CheckCircle2 className="h-5 w-5" />
+            </span>
+            <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              You&apos;re all clear
+            </p>
+            <p className="max-w-[34ch] text-xs text-zinc-600 dark:text-zinc-400">
+              {weekUnresolved
+                ? 'Nothing is waiting on your sign-off. Bonus scoring unlocks once Accounting uploads this week’s Hubstaff hours.'
+                : 'Nothing is waiting on your sign-off. New time adjustments and bonus weeks land here.'}
+            </p>
+          </div>
+        ) : (
+          <ul className="space-y-1.5">
+            {rows.map((item) =>
+              item.kind === 'approval' ? (
+                <ApprovalRow
+                  key={item.id}
+                  row={item.row}
+                  thumb={
+                    (item.row.image_paths ?? []).map((p) => signedUrls[p]).find(Boolean) ?? null
+                  }
+                  mounted={mounted}
+                  onReview={onReviewApproval}
+                />
+              ) : (
+                <BonusRow key={item.id} dept={item.dept} onOpen={onOpenScoring} />
+              ),
+            )}
+          </ul>
+        )}
+        </div>
+
+        {/* Pinned under the scroll area: the count of what didn't fit, and any
+            scoring error, must stay visible however far the list is scrolled. */}
+        {hidden > 0 && (
+          <button
+            type="button"
+            onClick={onReviewApproval}
+            className="mt-2.5 inline-flex shrink-0 items-center gap-1 self-start text-xs font-semibold text-secondary hover:underline"
+          >
+            +{hidden} more waiting
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        )}
+
+        {scoringError && (
+          <p className="mt-2.5 shrink-0 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+            {scoringError}
+          </p>
+        )}
+      </div>
+    </section>
   );
 }
 
-// ─── Overview: roster glance ─────────────────────────────────────────────────
+/** A pending time adjustment. Opens the queue — the decision needs the photo. */
+function ApprovalRow({
+  row,
+  thumb,
+  mounted,
+  onReview,
+}: {
+  row: TimeAdjustmentRow;
+  thumb: string | null;
+  mounted: boolean;
+  onReview: () => void;
+}) {
+  // Date.now() would not match the server render, so the age only appears after
+  // mount rather than tripping a hydration mismatch.
+  const waited = mounted ? waitedLabel(row.created_at) : null;
 
-/** How many faces the Overview shows before deferring to the My Team tab. */
-const TEAM_GLANCE_LIMIT = 24;
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onReview}
+        className="group flex w-full items-start gap-3 rounded-xl border border-zinc-100 px-3 py-3 text-left transition hover:border-blue-200 hover:bg-blue-50/50 dark:border-zinc-800 dark:hover:border-blue-900 dark:hover:bg-blue-950/20"
+      >
+        {thumb ? (
+          // eslint-disable-next-line @next/next/no-img-element -- signed storage URL
+          <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded-lg object-cover" />
+        ) : (
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-400 dark:bg-zinc-900 dark:text-zinc-600">
+            <ImageOff className="h-4 w-4" />
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-secondary">
+              Approval
+            </span>
+            {waited && (
+              <span className="text-[11px] text-zinc-500 dark:text-zinc-400">{waited}</span>
+            )}
+          </div>
+          <p className="mt-0.5 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            {row.work_email}
+          </p>
+          <p className="mt-0.5 truncate text-[12px] text-zinc-600 dark:text-zinc-400">
+            {TA_REASON_LABEL(row.reason)}
+            <span className="mx-1.5 text-zinc-400 dark:text-zinc-600">·</span>
+            <span className="font-mono text-[11px]">{row.adjust_date}</span>
+            {row.requested_hours != null && (
+              <>
+                <span className="mx-1.5 text-zinc-400 dark:text-zinc-600">·</span>
+                {/* Rounded for display, like the review table. Raw, this
+                    printed `4.566666666666666h` on the Overview too. */}
+                {fmtAdjustmentHours(row.requested_hours)}
+              </>
+            )}
+          </p>
+        </div>
+        <span className="mt-2 hidden shrink-0 items-center gap-1 text-xs font-semibold text-zinc-500 transition-colors group-hover:text-secondary sm:inline-flex dark:text-zinc-400">
+          Review
+          <ChevronRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+        </span>
+      </button>
+    </li>
+  );
+}
+
+/** One bonus department for the live pay week. Opens its calculator card. */
+function BonusRow({
+  dept,
+  onOpen,
+}: {
+  dept: BonusScoringItem;
+  onOpen: (d: { kind: 'hsl' | 'catalog'; key: string }) => void;
+}) {
+  const chip = SCORING_CHIP[dept.state];
+  const pending = isOutstanding(dept.state);
+
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onOpen({ kind: dept.kind, key: dept.key })}
+        className={cn(
+          'group flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition',
+          pending
+            ? 'border-zinc-100 hover:border-blue-200 hover:bg-blue-50/50 dark:border-zinc-800 dark:hover:border-blue-900 dark:hover:bg-blue-950/20'
+            : 'border-zinc-100 hover:border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:border-zinc-700 dark:hover:bg-zinc-900/60',
+        )}
+      >
+        {/* The department's own colour, kept to a slim bar inside the same
+            10×10 slot the approval thumbnails use — enough to identify the
+            department at a glance without a block of saturated colour on
+            every row. */}
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center" aria-hidden>
+          <span
+            className="h-9 w-1.5 rounded-full"
+            style={{ backgroundColor: dept.color }}
+          />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <span
+              className={cn(
+                'text-[11px] font-bold uppercase tracking-[0.1em]',
+                pending ? 'text-secondary' : 'text-zinc-500 dark:text-zinc-400',
+              )}
+            >
+              Bonus
+            </span>
+            <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+              {dept.cadence === 'monthly' ? 'Month end' : 'Weekly'}
+            </span>
+          </div>
+          <p className="mt-0.5 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            {dept.name}
+          </p>
+          <p className="mt-0.5 truncate text-[12px] text-zinc-600 dark:text-zinc-400">
+            {dept.scoredCount > 0 ? (
+              <>
+                {dept.scoredCount} scored
+                {dept.totalBonus > 0 && (
+                  <>
+                    <span className="mx-1.5 text-zinc-400 dark:text-zinc-600">·</span>
+                    <span className="font-mono text-[11px]">
+                      ₱{dept.totalBonus.toLocaleString('en-PH')}
+                    </span>
+                  </>
+                )}
+              </>
+            ) : dept.state === 'not_due' ? (
+              'Pays on the month’s final week'
+            ) : (
+              'Waiting on your scores'
+            )}
+          </p>
+        </div>
+        <span
+          className={cn(
+            'mt-2 shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold',
+            chip.cls,
+          )}
+        >
+          {chip.label}
+        </span>
+      </button>
+    </li>
+  );
+}
+
+// ─── Overview: find a person ─────────────────────────────────────────────────
+
+/** Rows the finder renders at once — the list scrolls rather than paging. */
+const FINDER_LIMIT = 60;
+
+/**
+ * Search the whole roster by name, email or team. With no query it lists who is
+ * tracking time right now — the only roster slice that changes minute to minute
+ * and the reason a manager looks at this rail unprompted.
+ */
+function PersonFinder({
+  members,
+  activeMembers,
+  totalCount,
+  loading,
+  onViewEmployee,
+  onOpenTeam,
+}: {
+  members: EmployeeRow[];
+  activeMembers: EmployeeRow[];
+  totalCount: number | null;
+  loading: boolean;
+  onViewEmployee: (email: string) => void;
+  onOpenTeam: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+
+  const results = useMemo(() => {
+    if (!q) return null;
+    return members
+      .filter((m) => {
+        const dept = formatDeptLabel(m.department);
+        return (
+          (m.name ?? '').toLowerCase().includes(q) ||
+          (m.work_email ?? '').toLowerCase().includes(q) ||
+          (m.personal_email ?? '').toLowerCase().includes(q) ||
+          dept.toLowerCase().includes(q)
+        );
+      })
+      .slice(0, FINDER_LIMIT);
+  }, [members, q]);
+
+  const activeSet = useMemo(() => new Set(activeMembers), [activeMembers]);
+  const listed = results ?? activeMembers.slice(0, FINDER_LIMIT);
+  const heading = results ? 'Results' : 'Active right now';
+  const headingCount = results
+    ? `${results.length}${results.length === FINDER_LIMIT ? '+' : ''}`
+    : `${activeMembers.length} of ${(totalCount ?? members.length).toLocaleString('en-US')}`;
+
+  return (
+    <aside
+      aria-label="Find a person"
+      className="flex min-w-0 flex-col rounded-2xl border border-zinc-200/80 bg-white px-4 py-5 sm:px-5 lg:min-h-0 dark:border-zinc-800 dark:bg-zinc-950"
+    >
+      <h2 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+        Find a person
+      </h2>
+      <div className="relative mt-3">
+        <Search
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400"
+          aria-hidden
+        />
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Name or team…"
+          aria-label="Search your roster by name, email or team"
+          className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-500 focus:border-secondary focus:outline-none dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-500"
+        />
+      </div>
+
+      <div className="mt-4 flex items-baseline justify-between gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-600 dark:text-zinc-400">
+          {heading}
+        </span>
+        <span className="text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+          {loading ? '—' : headingCount}
+        </span>
+      </div>
+
+      <div className="ov-scroll mt-1.5 max-h-[22rem] min-h-0 flex-1 overflow-y-auto lg:max-h-none">
+        {loading ? (
+          <ul className="space-y-1">
+            {[0, 1, 2, 3].map((i) => (
+              <li key={i} className="flex items-center gap-2.5 px-2 py-2">
+                <div className="h-8 w-8 shrink-0 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-800" />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <div className="h-2.5 w-1/2 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                  <div className="h-2 w-1/3 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : listed.length === 0 ? (
+          <p className="px-2 py-8 text-center text-xs text-zinc-600 dark:text-zinc-400">
+            {results
+              ? `Nobody on your roster matches “${query.trim()}”.`
+              : 'Nobody on your roster is tracking time right now.'}
+          </p>
+        ) : (
+          <ul className="space-y-0.5">
+            {listed.map((m, i) => {
+              const email = m.work_email ?? m.personal_email ?? null;
+              const online = activeSet.has(m);
+              const dept = formatDeptLabel(m.department);
+              return (
+                <li key={email ?? m.name ?? `member-${i}`}>
+                  <button
+                    type="button"
+                    onClick={() => (email ? onViewEmployee(email) : onOpenTeam())}
+                    className="group flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
+                  >
+                    <span className="relative shrink-0">
+                      <SpotlightAvatar name={m.name ?? '—'} email={email} px={32} />
+                      {online && (
+                        <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-zinc-950" />
+                      )}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
+                        {m.name ?? email ?? '—'}
+                      </p>
+                      <p className="truncate text-[11px] text-zinc-600 dark:text-zinc-400">
+                        {dept || 'No department'}
+                      </p>
+                    </div>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-zinc-400 transition-colors group-hover:text-secondary dark:text-zinc-600" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {members.length > 0 && (
+        <button
+          type="button"
+          onClick={onOpenTeam}
+          className="mt-3 inline-flex shrink-0 items-center gap-1 self-start text-xs font-semibold text-secondary hover:underline"
+        >
+          Open My Team
+          {totalCount !== null && (
+            <span className="tabular-nums">· {totalCount.toLocaleString('en-US')} people</span>
+          )}
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </aside>
+  );
+}
+
+// ─── Overview: shared bits ───────────────────────────────────────────────────
 
 /** Round avatar at an arbitrary pixel size — photo proxy with initials fallback. */
 function SpotlightAvatar({
@@ -1251,7 +1727,7 @@ function SpotlightAvatar({
     <div
       aria-hidden
       className={cn(
-        'flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br font-bold text-white shadow-sm',
+        'flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br font-bold text-white',
         gradientFor(seed),
       )}
       style={{ height: px, width: px, fontSize: Math.round(px * 0.34) }}
@@ -1260,112 +1736,6 @@ function SpotlightAvatar({
     </div>
   );
 }
-
-/** Who's on the roster right now — online first, click through to a profile. */
-function TeamGlancePanel({
-  members,
-  loading,
-  onOpenTeam,
-  onViewEmployee,
-}: {
-  members: EmployeeRow[];
-  loading: boolean;
-  onOpenTeam: () => void;
-  onViewEmployee: (email: string) => void;
-}) {
-  const onlineEmails = useOnlineEmails();
-  const isOnline = React.useCallback(
-    (m: EmployeeRow) => {
-      const w = normEmail(m.work_email ?? '');
-      const p = normEmail(m.personal_email ?? '');
-      return (!!w && onlineEmails.has(w)) || (!!p && onlineEmails.has(p));
-    },
-    [onlineEmails],
-  );
-
-  // Online members float to the front so the panel reads as live at a glance.
-  const ordered = useMemo(
-    () => [...members].sort((a, b) => Number(isOnline(b)) - Number(isOnline(a))),
-    [members, isOnline],
-  );
-  const onlineCount = useMemo(() => members.filter(isOnline).length, [members, isOnline]);
-  const shown = ordered.slice(0, TEAM_GLANCE_LIMIT);
-
-  return (
-    <OverviewPanel
-      icon={Users}
-      title="My team"
-      gradient="from-indigo-500 to-violet-600"
-      meta={
-        loading ? null : (
-          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            </span>
-            {onlineCount} active
-          </span>
-        )
-      }
-      action={members.length > 0 ? { label: 'Open My Team', onClick: onOpenTeam } : undefined}
-    >
-      {loading ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(4.25rem,1fr))] gap-2">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="flex flex-col items-center gap-1.5 py-1.5">
-              <div className="h-10 w-10 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
-              <div className="h-2 w-8 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-            </div>
-          ))}
-        </div>
-      ) : shown.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 pb-6 text-center">
-          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-indigo-400 to-violet-600 text-white shadow-sm shadow-indigo-500/30">
-            <Users className="h-5 w-5" />
-          </span>
-          <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">No team yet</p>
-          <p className="max-w-[16rem] text-xs text-zinc-500 dark:text-zinc-500">
-            Once a department is assigned to you, its members show up here.
-          </p>
-        </div>
-      ) : (
-        <>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(4.25rem,1fr))] gap-1">
-            {shown.map((m, i) => {
-              const email = m.work_email ?? m.personal_email ?? null;
-              return (
-                <button
-                  key={email ?? m.name ?? `member-${i}`}
-                  type="button"
-                  onClick={() => (email ? onViewEmployee(email) : onOpenTeam())}
-                  title={m.name ?? email ?? undefined}
-                  className="group flex flex-col items-center gap-1 rounded-lg px-0.5 py-1.5 transition hover:bg-indigo-50/70 dark:hover:bg-indigo-950/30"
-                >
-                  <span className="relative">
-                    <SpotlightAvatar name={m.name ?? '—'} email={email} px={40} />
-                    {isOnline(m) && (
-                      <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-zinc-950" />
-                    )}
-                  </span>
-                  <span className="w-full truncate text-center text-[10px] font-medium text-zinc-600 group-hover:text-zinc-900 dark:text-zinc-400 dark:group-hover:text-zinc-100">
-                    {resolveFirstName({ name: m.name ?? null, email })}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          {members.length > shown.length && (
-            <p className="mt-1 text-center text-[11px] text-zinc-400 dark:text-zinc-500">
-              +{members.length - shown.length} more on your roster
-            </p>
-          )}
-        </>
-      )}
-    </OverviewPanel>
-  );
-}
-
-// ─── Overview: bonuses to score ──────────────────────────────────────────────
 
 /** "Jul 20 – Jul 26" for a resolved pay week; an em dash before it resolves. */
 function fmtPayWeek(start: string | null, end: string | null): string {
@@ -1376,272 +1746,36 @@ function fmtPayWeek(start: string | null, end: string | null): string {
   return `${s} – ${new Date(`${end}T00:00:00`).toLocaleDateString('en-US', opts)}`;
 }
 
-/** How the row for each scoring state reads. Two groups only, visually: things
- *  that still need the manager (amber/zinc) and things already handled (green). */
+/** How the chip for each scoring state reads. Two groups only, visually: things
+ *  that still need the manager, and things already handled. Status keeps its own
+ *  semantics — amber stays warning, emerald stays done — so the blue accent
+ *  never has to mean two different things on one row. */
 const SCORING_CHIP: Record<ScoringState, { label: string; cls: string }> = {
   todo: {
     label: 'Not scored',
-    cls: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300',
+    cls: 'bg-amber-100 text-amber-900 dark:bg-amber-500/15 dark:text-amber-300',
   },
   in_progress: {
     label: 'Draft',
-    cls: 'bg-blue-100 text-blue-800 dark:bg-blue-500/15 dark:text-blue-300',
+    cls: 'bg-blue-100 text-blue-900 dark:bg-blue-500/15 dark:text-blue-300',
   },
   submitted: {
     label: 'Submitted',
-    cls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300',
+    cls: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-500/15 dark:text-emerald-300',
   },
   locked: {
     label: 'Locked',
-    cls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300',
+    cls: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-500/15 dark:text-emerald-300',
   },
   nothing: {
     label: 'No bonuses',
-    cls: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+    cls: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
   },
   not_due: {
     label: 'Month end',
-    cls: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+    cls: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
   },
 };
-
-/** Departments per page in the panel's rotation. */
-const SCORING_PAGE_SIZE = 5;
-/** How long each page of departments stays on screen. */
-const SCORING_PAGE_MS = 10_000;
-
-/**
- * What the KPI Calculator still owes payroll for the live pay week — one row per
- * department the manager scores, outstanding ones first. Clicking a row opens
- * that department's calculator directly.
- *
- * A manager can own more departments than fit the card, so the list pages itself
- * every 10s rather than hiding the tail behind a "+N more". Rotation pauses
- * while the pointer (or keyboard focus) is inside the card — the rows are
- * buttons, and a page turning mid-click would open the wrong department.
- */
-function BonusScoringPanel({
-  queue,
-  className,
-  onOpenCalculator,
-}: {
-  queue: BonusScoringQueue;
-  className?: string;
-  onOpenCalculator: (dept?: { kind: 'hsl' | 'catalog'; key: string }) => void;
-}) {
-  const { loading, items, outstanding, weekStart, weekEnd, weekUnresolved, error } = queue;
-  const gradient = 'from-amber-500 to-orange-600';
-  const reduceMotion = useReducedMotion();
-
-  const pageCount = Math.max(1, Math.ceil(items.length / SCORING_PAGE_SIZE));
-  const [page, setPage] = useState(0);
-  const [paused, setPaused] = useState(false);
-
-  // The list can shrink under us (a dept gets submitted, the roster reloads).
-  useEffect(() => {
-    if (page >= pageCount) setPage(0);
-  }, [page, pageCount]);
-
-  // `page` is a dependency on purpose: a manual dot click restarts the dwell so
-  // the page the manager just picked gets its full 10s.
-  useEffect(() => {
-    if (pageCount < 2 || paused) return;
-    const id = setTimeout(() => setPage((p) => (p + 1) % pageCount), SCORING_PAGE_MS);
-    return () => clearTimeout(id);
-  }, [page, pageCount, paused]);
-
-  const safePage = Math.min(page, pageCount - 1);
-  // Outstanding departments sort first, so page 1 is always the actual work.
-  const rows = items.slice(safePage * SCORING_PAGE_SIZE, (safePage + 1) * SCORING_PAGE_SIZE);
-  // Short last page: hold the card's height so the layout doesn't jump on turn.
-  const filler = pageCount > 1 ? SCORING_PAGE_SIZE - rows.length : 0;
-
-  return (
-    <OverviewPanel
-      icon={Sparkles}
-      title="Bonuses to score"
-      gradient={gradient}
-      className={className}
-      meta={
-        loading ? null : outstanding > 0 ? (
-          <span className={cn('shrink-0 rounded-full bg-gradient-to-r px-2 py-0.5 text-[10px] font-bold tabular-nums text-white', gradient)}>
-            {outstanding}
-          </span>
-        ) : items.length > 0 ? (
-          <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-            Submitted
-          </span>
-        ) : null
-      }
-      action={
-        items.length > 0
-          ? {
-              label: outstanding > 0 ? 'Open KPI Calculator' : 'Review in KPI Calculator',
-              onClick: () => onOpenCalculator(),
-            }
-          : undefined
-      }
-    >
-      {loading ? (
-        <div className="space-y-1.5">
-          {[0, 1, 2, 3].map((i) => (
-            <div
-              key={i}
-              className="flex items-center gap-3 rounded-xl border border-zinc-100 px-2.5 py-2 dark:border-zinc-800"
-            >
-              <div className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
-              <div className="min-w-0 flex-1 space-y-1.5">
-                <div className="h-2.5 w-1/2 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-                <div className="h-2 w-1/4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : weekUnresolved ? (
-        // The pay week comes from the Hubstaff upload. Without it every status
-        // would be read from a period key nothing was saved under, so say so
-        // rather than show a list of false to-dos.
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 pb-6 text-center">
-          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-zinc-300 to-zinc-500 text-white shadow-sm dark:from-zinc-700 dark:to-zinc-800">
-            <Clock className="h-5 w-5" />
-          </span>
-          <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Pay week not open yet</p>
-          <p className="max-w-[16rem] text-xs text-zinc-500 dark:text-zinc-500">
-            Scoring unlocks once Accounting uploads this week&apos;s Hubstaff hours.
-          </p>
-        </div>
-      ) : items.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 pb-6 text-center">
-          <span className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-zinc-300 to-zinc-500 text-white shadow-sm dark:from-zinc-700 dark:to-zinc-800">
-            <Sparkles className="h-5 w-5" />
-          </span>
-          <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">No bonus departments</p>
-          <p className="max-w-[16rem] text-xs text-zinc-500 dark:text-zinc-500">
-            Ask an admin to assign you a department under Roles &amp; permissions.
-          </p>
-        </div>
-      ) : (
-        <div
-          onMouseEnter={() => setPaused(true)}
-          onMouseLeave={() => setPaused(false)}
-          onFocusCapture={() => setPaused(true)}
-          onBlurCapture={() => setPaused(false)}
-        >
-          <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px]">
-            <span className="inline-flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
-              <CalendarDays className="h-3 w-3" />
-              {fmtPayWeek(weekStart, weekEnd)}
-            </span>
-            <span className={cn('font-medium', outstanding > 0 ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400')}>
-              {outstanding > 0
-                ? `${outstanding} of ${items.length} left`
-                : 'Everything submitted'}
-            </span>
-          </div>
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.ul
-              key={safePage}
-              className="space-y-1.5"
-              initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: reduceMotion ? 0 : -8 }}
-              transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
-            >
-              {rows.map((d) => {
-                const chip = SCORING_CHIP[d.state];
-                const pending = isOutstanding(d.state);
-                return (
-                  <li key={`${d.kind}:${d.key}`}>
-                    <button
-                      type="button"
-                      onClick={() => onOpenCalculator({ kind: d.kind, key: d.key })}
-                      className={cn(
-                        'flex w-full items-center gap-2.5 rounded-xl border px-2.5 py-2 text-left transition',
-                        pending
-                          ? 'border-zinc-100 bg-gradient-to-r from-amber-50/70 to-transparent hover:border-amber-200 hover:from-amber-100/70 dark:border-zinc-800 dark:from-amber-950/20 dark:hover:border-amber-900'
-                          : 'border-zinc-100 hover:border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:border-zinc-700 dark:hover:bg-zinc-900/60',
-                      )}
-                    >
-                      <span
-                        aria-hidden
-                        className="h-6 w-1 shrink-0 rounded-full"
-                        style={{ backgroundColor: d.color }}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">
-                          {d.name}
-                        </p>
-                        <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                          {d.scoredCount > 0 ? (
-                            <>
-                              {d.scoredCount} scored
-                              {d.totalBonus > 0 && (
-                                <>
-                                  <span className="mx-1 text-zinc-300 dark:text-zinc-700">&middot;</span>
-                                  <span className="font-mono">
-                                    ₱{d.totalBonus.toLocaleString('en-PH')}
-                                  </span>
-                                </>
-                              )}
-                            </>
-                          ) : d.state === 'nothing' ? (
-                            'Nothing assigned this week'
-                          ) : d.state === 'not_due' ? (
-                            'Pays on the month’s final week'
-                          ) : (
-                            'Waiting on your scores'
-                          )}
-                        </p>
-                      </div>
-                      <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold', chip.cls)}>
-                        {chip.label}
-                      </span>
-                      <ChevronRight className="h-4 w-4 shrink-0 text-zinc-300 dark:text-zinc-600" />
-                    </button>
-                  </li>
-                );
-              })}
-              {/* Short last page: an invisible clone of a row's box holds the
-                  card's height so the layout doesn't jump as pages turn. */}
-              {Array.from({ length: filler }).map((_, i) => (
-                <li
-                  key={`filler-${i}`}
-                  aria-hidden
-                  className="invisible rounded-xl border px-2.5 py-2"
-                >
-                  <p className="text-xs font-semibold">&nbsp;</p>
-                  <p className="text-[11px]">&nbsp;</p>
-                </li>
-              ))}
-            </motion.ul>
-          </AnimatePresence>
-          {pageCount > 1 && (
-            <div className="mt-2 flex items-center justify-center gap-1.5">
-              {Array.from({ length: pageCount }).map((_, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => setPage(i)}
-                  aria-label={`Show departments ${i * SCORING_PAGE_SIZE + 1}–${Math.min((i + 1) * SCORING_PAGE_SIZE, items.length)} of ${items.length}`}
-                  aria-current={i === safePage ? 'true' : undefined}
-                  className={cn(
-                    'h-1.5 rounded-full transition-all',
-                    i === safePage
-                      ? cn('w-5 bg-gradient-to-r', gradient)
-                      : 'w-1.5 bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600',
-                  )}
-                />
-              ))}
-            </div>
-          )}
-          {error && (
-            <p className="mt-1.5 text-center text-[11px] text-amber-700 dark:text-amber-400">{error}</p>
-          )}
-        </div>
-      )}
-    </OverviewPanel>
-  );
-}
 
 // ─── S-Wall tab ──────────────────────────────────────────────────────────────
 
@@ -3833,88 +3967,5 @@ function TeamPanel(props: TeamPanelProps) {
     <MedalProvider viewerEmail={props.viewerEmail} memberEmails={memberEmails}>
       <TeamPanelInner {...props} />
     </MedalProvider>
-  );
-}
-
-// ─── Bits ────────────────────────────────────────────────────────────────────
-
-interface StatTileProps {
-  label: string;
-  value: number | string;
-  hint: string;
-  icon: React.ComponentType<{ className?: string }>;
-  accent: 'blue' | 'indigo' | 'amber' | 'slate';
-  onClick?: () => void;
-}
-
-/** Soft gradient surface + gradient icon chip + gradient numeral. One number each. */
-function StatTile({ label, value, hint, icon: Icon, accent, onClick }: StatTileProps) {
-  const tone = {
-    blue: {
-      surface:
-        'border-blue-100 bg-gradient-to-br from-blue-50 via-white to-white dark:border-blue-950/60 dark:from-blue-950/40 dark:via-zinc-950 dark:to-zinc-950',
-      hover: 'hover:border-blue-300 hover:shadow-blue-500/10 dark:hover:border-blue-800',
-      chip: 'from-blue-500 to-blue-700 shadow-blue-500/30',
-      value: 'from-blue-700 to-indigo-900 dark:from-blue-200 dark:to-indigo-300',
-    },
-    indigo: {
-      surface:
-        'border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-white dark:border-indigo-950/60 dark:from-indigo-950/40 dark:via-zinc-950 dark:to-zinc-950',
-      hover: 'hover:border-indigo-300 hover:shadow-indigo-500/10 dark:hover:border-indigo-800',
-      chip: 'from-indigo-500 to-violet-700 shadow-indigo-500/30',
-      value: 'from-indigo-700 to-violet-900 dark:from-indigo-200 dark:to-violet-300',
-    },
-    amber: {
-      surface:
-        'border-amber-100 bg-gradient-to-br from-amber-50 via-white to-white dark:border-amber-950/60 dark:from-amber-950/40 dark:via-zinc-950 dark:to-zinc-950',
-      hover: 'hover:border-amber-300 hover:shadow-amber-500/10 dark:hover:border-amber-800',
-      chip: 'from-amber-500 to-orange-600 shadow-amber-500/30',
-      value: 'from-amber-600 to-orange-800 dark:from-amber-200 dark:to-orange-300',
-    },
-    slate: {
-      surface:
-        'border-zinc-200 bg-gradient-to-br from-zinc-50 via-white to-white dark:border-zinc-800 dark:from-zinc-900 dark:via-zinc-950 dark:to-zinc-950',
-      hover: 'hover:border-zinc-300 dark:hover:border-zinc-700',
-      // Inverts in dark mode, so the glyph flips dark to stay legible.
-      chip: 'from-zinc-600 to-zinc-900 shadow-zinc-900/25 dark:from-zinc-300 dark:to-zinc-500 dark:text-zinc-900',
-      value: 'from-zinc-700 to-zinc-900 dark:from-zinc-200 dark:to-zinc-400',
-    },
-  }[accent];
-
-  const Wrapper = onClick ? 'button' : 'div';
-
-  return (
-    <Wrapper
-      type={onClick ? 'button' : undefined}
-      onClick={onClick}
-      className={cn(
-        'group relative flex items-center gap-3.5 overflow-hidden rounded-2xl border px-4 py-4 text-left shadow-sm transition-all',
-        tone.surface,
-        onClick && cn('cursor-pointer hover:-translate-y-0.5 hover:shadow-md', tone.hover),
-      )}
-    >
-      <span
-        className={cn(
-          'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-md',
-          tone.chip,
-        )}
-      >
-        <Icon className="h-5 w-5" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-          {label}
-        </div>
-        <div
-          className={cn(
-            'mt-0.5 bg-gradient-to-br bg-clip-text text-2xl font-bold tabular-nums text-transparent',
-            tone.value,
-          )}
-        >
-          {value}
-        </div>
-        <div className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400">{hint}</div>
-      </div>
-    </Wrapper>
   );
 }

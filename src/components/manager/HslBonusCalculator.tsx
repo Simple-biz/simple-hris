@@ -12,6 +12,10 @@ import {
 const COLLAPSE_EASE = [0.22, 1, 0.36, 1] as const;
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { SmoothSelect } from '@/components/ui/smooth-select';
+import { StatusChip } from './kpi-status-chip';
+import { KpiReadinessChip } from './kpi-readiness-chip';
+import PayrollLockBanner from '@/components/employee/PayrollLockBanner';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import {
@@ -36,6 +40,7 @@ import {
 } from '@/lib/manager/kpi-cache';
 import { useKpiCacheIdentity } from '@/hooks/useKpiCacheIdentity';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
+import type { PayrollDispatchLockState } from '@/lib/supabase/payroll-dispatch-lock';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { slugifyDeptKey } from '@/lib/departments/registry';
 import {
@@ -550,6 +555,31 @@ interface HslBonusCalculatorProps {
   viewerEmail: string | null;
   managedDepts: string[];
   isElevated: boolean;
+  /**
+   * The HSL-Branches / Departments navigation, rendered into this calculator's
+   * own toolbar beside the people search rather than in a bar of its own above
+   * it (Kane, 2026-09-02). A NODE rather than a mode + callback: ManagerApp owns
+   * which calculator is showing, and both render the identical control, so
+   * passing the rendered switch down keeps one definition instead of two that
+   * can drift. Absent when the manager has only one calculator.
+   */
+  calculatorSwitch?: React.ReactNode;
+  /**
+   * Payroll's dispatch-lock state, from the SHELL that mounts this calculator.
+   *
+   * `useDispatchLock` is meant to be mounted once per shell and passed down —
+   * its own doc says so — and both calculators were calling it themselves. A
+   * fresh hook instance starts UNLOCKED and only flips after its first fetch, so
+   * every tab switch remounted the calculator, the "payroll is being processed"
+   * banner vanished, and it came back a round-trip later (Kane, 2026-09-02:
+   * *"it disappears like it doesn't know that payroll is processing"*). With
+   * the shell's already-resolved state handed in, the banner is on screen in
+   * the first frame of the mount.
+   *
+   * Optional only for mount points that have no shell instance (the Payroll
+   * Wizard's Readiness modal); there the calculator falls back to its own hook.
+   */
+  dispatchLock?: PayrollDispatchLockState;
   /** Start focused on this HSL sub-department (filter pre-selected, block
    *  expanded). Used by the Payroll Readiness "fix it from here" modal, which
    *  also scopes `managedDepts` to the same key so only that sub-dept renders. */
@@ -566,6 +596,8 @@ export default function HslBonusCalculator({
   viewerEmail,
   managedDepts,
   isElevated,
+  calculatorSwitch,
+  dispatchLock: dispatchLockFromShell,
   initialFilter,
   submissionSource,
 }: HslBonusCalculatorProps) {
@@ -612,8 +644,15 @@ export default function HslBonusCalculator({
    *  scoring the wrong week. */
   const [weekError, setWeekError] = useState(false);
 
+  // Alphabetical by display name (Kane, 2026-09-02). Sorted HERE, at the
+  // source, so the grid, the overlay's branch rail, the filter dropdown and the
+  // load order all agree — `HSL_DEPT_KEYS` is declaration order in `schema.ts`,
+  // which is history, not something a manager can predict.
   const visibleDepts = useMemo<HslDeptKey[]>(
-    () => HSL_DEPT_KEYS.filter((k) => canAccessHslDept(managedDepts, k, isElevated)),
+    () =>
+      HSL_DEPT_KEYS.filter((k) => canAccessHslDept(managedDepts, k, isElevated)).sort((a, b) =>
+        HSL_DEPTS[a].name.localeCompare(HSL_DEPTS[b].name, 'en', { sensitivity: 'base' }),
+      ),
     [managedDepts, isElevated],
   );
 
@@ -689,11 +728,33 @@ export default function HslBonusCalculator({
   const [autosaveError, setAutosaveError] = useState<Partial<Record<HslDeptKey, string>>>({});
 
   const [loadingDepts, setLoadingDepts] = useState<Set<HslDeptKey>>(new Set());
+  /**
+   * Branches whose load has finished at least once on this mount — success or
+   * failure. Grows only; a branch never leaves it.
+   *
+   * This is the difference between "there is nothing on screen yet" and "the
+   * figures you are looking at are being re-checked", and only the first of
+   * those is worth telling the manager about. `useLiveRefresh` falls back to a
+   * **30-second poll** when Realtime isn't available for these tables, so
+   * without this every branch flashed "loading…" twice a minute over figures
+   * that were already right there, and the page read as permanently busy
+   * (Kane, 2026-09-02: *"I think its polling time to time"* — it is).
+   *
+   * The fetch itself is untouched. The tab cache is PAINT-only by ruling and
+   * carries no skip-fetch flag (pinned by a test in `kpi-cache.ts`), so the way
+   * to stop showing a spinner is to stop showing it, never to stop asking the
+   * database. Freshness still has a voice: the top bar's "as of HH:MM" chip
+   * while cached rows are up, and the Refresh button, which does spin.
+   */
+  const [settledDepts, setSettledDepts] = useState<Set<HslDeptKey>>(new Set());
   /** Which dept's preview modal is open (null = closed). Mounted at the parent so
    *  it overlays the page rather than nesting inside a single dept block. */
   const [viewingDept, setViewingDept] = useState<HslDeptKey | null>(null);
   const [reopenSubmitting, setReopenSubmitting] = useState(false);
-  const { state: dispatchLock } = useDispatchLock();
+  // Hooks cannot be conditional, so the fallback instance always exists; the
+  // shell's state wins whenever it is provided (see the prop's doc).
+  const { state: dispatchLockFallback } = useDispatchLock();
+  const dispatchLock = dispatchLockFromShell ?? dispatchLockFallback;
   const payrollLocked = dispatchLock.locked;
 
   // Department navigation: which dept's block is expanded, and the active filter
@@ -958,12 +1019,22 @@ export default function HslBonusCalculator({
         next.delete(key);
         return next;
       });
+      // Every later load of this branch is a background re-check over figures
+      // already on screen, and says nothing.
+      setSettledDepts((prev) => (prev.has(key) ? prev : new Set([...prev, key])));
     }
   }, [weekStart, weekResolved]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // First-load gate: show a loading screen until every visible dept's initial
   // fetch has settled, so switching to the tab doesn't flash an empty calculator.
   const [loadsSettled, setLoadsSettled] = useState(false);
+
+  /** Branches that are loading for the FIRST time — the only ones with nothing
+   *  to show while they wait. Everything else re-checks in silence. */
+  const pendingFirstLoad = useMemo(
+    () => new Set([...loadingDepts].filter((k) => !settledDepts.has(k))),
+    [loadingDepts, settledDepts],
+  );
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -1377,6 +1448,15 @@ export default function HslBonusCalculator({
     [deptState, visibleDepts],
   );
 
+  /** Branches signed off for the week — `ready` or already `locked`. */
+  const readyBranches = useMemo(
+    () => visibleDepts.filter((k) => {
+      const st = deptState[k]?.status;
+      return st === 'ready' || st === 'locked';
+    }).length,
+    [visibleDepts, deptState],
+  );
+
   const totalPeople = useMemo(
     () => visibleDepts.reduce((sum, k) => sum + deptState[k]!.entries.length, 0),
     [deptState, visibleDepts],
@@ -1406,6 +1486,19 @@ export default function HslBonusCalculator({
     );
   }, [personQuery, visibleDepts, deptState]);
 
+  /** Options for the branch filter dropdown. Each branch carries its scored
+   *  headcount, which is what the old pill rail's count badge showed. */
+  const branchFilterOptions = useMemo(
+    () => [
+      { value: 'all' as const, label: `All branches · ${visibleDepts.length}` },
+      ...visibleDepts.map((k) => ({
+        value: k,
+        label: `${HSL_DEPTS[k].name} · ${deptState[k]?.entries.length ?? 0}`,
+      })),
+    ],
+    [visibleDepts, deptState],
+  );
+
   const filteredDepts = useMemo<HslDeptKey[]>(() => {
     // A people search spans every branch — it outranks the focus pill, otherwise
     // you'd have to already know which branch the person sits in.
@@ -1426,7 +1519,7 @@ export default function HslBonusCalculator({
             onOpen={inline ? () => openOverlay(key) : undefined}
             deptKey={key}
             state={deptState[key]!}
-            loading={loadingDepts.has(key)}
+            loading={pendingFirstLoad.has(key)}
             searchSeed={personSearch}
             periodStartStr={periodStart(HSL_DEPTS[key])}
             onKpiChange={(email, kpiKey, val) => {
@@ -1554,6 +1647,7 @@ export default function HslBonusCalculator({
     return (
       <KpiCalculatorLoading
         variant="hsl"
+        calculatorSwitch={calculatorSwitch}
         title={
           isElevated
             ? 'All Departments'
@@ -1590,6 +1684,9 @@ export default function HslBonusCalculator({
             </h2>
           </div>
           <div className="flex items-center gap-2">
+            {/* How many branches are signed off. First in the cluster on both
+                calculators — it is the thing a manager opens this tab to check. */}
+            <KpiReadinessChip ready={readyBranches} total={visibleDepts.length} />
             <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
               <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">Total</span>
               <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">
@@ -1603,13 +1700,16 @@ export default function HslBonusCalculator({
             {/* What is on screen right now is the previous visit's data, still
                 being re-pulled. Say when it was fetched rather than let a figure
                 that another scorer has since changed pass for live. Neutral, not
-                amber — amber is reserved for warnings. */}
+                amber — amber is reserved for warnings. No spinner either: the
+                timestamp is the whole message, and an icon turning forever beside
+                it made a finished page look like it was polling (Kane,
+                2026-09-02). The Refresh button still spins, because that one is
+                answering a click. */}
             {cacheAsOf !== null && (
               <span
                 className="hidden items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 font-mono text-[10px] text-zinc-500 shadow-sm sm:flex dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400"
                 title="Showing the scores this tab already had. Reloading from the database now."
               >
-                <RefreshCw className="h-3 w-3 animate-spin" aria-hidden />
                 as of{' '}
                 {new Date(cacheAsOf).toLocaleTimeString('en-US', {
                   hour: '2-digit',
@@ -1656,10 +1756,17 @@ export default function HslBonusCalculator({
           </div>
         )}
 
-        {/* Department filter rail — focus one branch or scan them all, plus a
-            cross-branch people search (find someone by work email). */}
-        {multiDept && (
+        {/* Branch filter + the cross-branch people search (find someone by work
+            email). The filter was a rail of one pill per branch; it wrapped to
+            three rows for a manager with a dozen of them and pushed the branches
+            themselves below the fold, so it collapses to a single dropdown
+            (Kane, 2026-09-02). The rail's headcounts survive as the option
+            labels, and the menu is portalled so the sticky, blurred top bar
+            can't clip it. */}
+        {(multiDept || calculatorSwitch) && (
           <div className="flex flex-wrap items-center gap-2">
+            {calculatorSwitch}
+            {multiDept && (
             <div className="relative w-full max-w-[260px]">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
               <input
@@ -1672,32 +1779,25 @@ export default function HslBonusCalculator({
                 className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition-colors focus:border-blue-400 focus:ring-1 focus:ring-blue-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
               />
             </div>
-            <div className="-mx-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto px-1 pb-0.5">
-              <DeptPill
-                active={!personQuery && activeFilter === 'all'}
-                label="All"
-                count={visibleDepts.length}
-                onClick={() => {
-                  setPersonSearch('');
-                  setActiveFilter('all');
-                }}
-              />
-              {visibleDepts.map((k) => (
-                <DeptPill
-                  key={k}
-                  active={!personQuery && activeFilter === k}
-                  label={HSL_DEPTS[k].name}
-                  color={HSL_DEPTS[k].color}
-                  count={deptState[k]!.entries.length}
-                  onClick={() => {
-                    // Picking a branch ends the cross-branch search — the two
-                    // filters would otherwise fight over what's on screen.
-                    setPersonSearch('');
-                    setActiveFilter(k);
-                  }}
-                />
-              ))}
-            </div>
+            )}
+            {multiDept && (
+            <SmoothSelect
+              value={personQuery ? 'all' : activeFilter}
+              options={branchFilterOptions}
+              // Picking a branch ends the cross-branch search — the two filters
+              // would otherwise fight over what's on screen.
+              onChange={(v) => {
+                setPersonSearch('');
+                setActiveFilter(v as HslDeptKey | 'all');
+              }}
+              aria-label="Filter branches"
+              searchable={visibleDepts.length > 8}
+              searchPlaceholder="Find a branch…"
+              portal
+              className="w-full max-w-[260px] sm:w-auto sm:min-w-[15rem]"
+              triggerClassName="h-8 rounded-md"
+            />
+            )}
           </div>
         )}
 
@@ -1710,13 +1810,15 @@ export default function HslBonusCalculator({
         )}
       </div>
 
-      {/* Payroll processing lock banner */}
-      {payrollLocked && (
-        <div className="flex items-center gap-2 border-b border-red-200 bg-red-50 px-5 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400">
-          <Lock className="h-3.5 w-3.5 shrink-0" />
-          <span>Payroll is being processed — KPI Calculator is locked. You cannot mark ready or unready until processing is complete.</span>
-        </div>
-      )}
+      {/* Payroll processing banner — the employee dashboard's, with its sweep
+          line, so "payroll is running" looks the same on every surface in the
+          app (Kane, 2026-09-02). Not dismissible here: on this calculator the
+          lock changes what the manager can do. */}
+      <PayrollLockBanner
+        state={dispatchLock}
+        detail="Mark ready and unready are paused until processing is complete."
+        dismissible={false}
+      />
 
       {/* Branches. A manager with one branch gets the scoring surface directly —
           a one-row list you have to click through would be pure ceremony. Anyone
@@ -1726,7 +1828,7 @@ export default function HslBonusCalculator({
           <HslBranchList
             deptKeys={filteredDepts}
             state={deptState}
-            loadingDepts={loadingDepts}
+            pendingFirstLoad={pendingFirstLoad}
             periodStart={periodStart}
             matchedBySearch={personQuery ? new Set(personHitDepts) : undefined}
             onOpen={openOverlay}
@@ -1903,18 +2005,12 @@ export default function HslBonusCalculator({
 
 // ── Branch list ───────────────────────────────────────────────────────────────
 
-/** Status chip for a scoring period. Shared by the branch list and the block
- *  header so one status never reads two ways. */
-const DEPT_STATUS_CHIP: Record<BonusStatus, string> = {
-  draft:  'bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200',
-  ready:  'bg-amber-200 text-amber-900 dark:bg-amber-700/80 dark:text-amber-100',
-  locked: 'bg-emerald-200 text-emerald-900 dark:bg-emerald-800/80 dark:text-emerald-100',
-};
-
 interface HslBranchListProps {
   deptKeys: HslDeptKey[];
   state: AllDeptState;
-  loadingDepts: Set<HslDeptKey>;
+  /** Only branches with nothing on screen yet. A background re-pull over rows
+   *  the manager can already read must not announce itself. */
+  pendingFirstLoad: Set<HslDeptKey>;
   periodStart: (dept: DeptConfig) => string;
   /** Branches containing a cross-branch people-search hit, flagged on the row. */
   matchedBySearch?: Set<HslDeptKey>;
@@ -1927,10 +2023,23 @@ interface HslBranchListProps {
  *  This replaced a stack of collapsible cards (Kane, 2026-09-01). Accordions
  *  made the page's height depend on what was open, so two branches could never
  *  be compared without scrolling past a full roster, and the scoring surface was
- *  always squeezed into whatever width the stack left it. A list compares in one
- *  glance and hands the whole overlay to the branch you actually picked. */
+ *  always squeezed into whatever width the stack left it. A row compares in one
+ *  glance and hands the whole overlay to the branch you actually picked.
+ *
+ *  **Two rows per line, not one** (Kane, 2026-09-02). The single stacked column
+ *  left two thirds of a desktop viewport empty beside it and pushed a manager
+ *  with a dozen branches well past the fold. Two columns from `lg` and one below
+ *  it: the row was always built to wrap (that is what `basis-40` is for), so the
+ *  narrow case degrades by dropping the figures to a second line rather than
+ *  crushing them. A card treatment was tried in between and reverted — the row
+ *  is the presentation, the column count was the only problem with it.
+ *
+ *  Rows are separate bordered boxes rather than one divided container, because a
+ *  shared container with an odd branch count leaves the bottom-right cell empty
+ *  and its border half-drawn. `h-full` keeps the pair on a line the same height
+ *  when one branch name wraps. */
 export function HslBranchList({
-  deptKeys, state, loadingDepts, periodStart, matchedBySearch, onOpen,
+  deptKeys, state, pendingFirstLoad, periodStart, matchedBySearch, onOpen,
 }: HslBranchListProps) {
   if (deptKeys.length === 0) {
     return (
@@ -1941,20 +2050,31 @@ export function HslBranchList({
   }
 
   return (
-    <ul className="divide-y divide-zinc-200 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-950/50">
+    <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
       {deptKeys.map((key) => {
         const dept = HSL_DEPTS[key];
         const st = state[key]!;
         const total = st.entries.reduce((s, e) => s + e.calculated_bonus, 0);
-        const loading = loadingDepts.has(key);
+        const loading = pendingFirstLoad.has(key);
         const matched = !!matchedBySearch?.has(key);
         return (
-          <li key={key}>
+          <li key={key} className="min-w-0">
             <button
               type="button"
               onClick={() => onOpen(key)}
               title={`Open ${dept.name}`}
-              className="group flex w-full flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 text-left outline-none transition-colors duration-150 hover:bg-zinc-50 focus-visible:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 dark:hover:bg-zinc-900/60 dark:focus-visible:bg-zinc-900/60"
+              className={cn(
+                'group flex h-full w-full flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border bg-white px-4 py-3 text-left',
+                'outline-none transition-[border-color,box-shadow] duration-150',
+                'hover:border-zinc-300 hover:shadow-sm focus-visible:ring-2 focus-visible:ring-blue-500',
+                'dark:bg-zinc-950/50 dark:hover:border-zinc-700',
+                // A cross-branch search hit is the one reason a row leaves the
+                // default border. The chip alone was easy to miss once the
+                // branches stopped being a single column read top to bottom.
+                matched
+                  ? 'border-blue-400 ring-1 ring-blue-400/50 dark:border-blue-500/70'
+                  : 'border-zinc-200 dark:border-zinc-800',
+              )}
             >
               <span
                 aria-hidden
@@ -1964,7 +2084,8 @@ export function HslBranchList({
 
               {/* `basis-40` is the load-bearing bit: the name keeps a readable
                   minimum and the figures wrap to their own line rather than
-                  squeezing "SSD Medical Records" into "SSD …". */}
+                  squeezing "SSD Medical Records" into "SSD …". It matters more
+                  at two columns than it did at one. */}
               <span className="flex min-w-0 flex-[2] basis-40 flex-col gap-0.5">
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="truncate text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
@@ -1981,27 +2102,18 @@ export function HslBranchList({
                 </span>
               </span>
 
+              {/* Fixed widths on the figures so the two columns each scan
+                  straight down. Narrower than the one-column version was — half
+                  the width has to carry the same four marks. */}
               <span className="ml-auto flex flex-none items-center gap-3">
-                <span className="flex items-center gap-2">
-                  <span
-                    className={cn(
-                      'rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em]',
-                      DEPT_STATUS_CHIP[st.status],
-                    )}
-                  >
-                    {st.status}
-                  </span>
-                  {loading && (
-                    <RefreshCw className="h-3 w-3 animate-spin text-zinc-500" aria-hidden />
-                  )}
-                </span>
+                <StatusChip status={st.status} />
 
-                <span className="text-right font-mono text-[10px] text-zinc-500 sm:w-16">
-                  {st.entries.length} ppl
+                <span className="text-right font-mono text-[10px] text-zinc-500 sm:w-14">
+                  {loading ? 'loading…' : `${st.entries.length} ppl`}
                 </span>
 
                 <span
-                  className="text-right font-mono text-sm font-bold tabular-nums sm:w-32"
+                  className="text-right font-mono text-sm font-bold tabular-nums sm:w-28"
                   style={{ color: dept.color }}
                 >
                   <AnimatedPeso amount={total} />
@@ -2017,35 +2129,6 @@ export function HslBranchList({
         );
       })}
     </ul>
-  );
-}
-
-// ── Department filter pill ──────────────────────────────────────────────────
-
-function DeptPill({
-  active, label, color, count, onClick,
-}: {
-  active: boolean;
-  label: string;
-  color?: string;
-  count: number;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
-        active
-          ? 'border-transparent bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
-          : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300 dark:hover:bg-zinc-800/60',
-      )}
-    >
-      {color && <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} aria-hidden />}
-      <span className="max-w-[10rem] truncate">{label}</span>
-      <span className={cn('font-mono text-[10px] tabular-nums', active ? 'opacity-70' : 'text-zinc-400')}>{count}</span>
-    </button>
   );
 }
 
@@ -2233,19 +2316,18 @@ function DeptBlock({
           )}>
             {dept.cadence}
           </span>
-          <span className={cn('rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em]', DEPT_STATUS_CHIP[state.status])}>
-            {state.status}
-          </span>
+          <StatusChip status={state.status} />
           {dept.monthlyMax && (
             <span className="font-mono text-[9px] text-zinc-500 dark:text-zinc-500">
               max {formatPeso(dept.monthlyMax)}/mo
             </span>
           )}
           <span className="font-mono text-[10px] text-zinc-500">· {periodLabel(dept, periodStartStr)}</span>
+          {/* Static, not a spinner. A background reload is not something the
+              manager started or has to wait for, and a permanently turning icon
+              on a screen that re-pulls on its own reads as a stuck request. */}
           {loading && (
-            <span className="inline-flex items-center gap-1 font-mono text-[10px] text-zinc-500">
-              <RefreshCw className="h-3 w-3 animate-spin" /> loading
-            </span>
+            <span className="font-mono text-[10px] text-zinc-500">loading…</span>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-3">

@@ -48,11 +48,9 @@ import {
   RefreshCw,
   Save,
   Search,
-  Sparkles,
   Unlock,
   User,
   UserPlus,
-  UserSearch,
   Users,
   X,
   Zap,
@@ -61,6 +59,11 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { StatusChip } from './kpi-status-chip';
+import { KpiReadinessChip } from './kpi-readiness-chip';
+import PayrollLockBanner from '@/components/employee/PayrollLockBanner';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
+import type { PayrollDispatchLockState } from '@/lib/supabase/payroll-dispatch-lock';
 import { normEmail } from '@/lib/email/norm-email';
 import {
   OffboardedStrip,
@@ -250,6 +253,34 @@ interface DeptBonusCalculatorProps {
    *  Omit for the manager's own KPI tab (defaults to "manager_kpi" server-side);
    *  the Payroll Wizard Readiness modal passes its own source. */
   submissionSource?: string;
+  /**
+   * The HSL-Branches / Departments navigation, rendered into this calculator's
+   * own toolbar beside the search rather than in a bar of its own above it
+   * (Kane, 2026-09-02).
+   *
+   * It is a NODE, not a mode + callback, because ManagerApp already owns which
+   * calculator is showing and both calculators have to render the identical
+   * control — passing the rendered switch down keeps one definition instead of
+   * two that can drift. Absent when the manager only has one calculator, in
+   * which case there is nothing to navigate between.
+   */
+  calculatorSwitch?: React.ReactNode;
+  /**
+   * Payroll's dispatch-lock state, from the SHELL that mounts this calculator.
+   *
+   * `useDispatchLock` is meant to be mounted once per shell and passed down —
+   * its own doc says so — and both calculators were calling it themselves. A
+   * fresh hook instance starts UNLOCKED and only flips after its first fetch, so
+   * every tab switch remounted the calculator, the "payroll is being processed"
+   * banner vanished, and it came back a round-trip later (Kane, 2026-09-02:
+   * *"it disappears like it doesn't know that payroll is processing"*). With
+   * the shell's already-resolved state handed in, the banner is on screen in
+   * the first frame of the mount.
+   *
+   * Optional only for mount points that have no shell instance (the Payroll
+   * Wizard's Readiness modal); there the calculator falls back to its own hook.
+   */
+  dispatchLock?: PayrollDispatchLockState;
 }
 
 // -- Per-department colour identity (hex; inline-styled to dodge Tailwind purge) --
@@ -349,48 +380,6 @@ function initials(name: string): string {
   if (parts.length === 0) return '?';
   if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
   return (parts[0]![0]! + parts[1]![0]!).toUpperCase();
-}
-
-/** Build short, *unique* abbreviations for the department picker tiles. The base
- *  form mirrors `initials()` — first letter of each of the first two words, or
- *  the first two letters when the name is a single word. On a collision we walk
- *  further into the name (and finally append a digit) so every department in the
- *  view ends up with a distinct tag. */
-function uniqueDeptAbbrevs(items: { key: string; name: string }[]): Record<string, string> {
-  const used = new Set<string>();
-  const out: Record<string, string> = {};
-  for (const { key, name } of items) {
-    const cleaned = name.replace(/["']/g, '').replace(/[,/]/g, ' ').trim();
-    const words = cleaned.split(/\s+/).filter(Boolean);
-    const letters = cleaned.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-
-    // Candidate abbreviations, most-preferred first.
-    const cands: string[] = [];
-    const push = (s: string) => {
-      const u = (s ?? '').toUpperCase();
-      if (u.length >= 2 && !cands.includes(u)) cands.push(u);
-    };
-    push(initials(name)); // base, e.g. "LG"
-    if (words.length >= 2) {
-      for (let i = 2; i < words.length; i++) push(words[0]![0]! + words[i]![0]!); // first + later word
-      push(words[0]!.slice(0, 2)); // first word, two letters
-      push(words[0]![0]! + words[1]![0]! + (words[2]?.[0] ?? words[1]![1] ?? '')); // 3-letter
-    } else {
-      for (let i = 2; i < letters.length; i++) push(letters[0]! + letters[i]!); // first + later letter
-      push(letters.slice(0, 3)); // 3-letter
-    }
-
-    let chosen = cands.find((c) => !used.has(c));
-    if (!chosen) {
-      const base = cands[0] ?? (key.slice(0, 2).toUpperCase() || '?');
-      let n = 2;
-      chosen = `${base}${n}`;
-      while (used.has(chosen)) chosen = `${base}${++n}`;
-    }
-    used.add(chosen);
-    out[key] = chosen;
-  }
-  return out;
 }
 
 function rowEmail(r: EmployeeRow): string {
@@ -735,6 +724,8 @@ export default function DeptBonusCalculator({
   controlledWeek,
   initialOpenDept = null,
   submissionSource,
+  calculatorSwitch,
+  dispatchLock: dispatchLockFromShell,
 }: DeptBonusCalculatorProps) {
   // Bind the tab cache to this viewer BEFORE any seeding below reads it. Two
   // people on one machine must never paint each other's departments, and the
@@ -745,6 +736,32 @@ export default function DeptBonusCalculator({
   // a separate staging table and never touches `bonus_catalog_applied` /
   // `hsl_bonus_period_status` (payroll) directly.
   const isQc = variant === 'qc';
+
+  /**
+   * Payroll's dispatch lock — **read for the banner and nothing else.**
+   *
+   * `ManagerApp` swaps this whole tab for `PayrollProcessingLock` once
+   * Accounting hits "Start processing", so the only person who ever sees the
+   * inside of this calculator while the lock is on is an **admin**, who is
+   * deliberately trusted to keep correcting numbers mid-run (the same bypass
+   * `processing-guard.ts` grants server-side). Until 2026-09-02 that meant they
+   * got no signal at all that a dispatch was live — they were editing figures
+   * Accounting was reading, and nothing on screen said so (Kane: *"in the
+   * departments I cannot see the payroll is being processed lock UI"*).
+   *
+   * It stays out of `kpiAutosaveGate` (`payrollLocked: false`, see the call
+   * site): feeding it in would silently stop an admin's corrections from ever
+   * persisting, which is the documented reason it was never read here. **The HSL
+   * calculator DOES gate on it and says so in its banner** — the two calculators
+   * disagree about whether an admin may work during processing, and that is a
+   * ruling for Kane, not something to settle by copying one into the other.
+   * Until then this banner states what is true HERE.
+   */
+  // Hooks cannot be conditional, so the fallback instance always exists; the
+  // shell's state wins whenever it is provided (see the prop's doc).
+  const { state: dispatchLockFallback } = useDispatchLock();
+  const payrollDispatch = dispatchLockFromShell ?? dispatchLockFallback;
+  const payrollProcessing = payrollDispatch.locked;
   const appliedEndpoint = isQc ? '/api/qc/submissions' : '/api/bonus-catalog-applied';
   // QC mode roster source: the officer's assigned members per department (the
   // authoritative per-dept roster in QC mode), plus a per-dept email set for
@@ -1159,17 +1176,28 @@ export default function DeptBonusCalculator({
   }, [isQc, isMonthlyPayWeek, deptLabelByKey, assignments, bonusById]);
 
   const visibleDeptKeys = useMemo<string[]>(() => {
+    // Alphabetical by the name the row prints (Kane, 2026-09-02) — the same
+    // resolver `DeptSummaryRow` uses, so what sorts is what the manager reads.
+    // Sorted at the source so the grid, the focus-mode rail and the load order
+    // agree; the raw sets below are catalog / assignment order, which is history.
+    const byName = (keys: string[]) => {
+      const label = (k: string) =>
+        DEPARTMENTS.find((d) => d.key === k)?.name ?? deptLabelByKey[k] ?? humanizeDeptKey(k);
+      return keys.sort((a, b) => label(a).localeCompare(label(b), 'en', { sensitivity: 'base' }));
+    };
     // QC officers only score the QC depts, and only the slots assigned to them
     // (qcRosterByDept is the authoritative per-dept roster in QC mode).
     if (isQc) {
-      return QC_DEPT_KEYS.filter((k) => (qcRosterByDept.get(k)?.length ?? 0) > 0);
+      return byName(QC_DEPT_KEYS.filter((k) => (qcRosterByDept.get(k)?.length ?? 0) > 0));
     }
     if (isElevated) {
-      return MANAGER_BONUS_DEPT_KEYS.filter(
-        (k) =>
-          (rosterByDept.get(k)?.length ?? 0) > 0 ||
-          (commonByDept.get(k)?.length ?? 0) > 0 ||
-          (individualByDept.get(k)?.size ?? 0) > 0,
+      return byName(
+        MANAGER_BONUS_DEPT_KEYS.filter(
+          (k) =>
+            (rosterByDept.get(k)?.length ?? 0) > 0 ||
+            (commonByDept.get(k)?.length ?? 0) > 0 ||
+            (individualByDept.get(k)?.size ?? 0) > 0,
+        ),
       );
     }
     const keys = new Set<string>();
@@ -1180,8 +1208,8 @@ export default function DeptBonusCalculator({
     // Managed in-app departments get a card too — catalog-driven like the rest
     // (roster + any bonuses assigned under their slug key; empty state otherwise).
     for (const k of customManagedKeys) keys.add(k);
-    return Array.from(keys);
-  }, [isQc, isElevated, managedDepts, rosterByDept, commonByDept, individualByDept, qcRosterByDept, customManagedKeys]);
+    return byName(Array.from(keys));
+  }, [isQc, isElevated, managedDepts, rosterByDept, commonByDept, individualByDept, qcRosterByDept, customManagedKeys, deptLabelByKey]);
 
   const [state, setState] = useState<AllState>({});
   // Landing: filter the department cards by name.
@@ -1758,21 +1786,6 @@ export default function DeptBonusCalculator({
       setWeekError(true);
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Short, unique abbreviation per visible department for the picker tiles
-  // (replaces the old wallpaper thumbnails). Computed over the whole visible set
-  // so collisions resolve deterministically and a dept's tag is stable as the
-  // landing search narrows.
-  const deptAbbrevByKey = useMemo<Record<string, string>>(
-    () =>
-      uniqueDeptAbbrevs(
-        visibleDeptKeys.map((key) => ({
-          key,
-          name: DEPARTMENTS.find((d) => d.key === key)?.name ?? deptLabelByKey[key] ?? key,
-        })),
-      ),
-    [visibleDeptKeys, deptLabelByKey],
-  );
 
   // -- Live bonus computation ----------------------------------------------------
 
@@ -3539,6 +3552,7 @@ export default function DeptBonusCalculator({
     return (
       <KpiCalculatorLoading
         variant="departments"
+        calculatorSwitch={calculatorSwitch}
         title={
           isElevated
             ? 'All Departments'
@@ -3555,14 +3569,22 @@ export default function DeptBonusCalculator({
 
   return (
     <div className="flex min-h-0 flex-col">
-      {/* Header + controls */}
-      <div className="sticky top-0 z-10 border-b border-zinc-200/80 bg-white/85 px-4 py-3 backdrop-blur-md dark:border-zinc-800 dark:bg-[#0d1117]/85 sm:px-6">
-        <div className="flex flex-wrap items-end justify-between gap-3">
+      {/* Top bar — deliberately the SAME header as the HSL calculator's, down to
+          the padding, the eyebrow tracking and the title weight (Kane,
+          2026-09-02: *"make sure they use the same headers"*). A manager moves
+          between these two tabs all day and they were reading as two different
+          products: this one had an 18px bold title over a 0.22em eyebrow and two
+          large stat tiles, the other a 16px semibold title over a 0.2em eyebrow
+          and one quiet figure pill. The pill won — the twin tiles were the
+          hero-metric template, and a projection that has not been locked yet is
+          not the loudest thing on a scoring screen. */}
+      <div className="sticky top-0 z-10 flex flex-col gap-2.5 border-b border-zinc-200/80 bg-white/90 px-5 py-3 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/90">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
+            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
               KPI Calculator &middot; Departments
             </p>
-            <h2 className="mt-0.5 text-[18px] font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+            <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
               {isElevated
                 ? 'All Departments'
                 : visibleDeptKeys.length === 1
@@ -3570,8 +3592,11 @@ export default function DeptBonusCalculator({
                     deptLabelByKey[visibleDeptKeys[0]] ??
                     humanizeDeptKey(visibleDeptKeys[0]))
                   : 'My Departments'}
-            </h2>
-            <div className="mt-2">
+              {/* HSL prints a static "week of <date>" here. This one is the
+                  same text, and opens the week menu — the picker used to be a
+                  bordered button with prev/next arrows and a calendar glyph,
+                  which was the single biggest reason the two headers did not
+                  read as the same header. */}
               <WeekPicker
                 value={weekStart}
                 weekEnd={weekEnd}
@@ -3579,109 +3604,47 @@ export default function DeptBonusCalculator({
                 currentWeekStart={currentWeekStart}
                 onChange={selectWeek}
               />
-            </div>
-            {/* The upload list never answered, so the week shown above is only a
-                local-clock guess — scoring against it would save rows nobody can
-                read back (see `weekResolved`). Everything is held until reload. */}
-            {weekError && (
-              <div
-                role="alert"
-                className="mt-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/30 dark:text-rose-200"
-              >
-                <span className="font-semibold">Couldn&apos;t confirm the payroll week.</span>{' '}
-                Applying bonuses is paused — anything saved now would be filed under the wrong week
-                and wouldn&apos;t be visible to Accounting or the other managers. Reload the page to
-                try again.
-              </div>
-            )}
+            </h2>
           </div>
-          <div className="flex items-stretch gap-2.5">
-            <motion.div
-              className="flex flex-col justify-center rounded-xl border border-emerald-200/80 bg-gradient-to-b from-emerald-50 to-white px-3.5 py-2 text-right dark:border-emerald-900/40 dark:from-emerald-950/30 dark:to-transparent"
-              initial={reduceMotion ? false : { opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.4, ease: EASE }}
-            >
-              <div className="font-mono text-[9px] uppercase tracking-[0.15em] text-emerald-600/80 dark:text-emerald-400/80">
-                Projected · week
-              </div>
-              <div className="tabular-nums font-mono text-xl font-bold leading-none text-emerald-700 dark:text-emerald-300">
-                {fmtTotals(grandTotal)}
-              </div>
-            </motion.div>
-            <div className="flex flex-col justify-center rounded-xl border border-zinc-200 bg-zinc-50/80 px-3.5 py-2 text-right dark:border-zinc-800 dark:bg-zinc-900/60">
-              <div className="font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-400">Headcount</div>
-              <div className="flex items-center justify-end gap-1 text-zinc-700 dark:text-zinc-200">
-                <Users className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
-                <span className="tabular-nums font-mono text-xl font-bold leading-none">{totalPeople}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {isLiveWeek ? (
-          <DeadlineBanner
-            weekStart={weekStart}
-            weekEnd={weekEnd}
-            daysLeft={daysLeft}
-            overdue={overdue}
-            readyCount={readyCount}
-            total={totalDepts}
-          />
-        ) : (
-          <PastWeekBanner
-            weekStart={weekStart}
-            weekEnd={weekEnd}
-            liveWeekStart={currentWeekStart}
-            liveWeekEnd={currentWeekStart ? weekEndFromStart(currentWeekStart) : ''}
-            onJumpToLive={() => currentWeekStart && selectWeek(currentWeekStart)}
-          />
-        )}
-
-        {hiddenMonthlyBonusNames.length > 0 && (
-          <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-snug text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-300">
-            <CalendarDays className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-            <span>
-              <strong>Monthly {hiddenMonthlyBonusNames.length === 1 ? 'bonus' : 'bonuses'}</strong>{' '}
-              ({hiddenMonthlyBonusNames.join(', ')}) {hiddenMonthlyBonusNames.length === 1 ? 'is' : 'are'} paid
-              once a month and only appear on the <strong>last payroll week of the month</strong> — switch to
-              that week to apply {hiddenMonthlyBonusNames.length === 1 ? 'it' : 'them'}.
-            </span>
-          </div>
-        )}
-
-        {/* Calculators toolbar: search + open-as toggle */}
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex min-w-0 flex-1 items-center gap-3">
-            <span className="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-400 sm:inline">
-              Department calculators
-            </span>
-            {/* Shown even with a single department — the search finds PEOPLE too,
-                and opening a hit lands on that person's row. */}
-            <div className="relative min-w-0 max-w-[260px] flex-1">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
-              <input
-                type="search"
-                value={deptSearch}
-                onChange={(e) => setDeptSearch(e.target.value)}
-                placeholder="Search departments or a work email…"
-                aria-label="Search departments, or a person by name or email"
-                title="Search a department name, or a person by name / work email — the department that scores them shows up"
-                className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition-colors focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
-              />
-            </div>
-          </div>
+          {/* The same cluster the HSL bar carries, in the same order: figure
+              pill, open-as switch, cache stamp, Refresh. The word differs by
+              one — this number is a PROJECTION until the week is locked, and
+              HSL's is a running total — because a shared shape is worth copying
+              and a wrong label is not. */}
           <div className="flex items-center gap-2">
+            {/* The old DeadlineBanner, as a chip, first in the cluster like HSL's.
+                Only the LIVE week has a deadline — a past week shows the count
+                alone, and the PastWeekBanner below says why. */}
+            <KpiReadinessChip
+              ready={readyCount}
+              total={totalDepts}
+              daysLeft={isLiveWeek ? daysLeft : undefined}
+              overdue={isLiveWeek && overdue}
+              noun="submitted"
+            />
+            <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
+              <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
+                Projected
+              </span>
+              <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                {fmtTotals(grandTotal)}
+              </span>
+              <span className="font-mono text-[10px] text-zinc-500">{totalPeople} ppl</span>
+            </div>
+            <ViewSwitch mode={mode} onChange={setMode} />
             {/* What is on screen right now is the previous visit's data, still
                 being re-pulled. Say when it was fetched rather than let a figure
                 another scorer has since changed pass for live. Neutral, not
-                amber — amber is reserved for warnings. */}
+                amber — amber is reserved for warnings. No spinner either: the
+                timestamp is the whole message, and an icon turning forever beside
+                it made a settled page look like it was polling (Kane,
+                2026-09-02). The Refresh button still spins — that one is
+                answering a click. */}
             {cacheAsOf !== null && (
               <span
                 className="hidden items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 font-mono text-[10px] text-zinc-500 shadow-sm sm:flex dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400"
                 title="Showing the bonuses this tab already had. Reloading from the database now."
               >
-                <RefreshCw className="h-3 w-3 animate-spin" aria-hidden />
                 as of{' '}
                 {new Date(cacheAsOf).toLocaleTimeString('en-US', {
                   hour: '2-digit',
@@ -3700,16 +3663,101 @@ export default function DeptBonusCalculator({
               <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
               {refreshing ? 'Refreshing…' : 'Refresh'}
             </Button>
-            <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-400">Open as</span>
-            <ViewSwitch mode={mode} onChange={setMode} />
+          </div>
+        </div>
+
+        {/* The upload list never answered, so the week shown above is only a
+            local-clock guess — scoring against it would save rows nobody can
+            read back (see `weekResolved`). Everything is held until reload. Same
+            slot, same shape as HSL's. */}
+        {weekError && (
+          <div
+            role="alert"
+            className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/30 dark:text-rose-200"
+          >
+            <span className="font-semibold">Couldn&apos;t confirm the payroll week.</span>{' '}
+            Applying bonuses is paused — anything saved now would be filed under the wrong week
+            and wouldn&apos;t be visible to Accounting or the other managers. Reload the page to
+            try again.
+          </div>
+        )}
+
+        {/* Second row: the calculator switch, then this screen's search — the
+            same two things, in the same order, as the HSL bar's second row.
+            `calculatorSwitch` is the HSL-Branches / Departments navigation,
+            handed down from ManagerApp; it used to be its own bar stacked above
+            this one, which cost a full row of height to hold two buttons and
+            read as page chrome rather than as part of this screen (Kane,
+            2026-09-02). Refresh, the cache stamp and the open-as switch moved UP
+            into the cluster beside the title, which is where HSL keeps them. */}
+        <div className="flex flex-wrap items-center gap-2">
+          {calculatorSwitch}
+          {/* Shown even with a single department — the search finds PEOPLE too,
+              and opening a hit lands on that person's row. Same box, same width,
+              same focus ring as the HSL people search. */}
+          <div className="relative w-full max-w-[260px]">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+            <input
+              type="search"
+              value={deptSearch}
+              onChange={(e) => setDeptSearch(e.target.value)}
+              placeholder="Search departments or a work email…"
+              aria-label="Search departments, or a person by name or email"
+              title="Search a department name, or a person by name / work email — the department that scores them shows up"
+              className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition-colors focus:border-blue-400 focus:ring-1 focus:ring-blue-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
+            />
           </div>
         </div>
       </div>
 
+      {/* Week context, BELOW the header — only when there is something to say.
+          The deadline banner is now the readiness chip in the header; what is
+          left here is the past-week notice and the monthly-bonus note, the same
+          place a banner goes on the HSL side. */}
+      {(!isLiveWeek || hiddenMonthlyBonusNames.length > 0) && (
+      <div className="flex flex-col gap-2 px-5 pt-3">
+        {!isLiveWeek && (
+          <PastWeekBanner
+            weekStart={weekStart}
+            weekEnd={weekEnd}
+            liveWeekStart={currentWeekStart}
+            liveWeekEnd={currentWeekStart ? weekEndFromStart(currentWeekStart) : ''}
+            onJumpToLive={() => currentWeekStart && selectWeek(currentWeekStart)}
+          />
+        )}
+        {hiddenMonthlyBonusNames.length > 0 && (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-snug text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-300">
+            <CalendarDays className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span>
+              <strong>Monthly {hiddenMonthlyBonusNames.length === 1 ? 'bonus' : 'bonuses'}</strong>{' '}
+              ({hiddenMonthlyBonusNames.join(', ')}) {hiddenMonthlyBonusNames.length === 1 ? 'is' : 'are'} paid
+              once a month and only appear on the <strong>last payroll week of the month</strong> — switch to
+              that week to apply {hiddenMonthlyBonusNames.length === 1 ? 'it' : 'them'}.
+            </span>
+          </div>
+        )}
+      </div>
+      )}
+
+      {/* Payroll processing banner — the employee dashboard's, with its sweep
+          line, same as HSL's. The WORDING differs because the behaviour does:
+          HSL blocks mark ready/unready while the lock is on, this one
+          deliberately does not, and a banner that claimed otherwise would be
+          telling an admin they cannot do something they can. See
+          `payrollProcessing` above. */}
+      <PayrollLockBanner
+        state={payrollDispatch}
+        detail="Accounting is dispatching from these figures — locked for everyone except admins; your changes still save."
+        dismissible={false}
+      />
+
       {/* Department cards */}
       <motion.div
         className={cn(
-          'relative grid gap-3.5 px-4 py-4 sm:px-6',
+          // Same container as the HSL branch grid — 'grid-cols-1 lg:grid-cols-2',
+          // gap-3, px-4 py-5 sm:px-6 — so the two calculators are the same
+          // screen with different rows in it (Kane, 2026-09-02).
+          'relative grid gap-3 px-4 py-5 sm:px-6',
           // QC mode keeps the calculator cards left-aligned (a focused work
           // surface); the manager landing centers a lone card as before.
           filteredDeptKeys.length <= 1
@@ -3730,12 +3778,11 @@ export default function DeptBonusCalculator({
             const v = buildDeptView(key);
             const peopleHits = matchedPeopleByDept.get(key) ?? [];
             return (
-              <DeptSummaryCard
+              <DeptSummaryRow
                 key={key}
                 name={v.dept?.name ?? deptLabelByKey[key] ?? humanizeDeptKey(key)}
                 desc={DEPT_DESCRIPTION[key] ?? ''}
                 color={v.color}
-                monogram={deptAbbrevByKey[key] ?? initials(v.dept?.name ?? deptLabelByKey[key] ?? humanizeDeptKey(key))}
                 headcount={v.allMembers.length}
                 entered={v.entered}
                 status={v.d?.status ?? 'draft'}
@@ -3873,11 +3920,37 @@ function CompletionGauge({
 }
 
 /** Landing card: a department's at-a-glance summary. Opens the calculator. */
-function DeptSummaryCard({
+/**
+ * One department as a ROW, deliberately the same shape as an HSL branch
+ * (`HslBranchList` in `HslBonusCalculator.tsx`): colour bar, name over a meta
+ * line, then status / headcount / projected / chevron pushed right, two per line
+ * from `lg`.
+ *
+ * Kane, 2026-09-02: *"make it similar to the design of the HSL Branches so its
+ * much simpler."* A manager moves between these two tabs all day and they were
+ * two different products — this one had a 64px monogram tile, a description
+ * line, a completion gauge, per-person match pills, a hover lift and a boxed
+ * chevron. What went is the ornament, not the information:
+ *
+ * - the monogram tile → the same 1px colour bar the branches use; the tile was
+ *   ~1/4 of the card's width to say what the colour already says;
+ * - the completion gauge → `entered/headcount ppl`, the number the gauge was
+ *   drawing, and the same slot a branch puts its headcount in;
+ * - the match pills → one `match` chip with a count, names moved to its
+ *   `title`; the landing search already lists what it matched;
+ * - `HeroBadge` → the shared `StatusChip`, so a department and a branch cannot
+ *   report the same status two different ways. `warn` survives it as the amber
+ *   "Action needed" draft.
+ *
+ * The entrance/exit variants and `layout` stay: the parent grid filters with
+ * `AnimatePresence mode="popLayout"`, and without them a narrowing search
+ * teleports the survivors. The hover lift is gone in favour of the branches'
+ * border-and-shadow, which reads better on a wide row than on a tall card.
+ */
+function DeptSummaryRow({
   name,
   desc,
   color,
-  monogram,
   headcount,
   entered,
   status,
@@ -3895,7 +3968,6 @@ function DeptSummaryCard({
   name: string;
   desc: string;
   color: string;
-  monogram: string;
   headcount: number;
   entered: number;
   status: BonusStatus;
@@ -3907,11 +3979,12 @@ function DeptSummaryCard({
   loading: boolean;
   isOpen: boolean;
   reduce: boolean;
-  /** People in this department that the landing search matched — shown so it's
-   *  obvious why a card surfaced when the query was an email, not a dept name. */
+  /** People in this department that the landing search matched — flagged so it's
+   *  obvious why a row surfaced when the query was an email, not a dept name. */
   matches?: { name: string; email: string }[];
   onOpen: () => void;
 }) {
+  const matched = matches.length > 0;
   return (
     <motion.button
       type="button"
@@ -3922,40 +3995,33 @@ function DeptSummaryCard({
         show: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.32, ease: EASE } },
       }}
       exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.95, transition: { duration: 0.18, ease: EASE } }}
-      whileHover={reduce ? undefined : { y: -3 }}
       whileTap={reduce ? undefined : { scale: 0.995 }}
       className={cn(
-        'group relative flex items-center gap-3.5 overflow-hidden rounded-2xl border bg-white p-3.5 text-left shadow-sm transition-shadow hover:shadow-lg dark:bg-zinc-900/40',
-        isOpen ? 'border-transparent' : 'border-zinc-200/90 dark:border-zinc-800',
+        'group flex h-full w-full flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border bg-white px-4 py-3 text-left',
+        'outline-none transition-[border-color,box-shadow] duration-150',
+        'hover:border-zinc-300 hover:shadow-sm focus-visible:ring-2 focus-visible:ring-blue-500',
+        'dark:bg-zinc-950/50 dark:hover:border-zinc-700',
+        isOpen
+          ? 'border-transparent'
+          : matched
+            ? 'border-blue-400 ring-1 ring-blue-400/50 dark:border-blue-500/70'
+            : 'border-zinc-200 dark:border-zinc-800',
       )}
       style={isOpen ? { boxShadow: `0 0 0 2px ${color}` } : undefined}
     >
-      <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: color }} aria-hidden />
+      <span
+        aria-hidden
+        className="h-8 w-1 flex-none rounded-full"
+        style={{ backgroundColor: color }}
+      />
 
-      {/* Abbreviation tile */}
-      <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl ring-1 ring-black/5 dark:ring-white/10">
-        <div
-          className="absolute inset-0 flex items-center justify-center font-mono text-lg font-bold"
-          style={{ backgroundColor: hexA(color, 0.14), color }}
-          aria-hidden
-        >
-          {monogram}
-        </div>
-        <div className="absolute bottom-1 left-1 flex items-center gap-1 rounded-full bg-black/45 px-1.5 py-0.5 text-white/90 backdrop-blur-sm">
-          <Users className="h-2.5 w-2.5" aria-hidden />
-          {loading ? (
-            <Skeleton className="h-2 w-3.5 bg-white/40 dark:bg-white/40" />
-          ) : (
-            <span className="tabular-nums font-mono text-[10px]">{headcount}</span>
-          )}
-        </div>
-      </div>
-
-      {/* Identity + status */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-base font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{name}</span>
-          <HeroBadge status={status} warn={warn} />
+      {/* `basis-40` keeps the name readable and lets the figures drop to their
+          own line rather than crushing — same rule as the branch row. */}
+      <span className="flex min-w-0 flex-[2] basis-40 flex-col gap-0.5">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+            {name}
+          </span>
           {dirty && (
             <span
               className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400"
@@ -3963,48 +4029,52 @@ function DeptSummaryCard({
               aria-hidden
             />
           )}
-        </div>
-        <p className="mt-0.5 line-clamp-1 text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">{desc}</p>
-        {matches.length > 0 && (
-          <div className="mt-1 flex flex-wrap items-center gap-1">
-            <UserSearch className="h-3 w-3 shrink-0 text-emerald-500" aria-hidden />
-            {matches.slice(0, 2).map((m) => (
-              <span
-                key={m.email}
-                className="max-w-full truncate rounded-full bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] text-emerald-700 ring-1 ring-emerald-200/70 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-900/60"
-                title={`${m.name} · ${m.email}`}
-              >
-                {m.name} · {m.email}
-              </span>
-            ))}
-            {matches.length > 2 && (
-              <span className="font-mono text-[10px] text-zinc-400">+{matches.length - 2} more</span>
-            )}
-          </div>
-        )}
-        {hasAnyBonus && headcount > 0 && !loading && (
-          <div className="mt-1.5">
-            <CompletionGauge entered={entered} total={headcount} toFill={toFill} size="sm" reduce={reduce} />
-          </div>
-        )}
-      </div>
-
-      {/* Projected + open affordance */}
-      <div className="flex shrink-0 items-center gap-3">
-        <div className="text-right">
-          <div className="font-mono text-[8px] uppercase tracking-[0.16em] text-zinc-400">Projected</div>
-          {loading ? (
-            <Skeleton className="ml-auto mt-1 h-4 w-16" />
-          ) : (
-            <div className="tabular-nums font-mono text-base font-bold leading-none text-emerald-600 dark:text-emerald-400">
-              {fmtTotals(projected)}
-            </div>
+          {matched && (
+            <span
+              title={matches.map((m) => `${m.name} · ${m.email}`).join('\n')}
+              className="flex-none rounded bg-blue-100 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-blue-800 dark:bg-blue-950/60 dark:text-blue-300"
+            >
+              {matches.length === 1 ? 'match' : `${matches.length} matches`}
+            </span>
           )}
-        </div>
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-200 text-zinc-400 transition-colors group-hover:border-zinc-300 group-hover:text-zinc-600 dark:border-zinc-700 dark:group-hover:border-zinc-600 dark:group-hover:text-zinc-300">
-          <ChevronRight className="h-4 w-4" aria-hidden />
         </span>
-      </div>
+        <span className="truncate font-mono text-[10px] text-zinc-500">{desc}</span>
+      </span>
+
+      <span className="ml-auto flex flex-none items-center gap-3">
+        <StatusChip status={status} warn={warn} />
+
+        {/* The gauge's two numbers, plainly. `toFill` rides the tooltip rather
+            than a third mark on the row. */}
+        <span
+          className="text-right font-mono text-[10px] text-zinc-500 sm:w-14"
+          title={
+            hasAnyBonus && headcount > 0
+              ? `${entered} of ${headcount} scored${toFill > 0 ? ` · ${toFill} still to fill` : ''}`
+              : undefined
+          }
+        >
+          {loading ? (
+            <Skeleton className="ml-auto h-2.5 w-10" />
+          ) : hasAnyBonus && headcount > 0 ? (
+            `${entered}/${headcount} ppl`
+          ) : (
+            `${headcount} ppl`
+          )}
+        </span>
+
+        <span
+          className="text-right font-mono text-sm font-bold tabular-nums sm:w-28"
+          style={{ color }}
+        >
+          {loading ? <Skeleton className="ml-auto h-4 w-20" /> : fmtTotals(projected)}
+        </span>
+
+        <ChevronRight
+          aria-hidden
+          className="h-4 w-4 flex-none text-zinc-400 transition-colors group-hover:text-zinc-700 dark:text-zinc-600 dark:group-hover:text-zinc-300"
+        />
+      </span>
     </motion.button>
   );
 }
@@ -4776,46 +4846,44 @@ function WeekPicker({
   const hasOlder = idx >= 0 && idx < options.length - 1;
   const hasNewer = idx > 0;
 
-  return (
-    <div ref={ref} className="relative inline-flex items-center gap-1">
-      <button
-        type="button"
-        aria-label="Older week"
-        disabled={!hasOlder}
-        onClick={() => hasOlder && onChange(options[idx + 1]!.start)}
-        className="rounded-md border border-zinc-200 bg-white p-1 text-zinc-500 transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:bg-zinc-800"
-      >
-        <ChevronLeft className="h-3.5 w-3.5" />
-      </button>
+  // Left/Right arrows step through weeks. They used to be two bordered
+  // buttons flanking the trigger; the trigger is now the same small text the
+  // HSL header prints, so the stepping moved to the keyboard.
+  const onTriggerKey = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key === 'ArrowLeft' && hasOlder) {
+      e.preventDefault();
+      onChange(options[idx + 1]!.start);
+    } else if (e.key === 'ArrowRight' && hasNewer) {
+      e.preventDefault();
+      onChange(options[idx - 1]!.start);
+    }
+  };
 
+  return (
+    <span ref={ref} className="relative ml-2 inline-flex items-center">
+      {/* Byte-for-byte the HSL header's "week of <date>" span, as a button.
+          `font-normal` matters: it sits inside an <h2> and must not inherit its
+          weight. A "past" marker is the one addition — a manager scoring a past
+          week needs that fact in the header, not only in a banner below it. */}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
+        onKeyDown={onTriggerKey}
         aria-expanded={open}
-        className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-left transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:bg-zinc-800/70"
+        aria-haspopup="listbox"
+        title={`${fmtWeek(value, weekEnd)} — click to change week, ←/→ to step`}
+        className="inline-flex items-center gap-1 rounded font-mono text-xs font-normal text-zinc-500 outline-none transition-colors hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:text-zinc-200"
       >
-        <CalendarDays className="h-3.5 w-3.5 text-zinc-400" />
-        <span className="text-[12.5px] font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">
-          {fmtWeek(value, weekEnd)}
-        </span>
-        {isLive ? (
-          <LiveBadge />
-        ) : (
-          <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-            Past
+        week of {value}
+        {!isLive && (
+          <span className="rounded bg-zinc-100 px-1 py-px font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+            past
           </span>
         )}
-        <ChevronDown className={cn('h-3.5 w-3.5 text-zinc-400 transition-transform', open && 'rotate-180')} />
-      </button>
-
-      <button
-        type="button"
-        aria-label="Newer week"
-        disabled={!hasNewer}
-        onClick={() => hasNewer && onChange(options[idx - 1]!.start)}
-        className="rounded-md border border-zinc-200 bg-white p-1 text-zinc-500 transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:bg-zinc-800"
-      >
-        <ChevronRight className="h-3.5 w-3.5" />
+        <ChevronDown
+          className={cn('h-3 w-3 text-zinc-400 transition-transform', open && 'rotate-180')}
+          aria-hidden
+        />
       </button>
 
       <AnimatePresence>
@@ -4825,7 +4893,7 @@ function WeekPicker({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -6, scale: 0.98 }}
             transition={{ duration: 0.16, ease: EASE }}
-            className="absolute left-9 top-full z-30 mt-1.5 w-64 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+            className="absolute left-0 top-full z-30 mt-1.5 w-64 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
           >
             <div className="flex items-center justify-between border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
               <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
@@ -4890,7 +4958,7 @@ function WeekPicker({
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </span>
   );
 }
 
@@ -4909,7 +4977,7 @@ function PastWeekBanner({
   onJumpToLive: () => void;
 }) {
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-indigo-300/70 bg-indigo-50 px-3 py-2 text-xs text-indigo-900 dark:border-indigo-800/60 dark:bg-indigo-950/40 dark:text-indigo-200">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-indigo-300/70 bg-indigo-50 px-3 py-2 text-xs text-indigo-900 dark:border-indigo-800/60 dark:bg-indigo-950/40 dark:text-indigo-200">
       <CalendarDays className="h-4 w-4 shrink-0" aria-hidden />
       <span className="font-semibold">Viewing the week of {fmtWeek(weekStart, weekEnd)}.</span>
       <span className="opacity-80">
@@ -4928,76 +4996,10 @@ function PastWeekBanner({
   );
 }
 
-function DeadlineBanner({
-  weekStart,
-  weekEnd,
-  daysLeft,
-  overdue,
-  readyCount,
-  total,
-}: {
-  weekStart: string;
-  weekEnd: string;
-  daysLeft: number;
-  overdue: boolean;
-  readyCount: number;
-  total: number;
-}) {
-  const draft = total - readyCount;
-  const done = draft === 0;
-  const tier: 'done' | 'critical' | 'warn' | 'info' = done
-    ? 'done'
-    : overdue || daysLeft <= 1
-      ? 'critical'
-      : daysLeft <= 3
-        ? 'warn'
-        : 'info';
-  const styles: Record<'done' | 'critical' | 'warn' | 'info', string> = {
-    done: 'border-emerald-300/70 bg-emerald-50 text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-200',
-    info: 'border-sky-300/70 bg-sky-50 text-sky-800 dark:border-sky-800/60 dark:bg-sky-950/40 dark:text-sky-200',
-    warn: 'border-amber-300/80 bg-amber-50 text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200',
-    critical: 'border-red-300/80 bg-red-50 text-red-900 dark:border-red-700/60 dark:bg-red-950/40 dark:text-red-200',
-  };
-  const Icon = done ? CheckCircle2 : tier === 'info' ? Clock : AlertTriangle;
-  const fmt = (iso: string) => {
-    const [y, m, dd] = iso.split('-').map(Number);
-    return new Date(y!, m! - 1, dd!).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  };
-  const countdown = overdue ? 'payroll window closing' : daysLeft <= 0 ? 'due today' : `${daysLeft} day${daysLeft === 1 ? '' : 's'} left`;
-  return (
-    <div className={cn('mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border px-3 py-2 text-xs', styles[tier])}>
-      <Icon className={cn('h-4 w-4 shrink-0', tier === 'critical' && !done && 'animate-pulse')} aria-hidden />
-      <span className="font-semibold">
-        {done ? 'All departments submitted for this week.' : `${draft} of ${total} department${total === 1 ? '' : 's'} not yet submitted.`}
-      </span>
-      <span className="opacity-80">
-        Week {fmt(weekStart)} &ndash; {fmt(weekEnd)} &middot; feeds this week&rsquo;s payroll{done ? '' : ` · ${countdown}`}
-      </span>
-      <span className="ml-auto rounded-full bg-white/70 px-2 py-0.5 font-mono text-[10px] font-semibold dark:bg-black/30">
-        {readyCount}/{total} ready
-      </span>
-    </div>
-  );
-}
+// `DeadlineBanner` lived here. It is now `KpiReadinessChip`
+// (`kpi-readiness-chip.tsx`) in the header, shared with the HSL calculator.
 
-function HeroBadge({ status, warn }: { status: BonusStatus; warn?: boolean }) {
-  const map: Record<BonusStatus, { label: string; cls: string; icon?: React.ReactNode }> = {
-    draft: warn
-      ? { label: 'Action needed', cls: 'bg-amber-100 text-amber-700 ring-1 ring-amber-300/70 dark:bg-amber-950/50 dark:text-amber-300 dark:ring-amber-700/50', icon: <AlertTriangle className="h-3 w-3" /> }
-      : { label: 'Draft', cls: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400', icon: <Sparkles className="h-3 w-3" /> },
-    ready: { label: 'Ready', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300', icon: <CheckCircle2 className="h-3 w-3" /> },
-    locked: { label: 'Locked', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300', icon: <Lock className="h-3 w-3" /> },
-  };
-  const s = map[status];
-  return (
-    <span
-      className={cn(
-        'inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide',
-        s.cls,
-      )}
-    >
-      {s.icon}
-      {s.label}
-    </span>
-  );
-}
+// `HeroBadge` lived here. It is now the shared `StatusChip`
+// (`kpi-status-chip.tsx`), because a department and an HSL branch were painting
+// the same three statuses in two different palettes — this one had `locked` in
+// amber, which the rest of the app reserves for warnings.
