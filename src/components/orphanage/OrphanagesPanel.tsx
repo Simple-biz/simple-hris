@@ -47,6 +47,12 @@ interface Orphanage {
   email: string | null;
   leftoverBudget: number;
   imageUrl: string | null;
+  /** Receiving bank for the interns' orphanage share (Payment Dispatch pays
+   *  the `intern_orphanage_share` item here under share_mode = system_split). */
+  bankName: string;
+  bankAccountName: string;
+  bankAccountNumber: string;
+  swiftCode: string;
 }
 
 type Row = {
@@ -58,6 +64,10 @@ type Row = {
   email: string | null;
   leftover_budget: number | string;
   image_url: string | null;
+  bank_name?: string | null;
+  bank_account_name?: string | null;
+  bank_account_number?: string | null;
+  swift_code?: string | null;
 };
 
 function rowToOrphanage(r: Row): Orphanage {
@@ -70,6 +80,10 @@ function rowToOrphanage(r: Row): Orphanage {
     email: r.email,
     leftoverBudget: Number(r.leftover_budget) || 0,
     imageUrl: r.image_url,
+    bankName: r.bank_name ?? '',
+    bankAccountName: r.bank_account_name ?? '',
+    bankAccountNumber: r.bank_account_number ?? '',
+    swiftCode: r.swift_code ?? '',
   };
 }
 
@@ -252,6 +266,10 @@ function OrphanageDialog({
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [leftover, setLeftover] = useState('');
+  const [bankName, setBankName] = useState('');
+  const [bankAccountName, setBankAccountName] = useState('');
+  const [bankAccountNumber, setBankAccountNumber] = useState('');
+  const [swiftCode, setSwiftCode] = useState('');
   const [imageUrl, setImageUrl] = useState<string | null>(null);
 
   const [uploading, setUploading] = useState(false);
@@ -267,6 +285,10 @@ function OrphanageDialog({
     setPhone(editing?.phone ?? '');
     setEmail(editing?.email ?? '');
     setLeftover(editing ? String(editing.leftoverBudget) : '');
+    setBankName(editing?.bankName ?? '');
+    setBankAccountName(editing?.bankAccountName ?? '');
+    setBankAccountNumber(editing?.bankAccountNumber ?? '');
+    setSwiftCode(editing?.swiftCode ?? '');
     setImageUrl(editing?.imageUrl ?? null);
   }, [open, editing]);
 
@@ -300,6 +322,10 @@ function OrphanageDialog({
       email: email.trim() || null,
       leftover_budget: Number.parseFloat(leftover) || 0,
       image_url: imageUrl,
+      bank_name: bankName.trim(),
+      bank_account_name: bankAccountName.trim(),
+      bank_account_number: bankAccountNumber.trim(),
+      swift_code: swiftCode.trim(),
       ...(editing ? {} : { created_by: viewerEmail ?? null }),
     };
     try {
@@ -568,6 +594,27 @@ function OrphanageDialog({
                     className="pl-9 font-mono"
                   />
                 </div>
+              </Field>
+
+              {/* Receiving bank — where Payment Dispatch sends the interns' orphanage
+                  share when Accounting has chosen "HRIS splits it". Edited only here. */}
+              <div className="col-span-2 mt-1 border-t border-pink-100/70 pt-4 dark:border-pink-950/45">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-pink-700 dark:text-pink-300">Receiving bank</p>
+                <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Where the interns&apos; orphanage share is paid. Payment Dispatch reads it from here and never edits it.
+                </p>
+              </div>
+              <Field id="orph-bank" label="Bank">
+                <Input id="orph-bank" value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="BDO, BPI, UnionBank…" />
+              </Field>
+              <Field id="orph-bank-holder" label="Account name">
+                <Input id="orph-bank-holder" value={bankAccountName} onChange={(e) => setBankAccountName(e.target.value)} placeholder="Name on the account" />
+              </Field>
+              <Field id="orph-bank-acct" label="Account number">
+                <Input id="orph-bank-acct" value={bankAccountNumber} onChange={(e) => setBankAccountNumber(e.target.value)} className="font-mono" />
+              </Field>
+              <Field id="orph-bank-swift" label="SWIFT / code">
+                <Input id="orph-bank-swift" value={swiftCode} onChange={(e) => setSwiftCode(e.target.value)} className="font-mono uppercase" placeholder="optional" />
               </Field>
             </div>
 

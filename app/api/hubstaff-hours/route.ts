@@ -1,5 +1,4 @@
 import { createSupabaseServerClient, createSupabaseServiceRoleClient } from "@/lib/supabase/server";
-import { mapHubstaffHoursRow } from "@/lib/supabase/hubstaff-hours";
 import {
   deleteHubstaffRowsBySourceFile,
   fetchHubstaffRowsOrdered,
@@ -11,7 +10,7 @@ import {
   renameHubstaffSourceFile,
   setHubstaffUploadCurrentBySourceFile,
   replaceHubstaffHoursFromCsvText,
-  rowsToPayrollRows,
+  splitHubstaffRows,
   sortHubstaffColumnsForDisplay,
 } from "@/lib/supabase/hubstaff-hours-db";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
@@ -319,8 +318,11 @@ export async function GET(req: NextRequest) {
         const match = rows.find((r) => rowMatchesAnyEmail(r, aliasSet));
         outRows = match ? [match] : [];
       }
-      const payrollRows = rowsToPayrollRows(outRows);
-      return NextResponse.json({ columns, rows: outRows, payrollRows, error: null });
+      // Interns (@pathway.ph) never reach payrollRows — they are priced by the
+      // Interns mini wizard from their own report. The count is disclosed so a
+      // stray intern in the Simple file is visible, never silently vanished.
+      const { payrollRows, internRowsDropped } = splitHubstaffRows(outRows);
+      return NextResponse.json({ columns, rows: outRows, payrollRows, internRowsDropped, error: null });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return NextResponse.json({ columns: null, rows: null, payrollRows: [], error: cleanErrorMessage(msg) });
@@ -331,8 +333,8 @@ export async function GET(req: NextRequest) {
   if (process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
     try {
       const { columns, rows } = await fetchHubstaffRowsOrdered();
-      const payrollRows = rowsToPayrollRows(rows);
-      return NextResponse.json({ columns, rows, payrollRows, error: null });
+      const { payrollRows, internRowsDropped } = splitHubstaffRows(rows);
+      return NextResponse.json({ columns, rows, payrollRows, internRowsDropped, error: null });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return NextResponse.json({ columns: null, rows: null, payrollRows: [], error: cleanErrorMessage(msg) });
@@ -358,8 +360,10 @@ export async function GET(req: NextRequest) {
     );
     const columns =
       rawRows.length > 0 ? sortHubstaffColumnsForDisplay(Object.keys(rawRows[0])) : [];
-    const payrollRows = rawRows.map((r) => mapHubstaffHoursRow(r));
-    return NextResponse.json({ columns, rows: rawRows, payrollRows, error: null });
+    // Through the shared mapper, not mapHubstaffHoursRow directly — this branch
+    // used to be the one reader that would have leaked intern rows.
+    const { payrollRows, internRowsDropped } = splitHubstaffRows(rawRows);
+    return NextResponse.json({ columns, rows: rawRows, payrollRows, internRowsDropped, error: null });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ columns: null, rows: null, payrollRows: [], error: msg });

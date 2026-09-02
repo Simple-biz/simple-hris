@@ -3,6 +3,7 @@ import { parseCsv } from "@/lib/csv/parse-csv";
 import { upsertAppSetting } from "@/lib/supabase/app-settings";
 import { mapHubstaffHoursRow, type PayrollHubstaffRow } from "@/lib/supabase/hubstaff-hours";
 import { payrollWeekFilenameError } from "@/lib/hubstaff/calendar-column-dedupe";
+import { partitionInternRows } from "@/lib/interns/intern-hours-rows";
 
 function getTableName(): string {
   return process.env.NEXT_PUBLIC_SUPABASE_HUBSTAFF_HOURS_TABLE?.trim() || "hubstaff_hours";
@@ -1100,6 +1101,28 @@ export async function fetchHubstaffRowsGroupedBySourceFile(): Promise<{
   return { files };
 }
 
+/**
+ * Map raw `hubstaff_hours` rows into payroll rows AND drop orphanage interns.
+ *
+ * Interns (`@pathway.ph`) are NEVER payroll rows: they arrive on their own
+ * Hubstaff report (`orphanage_intern_hours`) and are priced by the Interns mini
+ * wizard. If one lands in `hubstaff_hours` by mistake it must not be paid by the
+ * Simple rail, so the read mapper — the single choke point every payroll reader
+ * goes through (Payroll Wizard, current-pay, readiness, seeder, roster) — drops
+ * it here. Filtering at READ, not ingest, mirrors `HUBSTAFF_INGEST_BLOCKED_EMAILS`
+ * in spirit but keeps the raw rows so the count can be disclosed.
+ *
+ * Use {@link splitHubstaffRows} when the caller needs to SAY how many were dropped.
+ */
 export function rowsToPayrollRows(rows: Record<string, unknown>[]): PayrollHubstaffRow[] {
-  return rows.map((r) => mapHubstaffHoursRow(r));
+  return splitHubstaffRows(rows).payrollRows;
+}
+
+/** Same mapping, but returns the dropped intern count so a response can disclose it. */
+export function splitHubstaffRows(rows: Record<string, unknown>[]): {
+  payrollRows: PayrollHubstaffRow[];
+  internRowsDropped: number;
+} {
+  const { payroll, interns } = partitionInternRows(rows.map((r) => mapHubstaffHoursRow(r)));
+  return { payrollRows: payroll, internRowsDropped: interns.length };
 }

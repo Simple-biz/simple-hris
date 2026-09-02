@@ -1,0 +1,213 @@
+-- [ORPHANAGE-INTERNS] 2026-09-02
+--
+-- Orphanage interns are a payee class of their own: profiled on the Orphanage
+-- dashboard with a @pathway.ph address, tracked on THEIR OWN weekly Hubstaff
+-- report, priced by the Interns mini wizard (capped hours × a dated rate, own
+-- ₱1,000 PAB, no Tech Bonus), accepted by Accounting in the Payroll Wizard's
+-- Interns view, and paid from Payment Dispatch → Orphanage. They never touch
+-- global_master_list, employee_hourly_rates, hubstaff_hours, payment_dispatches
+-- or the paystub rail. Doc: docs/features/orphanage-interns.md.
+--
+-- Applied by scripts/apply-orphanage-interns-migration.mts (dry by default,
+-- --apply to commit). Idempotent: IF NOT EXISTS / OR REPLACE throughout.
+
+BEGIN;
+
+-- ── Profiles ──────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.orphanage_interns (
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  -- Identity IS the address. Lower-cased by the app; the CHECK is the last line.
+  email                TEXT NOT NULL UNIQUE,
+  full_name            TEXT NOT NULL,
+  personal_email       TEXT,
+  phone                TEXT,
+  orphanage_id         UUID REFERENCES public.orphanages(id) ON DELETE SET NULL,
+  status               TEXT NOT NULL DEFAULT 'active',
+  started_on           DATE,
+  ended_on             DATE,
+  -- Caps / bonus / split are per-intern columns (defaults = the meeting's
+  -- numbers) so a future change is a data edit, not a deploy.
+  weekly_cap_hours     NUMERIC(6,2)  NOT NULL DEFAULT 5,
+  daily_cap_hours      NUMERIC(6,2)  NOT NULL DEFAULT 5,
+  pab_bonus_php        NUMERIC(12,2) NOT NULL DEFAULT 1000,
+  orphanage_share_pct  NUMERIC(5,2)  NOT NULL DEFAULT 50,
+  -- Bank: the same four columns as orphanage_worker_payments / orphanage_dispatches.
+  -- Edited ONLY on the Orphanage dashboard (Kane 2026-09-02).
+  bank_name            TEXT NOT NULL DEFAULT '',
+  bank_account_name    TEXT NOT NULL DEFAULT '',
+  bank_account_number  TEXT NOT NULL DEFAULT '',
+  swift_code           TEXT NOT NULL DEFAULT '',
+  note                 TEXT,
+  created_by           TEXT,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT orphanage_interns_email_domain_check
+    CHECK (email = lower(email) AND email LIKE '%@pathway.ph'),
+  CONSTRAINT orphanage_interns_status_check
+    CHECK (status IN ('active', 'ended')),
+  CONSTRAINT orphanage_interns_caps_positive
+    CHECK (weekly_cap_hours > 0 AND daily_cap_hours > 0),
+  CONSTRAINT orphanage_interns_pab_nonnegative
+    CHECK (pab_bonus_php >= 0),
+  CONSTRAINT orphanage_interns_share_pct_range
+    CHECK (orphanage_share_pct >= 0 AND orphanage_share_pct <= 100)
+);
+COMMENT ON TABLE public.orphanage_interns IS
+  '[ORPHANAGE-INTERNS] Orphanage intern profiles (@pathway.ph). Personal + bank data change ONLY on the Orphanage dashboard. See docs/features/orphanage-interns.md.';
+
+-- ── Dated rates ───────────────────────────────────────────────────────────────
+-- A rate is a DATED fact about a person (memory: rate-updated-at-not-evidence).
+-- The effective rate for a day = the newest row with effective_from <= that day.
+-- Never UPDATE a row here; append.
+CREATE TABLE IF NOT EXISTS public.orphanage_intern_rates (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  intern_id      UUID NOT NULL REFERENCES public.orphanage_interns(id) ON DELETE CASCADE,
+  rate_php       NUMERIC(12,2) NOT NULL,
+  effective_from DATE NOT NULL,
+  set_by         TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT orphanage_intern_rates_rate_positive CHECK (rate_php > 0),
+  CONSTRAINT orphanage_intern_rates_one_per_day UNIQUE (intern_id, effective_from)
+);
+CREATE INDEX IF NOT EXISTS orphanage_intern_rates_intern_idx
+  ON public.orphanage_intern_rates (intern_id, effective_from DESC);
+
+-- ── The interns' weekly Hubstaff report ──────────────────────────────────────
+-- SAME COLUMNS as the Payroll Wizard's report so the shared parser reads it —
+-- but a separate table, because the hubstaff_hours upload path promotes
+-- is_current and fires MESA / notifications / the disbursement seeder. The CSV
+-- row is kept verbatim as JSONB (flexible columns, exactly like hubstaff_hours);
+-- re-uploading a file replaces that file's rows.
+CREATE TABLE IF NOT EXISTS public.orphanage_intern_hours_uploads (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_file   TEXT NOT NULL UNIQUE,
+  week_start    DATE NOT NULL,   -- the Sunday in the filename
+  week_end      DATE NOT NULL,   -- the Saturday
+  row_count     INT  NOT NULL DEFAULT 0,
+  refused_count INT  NOT NULL DEFAULT 0,  -- non-@pathway.ph rows reported back, NEVER stored
+  uploaded_by   TEXT,
+  uploaded_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.orphanage_intern_hours (
+  id          BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  upload_id   UUID NOT NULL REFERENCES public.orphanage_intern_hours_uploads(id) ON DELETE CASCADE,
+  source_file TEXT NOT NULL,
+  row_index   INT  NOT NULL,
+  email       TEXT NOT NULL,
+  row         JSONB NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT orphanage_intern_hours_email_domain_check
+    CHECK (email = lower(email) AND email LIKE '%@pathway.ph'),
+  CONSTRAINT orphanage_intern_hours_one_per_row UNIQUE (source_file, row_index)
+);
+CREATE INDEX IF NOT EXISTS orphanage_intern_hours_file_idx
+  ON public.orphanage_intern_hours (source_file);
+CREATE INDEX IF NOT EXISTS orphanage_intern_hours_email_idx
+  ON public.orphanage_intern_hours (email);
+
+-- ── The locked week: ONE carrier ─────────────────────────────────────────────
+-- Period identity = the intern report's source_file, like orphanage_pay. There
+-- is deliberately NO app_settings blob for intern amounts — the whole-object
+-- blob is where the 2026-08 orphanage clobber lived.
+CREATE TABLE IF NOT EXISTS public.orphanage_intern_pay (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_file           TEXT NOT NULL,
+  intern_id             UUID NOT NULL REFERENCES public.orphanage_interns(id) ON DELETE RESTRICT,
+  intern_email          TEXT NOT NULL,
+  intern_name           TEXT NOT NULL,
+  week_start            DATE NOT NULL,
+  week_end              DATE NOT NULL,
+  hours_raw             NUMERIC(12,4) NOT NULL,
+  hours_paid            NUMERIC(12,2) NOT NULL,
+  hours_by_day          JSONB NOT NULL,
+  rate_php              NUMERIC(12,2) NOT NULL,
+  pay_php               NUMERIC(12,2) NOT NULL,
+  pab_php               NUMERIC(12,2) NOT NULL DEFAULT 0,
+  pab_mode              TEXT NOT NULL,
+  pab_month             TEXT,
+  gross_php             NUMERIC(12,2) NOT NULL,
+  orphanage_share_pct   NUMERIC(5,2)  NOT NULL,
+  orphanage_share_php   NUMERIC(12,2) NOT NULL,
+  intern_share_php      NUMERIC(12,2) NOT NULL,
+  share_mode            TEXT NOT NULL,
+  -- The two-stage hand-off: the Orphanage Manager submits, Accounting decides.
+  -- 'paid' is NOT a status here — it is derived from orphanage_dispatches.
+  status                TEXT NOT NULL DEFAULT 'submitted',
+  submitted_by          TEXT,
+  submitted_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decided_by            TEXT,
+  decided_at            TIMESTAMPTZ,
+  decision_note         TEXT,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT orphanage_intern_pay_one_per_week UNIQUE (source_file, intern_id),
+  CONSTRAINT orphanage_intern_pay_status_check
+    CHECK (status IN ('submitted', 'accepted', 'rejected')),
+  CONSTRAINT orphanage_intern_pay_share_mode_check
+    CHECK (share_mode IN ('system_split', 'intern_remits')),
+  CONSTRAINT orphanage_intern_pay_pab_mode_check
+    CHECK (pab_mode IN ('weekly_hours', 'not_payout_week')),
+  CONSTRAINT orphanage_intern_pay_shares_sum
+    CHECK (orphanage_share_php + intern_share_php = gross_php),
+  CONSTRAINT orphanage_intern_pay_gross_sum
+    CHECK (gross_php = pay_php + pab_php)
+);
+CREATE INDEX IF NOT EXISTS orphanage_intern_pay_file_idx
+  ON public.orphanage_intern_pay (source_file);
+CREATE INDEX IF NOT EXISTS orphanage_intern_pay_status_idx
+  ON public.orphanage_intern_pay (status, submitted_at DESC);
+
+-- ── updated_at triggers (same helper shape as the other orphanage tables) ────
+CREATE OR REPLACE FUNCTION public.set_orphanage_interns_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_orphanage_interns_updated_at ON public.orphanage_interns;
+CREATE TRIGGER trg_orphanage_interns_updated_at
+  BEFORE UPDATE ON public.orphanage_interns
+  FOR EACH ROW EXECUTE FUNCTION public.set_orphanage_interns_updated_at();
+
+DROP TRIGGER IF EXISTS trg_orphanage_intern_pay_updated_at ON public.orphanage_intern_pay;
+CREATE TRIGGER trg_orphanage_intern_pay_updated_at
+  BEFORE UPDATE ON public.orphanage_intern_pay
+  FOR EACH ROW EXECUTE FUNCTION public.set_orphanage_interns_updated_at();
+
+-- ── Dispatch: two new dispatch types + the source reference ─────────────────
+-- Mirrors worker_payment (#95). One dispatch per (record, type): the intern
+-- share and the orphanage share are separate payees.
+ALTER TABLE public.orphanage_dispatches
+  DROP CONSTRAINT IF EXISTS orphanage_dispatches_dispatch_type_check;
+ALTER TABLE public.orphanage_dispatches
+  ADD CONSTRAINT orphanage_dispatches_dispatch_type_check
+  CHECK (dispatch_type IN ('budget_request', 'gift_shipping', 'worker_payment', 'intern_pay', 'intern_orphanage_share'));
+
+ALTER TABLE public.orphanage_dispatches
+  ADD COLUMN IF NOT EXISTS intern_pay_id UUID
+    REFERENCES public.orphanage_intern_pay(id) ON DELETE SET NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS orphanage_dispatches_intern_pay_uniq
+  ON public.orphanage_dispatches (intern_pay_id, dispatch_type)
+  WHERE intern_pay_id IS NOT NULL;
+
+-- ── The orphanage's RECEIVING bank (for share_mode = system_split) ───────────
+ALTER TABLE public.orphanages ADD COLUMN IF NOT EXISTS bank_name           TEXT NOT NULL DEFAULT '';
+ALTER TABLE public.orphanages ADD COLUMN IF NOT EXISTS bank_account_name   TEXT NOT NULL DEFAULT '';
+ALTER TABLE public.orphanages ADD COLUMN IF NOT EXISTS bank_account_number TEXT NOT NULL DEFAULT '';
+ALTER TABLE public.orphanages ADD COLUMN IF NOT EXISTS swift_code          TEXT NOT NULL DEFAULT '';
+
+-- ── RLS: PII + money; the anon key ships in the browser bundle. House
+-- precedent for a PII table is RLS ENABLED with NO policies — every read goes
+-- through a service-role API route behind a feature gate.
+ALTER TABLE public.orphanage_interns             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.orphanage_intern_rates        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.orphanage_intern_hours        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.orphanage_intern_hours_uploads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.orphanage_intern_pay          ENABLE ROW LEVEL SECURITY;
+
+COMMIT;
+
+-- Verification:
+-- select email, full_name, status from public.orphanage_interns order by full_name;
+-- select source_file, status, count(*), sum(gross_php) from public.orphanage_intern_pay group by 1,2 order by 1 desc;

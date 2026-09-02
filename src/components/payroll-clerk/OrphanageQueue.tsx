@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronUp,
   Gift,
+  GraduationCap,
   Hammer,
   Heart,
   Loader2,
@@ -64,17 +65,27 @@ function OrphanageItemCard({
 
   const isBudget = item.sourceType === 'budget_request';
   const isWorker = item.sourceType === 'worker_payment';
-  const accentClass = isWorker
+  // Intern items (accepted intern weeks) — violet, the one accent this queue
+  // did not already use. Their bank is READ-ONLY here: it changes on the
+  // Orphanage dashboard (intern profile / orphanage directory), never at pay time.
+  const isIntern = item.sourceType === 'intern_pay' || item.sourceType === 'intern_orphanage_share';
+  const accentClass = isIntern
+    ? 'border-violet-200/80 dark:border-violet-900/40'
+    : isWorker
     ? 'border-emerald-200/80 dark:border-emerald-900/40'
     : isBudget
       ? 'border-teal-200/80 dark:border-teal-900/40'
       : 'border-pink-200/80 dark:border-pink-900/40';
-  const badgeClass = isWorker
+  const badgeClass = isIntern
+    ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300'
+    : isWorker
     ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
     : isBudget
       ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300'
       : 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300';
-  const badgeLabel = isWorker
+  const badgeLabel = isIntern
+    ? (item.internPayee === 'orphanage' ? 'Orphanage share' : 'Intern')
+    : isWorker
     ? (wp ? workerTypeLabel(wp) : 'Worker')
     : isBudget
       ? 'Budget Request'
@@ -311,17 +322,28 @@ export default function OrphanageQueue() {
   const budgetItems = useMemo(() => items.filter((i) => i.sourceType === 'budget_request'), [items]);
   const giftItems = useMemo(() => items.filter((i) => i.sourceType === 'gift_shipping'), [items]);
   const workerItems = useMemo(() => items.filter((i) => i.sourceType === 'worker_payment'), [items]);
+  const internItems = useMemo(
+    () => items.filter((i) => i.sourceType === 'intern_pay' || i.sourceType === 'intern_orphanage_share'),
+    [items],
+  );
 
   const PAGE_SIZE = 25;
   const [budgetPage, setBudgetPage] = useState(1);
   const [giftPage, setGiftPage] = useState(1);
   const [workerPage, setWorkerPage] = useState(1);
+  const [internPage, setInternPage] = useState(1);
   const budgetPageCount = Math.max(1, Math.ceil(budgetItems.length / PAGE_SIZE));
   const giftPageCount = Math.max(1, Math.ceil(giftItems.length / PAGE_SIZE));
   const workerPageCount = Math.max(1, Math.ceil(workerItems.length / PAGE_SIZE));
+  const internPageCount = Math.max(1, Math.ceil(internItems.length / PAGE_SIZE));
   useEffect(() => { if (budgetPage > budgetPageCount) setBudgetPage(budgetPageCount); }, [budgetPage, budgetPageCount]);
   useEffect(() => { if (giftPage > giftPageCount) setGiftPage(giftPageCount); }, [giftPage, giftPageCount]);
   useEffect(() => { if (workerPage > workerPageCount) setWorkerPage(workerPageCount); }, [workerPage, workerPageCount]);
+  useEffect(() => { if (internPage > internPageCount) setInternPage(internPageCount); }, [internPage, internPageCount]);
+  const pagedInternItems = useMemo(
+    () => internItems.slice((internPage - 1) * PAGE_SIZE, internPage * PAGE_SIZE),
+    [internItems, internPage],
+  );
   const pagedBudgetItems = useMemo(
     () => budgetItems.slice((budgetPage - 1) * PAGE_SIZE, budgetPage * PAGE_SIZE),
     [budgetItems, budgetPage],
@@ -569,6 +591,42 @@ export default function OrphanageQueue() {
                   pageSize={PAGE_SIZE}
                   onPageChange={setWorkerPage}
                   label="staff"
+                  className="mt-2 border-0"
+                />
+              </section>
+            )}
+
+            {/* Interns — accepted intern weeks from the Payroll Wizard → Interns view.
+                One item per intern share (+ one per orphanage share under
+                system_split). No edit / delete: the numbers are the locked week's,
+                and the bank is the profile's — both change on the Orphanage side. */}
+            {internItems.length > 0 && (
+              <section>
+                <h2 className="mb-3 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                  <GraduationCap className="h-3.5 w-3.5 text-violet-500" />
+                  Interns
+                  <span className="ml-1 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
+                    {internItems.length}
+                  </span>
+                </h2>
+                <AnimatePresence mode="popLayout">
+                  <div className="flex flex-col gap-3">
+                    {pagedInternItems.map((item) => (
+                      <OrphanageItemCard
+                        key={`${item.sourceType}:${item.sourceId}`}
+                        item={item}
+                        onMarkPaid={setMarkPaidItem}
+                      />
+                    ))}
+                  </div>
+                </AnimatePresence>
+                <QueuePagination
+                  page={internPage}
+                  pageCount={internPageCount}
+                  total={internItems.length}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setInternPage}
+                  label="intern items"
                   className="mt-2 border-0"
                 />
               </section>

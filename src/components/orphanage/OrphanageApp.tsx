@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   ClipboardList,
   FileText,
+  GraduationCap,
   HeartHandshake,
   History as HistoryIcon,
   LayoutDashboard,
@@ -55,6 +56,7 @@ import OrphanageBudgetForm from '@/components/orphanage/OrphanageBudgetForm';
 import OrphanageBudgetHistory from '@/components/orphanage/OrphanageBudgetHistory';
 import OrphanagesPanel from '@/components/orphanage/OrphanagesPanel';
 import ThirdPartyVendorsPanel from '@/components/orphanage/ThirdPartyVendorsPanel';
+import InternsTab from '@/components/orphanage/interns/InternsTab';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
@@ -191,7 +193,7 @@ export default function OrphanageApp() {
   const welcomeMsg = WELCOME_MESSAGES[welcomeIdx]!;
 
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'queue' | 'budget' | 'budget-history' | 'third-party-vendors' | 's-wall' | 'notifications'
+    'overview' | 'queue' | 'budget' | 'budget-history' | 'third-party-vendors' | 'interns' | 's-wall' | 'notifications'
   >('overview');
   usePublishPresenceTab(humanizeTabId(activeTab));
   useTabDocumentTitle(humanizeTabId(activeTab));
@@ -528,6 +530,19 @@ export default function OrphanageApp() {
               >
                 <Receipt className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'third-party-vendors' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
                 <span className="truncate text-left">3rd party vendors</span>
+              </button>)}
+              {canSeeOrphanageTab('interns') && (<button
+                type="button"
+                onClick={() => { setActiveTab('interns'); setMobileNavOpen(false); }}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
+                  activeTab === 'interns'
+                    ? 'bg-gradient-to-r from-pink-600 to-rose-700 font-medium text-white shadow-sm shadow-pink-600/25'
+                    : 'text-[#3f3f46] hover:bg-pink-50 hover:text-pink-900 dark:text-zinc-300 dark:hover:bg-pink-950/40 dark:hover:text-pink-100',
+                )}
+              >
+                <GraduationCap className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'interns' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
+                <span className="truncate text-left">Interns</span>
               </button>)}
               {canSeeOrphanageTab('notifications') && (<button
                 type="button"
@@ -1136,6 +1151,18 @@ export default function OrphanageApp() {
               className="flex min-h-0 flex-1 flex-col overflow-y-auto"
             >
               <ThirdPartyVendorsPanel viewerEmail={viewerEmail} />
+            </motion.div>
+          )}
+          {activeTab === 'interns' && (
+            <motion.div
+              key="interns"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+            >
+              <InternsTab viewerEmail={viewerEmail} canEdit={!permsReady || canEditTab('orphanage', 'interns')} />
             </motion.div>
           )}
 {activeTab === 'notifications' && (

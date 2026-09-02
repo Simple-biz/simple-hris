@@ -209,6 +209,10 @@ export default function OrphanageMarkPaidDialog({ item, onClose, onConfirm }: Ma
 
   const cfg   = status === 'paid' ? ORPHANAGE_PAID_CFG : ORPHANAGE_PROBLEM_CFG;
   const valid = transactionId.trim().length > 0;
+  // Intern items pay to the bank on the intern profile (or the orphanage
+  // directory for the orphanage share). Those change ONLY on the Orphanage
+  // dashboard (Kane 2026-09-02) — so no bank edit here, unlike worker payments.
+  const bankLocked = item?.sourceType === 'intern_pay' || item?.sourceType === 'intern_orphanage_share';
 
   const PILLS: { value: 'paid' | 'problem'; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
     { value: 'paid',    label: 'Paid',        Icon: CheckCircle2 },
@@ -357,6 +361,15 @@ export default function OrphanageMarkPaidDialog({ item, onClose, onConfirm }: Ma
             <div className="h-px flex-1 bg-zinc-100 dark:bg-zinc-800" />
           </div>
 
+          {bankLocked && (
+            <p className="rounded-lg border border-violet-200/70 bg-violet-50/60 px-3 py-2 text-[11px] text-violet-800 dark:border-violet-900/40 dark:bg-violet-950/20 dark:text-violet-200">
+              {item?.internPayee === 'orphanage'
+                ? "Paid to the orphanage's bank from the Orphanage directory. Fix it there, then reopen this item — not here."
+                : "Paid to the bank on the intern's profile. Fix it on the Orphanage dashboard → Interns, then reopen this item — not here."}
+              {!bankName && !bankAccountNumber && ' No bank is on file yet.'}
+            </p>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <OField id="o-rcpt-bank" label="Bank" cfg={cfg}>
               <OInput
@@ -365,7 +378,8 @@ export default function OrphanageMarkPaidDialog({ item, onClose, onConfirm }: Ma
                 placeholder="BDO, BPI, UnionBank..."
                 value={bankName}
                 onChange={(e) => setBankName(e.target.value)}
-                disabled={saving}
+                disabled={saving || bankLocked}
+                readOnly={bankLocked}
               />
             </OField>
             <OField id="o-rcpt-holder" label="Account holder" cfg={cfg}>
@@ -375,7 +389,8 @@ export default function OrphanageMarkPaidDialog({ item, onClose, onConfirm }: Ma
                 placeholder="Name on account"
                 value={bankAccountName}
                 onChange={(e) => setBankAccountName(e.target.value)}
-                disabled={saving}
+                disabled={saving || bankLocked}
+                readOnly={bankLocked}
               />
             </OField>
           </div>
@@ -388,7 +403,8 @@ export default function OrphanageMarkPaidDialog({ item, onClose, onConfirm }: Ma
               value={bankAccountNumber}
               onChange={(e) => setBankAccountNumber(e.target.value)}
               className="font-mono text-xs"
-              disabled={saving}
+              disabled={saving || bankLocked}
+              readOnly={bankLocked}
             />
           </OField>
 
@@ -401,7 +417,8 @@ export default function OrphanageMarkPaidDialog({ item, onClose, onConfirm }: Ma
                 value={swiftCode}
                 onChange={(e) => setSwiftCode(e.target.value)}
                 className="font-mono text-xs uppercase"
-                disabled={saving}
+                disabled={saving || bankLocked}
+                readOnly={bankLocked}
               />
             </OField>
           )}

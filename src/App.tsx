@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import Sidebar from './components/Sidebar';
 import Overview from './components/Overview';
 import PayrollWizard from './components/PayrollWizard';
+import InternsPayrollView from '@/components/accounting/interns/InternsPayrollView';
 import { Toaster } from '@/components/ui/sonner';
 import SystemSettings from './components/SystemSettings';
 import PabDisputeQueue from './components/payroll/PabDisputeQueue';
@@ -237,6 +238,27 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
   // stuttered the animation.
   const [wizardVisited, setWizardVisited] = useState(false);
   const [wizardShown, setWizardShown] = useState(false);
+  // Simple | Interns toggle on the Payroll Wizard tab (Kane 2026-09-02). Interns
+  // is a SEPARATE component beside the Payroll Wizard — the wizard stays mounted
+  // (parked with `hidden`) while Interns is showing, so the toggle never costs a
+  // wizard remount. Remembered per browser session only.
+  const [wizardMode, setWizardMode] = useState<'simple' | 'interns'>(() => {
+    try {
+      return sessionStorage.getItem('accounting.wizardMode') === 'interns' ? 'interns' : 'simple';
+    } catch {
+      return 'simple';
+    }
+  });
+  const [internsVisited, setInternsVisited] = useState(wizardMode === 'interns');
+  const switchWizardMode = (mode: 'simple' | 'interns') => {
+    setWizardMode(mode);
+    if (mode === 'interns') setInternsVisited(true);
+    try {
+      sessionStorage.setItem('accounting.wizardMode', mode);
+    } catch {
+      /* ignore */
+    }
+  };
   // Parked = `display:none`, so an inactive wizard costs nothing to lay out.
   // Applied only once the exit animation has finished — parking it mid-fade
   // would make it vanish instead of leave.
@@ -480,11 +502,47 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
                   view-only user must not touch its step / department navigation, so
                   lock it strictly (no tab/pagination carve-out) rather than the usual
                   browseable read-only. */}
+              {/* Simple | Interns — the interns are a separate payee class with their
+                  own mini wizard on the Orphanage dashboard; this side is Accounting's
+                  inbox for the weeks they lock in. */}
+              <div className="flex items-center justify-end px-4 pt-3 md:px-6" data-readonly-allow>
+                <div role="tablist" aria-label="Payroll rail" className="inline-flex rounded-xl border border-zinc-200 bg-zinc-50 p-1 dark:border-zinc-800 dark:bg-zinc-900/60">
+                  {(['simple', 'interns'] as const).map((m) => (
+                    <button
+                      key={m}
+                      role="tab"
+                      type="button"
+                      aria-selected={wizardMode === m}
+                      onClick={() => switchWizardMode(m)}
+                      className={cn(
+                        'rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors',
+                        wizardMode === m
+                          ? m === 'interns'
+                            ? 'bg-white text-violet-700 shadow-sm dark:bg-zinc-950 dark:text-violet-300'
+                            : 'bg-white text-indigo-700 shadow-sm dark:bg-zinc-950 dark:text-indigo-300'
+                          : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
+                      )}
+                    >
+                      {m === 'simple' ? 'Simple' : 'Interns'}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <ReadOnlyTab
                 readOnly={permsLoaded && !canEditAccountingTab('payroll-wizard', roles, featurePerms)}
                 strict
               >
-                <PayrollWizard sessionEmail={sessionEmail} sessionRole={roles[0] ?? null} initialData={initialData} />
+                <div className={cn('flex min-h-0 flex-1 flex-col', wizardMode !== 'simple' && 'hidden')}>
+                  <PayrollWizard sessionEmail={sessionEmail} sessionRole={roles[0] ?? null} initialData={initialData} />
+                </div>
+                {internsVisited && (
+                  <div className={cn('flex min-h-0 flex-1 flex-col overflow-y-auto', wizardMode !== 'interns' && 'hidden')}>
+                    <InternsPayrollView
+                      sessionEmail={sessionEmail}
+                      canEdit={!permsLoaded || canEditAccountingTab('payroll-wizard', roles, featurePerms)}
+                    />
+                  </div>
+                )}
               </ReadOnlyTab>
             </motion.div>
           )}

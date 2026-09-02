@@ -77,6 +77,7 @@ export const VIEW_TAB_IDS: Record<FeatureViewKey, readonly string[]> = {
     'budget',
     'budget-history',
     'third-party-vendors',
+    'interns',
     'notifications',
     's-wall',
   ],

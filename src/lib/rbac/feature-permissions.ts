@@ -59,6 +59,7 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "budget",              label: "Budget" },
     { key: "budget_history",      label: "Budget History" },
     { key: "third_party_vendors", label: "3rd Party Vendors" },
+    { key: "interns",             label: "Interns" },
     { key: "s_wall",              label: "S-Wall" },
     { key: "notifications",       label: "Notifications" },
   ],

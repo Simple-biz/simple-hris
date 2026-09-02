@@ -5,9 +5,17 @@ import {
   workerTypeLabel,
   type OrphanageWorkerPaymentRow,
 } from '../orphanage/worker-payment';
+import type { OrphanageInternPayRow } from '@/lib/interns/intern-types';
+import { mapInternPay } from './orphanage-intern-pay-db';
 
 export type OrphanageDispatchStatus = 'pending' | 'paid' | 'problem';
-export type OrphanageDispatchType = 'budget_request' | 'gift_shipping' | 'worker_payment';
+/**
+ * `intern_pay` / `intern_orphanage_share` (2026-09-02): an ACCEPTED intern week
+ * row (`orphanage_intern_pay`) is the source. Under `system_split` it yields two
+ * payees — the intern's share and the orphanage's share; under `intern_remits`
+ * one item for the gross. Both reference `intern_pay_id`.
+ */
+export type OrphanageDispatchType = 'budget_request' | 'gift_shipping' | 'worker_payment' | 'intern_pay' | 'intern_orphanage_share';
 
 export interface OrphanageDispatchRow {
   id: string;
@@ -16,6 +24,8 @@ export interface OrphanageDispatchRow {
   gift_shipping_id: string | null;
   /** Set when dispatch_type === 'worker_payment' — the source worker row. */
   worker_payment_id: string | null;
+  /** Set for intern_pay / intern_orphanage_share — the accepted intern week row. */
+  intern_pay_id: string | null;
   /** Self-contained name snapshot for worker payments (no employee to join to). */
   recipient_name: string | null;
   /** 'handyman' | 'musician' | 'other' for worker payments; null otherwise. */
@@ -56,10 +66,111 @@ export interface OrphanagePendingItem {
   giftShipping?: EmployeeGiftShippingRow;
   /** Extra context for worker payments (handymen / musicians / other). */
   workerPayment?: OrphanageWorkerPaymentRow;
+  /** Extra context for intern items — the accepted week row this item pays. */
+  internPay?: OrphanageInternPayRow;
+  /** For intern items: whose share this is. Bank is READ-ONLY at pay time —
+   *  intern bank changes on the Orphanage dashboard, orphanage bank in its directory. */
+  internPayee?: 'intern' | 'orphanage';
 }
 
 const SELECT_COLS =
-  'id, dispatch_type, budget_request_id, gift_shipping_id, worker_payment_id, recipient_name, worker_type, label, submitter_email, bank_name, bank_account_name, bank_account_number, swift_code, amount_php, status, transaction_id, bank_used, sent_date, note, created_by, paid_by, paid_at, created_at, updated_at';
+  'id, dispatch_type, budget_request_id, gift_shipping_id, worker_payment_id, intern_pay_id, recipient_name, worker_type, label, submitter_email, bank_name, bank_account_name, bank_account_number, swift_code, amount_php, status, transaction_id, bank_used, sent_date, note, created_by, paid_by, paid_at, created_at, updated_at';
+
+/**
+ * Accepted intern weeks with no dispatch yet → pending items. Best-effort like
+ * the worker branch: if the intern tables are absent (migration not run), the
+ * rest of the queue still loads.
+ */
+async function listPendingInternItems(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
+): Promise<OrphanagePendingItem[]> {
+  const { data: dispatched, error: dErr } = await supabase
+    .from('orphanage_dispatches')
+    .select('intern_pay_id, dispatch_type')
+    .not('intern_pay_id', 'is', null);
+  if (dErr) {
+    console.warn('[orphanage-dispatches] intern dispatch dedup unavailable (run the 2026-09-02 interns migration?):', dErr.message);
+    return [];
+  }
+  const done = new Set(
+    (dispatched ?? []).map((d: { intern_pay_id: string | null; dispatch_type: string }) => `${d.intern_pay_id}:${d.dispatch_type}`),
+  );
+
+  const { data: payData, error: payErr } = await supabase
+    .from('orphanage_intern_pay')
+    .select('*')
+    .eq('status', 'accepted')
+    .order('week_start', { ascending: false })
+    .order('intern_name');
+  if (payErr) {
+    console.warn('[orphanage-dispatches] intern pay unavailable (run the 2026-09-02 interns migration?):', payErr.message);
+    return [];
+  }
+  const payRows = ((payData ?? []) as Record<string, unknown>[]).map(mapInternPay);
+  if (payRows.length === 0) return [];
+
+  const internIds = [...new Set(payRows.map((r) => r.intern_id))];
+  const { data: internData } = await supabase
+    .from('orphanage_interns')
+    .select('id, full_name, orphanage_id, bank_name, bank_account_name, bank_account_number, swift_code')
+    .in('id', internIds);
+  const interns = new Map(
+    ((internData ?? []) as Array<{ id: string; full_name: string; orphanage_id: string | null; bank_name: string; bank_account_name: string; bank_account_number: string; swift_code: string }>).map((i) => [i.id, i]),
+  );
+  const orphIds = [...new Set([...interns.values()].map((i) => i.orphanage_id).filter((x): x is string => !!x))];
+  const { data: orphData } = orphIds.length
+    ? await supabase.from('orphanages').select('id, name, bank_name, bank_account_name, bank_account_number, swift_code').in('id', orphIds)
+    : { data: [] as unknown[] };
+  const orphanages = new Map(
+    ((orphData ?? []) as Array<{ id: string; name: string; bank_name?: string; bank_account_name?: string; bank_account_number?: string; swift_code?: string }>).map((o) => [o.id, o]),
+  );
+
+  const weekLabel = (r: OrphanageInternPayRow) => {
+    const f = (iso: string) => {
+      const [y, m, d] = iso.split('-').map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    };
+    return `${f(r.week_start)}–${f(r.week_end)}`;
+  };
+
+  const items: OrphanagePendingItem[] = [];
+  for (const r of payRows) {
+    const intern = interns.get(r.intern_id);
+    const internAmount = r.share_mode === 'system_split' ? r.intern_share_php : r.gross_php;
+    if (!done.has(`${r.id}:intern_pay`) && internAmount > 0) {
+      items.push({
+        sourceType: 'intern_pay',
+        sourceId: r.id,
+        label: `${r.intern_name} · Intern · ${weekLabel(r)}${r.pab_php > 0 ? ' · incl. PAB' : ''}`,
+        submitterEmail: r.intern_email,
+        bankName: intern?.bank_name ?? '',
+        bankAccountName: intern?.bank_account_name ?? '',
+        bankAccountNumber: intern?.bank_account_number ?? '',
+        swiftCode: intern?.swift_code ?? '',
+        amountPhp: internAmount,
+        internPay: r,
+        internPayee: 'intern',
+      });
+    }
+    if (r.share_mode === 'system_split' && r.orphanage_share_php > 0 && !done.has(`${r.id}:intern_orphanage_share`)) {
+      const orph = intern?.orphanage_id ? orphanages.get(intern.orphanage_id) : undefined;
+      items.push({
+        sourceType: 'intern_orphanage_share',
+        sourceId: r.id,
+        label: `${orph?.name ?? 'Orphanage'} · ${r.orphanage_share_pct}% share of ${r.intern_name} · ${weekLabel(r)}`,
+        submitterEmail: r.intern_email,
+        bankName: orph?.bank_name ?? '',
+        bankAccountName: orph?.bank_account_name ?? '',
+        bankAccountNumber: orph?.bank_account_number ?? '',
+        swiftCode: orph?.swift_code ?? '',
+        amountPhp: r.orphanage_share_php,
+        internPay: r,
+        internPayee: 'orphanage',
+      });
+    }
+  }
+  return items;
+}
 
 /**
  * Returns all approved orphanage budget requests and approved gift shippings
@@ -168,6 +279,7 @@ export async function listPendingOrphanageItems(): Promise<{
       amountPhp: r.amount_php,
       workerPayment: r,
     })),
+    ...(await listPendingInternItems(supabase)),
   ];
 
   return { items, defaultBank, error: null };
@@ -179,6 +291,7 @@ export async function createOrphanageDispatch(input: {
   budget_request_id?: string | null;
   gift_shipping_id?: string | null;
   worker_payment_id?: string | null;
+  intern_pay_id?: string | null;
   recipient_name?: string | null;
   worker_type?: string | null;
   label: string;
@@ -206,6 +319,7 @@ export async function createOrphanageDispatch(input: {
       budget_request_id: input.budget_request_id ?? null,
       gift_shipping_id: input.gift_shipping_id ?? null,
       worker_payment_id: input.worker_payment_id ?? null,
+      intern_pay_id: input.intern_pay_id ?? null,
       recipient_name: input.recipient_name ?? null,
       worker_type: input.worker_type ?? null,
       label: input.label,

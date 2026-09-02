@@ -56,9 +56,10 @@ export async function POST(req: NextRequest) {
   const sourceType = body.source_type as OrphanageDispatchType | undefined;
   const sourceId = body.source_id as string | undefined;
 
-  if (!sourceType || !['budget_request', 'gift_shipping', 'worker_payment'].includes(sourceType)) {
-    return NextResponse.json({ error: 'source_type must be budget_request, gift_shipping, or worker_payment' }, { status: 400 });
+  if (!sourceType || !['budget_request', 'gift_shipping', 'worker_payment', 'intern_pay', 'intern_orphanage_share'].includes(sourceType)) {
+    return NextResponse.json({ error: 'source_type must be budget_request, gift_shipping, worker_payment, intern_pay, or intern_orphanage_share' }, { status: 400 });
   }
+  const isIntern = sourceType === 'intern_pay' || sourceType === 'intern_orphanage_share';
   if (!sourceId) {
     return NextResponse.json({ error: 'source_id is required' }, { status: 400 });
   }
@@ -74,6 +75,7 @@ export async function POST(req: NextRequest) {
     budget_request_id: sourceType === 'budget_request' ? sourceId : null,
     gift_shipping_id: sourceType === 'gift_shipping' ? sourceId : null,
     worker_payment_id: sourceType === 'worker_payment' ? sourceId : null,
+    intern_pay_id: isIntern ? sourceId : null,
     recipient_name: (body.recipient_name as string | null) ?? null,
     worker_type: (body.worker_type as string | null) ?? null,
     label: String(body.label ?? ''),
@@ -107,6 +109,7 @@ export async function POST(req: NextRequest) {
         budget_request_id: row.budget_request_id,
         gift_shipping_id: row.gift_shipping_id,
         worker_payment_id: row.worker_payment_id,
+        intern_pay_id: row.intern_pay_id,
         recipient_name: row.recipient_name,
         worker_type: row.worker_type,
         label: row.label,
