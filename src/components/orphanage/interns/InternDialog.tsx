@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ChevronDown, GraduationCap, Loader2 } from 'lucide-react';
+import { AlertCircle, Banknote, GraduationCap, Loader2, UserRound, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -16,18 +16,23 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { isInternEmail, INTERN_EMAIL_DOMAIN } from '@/lib/interns/intern-email';
-import { INTERN_DEFAULTS, type OrphanageInternRow } from '@/lib/interns/intern-types';
+import { INTERN_DEFAULTS, formatInternPHP, type OrphanageInternRow } from '@/lib/interns/intern-types';
 
 interface OrphanageOption { id: string; name: string }
+type Pane = 'profile' | 'pay' | 'bank';
 
 /**
  * Add / edit an intern profile. The ONLY form that writes intern personal data
  * and bank details (Kane 2026-09-02). The email must be @pathway.ph — validated
  * here, re-checked by the route, and enforced last by the DB CHECK.
  *
+ * Three tabs (Kane: "separate them in tabs") so every pane fits in one view
+ * without scrolling: Profile · Pay · Bank. Height follows the house dialog rule
+ * (dialog-content-no-height-cap): flex column, gap-0, dvh cap, shrink-0 chrome,
+ * one min-h-0 scrolling body as the safety net.
+ *
  * On create the first RATE is captured too (rate + effective date) so the
- * intern can be priced from day one; later changes go through "Change rate…",
- * which appends to history and never edits it.
+ * intern can be priced from day one; later changes go through "Change rate…".
  */
 export default function InternDialog({
   open,
@@ -43,10 +48,10 @@ export default function InternDialog({
   onSaved: (intern: OrphanageInternRow) => void;
 }) {
   const editing = editingId != null;
+  const [pane, setPane] = useState<Pane>('profile');
   const [loadingRecord, setLoadingRecord] = useState(false);
   const [saving, setSaving] = useState(false);
   const [orphanages, setOrphanages] = useState<OrphanageOption[]>([]);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -54,6 +59,7 @@ export default function InternDialog({
   const [phone, setPhone] = useState('');
   const [orphanageId, setOrphanageId] = useState('');
   const [startedOn, setStartedOn] = useState('');
+  const [note, setNote] = useState('');
   const [ratePhp, setRatePhp] = useState(String(INTERN_DEFAULTS.ratePhp));
   const [rateFrom, setRateFrom] = useState('');
   const [weeklyCap, setWeeklyCap] = useState(String(INTERN_DEFAULTS.weeklyCapHours));
@@ -64,16 +70,14 @@ export default function InternDialog({
   const [bankAccountName, setBankAccountName] = useState('');
   const [bankAccountNumber, setBankAccountNumber] = useState('');
   const [swiftCode, setSwiftCode] = useState('');
-  const [note, setNote] = useState('');
 
   useEffect(() => {
     if (!open) return;
     void (async () => {
       try {
         const res = await fetch('/api/orphanages', { cache: 'no-store' });
-        const json = (await res.json()) as { rows?: OrphanageOption[]; orphanages?: OrphanageOption[] } | OrphanageOption[];
-        const list = Array.isArray(json) ? json : json.rows ?? json.orphanages ?? [];
-        setOrphanages(list.map((o) => ({ id: o.id, name: o.name })));
+        const json = (await res.json()) as { rows?: OrphanageOption[] };
+        setOrphanages((json.rows ?? []).map((o) => ({ id: o.id, name: o.name })));
       } catch {
         setOrphanages([]);
       }
@@ -82,14 +86,15 @@ export default function InternDialog({
 
   useEffect(() => {
     if (!open) return;
-    setAdvancedOpen(false);
+    setPane('profile');
+    const today = new Date().toISOString().slice(0, 10);
     if (!editingId) {
-      setFullName(''); setEmail(''); setPersonalEmail(''); setPhone(''); setOrphanageId('');
-      setStartedOn(new Date().toISOString().slice(0, 10));
-      setRatePhp(String(INTERN_DEFAULTS.ratePhp)); setRateFrom(new Date().toISOString().slice(0, 10));
+      setFullName(''); setEmail(''); setPersonalEmail(''); setPhone(''); setOrphanageId(''); setNote('');
+      setStartedOn(today);
+      setRatePhp(String(INTERN_DEFAULTS.ratePhp)); setRateFrom(today);
       setWeeklyCap(String(INTERN_DEFAULTS.weeklyCapHours)); setDailyCap(String(INTERN_DEFAULTS.dailyCapHours));
       setPabBonus(String(INTERN_DEFAULTS.pabBonusPhp)); setSharePct(String(INTERN_DEFAULTS.orphanageSharePct));
-      setBankName(''); setBankAccountName(''); setBankAccountNumber(''); setSwiftCode(''); setNote('');
+      setBankName(''); setBankAccountName(''); setBankAccountNumber(''); setSwiftCode('');
       return;
     }
     setLoadingRecord(true);
@@ -100,11 +105,10 @@ export default function InternDialog({
         if (!res.ok || json.error || !json.intern) throw new Error(json.error ?? 'Could not load the profile');
         const i = json.intern;
         setFullName(i.full_name); setEmail(i.email); setPersonalEmail(i.personal_email ?? ''); setPhone(i.phone ?? '');
-        setOrphanageId(i.orphanage_id ?? ''); setStartedOn(i.started_on ?? '');
+        setOrphanageId(i.orphanage_id ?? ''); setStartedOn(i.started_on ?? ''); setNote(i.note ?? '');
         setWeeklyCap(String(i.weekly_cap_hours)); setDailyCap(String(i.daily_cap_hours));
         setPabBonus(String(i.pab_bonus_php)); setSharePct(String(i.orphanage_share_pct));
         setBankName(i.bank_name); setBankAccountName(i.bank_account_name); setBankAccountNumber(i.bank_account_number); setSwiftCode(i.swift_code);
-        setNote(i.note ?? '');
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Could not load the profile');
         onOpenChange(false);
@@ -115,8 +119,13 @@ export default function InternDialog({
   }, [open, editingId, onOpenChange]);
 
   const emailOk = isInternEmail(email);
-  const rateOk = !editing ? Number(ratePhp) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(rateFrom) : true;
-  const valid = fullName.trim().length > 0 && emailOk && rateOk;
+  const nameOk = fullName.trim().length > 0;
+  const rateOk = editing || (Number(ratePhp) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(rateFrom));
+  const capsOk = Number(weeklyCap) > 0 && Number(dailyCap) > 0 && Number(pabBonus) >= 0 && Number(sharePct) >= 0 && Number(sharePct) <= 100;
+  const bankMissing = !bankName.trim() || !bankAccountNumber.trim();
+  const profileIssue = !nameOk ? 'Full name is required' : !emailOk ? `Email must be @${INTERN_EMAIL_DOMAIN}` : null;
+  const payIssue = !rateOk ? 'A first rate and its effective date are required' : !capsOk ? 'Caps must be positive; share 0–100%' : null;
+  const valid = !profileIssue && !payIssue;
 
   const save = async () => {
     if (!valid || saving) return;
@@ -160,36 +169,70 @@ export default function InternDialog({
     }
   };
 
+  const tabs: Array<{ id: Pane; label: string; Icon: typeof UserRound; issue: string | null; hint?: string }> = [
+    { id: 'profile', label: 'Profile', Icon: UserRound, issue: profileIssue },
+    { id: 'pay', label: 'Pay', Icon: Wallet, issue: payIssue },
+    { id: 'bank', label: 'Bank', Icon: Banknote, issue: null, hint: bankMissing ? 'no bank yet' : undefined },
+  ];
+
+  const field = 'space-y-1';
+  const labelCls = 'text-[11px] font-medium text-zinc-600 dark:text-zinc-400';
+
   return (
     <Dialog open={open} onOpenChange={(o) => !saving && onOpenChange(o)}>
-      <DialogContent className="max-h-[92vh] gap-0 overflow-y-auto border-pink-100/70 bg-white p-0 [scrollbar-width:none] sm:max-w-[48rem] [&::-webkit-scrollbar]:hidden dark:border-pink-950/50 dark:bg-zinc-950">
-        <DialogHeader className="border-b border-pink-100/70 px-6 py-5 pr-12 text-left dark:border-pink-950/45">
+      <DialogContent className="flex max-h-[calc(100dvh-1.5rem)] flex-col gap-0 overflow-hidden border-pink-100/70 bg-white p-0 sm:max-h-[92dvh] sm:max-w-[40rem] dark:border-pink-950/50 dark:bg-zinc-950">
+        <DialogHeader className="shrink-0 border-b border-pink-100/70 px-5 pb-0 pt-4 pr-12 text-left dark:border-pink-950/45">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-pink-500 to-rose-600 text-white shadow-md shadow-pink-500/30">
-              <GraduationCap className="h-4.5 w-4.5" />
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-pink-500 to-rose-600 text-white shadow-md shadow-pink-500/30">
+              <GraduationCap className="h-4 w-4" />
             </div>
-            <div>
-              <DialogTitle className="text-base font-semibold">{editing ? 'Edit intern' : 'Add intern'}</DialogTitle>
+            <div className="min-w-0">
+              <DialogTitle className="text-base font-semibold">{editing ? `Edit ${fullName || 'intern'}` : 'Add intern'}</DialogTitle>
               <DialogDescription className="text-xs">
-                Personal data, bank details and rates change only here. No onboarding paperwork.
+                Personal data, bank and rates change only here. No onboarding paperwork.
               </DialogDescription>
             </div>
           </div>
+          <div role="tablist" aria-label="Intern profile sections" className="-mb-px mt-3 flex gap-1">
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                role="tab"
+                type="button"
+                aria-selected={pane === t.id}
+                onClick={() => setPane(t.id)}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-t-lg border border-b-0 px-3 py-1.5 text-xs font-semibold transition-colors',
+                  pane === t.id
+                    ? 'border-pink-200 bg-white text-pink-700 dark:border-pink-900/50 dark:bg-zinc-950 dark:text-pink-300'
+                    : 'border-transparent text-zinc-500 hover:text-pink-700 dark:text-zinc-400 dark:hover:text-pink-300',
+                )}
+              >
+                <t.Icon className="h-3.5 w-3.5" />
+                {t.label}
+                {t.issue ? (
+                  <span className="h-1.5 w-1.5 rounded-full bg-rose-500" title={t.issue} aria-label={t.issue} />
+                ) : t.hint ? (
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400" title={t.hint} aria-label={t.hint} />
+                ) : null}
+              </button>
+            ))}
+          </div>
         </DialogHeader>
 
-        {loadingRecord ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="h-6 w-6 animate-spin text-pink-500" />
-          </div>
-        ) : (
-          <div className="flex flex-col gap-6 px-6 py-5">
-            <section className="grid gap-4 sm:grid-cols-2">
-              <div className="sm:col-span-2">
-                <Label htmlFor="in-name" className="text-xs">Full name <span className="text-rose-500">*</span></Label>
-                <Input id="in-name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="e.g. Maria Santos" />
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {loadingRecord ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-pink-500" />
+            </div>
+          ) : pane === 'profile' ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className={cn(field, 'sm:col-span-2')}>
+                <Label htmlFor="in-name" className={labelCls}>Full name <span className="text-rose-500">*</span></Label>
+                <Input id="in-name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="e.g. Maria Santos" autoFocus={!editing} />
               </div>
-              <div>
-                <Label htmlFor="in-email" className="text-xs">Intern email <span className="text-rose-500">*</span></Label>
+              <div className={cn(field, 'sm:col-span-2')}>
+                <Label htmlFor="in-email" className={labelCls}>Intern email <span className="text-rose-500">*</span></Label>
                 <Input
                   id="in-email"
                   type="email"
@@ -198,20 +241,20 @@ export default function InternDialog({
                   placeholder={`name@${INTERN_EMAIL_DOMAIN}`}
                   className={cn('font-mono', email && !emailOk && 'border-rose-400 focus-visible:ring-rose-400')}
                 />
-                <p className={cn('mt-1 text-[11px]', email && !emailOk ? 'text-rose-600' : 'text-zinc-400')}>
-                  Must be an @{INTERN_EMAIL_DOMAIN} address — never @simple.biz. This is how payroll tells an intern apart.
+                <p className={cn('text-[11px]', email && !emailOk ? 'text-rose-600' : 'text-zinc-400')}>
+                  Must be @{INTERN_EMAIL_DOMAIN} — never @simple.biz. This is how payroll tells an intern apart.
                 </p>
               </div>
-              <div>
-                <Label htmlFor="in-personal" className="text-xs">Personal email</Label>
+              <div className={field}>
+                <Label htmlFor="in-personal" className={labelCls}>Personal email</Label>
                 <Input id="in-personal" type="email" value={personalEmail} onChange={(e) => setPersonalEmail(e.target.value)} placeholder="optional" className="font-mono" />
               </div>
-              <div>
-                <Label htmlFor="in-phone" className="text-xs">Phone</Label>
+              <div className={field}>
+                <Label htmlFor="in-phone" className={labelCls}>Phone</Label>
                 <Input id="in-phone" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+63 …" className="font-mono" />
               </div>
-              <div>
-                <Label htmlFor="in-orph" className="text-xs">Orphanage</Label>
+              <div className={field}>
+                <Label htmlFor="in-orph" className={labelCls}>Orphanage</Label>
                 <select
                   id="in-orph"
                   value={orphanageId}
@@ -224,100 +267,113 @@ export default function InternDialog({
                   ))}
                 </select>
               </div>
-              <div>
-                <Label htmlFor="in-start" className="text-xs">Started on</Label>
+              <div className={field}>
+                <Label htmlFor="in-start" className={labelCls}>Started on</Label>
                 <Input id="in-start" type="date" value={startedOn} onChange={(e) => setStartedOn(e.target.value)} />
               </div>
-            </section>
-
-            {!editing && (
-              <section className="rounded-xl border border-pink-100 bg-pink-50/40 p-4 dark:border-pink-900/40 dark:bg-pink-950/10">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-pink-700 dark:text-pink-300">First rate</h3>
-                <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                  Weeks price with the rate in force on each day. Later changes are added with their own effective date; history is never edited.
-                </p>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <Label htmlFor="in-rate" className="text-xs">Hourly rate (₱) <span className="text-rose-500">*</span></Label>
-                    <Input id="in-rate" type="number" min={1} step="0.01" value={ratePhp} onChange={(e) => setRatePhp(e.target.value)} className="font-mono" />
-                  </div>
-                  <div>
-                    <Label htmlFor="in-rate-from" className="text-xs">Effective from <span className="text-rose-500">*</span></Label>
-                    <Input id="in-rate-from" type="date" value={rateFrom} onChange={(e) => setRateFrom(e.target.value)} />
-                  </div>
-                </div>
-              </section>
-            )}
-
-            <section>
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Bank</h3>
-              <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                Payment Dispatch pays to exactly these details. A wrong bank is fixed here, never at pay time.
-              </p>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <div>
-                  <Label htmlFor="in-bank" className="text-xs">Bank name</Label>
-                  <Input id="in-bank" value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="BDO, BPI, GCash…" />
-                </div>
-                <div>
-                  <Label htmlFor="in-holder" className="text-xs">Account name</Label>
-                  <Input id="in-holder" value={bankAccountName} onChange={(e) => setBankAccountName(e.target.value)} placeholder="Name on the account" />
-                </div>
-                <div>
-                  <Label htmlFor="in-acct" className="text-xs">Account number</Label>
-                  <Input id="in-acct" value={bankAccountNumber} onChange={(e) => setBankAccountNumber(e.target.value)} className="font-mono" />
-                </div>
-                <div>
-                  <Label htmlFor="in-swift" className="text-xs">SWIFT / code</Label>
-                  <Input id="in-swift" value={swiftCode} onChange={(e) => setSwiftCode(e.target.value)} className="font-mono uppercase" placeholder="optional" />
-                </div>
+              <div className={cn(field, 'sm:col-span-2')}>
+                <Label htmlFor="in-note" className={labelCls}>Note</Label>
+                <Input id="in-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional" />
               </div>
-            </section>
+            </div>
+          ) : pane === 'pay' ? (
+            <div className="flex flex-col gap-4">
+              <section className="rounded-xl border border-pink-100 bg-pink-50/40 p-3.5 dark:border-pink-900/40 dark:bg-pink-950/10">
+                <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-pink-700 dark:text-pink-300">
+                  {editing ? 'Rate' : 'First rate'}
+                </h3>
+                {editing ? (
+                  <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                    Rates are dated history and never edited here. Use <span className="font-semibold">Change rate…</span> on the profile card to add a new rate from a date.
+                  </p>
+                ) : (
+                  <>
+                    <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Weeks price with the rate in force on each day. Later changes are added with their own effective date.
+                    </p>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <div className={field}>
+                        <Label htmlFor="in-rate" className={labelCls}>Hourly rate (₱) <span className="text-rose-500">*</span></Label>
+                        <Input id="in-rate" type="number" min={1} step="0.01" value={ratePhp} onChange={(e) => setRatePhp(e.target.value)} className="font-mono" />
+                      </div>
+                      <div className={field}>
+                        <Label htmlFor="in-rate-from" className={labelCls}>Effective from <span className="text-rose-500">*</span></Label>
+                        <Input id="in-rate-from" type="date" value={rateFrom} onChange={(e) => setRateFrom(e.target.value)} />
+                      </div>
+                    </div>
+                  </>
+                )}
+              </section>
 
-            <section className="rounded-xl border border-zinc-200 dark:border-zinc-800">
-              <button
-                type="button"
-                onClick={() => setAdvancedOpen((v) => !v)}
-                className="flex w-full items-center justify-between px-4 py-3 text-left text-xs font-semibold text-zinc-700 dark:text-zinc-300"
-              >
-                <span>Caps, PAB and orphanage share <span className="ml-1 font-normal text-zinc-400">— defaults: {INTERN_DEFAULTS.dailyCapHours}h/day · {INTERN_DEFAULTS.weeklyCapHours}h/week · ₱{INTERN_DEFAULTS.pabBonusPhp} PAB · {INTERN_DEFAULTS.orphanageSharePct}%</span></span>
-                <ChevronDown className={cn('h-4 w-4 transition-transform', advancedOpen && 'rotate-180')} />
-              </button>
-              {advancedOpen && (
-                <div className="grid gap-3 border-t border-zinc-200 px-4 py-4 sm:grid-cols-4 dark:border-zinc-800">
-                  <div>
-                    <Label htmlFor="in-daily" className="text-xs">Daily cap (h)</Label>
+              <section>
+                <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">Caps, PAB and orphanage share</h3>
+                <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Defaults are the agreed numbers: {INTERN_DEFAULTS.dailyCapHours}h a day, {INTERN_DEFAULTS.weeklyCapHours}h a week, {formatInternPHP(INTERN_DEFAULTS.pabBonusPhp)} PAB, {INTERN_DEFAULTS.orphanageSharePct}% to the orphanage.
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className={field}>
+                    <Label htmlFor="in-daily" className={labelCls}>Daily cap (h)</Label>
                     <Input id="in-daily" type="number" min={0.25} step="0.25" value={dailyCap} onChange={(e) => setDailyCap(e.target.value)} className="font-mono" />
                   </div>
-                  <div>
-                    <Label htmlFor="in-weekly" className="text-xs">Weekly cap (h)</Label>
+                  <div className={field}>
+                    <Label htmlFor="in-weekly" className={labelCls}>Weekly cap (h)</Label>
                     <Input id="in-weekly" type="number" min={0.25} step="0.25" value={weeklyCap} onChange={(e) => setWeeklyCap(e.target.value)} className="font-mono" />
                   </div>
-                  <div>
-                    <Label htmlFor="in-pab" className="text-xs">PAB (₱/month)</Label>
+                  <div className={field}>
+                    <Label htmlFor="in-pab" className={labelCls}>PAB (₱/month)</Label>
                     <Input id="in-pab" type="number" min={0} step="1" value={pabBonus} onChange={(e) => setPabBonus(e.target.value)} className="font-mono" />
                   </div>
-                  <div>
-                    <Label htmlFor="in-share" className="text-xs">Orphanage share (%)</Label>
+                  <div className={field}>
+                    <Label htmlFor="in-share" className={labelCls}>Orphanage share (%)</Label>
                     <Input id="in-share" type="number" min={0} max={100} step="1" value={sharePct} onChange={(e) => setSharePct(e.target.value)} className="font-mono" />
                   </div>
                 </div>
-              )}
-            </section>
-
-            <div>
-              <Label htmlFor="in-note" className="text-xs">Note</Label>
-              <Input id="in-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="optional" />
+              </section>
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="flex flex-col gap-3">
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                Payment Dispatch pays to exactly these details and cannot edit them. A wrong bank is fixed here, never at pay time.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className={field}>
+                  <Label htmlFor="in-bank" className={labelCls}>Bank name</Label>
+                  <Input id="in-bank" value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="BDO, BPI, GCash…" />
+                </div>
+                <div className={field}>
+                  <Label htmlFor="in-holder" className={labelCls}>Account name</Label>
+                  <Input id="in-holder" value={bankAccountName} onChange={(e) => setBankAccountName(e.target.value)} placeholder="Name on the account" />
+                </div>
+                <div className={field}>
+                  <Label htmlFor="in-acct" className={labelCls}>Account number</Label>
+                  <Input id="in-acct" value={bankAccountNumber} onChange={(e) => setBankAccountNumber(e.target.value)} className="font-mono" />
+                </div>
+                <div className={field}>
+                  <Label htmlFor="in-swift" className={labelCls}>SWIFT / code</Label>
+                  <Input id="in-swift" value={swiftCode} onChange={(e) => setSwiftCode(e.target.value)} className="font-mono uppercase" placeholder="optional" />
+                </div>
+              </div>
+              {bankMissing && (
+                <p className="flex items-center gap-1.5 rounded-lg border border-amber-200/70 bg-amber-50/60 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                  No bank yet — the profile saves, but Payment Dispatch will have nowhere to send the money until this is filled in.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
 
-        <DialogFooter className="border-t border-pink-100/70 px-6 py-4 dark:border-pink-950/45">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
-          <Button onClick={save} disabled={!valid || saving || loadingRecord} className="gap-2 bg-pink-600 text-white hover:bg-pink-700">
-            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-            {editing ? 'Save changes' : 'Add intern'}
-          </Button>
+        <DialogFooter className="shrink-0 flex-row items-center justify-between gap-2 border-t border-pink-100/70 px-5 py-3 dark:border-pink-950/45 sm:justify-between">
+          <span className="min-w-0 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+            {profileIssue ?? payIssue ?? (bankMissing ? 'Bank not filled in yet' : 'Ready to save')}
+          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
+            <Button size="sm" onClick={save} disabled={!valid || saving || loadingRecord} className="gap-2 bg-pink-600 text-white hover:bg-pink-700">
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+              {editing ? 'Save changes' : 'Add intern'}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
