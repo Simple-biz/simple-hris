@@ -45,7 +45,6 @@ import PeopleTab from '@/components/people/PeopleTab';
 import AccountingTransfers from '@/components/accounting/AccountingTransfers';
 import AccountingDocuments from '@/components/accounting/AccountingDocuments';
 import PayrollWizardNotesFab from '@/components/accounting/PayrollWizardNotesFab';
-import DispatchPaidToasts from '@/components/accounting/DispatchPaidToasts';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -523,9 +522,6 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
             />
           )}
       </main>
-      {/* Lower-left "X paid Y $Z" cards while processing is on — every tab,
-          every permission. Own stack, not sonner: the Toaster stays top-right. */}
-      <DispatchPaidToasts locked={dispatchLock.locked} selfEmail={sessionEmail} />
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </div>
   );

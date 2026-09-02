@@ -33,9 +33,9 @@ interface RecentPaidResponse {
 }
 
 /**
- * The live half of the Payment Dispatch "paid" toast. Mount ONCE per Accounting
- * shell (App.tsx) with the global dispatch lock and the viewer's email. Three
- * delivery paths feed one de-duped stack:
+ * The live half of the Payment Dispatch "paid" toast. Mounted ONCE per document
+ * from the root layout (DispatchPaidToastsGlobal) with the global dispatch lock
+ * and the viewer's email. Three delivery paths feed one de-duped stack:
  *
  *  - LOCAL: PayrollDispatch's Mark Paid handler fires `hris:dispatch-paid` on
  *    `window` after each successful paid POST leg. We show the card and
@@ -48,7 +48,13 @@ interface RecentPaidResponse {
  *    cannot broadcast — an older production build, a down socket, a write from
  *    outside the app. The server sets the watermark (never this clock), OWN
  *    rows are skipped (the local path owns them), and rows older than 90 s only
- *    advance the watermark. A 401/403 stops the poll for this mount.
+ *    advance the watermark.
+ *
+ * The poll's first answer is also the AUTHORIZATION probe: 200 means this
+ * viewer has Accounting → Payment Dispatch view access (or is admin) and remote
+ * cards may render; 401/403 stops the poll and no remote card ever renders on
+ * this document. Mounted from the root layout on every dashboard, so that
+ * server verdict is the only gate — no client-side RBAC copy.
  *
  * Nothing shows while `locked` is false, and flipping the lock off clears the
  * stack. De-dupe is by dispatch row id, so a payment arriving on two paths is
@@ -67,6 +73,11 @@ export function useDispatchPaidToasts(
   const nextChimeAtRef = useRef(0);
   const channelRef = useRef<RealtimeChannel | null>(null);
   const channelReadyRef = useRef(false);
+  // Who may see remote payments is the SERVER's call: the recent-paid route's
+  // first answer (200 vs 401/403) sets this. `null` = not yet known. Remote
+  // cards (broadcast + poll) require `true`; the local path does not — a browser
+  // that just had a paid POST accepted is authorized by construction.
+  const authorizedRef = useRef<boolean | null>(null);
   const self = (selfEmail ?? '').trim().toLowerCase() || null;
 
   const dismiss = useCallback((id: string) => {
@@ -79,8 +90,9 @@ export function useDispatchPaidToasts(
   }, []);
 
   const push = useCallback(
-    (evt: PaidToastEvent, opts: { chime: boolean }) => {
+    (evt: PaidToastEvent, opts: { chime: boolean; remote: boolean }) => {
       if (!lockedRef.current) return;
+      if (opts.remote && authorizedRef.current !== true) return;
       if (seenRef.current.has(evt.id)) return;
       seenRef.current.add(evt.id);
       setStack((prev) => pushPaidToast(prev, evt));
@@ -108,6 +120,7 @@ export function useDispatchPaidToasts(
     chimeTimersRef.current = [];
     nextChimeAtRef.current = 0;
     seenRef.current.clear();
+    authorizedRef.current = null;
     setStack([]);
   }, [locked]);
 
@@ -124,7 +137,7 @@ export function useDispatchPaidToasts(
     });
     channel.on('broadcast', { event: PAID_TOAST_EVENT }, ({ payload }) => {
       const evt = parsePaidToastPayload(payload);
-      if (evt) push(evt, { chime: true });
+      if (evt) push(evt, { chime: true, remote: true });
     });
     channel.subscribe((status, err) => {
       if (status === 'SUBSCRIBED') channelReadyRef.current = true;
@@ -170,9 +183,10 @@ export function useDispatchPaidToasts(
         const res = await fetch(url, { cache: 'no-store' });
         if (cancelled) return;
         if (res.status === 401 || res.status === 403) {
+          // Not authorized for this surface — nothing renders on this document
+          // until the lock cycles (a grant change takes effect next run).
+          authorizedRef.current = false;
           stopped = true;
-          // eslint-disable-next-line no-console
-          console.warn(`[dispatch-paid-toast] recent-paid poll denied (${res.status}); poll stopped.`);
           return;
         }
         const json = (await res.json()) as RecentPaidResponse;
@@ -180,13 +194,14 @@ export function useDispatchPaidToasts(
           schedule();
           return;
         }
+        authorizedRef.current = true;
         const serverNow = typeof json.now === 'string' ? Date.parse(json.now) : NaN;
         if (since) {
           const { events } = foldRecentPaidRows(json.rows ?? [], {
             selfEmail: self,
             serverNow: Number.isFinite(serverNow) ? serverNow : Date.now(),
           });
-          for (const evt of events) push(evt, { chime: true });
+          for (const evt of events) push(evt, { chime: true, remote: true });
         }
         const prev = since;
         if (typeof json.latest === 'string' && json.latest) since = json.latest;
@@ -225,7 +240,7 @@ export function useDispatchPaidToasts(
     const onLocal = (e: Event) => {
       const evt = parsePaidToastPayload((e as CustomEvent<unknown>).detail);
       if (!evt) return;
-      push(evt, { chime: false });
+      push(evt, { chime: false, remote: false });
       const channel = channelRef.current;
       if (channel && channelReadyRef.current) {
         void channel.send({ type: 'broadcast', event: PAID_TOAST_EVENT, payload: evt });

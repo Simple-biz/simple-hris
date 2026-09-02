@@ -61,3 +61,16 @@ Broadcast needs the PAYER's browser on this code. Fix: a server poll that does n
       threaded from App.tsx through the component.
 - [x] 12. Docs rewritten: the "missed toasts are accepted" stance is gone.
 
+## Follow-up 2, same day — every dashboard, Accounting VIEW access (hardening)
+
+Kane: "Elevated users should see this every dashboard please if they have Accounting View
+Access not Edit."
+
+- [x] 13. Route gate → `requireFeatureAccess("accounting","payment_dispatch","view")` (the
+      view-level dispatch-read gate already used by paystub / arrears / orphanage-dispatches).
+- [x] 14. Hook: the first poll is the authorization probe; remote cards require a 200; 401/403
+      stops the poll; verdict resets when the lock flips off. Local path stays ungated.
+- [x] 15. `src/components/common/DispatchPaidToastsGlobal.tsx` (session + lock wrapper) mounted in
+      `app/layout.tsx`; the App.tsx mount removed so there is exactly one instance.
+- [x] 16. Docs + INDEX + memory updated.
+

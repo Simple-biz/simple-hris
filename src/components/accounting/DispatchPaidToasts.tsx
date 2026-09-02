@@ -10,8 +10,9 @@ import {
 } from '@/lib/payroll/dispatch-paid-toast';
 
 /**
- * Lower-left "X paid Y $Z" cards, one per PAID dispatch row, shown on every
- * Accounting tab while processing is ON. Its own fixed stack rather than a
+ * Lower-left "X paid Y $Z" cards, one per PAID dispatch row, shown on EVERY
+ * dashboard while processing is ON to anyone with Accounting → Payment Dispatch
+ * view access (mounted from the root layout). Its own fixed stack rather than a
  * sonner toast: the Accounting Toaster is top-right and teal by rule
  * (docs/features/notification-alerts.md), and this card's motion is the point —
  * it slides IN from the left edge, rests, and leaves to the right.

@@ -1,16 +1,17 @@
-# Payment Dispatch "paid" toast — lower-left cards on every Accounting tab while processing is on
+# Payment Dispatch "paid" toast — lower-left cards on every dashboard while processing is on
 
-While the global dispatch lock is ON, every open Accounting dashboard shows one card in the
-lower-left per **Paid** dispatch row — `lenny@simple.biz paid kaner@simple.biz  $2,700.00`
+While the global dispatch lock is ON, every open dashboard shows one card in the lower-left per
+**Paid** dispatch row — `lenny@simple.biz paid kaner@simple.biz  $2,700.00`
 (₱ small beneath) — sliding in from the left edge, resting ~6 s, then leaving to the right. The
 paying browser shows it from its own Mark Paid handler; every other Accounting screen hears it
 over a Supabase Realtime **Broadcast** topic — and, since 2026-09-02 evening, also by **polling
 the server** every 10 s, so a payment logged by a clerk on an older production build (Lenny on
 prod while Kane ran localhost — the first live test showed nothing) still lands as a card. Remote
-arrivals play the payment-confirmed chime. It is
-visible on every tab, to every permission level, because it names no amount the viewer could
-not already read on the Payment Dispatch tab. Shipped 2026-09-02 (Kane approved the brief the
-same day: every tab, every permission; chime on remote screens).
+arrivals play the payment-confirmed chime. Since the same evening it is mounted from the **root
+layout**, so it shows on EVERY dashboard — Accounting, Admin, CEO, HR, Manager, Orphanage, QC,
+Payroll Clerk, Employee — to anyone holding **Accounting → Payment Dispatch VIEW access** (or
+admin). Kane's rulings, all 2026-09-02: every tab; chime on remote screens; "elevated users
+should see this on every dashboard if they have Accounting View access, not Edit".
 
 ## Key files
 
@@ -22,7 +23,7 @@ same day: every tab, every permission; chime on remote screens).
 | Announce point — after each successful `paid` POST leg | `src/components/payroll-clerk/PayrollDispatch.tsx` (`handleConfirmPaid`) |
 | Poll route — watermark + PAID rows after `since`, same gate as the dispatch list | `app/api/payment-dispatches/recent-paid/route.ts` |
 | Poll read — bounded, oldest-first, `truncated` continuation | `listRecentPaidDispatches` in `src/lib/supabase/payment-dispatches.ts` |
-| Mount — beside `<Toaster>`, fed `dispatchLock.locked` | `src/App.tsx` |
+| Mount — root layout, every dashboard; runs only with a signed-in session | `src/components/common/DispatchPaidToastsGlobal.tsx` · `app/layout.tsx` |
 
 ## Broadcast, never `postgres_changes` — and on its OWN topic
 
@@ -56,11 +57,33 @@ every 10 s and folds new PAID rows into the same stack (`foldRecentPaidRows`, pu
   path; the poll must never mint a second card (`selfEmail` comes from the shell).
 - **Stale rows only advance the watermark.** Older than 90 s by the server clock means history,
   not news — a tab hidden for an hour does not replay sixty payments on return.
-- **Same gate as the dispatch list.** `requireRateVisibilityOrFeatureEdit("accounting",
-  "payment_dispatch")` — the ONE gate every dispatch-queue read shares
-  ([payment-dispatch.md](./payment-dispatch.md) §5.1, `authorize-feature.ts`). The Accounting
-  shell admits only `accounting` and `admin`, both rate-visible, so "every permission in the
-  shell" and this gate are the same set. A 401/403 stops the poll for that mount.
+- **The gate is "Accounting VIEW access".** `requireFeatureAccess("accounting",
+  "payment_dispatch", "view")` — a view-or-better grant on the Accounting dashboard's Payment
+  Dispatch tab, the same gate as the other view-level dispatch reads (paystub, arrears,
+  orphanage-dispatches). Admin bypasses. A missing grant is 403 (`rbac-feature-permissions.md`
+  default-deny), and that answer is how the client learns it is not authorized.
+
+## Who sees it is the server's verdict, on every dashboard
+
+`DispatchPaidToastsGlobal` sits in `app/layout.tsx` beside `CarlaSongToast`, so it survives
+dashboard switches and renders on all of them. It refuses to run without a signed-in session
+(public pages never probe or subscribe). Beyond that, **no client-side RBAC copy exists**: the
+hook's first poll after the lock turns on is the authorization probe — 200 lets remote cards
+(broadcast and poll) render, 401/403 stops the poll and nothing remote ever renders on that
+document. The local path (the payer's own Mark Paid) is never gated here; a browser whose paid
+POST was just accepted is authorized by construction.
+
+Consequences to know:
+
+- A person whose Payment Dispatch tab an admin set to **hidden** sees no toast anywhere, even
+  with the `accounting` role. That is Kane's rule applied literally — the grant decides, not
+  the role. (The earlier gate, rate-visible-OR-edit, would have admitted them; it was replaced,
+  not loosened.)
+- A grant changed mid-run takes effect on the next lock cycle — the verdict is cached per
+  processing run and cleared when the lock flips off.
+- Mounting `<DispatchPaidToasts>` anywhere else would create a second instance with its own
+  de-dupe memory and double every card. The Accounting shell's own mount was removed for that
+  reason; the root layout is the only one.
 
 ## Only a real `paid` row toasts
 
@@ -105,8 +128,8 @@ payee leads with `$COP`.
 - **A remote card can lag up to 10 s.** That is the poll cadence when the payer's build cannot
   broadcast. Once every clerk is on a build with this code, Broadcast delivers instantly and
   the poll merely confirms.
-- **The standalone `/payroll-clerk` shell shows nothing.** Kane did not answer Q3 in the brief,
-  so it stayed out. Mounting `<DispatchPaidToasts>` there is one line if wanted.
+- **An employee-only user never sees it, even during processing.** They have no Accounting
+  grant, so the probe returns 403 and the stack stays empty. That is the gate working.
 
 ## Deploy notes
 
@@ -114,4 +137,6 @@ payee leads with `$COP`.
 no n8n. Broadcast needs no publication membership.
 
 **Rollout note:** the toast appears for a payment only when the VIEWER's build has this code.
-The payer's build no longer matters — that is what the poll is for.
+The payer's build no longer matters — that is what the poll is for. Visibility for a given
+person is an Admin → Roles decision (Accounting → Payment Dispatch at View or Edit), not a code
+change.

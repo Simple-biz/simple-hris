@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import NextAuthProvider from "@/components/auth/NextAuthProvider";
 import CarlaSongToast from "@/components/common/CarlaSongToast";
+import DispatchPaidToastsGlobal from "@/components/common/DispatchPaidToastsGlobal";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth/auth-options";
 import { Toaster } from "sonner";
@@ -46,6 +47,10 @@ export default async function RootLayout({
                 switches (client-side navs never remount this layout). Renders
                 null for everyone else / when nothing is playing. */}
             <CarlaSongToast />
+            {/* Lower-left "X paid Y $Z" cards while payroll is processing — root
+                layout so EVERY dashboard shows them; the server decides who is
+                authorized (Accounting → Payment Dispatch view access). */}
+            <DispatchPaidToastsGlobal />
             <Toaster position="top-right" richColors closeButton />
           </ThemeProvider>
         </NextAuthProvider>
