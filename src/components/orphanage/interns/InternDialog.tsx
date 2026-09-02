@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, Banknote, GraduationCap, Loader2, UserRound, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -48,6 +48,12 @@ export default function InternDialog({
   onSaved: (intern: OrphanageInternRow) => void;
 }) {
   const editing = editingId != null;
+  // The parent passes an inline arrow, so its identity changes on every parent
+  // render (presence / permission polling re-renders the whole dashboard). If
+  // the reset effect below depended on it, every such render would wipe the form
+  // mid-typing — which is exactly what happened. Read it through a ref instead.
+  const onOpenChangeRef = useRef(onOpenChange);
+  onOpenChangeRef.current = onOpenChange;
   const [pane, setPane] = useState<Pane>('profile');
   const [loadingRecord, setLoadingRecord] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -119,12 +125,13 @@ export default function InternDialog({
         setBankName(i.bank_name); setBankAccountName(i.bank_account_name); setBankAccountNumber(i.bank_account_number); setSwiftCode(i.swift_code);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Could not load the profile');
-        onOpenChange(false);
+        onOpenChangeRef.current(false);
       } finally {
         setLoadingRecord(false);
       }
     })();
-  }, [open, editingId, onOpenChange]);
+    // Reset ONLY when the dialog opens or the record being edited changes.
+  }, [open, editingId]);
 
   const emailOk = isInternEmail(email);
   const nameOk = fullName.trim().length > 0;
