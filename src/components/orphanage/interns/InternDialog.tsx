@@ -51,6 +51,12 @@ export default function InternDialog({
   const [pane, setPane] = useState<Pane>('profile');
   const [loadingRecord, setLoadingRecord] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Validation speaks only after the user has acted: a field they left, or a
+  // Save they attempted. An empty form is not an error yet — nagging "Full name
+  // is required" before a keystroke is noise on a money/identity form.
+  const [touched, setTouched] = useState<Set<string>>(new Set());
+  const [attempted, setAttempted] = useState(false);
+  const touch = (k: string) => setTouched((prev) => (prev.has(k) ? prev : new Set(prev).add(k)));
   const [orphanages, setOrphanages] = useState<OrphanageOption[]>([]);
 
   const [fullName, setFullName] = useState('');
@@ -87,6 +93,8 @@ export default function InternDialog({
   useEffect(() => {
     if (!open) return;
     setPane('profile');
+    setTouched(new Set());
+    setAttempted(false);
     const today = new Date().toISOString().slice(0, 10);
     if (!editingId) {
       setFullName(''); setEmail(''); setPersonalEmail(''); setPhone(''); setOrphanageId(''); setNote('');
@@ -126,9 +134,20 @@ export default function InternDialog({
   const profileIssue = !nameOk ? 'Full name is required' : !emailOk ? `Email must be @${INTERN_EMAIL_DOMAIN}` : null;
   const payIssue = !rateOk ? 'A first rate and its effective date are required' : !capsOk ? 'Caps must be positive; share 0–100%' : null;
   const valid = !profileIssue && !payIssue;
+  // What the user has earned hearing about: a tab's issue shows once its fields
+  // were touched or a save was attempted. The tab dots follow the same rule.
+  const showProfileIssue = !!profileIssue && (attempted || (!nameOk ? touched.has('name') : touched.has('email')));
+  const showPayIssue = !!payIssue && (attempted || touched.has('pay'));
+  const footerIssue = showProfileIssue ? profileIssue : showPayIssue ? payIssue : null;
 
   const save = async () => {
-    if (!valid || saving) return;
+    if (saving) return;
+    if (!valid) {
+      // Take them to the problem instead of silently refusing.
+      setAttempted(true);
+      setPane(profileIssue ? 'profile' : 'pay');
+      return;
+    }
     setSaving(true);
     try {
       const body: Record<string, unknown> = {
@@ -170,9 +189,9 @@ export default function InternDialog({
   };
 
   const tabs: Array<{ id: Pane; label: string; Icon: typeof UserRound; issue: string | null; hint?: string }> = [
-    { id: 'profile', label: 'Profile', Icon: UserRound, issue: profileIssue },
-    { id: 'pay', label: 'Pay', Icon: Wallet, issue: payIssue },
-    { id: 'bank', label: 'Bank', Icon: Banknote, issue: null, hint: bankMissing ? 'no bank yet' : undefined },
+    { id: 'profile', label: 'Profile', Icon: UserRound, issue: showProfileIssue ? profileIssue : null },
+    { id: 'pay', label: 'Pay', Icon: Wallet, issue: showPayIssue ? payIssue : null },
+    { id: 'bank', label: 'Bank', Icon: Banknote, issue: null, hint: bankMissing && (touched.has('bank') || attempted || editing) ? 'No bank on file' : undefined },
   ];
 
   const field = 'space-y-1';
@@ -229,7 +248,17 @@ export default function InternDialog({
             <div className="grid gap-3 sm:grid-cols-2">
               <div className={cn(field, 'sm:col-span-2')}>
                 <Label htmlFor="in-name" className={labelCls}>Full name <span className="text-rose-500">*</span></Label>
-                <Input id="in-name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="e.g. Maria Santos" autoFocus={!editing} />
+                <Input
+                  id="in-name"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  onBlur={() => touch('name')}
+                  placeholder="e.g. Maria Santos"
+                  autoFocus={!editing}
+                  aria-invalid={showProfileIssue && !nameOk ? true : undefined}
+                  className={cn(showProfileIssue && !nameOk && 'border-rose-400 focus-visible:ring-rose-400')}
+                />
+                {showProfileIssue && !nameOk && <p className="text-[11px] text-rose-600">Full name is required.</p>}
               </div>
               <div className={cn(field, 'sm:col-span-2')}>
                 <Label htmlFor="in-email" className={labelCls}>Intern email <span className="text-rose-500">*</span></Label>
@@ -238,10 +267,12 @@ export default function InternDialog({
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  onBlur={() => touch('email')}
                   placeholder={`name@${INTERN_EMAIL_DOMAIN}`}
-                  className={cn('font-mono', email && !emailOk && 'border-rose-400 focus-visible:ring-rose-400')}
+                  aria-invalid={showProfileIssue && nameOk && !emailOk ? true : undefined}
+                  className={cn('font-mono', (email || showProfileIssue) && !emailOk && touched.has('email') && 'border-rose-400 focus-visible:ring-rose-400')}
                 />
-                <p className={cn('text-[11px]', email && !emailOk ? 'text-rose-600' : 'text-zinc-400')}>
+                <p className={cn('text-[11px]', (email || attempted) && !emailOk && touched.has('email') ? 'text-rose-600' : 'text-zinc-400')}>
                   Must be @{INTERN_EMAIL_DOMAIN} — never @simple.biz. This is how payroll tells an intern apart.
                 </p>
               </div>
@@ -294,11 +325,11 @@ export default function InternDialog({
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
                       <div className={field}>
                         <Label htmlFor="in-rate" className={labelCls}>Hourly rate (₱) <span className="text-rose-500">*</span></Label>
-                        <Input id="in-rate" type="number" min={1} step="0.01" value={ratePhp} onChange={(e) => setRatePhp(e.target.value)} className="font-mono" />
+                        <Input id="in-rate" type="number" min={1} step="0.01" value={ratePhp} onChange={(e) => setRatePhp(e.target.value)} onBlur={() => touch('pay')} className="font-mono" />
                       </div>
                       <div className={field}>
                         <Label htmlFor="in-rate-from" className={labelCls}>Effective from <span className="text-rose-500">*</span></Label>
-                        <Input id="in-rate-from" type="date" value={rateFrom} onChange={(e) => setRateFrom(e.target.value)} />
+                        <Input id="in-rate-from" type="date" value={rateFrom} onChange={(e) => setRateFrom(e.target.value)} onBlur={() => touch('pay')} />
                       </div>
                     </div>
                   </>
@@ -310,7 +341,7 @@ export default function InternDialog({
                 <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
                   Defaults are the agreed numbers: {INTERN_DEFAULTS.dailyCapHours}h a day, {INTERN_DEFAULTS.weeklyCapHours}h a week, {formatInternPHP(INTERN_DEFAULTS.pabBonusPhp)} PAB, {INTERN_DEFAULTS.orphanageSharePct}% to the orphanage.
                 </p>
-                <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4" onBlur={() => touch('pay')}>
                   <div className={field}>
                     <Label htmlFor="in-daily" className={labelCls}>Daily cap (h)</Label>
                     <Input id="in-daily" type="number" min={0.25} step="0.25" value={dailyCap} onChange={(e) => setDailyCap(e.target.value)} className="font-mono" />
@@ -335,7 +366,7 @@ export default function InternDialog({
               <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                 Payment Dispatch pays to exactly these details and cannot edit them. A wrong bank is fixed here, never at pay time.
               </p>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-3 sm:grid-cols-2" onBlur={() => touch('bank')}>
                 <div className={field}>
                   <Label htmlFor="in-bank" className={labelCls}>Bank name</Label>
                   <Input id="in-bank" value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="BDO, BPI, GCash…" />
@@ -353,23 +384,36 @@ export default function InternDialog({
                   <Input id="in-swift" value={swiftCode} onChange={(e) => setSwiftCode(e.target.value)} className="font-mono uppercase" placeholder="optional" />
                 </div>
               </div>
-              {bankMissing && (
+              {bankMissing && (touched.has('bank') || attempted || editing) && (
                 <p className="flex items-center gap-1.5 rounded-lg border border-amber-200/70 bg-amber-50/60 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
                   <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                  No bank yet — the profile saves, but Payment Dispatch will have nowhere to send the money until this is filled in.
+                  No bank on file — the profile saves, but Payment Dispatch has nowhere to send the money until this is filled in.
                 </p>
               )}
             </div>
           )}
         </div>
 
-        <DialogFooter className="shrink-0 flex-row items-center justify-between gap-2 border-t border-pink-100/70 px-5 py-3 dark:border-pink-950/45 sm:justify-between">
-          <span className="min-w-0 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-            {profileIssue ?? payIssue ?? (bankMissing ? 'Bank not filled in yet' : 'Ready to save')}
-          </span>
+        <DialogFooter className="shrink-0 flex-row items-center gap-3 border-t border-pink-100/70 px-5 py-4 dark:border-pink-950/45 sm:justify-between">
+          {/* Left: only speaks when there is something to fix. Silence is the default. */}
+          <p
+            role="status"
+            aria-live="polite"
+            className={cn('min-w-0 flex-1 truncate text-xs', footerIssue ? 'flex items-center gap-1.5 text-rose-600 dark:text-rose-400' : 'text-transparent')}
+          >
+            {footerIssue && <AlertCircle className="h-3.5 w-3.5 shrink-0" />}
+            {footerIssue ?? ' '}
+          </p>
           <div className="flex shrink-0 items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
-            <Button size="sm" onClick={save} disabled={!valid || saving || loadingRecord} className="gap-2 bg-pink-600 text-white hover:bg-pink-700">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving} className="h-10 px-4">
+              Cancel
+            </Button>
+            <Button
+              onClick={save}
+              disabled={saving || loadingRecord}
+              aria-disabled={!valid || undefined}
+              className={cn('h-10 min-w-[8.5rem] gap-2 bg-pink-600 px-5 font-semibold text-white hover:bg-pink-700', !valid && 'opacity-80')}
+            >
               {saving && <Loader2 className="h-4 w-4 animate-spin" />}
               {editing ? 'Save changes' : 'Add intern'}
             </Button>
