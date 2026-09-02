@@ -21,6 +21,13 @@ export const INTERN_DEFAULTS = {
 export interface OrphanageInternRow {
   id: string;
   email: string;
+  /** Name PARTS are the source of truth (like Simple's onboarding); full_name is
+   *  composed from first + last + extension on every write. middle_name is
+   *  stored and shown but never composed in (onboarding-name-parts.md). */
+  first_name: string;
+  middle_name: string | null;
+  last_name: string;
+  name_extension: string | null;
   full_name: string;
   personal_email: string | null;
   phone: string | null;

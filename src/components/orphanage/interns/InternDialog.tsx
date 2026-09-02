@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { isInternEmail, INTERN_EMAIL_DOMAIN } from '@/lib/interns/intern-email';
 import { INTERN_DEFAULTS, formatInternPHP, type OrphanageInternRow } from '@/lib/interns/intern-types';
+import { composeFullName } from '@/lib/hr/work-email';
 
 interface OrphanageOption { id: string; name: string }
 type Pane = 'profile' | 'pay' | 'bank';
@@ -65,7 +66,13 @@ export default function InternDialog({
   const touch = (k: string) => setTouched((prev) => (prev.has(k) ? prev : new Set(prev).add(k)));
   const [orphanages, setOrphanages] = useState<OrphanageOption[]>([]);
 
-  const [fullName, setFullName] = useState('');
+  // Name PARTS, like Simple's onboarding (onboarding-name-parts.md): first + last
+  // (+ extension) compose the stored full name; the middle name is kept but NEVER
+  // composed in — it would change the go-by everywhere the name is printed.
+  const [firstName, setFirstName] = useState('');
+  const [middleName, setMiddleName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [nameExtension, setNameExtension] = useState('');
   const [email, setEmail] = useState('');
   const [personalEmail, setPersonalEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -103,7 +110,8 @@ export default function InternDialog({
     setAttempted(false);
     const today = new Date().toISOString().slice(0, 10);
     if (!editingId) {
-      setFullName(''); setEmail(''); setPersonalEmail(''); setPhone(''); setOrphanageId(''); setNote('');
+      setFirstName(''); setMiddleName(''); setLastName(''); setNameExtension('');
+      setEmail(''); setPersonalEmail(''); setPhone(''); setOrphanageId(''); setNote('');
       setStartedOn(today);
       setRatePhp(String(INTERN_DEFAULTS.ratePhp)); setRateFrom(today);
       setWeeklyCap(String(INTERN_DEFAULTS.weeklyCapHours)); setDailyCap(String(INTERN_DEFAULTS.dailyCapHours));
@@ -118,7 +126,8 @@ export default function InternDialog({
         const json = (await res.json()) as { intern?: OrphanageInternRow; error?: string | null };
         if (!res.ok || json.error || !json.intern) throw new Error(json.error ?? 'Could not load the profile');
         const i = json.intern;
-        setFullName(i.full_name); setEmail(i.email); setPersonalEmail(i.personal_email ?? ''); setPhone(i.phone ?? '');
+        setFirstName(i.first_name); setMiddleName(i.middle_name ?? ''); setLastName(i.last_name); setNameExtension(i.name_extension ?? '');
+        setEmail(i.email); setPersonalEmail(i.personal_email ?? ''); setPhone(i.phone ?? '');
         setOrphanageId(i.orphanage_id ?? ''); setStartedOn(i.started_on ?? ''); setNote(i.note ?? '');
         setWeeklyCap(String(i.weekly_cap_hours)); setDailyCap(String(i.daily_cap_hours));
         setPabBonus(String(i.pab_bonus_php)); setSharePct(String(i.orphanage_share_pct));
@@ -134,16 +143,20 @@ export default function InternDialog({
   }, [open, editingId]);
 
   const emailOk = isInternEmail(email);
-  const nameOk = fullName.trim().length > 0;
+  const firstOk = firstName.trim().length > 0;
+  const lastOk = lastName.trim().length > 0;
+  const nameOk = firstOk && lastOk;
+  const composedName = composeFullName(firstName, lastName, nameExtension);
   const rateOk = editing || (Number(ratePhp) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(rateFrom));
   const capsOk = Number(weeklyCap) > 0 && Number(dailyCap) > 0 && Number(pabBonus) >= 0 && Number(sharePct) >= 0 && Number(sharePct) <= 100;
   const bankMissing = !bankName.trim() || !bankAccountNumber.trim();
-  const profileIssue = !nameOk ? 'Full name is required' : !emailOk ? `Email must be @${INTERN_EMAIL_DOMAIN}` : null;
+  const profileIssue = !firstOk ? 'First name is required' : !lastOk ? 'Last name is required' : !emailOk ? `Email must be @${INTERN_EMAIL_DOMAIN}` : null;
   const payIssue = !rateOk ? 'A first rate and its effective date are required' : !capsOk ? 'Caps must be positive; share 0–100%' : null;
   const valid = !profileIssue && !payIssue;
   // What the user has earned hearing about: a tab's issue shows once its fields
   // were touched or a save was attempted. The tab dots follow the same rule.
-  const showProfileIssue = !!profileIssue && (attempted || (!nameOk ? touched.has('name') : touched.has('email')));
+  const showProfileIssue =
+    !!profileIssue && (attempted || (!firstOk ? touched.has('first') : !lastOk ? touched.has('last') : touched.has('email')));
   const showPayIssue = !!payIssue && (attempted || touched.has('pay'));
   const footerIssue = showProfileIssue ? profileIssue : showPayIssue ? payIssue : null;
 
@@ -158,7 +171,10 @@ export default function InternDialog({
     setSaving(true);
     try {
       const body: Record<string, unknown> = {
-        full_name: fullName.trim(),
+        first_name: firstName.trim(),
+        middle_name: middleName.trim() || null,
+        last_name: lastName.trim(),
+        name_extension: nameExtension.trim() || null,
         email: email.trim().toLowerCase(),
         personal_email: personalEmail.trim() || null,
         phone: phone.trim() || null,
@@ -213,7 +229,7 @@ export default function InternDialog({
               <GraduationCap className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <DialogTitle className="text-base font-semibold">{editing ? `Edit ${fullName || 'intern'}` : 'Add intern'}</DialogTitle>
+              <DialogTitle className="text-base font-semibold">{editing ? `Edit ${composedName || 'intern'}` : 'Add intern'}</DialogTitle>
               <DialogDescription className="text-xs">
                 Personal data, bank and rates change only here. No onboarding paperwork.
               </DialogDescription>
@@ -253,20 +269,46 @@ export default function InternDialog({
             </div>
           ) : pane === 'profile' ? (
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className={cn(field, 'sm:col-span-2')}>
-                <Label htmlFor="in-name" className={labelCls}>Full name <span className="text-rose-500">*</span></Label>
+              <div className={field}>
+                <Label htmlFor="in-first" className={labelCls}>First name <span className="text-rose-500">*</span></Label>
                 <Input
-                  id="in-name"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  onBlur={() => touch('name')}
-                  placeholder="e.g. Maria Santos"
+                  id="in-first"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  onBlur={() => touch('first')}
+                  placeholder="Maria"
                   autoFocus={!editing}
-                  aria-invalid={showProfileIssue && !nameOk ? true : undefined}
-                  className={cn(showProfileIssue && !nameOk && 'border-rose-400 focus-visible:ring-rose-400')}
+                  aria-invalid={showProfileIssue && !firstOk ? true : undefined}
+                  className={cn(showProfileIssue && !firstOk && 'border-rose-400 focus-visible:ring-rose-400')}
                 />
-                {showProfileIssue && !nameOk && <p className="text-[11px] text-rose-600">Full name is required.</p>}
               </div>
+              <div className={field}>
+                <Label htmlFor="in-middle" className={labelCls}>Middle name</Label>
+                <Input id="in-middle" value={middleName} onChange={(e) => setMiddleName(e.target.value)} placeholder="optional" />
+              </div>
+              <div className={field}>
+                <Label htmlFor="in-last" className={labelCls}>Last name <span className="text-rose-500">*</span></Label>
+                <Input
+                  id="in-last"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  onBlur={() => touch('last')}
+                  placeholder="Santos"
+                  aria-invalid={showProfileIssue && firstOk && !lastOk ? true : undefined}
+                  className={cn(showProfileIssue && firstOk && !lastOk && 'border-rose-400 focus-visible:ring-rose-400')}
+                />
+              </div>
+              <div className={field}>
+                <Label htmlFor="in-ext" className={labelCls}>Extension</Label>
+                <Input id="in-ext" value={nameExtension} onChange={(e) => setNameExtension(e.target.value)} placeholder="Jr, Sr, III…" />
+              </div>
+              <p className="sm:col-span-2 -mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                {composedName ? (
+                  <>Saved as <span className="font-semibold text-zinc-800 dark:text-zinc-200">{composedName}</span>{middleName.trim() ? <> — the middle name is kept on the profile but not in the name, like Simple hires.</> : null}</>
+                ) : (
+                  <>First and last name compose the name payroll prints, like Simple hires.</>
+                )}
+              </p>
               <div className={cn(field, 'sm:col-span-2')}>
                 <Label htmlFor="in-email" className={labelCls}>Intern email <span className="text-rose-500">*</span></Label>
                 <Input

@@ -83,6 +83,7 @@ const TABLES = [
 const CONSTRAINTS = [
   'orphanage_interns_email_domain_check',
   'orphanage_interns_status_check',
+  'orphanage_interns_name_parts_present',
   'orphanage_interns_caps_positive',
   'orphanage_interns_pab_nonnegative',
   'orphanage_interns_share_pct_range',
@@ -147,6 +148,8 @@ const CHECKS: Array<[string, string]> = [
 const LEGAL_INTERN: Record<string, string> = {
   id: "'00000000-0000-4000-8000-000000000001'",
   email: "'control@pathway.ph'",
+  first_name: "'Control'",
+  last_name: "'Intern'",
   full_name: "'Control Intern'",
 };
 function insertIntern(overrides: Record<string, string> = {}): string {
@@ -195,6 +198,8 @@ const NEGATIVE_CONTROLS: Array<[string, string]> = [
   ['a @simple.biz intern is rejected (the domain rule, in the database)', insertIntern({ email: "'control@simple.biz'" })],
   ['a mixed-case intern email is rejected (the app lower-cases; the CHECK insists)', insertIntern({ email: "'Control@pathway.ph'" })],
   ["an unknown status ('paused') is rejected", insertIntern({ status: "'paused'" })],
+  ['a blank first name is rejected (name parts are the source of truth)', insertIntern({ first_name: "'  '" })],
+  ['a blank last name is rejected', insertIntern({ last_name: "''" })],
   ['a zero weekly cap is rejected', insertIntern({ weekly_cap_hours: '0' })],
   ['a 101% orphanage share is rejected', insertIntern({ orphanage_share_pct: '101' })],
   ['a zero rate is rejected', `${insertIntern()}; INSERT INTO public.orphanage_intern_rates (intern_id, rate_php, effective_from) VALUES (${LEGAL_INTERN.id}, 0, '2026-09-01')`],

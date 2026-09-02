@@ -11,6 +11,7 @@ An orphanage intern is a **payee class of their own**, not an employee:
 | | Simple employee | Orphanage intern |
 |---|---|---|
 | Identity | `global_master_list` work email | `@pathway.ph` email on `orphanage_interns` |
+| Name | parts on the onboarding tables, composed `Name` on the master list | parts on `orphanage_interns` (`first_name` / `middle_name` / `last_name` / `name_extension`), composed `full_name` — same `composeFullName`, middle never composed |
 | Hours | `hubstaff_hours` (Simple's weekly report) | `orphanage_intern_hours` (their own weekly report, same columns) |
 | Rate | Payment Catalog / `employee_hourly_rates` | `orphanage_intern_rates` — dated rows |
 | Pay rule | Payroll Wizard (40h cap, OT, HSL forms…) | `priceInternWeek`: daily cap → weekly cap → rate in force per day; **no OT, no weekend premium** |
@@ -51,6 +52,18 @@ it is derived from `orphanage_dispatches` rows referencing `intern_pay_id`.
 - The intern upload **never touches `hubstaff_hours`, `is_current`, MESA, notifications or the
   disbursement seeder**. That is why `orphanage_intern_hours` exists as a separate table even though
   its columns are the same.
+
+### Name — parts are the source of truth, like Simple's onboarding
+- `orphanage_interns` stores `first_name` (required), `middle_name`, `last_name` (required),
+  `name_extension`; `full_name` is COMPOSED on every write by the same `composeFullName`
+  Simple's onboarding uses (first + last + extension). Kane 2026-09-02: "split the full name,
+  similar to simple biz".
+- **The middle name is never composed in** — same rule and same reason as
+  `onboarding-name-parts.md`: the go-by rule takes the last given token, so folding it in would
+  change what payroll prints. It is stored and shown on the profile only.
+- A PATCH carrying any part recomposes `full_name` from the MERGED parts server-side
+  (`updateIntern`), so a client that sends only the field it edited cannot desync the name.
+  DB CHECK `orphanage_interns_name_parts_present` refuses blank first/last.
 
 ### Pricing — `src/lib/interns/intern-week-pay.ts` (pure, 15 tests)
 - `paid_day = min(round2(raw_day), dailyCap)`; the weekly cap is consumed chronologically.

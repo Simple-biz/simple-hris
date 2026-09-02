@@ -4,6 +4,7 @@ import { maskAccountLast4 } from '@/lib/payroll/mask-account';
 import { isInternEmail } from '@/lib/interns/intern-email';
 import { normEmail } from '@/lib/email/norm-email';
 import { internRateForDay } from '@/lib/interns/intern-week-pay';
+import { composeFullName } from '@/lib/hr/work-email';
 import type {
   InternStatus,
   OrphanageInternListItem,
@@ -24,7 +25,7 @@ import type {
  */
 
 const INTERN_COLS =
-  'id, email, full_name, personal_email, phone, orphanage_id, status, started_on, ended_on, weekly_cap_hours, daily_cap_hours, pab_bonus_php, orphanage_share_pct, bank_name, bank_account_name, bank_account_number, swift_code, note, created_by, created_at, updated_at';
+  'id, email, first_name, middle_name, last_name, name_extension, full_name, personal_email, phone, orphanage_id, status, started_on, ended_on, weekly_cap_hours, daily_cap_hours, pab_bonus_php, orphanage_share_pct, bank_name, bank_account_name, bank_account_number, swift_code, note, created_by, created_at, updated_at';
 const RATE_COLS = 'id, intern_id, rate_php, effective_from, set_by, created_at';
 
 function num(v: unknown): number {
@@ -36,6 +37,10 @@ function mapIntern(r: Record<string, unknown>): OrphanageInternRow {
   return {
     id: String(r.id),
     email: String(r.email ?? ''),
+    first_name: String(r.first_name ?? ''),
+    middle_name: (r.middle_name as string | null) ?? null,
+    last_name: String(r.last_name ?? ''),
+    name_extension: (r.name_extension as string | null) ?? null,
     full_name: String(r.full_name ?? ''),
     personal_email: (r.personal_email as string | null) ?? null,
     phone: (r.phone as string | null) ?? null,
@@ -148,7 +153,11 @@ export async function listInternsByEmail(): Promise<{ byEmail: Map<string, Orpha
 
 export interface InternProfileInput {
   email: string;
-  full_name: string;
+  /** Name parts — first + last required; full_name is COMPOSED, never sent. */
+  first_name: string;
+  middle_name?: string | null;
+  last_name: string;
+  name_extension?: string | null;
   personal_email?: string | null;
   phone?: string | null;
   orphanage_id?: string | null;
@@ -172,8 +181,11 @@ export function validateInternProfile(input: Partial<InternProfileInput>, forCre
     const e = normEmail(input.email ?? '');
     if (!e || !isInternEmail(e)) return 'email must be an @pathway.ph address';
   }
-  if (forCreate || input.full_name !== undefined) {
-    if (!(input.full_name ?? '').trim()) return 'full_name is required';
+  if (forCreate || input.first_name !== undefined) {
+    if (!(input.first_name ?? '').trim()) return 'first_name is required';
+  }
+  if (forCreate || input.last_name !== undefined) {
+    if (!(input.last_name ?? '').trim()) return 'last_name is required';
   }
   if (input.status !== undefined && input.status !== 'active' && input.status !== 'ended') return "status must be 'active' or 'ended'";
   for (const k of ['weekly_cap_hours', 'daily_cap_hours'] as const) {
@@ -194,7 +206,10 @@ export function validateInternProfile(input: Partial<InternProfileInput>, forCre
 function toDbPatch(input: Partial<InternProfileInput>): Record<string, unknown> {
   const p: Record<string, unknown> = {};
   if (input.email !== undefined) p.email = normEmail(input.email);
-  if (input.full_name !== undefined) p.full_name = input.full_name.trim();
+  if (input.first_name !== undefined) p.first_name = input.first_name.trim();
+  if (input.middle_name !== undefined) p.middle_name = input.middle_name?.trim() || null;
+  if (input.last_name !== undefined) p.last_name = input.last_name.trim();
+  if (input.name_extension !== undefined) p.name_extension = input.name_extension?.trim() || null;
   if (input.personal_email !== undefined) p.personal_email = input.personal_email?.trim() || null;
   if (input.phone !== undefined) p.phone = input.phone?.trim() || null;
   if (input.orphanage_id !== undefined) p.orphanage_id = input.orphanage_id || null;
@@ -221,7 +236,12 @@ export async function createIntern(
   if (!supabase) return { intern: null, error: 'Supabase not configured' };
   const { data, error } = await supabase
     .from('orphanage_interns')
-    .insert({ ...toDbPatch(input), created_by: createdBy })
+    .insert({
+      ...toDbPatch(input),
+      // Composed exactly like Simple's onboarding: first + last + extension, NEVER the middle name.
+      full_name: composeFullName(input.first_name, input.last_name, input.name_extension),
+      created_by: createdBy,
+    })
     .select(INTERN_COLS)
     .single();
   if (error) return { intern: null, error: error.message };
@@ -236,6 +256,20 @@ export async function updateIntern(
   if (!supabase) return { intern: null, error: 'Supabase not configured' };
   const patch = toDbPatch(input);
   if (Object.keys(patch).length === 0) return { intern: null, error: 'Nothing to update' };
+  const NAME_PARTS = ['first_name', 'middle_name', 'last_name', 'name_extension'] as const;
+  if (NAME_PARTS.some((k) => k in patch)) {
+    // A part changed → recompose full_name from the MERGED parts (the client may
+    // send only the part it edited). Middle name is deliberately left out.
+    const { data: cur, error: curErr } = await supabase.from('orphanage_interns').select('first_name, last_name, name_extension').eq('id', id).maybeSingle();
+    if (curErr) return { intern: null, error: curErr.message };
+    if (!cur) return { intern: null, error: 'Not found' };
+    const c = cur as { first_name: string; last_name: string; name_extension: string | null };
+    patch.full_name = composeFullName(
+      (patch.first_name as string | undefined) ?? c.first_name,
+      (patch.last_name as string | undefined) ?? c.last_name,
+      patch.name_extension !== undefined ? (patch.name_extension as string | null) : c.name_extension,
+    );
+  }
   const { data, error } = await supabase.from('orphanage_interns').update(patch).eq('id', id).select(INTERN_COLS).single();
   if (error) return { intern: null, error: error.message };
   return { intern: mapIntern(data as Record<string, unknown>), error: null };

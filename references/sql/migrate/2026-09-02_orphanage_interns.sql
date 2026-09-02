@@ -18,6 +18,13 @@ CREATE TABLE IF NOT EXISTS public.orphanage_interns (
   id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   -- Identity IS the address. Lower-cased by the app; the CHECK is the last line.
   email                TEXT NOT NULL UNIQUE,
+  -- Name PARTS are the source of truth, like Simple's onboarding
+  -- (onboarding-name-parts.md): first + last (+ extension) compose full_name on
+  -- every write; middle_name is stored and shown but NEVER composed in.
+  first_name           TEXT NOT NULL,
+  middle_name          TEXT,
+  last_name            TEXT NOT NULL,
+  name_extension       TEXT,
   full_name            TEXT NOT NULL,
   personal_email       TEXT,
   phone                TEXT,
@@ -45,6 +52,8 @@ CREATE TABLE IF NOT EXISTS public.orphanage_interns (
     CHECK (email = lower(email) AND email LIKE '%@pathway.ph'),
   CONSTRAINT orphanage_interns_status_check
     CHECK (status IN ('active', 'ended')),
+  CONSTRAINT orphanage_interns_name_parts_present
+    CHECK (length(trim(first_name)) > 0 AND length(trim(last_name)) > 0),
   CONSTRAINT orphanage_interns_caps_positive
     CHECK (weekly_cap_hours > 0 AND daily_cap_hours > 0),
   CONSTRAINT orphanage_interns_pab_nonnegative
