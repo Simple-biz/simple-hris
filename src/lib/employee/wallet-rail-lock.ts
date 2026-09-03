@@ -30,7 +30,14 @@ import { resolveEffectivePayoutProcessor } from './payout-completeness';
  * payee gets moved onto a wallet — the caller should surface the error rather
  * than treat it as "no rail assigned".
  */
-export async function resolveWalletRailLock(email: string): Promise<{
+export async function resolveWalletRailLock(
+  email: string,
+  /** The person's `employee_ids` row when the caller has ALREADY read it for the
+   *  same email (the `/api/employee-ids?email=` route does) — saves the duplicate
+   *  round-trip. `undefined` = not preloaded, read it here. A preloaded `null`
+   *  means "read succeeded, no row", and is honoured as such. */
+  preloaded?: { row: Awaited<ReturnType<typeof getEmployeeIdRowByEmail>>['row'] },
+): Promise<{
   locked: boolean;
   effectiveRail: ProcessorId | null;
   error: string | null;
@@ -38,10 +45,12 @@ export async function resolveWalletRailLock(email: string): Promise<{
   const target = (email ?? '').trim();
   if (!target) return { locked: true, effectiveRail: null, error: 'No email supplied.' };
 
-  const { row, error: idsErr } = await getEmployeeIdRowByEmail(target).catch((e: unknown) => ({
-    row: null,
-    error: e instanceof Error ? e.message : String(e),
-  }));
+  const { row, error: idsErr } = preloaded
+    ? { row: preloaded.row, error: null }
+    : await getEmployeeIdRowByEmail(target).catch((e: unknown) => ({
+        row: null,
+        error: e instanceof Error ? e.message : String(e),
+      }));
   if (idsErr) return { locked: true, effectiveRail: null, error: idsErr };
 
   // Tier 3. A failure here is NOT best-effort: without the legacy cell we

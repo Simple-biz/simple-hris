@@ -135,3 +135,67 @@ export function dedupeOneRowPerWeek<T>(rows: T[], identify: (row: T) => WeekIden
   }
   return out;
 }
+
+/** Public form of the per-week precedence, for callers that must reason about
+ *  it BEFORE building rows (see {@link dropDominatedCandidates}). */
+export function weekIdentityBeats(a: WeekIdentity, b: WeekIdentity): boolean {
+  return beats(a, b);
+}
+
+/**
+ * Prune engine candidates that {@link dedupeOneRowPerWeek} would discard
+ * anyway, BEFORE the caller pays to build them.
+ *
+ * The paystub route used to run the whole-company engine for every non-staged
+ * upload and only then collapse duplicates — a backfill re-upload, its original,
+ * and an overlapping aggregate each cost a full run for a row that was dropped.
+ *
+ * `incumbents` are rows the caller already has for free (staged payloads). A
+ * candidate is kept only if it would win its week outright:
+ *   - against every incumbent sharing its week key (ties go to the incumbent —
+ *     the final dedupe keeps the first occurrence, and incumbents come first);
+ *   - against every other candidate sharing its week key (first occurrence on a
+ *     tie — the same stable rule the final dedupe applies).
+ * Candidates with no canonical week key (unparseable dates, or spans longer
+ * than {@link MAX_WEEK_SPAN_DAYS}) pass through untouched, exactly as the final
+ * dedupe passes their rows through: hiding an unrecognised week could hide money.
+ *
+ * Pure and order-preserving.
+ */
+export function dropDominatedCandidates<T>(
+  candidates: T[],
+  identify: (candidate: T) => WeekIdentity,
+  incumbents: WeekIdentity[],
+): T[] {
+  const incumbentsByKey = new Map<string, WeekIdentity[]>();
+  for (const inc of incumbents) {
+    const key = canonicalWeekKey(inc.weekStart, inc.weekEnd);
+    if (!key) continue;
+    const list = incumbentsByKey.get(key);
+    if (list) list.push(inc);
+    else incumbentsByKey.set(key, [inc]);
+  }
+
+  // Pass 1 — drop anything an incumbent would beat or tie.
+  const survivors: Array<{ candidate: T; id: WeekIdentity; key: string | null }> = [];
+  for (const candidate of candidates) {
+    const id = identify(candidate);
+    const key = canonicalWeekKey(id.weekStart, id.weekEnd);
+    if (key) {
+      const incs = incumbentsByKey.get(key) ?? [];
+      if (incs.some((inc) => !beats(id, inc))) continue;
+    }
+    survivors.push({ candidate, id, key });
+  }
+
+  // Pass 2 — one winner per week among the survivors, first occurrence on a tie.
+  const winnerByKey = new Map<string, { candidate: T; id: WeekIdentity }>();
+  for (const s of survivors) {
+    if (!s.key) continue;
+    const cur = winnerByKey.get(s.key);
+    if (!cur || beats(s.id, cur.id)) winnerByKey.set(s.key, { candidate: s.candidate, id: s.id });
+  }
+  return survivors
+    .filter((s) => !s.key || winnerByKey.get(s.key)?.candidate === s.candidate)
+    .map((s) => s.candidate);
+}

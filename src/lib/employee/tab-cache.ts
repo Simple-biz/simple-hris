@@ -333,4 +333,15 @@ export const EMPLOYEE_CACHE_KEYS = {
   paidPaystubWeeks: 'employee:paid-paystub-weeks',
   /** `GET /api/people/special-transfers?email=` — the one-off transfers strip. */
   specialTransfers: 'employee:special-transfers',
+  /** Profile → `GET /api/employees?email=` merged with `/api/employee-master-record`
+   *  — the FULL master row (address fields included), distinct from `masterRow`. */
+  profileMaster: 'employee:profile-master',
+  /** Profile → `GET /api/employee-hourly-rates?email=` — the resolved rate row. */
+  profileRate: 'employee:profile-rate',
+  /** Profile → `GET /api/employee-skill-sets?email=` — the normalised fields. */
+  profileSkillSet: 'employee:profile-skill-set',
+  /** Profile → Pay Stubs `GET /api/employee/paystub?summary=1` — the RAW summary
+   *  rows (plain JSON: strings, numbers, nulls). Bank/payout rows are deliberately
+   *  NOT cached: account numbers stay out of storage. */
+  paystubSummary: 'employee:paystub-summary',
 } as const;

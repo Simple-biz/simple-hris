@@ -36,6 +36,8 @@ import { DatePicker } from '@/components/ui/date-picker';
 import EmployeeAvatar from './EmployeeAvatar';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
+import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
+import { useEmployeeCachedState } from '@/hooks/useEmployeeCachedState';
 import {
   OFFICIAL_USD_TO_PHP_RATE,
   effectiveUsdToPhpRateFromStored,
@@ -636,11 +638,26 @@ export default function EmployeeProfile({
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [removingPhoto, setRemovingPhoto] = useState(false);
 
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [master, setMaster] = useState<EmployeeRow | null>(null);
-  const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
+  // Identity + rate survive a reload (sessionStorage, identity-stamped — see
+  // docs/features/employee-dashboard-cache.md). A cached value only SEEDS the
+  // first paint; the fetch effect below still runs unconditionally and
+  // overwrites it. The bank/payout row is deliberately NOT cached — account
+  // numbers stay out of storage — so the Payment pane keeps its own loaded flag
+  // and shows a skeleton until the live row lands.
+  const [master, setMaster] = useEmployeeCachedState<EmployeeRow | null>(
+    EMPLOYEE_CACHE_KEYS.profileMaster,
+    null,
+  );
+  const [rate, setRate] = useEmployeeCachedState<EmployeeHourlyRateRow | null>(
+    EMPLOYEE_CACHE_KEYS.profileRate,
+    null,
+  );
   const [bankInfo, setBankInfo] = useState<EmployeeIdRow | null>(null);
+  const [bankInfoLoaded, setBankInfoLoaded] = useState(false);
+  // Whole-page skeleton ONLY while nothing is known yet. A cached identity paints
+  // at once and refreshes in place when the live fetch lands.
+  const [loading, setLoading] = useState(() => master === null);
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
 
   const [preferredProcessor, setPreferredProcessor] = useState<ProcessorId | ''>('');
@@ -776,7 +793,12 @@ export default function EmployeeProfile({
   // Every PAID week's full statement (`GET /api/employee/paystub?all=1`, session-
   // scoped). Loaded lazily the first time the tab is opened; backs the week list,
   // the per-week modal, and the all-weeks PDF/XLSX export.
-  const [payStubs, setPayStubs] = useState<PayStubSummaryRow[]>([]);
+  // Cached across reloads (RAW summary rows — plain JSON); the fetch below still
+  // runs on the first open and overwrites them. Paints, never decides.
+  const [payStubs, setPayStubs] = useEmployeeCachedState<PayStubSummaryRow[]>(
+    EMPLOYEE_CACHE_KEYS.paystubSummary,
+    [],
+  );
   const [payStubsLoading, setPayStubsLoading] = useState(false);
   const [payStubsError, setPayStubsError] = useState<string | null>(null);
   const [payStubModalFile, setPayStubModalFile] = useState<string | null>(null);
@@ -836,7 +858,12 @@ export default function EmployeeProfile({
   };
 
   // Skill Sets - editable by the employee, read-only on the My Team page.
-  const [skillSet, setSkillSet] = useState<SkillSetFields>(EMPTY_SKILL_SET);
+  // Cached across reloads (normalised plain-JSON fields); the fetch effect below
+  // still runs unconditionally and overwrites it.
+  const [skillSet, setSkillSet] = useEmployeeCachedState<SkillSetFields>(
+    EMPLOYEE_CACHE_KEYS.profileSkillSet,
+    EMPTY_SKILL_SET,
+  );
   const [skillSetBaseline, setSkillSetBaseline] = useState<SkillSetFields>(EMPTY_SKILL_SET);
   const [skillSetLoading, setSkillSetLoading] = useState(false);
   const [skillSetLoaded, setSkillSetLoaded] = useState(false);
@@ -947,17 +974,25 @@ export default function EmployeeProfile({
     let cancelled = false;
     (async () => {
       setError(null);
-      setLoading(true);
       try {
         // Server-side `?email=` filter: each route returns just this employee's
         // row instead of the full table. Same pattern documented in
         // memory/project_employee_portal_filtered_endpoints.md.
+        //
+        // ONE wave. None of these six reads depends on another's result — the
+        // master-record and bank-preferred calls used to wait for the first four
+        // and then for each other (three serial hops behind one skeleton).
+        // The two optional ones resolve to `null` on a network failure so a
+        // missing badge or address supplement can never fail the whole profile.
         const emailParam = `email=${encodeURIComponent(employeeEmail)}`;
-        const [empRes, rateRes, idsRes, fxRes] = await Promise.all([
+        const optional = (url: string) => fetch(url, { cache: 'no-store' }).catch(() => null);
+        const [empRes, rateRes, idsRes, fxRes, mrRes, bpRes] = await Promise.all([
           fetch(`/api/employees?${emailParam}`, { cache: 'no-store' }),
           fetch(`/api/employee-hourly-rates?${emailParam}`, { cache: 'no-store' }),
           fetch(`/api/employee-ids?${emailParam}`, { cache: 'no-store' }),
           fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' }),
+          optional(`/api/employee-master-record?${emailParam}`),
+          optional(`/api/bank-preferred-requests?${emailParam}`),
         ]);
 
         const empJson = (await empRes.json()) as { employees?: EmployeeRow[]; error?: string | null };
@@ -969,6 +1004,38 @@ export default function EmployeeProfile({
         };
         const fxJson = (await fxRes.json()) as { value: string | null };
 
+        // /api/employee-master-record queries `global_master_list` directly (where
+        // the address columns live) and works as both:
+        //   1. Identity fallback when the user isn't in `active_employees` (devs/founders)
+        //   2. Address-data supplement when the active_employees view hasn't been
+        //      refreshed since the address migration (2026-05-02) — in that case,
+        //      `me` is missing the home-address fields, so we merge them in here.
+        let masterRecord: EmployeeRow | null = null;
+        if (mrRes) {
+          try {
+            const mrJson = (await mrRes.json()) as { employee?: EmployeeRow | null };
+            masterRecord = mrJson.employee ?? null;
+          } catch {
+            /* ignore — fall back to active_employees row alone */
+          }
+        }
+
+        // A pending Bank Preferred change (awaiting accounting approval) shows as
+        // a badge on the field; the live value stays whatever's on employee_ids.
+        let pendingBp: ProcessorId | '' = '';
+        if (bpRes) {
+          try {
+            const bpJson = (await bpRes.json()) as { rows?: { to_value?: string; status?: string }[] };
+            const latest = (bpJson.rows ?? [])[0];
+            pendingBp =
+              latest?.status === 'pending' && isProcessorId(latest.to_value ?? '')
+                ? (latest.to_value as ProcessorId)
+                : '';
+          } catch {
+            /* non-fatal — just no badge */
+          }
+        }
+
         if (cancelled) return;
 
         if (fxRes.ok) {
@@ -978,24 +1045,6 @@ export default function EmployeeProfile({
         if (empJson.error) setError(empJson.error);
         // Server already filtered to this employee; just take the first row.
         const me = (empJson.employees ?? [])[0];
-
-        // Always also fetch /api/employee-master-record. It queries `global_master_list`
-        // directly (where the address columns live) and works as both:
-        //   1. Identity fallback when the user isn't in `active_employees` (devs/founders)
-        //   2. Address-data supplement when the active_employees view hasn't been
-        //      refreshed since the address migration (2026-05-02) — in that case,
-        //      `me` is missing the home-address fields, so we merge them in here.
-        let masterRecord: EmployeeRow | null = null;
-        try {
-          const mrRes = await fetch(
-            `/api/employee-master-record?email=${encodeURIComponent(employeeEmail)}`,
-            { cache: 'no-store' },
-          );
-          const mrJson = (await mrRes.json()) as { employee?: EmployeeRow | null };
-          masterRecord = mrJson.employee ?? null;
-        } catch {
-          /* ignore — fall back to active_employees row alone */
-        }
 
         if (!cancelled) {
           if (me) {
@@ -1021,24 +1070,9 @@ export default function EmployeeProfile({
         }
         const myId = (idsJson.rows ?? [])[0];
         setBankInfo(myId ?? null);
+        setBankInfoLoaded(true);
         setWalletRailEffective(walletRailEffectiveFromPayload(idsJson.walletRail));
-
-        // A pending Bank Preferred change (awaiting accounting approval) shows as
-        // a badge on the field; the live value stays whatever's on employee_ids.
-        try {
-          const bpRes = await fetch(`/api/bank-preferred-requests?${emailParam}`, { cache: 'no-store' });
-          const bpJson = (await bpRes.json()) as { rows?: { to_value?: string; status?: string }[] };
-          if (!cancelled) {
-            const latest = (bpJson.rows ?? [])[0];
-            setPendingBankPreferred(
-              latest?.status === 'pending' && isProcessorId(latest.to_value ?? '')
-                ? (latest.to_value as ProcessorId)
-                : '',
-            );
-          }
-        } catch {
-          /* non-fatal — just no badge */
-        }
+        setPendingBankPreferred(pendingBp);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load profile');
       } finally {
@@ -1640,7 +1674,7 @@ export default function EmployeeProfile({
                       </div>
                     }
                   >
-                    {payStubsLoading ? (
+                    {payStubsLoading && payStubs.length === 0 ? (
                       <div className="flex items-center justify-center py-14">
                         <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
                       </div>
@@ -1779,7 +1813,23 @@ export default function EmployeeProfile({
                 </>
               )}
 
-              {activeTab === 'payment' && (
+              {/* The bank/payout row is never cached (account numbers stay out of
+                  storage), so when the rest of the profile painted from cache this
+                  pane alone waits for the live row — a skeleton, never the empty
+                  "add your details" form flashing over real saved details. */}
+              {activeTab === 'payment' && !bankInfoLoaded && (
+                <Section title="Disbursement" description="How and where you get paid">
+                  <div className="space-y-3 py-4" aria-busy="true" aria-label="Loading payout details">
+                    {[0, 1, 2, 3].map((i) => (
+                      <div
+                        key={i}
+                        className="h-10 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-900"
+                      />
+                    ))}
+                  </div>
+                </Section>
+              )}
+              {activeTab === 'payment' && bankInfoLoaded && (
                 <>
                   <Section
                     title="Disbursement"

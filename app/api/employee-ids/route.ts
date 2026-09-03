@@ -23,7 +23,14 @@ export async function GET(req: NextRequest) {
     // `resolveWalletRailLock` can, and it FAILS CLOSED (a read error is
     // `locked: true` with the error attached). Only ever sent on the ?email=
     // branch: a caller with no payload must read as LOCKED, never as unlocked.
-    const walletRail = await resolveWalletRailLock(authz.effectiveEmail);
+    // The row above is the SAME tier-1 read the resolver would make; hand it over
+    // instead of paying for it twice. A failed read is NOT handed over — the
+    // resolver must judge it itself (and fail closed), not inherit a null that
+    // looks like "no row".
+    const walletRail = await resolveWalletRailLock(
+      authz.effectiveEmail,
+      error ? undefined : { row },
+    );
     return NextResponse.json({ rows: row ? [row] : [], error, walletRail });
   }
   const { rows, error } = await getEmployeeIds();

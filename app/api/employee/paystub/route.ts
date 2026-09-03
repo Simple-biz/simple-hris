@@ -33,10 +33,15 @@ import {
   type CurrentPayEntry,
   type CurrentPayResult,
 } from "@/lib/payroll/current-pay";
-import { loadWeekDiscretionary, loadFinalPayForWeeks } from "@/lib/payroll/paystub-recovery";
+import { loadRecoveryForWeeks, type WeekDiscretionary } from "@/lib/payroll/paystub-recovery";
+import { createEngineWeekMemo, engineWeekMemoKey } from "@/lib/payroll/engine-week-memo";
 import type { HoganSheetBlockRaw } from "@/lib/payroll/hogan-week-pay";
 import { resolveEmployeeProcessor, resolvePayDateIso } from "@/lib/payroll/pay-schedule";
-import { dedupeOneRowPerWeek } from "@/lib/payroll/paystub-week-dedupe";
+import {
+  dedupeOneRowPerWeek,
+  dropDominatedCandidates,
+  type WeekIdentity,
+} from "@/lib/payroll/paystub-week-dedupe";
 import { getEmployeeMasterRecord } from "@/lib/supabase/employees";
 import { getAppSetting, getAppSettingsWithMeta } from "@/lib/supabase/app-settings";
 import { listHubstaffUploads, getUploadedSourceFiles } from "@/lib/supabase/hubstaff-hours-db";
@@ -107,24 +112,89 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-/** All source-file (week) keys that exist, newest-first. Best-effort — falls back
- *  through the upload archive → distinct hours source_files → empty. */
-async function listAllSourceFiles(): Promise<string[]> {
+/** The upload archive as the recovery tiers need it: every source-file (week)
+ *  key that exists, newest-first, plus each file's CURRENT Hubstaff upload batch
+ *  id (`is_current` first, then newest — the same preference
+ *  `getHubstaffUploadIdBySourceFile` applies). A recovered snapshot or a memoized
+ *  engine run is trusted ONLY for the batch it was computed from, so a file with
+ *  no resolvable batch (the hours-table fallback) maps to `null` = never trusted.
+ *  Best-effort — falls back through the upload archive → distinct hours
+ *  source_files → empty. */
+async function listUploadIndex(): Promise<{
+  files: string[];
+  uploadIdByFile: Map<string, string | null>;
+}> {
+  const uploadIdByFile = new Map<string, string | null>();
   try {
     const uploads = await listHubstaffUploads();
-    const files = uploads.map((u) => u.source_file).filter((f): f is string => !!f);
-    if (files.length > 0) return [...new Set(files)];
+    const files: string[] = [];
+    for (const u of uploads) {
+      if (!u.source_file) continue;
+      if (!uploadIdByFile.has(u.source_file)) files.push(u.source_file);
+      const prev = uploadIdByFile.get(u.source_file);
+      // Rows arrive newest-first; a later `is_current` row still wins.
+      if (prev === undefined || (u.is_current && prev !== u.id)) {
+        if (prev === undefined || u.is_current) uploadIdByFile.set(u.source_file, u.id);
+      }
+    }
+    if (files.length > 0) return { files, uploadIdByFile };
   } catch {
     /* fall through */
   }
   try {
-    return [...new Set(await getUploadedSourceFiles())];
+    const files = [...new Set(await getUploadedSourceFiles())];
+    for (const f of files) uploadIdByFile.set(f, null);
+    return { files, uploadIdByFile };
   } catch {
-    return [];
+    return { files: [], uploadIdByFile };
   }
 }
 
+/** Per-process memo of whole-company engine runs, keyed by (file, upload batch).
+ *  See `engine-week-memo.ts` for the bounds. Only the engine path uses it —
+ *  staged payloads and wizard snapshots are never memoized. */
+const engineWeekMemo = createEngineWeekMemo<CurrentPayResult>();
+
+async function runEngineForWeek(sourceFile: string, uploadId: string | null): Promise<CurrentPayResult> {
+  const key = engineWeekMemoKey(sourceFile, uploadId);
+  const compute = () => computeCurrentPay({ sourceFile });
+  return key ? engineWeekMemo.get(key, compute) : compute();
+}
+
+/** The pre-dedupe identity of a candidate (non-staged) file: dates from the
+ *  filename, paid-ness from the dispatch log, recency from the upload archive. */
+function candidateIdentity(
+  file: string,
+  paidAtByFile: ReadonlyMap<string, string | null>,
+  uploadRank: ReadonlyMap<string, number>,
+): WeekIdentity {
+  const range = parseDateRangeFromFilename(file);
+  return {
+    weekStart: range ? fmtIso(range.start) : null,
+    weekEnd: range ? fmtIso(range.end) : null,
+    paid: paidAtByFile.has(file),
+    paidAt: paidAtByFile.get(file) ?? null,
+    staged: false,
+    rank: uploadRank.get(file),
+  };
+}
+
 const round2 = (n: number) => Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
+
+/** "Nothing recovered for this week" — the shape a missing batch entry takes. */
+function emptyWeekDiscretionary(): WeekDiscretionary {
+  return {
+    finalPay: null,
+    fxRate: null,
+    adjustment: 0,
+    adjustmentNote: null,
+    orphanage: 0,
+    hasWizardData: false,
+    source: null,
+    recoveredWeekClosed: false,
+    period: null,
+  };
+}
 
 /** Format a local Date as YYYY-MM-DD (no TZ drift). */
 function fmtIso(d: Date): string {
@@ -331,8 +401,14 @@ async function reconstructStubForWeek(params: {
   paidAt: string | null;
   processor: string | null;
   fallbackFxRate: number;
+  /** Every recovery tier for this week, batch-loaded by the caller
+   *  (`loadRecoveryForWeeks`) — no per-week reads happen in here. */
+  disc: WeekDiscretionary;
+  /** The file's CURRENT upload batch id; keys the engine memo. Null = unknown,
+   *  so the engine runs unmemoized (today's behaviour). */
+  uploadId: string | null;
 }): Promise<EmployeePayStub | null> {
-  const disc = await loadWeekDiscretionary(params.sourceFile, params.emails);
+  const disc = params.disc;
   const fp = disc.finalPay;
   const itemized =
     !!fp &&
@@ -340,7 +416,9 @@ async function reconstructStubForWeek(params: {
     typeof fp.techBonus === "number" &&
     typeof fp.otherBonuses === "number";
 
-  // Cheap dates from the filename (used directly on the fast path).
+  // Cheap dates from the filename (used directly on the fast path). A recovered
+  // snapshot carries the engine's own period — prefer it, exactly as the live
+  // engine path below prefers `result.period` over the filename.
   let weekStart: string | null = null;
   let weekEnd: string | null = null;
   const range = parseDateRangeFromFilename(params.sourceFile);
@@ -348,6 +426,15 @@ async function reconstructStubForWeek(params: {
     weekStart = fmtIso(range.start);
     weekEnd = fmtIso(range.end);
   }
+  if (disc.source === "recovered" && disc.period) {
+    if (disc.period.start) weekStart = disc.period.start;
+    if (disc.period.end) weekEnd = disc.period.end;
+  }
+
+  // A matching recovered snapshot that does NOT list this person is the engine's
+  // verdict already: they were not in this week. Re-running it would only spend
+  // ~6 s to say the same thing (and would defeat the snapshot's purpose).
+  if (!fp && disc.recoveredWeekClosed) return null;
 
   const payDate = () => resolvePayDateIso(params.paidAt, weekEnd, params.processor);
 
@@ -400,7 +487,7 @@ async function reconstructStubForWeek(params: {
   // ── SLOW PATH: engine needed for the split (old snapshot) or the whole week ──
   let result: CurrentPayResult | null = null;
   try {
-    result = await computeCurrentPay({ sourceFile: params.sourceFile });
+    result = await runEngineForWeek(params.sourceFile, params.uploadId);
   } catch {
     result = null;
   }
@@ -638,15 +725,26 @@ export async function GET(req: NextRequest) {
 
     // 2) Pre-launch: recover an unlocked week from the wizard snapshot + hours.
     if (SHOW_UNPAID_STAGED_PAYSTUBS) {
-      const recon = await reconstructStubForWeek({
-        sourceFile,
-        emails,
-        name: master?.name ?? "",
-        department: master?.department ?? "",
-        paidAt,
-        processor,
-        fallbackFxRate: await currentFxRate(),
-      });
+      const [{ uploadIdByFile }, fallbackFxRate] = await Promise.all([
+        listUploadIndex(),
+        currentFxRate(),
+      ]);
+      const uploadId = uploadIdByFile.get(sourceFile) ?? null;
+      const discMap = await loadRecoveryForWeeks([sourceFile], emails, uploadIdByFile);
+      const disc = discMap.get(sourceFile);
+      const recon = disc
+        ? await reconstructStubForWeek({
+            sourceFile,
+            emails,
+            name: master?.name ?? "",
+            department: master?.department ?? "",
+            paidAt,
+            processor,
+            fallbackFxRate,
+            disc,
+            uploadId,
+          })
+        : null;
       if (recon) {
         return NextResponse.json({
           paystub: copDecorate(recon.view),
@@ -700,14 +798,19 @@ export async function GET(req: NextRequest) {
   // NO per-week `computeCurrentPay` — the slow engine runs ONLY for weeks that
   // have neither (oldest, pre-snapshot weeks). This is the fast path the tab uses.
   if (wantSummary) {
-    const [{ rows: dispatches }, { rows: payloads }, { employee: master }, allFiles, fxFallback] =
-      await Promise.all([
-        listPaymentDispatches({ recipientEmail: email }),
-        listPaystubPayloadsForEmployee(email),
-        getEmployeeMasterRecord(email),
-        listAllSourceFiles(),
-        currentFxRate(),
-      ]);
+    const [
+      { rows: dispatches },
+      { rows: payloads },
+      { employee: master },
+      { files: allFiles, uploadIdByFile },
+      fxFallback,
+    ] = await Promise.all([
+      listPaymentDispatches({ recipientEmail: email }),
+      listPaystubPayloadsForEmployee(email),
+      getEmployeeMasterRecord(email),
+      listUploadIndex(),
+      currentFxRate(),
+    ]);
     const emails = callerEmails(email, master);
     const processor = await resolveEmployeeProcessor(emails);
     const paidAtByFile = paidAtByFileFrom(dispatches);
@@ -739,20 +842,46 @@ export async function GET(req: NextRequest) {
     });
 
     if (SHOW_UNPAID_STAGED_PAYSTUBS) {
-      const others = allFiles.filter((f) => !stagedFiles.has(f));
-      const snapshots = await loadFinalPayForWeeks(others, emails);
+      // Prune BEFORE any recovery work: a non-staged file whose week a staged
+      // row (or a newer non-staged upload) already wins would be discarded by
+      // the final dedupe below anyway — so never pay to build it. Same
+      // precedence, applied early; the final dedupe still runs as the guardrail.
+      const uploadRankEarly = new Map(allFiles.map((f, i) => [f, i] as const));
+      const stagedIdentities: WeekIdentity[] = rows.map((r) => ({
+        weekStart: r.weekStart,
+        weekEnd: r.weekEnd,
+        paid: r.paidAt != null,
+        paidAt: r.paidAt,
+        staged: true,
+        rank: uploadRankEarly.get(r.sourceFile),
+      }));
+      const others = dropDominatedCandidates(
+        allFiles.filter((f) => !stagedFiles.has(f)),
+        (f) => candidateIdentity(f, paidAtByFile, uploadRankEarly),
+        stagedIdentities,
+      );
+      // ONE app_settings round-trip for every tier of every candidate week
+      // (wizard snapshot · recovered snapshot · additions blob).
+      const recovery = await loadRecoveryForWeeks(others, emails, uploadIdByFile);
       const needEngine: string[] = [];
       for (const f of others) {
-        const snap = snapshots.get(f) ?? { finalPay: null, fxRate: null };
-        const fp = snap.finalPay;
+        const disc = recovery.get(f);
+        const fp = disc?.finalPay ?? null;
         if (!fp) {
-          needEngine.push(f);
+          // A matching recovered snapshot without this person = not in this
+          // week; the engine already said so. Only a week with NO usable
+          // snapshot at all still needs it.
+          if (!disc?.recoveredWeekClosed) needEngine.push(f);
           continue;
         }
         const range = parseDateRangeFromFilename(f);
-        const weekStart = range ? fmtIso(range.start) : null;
-        const weekEnd = range ? fmtIso(range.end) : null;
-        const fx = snap.fxRate && snap.fxRate > 0 ? snap.fxRate : fxFallback;
+        let weekStart = range ? fmtIso(range.start) : null;
+        let weekEnd = range ? fmtIso(range.end) : null;
+        if (disc?.source === "recovered" && disc.period) {
+          weekStart = disc.period.start ?? weekStart;
+          weekEnd = disc.period.end ?? weekEnd;
+        }
+        const fx = disc?.fxRate && disc.fxRate > 0 ? disc.fxRate : fxFallback;
         const totalPayPhp = round2(fp.final);
         const pAt = paidAtByFile.get(f) ?? null;
         rows.push({
@@ -766,7 +895,7 @@ export async function GET(req: NextRequest) {
           payDate: resolvePayDateIso(pAt, weekEnd, processor),
         });
       }
-      // Only weeks with neither a staged payload nor a snapshot need the engine.
+      // Only weeks with neither a staged payload nor ANY snapshot need the engine.
       const heavy = await mapWithConcurrency(needEngine, 6, (f) =>
         reconstructStubForWeek({
           sourceFile: f,
@@ -776,6 +905,8 @@ export async function GET(req: NextRequest) {
           paidAt: paidAtByFile.get(f) ?? null,
           processor,
           fallbackFxRate: fxFallback,
+          disc: recovery.get(f) ?? emptyWeekDiscretionary(),
+          uploadId: uploadIdByFile.get(f) ?? null,
         }),
       );
       for (const s of heavy) {
@@ -810,11 +941,12 @@ export async function GET(req: NextRequest) {
 
   // ── All-weeks mode: full statements for every week (drives the export) ─────
   if (wantAll) {
-    const [{ rows: dispatches }, { rows: payloads }, allFiles] = await Promise.all([
-      listPaymentDispatches({ recipientEmail: email }),
-      listPaystubPayloadsForEmployee(email),
-      listAllSourceFiles(),
-    ]);
+    const [{ rows: dispatches }, { rows: payloads }, { files: allFiles, uploadIdByFile }] =
+      await Promise.all([
+        listPaymentDispatches({ recipientEmail: email }),
+        listPaystubPayloadsForEmployee(email),
+        listUploadIndex(),
+      ]);
     const paidAtByFile = paidAtByFileFrom(dispatches);
 
     const staged = payloads.filter(
@@ -852,7 +984,22 @@ export async function GET(req: NextRequest) {
 
     let recoveredStubs: EmployeePayStub[] = [];
     if (SHOW_UNPAID_STAGED_PAYSTUBS) {
-      const toRecover = allFiles.filter((f) => !stagedFiles.has(f));
+      // Same early prune as the summary list, against the staged statements.
+      const uploadRankEarly = new Map(allFiles.map((f, i) => [f, i] as const));
+      const stagedIdentities: WeekIdentity[] = officialStubs.map((s) => ({
+        weekStart: s.view.weekStart,
+        weekEnd: s.view.weekEnd,
+        paid: s.paidAt != null,
+        paidAt: s.paidAt,
+        staged: true,
+        rank: uploadRankEarly.get(s.sourceFile),
+      }));
+      const toRecover = dropDominatedCandidates(
+        allFiles.filter((f) => !stagedFiles.has(f)),
+        (f) => candidateIdentity(f, paidAtByFile, uploadRankEarly),
+        stagedIdentities,
+      );
+      const recovery = await loadRecoveryForWeeks(toRecover, emails, uploadIdByFile);
       const recovered = await mapWithConcurrency(toRecover, 6, (file) =>
         reconstructStubForWeek({
           sourceFile: file,
@@ -862,6 +1009,8 @@ export async function GET(req: NextRequest) {
           paidAt: paidAtByFile.get(file) ?? null,
           processor,
           fallbackFxRate: fxFallback,
+          disc: recovery.get(file) ?? emptyWeekDiscretionary(),
+          uploadId: uploadIdByFile.get(file) ?? null,
         }),
       );
       recoveredStubs = recovered.filter((s): s is EmployeePayStub => s !== null);

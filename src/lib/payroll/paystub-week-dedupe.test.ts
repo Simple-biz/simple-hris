@@ -92,3 +92,81 @@ test("non-week rows (multi-week files, missing dates) pass through untouched", (
     "dateless",
   ]);
 });
+
+// ───────── dropDominatedCandidates — prune BEFORE the engine runs ─────────
+import { dropDominatedCandidates, weekIdentityBeats } from "./paystub-week-dedupe";
+
+test("a non-staged candidate whose week is already staged is dropped before the engine", () => {
+  const staged: WeekIdentity[] = [
+    { weekStart: "2026-05-03", weekEnd: "2026-05-09", paid: false, staged: true, rank: 1 },
+  ];
+  const candidates: Row[] = [
+    { label: "backfill", weekStart: "2026-05-04", weekEnd: "2026-05-10", paid: false, staged: false, rank: 0 },
+    { label: "april", weekStart: "2026-04-26", weekEnd: "2026-05-02", paid: false, staged: false, rank: 2 },
+  ];
+  assert.deepEqual(labels(dropDominatedCandidates(candidates, identify, staged)), ["april"]);
+});
+
+test("a PAID non-staged candidate still beats an unpaid staged incumbent (money record wins)", () => {
+  const staged: WeekIdentity[] = [
+    { weekStart: "2026-05-03", weekEnd: "2026-05-09", paid: false, staged: true, rank: 1 },
+  ];
+  const candidates: Row[] = [
+    { label: "paid-recovered", weekStart: "2026-05-03", weekEnd: "2026-05-09", paid: true, paidAt: "2026-05-12", staged: false, rank: 0 },
+  ];
+  assert.deepEqual(labels(dropDominatedCandidates(candidates, identify, staged)), ["paid-recovered"]);
+});
+
+test("among candidates for the SAME week only the newest upload survives", () => {
+  const candidates: Row[] = [
+    { label: "original", weekStart: "2026-05-03", weekEnd: "2026-05-09", paid: false, staged: false, rank: 5 },
+    { label: "repair", weekStart: "2026-05-04", weekEnd: "2026-05-10", paid: false, staged: false, rank: 0 },
+    { label: "other-week", weekStart: "2026-03-01", weekEnd: "2026-03-07", paid: false, staged: false, rank: 9 },
+  ];
+  // Order preserved: the winner keeps its own position.
+  assert.deepEqual(labels(dropDominatedCandidates(candidates, identify, [])), ["repair", "other-week"]);
+});
+
+test("a tie between candidates keeps the FIRST occurrence — same rule as the final dedupe", () => {
+  const candidates: Row[] = [
+    { label: "first", weekStart: "2026-05-03", weekEnd: "2026-05-09", paid: false, staged: false },
+    { label: "second", weekStart: "2026-05-03", weekEnd: "2026-05-09", paid: false, staged: false },
+  ];
+  const pruned = dropDominatedCandidates(candidates, identify, []);
+  const final = dedupeOneRowPerWeek(candidates, identify);
+  assert.deepEqual(labels(pruned), ["first"]);
+  assert.deepEqual(labels(pruned), labels(final));
+});
+
+test("non-week shapes (4-week aggregate, unparseable) always pass through", () => {
+  const staged: WeekIdentity[] = [
+    { weekStart: "2026-04-05", weekEnd: "2026-04-11", paid: false, staged: true },
+  ];
+  const candidates: Row[] = [
+    { label: "aggregate", weekStart: "2026-04-05", weekEnd: "2026-05-02", paid: false, staged: false },
+    { label: "garbage", weekStart: null, weekEnd: null, paid: false, staged: false },
+    { label: "same-week", weekStart: "2026-04-05", weekEnd: "2026-04-11", paid: false, staged: false },
+  ];
+  assert.deepEqual(labels(dropDominatedCandidates(candidates, identify, staged)), ["aggregate", "garbage"]);
+});
+
+test("pruning then final dedupe yields the SAME winners as final dedupe alone (no candidate lost)", () => {
+  const staged: Row[] = [
+    { label: "S-may3", weekStart: "2026-05-03", weekEnd: "2026-05-09", paid: false, staged: true, rank: 3 },
+    { label: "S-jul19-paid", weekStart: "2026-07-19", weekEnd: "2026-07-25", paid: true, paidAt: "2026-07-28", staged: true, rank: 4 },
+  ];
+  const candidates: Row[] = [
+    { label: "C-may4-backfill", weekStart: "2026-05-04", weekEnd: "2026-05-10", paid: false, staged: false, rank: 0 },
+    { label: "C-mar1", weekStart: "2026-03-01", weekEnd: "2026-03-07", paid: false, staged: false, rank: 8 },
+    { label: "C-mar1-dupe", weekStart: "2026-03-01", weekEnd: "2026-03-07", paid: false, staged: false, rank: 9 },
+    { label: "C-agg", weekStart: "2026-04-05", weekEnd: "2026-05-02", paid: false, staged: false, rank: 1 },
+    { label: "C-jul19-paid-later", weekStart: "2026-07-19", weekEnd: "2026-07-25", paid: true, paidAt: "2026-07-29", staged: false, rank: 0 },
+  ];
+  const withoutPrune = labels(dedupeOneRowPerWeek([...staged, ...candidates], identify));
+  const pruned = dropDominatedCandidates(candidates, identify, staged);
+  const withPrune = labels(dedupeOneRowPerWeek([...staged, ...pruned], identify));
+  assert.deepEqual(withPrune, withoutPrune);
+  // And the prune actually saved engine runs.
+  assert.ok(pruned.length < candidates.length);
+  assert.ok(weekIdentityBeats(candidates[4], staged[1]), "later paidAt beats earlier paid");
+});

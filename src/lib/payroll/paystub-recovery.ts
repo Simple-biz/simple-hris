@@ -26,7 +26,14 @@
  * `EmployeeDashboard.tsx` and the additions payload in `PayrollWizard.tsx`
  * (`publishFinalPaySnapshot` / `saveAdditionsProgress`).
  */
-import { getAppSetting, getAppSettings } from "@/lib/supabase/app-settings";
+import { getAppSettings } from "@/lib/supabase/app-settings";
+import {
+  parseAdditionsBlob,
+  pickAdditionsOverlay,
+  pickByEmail,
+  readRecoveredSnapshot,
+  recoveredSnapshotKey,
+} from "@/lib/payroll/paystub-recovered";
 import type { ProrationBlockRaw } from "@/lib/payroll/paystub-view";
 import type { HoganSheetBlockRaw } from "@/lib/payroll/hogan-week-pay";
 import type { DepartmentTransferBlockRaw } from "@/lib/payroll/department-transfer-legs";
@@ -125,30 +132,16 @@ export interface WeekDiscretionary {
    *  week — i.e. the week was actually processed in the wizard, so the recovered
    *  figures are authoritative (what was paid), not a bare hours estimate. */
   hasWizardData: boolean;
-}
-
-const round2 = (n: number) => Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
-
-/** Match a map keyed by any of the employee's emails (case-insensitive). The
- *  additions blob is keyed by the raw Hubstaff email, which may be the work OR
- *  personal address in any case, so try every known alias. */
-function pickByEmail<T>(map: Record<string, T>, emailsLower: string[]): T | undefined {
-  for (const e of emailsLower) {
-    if (Object.prototype.hasOwnProperty.call(map, e)) return map[e];
-  }
-  // Case-insensitive fallback (keys stored with original casing).
-  const lc = new Map<string, T>();
-  for (const [k, v] of Object.entries(map)) lc.set(k.trim().toLowerCase(), v);
-  for (const e of emailsLower) {
-    const v = lc.get(e);
-    if (v !== undefined) return v;
-  }
-  return undefined;
-}
-
-function toNumber(v: unknown): number {
-  const n = typeof v === "string" ? Number(v) : (v as number);
-  return typeof n === "number" && Number.isFinite(n) ? n : 0;
+  /** Which tier `finalPay` came from: the wizard's own snapshot, the paystub-only
+   *  `paystub.recovered.*` cache of an engine run, or neither. */
+  source: "wizard" | "recovered" | null;
+  /** True when a MATCHING recovered snapshot exists for this week but the caller
+   *  is not in it — the engine already judged the whole batch, so "not in this
+   *  week" is the answer and the engine must not be re-run to confirm it. */
+  recoveredWeekClosed: boolean;
+  /** The engine's period as stored on a recovered snapshot (preferred over the
+   *  filename dates, as the live engine path does); null otherwise. */
+  period: { start: string | null; end: string | null } | null;
 }
 
 /** Parse a `payroll.wizard.final_pay.<file>` JSON value into this employee's exact
@@ -214,46 +207,105 @@ export async function loadFinalPayForWeeks(
 export async function loadWeekDiscretionary(
   sourceFile: string,
   emails: string[],
+  /** The file's CURRENT Hubstaff upload batch id, when the caller knows it —
+   *  required for a `paystub.recovered.*` snapshot to be trusted. Omit and the
+   *  recovered tier is skipped (read as stale), never the wizard tier. */
+  currentUploadId: string | null = null,
 ): Promise<WeekDiscretionary> {
+  const map = await loadRecoveryForWeeks([sourceFile], emails, new Map([[sourceFile, currentUploadId]]));
+  return map.get(sourceFile) ?? emptyDiscretionary();
+}
+
+function emptyDiscretionary(): WeekDiscretionary {
+  return {
+    finalPay: null,
+    fxRate: null,
+    adjustment: 0,
+    adjustmentNote: null,
+    orphanage: 0,
+    hasWizardData: false,
+    source: null,
+    recoveredWeekClosed: false,
+    period: null,
+  };
+}
+
+/**
+ * BATCH loader for every recovery tier at once — ONE `app_settings` round-trip
+ * for N weeks × three keys (wizard `final_pay`, paystub-only `recovered`, and the
+ * `additions` blob). Replaces the per-week pair of reads the reconstruction used
+ * to make on top of the batch `final_pay` read.
+ *
+ * Tier precedence per week, never mixed:
+ *   1. wizard `final_pay` snapshot present for the caller → `source: "wizard"`;
+ *   2. else a `paystub.recovered.<file>` snapshot whose `upload_id` matches
+ *      `uploadIdByFile` → `source: "recovered"`; the caller's entry may be null,
+ *      and then `recoveredWeekClosed` is true: the engine already judged this
+ *      whole batch and the person was not in it — do NOT run it again;
+ *   3. else nothing → the caller decides whether to run the engine.
+ * A recovered snapshot for a different (or unknown) batch is ignored entirely.
+ */
+export async function loadRecoveryForWeeks(
+  sourceFiles: string[],
+  emails: string[],
+  uploadIdByFile: ReadonlyMap<string, string | null>,
+): Promise<Map<string, WeekDiscretionary>> {
   const emailsLower = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
+  const out = new Map<string, WeekDiscretionary>();
+  const files = [...new Set(sourceFiles.filter(Boolean))];
+  if (files.length === 0) return out;
 
-  const [finalRaw, additionsRaw] = await Promise.all([
-    getAppSetting(`payroll.wizard.final_pay.${sourceFile}`),
-    getAppSetting(`payroll.wizard.additions.${sourceFile}`),
-  ]);
-
-  // ── Exact per-employee figures (final_pay snapshot) ──────────────────────────
-  const { finalPay, fxRate } = parseFinalPaySnapshot(finalRaw, emailsLower);
-
-  // ── Real accounting Adjustment + note + Orphanage (additions blob) ───────────
-  let adjustment = 0;
-  let adjustmentNote: string | null = null;
-  let orphanage = 0;
-  let additionsPresent = false;
-  if (additionsRaw) {
-    try {
-      const parsed = JSON.parse(additionsRaw) as {
-        bonusOverrides?: Record<string, unknown>;
-        bonusOverrideNotes?: Record<string, unknown>;
-        orphanageAmounts?: Record<string, unknown>;
-      };
-      additionsPresent = true;
-      adjustment = round2(toNumber(pickByEmail(parsed.bonusOverrides ?? {}, emailsLower)));
-      const note = pickByEmail(parsed.bonusOverrideNotes ?? {}, emailsLower);
-      adjustmentNote = typeof note === "string" && note.trim() ? note.trim() : null;
-      orphanage = round2(toNumber(pickByEmail(parsed.orphanageAmounts ?? {}, emailsLower)));
-    } catch {
-      /* malformed blob — treat as absent */
-    }
+  const finalKey = (f: string) => `payroll.wizard.final_pay.${f}`;
+  const additionsKey = (f: string) => `payroll.wizard.additions.${f}`;
+  const keys = files.flatMap((f) => [finalKey(f), recoveredSnapshotKey(f), additionsKey(f)]);
+  let values: Record<string, string | null> = {};
+  try {
+    values = await getAppSettings(keys);
+  } catch {
+    for (const f of files) out.set(f, emptyDiscretionary());
+    return out;
   }
 
-  return {
-    finalPay,
-    fxRate,
-    adjustment,
-    // Only surface a note when there's actually an adjustment to annotate.
-    adjustmentNote: adjustment !== 0 ? adjustmentNote : null,
-    orphanage,
-    hasWizardData: finalPay != null || additionsPresent,
-  };
+  for (const f of files) {
+    const wizard = parseFinalPaySnapshot(values[finalKey(f)] ?? null, emailsLower);
+    const additionsRaw = values[additionsKey(f)] ?? null;
+    const blob = parseAdditionsBlob(additionsRaw);
+    const overlay = pickAdditionsOverlay(blob, emailsLower);
+
+    let finalPay = wizard.finalPay;
+    let fxRate = wizard.fxRate;
+    let source: WeekDiscretionary["source"] = finalPay ? "wizard" : null;
+    let recoveredWeekClosed = false;
+    let period: WeekDiscretionary["period"] = null;
+
+    if (!finalPay) {
+      const recovered = readRecoveredSnapshot(
+        values[recoveredSnapshotKey(f)] ?? null,
+        emailsLower,
+        uploadIdByFile.get(f) ?? null,
+      );
+      if (recovered.status === "match") {
+        source = "recovered";
+        finalPay = recovered.entry;
+        fxRate = fxRate ?? recovered.fxRate;
+        recoveredWeekClosed = recovered.entry === null;
+        period = recovered.period;
+      }
+    }
+
+    out.set(f, {
+      finalPay,
+      fxRate,
+      adjustment: overlay.adjustment,
+      adjustmentNote: overlay.adjustmentNote,
+      orphanage: overlay.orphanage,
+      // The wizard processed this week (its own snapshot or a locked-additions
+      // blob). A recovered snapshot is NOT wizard data and does not flip this.
+      hasWizardData: wizard.finalPay != null || blob != null,
+      source,
+      recoveredWeekClosed,
+      period,
+    });
+  }
+  return out;
 }

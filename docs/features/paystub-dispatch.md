@@ -907,8 +907,86 @@ The Dispatch panel still shows the **running red-light animation** while `isDisp
 **"Locked — Payment Dispatch is live for this cycle"** + an **Unlock** button when locked, or
 an amber "Unlocked — Payment Dispatch stays empty…" note otherwise.
 
+## Recovered-week snapshots, engine memo and early prune — 2026-09-03
+
+Kane: *"It takes like a long time to load though especially the paystubs."* Measured
+read-only against the live database: 28 upload weeks, of which **14 (Mar–early May 2026)
+had neither a wizard `final_pay` snapshot nor a staged payload**. For each of those the
+employee `?summary=1` route ran the whole-company engine (`computeCurrentPay`, ~6.6 s,
+~740 people), six at a time, on every open by every employee — ~15–20 s before the list
+painted — and the answer is identical for every viewer. Duplicate-week files (a backfill
+re-upload, a 4-week `time-activity-report`) each cost a run and were then discarded by
+the one-row-per-week dedupe.
+
+### The key decision: a paystub-ONLY key, never `payroll.wizard.final_pay.*`
+
+`payroll.wizard.final_pay.<file>` means *"the exact net pay the wizard computed on the day
+= what Payment Dispatch paid out"*. Payment Dispatch **prices** from it
+(`useDispatchQueue`), the wizard **replays** from it, the Overview trusts it as take-home.
+An engine run made today from today's rates table is none of those things
+(`rate-updated-at-not-evidence`: the sheet silently re-prices history), so the recovered
+figures are persisted under **`paystub.recovered.<file>`** instead, and that key has
+exactly one reader: the recovery tiers of `app/api/employee/paystub/route.ts`. It is
+consulted only when a week has no wizard snapshot and no staged payload, and it carries
+the same figures those viewers already saw.
+
+Shared pure module: `src/lib/payroll/paystub-recovered.ts`.
+
+| Invariant | Enforced by |
+|---|---|
+| Snapshot is stamped with the Hubstaff **`upload_id`**; trusted only while stored AND current batch ids are both present and equal. Unstamped or unknown batch → `stale` → engine (today's behaviour, fail closed). | `readRecoveredSnapshot` (+ test) |
+| Whole-company, whole-week: a **match without the caller** = "not in this week" (the engine's own verdict). `recoveredWeekClosed` is set and the route must **not** re-run the engine. | `loadRecoveryForWeeks` → `reconstructStubForWeek` early return |
+| `buildRecoveredEntry` mirrors the route's engine-only branch line for line and emits an **itemized** `WizardFinalPayEntry`, so the route renders it through the same fast path a wizard snapshot takes. The backfill script and the route call the one function. | `paystub-recovered.test.ts` |
+| Adjustment / Orphanage overlay gated on `hasRate`, performance 0, MESA disbursement 0 — as the wizard drops them for no-rate people. | same test |
+| Never written under the wizard prefix. | script asserts the prefix before every upsert |
+
+### Recovery tiers, batched
+
+`loadRecoveryForWeeks(files, emails, uploadIdByFile)` makes **one** `app_settings`
+`.in()` read for three keys × N weeks — wizard `final_pay`, `paystub.recovered`, and the
+`additions` blob — and returns a `WeekDiscretionary` per week with `source: "wizard" |
+"recovered" | null`. Precedence is never mixed: a wizard snapshot for the caller wins; else
+a matching recovered snapshot; else nothing (engine). `reconstructStubForWeek` now takes
+`disc` and `uploadId` as parameters and does **no reads of its own**; the single-week
+modal, the summary list and the all-weeks export all go through the same loader.
+
+### Engine memo
+
+`src/lib/payroll/engine-week-memo.ts`: per-process memo of `computeCurrentPay` results
+keyed by `(sourceFile, uploadId)`, **5-minute TTL**, rejections evicted, unknown batch → no
+key → no memo. Only the engine path uses it; staged payloads and wizard snapshots are never
+memoized (a re-lock can change them). It bounds how long a viewer of an **unpublished**
+week — one the wizard has not yet snapshotted — can lag a rates/hours edit.
+
+### Prune before the engine
+
+`dropDominatedCandidates` (`paystub-week-dedupe.ts`) removes non-staged files the final
+`dedupeOneRowPerWeek` would discard anyway: those beaten or tied by a staged incumbent for
+the same Sunday-anchored week, and all but the winner among candidates for one week. Same
+`beats` precedence (paid > staged > newest upload), ties to the incumbent / first
+occurrence, non-week shapes (>9-day aggregates, unparseable) pass through. A test pins
+`dedupe(prune(candidates))` ≡ `dedupe(candidates)`. The final dedupe still runs as the
+guardrail.
+
+### Backfill
+
+`scripts/backfill-paystub-recovered-snapshots.mts` — dry run by default (prints the
+plan, builds every snapshot, writes nothing); `--apply` first writes a SELECT backup of
+all existing `paystub.recovered.*` rows to `references/backups/`, then upserts;
+`--force` recomputes weeks whose snapshot is already current; `--file <name>` narrows.
+Reversal = delete the written keys (the backup names them). A re-upload of a week already
+invalidates its snapshot by batch id; re-run the script to refresh it.
+
+**Client half** (Profile): the identity fetch is one wave instead of three serial hops, and
+the Profile + Pay Stubs summary are wired into the reload cache — see
+`employee-dashboard-cache.md`. **Still open:** `/api/employees?email=` pages the whole
+active roster to find one person (needs the employee-ID serial rule — its own pass); the
+FX key is fetched twice per Profile load. Flipping `SHOW_UNPAID_STAGED_PAYSTUBS` to false at
+launch disables the whole recovery path, this key included.
+
 ## References
 
+- Recovered snapshots: `src/lib/payroll/paystub-recovered.ts` · `paystub-recovery.ts` (`loadRecoveryForWeeks`) · `engine-week-memo.ts` · `scripts/backfill-paystub-recovered-snapshots.mts`.
 - Migration: `references/seed_paystub_dispatch_queue.sql` (`paystub_dispatch_queue` — **APPLIED**, migration #72, verified 2026-08-11).
 - Workflow JSON: `references/n8n_paystub_dispatch.json`.
 - Business rules: `Documentation/BUSINESS_LOGIC.md`.

@@ -102,14 +102,34 @@ the seed path and the fetch path cannot diverge).
 
 ## Wired datasets
 
-Four, all on the Overview, all plain-JSON or raw-payload:
+Eight — four on the Overview, four on the Profile — all plain-JSON or raw-payload:
 
 | Key | Source | Note |
 |---|---|---|
-| `masterRow` | `GET /api/employees?email=` | name / emails / department — drives the greeting, the HSL check and the dept key |
-| `rateHistory` | `GET /api/employee-rate-history?email=` | RAW rows; parsed for the PAB day badge |
-| `paidPaystubWeeks` | `GET /api/employee/paystub` (weeks mode) | week LIST, not the derived `Set` |
-| `specialTransfers` | `GET /api/people/special-transfers?email=` | the one-off transfers strip |
+| `masterRow` | `GET /api/employees?email=` | Overview · name / emails / department — drives the greeting, the HSL check and the dept key |
+| `rateHistory` | `GET /api/employee-rate-history?email=` | Overview · RAW rows; parsed for the PAB day badge |
+| `paidPaystubWeeks` | `GET /api/employee/paystub` (weeks mode) | Overview · week LIST, not the derived `Set` |
+| `specialTransfers` | `GET /api/people/special-transfers?email=` | Overview · the one-off transfers strip |
+| `profileMaster` | `GET /api/employees?email=` + `/api/employee-master-record` | Profile · the FULL master row (address fields merged in) — a different shape from `masterRow`, hence its own key |
+| `profileRate` | `GET /api/employee-hourly-rates?email=` | Profile · the resolved rate row (Compensation pane) |
+| `profileSkillSet` | `GET /api/employee-skill-sets?email=` | Profile · the normalised skill-set fields |
+| `paystubSummary` | `GET /api/employee/paystub?summary=1` | Profile → Pay Stubs · RAW summary rows; the list paints from them while the live fetch runs |
+
+### What the Profile deliberately does NOT cache (2026-09-03)
+
+The **bank / payout row** (`GET /api/employee-ids?email=`) carries account numbers and
+is never written to storage. Consequence: when the rest of the Profile paints from
+cache, the Payment pane alone waits for the live row behind its own `bankInfoLoaded`
+flag and shows a skeleton — never the empty "add your payout details" form flashing over
+saved details. The whole-page `ProfileSkeleton` now shows only when nothing is cached
+(`loading` seeds from `master === null`); with a cached identity the page paints at once
+and refreshes in place.
+
+The Profile's identity fetch is also **one wave** now: `/api/employee-master-record` and
+`/api/bank-preferred-requests` used to wait for the first four calls and then for each
+other (three serial hops behind one skeleton). They have no data dependency on the
+others, so all six run in one `Promise.all`; the two optional ones resolve to `null` on
+a network failure so a missing badge can never fail the profile.
 
 **Every key in `EMPLOYEE_CACHE_KEYS` is wired to a live call site.** An unused key is
 an invitation to cache something under a shape it was not written for; if a dataset
@@ -125,10 +145,14 @@ stops being cached, delete its key with the call site.
 
 ## Not done
 
-- **Only the Overview is wired.** Profile, My Hours, MESA, Leaves, Team and KPI Results
-  still reload cold. The recipe above is all they need; each is its own review.
-- **No server-side caching.** Every route keeps `cache: 'no-store'`; this is a
-  client-side paint optimisation and changes no route's freshness.
+- **Overview and Profile are wired (Profile since 2026-09-03).** My Hours, MESA, Leaves,
+  Team and KPI Results still reload cold. The recipe above is all they need; each is its
+  own review.
+- **No server-side caching of this kind.** Every route keeps `cache: 'no-store'`; this is
+  a client-side paint optimisation and changes no route's freshness. (The employee
+  paystub route separately memoizes whole-company ENGINE runs for weeks with no snapshot
+  — a different thing, bounded by upload batch and a 5-minute TTL; see
+  `paystub-dispatch.md` → "Recovered-week snapshots".)
 - **The heavy pay row itself is not cached** — `refreshDashboard`'s `row`/`columns`
   fan-out is the single biggest reload cost and the most delicate money path. Caching
   it needs its own decision about what an "as of" label should say.
