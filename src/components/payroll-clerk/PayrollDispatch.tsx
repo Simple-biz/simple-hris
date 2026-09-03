@@ -36,7 +36,14 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
 import { announceDispatchPaid } from '@/hooks/useDispatchPaidToasts';
-import { buildPaidToastEvent, shouldAnnouncePaid } from '@/lib/payroll/dispatch-paid-toast';
+import {
+  PAID_TOAST_REMOTE_EVENT,
+  buildPaidToastEvent,
+  hidePaidElsewhere,
+  parsePaidToastPayload,
+  remotePaidHidesRow,
+  shouldAnnouncePaid,
+} from '@/lib/payroll/dispatch-paid-toast';
 import ProcessorQueue from './ProcessorQueue';
 import ExcludedQueue from './ExcludedQueue';
 import DoneQueue from './DoneQueue';
@@ -462,8 +469,40 @@ export default function PayrollDispatch() {
   // them in Excluded under `usd_paid`, so they're off this screen's counters
   // entirely. The filter here is belt-and-braces against a stale sessionStorage
   // queue cached before that change.
-  const copPending = useMemo(() => pending.filter((r) => r.payCurrency === 'COP'), [pending]);
-  const mainPending = useMemo(() => pending.filter((r) => r.payCurrency === 'PHP'), [pending]);
+  // People another screen just paid (the lower-left toast's remote event) — hidden
+  // at the RENDER boundary only, until the next reload lands and `fetched` speaks.
+  // Never subtract these from `pending`: it feeds `isCycleFullyPaid`, and emptying
+  // it ahead of the server is the 2026-08-18 false-100% celebration bug.
+  const [paidElsewhere, setPaidElsewhere] = useState<ReadonlySet<string>>(() => new Set());
+  const periodSourceFileRef = useRef<string | null>(null);
+  periodSourceFileRef.current = period.sourceFile;
+  useEffect(() => {
+    const onRemotePaid = (e: Event) => {
+      const evt = parsePaidToastPayload((e as CustomEvent<unknown>).detail);
+      if (!evt || !remotePaidHidesRow(evt, periodSourceFileRef.current)) return;
+      setPaidElsewhere((prev) => {
+        if (prev.has(evt.recipientEmail)) return prev;
+        const next = new Set(prev);
+        next.add(evt.recipientEmail);
+        return next;
+      });
+    };
+    window.addEventListener(PAID_TOAST_REMOTE_EVENT, onRemotePaid);
+    return () => window.removeEventListener(PAID_TOAST_REMOTE_EVENT, onRemotePaid);
+  }, []);
+  // A reload landed → the server's rows are the truth again; drop the overlay.
+  useEffect(() => {
+    setPaidElsewhere((prev) => (prev.size === 0 ? prev : new Set()));
+  }, [fetched]);
+
+  const copPending = useMemo(
+    () => hidePaidElsewhere(pending.filter((r) => r.payCurrency === 'COP'), paidElsewhere),
+    [pending, paidElsewhere],
+  );
+  const mainPending = useMemo(
+    () => hidePaidElsewhere(pending.filter((r) => r.payCurrency === 'PHP'), paidElsewhere),
+    [pending, paidElsewhere],
+  );
 
   const counts = useMemo(() => {
     const result: Record<ProcessorId, number> = {

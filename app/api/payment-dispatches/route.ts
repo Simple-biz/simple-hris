@@ -27,6 +27,15 @@ import { getSessionActor } from "@/lib/auth/session-actor";
 import { requireFeatureEdit, requireRateVisibilityOrFeatureEdit } from "@/lib/auth/authorize-feature";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { pulsePaymentsLive } from "@/lib/supabase/app-settings";
+import { broadcastFromServer } from "@/lib/supabase/realtime-broadcast";
+import {
+  DISPATCH_SYNC_QUEUE_CHANGED,
+  DISPATCH_SYNC_TOPIC,
+  PAID_TOAST_EVENT,
+  PAID_TOAST_TOPIC,
+  buildPaidToastEvent,
+  shouldAnnouncePaid,
+} from "@/lib/payroll/dispatch-paid-toast";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -310,6 +319,33 @@ export async function POST(req: NextRequest) {
   // Nudge the CEO live "payments to send" counter to refetch (via app_settings
   // Realtime — reliably reaches the browser, unlike payment_dispatches).
   void pulsePaymentsLive();
+
+  // Push the change to every open dashboard NOW, from the server — so the
+  // Payment Dispatch table drops this person and the lower-left "X paid Y" card
+  // appears within a second on every screen, whatever build the PAYER runs.
+  // Broadcast is the only push that reaches the anon browser (RLS blocks
+  // postgres_changes on this table). Fire-and-forget: the pollers reconcile.
+  void broadcastFromServer(DISPATCH_SYNC_TOPIC, DISPATCH_SYNC_QUEUE_CHANGED, {
+    sourceFile: row.cycle_source_file ?? null,
+    ts: Date.now(),
+  });
+  if (shouldAnnouncePaid(row.status)) {
+    void broadcastFromServer(
+      PAID_TOAST_TOPIC,
+      PAID_TOAST_EVENT,
+      buildPaidToastEvent({
+        id: row.id,
+        by: createdBy,
+        recipientEmail: row.recipient_email,
+        recipientName: row.recipient_name,
+        amountUsd: row.amount_usd,
+        amountPhp: row.amount_php,
+        amountCop: row.amount_cop,
+        processor: row.processor,
+        sourceFile: row.cycle_source_file,
+      }) as unknown as Record<string, unknown>,
+    );
+  }
 
   void insertAuditLog({
     user_name: createdBy ?? "unknown",

@@ -252,3 +252,40 @@ export function foldRecentPaidRows(
   events.sort((a, b) => a.ts - b.ts);
   return { events, skippedOwn, skippedStale };
 }
+
+// ── Table sync ────────────────────────────────────────────────────────────────
+// A toast for Employee A must never outrun the queue: the moment a REMOTE paid
+// event is accepted, the toast hook fires this same-document event and the
+// Payment Dispatch table hides A at the RENDER boundary until the next reload
+// lands. `pending` itself is never touched — it feeds `isCycleFullyPaid`, and
+// emptying it ahead of the server is exactly the 2026-08-18 false-100% bug.
+
+/** Same-document CustomEvent for every remote paid event the toast hook accepts. */
+export const PAID_TOAST_REMOTE_EVENT = 'hris:dispatch-paid-remote';
+
+/** Does a remote paid event concern the cycle this table is showing? A missing
+ *  sourceFile on either side is taken as "yes" — hiding one row a few seconds
+ *  early is harmless (the reload restores it), hiding nothing is the bug. */
+export function remotePaidHidesRow(
+  evt: Pick<PaidToastEvent, 'sourceFile'>,
+  tableSourceFile: string | null | undefined,
+): boolean {
+  if (!evt.sourceFile || !tableSourceFile) return true;
+  return evt.sourceFile === tableSourceFile;
+}
+
+/** Render-boundary filter: drop rows whose recipient was just paid elsewhere. */
+export function hidePaidElsewhere<T extends { email: string }>(
+  rows: readonly T[],
+  paidElsewhere: ReadonlySet<string>,
+): T[] {
+  if (paidElsewhere.size === 0) return rows as T[];
+  return rows.filter((r) => !paidElsewhere.has(r.email.trim().toLowerCase()));
+}
+
+// ── The queue's own sync topic (owned by useDispatchQueue, mirrored here so the
+// SERVER can announce a queue change without importing a 'use client' file) ──
+/** Realtime Broadcast topic the Payment Dispatch queue reloads on. */
+export const DISPATCH_SYNC_TOPIC = 'payment-dispatch-sync';
+/** Its event name. Payload: `{ sourceFile, ts }`. */
+export const DISPATCH_SYNC_QUEUE_CHANGED = 'queue-changed';

@@ -23,6 +23,8 @@ should see this on every dashboard if they have Accounting View access, not Edit
 | Announce point — after each successful `paid` POST leg | `src/components/payroll-clerk/PayrollDispatch.tsx` (`handleConfirmPaid`) |
 | Poll route — watermark + PAID rows after `since`, same gate as the dispatch list | `app/api/payment-dispatches/recent-paid/route.ts` |
 | Poll read — bounded, oldest-first, `truncated` continuation | `listRecentPaidDispatches` in `src/lib/supabase/payment-dispatches.ts` |
+| Server-side Broadcast (REST) — fires from the route that wrote the row | `src/lib/supabase/realtime-broadcast.ts` · `app/api/payment-dispatches/route.ts` · `.../undo/route.ts` |
+| Table sync — remote paid ⇒ row hidden at the render boundary | `PAID_TOAST_REMOTE_EVENT`, `remotePaidHidesRow`, `hidePaidElsewhere` · `PayrollDispatch.tsx` (`paidElsewhere`) |
 | Mount — root layout, every dashboard; runs only with a signed-in session | `src/components/common/DispatchPaidToastsGlobal.tsx` · `app/layout.tsx` |
 
 ## Broadcast, never `postgres_changes` — and on its OWN topic
@@ -38,9 +40,46 @@ repeated topic, so publishing on the queue's `payment-dispatch-sync` would let t
 `removeChannel` tear down the queue's live sync (and vice versa). A test pins the topic away
 from both `payment-dispatch-sync` and `payments-live`.
 
-Broadcast alone was not enough — it only works while the **payer's** browser runs this code and
-the receiver's socket is up. The first live test (Kane on localhost, Lenny paying from the
-production build) showed nothing, because Lenny's build had nothing to send. Hence the poll below.
+Broadcast from the **browser** alone was not enough — it only works while the payer's browser
+runs this code. The first live test (Kane on localhost, Lenny paying from the production build)
+showed nothing, because Lenny's build had nothing to send. Two fixes stack: the poll below
+(the floor), and, since the same night, the **server broadcasts** too.
+
+## The server broadcasts the moment it writes the row
+
+`POST /api/payment-dispatches` sends two Broadcasts right after the INSERT succeeds, through
+`broadcastFromServer` (service-role client, REST delivery — `channel.httpSend`, no socket):
+
+| Topic | Event | Who reacts |
+| --- | --- | --- |
+| `payment-dispatch-sync` | `queue-changed` `{ sourceFile, ts }` | every open Payment Dispatch table reloads its queue (its existing listener) |
+| `payment-dispatch-paid` | `paid` (the toast event) | every dashboard's toast stack — only when `status === 'paid'` |
+
+`POST /api/payment-dispatches/undo` sends `queue-changed` only, once per cycle touched. An Undo
+is a delete, never a toast.
+
+Why this is the fix and not the browser broadcast: the live catalog (checked 2026-09-02) has
+`payment_dispatches` under RLS with **zero policies** and `app_settings` under "Admins only", so
+`postgres_changes` can never deliver to the anon browser. Broadcast is a bus, not a table — a
+message posted by the server reaches every subscriber regardless of who paid or on which build.
+The browser still re-broadcasts its own payment (a second chance if the server's REST call
+fails); de-dupe by row id makes the pair one card. A payer therefore hears its **own** payment
+back over the wire — remote events whose actor is the viewer are dropped, so the payer never
+gets a second card or a chime for their own click.
+
+## The table never lags the toast
+
+The moment a remote paid event is accepted, the hook fires `hris:dispatch-paid-remote` on the
+document. `PayrollDispatch` listens: if the event's cycle matches the table's (or either is
+unknown), the recipient goes into a `paidElsewhere` overlay and is filtered out of
+`mainPending` / `copPending` **at the render boundary**. The overlay is cleared whenever a
+reload lands (`fetched` changes), so the server's rows are the truth again within seconds.
+
+`pending` itself is **never** touched by this path. It feeds `isCycleFullyPaid`, and emptying
+it ahead of the server is exactly the 2026-08-18 false-100% celebration
+([cycle-closeout.md](./cycle-closeout.md), memory `payment-cycle-complete-celebration`). The
+hero Pending count and the progress strip therefore lag the visual removal by one reload; that
+lag is the safety margin, not a bug.
 
 ## The poll is the path that does not depend on the payer
 
@@ -125,9 +164,11 @@ payee leads with `$COP`.
 - **Two actor sources, one value.** Local and broadcast cards carry the paying browser's session
   email; polled cards carry `created_by`. `getSessionActor` lowercases `session.user.email`
   into `created_by`, so they agree. A missing actor reads `accounting`.
-- **A remote card can lag up to 10 s.** That is the poll cadence when the payer's build cannot
-  broadcast. Once every clerk is on a build with this code, Broadcast delivers instantly and
-  the poll merely confirms.
+- **A remote card can still lag up to 10 s** — only when the server's REST broadcast failed AND
+  the payer's browser could not broadcast. Normally the server's message lands within a second
+  of the INSERT, whatever build the payer runs; the poll is the floor.
+- **The hero Pending count moves a beat after the row disappears.** The row is hidden at the
+  render boundary; the count comes from `pending`, which only the reload may change.
 - **An employee-only user never sees it, even during processing.** They have no Accounting
   grant, so the probe returns 403 and the stack stays empty. That is the gate working.
 

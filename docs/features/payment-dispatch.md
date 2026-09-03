@@ -722,6 +722,14 @@ Two independent paths now keep every open screen level:
 > publication change is needed**, and adding `payment_dispatches` to
 > `supabase_realtime` would not have fixed it.
 
+> **2026-09-02 — the SERVER now broadcasts `queue-changed` too**, right after the INSERT
+> (and after an Undo delete), via `broadcastFromServer` (REST, service role). So a remote
+> table reloads within a second even when the payer's browser runs an older build or has no
+> socket. Live catalog check the same day: `payment_dispatches` is under RLS with **zero
+> policies** and `app_settings` is "Admins only" — the anon browser can never receive
+> `postgres_changes` from either, which is why Broadcast is the only push here. Details in
+> [dispatch-paid-toast.md](./dispatch-paid-toast.md) § "The server broadcasts".
+
 Residual, unchanged: `POST /api/payment-dispatches` **awaits** the n8n paystub send
 before responding (that is what returns `{ paystub: { staged, sent, error } }` and
 stamps the queue row), so a slow n8n still slows the confirming clerk's dialog. Their

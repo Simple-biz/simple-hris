@@ -9,6 +9,7 @@ import {
   PAID_TOAST_EVENT,
   PAID_TOAST_LOCAL_EVENT,
   PAID_TOAST_POLL_MS,
+  PAID_TOAST_REMOTE_EVENT,
   PAID_TOAST_TOPIC,
   PAID_TOAST_TTL_MS,
   foldRecentPaidRows,
@@ -93,9 +94,18 @@ export function useDispatchPaidToasts(
     (evt: PaidToastEvent, opts: { chime: boolean; remote: boolean }) => {
       if (!lockedRef.current) return;
       if (opts.remote && authorizedRef.current !== true) return;
+      // The server now broadcasts every paid row, so a payer hears their OWN
+      // payment back over the wire. The local path already showed and chimed
+      // it; a remote echo of our own actor must never mint a card or a chime.
+      if (opts.remote && self && evt.by === self) return;
       if (seenRef.current.has(evt.id)) return;
       seenRef.current.add(evt.id);
       setStack((prev) => pushPaidToast(prev, evt));
+      // Tell the Payment Dispatch table (if this document is showing it) so the
+      // paid person leaves the queue the same instant the card appears.
+      if (opts.remote) {
+        window.dispatchEvent(new CustomEvent(PAID_TOAST_REMOTE_EVENT, { detail: evt }));
+      }
       timersRef.current.set(
         evt.id,
         window.setTimeout(() => dismiss(evt.id), PAID_TOAST_TTL_MS),
@@ -107,7 +117,7 @@ export function useDispatchPaidToasts(
         nextChimeAtRef.current = playAt + PAID_TOAST_CHIME_STAGGER_MS;
       }
     },
-    [dismiss],
+    [dismiss, self],
   );
 
   // Lock OFF → the surface is gone: clear cards, timers, queued chimes and the

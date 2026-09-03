@@ -26,6 +26,7 @@ import {
 import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
+import { DISPATCH_SYNC_QUEUE_CHANGED, DISPATCH_SYNC_TOPIC } from '@/lib/payroll/dispatch-paid-toast';
 
 /** Resolve a department key to its display name (null when unknown/empty). */
 function deptNameFromKey(key: string | null | undefined): string | null {
@@ -176,8 +177,8 @@ const EMPTY_PERIOD: PayrollPeriod = {
  * different contract (Accounting publishing exact counts to a viewer), and joining
  * one topic twice from the same page invites subscription conflicts.
  */
-const DISPATCH_SYNC_CHANNEL = 'payment-dispatch-sync';
-const DISPATCH_SYNC_EVENT = 'queue-changed';
+const DISPATCH_SYNC_CHANNEL = DISPATCH_SYNC_TOPIC;
+const DISPATCH_SYNC_EVENT = DISPATCH_SYNC_QUEUE_CHANGED;
 /** Coalesce a burst — settling multi-cycle arrears fires one POST per cycle. */
 const DISPATCH_SYNC_DEBOUNCE_MS = 400;
 /** Fallback cadence when the socket is down or a change came from outside the app. */

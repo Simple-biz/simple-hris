@@ -74,3 +74,21 @@ Access not Edit."
       `app/layout.tsx`; the App.tsx mount removed so there is exactly one instance.
 - [x] 16. Docs + INDEX + memory updated.
 
+## Follow-up 3, same day — table lagged the toast; make it real time (hardening)
+
+Kane: Employee A's card appeared while the table still listed him. Root cause: the toast
+poll is light; the table waits for a browser broadcast (payer on an old build ⇒ none) or its
+15 s signature poll, then re-pulls the whole queue. Supabase check: `payment_dispatches` RLS
+on, zero policies; `app_settings` "Admins only" ⇒ `postgres_changes` is dead for anon.
+
+- [x] 17. `src/lib/supabase/realtime-broadcast.ts` — `broadcastFromServer` (service role,
+      `httpSend` REST, fire-and-forget, never throws).
+- [x] 18. `POST /api/payment-dispatches` broadcasts `queue-changed` + (if paid) the toast event
+      after the INSERT; `/undo` broadcasts `queue-changed` per cycle touched.
+- [x] 19. Sync topic constants moved to the pure lib so the server can name them without
+      importing a 'use client' file; `useDispatchQueue` reads them from there.
+- [x] 20. Hook: drops remote echoes of the viewer's own actor; fires
+      `hris:dispatch-paid-remote` for accepted remote events.
+- [x] 21. `PayrollDispatch`: `paidElsewhere` overlay hides the row at the render boundary
+      (`mainPending` / `copPending`), cleared when `fetched` changes. `pending` untouched.
+- [x] 22. Tests (13), docs, INDEX, memory.

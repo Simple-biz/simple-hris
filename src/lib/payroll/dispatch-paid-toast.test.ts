@@ -11,6 +11,8 @@ import {
   shouldAnnouncePaid,
   foldRecentPaidRows,
   PAID_TOAST_FRESH_MS,
+  remotePaidHidesRow,
+  hidePaidElsewhere,
   type PaidToastEvent,
 } from './dispatch-paid-toast';
 
@@ -172,4 +174,17 @@ test('foldRecentPaidRows: a row naming nobody is dropped; a missing actor reads 
   );
   assert.deepEqual(events.map((e) => e.id), ['ok']);
   assert.equal(events[0].by, 'accounting');
+});
+
+test('remotePaidHidesRow: same cycle hides, a different cycle does not, unknown cycle hides', () => {
+  assert.equal(remotePaidHidesRow({ sourceFile: 'a.csv' }, 'a.csv'), true);
+  assert.equal(remotePaidHidesRow({ sourceFile: 'a.csv' }, 'b.csv'), false);
+  assert.equal(remotePaidHidesRow({ sourceFile: null }, 'a.csv'), true);
+  assert.equal(remotePaidHidesRow({ sourceFile: 'a.csv' }, null), true);
+});
+
+test('hidePaidElsewhere: filters by normalised email and returns the same array when idle', () => {
+  const rows = [{ email: 'A@x.y', v: 1 }, { email: 'b@x.y', v: 2 }];
+  assert.equal(hidePaidElsewhere(rows, new Set()), rows);
+  assert.deepEqual(hidePaidElsewhere(rows, new Set(['a@x.y'])).map((r) => r.v), [2]);
 });

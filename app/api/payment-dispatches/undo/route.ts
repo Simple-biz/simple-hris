@@ -9,6 +9,8 @@ import { getSessionActor } from "@/lib/auth/session-actor";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { pulsePaymentsLive } from "@/lib/supabase/app-settings";
+import { broadcastFromServer } from "@/lib/supabase/realtime-broadcast";
+import { DISPATCH_SYNC_QUEUE_CHANGED, DISPATCH_SYNC_TOPIC } from "@/lib/payroll/dispatch-paid-toast";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -142,6 +144,17 @@ export async function POST(req: NextRequest) {
 
     // Nudge the CEO live "payments to send" counter to refetch (count goes back up).
     void pulsePaymentsLive();
+    // Push the change to every open Payment Dispatch table now (server-side
+    // Broadcast — the only push that reaches the anon browser). One message per
+    // cycle touched; the queue ignores cycles it isn't showing. Never a toast:
+    // an Undo is a delete, not a payment.
+    const touched = new Set(deletedRows.map((r) => r.cycle_source_file ?? null));
+    for (const sourceFile of touched) {
+      void broadcastFromServer(DISPATCH_SYNC_TOPIC, DISPATCH_SYNC_QUEUE_CHANGED, {
+        sourceFile,
+        ts: Date.now(),
+      });
+    }
   } else if (!deleteError) {
     // No-op undo — the rows were already gone (concurrent clerk, stale UI,
     // replayed request). Still leave a trace of who attempted it and against
