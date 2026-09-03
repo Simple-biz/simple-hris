@@ -45,9 +45,15 @@ import { deletePayStructure, listPayStructures, upsertPayStructure } from '@/lib
 import { newPayId, type PayStructure } from '@/lib/payment-catalog/pay-structure';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
+import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import {
   applyDepartmentEdit,
+  diffBuiltinManagers,
   diffDepartmentEdit,
+  validateBuiltinManagersInput,
+  type BuiltinManagersEvent,
+  type BuiltinManagersInput,
   managerGrantLabel,
   slugifyDeptKey,
   subDeptStructureKey,
@@ -356,6 +362,10 @@ export async function PATCH(request: Request) {
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
+  // A master-list department: only its manager grants are editable (§7).
+  if (input && typeof (input as unknown as BuiltinManagersInput).builtinKey === 'string') {
+    return patchBuiltinManagers(input as unknown as BuiltinManagersInput, actor);
+  }
   if (
     !input ||
     typeof input.key !== 'string' ||
@@ -551,5 +561,98 @@ export async function PATCH(request: Request) {
     },
   });
 
+  return new Response(stream, { headers: NDJSON_HEADERS });
+}
+
+/**
+ * PATCH { builtinKey, managers } -- the manager set of a BUILT-IN department.
+ *
+ * "Current" is every active department_managers row whose raw label normalizes
+ * to the key (Admin Roles writes whatever label the picker offered -- "Lead
+ * Gen", "Lead Generation" -- so aliases must count, or a removal would leave a
+ * ghost grant that still lights the manager's dashboard). Revocation therefore
+ * hits EVERY raw-label variant the person holds for this key; new grants are
+ * written under the built-in display name. HSL is refused by the validator: its
+ * grants are per-sub-team access keys, not department management.
+ */
+async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string): Promise<Response> {
+  const check = validateBuiltinManagersInput(input);
+  if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
+  const key = input.builtinKey.trim();
+  const dept = DEPARTMENTS.find((d) => d.key === key);
+  if (!dept) return NextResponse.json({ error: 'That is not a built-in department.' }, { status: 400 });
+
+  const { rows, error: listErr } = await listAllDepartmentManagers();
+  if (listErr) return NextResponse.json({ error: listErr }, { status: 500 });
+  const currentRows = rows.filter((r) => normalizeDeptToKey(r.department) === key);
+  const current = currentRows.map((r) => r.manager_email.trim().toLowerCase());
+  const next = input.managers.map((m) => m.workEmail.trim().toLowerCase());
+  const diff = diffBuiltinManagers(current, next);
+  const nameFor = new Map(input.managers.map((m) => [m.workEmail.trim().toLowerCase(), m.name.trim()] as const));
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const emit = (event: BuiltinManagersEvent) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      };
+      const fail = (message: string) => {
+        emit({ type: 'error', stage: 'managers', message });
+        controller.close();
+      };
+      try {
+        emit({ type: 'stage', stage: 'managers', status: 'start' });
+        for (const email of diff.revoked) {
+          // Every raw-label variant this person holds for the key.
+          const labels = new Set(
+            currentRows.filter((r) => r.manager_email.trim().toLowerCase() === email).map((r) => r.department.trim()),
+          );
+          for (const label of labels) {
+            const res = await revokeManagerDepartment({ manager_email: email, department: label });
+            if (res.error) return fail(`${email}: could not revoke manager access: ${res.error}`);
+          }
+        }
+        for (const email of diff.granted) {
+          const res = await assignManagerDepartment({ manager_email: email, department: dept.name, assigned_by: actor });
+          if (res.error) return fail(`${nameFor.get(email) || email}: manager grant failed: ${res.error}`);
+        }
+        emit({
+          type: 'stage',
+          stage: 'managers',
+          status: 'done',
+          note: diff.changed ? `+${diff.granted.length} / -${diff.revoked.length}` : 'unchanged',
+        });
+
+        const whoActor = await getSessionActor();
+        void insertAuditLog({
+          user_name: whoActor.user_name,
+          user_role: whoActor.user_role,
+          action: 'department.managers.update',
+          resource: 'department_managers',
+          resource_id: key,
+          details: {
+            department: dept.name,
+            managers_granted: diff.granted,
+            managers_revoked: diff.revoked,
+            resulting_managers: next,
+          },
+        }).catch(() => undefined);
+
+        emit({
+          type: 'done',
+          summary: { key, name: dept.name, granted: diff.granted, revoked: diff.revoked, warnings: [] },
+        });
+        controller.close();
+      } catch (e) {
+        const message = e instanceof Error ? e.message : 'Updating manager access failed';
+        try {
+          emit({ type: 'error', stage: 'managers', message });
+          controller.close();
+        } catch {
+          /* stream already closed */
+        }
+      }
+    },
+  });
   return new Response(stream, { headers: NDJSON_HEADERS });
 }

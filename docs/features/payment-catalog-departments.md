@@ -8,7 +8,8 @@ that spins one up end-to-end: name → optional HSL-style sub-departments →
 initial people (**at least one Manager required**) → optional department pay
 rate, with a **streamed, staged creation animation**. Since 2026-09-03 every
 in-app card also carries **Edit** (§6): rename, restructure sub-departments,
-change people — the key never changes and stale saves are refused.
+change people — the key never changes and stale saves are refused. Master-list
+cards carry Edit as well, for **managers only** (§7).
 
 Built Jul 24, 2026: `5359889` (tab + wizard), `ec4482f` (self-contained
 refactor, same day), `83d81c5` (manager KPI surfaces + bonus assignments),
@@ -32,6 +33,7 @@ refactor, same day), `83d81c5` (manager KPI surfaces + bonus assignments),
 | One-off EA master-list transfer (Jul 24) | `scripts/transfer-eas-to-executive-assistants.mts` |
 | Edit Department dialog (§6) | `src/components/accounting/departments/EditDepartmentDialog.tsx` |
 | Shared Create/Edit steps + staged overlay | `src/components/accounting/departments/department-wizard-steps.tsx` · `staged-run.tsx` |
+| Master-list card Edit — managers only (§7) | `src/components/accounting/departments/EditBuiltinManagersDialog.tsx` |
 
 ## 1. Storage — an `app_settings` registry, **no migration**
 
@@ -377,6 +379,51 @@ the grant label used, and the rate rows set / deleted.
 registry, edit, rate-alias and rail-alias suites. Not browser-verified in the
 building session (no signed-in browser); the dev server compiled both the GET
 and the PATCH route.
+
+## 7. Editing a master-list department — managers only (2026-09-03)
+
+Every **master-list** card carries **Edit** too (Kane, same day: *"make sure
+that the from the Master list sync should have it"*). A Sheet-synced
+department owns almost nothing in the app — its name and alias map are code
+(`DEPARTMENTS`, `normalize-dept-key.ts`), its people come from the Sheet sync
+and move only via department transfers, and sub-departments exist only for HSL
+as hard-coded `HSL_DEPT_KEYS`. The one in-app fact is **manager access**, so
+the dialog edits exactly that: Managers → Review, then the same staged overlay.
+Approved as managers-only; the Payment Catalog is thereby a **second write
+path for `department_managers`** beside Admin → Roles & permissions — both use
+the same `assignManagerDepartment` / `revokeManagerDepartment` helpers.
+
+| Piece | File |
+| --- | --- |
+| Dialog (Managers step, Review, "what this dialog cannot change") | `src/components/accounting/departments/EditBuiltinManagersDialog.tsx` |
+| `validateBuiltinManagersInput`, `diffBuiltinManagers`, `isBuiltinManagersEditable` | `src/lib/departments/registry.ts` (+ `registry-builtin-managers.test.ts`) |
+| `PATCH { builtinKey, managers }` branch | `app/api/payment-catalog/departments/route.ts` (`patchBuiltinManagers`) |
+
+Rules:
+
+- **"Current" is every active grant whose raw label normalizes to the key.**
+  Admin Roles writes whatever label its picker offered ("Lead Gen", "Lead
+  Generation", …), so the dialog's manager list and the server's diff both go
+  through `normalizeDeptToKey` — the same way the card's `managersForKey`
+  already counted them. **Revoking a manager revokes every raw-label variant**
+  that person holds for the key; otherwise a ghost grant under an alias would
+  keep lighting their dashboard. New grants are written under the built-in
+  display name (`DEPARTMENTS[].name`), which normalizes to the key.
+- **HSL has no Edit.** Its grants are per-sub-team access keys (`hsl:<key>`),
+  and `normalizeDeptToKey` collapses them to `hogan_smith_law`, so a "remove
+  manager" here would silently revoke a manager's sub-team KPI access
+  ([hsl-subdepartments.md](./hsl-subdepartments.md)). The card says "Managers
+  per sub-team"; the validator refuses the key server-side too
+  (`BUILTIN_MANAGERS_EDIT_EXCLUDED_KEYS`).
+- **At least one manager stays**, mirrored client (Save gating) and server.
+- The dialog lists what it **cannot** change — name, people, sub-departments —
+  and why, with a Pay Structure link for rates. Adding a person to a built-in
+  department is a transfer, not an edit; do not add a member picker here.
+- Audit: `department.managers.update` on `department_managers` with granted /
+  revoked / resulting sets.
+- Payload discrimination: a PATCH body with a string `builtinKey` is the
+  managers edit; anything else is the in-app edit (§6). A registry key is never
+  a built-in key (Create refuses the collision), so the two cannot be confused.
 
 ## Deploy notes
 

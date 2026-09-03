@@ -76,6 +76,8 @@ import {
 } from './departments/department-wizard-steps';
 import { StagedProgress, useStagedRun } from './departments/staged-run';
 import EditDepartmentDialog from './departments/EditDepartmentDialog';
+import EditBuiltinManagersDialog from './departments/EditBuiltinManagersDialog';
+import { isBuiltinManagersEditable } from '@/lib/departments/registry';
 
 export type { DirectoryPerson };
 
@@ -142,6 +144,13 @@ export default function DepartmentsTab({
   useEffect(() => {
     if (editingKey && !editingEntry) setEditingKey(null);
   }, [editingKey, editingEntry]);
+  // Master-list cards edit MANAGERS only (§7) -- the rest of their shape is the
+  // Sheet's and code's. HSL is excluded: its grants are per-sub-team access keys.
+  const [builtinEditingKey, setBuiltinEditingKey] = useState<string | null>(null);
+  const builtinEditing = useMemo(
+    () => (builtinEditingKey ? DEPARTMENTS.find((d) => d.key === builtinEditingKey) ?? null : null),
+    [builtinEditingKey],
+  );
 
   const nameByEmail = useMemo(() => {
     const m = new Map<string, string>();
@@ -386,14 +395,35 @@ export default function DepartmentsTab({
                       </span>
                     )}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => onOpenPayStructure(d.key)}
-                    className="inline-flex items-center gap-0.5 rounded-md px-1.5 py-1 text-[11px] font-semibold text-orange-600 transition-colors hover:bg-orange-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
-                  >
-                    Pay structure
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  </button>
+                  <span className="flex shrink-0 items-center gap-0.5">
+                    {isBuiltinManagersEditable(d.key) ? (
+                      <button
+                        type="button"
+                        onClick={() => setBuiltinEditingKey(d.key)}
+                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
+                        aria-label={`Edit ${d.name} managers`}
+                        title="Edit managers"
+                      >
+                        <Pencil className="h-3 w-3" />
+                        Edit
+                      </button>
+                    ) : (
+                      <span
+                        className="px-1.5 py-1 text-[10.5px] font-medium text-zinc-400 dark:text-zinc-500"
+                        title="HSL manager access is granted per sub-team in Roles & permissions"
+                      >
+                        Managers per sub-team
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onOpenPayStructure(d.key)}
+                      className="inline-flex items-center gap-0.5 rounded-md px-1.5 py-1 text-[11px] font-semibold text-orange-600 transition-colors hover:bg-orange-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                    >
+                      Pay structure
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
                 </div>
               </div>
             );
@@ -424,6 +454,23 @@ export default function DepartmentsTab({
         roster={roster}
         payStructures={payStructures}
         onClose={() => setEditingKey(null)}
+        onChanged={onChanged}
+        onOpenPayStructure={onOpenPayStructure}
+      />
+
+      <EditBuiltinManagersDialog
+        open={builtinEditing !== null}
+        dept={builtinEditing ? { key: builtinEditing.key, name: builtinEditing.name } : null}
+        currentManagers={
+          builtinEditing
+            ? Array.from(managersForKey.get(builtinEditing.key) ?? []).map((e) => ({
+                email: e,
+                name: nameByEmail.get(e) ?? e,
+              }))
+            : []
+        }
+        roster={roster}
+        onClose={() => setBuiltinEditingKey(null)}
         onChanged={onChanged}
         onOpenPayStructure={onOpenPayStructure}
       />

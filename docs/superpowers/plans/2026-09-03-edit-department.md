@@ -59,3 +59,20 @@ card's `customManagedKeys`, Readiness). A rename therefore:
       live on :3000, so no `next build`).
 - [x] 8. Docs: §6 in `payment-catalog-departments.md`, INDEX row Memory cell, memory
       `edit-department-dialog` + MEMORY.md pointer. One commit with the code.
+
+## Follow-up, same day — Edit on master-list cards (managers only)
+
+Kane: *"Created in app has the edit but please make sure that the from the Master list sync
+should have it."* Brief posted; approved Q1 = managers-only, Q2 = Payment Catalog may be a
+second write path for `department_managers`.
+
+- [x] 9. `registry.ts` — `isBuiltinManagersEditable` (HSL excluded), `validateBuiltinManagersInput`,
+      `diffBuiltinManagers`, `BUILTIN_MANAGERS_STAGES` + event/summary types; tests in
+      `registry-builtin-managers.test.ts`.
+- [x] 10. Route — PATCH body with a string `builtinKey` → `patchBuiltinManagers`: current = active
+      grants whose raw label normalizes to the key; revoke every raw-label variant; grant under
+      `DEPARTMENTS[].name`; audit `department.managers.update`.
+- [x] 11. `EditBuiltinManagersDialog.tsx` — Managers (roster typeahead, ≥1) → Review (diff +
+      "what this dialog cannot change" + Pay Structure link); shared staged overlay.
+- [x] 12. DepartmentsTab — Edit on every master-list card; HSL shows "Managers per sub-team".
+- [x] 13. Docs §7, INDEX sentence, memory update. Second commit.

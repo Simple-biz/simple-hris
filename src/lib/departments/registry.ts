@@ -690,3 +690,94 @@ export type EditDepartmentEvent =
   | { type: 'stage'; stage: CreateDepartmentStageKey; status: 'start' | 'done'; note?: string }
   | { type: 'done'; summary: EditDepartmentSummary }
   | { type: 'error'; stage: CreateDepartmentStageKey; message: string };
+
+// ---------------------------------------------------------------------------
+// Built-in (master-list) departments -- manager access is the ONE thing the
+// app owns about them. Name and alias map are code (DEPARTMENTS), people come
+// from the Sheet sync and move only via transfers, sub-departments exist only
+// for HSL via HSL_DEPT_KEYS. So "Edit" on a master-list card edits managers.
+// (Kane, 2026-09-03: managers-only; Payment Catalog may be a second write path
+// for department_managers beside Admin → Roles & permissions.)
+// ---------------------------------------------------------------------------
+
+/**
+ * Built-in keys whose manager access is NOT editable here. HSL grants are
+ * per SUB-TEAM access keys (`hsl:<key>`), which `normalizeDeptToKey` collapses
+ * to the parent — a "remove manager" here would silently revoke a manager's
+ * sub-team KPI access. That stays in Roles & permissions.
+ */
+export const BUILTIN_MANAGERS_EDIT_EXCLUDED_KEYS: ReadonlySet<string> = new Set(['hogan_smith_law']);
+
+export function isBuiltinManagersEditable(key: string): boolean {
+  return BUILTIN_KEYS.has(key) && !BUILTIN_MANAGERS_EDIT_EXCLUDED_KEYS.has(key);
+}
+
+export interface BuiltinManagerInput {
+  name: string;
+  workEmail: string;
+}
+
+export interface BuiltinManagersInput {
+  /** A built-in DEPARTMENTS key (never a registry key). */
+  builtinKey: string;
+  /** The FULL resulting manager set; the server diffs it against live grants. */
+  managers: BuiltinManagerInput[];
+}
+
+const MAX_BUILTIN_MANAGERS = 50;
+
+/** Mirrored client-side (Save gating) and server-side (PATCH). */
+export function validateBuiltinManagersInput(input: BuiltinManagersInput): { ok: boolean; error?: string } {
+  const key = input.builtinKey?.trim() ?? '';
+  if (!BUILTIN_KEYS.has(key)) return { ok: false, error: 'That is not a built-in department.' };
+  if (BUILTIN_MANAGERS_EDIT_EXCLUDED_KEYS.has(key)) {
+    return { ok: false, error: 'HSL manager access is granted per sub-team in Roles & permissions.' };
+  }
+  if (!Array.isArray(input.managers) || input.managers.length === 0) {
+    return { ok: false, error: 'Keep at least one Manager on the department.' };
+  }
+  if (input.managers.length > MAX_BUILTIN_MANAGERS) {
+    return { ok: false, error: `Keep it to ${MAX_BUILTIN_MANAGERS} managers or fewer.` };
+  }
+  const seen = new Set<string>();
+  for (const m of input.managers) {
+    const who = m.name?.trim() || m.workEmail?.trim() || 'a manager';
+    if (!m.name?.trim()) return { ok: false, error: 'Every manager needs a name.' };
+    const email = m.workEmail?.trim().toLowerCase() ?? '';
+    if (!email || !isEmailish(email)) return { ok: false, error: `${who} needs a valid work email.` };
+    if (seen.has(email)) return { ok: false, error: `${email} is listed twice.` };
+    seen.add(email);
+  }
+  return { ok: true };
+}
+
+/** Which grants to add and revoke to turn `current` into `next` (emails
+ *  lower-cased; order preserved from `next` / `current`). */
+export function diffBuiltinManagers(
+  current: Iterable<string>,
+  next: Iterable<string>,
+): { granted: string[]; revoked: string[]; changed: boolean } {
+  const norm = (e: string) => e.trim().toLowerCase();
+  const cur = new Set(Array.from(current, norm).filter(Boolean));
+  const nxt = new Set(Array.from(next, norm).filter(Boolean));
+  const granted = [...nxt].filter((e) => !cur.has(e));
+  const revoked = [...cur].filter((e) => !nxt.has(e));
+  return { granted, revoked, changed: granted.length > 0 || revoked.length > 0 };
+}
+
+export const BUILTIN_MANAGERS_STAGES: { key: CreateDepartmentStageKey; label: string }[] = [
+  { key: 'managers', label: 'Updating manager access' },
+];
+
+export interface BuiltinManagersSummary {
+  key: string;
+  name: string;
+  granted: string[];
+  revoked: string[];
+  warnings: string[];
+}
+
+export type BuiltinManagersEvent =
+  | { type: 'stage'; stage: CreateDepartmentStageKey; status: 'start' | 'done'; note?: string }
+  | { type: 'done'; summary: BuiltinManagersSummary }
+  | { type: 'error'; stage: CreateDepartmentStageKey; message: string };
