@@ -1736,7 +1736,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                         if (!inMonth) {
                           if (hours > 0 && weekend) {
                             cellBorder =
-                              'border-dashed border-zinc-300/90 bg-orange-50/30 text-zinc-700 opacity-90 shadow-none dark:border-zinc-600 dark:bg-orange-950/15 dark:text-zinc-300';
+                              'border-dashed border-zinc-300/90 bg-orange-50/30 text-orange-900 opacity-90 shadow-none dark:border-zinc-600 dark:bg-orange-950/15 dark:text-orange-100';
                           } else if (hours > 0) {
                             cellBorder =
                               'border-dashed border-indigo-200/80 bg-indigo-50/50 text-indigo-900 opacity-90 shadow-none dark:border-indigo-900/50 dark:bg-indigo-950/30 dark:text-indigo-100';
@@ -1753,7 +1753,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                         } else if (weekend) {
                           if (hours > 0) {
                             cellBorder =
-                              'border-zinc-200 bg-orange-50/50 text-zinc-900 dark:border-zinc-700/60 dark:bg-orange-950/20 dark:text-zinc-100';
+                              'border-zinc-200 bg-orange-50/50 text-orange-950 dark:border-zinc-700/60 dark:bg-orange-950/20 dark:text-orange-100';
                           } else {
                             cellBorder =
                               'border-zinc-200 bg-zinc-50/60 text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-100';
