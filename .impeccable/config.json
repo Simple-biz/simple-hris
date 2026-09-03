@@ -47,6 +47,15 @@
         ],
         "createdAt": "2026-09-03T19:20:07.505Z",
         "reason": "Claude: both hits are icon buttons — text-zinc-400 at rest, hover:bg-orange-50 + hover:text-orange-600 change together, so gray never sits on the colored bg"
+      },
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "src/lib/payment-catalog/pay-processors.ts"
+        ],
+        "createdAt": "2026-09-03T19:20:46.049Z",
+        "reason": "Claude: pure TS lib, no JSX — both hits are doc comments that mention <img src> as the render rule for logos"
       }
     ]
   }
