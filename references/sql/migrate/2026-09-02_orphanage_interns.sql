@@ -61,6 +61,30 @@ CREATE TABLE IF NOT EXISTS public.orphanage_interns (
   CONSTRAINT orphanage_interns_share_pct_range
     CHECK (orphanage_share_pct >= 0 AND orphanage_share_pct <= 100)
 );
+-- Already-applied tables (created before the 2026-09-02 name split) get the
+-- name-part columns here: add with a '' default, backfill from full_name (first
+-- token → first_name, the rest → last_name), then attach the CHECK. Fresh
+-- tables already have every column, so each step is a no-op for them.
+ALTER TABLE public.orphanage_interns ADD COLUMN IF NOT EXISTS first_name     TEXT NOT NULL DEFAULT '';
+ALTER TABLE public.orphanage_interns ADD COLUMN IF NOT EXISTS middle_name    TEXT;
+ALTER TABLE public.orphanage_interns ADD COLUMN IF NOT EXISTS last_name      TEXT NOT NULL DEFAULT '';
+ALTER TABLE public.orphanage_interns ADD COLUMN IF NOT EXISTS name_extension TEXT;
+UPDATE public.orphanage_interns
+   SET first_name = split_part(trim(full_name), ' ', 1),
+       last_name  = NULLIF(trim(substr(trim(full_name), length(split_part(trim(full_name), ' ', 1)) + 1)), '')
+ WHERE trim(first_name) = '' AND trim(full_name) <> '';
+UPDATE public.orphanage_interns SET last_name = first_name WHERE last_name IS NULL OR trim(last_name) = '';
+ALTER TABLE public.orphanage_interns ALTER COLUMN first_name DROP DEFAULT;
+ALTER TABLE public.orphanage_interns ALTER COLUMN last_name  DROP DEFAULT;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'orphanage_interns_name_parts_present') THEN
+    ALTER TABLE public.orphanage_interns
+      ADD CONSTRAINT orphanage_interns_name_parts_present
+      CHECK (length(trim(first_name)) > 0 AND length(trim(last_name)) > 0);
+  END IF;
+END$$;
+
 COMMENT ON TABLE public.orphanage_interns IS
   '[ORPHANAGE-INTERNS] Orphanage intern profiles (@pathway.ph). Personal + bank data change ONLY on the Orphanage dashboard. See docs/features/orphanage-interns.md.';
 
