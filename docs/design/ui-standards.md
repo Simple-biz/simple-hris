@@ -1280,6 +1280,42 @@ Tailwind defaults in use, mapped to semantic intent:
 Do not introduce a sixth status color (e.g. teal, indigo) without updating
 this table. The five colors above carry semantic weight across the app.
 
+### 15.1 `--primary` cannot carry small text
+
+**Measured 2026-09-02 on the Manager Overview: `--primary` orange is 2.7:1 against
+these surfaces — below AA for text of any size.** It is a brand and fill colour, not
+an ink. When a surface needs an accent that small text can sit in, use `--secondary`
+blue; the Overview does exactly this and documents why
+([manager-overview.md](../features/manager-overview.md)). Emerald stays reserved for
+presence, because "online" is its own meaning rather than an accent.
+
+### 15.2 Tone classes must be literal — never interpolated
+
+Tailwind compiles the classes it can **see in the source**. A computed class name
+(`` `border-${tone}-200 bg-${tone}-50` ``) is absent from the build output and renders
+**unstyled with no error**. Write every branch out in full, even when that means
+repeating five near-identical strings:
+
+```tsx
+// wrong — silently unstyled
+className={`border-${tone}-200 bg-${tone}-50 text-${tone}-900`}
+// right
+tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-900' : …
+```
+
+This has bitten twice: the Manager Time Adjustments workspace and the Employee
+My Hours day tiles.
+
+### 15.3 Ink on a coloured ground comes from that ground
+
+Neutral zinc/grey text on a tinted fill is the `gray-on-color` defect the design
+detector flags, and it is usually real. **Retint the text to the ground's own hue**
+— slate on the Overview's `bg-secondary/[0.06]` greeting, `text-orange-950` on the
+My Hours weekend tile, the Time Adjustments explanation ink to its own fill
+(`b97637e3`). A waiver is only correct when the coloured ground exists **solely on
+hover** and the text turns with it; waive it file-scoped in `.impeccable/config.json`
+with the reasoning in the commit message, never by changing the resting colour.
+
 ---
 
 ## 16. Accessibility checklist
@@ -1301,6 +1337,10 @@ Every new surface must:
   it the browser defaults to `submit` and breaks form flows.
 - Include `aria-label` on icon-only buttons (`<Menu>` hamburger, `<X>` close,
   toggle buttons).
+- Never place neutral grey text on a tinted ground — retint it to the ground's own
+  hue (§15.3), and never use `--primary` for text (§15.1, 2.7:1).
+- Respect `prefers-reduced-motion` by stopping travel, not by removing the signal:
+  the KPI Calculator's payroll-lock rim stays lit and stops rotating.
 
 ---
 
