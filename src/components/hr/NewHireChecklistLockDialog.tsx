@@ -64,8 +64,21 @@ interface Props {
   mode: LockDialogMode | null;
   /** e.g. "Jun 28 – Jul 4, 2026". */
   weekLabel: string;
-  /** Fully formatted orientation day, e.g. "Monday, Jul 6, 2026". */
-  orientationLabel: string;
+  /**
+   * Fully formatted orientation day, e.g. "Monday, Jul 6, 2026" — or null when
+   * it could not be resolved (holiday calendar unreadable / every weekday a
+   * holiday). Null is NOT "assume Monday": the send is refused server-side in
+   * exactly the same cases, and this dialog must say so rather than promise a
+   * date no hire will receive.
+   */
+  orientationLabel: string | null;
+  /**
+   * Why the date is not the default Monday, e.g.
+   * "Moved from Monday (Sep 7) — Labor Day". Null when nothing moved.
+   */
+  orientationShiftReason?: string | null;
+  /** True while the holiday calendar is still loading. */
+  orientationLoading?: boolean;
   /** Non-blank hires that will be emailed on lock. */
   hireCount: number;
   /** Who locked the week + when (reopen context only). */
@@ -81,6 +94,8 @@ export default function NewHireChecklistLockDialog({
   mode,
   weekLabel,
   orientationLabel,
+  orientationShiftReason = null,
+  orientationLoading = false,
   hireCount,
   lockedBy,
   lockedStamp,
@@ -298,11 +313,33 @@ export default function NewHireChecklistLockDialog({
                     </li>
                     <li className="flex items-start gap-2">
                       <CalendarClock className={cn('mt-0.5 h-4 w-4 shrink-0', theme.accentText)} />
-                      <span>
-                        Orientation date:{' '}
-                        <strong className="font-semibold text-zinc-900 dark:text-white">{orientationLabel}</strong>{' '}
-                        (the Monday of this week).
-                      </span>
+                      {orientationLoading ? (
+                        <span className="text-zinc-500 dark:text-zinc-400">Checking the holiday calendar&hellip;</span>
+                      ) : orientationLabel === null ? (
+                        <span>
+                          <strong className="font-semibold text-amber-700 dark:text-amber-300">
+                            Orientation date unavailable
+                          </strong>{' '}
+                          — the holiday calendar could not be read, so locking now will freeze the week but
+                          send <strong className="font-semibold text-zinc-900 dark:text-white">no emails</strong>.
+                        </span>
+                      ) : (
+                        <span>
+                          Orientation date:{' '}
+                          <strong className="font-semibold text-zinc-900 dark:text-white">{orientationLabel}</strong>
+                          {orientationShiftReason ? (
+                            <>
+                              {' '}&mdash;{' '}
+                              <span className="font-semibold text-amber-700 dark:text-amber-300">
+                                {orientationShiftReason}
+                              </span>
+                              . This is the date the hires will be emailed.
+                            </>
+                          ) : (
+                            <> (the Monday of this week).</>
+                          )}
+                        </span>
+                      )}
                     </li>
                     <li className="flex items-start gap-2">
                       <Mail className={cn('mt-0.5 h-4 w-4 shrink-0', theme.accentText)} />

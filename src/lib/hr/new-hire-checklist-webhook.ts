@@ -1,5 +1,9 @@
 import { resolveWebhookUrl } from "@/lib/webhooks/resolve-webhook";
 import { isLeadGenDepartment } from "@/lib/hr/offboard-webhooks";
+import {
+  describeOrientationShift,
+  type OrientationResolution,
+} from "@/lib/hr/orientation-date";
 import type {
   HrChecklistPeriod,
   HrNewHireChecklistRow,
@@ -129,39 +133,18 @@ function toCleanHire(row: HrNewHireChecklistRow, email: string | null): CleanHir
 }
 
 // ── Start-week / orientation fields for the welcome email ──────────────────
-// The checklist week is Sun-anchored, so hires start (and orient) the MONDAY of
-// that week. If the real start/orientation day ever moves, change ORIENT_OFFSET
-// — start_date, orientation_date, and orientation_weekday all key off it.
-const ORIENT_OFFSET_DAYS = 1;
-
-const WEEKDAY_NAMES = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-] as const;
+// The orientation day is NOT derived here. It comes from the shared, tested
+// resolver in `@/lib/hr/orientation-date`, which the Lock-in dialog's
+// "Orientation date:" line calls too — the email and the confirmation HR reads
+// before sending must never be able to disagree. See that file for the rule
+// (Monday by default; an enabled US holiday advances to the next weekday).
+//
+// start_date, orientation_date and orientation_weekday ALL key off the one
+// resolved date: the email prints "your official start date" directly above the
+// orientation row and calls it "your first day", so they are one day by
+// construction. Splitting them ships a self-contradictory email.
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-/** Shift a YYYY-MM-DD date by `n` days (UTC math, so no server-TZ drift). */
-function addDaysIso(iso: string, n: number): string | null {
-  if (!ISO_DATE.test(iso)) return null;
-  const [y, m, d] = iso.split("-").map(Number);
-  const dt = new Date(Date.UTC(y!, m! - 1, d! + n));
-  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getUTCDate()).padStart(2, "0");
-  return `${dt.getUTCFullYear()}-${mm}-${dd}`;
-}
-
-/** Full weekday name for a YYYY-MM-DD date (e.g. "Monday"). */
-function weekdayName(iso: string | null): string | null {
-  if (!iso || !ISO_DATE.test(iso)) return null;
-  const [y, m, d] = iso.split("-").map(Number);
-  return WEEKDAY_NAMES[new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay()] ?? null;
-}
 
 /** YYYY-MM-DD -> MM/DD/YYYY (the format the welcome email prints). */
 function usDate(iso: string | null): string | null {
@@ -206,6 +189,20 @@ export type LockWebhookSkippedRow = {
   reason: LockWebhookSkipReason;
 };
 
+/** What the send actually told hires, so the lock response / audit can say it. */
+export type LockWebhookOrientation = {
+  /** ISO date orientation was announced for, or null when it could not be resolved. */
+  date: string | null;
+  /** e.g. "Tuesday". */
+  weekday: string | null;
+  /** True when a holiday pushed it off the default Monday. */
+  shifted: boolean;
+  /** Human reason, e.g. "Moved from Monday (Sep 7) — Labor Day". Null when unshifted. */
+  reason: string | null;
+  /** Holidays stepped over, in order. */
+  skippedHolidays: { date: string; name: string }[];
+};
+
 export type NewHireChecklistLockWebhookResult = {
   /** True once we attempted the POST (false = no sendable hires / no URL). */
   fired: boolean;
@@ -217,7 +214,29 @@ export type NewHireChecklistLockWebhookResult = {
   error: string | null;
   /** Hires that got NO welcome email because their address was unusable. */
   skipped: LockWebhookSkippedRow[];
+  /** The orientation day this send announced (null date = unresolved, nothing sent). */
+  orientation: LockWebhookOrientation;
 };
+
+/** Flatten a resolution into the result/audit shape. */
+export function summarizeOrientation(res: OrientationResolution): LockWebhookOrientation {
+  if (!res.ok) {
+    return {
+      date: null,
+      weekday: null,
+      shifted: false,
+      reason: res.reason,
+      skippedHolidays: res.skipped.map((s) => ({ date: s.date, name: s.name })),
+    };
+  }
+  return {
+    date: res.date,
+    weekday: res.weekday,
+    shifted: res.shifted,
+    reason: describeOrientationShift(res),
+    skippedHolidays: res.skipped.map((s) => ({ date: s.date, name: s.name })),
+  };
+}
 
 /** POST a JSON body; best-effort, never throws. 25s timeout. */
 async function postJson(
@@ -262,18 +281,33 @@ export function buildLockWebhookPayload(args: {
   periodEnd: string | null;
   rows: HrNewHireChecklistRow[];
   lockedBy: string | null;
+  /**
+   * The week's orientation day, already resolved against the holiday calendar
+   * by the caller (see `resolveOrientationDate`). Passed IN rather than derived
+   * here so this function stays pure and testable, and so the date the dialog
+   * showed HR is provably the date that gets emailed.
+   */
+  orientation: Extract<OrientationResolution, { ok: true }>;
 }): { payload: Record<string, unknown>; skipped: LockWebhookSkippedRow[] } {
-  // Hires start / orient the Monday of the Sun-anchored checklist week.
-  const orientation = addDaysIso(args.periodStart, ORIENT_OFFSET_DAYS);
+  const orientIso = args.orientation.date;
 
   // Welcome-email fields — same for every hire this week. Baked into EACH row
   // (below) so a Split Out yields self-contained per-hire items, and also kept
   // at the top level for reference.
   const emailFields = {
-    start_date: usDate(orientation),               // {{ start_date }}        MM/DD/YYYY
-    orientation_date: usDate(orientation),          // {{ orientation_date }}  MM/DD/YYYY
-    orientation_weekday: weekdayName(orientation),  // {{ orientation_weekday }}
-    zoom_link: ORIENTATION_ZOOM_LINK,               // {{ zoom_link }}
+    start_date: usDate(orientIso),                       // {{ start_date }}        MM/DD/YYYY
+    orientation_date: usDate(orientIso),                 // {{ orientation_date }}  MM/DD/YYYY
+    orientation_weekday: args.orientation.weekday,       // {{ orientation_weekday }}
+    zoom_link: ORIENTATION_ZOOM_LINK,                    // {{ zoom_link }}
+  };
+
+  // Diagnostics for n8n / the webhook log — NOT used by the email template.
+  // They record why the date is what it is, so a shifted week is self-evident
+  // in the captured payload without re-deriving anything.
+  const orientationMeta = {
+    orientation_shifted: args.orientation.shifted,
+    orientation_default_date: usDate(args.orientation.baseDate),
+    orientation_shift_reason: describeOrientationShift(args.orientation),
   };
 
   // One self-contained item per sendable hire: the hire's own fields + the
@@ -324,6 +358,7 @@ export function buildLockWebhookPayload(args: {
     locked_by: args.period?.locked_by ?? args.lockedBy ?? null,
     row_count: rows.length,
     ...emailFields,
+    ...orientationMeta,
     rows,
   };
   return { payload, skipped };
@@ -335,6 +370,15 @@ export function buildLockWebhookPayload(args: {
  * Split Out flow). Rows without a usable email are excluded and reported via
  * `skipped`. Never throws — the DB write is the source of truth, so the
  * webhook is a best-effort side-effect and a failure never blocks the lock.
+ *
+ * The caller resolves the orientation day and hands it in. An UNRESOLVED
+ * orientation (`ok: false` — an unreadable holiday calendar, or a week whose
+ * every weekday is a holiday) sends NOTHING and reports the reason. Falling
+ * back to the plain Monday would mail the exact date this feature exists to
+ * avoid, and silently: the whole point is that nobody is told to attend
+ * orientation on a holiday. Nothing was sent, so the week can simply be
+ * reopened and re-locked once the calendar is fixed — that is safe here
+ * precisely because no hire received a first email to be duplicated.
  */
 export async function fireNewHireChecklistLockWebhook(args: {
   period: HrChecklistPeriod | null;
@@ -342,12 +386,51 @@ export async function fireNewHireChecklistLockWebhook(args: {
   periodEnd: string | null;
   rows: HrNewHireChecklistRow[];
   lockedBy: string | null;
+  orientation: OrientationResolution;
 }): Promise<NewHireChecklistLockWebhookResult> {
   if (args.rows.length === 0) {
-    return { fired: false, count: 0, status: null, error: null, skipped: [] };
+    return {
+      fired: false,
+      count: 0,
+      status: null,
+      error: null,
+      skipped: [],
+      orientation: summarizeOrientation(args.orientation),
+    };
   }
 
-  const { payload, skipped } = buildLockWebhookPayload(args);
+  if (!args.orientation.ok) {
+    const why =
+      args.orientation.reason === "no_weekday_left"
+        ? `every weekday of the week is a holiday (${args.orientation.skipped
+            .map((s) => s.name)
+            .join(", ")}) — pick the orientation date by hand`
+        : args.orientation.reason === "calendar_unavailable"
+          ? "the holiday calendar could not be read, so the orientation date is unknown"
+          : "the week's period start is not a valid date";
+    console.error(`[new-hire-checklist] orientation unresolved, NOTHING sent: ${why}`);
+    return {
+      fired: false,
+      count: 0,
+      status: null,
+      error: `No orientation email sent — ${why}.`,
+      skipped: [],
+      orientation: summarizeOrientation(args.orientation),
+    };
+  }
+
+  const orientation = summarizeOrientation(args.orientation);
+  if (orientation.shifted) {
+    console.warn(
+      `[new-hire-checklist] orientation for ${args.periodStart} announced as ` +
+        `${orientation.weekday} ${orientation.date} — ${orientation.reason}`,
+    );
+  }
+
+  const { payload, skipped } = buildLockWebhookPayload({
+    ...args,
+    orientation: args.orientation,
+  });
   const count = (payload.rows as unknown[]).length;
   const badEmail = skipped.filter((s) => s.reason === "invalid_email");
   const offDept = skipped.filter((s) => s.reason === "not_lead_gen");
@@ -364,16 +447,23 @@ export async function fireNewHireChecklistLockWebhook(args: {
     );
   }
   if (count === 0) {
-    return { fired: false, count: 0, status: null, error: null, skipped };
+    return { fired: false, count: 0, status: null, error: null, skipped, orientation };
   }
 
   let url: string;
   try {
     url = await resolveUrl();
   } catch (e) {
-    return { fired: false, count, status: null, error: e instanceof Error ? e.message : String(e), skipped };
+    return {
+      fired: false,
+      count,
+      status: null,
+      error: e instanceof Error ? e.message : String(e),
+      skipped,
+      orientation,
+    };
   }
 
   const res = await postJson(url, payload);
-  return { fired: true, count, status: res.status, error: res.error, skipped };
+  return { fired: true, count, status: res.status, error: res.error, skipped, orientation };
 }

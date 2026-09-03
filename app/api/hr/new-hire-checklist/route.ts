@@ -13,12 +13,68 @@ import {
 import { deniedResponse, requireElevatedSession } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { fireNewHireChecklistLockWebhook } from "@/lib/hr/new-hire-checklist-webhook";
+import {
+  resolveOrientationDate,
+  orientationCalendarUnavailable,
+  type OrientationResolution,
+} from "@/lib/hr/orientation-date";
+import { getAppSettingStrict } from "@/lib/supabase/app-settings";
+import {
+  US_HOLIDAYS_ENABLED_KEY,
+  US_HOLIDAYS_LIST_KEY,
+  parseUsHolidaysList,
+  getEnabledHolidayMap,
+} from "@/lib/us-holidays";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Resolve the week's orientation day against the SAME holiday calendar PAB
+ * forgiveness uses, so a Monday holiday moves the invite instead of mailing
+ * hires a date the company is closed on.
+ *
+ * Reads STRICTLY (`getAppSettingStrict` throws; `getAppSettings` swallows the
+ * error and hands back nulls). The difference matters: nulls from a failed read
+ * are indistinguishable from "no holidays configured", which resolves happily to
+ * Monday — i.e. a transient DB blip would silently reinstate the exact bug this
+ * closes. A failed read therefore returns `calendar_unavailable` and the sender
+ * mails nobody.
+ *
+ * A `us_holidays_list` that is present but unparseable is treated the same way:
+ * `parseUsHolidaysList` swallows a JSON error into an empty array, so without
+ * this check a corrupt blob would also read as "no holidays".
+ */
+async function resolveWeekOrientation(period: string): Promise<OrientationResolution> {
+  let rawList: string | null;
+  let rawEnabled: string | null;
+  try {
+    [rawList, rawEnabled] = await Promise.all([
+      getAppSettingStrict(US_HOLIDAYS_LIST_KEY),
+      getAppSettingStrict(US_HOLIDAYS_ENABLED_KEY),
+    ]);
+  } catch (e) {
+    console.error(
+      `[new-hire-checklist] holiday calendar unreadable for ${period}:`,
+      e instanceof Error ? e.message : String(e),
+    );
+    return orientationCalendarUnavailable(period);
+  }
+
+  const list = parseUsHolidaysList(rawList);
+  if (list.length === 0 && (rawList ?? "").trim() !== "" && (rawList ?? "").trim() !== "[]") {
+    console.error(`[new-hire-checklist] us_holidays_list is present but unparseable for ${period}`);
+    return orientationCalendarUnavailable(period);
+  }
+
+  // Absent master toggle means ON — business-logic.md § US Holiday forgiveness,
+  // and the convention at every payroll call site.
+  const enabled = rawEnabled == null ? true : rawEnabled === "true";
+  return resolveOrientationDate(period, getEnabledHolidayMap(list, enabled));
+}
 const FIELD_SET = new Set<string>(HR_NEW_HIRE_CHECKLIST_FIELDS);
 
 /** Keep only recognised data columns from an untrusted values object. */
@@ -292,12 +348,14 @@ export async function PUT(req: Request) {
   if (locked.error) return NextResponse.json({ error: locked.error }, { status: 500 });
 
   const { rows } = await listHrNewHireChecklist(period);
+  const orientation = await resolveWeekOrientation(period);
   const webhook = await fireNewHireChecklistLockWebhook({
     period: locked.period,
     periodStart: period,
     periodEnd: body.period_end ?? null,
     rows,
     lockedBy: authz.sessionEmail,
+    orientation,
   });
 
   void insertAuditLog({
@@ -317,6 +375,13 @@ export async function PUT(req: Request) {
         department: s.department,
         reason: s.reason,
       })),
+      // What the hires were actually told, and why — a shifted or refused
+      // orientation date must be recoverable from the audit row alone.
+      orientation_date: webhook?.orientation.date ?? null,
+      orientation_weekday: webhook?.orientation.weekday ?? null,
+      orientation_shifted: webhook?.orientation.shifted ?? false,
+      orientation_reason: webhook?.orientation.reason ?? null,
+      orientation_holidays: webhook?.orientation.skippedHolidays ?? [],
     },
   });
 

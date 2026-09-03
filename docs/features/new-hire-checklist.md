@@ -150,9 +150,60 @@ Unknown `values` keys are dropped by `pickFields` (only `HR_NEW_HIRE_CHECKLIST_F
 shared week/email fields (`start_date`, `orientation_date`, `orientation_weekday`, `zoom_link`), a
 derived `first_name`, and `lead_gen: true`, so an n8n **Split Out** on `body.rows` yields
 ready-to-send per-hire items. Hires start and orient the **Monday** of the Sun-anchored week
-(`ORIENT_OFFSET_DAYS = 1`). The URL resolves through the Admin → Webhooks slug registry
+(`ORIENT_OFFSET_DAYS = 1`) — the **default**, not the rule: a Monday that is an enabled US
+holiday moves to the next working weekday (see **Holiday-aware orientation date** below). The
+URL resolves through the Admin → Webhooks slug registry
 (`new_hire_checklist_lock`) with an env-var override and a hard-coded default; the POST is
 best-effort with a 25s timeout and never throws. No `cell_edits` / timestamp noise is sent.
+
+### Holiday-aware orientation date
+
+Shipped **2026-09-03** (Kane: *"If there is a holiday on monday then move it the next day if
+there is another holiday in there then move it to the next"*). The trigger was the **2026-09-06**
+week: its Monday is **2026-09-07, Labor Day**, already sitting `enabled: true` in
+`us_holidays_list`, and the lock was going to email 64 Lead Gen hires a 10:00 AM EST session on
+a day the company is closed.
+
+**The date is resolved in ONE place — [`resolveOrientationDate`](src/lib/hr/orientation-date.ts)**
+— and both publishers of that date call it: `buildLockWebhookPayload` (what gets emailed) and the
+Lock-in dialog's "Orientation date:" line (what HR confirms before sending). Never re-derive
+`start + 1` anywhere else. A dialog that promises Monday while the email says Tuesday is worse
+than not shifting at all, and it is the same "both sides must read one key" rule the Orientation
+attendance surfaces run on.
+
+- **The calendar is the PAB calendar.** `getEnabledHolidayMap` over `us_holidays_list` /
+  `us_holidays_enabled` — the same map that forgives PAB (`docs/reference/business-logic.md`
+  § US Holiday forgiveness). A holiday with `enabled: false`, or the master toggle off, yields an
+  empty map and therefore **no shift**: a holiday that does not forgive PAB does not move
+  orientation either. One calendar, one meaning. Absent master toggle = ON.
+- **The walk repeats.** Monday holiday → Tuesday; Tuesday also a holiday → Wednesday; and so on.
+- **It never leaves the week.** Only Mon–Fri are candidates. If *every* weekday of the week is a
+  holiday the resolver **refuses** (`no_weekday_left`) rather than rolling into Saturday or next
+  week's period — a human picks that date.
+- **`start_date` moves WITH `orientation_date`.** They are one value: the email prints
+  "Your official start date is …" directly above the orientation row and calls it "your first
+  day". Splitting them ships a self-contradictory email.
+- **A failed read is not an answer.** The route reads through `getAppSettingStrict` (which
+  throws) rather than `getAppSettings` (which swallows the error and returns nulls), and treats a
+  present-but-unparseable `us_holidays_list` the same way, because both would otherwise be
+  indistinguishable from "no holidays configured" — which resolves happily to Monday and silently
+  reinstates the exact bug. Either case yields `calendar_unavailable`, and then
+  **`fireNewHireChecklistLockWebhook` sends NOTHING** and returns an error naming the reason. The
+  lock itself still succeeds (the DB is the source of truth, as always). Re-locking after fixing
+  the calendar is safe **in this specific case only** — no hire got a first email, so there is
+  nothing to duplicate; the standing "never reopen+re-lock to resend" rule still holds whenever a
+  send actually happened.
+- **The payload carries its own reasoning**: `orientation_shifted`, `orientation_default_date`
+  and `orientation_shift_reason` ride alongside the email fields (n8n ignores them), and the
+  `hr.new_hire_checklist.locked` audit row records `orientation_date`, `orientation_weekday`,
+  `orientation_shifted`, `orientation_reason` and `orientation_holidays` — so what the hires were
+  told, and why, is recoverable from the audit row alone.
+- **The list is US federal holidays.** A Philippine holiday is not in it and moves nothing.
+
+Verified against production on 2026-09-03: the 2026-09-06 week resolves to **Tuesday 09/08/2026**
+on all 64 sendable rows and at the top level, `orientation_default_date` 09/07/2026, reason
+"Moved from Monday (Sep 7) — Labor Day"; 2026-08-30, 2026-09-13 and 2026-11-22 all still resolve
+to their plain Monday.
 
 ### Lead Gen only — who is left out, and why
 

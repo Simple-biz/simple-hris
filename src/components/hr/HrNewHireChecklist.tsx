@@ -37,6 +37,13 @@ import { useSession } from 'next-auth/react';
 import type { CellEditEntry, HrNewHireChecklistRow } from '@/lib/supabase/hr-new-hire-checklist';
 import { ONBOARDING_COUNTRIES, resolveOnboardingCountry } from '@/lib/onboarding/countries';
 import { BASE_SOURCE_OPTIONS, isReferralSource } from '@/lib/hr/referral-source';
+import { resolveOrientationDate, describeOrientationShift } from '@/lib/hr/orientation-date';
+import {
+  US_HOLIDAYS_ENABLED_KEY,
+  US_HOLIDAYS_LIST_KEY,
+  parseUsHolidaysList,
+  getEnabledHolidayMap,
+} from '@/lib/us-holidays';
 import { useChecklistRoom } from '@/hooks/useChecklistRoom';
 import NewHireChecklistLockDialog, { type LockDialogMode } from './NewHireChecklistLockDialog';
 import NewHireQuickAddDialog, { type QuickAddValues } from './NewHireQuickAddDialog';
@@ -190,19 +197,35 @@ function formatWeekLabel(startIso: string): string {
   return `${f(s)} – ${f(e)}, ${e.getFullYear()}`;
 }
 
-/** The orientation day for a Sun-anchored week: the MONDAY (start + 1 day),
- *  formatted "Monday, Jul 6, 2026". Mirrors the webhook's ORIENT_OFFSET_DAYS=1. */
-function formatOrientationLabel(startIso: string): string {
-  if (!startIso) return '—';
-  const [y, m, d] = startIso.split('-').map(Number);
-  if (!y || !m || !d) return startIso;
-  const orient = new Date(y, m - 1, d + 1);
-  return orient.toLocaleDateString(undefined, {
+/** "2026-09-08" -> "Tuesday, Sep 8, 2026". */
+function formatOrientationDay(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return iso;
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
     weekday: 'long',
     month: 'short',
     day: 'numeric',
     year: 'numeric',
   });
+}
+
+/**
+ * The orientation day the hires will actually be emailed, formatted
+ * "Tuesday, Sep 8, 2026" — or null when it cannot be resolved.
+ *
+ * Delegates the WALK to the shared `resolveOrientationDate`, which is the same
+ * function the lock webhook uses to fill `orientation_date`. Do not re-derive
+ * "start + 1" here: this string is the promise HR confirms before the send, and
+ * a dialog that says Monday while the email says Tuesday is the one failure
+ * this feature must not have.
+ */
+function formatOrientationLabel(
+  startIso: string,
+  holidays: ReadonlyMap<string, string>,
+): string | null {
+  if (!startIso) return null;
+  const res = resolveOrientationDate(startIso, holidays);
+  return res.ok ? formatOrientationDay(res.date) : null;
 }
 
 function formatLockStamp(iso: string | null): string {
@@ -254,6 +277,19 @@ export default function HrNewHireChecklist({
   const [loading, setLoading] = useState<boolean>(() => !cached?.loaded);
   const [busy, setBusy] = useState(false); // any in-flight mutation (add/edit/delete/bulk/lock)
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * The US holiday calendar, used ONLY to resolve the orientation day the same
+   * way the server does before it emails it (see `resolveOrientationDate`).
+   * `status` is tracked rather than defaulting to an empty map because "no
+   * holidays configured" and "the calendar failed to load" resolve to different
+   * answers — the first legitimately gives Monday, the second gives no date at
+   * all, which is exactly what the lock route does with a failed read.
+   */
+  const [holidays, setHolidays] = useState<{
+    status: 'loading' | 'ready' | 'error';
+    map: Map<string, string>;
+  }>({ status: 'loading', map: new Map() });
 
   // Which password-gated action is being confirmed (null = no dialog).
   const [actionDialog, setActionDialog] = useState<LockDialogMode | null>(null);
@@ -399,6 +435,41 @@ export default function HrNewHireChecklist({
   }, [period, loaded, fetchPeriod]);
 
   useEffect(() => { void loadPeriods(); }, [loadPeriods]);
+
+  /**
+   * US holiday calendar, for the orientation date shown in the Lock-in dialog.
+   * NOT best-effort: a failure sets `status: 'error'` so the dialog says the
+   * date is unavailable instead of quietly falling back to Monday — the lock
+   * route refuses the send in the same situation, and the two must agree.
+   * One fetch per mount; the list is week-independent.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    fetch(
+      `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY].join(','))}`,
+      { cache: 'no-store' },
+    )
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((j: { values?: Record<string, string | null>; error?: string | null }) => {
+        if (cancelled) return;
+        if (j.error) throw new Error(j.error);
+        const values = j.values ?? {};
+        const raw = values[US_HOLIDAYS_LIST_KEY] ?? null;
+        const list = parseUsHolidaysList(raw);
+        // Present but unparseable is a failure, not "no holidays" —
+        // parseUsHolidaysList swallows a JSON error into an empty array.
+        const trimmed = (raw ?? '').trim();
+        if (list.length === 0 && trimmed !== '' && trimmed !== '[]') {
+          throw new Error('us_holidays_list is unparseable');
+        }
+        // Absent master toggle means ON (docs/reference/business-logic.md).
+        const enabledRaw = values[US_HOLIDAYS_ENABLED_KEY];
+        const enabled = enabledRaw == null ? true : enabledRaw === 'true';
+        setHolidays({ status: 'ready', map: getEnabledHolidayMap(list, enabled) });
+      })
+      .catch(() => { if (!cancelled) setHolidays({ status: 'error', map: new Map() }); });
+    return () => { cancelled = true; };
+  }, []);
 
   // Department dropdown options (best-effort; used by the modal + bulk bar).
   useEffect(() => {
@@ -1798,7 +1869,15 @@ export default function HrNewHireChecklist({
       <NewHireChecklistLockDialog
         mode={actionDialog}
         weekLabel={formatWeekLabel(period)}
-        orientationLabel={formatOrientationLabel(period)}
+        orientationLabel={
+          holidays.status === 'error' ? null : formatOrientationLabel(period, holidays.map)
+        }
+        orientationShiftReason={
+          holidays.status === 'ready'
+            ? describeOrientationShift(resolveOrientationDate(period, holidays.map))
+            : null
+        }
+        orientationLoading={holidays.status === 'loading'}
         hireCount={hireCount}
         lockedBy={lockedBy}
         lockedStamp={formatLockStamp(lockedAt) || null}

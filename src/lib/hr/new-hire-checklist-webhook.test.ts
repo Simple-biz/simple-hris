@@ -2,9 +2,24 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildLockWebhookPayload,
+  fireNewHireChecklistLockWebhook,
   sanitizePersonalEmail,
 } from "./new-hire-checklist-webhook";
+import { resolveOrientationDate } from "./orientation-date";
 import type { HrNewHireChecklistRow } from "@/lib/supabase/hr-new-hire-checklist";
+
+const NO_HOLIDAYS = new Map<string, string>();
+
+/**
+ * The week's orientation day, resolved the way the route resolves it. These
+ * tests are about WHO gets the email; the date walk itself is covered in
+ * orientation-date.test.ts.
+ */
+function orient(periodStart: string, holidays: Map<string, string> = NO_HOLIDAYS) {
+  const r = resolveOrientationDate(periodStart, holidays);
+  if (!r.ok) throw new Error(`test fixture: ${periodStart} did not resolve (${r.reason})`);
+  return r;
+}
 
 function row(over: Partial<HrNewHireChecklistRow>): HrNewHireChecklistRow {
   return {
@@ -89,6 +104,7 @@ test("buildLockWebhookPayload sends sanitized rows and skips unsalvageable ones"
   const { payload, skipped } = buildLockWebhookPayload({
     period: null,
     periodStart: "2026-08-02",
+    orientation: orient("2026-08-02"),
     periodEnd: null,
     rows,
     lockedBy: "kaner@simple.biz",
@@ -134,6 +150,7 @@ test("buildLockWebhookPayload withholds hires who are not Lead Gen", () => {
   const { payload, skipped } = buildLockWebhookPayload({
     period: null,
     periodStart: "2026-08-23",
+    orientation: orient("2026-08-23"),
     periodEnd: null,
     rows,
     lockedBy: "teal@simple.biz",
@@ -165,6 +182,7 @@ test("buildLockWebhookPayload fails CLOSED on a blank or unrecognised department
   const { payload, skipped } = buildLockWebhookPayload({
     period: null,
     periodStart: "2026-08-23",
+    orientation: orient("2026-08-23"),
     periodEnd: null,
     rows,
     lockedBy: "teal@simple.biz",
@@ -183,6 +201,7 @@ test("buildLockWebhookPayload accepts every label that resolves to lead_gen", ()
     const { payload, skipped } = buildLockWebhookPayload({
       period: null,
       periodStart: "2026-08-23",
+    orientation: orient("2026-08-23"),
       periodEnd: null,
       rows: [row({ id: "a", position: 1, department: dept })],
       lockedBy: "teal@simple.biz",
@@ -197,6 +216,7 @@ test("a non-Lead-Gen hire with a broken email reports the department, not the em
   const { skipped } = buildLockWebhookPayload({
     period: null,
     periodStart: "2026-08-23",
+    orientation: orient("2026-08-23"),
     periodEnd: null,
     rows: [row({ id: "a", position: 1, department: "HSL", personal_email: "not-an-address" })],
     lockedBy: "teal@simple.biz",
@@ -218,6 +238,7 @@ test("the 2026-08-23 week: 78 Lead Gen hires send, the HSL hire does not", () =>
   const { payload, skipped } = buildLockWebhookPayload({
     period: null,
     periodStart: "2026-08-23",
+    orientation: orient("2026-08-23"),
     periodEnd: null,
     rows: week,
     lockedBy: "teal@simple.biz",
@@ -230,4 +251,86 @@ test("the 2026-08-23 week: 78 Lead Gen hires send, the HSL hire does not", () =>
   // hire_index still counts the FULL week, so a resend lines up with n8n's
   // original item numbering (the withheld hire leaves a gap, by design).
   assert.equal(sent[66]!.hire_index, 68);
+});
+
+// ── Holiday-shifted orientation (2026-09-03) ───────────────────────────────
+
+const LABOR_DAY = new Map([["2026-09-07", "Labor Day"]]);
+
+test("a holiday Monday moves the emailed date, on EVERY row and the top level", () => {
+  const rows = [
+    row({ id: "a", position: 1, personal_email: "a@gmail.com" }),
+    row({ id: "b", position: 2, personal_email: "b@gmail.com" }),
+  ];
+  const { payload } = buildLockWebhookPayload({
+    period: null,
+    periodStart: "2026-09-06",
+    orientation: orient("2026-09-06", LABOR_DAY),
+    periodEnd: null,
+    rows,
+    lockedBy: "teal@simple.biz",
+  });
+
+  assert.equal(payload.orientation_date, "09/08/2026");
+  assert.equal(payload.orientation_weekday, "Tuesday");
+  // start_date moves WITH it — the email calls this day "your first day" and
+  // prints the start date directly above the orientation row.
+  assert.equal(payload.start_date, "09/08/2026");
+
+  const sent = payload.rows as Array<Record<string, unknown>>;
+  assert.equal(sent.length, 2);
+  for (const r of sent) {
+    assert.equal(r.orientation_date, "09/08/2026");
+    assert.equal(r.orientation_weekday, "Tuesday");
+    assert.equal(r.start_date, "09/08/2026");
+  }
+});
+
+test("the payload records WHY the date moved", () => {
+  const { payload } = buildLockWebhookPayload({
+    period: null,
+    periodStart: "2026-09-06",
+    orientation: orient("2026-09-06", LABOR_DAY),
+    periodEnd: null,
+    rows: [row({ id: "a", position: 1 })],
+    lockedBy: "teal@simple.biz",
+  });
+  assert.equal(payload.orientation_shifted, true);
+  assert.equal(payload.orientation_default_date, "09/07/2026");
+  assert.equal(payload.orientation_shift_reason, "Moved from Monday (Sep 7) — Labor Day");
+});
+
+test("an unshifted week carries no shift reason", () => {
+  const { payload } = buildLockWebhookPayload({
+    period: null,
+    periodStart: "2026-08-02",
+    orientation: orient("2026-08-02"),
+    periodEnd: null,
+    rows: [row({ id: "a", position: 1 })],
+    lockedBy: "teal@simple.biz",
+  });
+  assert.equal(payload.orientation_shifted, false);
+  assert.equal(payload.orientation_shift_reason, null);
+  assert.equal(payload.orientation_date, "08/03/2026");
+});
+
+test("an UNRESOLVED orientation sends NOTHING — never a silent fallback to Monday", async () => {
+  // A failed holiday read must not degrade to the plain Monday: that is the
+  // exact date this feature exists to avoid. No POST is attempted.
+  for (const reason of ["calendar_unavailable", "no_weekday_left", "bad_period"] as const) {
+    const res = await fireNewHireChecklistLockWebhook({
+      period: null,
+      periodStart: "2026-09-06",
+      periodEnd: null,
+      rows: [row({ id: "a", position: 1, personal_email: "a@gmail.com" })],
+      lockedBy: "teal@simple.biz",
+      orientation: { ok: false, reason, baseDate: "2026-09-07", skipped: [] },
+    });
+    assert.equal(res.fired, false, `${reason} must not fire`);
+    assert.equal(res.count, 0);
+    assert.equal(res.status, null);
+    assert.ok(res.error && res.error.startsWith("No orientation email sent"), `${reason} must explain itself`);
+    assert.equal(res.orientation.date, null);
+    assert.equal(res.orientation.shifted, false);
+  }
 });
