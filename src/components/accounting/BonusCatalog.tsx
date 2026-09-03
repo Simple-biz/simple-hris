@@ -54,6 +54,7 @@ import {
   Star,
   LayoutDashboard,
   FolderTree,
+  Landmark,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -134,6 +135,8 @@ import {
 } from '@/lib/payment-catalog/person-comp';
 import PaymentCatalogOverview from './PaymentCatalogOverview';
 import DepartmentsTab from './DepartmentsTab';
+import PayProcessorsTab from './PayProcessorsTab';
+import { PAY_PROCESSORS_SETTING_KEY, type PayProcessor } from '@/lib/payment-catalog/pay-processors';
 import { subDeptStructureKey, type DepartmentRegistryEntry } from '@/lib/departments/registry';
 
 // Always render exactly 2 decimals so the exact amount is shown without ever
@@ -627,7 +630,15 @@ function withoutOffboarded(roster: RosterEntry[], offboarded: Set<string>): Rost
 // Top-level component
 // ---------------------------------------------------------------------------
 
-type CatalogTab = 'overview' | 'search' | 'departments' | 'pay-structure' | 'library' | 'assignments' | 'system-bonuses';
+type CatalogTab =
+  | 'overview'
+  | 'search'
+  | 'departments'
+  | 'pay-processors'
+  | 'pay-structure'
+  | 'library'
+  | 'assignments'
+  | 'system-bonuses';
 
 export default function BonusCatalog({ initialData }: { initialData?: InitialAccountingData | null }) {
   const [bonuses, setBonuses] = useState<BonusDef[]>([]);
@@ -638,6 +649,8 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   // department_managers assignment (dept string, lower-cased -> manager emails).
   const [deptRegistry, setDeptRegistry] = useState<DepartmentRegistryEntry[]>([]);
   const [deptManagers, setDeptManagers] = useState<Record<string, string[]>>({});
+  // Pay Processors registry (stored rows merged over the code seeds server-side).
+  const [payProcessors, setPayProcessors] = useState<PayProcessor[]>([]);
   // Set when another tab asks Pay Structure to open focused on a department.
   const [payFocusDept, setPayFocusDept] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -717,11 +730,12 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   const refetch = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [catRes, payRes, sysRes, deptRes] = await Promise.all([
+      const [catRes, payRes, sysRes, deptRes, procRes] = await Promise.all([
         fetch('/api/bonus-catalog', { cache: 'no-store' }),
         fetch('/api/payment-catalog/pay-structures', { cache: 'no-store' }),
         fetch('/api/payment-catalog/system-bonuses', { cache: 'no-store' }),
         fetch('/api/payment-catalog/departments', { cache: 'no-store' }),
+        fetch('/api/payment-catalog/pay-processors', { cache: 'no-store' }),
       ]);
       const cat = (await catRes.json()) as {
         bonuses?: BonusDef[];
@@ -735,12 +749,16 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
         managers?: Record<string, string[]>;
         error?: string | null;
       };
+      const proc = (await procRes.json()) as { processors?: PayProcessor[]; error?: string | null };
       setBonuses(cat.bonuses ?? []);
       setAssignments(cat.assignments ?? []);
       setPayStructures(pay.structures ?? []);
       setSystemBonuses(sys.bonuses ?? []);
       setDeptRegistry(dept.registry ?? []);
       setDeptManagers(dept.managers ?? {});
+      // A failed processors read keeps the PRIOR list rather than blanking it —
+      // an empty tab reads as "every processor is gone", not as an error.
+      if (Array.isArray(proc.processors) && !proc.error) setPayProcessors(proc.processors);
     } catch {
       /* keep prior state */
     } finally {
@@ -773,6 +791,17 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
           schema: 'public',
           table: 'app_settings',
           filter: 'key=eq.payment_catalog.departments.registry',
+        },
+        () => void refetch(),
+      )
+      .on(
+        'postgres_changes',
+        // Pay Processors registry — same one-key filter, same reason.
+        {
+          event: '*',
+          schema: 'public',
+          table: 'app_settings',
+          filter: `key=eq.${PAY_PROCESSORS_SETTING_KEY}`,
         },
         () => void refetch(),
       )
@@ -966,6 +995,12 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
     { id: 'overview', label: 'Summary', icon: LayoutDashboard, count: 0 },
     { id: 'search', label: 'Search', icon: Search, count: 0 },
     { id: 'departments', label: 'Department', icon: FolderTree, count: deptRegistry.length },
+    {
+      id: 'pay-processors',
+      label: 'Pay Processors',
+      icon: Landmark,
+      count: payProcessors.filter((p) => p.status === 'active').length,
+    },
     { id: 'pay-structure', label: 'Pay Structure', icon: Wallet, count: payStructures.length },
     { id: 'library', label: 'Bonus Library', icon: Sparkles, count: bonuses.length },
     { id: 'assignments', label: 'Assignments', icon: Building2, count: assignments.length },
@@ -1119,6 +1154,17 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
                   setTab('pay-structure');
                 }}
               />
+            </motion.div>
+          ) : tab === 'pay-processors' ? (
+            <motion.div
+              key="pay-processors"
+              initial={{ opacity: 0, x: -14 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 14 }}
+              transition={{ duration: 0.24, ease: EASE }}
+              className="h-full"
+            >
+              <PayProcessorsTab processors={payProcessors} onChanged={() => void refetch()} />
             </motion.div>
           ) : tab === 'pay-structure' ? (
             <motion.div
