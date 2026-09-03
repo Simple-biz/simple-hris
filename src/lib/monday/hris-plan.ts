@@ -1412,4 +1412,85 @@ export const PLAN_TASKS: PlanTask[] = [
   // paid final. A new tested replay-finals-overlay module makes a replayed export carry the FULL
   // saved split — the wizard-week-replay-fidelity rule, turned into code.
   { epic: 'HRIS-02a', name: 'Replayed wizard exports carry the FULL saved split, so every row reconciles against the paid final', type: 'Bug', sp: 3, done: false, sprint: 'S28', priority: 'High' },
+
+  // ── PASS 23 · 2026-09-03 · the range 0703c748..67858c44 (35 commits, Sep 2 – Sep 3 afternoon) ────
+  // Clustered by file overlap and cross-checked against the 19 session transcripts since Sep 2. The
+  // message trap fired again: f36a97ce is titled "Push" and carries the entire KPI-calculator header
+  // unification (three new components, a 348-line doc section, DeptBonusCalculator + HslBonusCalculator
+  // + ManagerApp rewrites) alongside 150 files of impeccable-skill mirror noise. Two external steps
+  // were PROBED, not assumed (plain .limit(1), negative control first): the orphanage_interns tables
+  // EXIST with 9 interns and the name-part columns present, so the interns migration IS applied
+  // despite the memory saying PENDING; and app_settings holds 14 paystub.recovered.* keys, so the
+  // paystub backfill has run. payment_dispatches holds ONE (cycle,email) group with a second paid row
+  // — the divergent alonzos@ pair the dedupe skips by design — so the dedupe --apply has been run too.
+  //
+  // Six commits (1f5b3ce4 → 67858c44) are NOT ancestors of origin/main (= baa7ba21) at staging time,
+  // so their rows are capped In Progress and must be re-derived at apply time if Kane pushes first.
+  // Nothing below is done:true except the dedupe chore, which is closed on a measurement.
+  //
+  // 5 SP: Manager → Time adjustments leaves ManagerApp (−1,051 lines) for its own file plus a pure
+  // queue module with 40 tests; master-detail review workspace off a design handoff, MESA-in-blue,
+  // detail as a modal that fits without scrolling, 2dp display rounding, landing segment = second-
+  // approver discovery. Kane's session 4f0ac61c.
+  { epic: 'HRIS-04', name: 'Manager Time Adjustments becomes a master-detail review workspace on the MESA-in-blue theme, with the detail as a modal', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  // 2 SP: the flicker Kane opened the session on — a fetch-per-render loop; the callback is ref'd and
+  // the poll runs every 60 s, pinned by a new live test. Own row: a bug class, not chrome.
+  { epic: 'HRIS-04', name: 'Manager Time Adjustments flicker was a fetch-per-render loop — ref the callback, poll every 60 s', type: 'Bug', sp: 2, done: false, sprint: 'S28', priority: 'High' },
+  // 5 SP: the two KPI calculators get ONE header — a Departments/HSL Branches switch in the toolbar,
+  // the readiness chip ("N of M ready") folded out of the DeadlineBanner, the Draft/Ready/Locked chip
+  // ladder shared by both, the payroll-processing banner reused from the employee shell with a
+  // per-surface sentence, the dispatch lock passed from the shell, and Departments adopting the HSL
+  // branch row in a two-column grid. All in f36a97ce ("Push"). Session d6070184 and its siblings.
+  { epic: 'HRIS-06', name: 'Both KPI calculators share one header — a Departments/HSL switch, the readiness chip, the Draft/Ready/Locked ladder and the shell’s lock banner', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  // 5 SP: four commits in one evening on one feature (dispatch-paid-toast.ts + hook + doc): the
+  // lower-left "lenny@ paid kaner@ $2,700" cards, first a client broadcast, then a 10 s server poll
+  // because the payer's build mattered, then mounted ONCE from the root layout for anyone with
+  // Accounting → Payment Dispatch VIEW (server 200/403 is the verdict), then the SERVER broadcasts
+  // after each INSERT so the table clears the instant the toast lands. Session d71bedc4.
+  { epic: 'HRIS-03a', name: 'Lower-left “X paid Y $Z” toast on every dashboard while processing is on, broadcast by the server after each dispatch INSERT', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  // 5 SP: 82 (cycle, person) groups had a second paid row (cobb@ paid twice 50 s apart). Server 409
+  // already_paid guard keyed on cycle_source_file, failing CLOSED; a load fence drops stale queue
+  // responses; both Mark Paid clients treat 409 as settled. Tests on both modules. Critical: money log.
+  { epic: 'HRIS-03a', name: 'Payment Dispatch refuses a second paid row per cycle — server 409 guard, stale-load fence, and a dedupe script', type: 'Bug', sp: 5, done: false, sprint: 'S28', priority: 'Critical' },
+  // 1 SP, done:TRUE on a MEASUREMENT: a read-only paged count of payment_dispatches on 2026-09-03
+  // finds exactly ONE (cycle,email) group with a second paid row — the divergent alonzos@ pair the
+  // script refuses by design — where the dry run of the same morning found 81 echo groups. The
+  // cleanup ran. Its date is external (a script run, not a commit) and is the day it was measured.
+  { epic: 'HRIS-03a', name: 'Run dedupe-payment-dispatches --apply — 81 echo groups collapsed to the oldest row, alonzos@ left as divergent', type: 'Chore', sp: 1, done: true, sprint: 'S28', priority: 'High' },
+  // 2 SP: Stop Processing filed a person the toast had just announced as paid as unpaid, because
+  // unpaidPayable read the un-overlaid rows; the close-out record now prunes reconciled-paid
+  // employees and counts them. LOCAL ONLY at staging (1f5b3ce4 not on origin/main).
+  { epic: 'HRIS-03a', name: 'Stop Processing can no longer file a just-paid person as unpaid — the close-out prunes reconciled-paid employees', type: 'Bug', sp: 2, done: false, sprint: 'S28', priority: 'High' },
+  // 8 SP — the cap, deliberately, and not an epic: one payee class delivered end to end in a day.
+  // Eight commits: own tables (orphanage_interns / _hours / _pay, migration + apply script), own
+  // Hubstaff report that never touches hubstaff_hours, Profiles + a mini wizard on /orphanage in the
+  // Payroll Wizard's shape, a Simple | Interns toggle in Accounting, accept/reject → Payment
+  // Dispatch → Orphanage queue, PAB ₱1,000 on 5 paid h every week, name split like Simple hires,
+  // and a three-tab dialog. Migration PROBED APPLIED (9 interns, name parts present). Still open:
+  // orphanage.interns.config.shareMode is ABSENT, so Lock in is refused until Ellie/Ralph decide.
+  { epic: 'HRIS-03c', name: 'Orphanage interns — @pathway.ph profiles, own Hubstaff report and tables, a mini wizard on /orphanage, a Simple | Interns view in Accounting, and dispatch to the Orphanage queue', type: 'Feature', sp: 8, done: false, sprint: 'S28', priority: 'High' },
+  // 5 SP: Pay Stubs took 15–20 s because 14 pre-snapshot weeks re-ran the whole-company engine on
+  // every open. A paystub-only paystub.recovered.* key stamped with the Hubstaff upload id, a 5-min
+  // engine memo, prune-before-dedupe, and the Profile identity fetch flattened 3 hops → 1. Backfill
+  // PROBED RUN: 14 keys present. Never written under the wizard's final_pay key — by design.
+  { epic: 'HRIS-09', name: 'Employee Pay Stubs are served from recovered snapshots and Profile loads in one wave', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  // 2 SP: five polish commits on one file (EmployeeMyHours.tsx) — tiles styled like the MESA stat
+  // cards, then a notch smaller, flat tone fills, month range + PAB period flattened beside the pill,
+  // warm weekend text. Session 3e4c6a06.
+  { epic: 'HRIS-09', name: 'Employee My Hours calendar tiles restyled like the MESA stat cards — flat tone fills, bigger dates, warm weekend text', type: 'Feature', sp: 2, done: false, sprint: 'S28', priority: 'Low' },
+  // 1 SP: four PNGs and the layout's icon links. Session 2fc55a85.
+  { epic: 'HRIS-15', name: 'Favicon becomes the Employee Penny chat-bubble heart', type: 'Chore', sp: 1, done: false, sprint: 'S28', priority: 'Low' },
+  // 5 SP: a new Payment Catalog tab and route — the registry of send-from processors, 1:1 rails
+  // (Kolan, HiGlobe) modelled as WALLET_RAILS, drift shown as a chip never a refusal; 680-line tab,
+  // 429-line lib with 258 lines of tests. LOCAL ONLY at staging (5062ccc1 + 44aa16f7). Session 5a2f134a.
+  { epic: 'HRIS-06', name: 'Payment Catalog Pay Processors tab — the source-of-truth registry of send-from processors and their 1:1 rails', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  // 2 SP: a pure resolveDispatchButtonState with tests; the button is DISABLED while the cycle is
+  // locked and sent to Payment Dispatch, Unlock → change → lock only re-stages. LOCAL ONLY at staging.
+  { epic: 'HRIS-02a', name: 'Wizard Lock-in button greys out once the cycle is locked and sent to Payment Dispatch', type: 'Bug', sp: 2, done: false, sprint: 'S28', priority: 'Medium' },
+  // 8 SP — the cap: Edit Department on every Payment Catalog card (846-line dialog, 813 lines of
+  // wizard steps, a 375-line staged run, registry +427, 8 route handlers) — rename keeps the KEY and
+  // adds a previousNames alias resolved by the rate engine, sub-department restructure, people
+  // moves, CAS 409; then Edit on the master-list cards for managers only, HSL excluded. LOCAL ONLY
+  // at staging (7e15aed8 + 67858c44). Session 1a8c9a77.
+  { epic: 'HRIS-06', name: 'Edit Department on every Payment Catalog card — rename by alias, sub-department restructure, people moves, CAS-guarded; master-list cards for managers only', type: 'Feature', sp: 8, done: false, sprint: 'S28', priority: 'High' },
 ];

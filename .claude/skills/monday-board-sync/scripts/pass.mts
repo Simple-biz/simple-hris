@@ -702,9 +702,9 @@ import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-09-02';
-export const AUDIT_RANGE = '6ae82ac5..0703c748 (Aug 28 pm – Sep 1 evening)';
-export const AUDIT_COMMITS = 60;
+export const PASS_DATE = '2026-09-03';
+export const AUDIT_RANGE = '0703c748..67858c44 (Sep 2 – Sep 3 afternoon)';
+export const AUDIT_COMMITS = 35;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -731,186 +731,129 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // ── PASS 22 · 2026-09-02 · pass 21's 14 staged rows RE-DERIVED, plus 6 more off bf43c86a..0703c748
-  // Pass 21 was staged in 9d9ce8b6 and NEVER APPLIED — the daily budget died before the write, so
-  // none of these 14 rows exist on the board (it holds 220 of a declared 234). The staged prose is
-  // therefore a snapshot of a claim, not a standing fact, and two rows have been re-derived from git
-  // rather than carried forward:
+  // ── PASS 23 · 2026-09-03 · the range 0703c748..67858c44 (35 commits, Sep 2 – Sep 3 afternoon) ────
+  // Pass 22 landed on the board the morning of Sep 2 (79d0868bbb8d, VERIFY PASS), so its rows are
+  // history and this file holds only what happened since. Clustered by file overlap; the transcripts
+  // for the 19 sessions since Sep 2 were read to name the work (f36a97ce "Push" carries a whole
+  // feature plus 150 files of skill-mirror noise, and would have been dropped as noise otherwise).
   //
-  //   • the Termination Documents row was written when origin/main was 7424aa7a and deliberately
-  //     excluded 90812026 + bf43c86a as local-only. Both are ancestors of origin/main now, so they
-  //     join its evidence.
-  //   • the Generate COE row was capped at In Progress for the same reason. 6d16bd70 and 604abd10
-  //     are ancestors now, so the cap has expired: Pending Deploy, blocker cleared.
+  // What was MEASURED, not assumed, before staging (plain .limit(1) probes, negative control first):
+  //   • orphanage_interns / _hours / _pay EXIST (9 / 10 / 0 rows), name-part columns PRESENT — the
+  //     interns migration is applied, contrary to the memory's "PENDING --apply".
+  //   • app_settings has 14 paystub.recovered.* keys — the paystub backfill has run.
+  //   • payment_dispatches has ONE (cycle,email) group with >1 paid row, down from 81 in the dry run
+  //     of the same morning — the dedupe --apply has run; the survivor is the divergent alonzos@ pair.
+  //   • orphanage.interns.config is ABSENT — shareMode unset, so the intern Lock in is refused.
   //
-  // Clustered by file overlap, and the range produced the trap's specimen twice: e8e8c6ae ("PAB TAB
-  // Ignore") is the entire Termination Documents feature with zero PAB files, and 2547b719
-  // ("ORPHANAGE UI") is 1,227 lines of HslBonusCalculator with zero orphanage files.
+  // origin/main = baa7ba21 at staging. The six commits after it (1f5b3ce4 → 67858c44) are LOCAL
+  // ONLY, so their four rows are In Progress. If Kane pushes before this is applied, RE-DERIVE them
+  // (the ancestor check flips them to Pending Deploy) — never carry this prose forward.
   //
-  // Both migrations in the older half were probed live (plain .limit(1), never head:true, negative
-  // control included): payroll_rate_exemptions EXISTS with a row, termination_documents EXISTS with a
-  // row. The newer half (bf43c86a..0703c748) introduces NO .sql, no apply-*.mjs and no n8n workflow,
-  // so nothing in it is code-complete-but-dead either.
-  //
-  // The six new rows are Pending Deploy, not Done: every sha is on origin/main, which is necessary
-  // and not sufficient. They go Done in a follow-up correction the moment Kane says he has clicked
-  // through them in prod — that confirmation is the evidence, and it has not been given yet.
+  // No row is Done on a click-through: Kane asked for the commits to be posted, which is an
+  // instruction about the write, not a confirmation about any surface. The one Done row is closed on
+  // a database measurement, with dateBasis 'external' because a script run has no commit date.
   {
-    name: 'PAB step shows the 1,557 people it hid — names, Employee IDs, Catalog departments, status filters and a KPI strip',
-    status: 'Done',
-    completed: '2026-08-28',
-    shas: ['3363e590', '8f85e3be', '119129b6', '1641f91b', '8b3d7de1', '2def4f07', '7843a508', '5fdff012', 'ad8c5839', 'd6036145', 'd3486661', 'ac94b91a'],
-    basis:
-      'Twelve commits in one afternoon on one surface (PayrollWizard.tsx + PabIneligibleTable.tsx + pab-ineligibility.ts). The headline bug: the step said "nobody is ineligible" over 1,557 ineligible people — scripts/diagnose-pab-step6.mts measured it before the fix. Then the table earned the surface: names instead of emails, Employee ID and work email columns, department + status filters that read the Payment Catalog rather than raw keys (dept-identity.ts, tested), a KPI strip replacing the banner, coverage pinned to active Global Master List people WITH hours, a leaver with no hours no longer ranked the worst attendance in the company (tested), an eligible count with checkable arithmetic, and the calendar modal gone wide with the verdict in a right rail. All twelve shas are ancestors of origin/main and the surface has been driven in the wizard since. Scored 5, not 8: one step, no new table, no money path — the verdict semantics are the separate S28 row.',
-  },
-  {
-    name: 'Wizard HSL step drops the banner and the weekly KPI period cards',
-    status: 'Done',
-    completed: '2026-08-28',
-    shas: ['a84146cb'],
-    basis:
-      'One commit, chrome not calculation: the HSL step loses its banner and its WEEKLY KPI period cards. The hand-keyed MONTHLY bonus cards stay, per the standing hsl-monthly-bonus-cards-only rule — nothing about pay or scoring moved. On origin/main.',
-  },
-  {
-    name: 'Missing-CSV dialog stops claiming an auto-sync it never performs',
-    status: 'Done',
-    completed: '2026-08-29',
-    shas: ['cc10258a'],
-    basis:
-      'A truthfulness fix in one component: the wizard’s missing-CSV dialog claimed an auto-sync that does not exist. It now says less and stops lying. Scored 1 — one dialog, no behavior change beyond the copy.',
-  },
-  {
-    name: 'Team Rankings is Kane’s alone — admin roles confer nothing',
-    status: 'Done',
-    completed: '2026-08-29',
-    shas: ['50c05777'],
-    basis:
-      'A new rankings-viewers RBAC module with tests plus the API-route gate: the Rankings tier flags in the Team directory are visible to kaner@ alone, and holding an admin dashboard role confers nothing — the same dedicated-grant shape the tickets role uses. Enforced server-side in app/api/team-rankings, not hidden client-side. On origin/main.',
-  },
-  {
-    name: 'The red double-pay guard was right — its test was wrong, and three undocumented surfaces got their docs',
-    status: 'Done',
-    completed: '2026-08-31',
-    shas: ['3bac1ff6', '47ed47ef'],
-    basis:
-      'One row on file overlap: both commits touch hsl-catalog-migration.md and INDEX.md two days apart and are one story. The docs sweep (3bac1ff6) found a RED double-pay guard and wrote the three missing feature docs (salaried-pay-basis, pay-structure-no-department, hsl-kpi-calculator-2026-07) plus an audit script; the follow-up (47ed47ef) proved the guard itself was RIGHT and the TEST was wrong, and fixed the test. Nothing was loosened — the guard never moved, which is the point of recording it as a Bug row.',
-  },
-  {
-    name: 'The 1:1 rule — the receiving bank drives the send-from rail, gated on both sides',
-    status: 'Done',
-    completed: '2026-08-31',
-    shas: ['ce4f2302', 'debac13d', 'b8b1f3fc'],
-    basis:
-      'Three commits rewriting the same tested modules (employee-payment-processors.ts, wallet-rail-lock.ts) in one evening, superseding the 08-31 wires lock: the rail pickers judge the EFFECTIVE rail rather than tier 1, the RECEIVING side is gated with the coupling kept one-way, and then THE 1:1 RULE lands — the receiving bank drives the send-from rail across the employee profile, People, Bank Preferred approvals and the OTP bank-update form. Scored 5 as the peer of the S27 Kolan/HiGlobe assignability row: it changes who can be routed where, on the rail, while repricing nothing. On origin/main.',
-  },
-  {
-    name: 'Start Processing plays a real engine — truckstart.mp3 in both the Wizard and Dispatch',
-    status: 'Done',
-    completed: '2026-09-01',
-    shas: ['e3613f41', '449f8d62', '9306ee19', '978500d7'],
-    basis:
-      'The cue that killed the "every sound is Web Audio" rule: after a synthesized V12 (e3613f41) and a three-candidate bench in the sound tester that left the shipped cue untouched (449f8d62), Start Processing now plays a real recording — public/sounds/truckstart.mp3 — in both the Payroll Wizard and Payment Dispatch, with its tail faded (978500d7). Kane auditioned the candidates himself on the bench, which is what picked the recording. On origin/main.',
-  },
-  {
-    name: 'Preview Emails wears the wizard’s chrome and shows the WORK email',
-    status: 'Done',
-    completed: '2026-09-01',
-    shas: ['541b6dfb'],
-    basis:
-      'The wizard’s Preview Emails dialog leaves the stock look for the wizard’s own chrome and displays the WORK email. Display only: delivery still goes to the personal address — the standing preview-emails-work-email rule, now stated by the UI instead of contradicted by it. On origin/main.',
-  },
-  {
-    name: 'PAB verdicts — the payout week owns the tab, Ignore joins Forgive, decided rows leave to a realtime Done tab, and PAB becomes step 4',
-    status: 'Done',
-    completed: '2026-09-01',
-    shas: ['7428e866', 'a2b428db', '377834e5', '7ca5ceaf', '7cd45fa2', '3b21a7ce', 'bc731dd6', '1f7a631d'],
-    basis:
-      'The verdict layer over the S27 table row, eight commits on the same files in one morning: the payout week owns the tab (the payout-week gate — PAB pays only the week containing the period end), Ignore joins Forgive as the other verdict, decided rows LEAVE the list into a Done tab of receipts with realtime decisions visible across open wizards, paused departments skip the step, HSL failures aggregate as weeks, a no-hours day reads amber and never grey, confirms use the app’s dialog instead of window.confirm, and PAB moves BEFORE Additions so the rail is 4 PAB · 5 Additions · 6 Contractors (tutorial guide re-pinned, tested). e8e8c6ae sits inside this commit window but carries ZERO PAB files — it is the Termination Documents feature and is excluded from this row’s evidence deliberately. Scored 5, not 8: decisions ride the existing exclusions path, no new table.',
-  },
-  {
-    name: 'Readiness No Pay Rate rows can be Ignored for one week, backed by a payroll_rate_exemptions table',
-    status: 'Done',
-    completed: '2026-09-01',
-    shas: ['225481a2'],
-    basis:
-      'A No Pay Rate readiness blocker can be Ignored for exactly one week: a NEW payroll_rate_exemptions table, an API route, a tested readiness-rate-ignore module and the Notes-FAB wiring. THE MIGRATION IS NOT PENDING: probed live 2026-09-01 with a plain .limit(1) (never head:true, negative control alongside) — the table EXISTS and already holds a row, which also means the route has run against production. That measurement supersedes the payroll-notes-no-pay-rate-ignore memory’s "migration PENDING Kane" claim, which described the plan, not the outcome.',
-  },
-  {
-    name: 'Bank Preferred requests are rows in the Issues table, and decided rows gain Edit and Delete',
-    status: 'Done',
-    completed: '2026-09-01',
-    shas: ['5f638846', 'fba536de', '9b2efb88'],
-    basis:
-      'Bank Preferred requests stop being a card floating above the Issues table and become ROWS in it; the default filter is All and the KPI cards always count ALL data rather than the filtered slice; and decided bank rows gain Edit and Delete through a new per-id API route — a decision is no longer immutable. The approval gate itself is unchanged: rows still hold for Accounting approval. On origin/main.',
-  },
-  {
-    name: 'People Offboarded search tab — search · pay · bank in one surface, one-off cards join the processor buckets',
-    status: 'Done',
-    completed: '2026-09-01',
-    shas: ['5a7c066b', '2c0f7666', 'd1dc97d4', 'dc1b6260'],
-    basis:
-      'The People → Offboarded tab becomes a search-first surface (search · pay · bank): a new /api/people/offboarded route, a tested offboarded-search module, ROW grain with recycled emails warn-and-allow, and the one-off payment cards MOVE off the tab into the processor buckets on Payment Dispatch (urgent-payments route reworked to match). Then the console treatment: live search readout that speaks the query term, phase messages, an Employee ID column and a typing-only debounce. Shipped with its feature doc and the ship sha stamped into it. Scored 5: a new API + module + a cross-surface move of the one-off cards. On origin/main.',
-  },
-  {
-    name: 'Termination Documents — a generated packet per leaver with its own table, personal-email search and undo on the doc row',
-    status: 'Done',
-    completed: '2026-09-01',
-    shas: ['e8e8c6ae', '90812026', 'bf43c86a'],
-    basis:
-      'The commit message says "PAB TAB Ignore"; the files say otherwise — e8e8c6ae carries the entire Termination Documents feature and zero PAB files (the file-overlap rule’s best specimen yet). Its own termination_documents table, four API routes (list, facts, search, per-id), the Accounting panel where the personal email SEARCHES and the work email IDENTIFIES, undo on the doc row, and a revert-writebacks script. THE MIGRATION IS APPLIED: probed live 2026-09-01 with a plain .limit(1) — the table EXISTS and already holds a generated document, so the surface has run against production. RE-DERIVED 2026-09-02: the two polish commits the staged pass held back as local-only — 90812026 (live scan-line search console on Step 1) and bf43c86a (smoothed scan line, results pop in when data lands) — are BOTH ancestors of origin/main now, so they join the evidence and bf43c86a sets the Completed Date. Every listed sha is ancestor-verified.',
-  },
-  {
-    name: 'Generate COE from the Signing Queue — accounting issues and signs on the employee’s behalf',
+    name: 'Manager Time Adjustments becomes a master-detail review workspace on the MESA-in-blue theme, with the detail as a modal',
     status: 'Pending Deploy',
-    shas: ['6d16bd70', '604abd10'],
+    shas: ['840f0f77', 'b97637e3', '0ce0fa64', 'f36a97ce'],
     basis:
-      'RE-DERIVED 2026-09-02: the staged pass capped this at In Progress because neither sha was an ancestor of origin/main when it was written (origin/main was 7424aa7a). Both are ancestors now — re-checked with git merge-base --is-ancestor — so the cap has expired and the blocker is cleared. Pending Deploy, not Done: pushed means Vercel will deploy it, not that anyone has looked. What exists: Generate COE from the Signing Queue, where accounting issues the certificate and signs on the employee’s behalf — active-Global-Master-List-only and failing CLOSED, preview + issue + search routes, a tested coe-admin module, and the audit trail naming the ADMIN who generated it. Done the moment Kane confirms he has driven it in prod.',
-  },
-
-  // ── PASS 22 · new rows off bf43c86a..0703c748 (Sep 1 evening, 12 commits) ───────────────────────
-  // All Pending Deploy: every sha is an ancestor of origin/main, none of them needs a migration or an
-  // n8n import, and no one has yet said they clicked through the result in production.
-  {
-    name: 'Orphanage step deletes wipe both carriers, the additions blob is written under CAS, and the red panel restores from record',
-    status: 'Pending Deploy',
-    shas: ['27328af3', '28bea8ac'],
-    basis:
-      'Two commits, one surface — they share PayrollWizard.tsx and docs/features/orphanage-pay-step.md, which is why this is one row and not two. 27328af3 puts the additions blob behind a compare-and-set (a new tested wizard-additions module, an app-settings CAS path) and adds Restore-from-record to the red panel; 28bea8ac makes a delete wipe BOTH carriers rather than one, with a Remove all button, record-only row deletes, a new OrphanageClearConfirmDialog and a snapshot-or-refuse audit in orphanage-pay-db. Both are ancestors of origin/main and neither needs a migration — the CAS rides app_settings, which already exists. Not Done: nobody has confirmed the delete path in prod, and this one touches stored pay records, so the gate stays shut until Kane says he re-entered the data cleanly.',
+      'Three commits on the new ManagerTimeAdjustments.tsx (1,544 lines) and the pure time-adjustment-queue.ts (501 lines, 40 tests), with ManagerApp.tsx losing 1,051 lines; f36a97ce carries the design handoff bundle under references/design_handoff_time_adjustments/ that the build followed. Master-detail review workspace themed on MESA in blue, then the detail became a modal that fits without scrolling with a square proof image, hours rounded to 2dp for DISPLAY only, and the landing segment opens on the first queue with outstanding work because it IS the second-approver discovery path. All four shas are ancestors of origin/main; nobody has said they have reviewed a request through the new workspace in prod, so it stays short of Done.',
   },
   {
-    name: 'HSL KPI branches become a list that opens a Windowed/Half/Full overlay, with SSD rebuilt and a matching first-load skeleton',
+    name: 'Manager Time Adjustments flicker was a fetch-per-render loop — ref the callback, poll every 60 s',
     status: 'Pending Deploy',
-    shas: ['2547b719', '276e6d7f', 'db69b335'],
+    shas: ['62c8312e'],
     basis:
-      'Three commits on HslBonusCalculator.tsx and its feature doc, rebuilt off the design handoff under references/UI improvement request/. Branches stop being cards and become a LIST that opens a Windowed/Half/Full overlay, SSD Medical Records is rebuilt, and the first-load skeleton mirrors the branch list instead of the cards it replaced. 2547b719 is the second file-overlap specimen of the pass: its message is "ORPHANAGE UI" and it contains zero orphanage files. It also committed HslBonusCalculator.tsx.bak — 3,259 lines of dead backup that should be deleted, noted here rather than silently fixed. All three shas are on origin/main; no one has driven the new overlay in prod yet.',
+      'The bug Kane opened session 4f0ac61c on ("Fix the Polling Issue please"). The tab re-fetched on every render because the cached-state setter was in the effect deps and never bailed out; the callback is now ref\'d and the poll runs once every 60 s, pinned by a new manager-time-adjustments-live test (155 lines). Its own row rather than a line in the workspace row: a render-loop is a bug class the next reader should be able to find by name. On origin/main, not confirmed live.',
   },
   {
-    name: 'KPI Calculator paints from cache across the tab-switch unmount, and holds scoring until week, catalog and FX are live',
+    name: 'Both KPI calculators share one header — a Departments/HSL switch, the readiness chip, the Draft/Ready/Locked ladder and the shell’s lock banner',
     status: 'Pending Deploy',
-    shas: ['9ddf772f', 'c502457c'],
+    shas: ['f36a97ce'],
     basis:
-      'A new kpi-cache module (439 lines, 418 lines of tests) plus a useKpiCacheIdentity hook behind both HslBonusCalculator and DeptBonusCalculator, so the calculator repaints instantly across the tab-switch unmount, and c502457c extends it to the bonus catalog so switching to Departments is instant. The safety property is the point and it is tested: the cache PAINTS but never DECIDES — scoring is held until the week, the catalog and the FX rate are all live, and the cache key carries the week. Both shas are on origin/main. Not Done: a cache that decides too early would misprice a bonus, so this one wants a prod click-through before it closes.',
+      'The message-trap specimen of this pass: f36a97ce is titled "Push" and, beneath ~150 files of impeccable-skill mirror noise, carries three new components (kpi-calculator-switch, kpi-readiness-chip, kpi-status-chip), a 348-line section in the HSL KPI doc, and rewrites of DeptBonusCalculator (350/348), HslBonusCalculator (192/110) and ManagerApp (802/751). The two calculators get ONE header — a Departments/HSL Branches switch in the toolbar, the Departments DeadlineBanner folded into an "N of M ready" chip, a Draft/Ready/Locked chip ladder shared by both (Ready = GREEN, Locked = black, amber = warning only), the employee shell\'s payroll-processing banner reused with a per-surface sentence, the dispatch lock passed from the shell (QCApp too), and Departments adopting the HSL branch row in a two-column grid. On origin/main; Kane asked three times that the two headers be "the same", and only he can say they render the same in prod.',
   },
   {
-    name: 'Manager dashboard shell paints from cache across the tab-switch unmount and a reload',
+    name: 'Lower-left “X paid Y $Z” toast on every dashboard while processing is on, broadcast by the server after each dispatch INSERT',
     status: 'Pending Deploy',
-    shas: ['ad869220'],
+    shas: ['60ea3aeb', '64f012b6', '1128ebce', '407207a3'],
     basis:
-      'Its own module, not a reuse of the KPI cache: a new tab-cache (471 lines, 354 lines of tests) and a useManagerCachedState hook across ManagerApp, ManagerBonusHistory, ManagerSidebar and ManagerTransfers, with use-bonus-scoring-queue reworked around it and a new manager-dashboard-cache feature doc. The Manager shell unmounts on every tab switch, so the spinner has to be derived or the skeleton repaints; boundness is part of the cache key. On origin/main, not yet confirmed live.',
+      'Four commits in one evening on one feature (dispatch-paid-toast.ts, useDispatchPaidToasts, dispatch-paid-toast.md). 60ea3aeb: the lower-left "lenny@ paid kaner@ $2,700" cards on the Accounting shell, own stack not sonner, paid rows only, chime asymmetric. 64f012b6: a 10 s poll of a new recent-paid route because the first live test (Kane localhost, Lenny on prod) showed nothing — the payer\'s build mattered. 1128ebce: mounted ONCE from the root layout for anyone with Accounting → Payment Dispatch VIEW, the first poll\'s 200/403 being the verdict. 407207a3: the SERVER broadcasts on both realtime topics right after the dispatch INSERT so the queue clears the instant the toast lands, with the recipient hidden at the render boundary and pending never touched. All on origin/main. The one live test on record predates three of the four commits, so the final shape has not been seen in prod.',
   },
   {
-    name: 'Payroll Notes rows are shared — any wizard editor deletes or applies any row, and the board pages past 1000',
+    name: 'Payment Dispatch refuses a second paid row per cycle — server 409 guard, stale-load fence, and a dedupe script',
     status: 'Pending Deploy',
-    shas: ['e62f30e8'],
+    shas: ['d406e7c9'],
     basis:
-      'One commit: the notes route drops its author check so any wizard editor may delete or apply any row, and the board pages past the PostgREST 1000-row cap that was hiding rows from the very people who needed them (the postgrest-1000-cap rule, applied). Small and self-contained — a route, the FAB, the payroll-wizard-notes db layer and the feature doc. On origin/main. Scored 2: no new table, no new surface, but it does widen who can delete a row, which is why it is not 1.',
+      'Found the same morning: cobb@ paid twice by graceh@ 50 s apart with the same txn id, and a read-only audit counted 82 (cycle, person) groups with a second paid row. One commit closes both causes — POST /api/payment-dispatches now answers 409 already_paid keyed on cycle_source_file for employee paid rows and fails CLOSED on a read error (dispatch-duplicate-guard.ts, 151 lines of tests), and useDispatchQueue.load() carries a fence that drops stale successes and failures (load-fence.ts, tested); both Mark Paid clients treat 409 as settled and never restore to Pending. The 252-line dedupe script ships in the same commit and is its own row. On origin/main. Critical priority because it is the money log; not Done because a guard on a payment route has to be seen refusing in prod before anyone credits it.',
   },
   {
-    name: 'Replayed wizard exports carry the FULL saved split, so every row reconciles against the paid final',
-    status: 'Pending Deploy',
-    shas: ['0703c748'],
+    name: 'Run dedupe-payment-dispatches --apply — 81 echo groups collapsed to the oldest row, alonzos@ left as divergent',
+    status: 'Done',
+    completed: '2026-09-03',
+    dateBasis: 'external',
+    shas: ['d406e7c9'],
     basis:
-      'A replayed week exported a partial split, so its rows did not reconcile against the paid final — a reporting lie about money already sent. A new tested replay-finals-overlay module (98 lines, 110 of tests) makes the replay carry the FULL saved split, which is the wizard-week-replay-fidelity rule turned into code. On origin/main, and the last commit in the range. Not Done: a reconciliation fix is exactly the kind of thing that has to be seen reconciling before anyone credits it.',
+      'Closed on a MEASUREMENT, not an assertion. The dry run of 2026-09-03 morning reported 81 echo groups → 82 rows (₱983,343) and refused alonzos@ as divergent by design; the memory recorded the --apply as PENDING Kane. A read-only paged count of payment_dispatches later the same day (8,726 paid rows, grouped by cycle_source_file-else-cycle_id + lower(recipient_email), employee rows only) finds exactly ONE group with a second paid row — the alonzos@ pair the script skips. The cleanup ran; the only thing that could have collapsed 81 groups to the one the script refuses is the script. The date is external because a script run has no commit: it is the day the result was measured, and it is inside Sprint 28. Still OPEN and out of this row\'s scope: whether alonzos@ on the 07-26 cycle was a REAL double payment in Hurupay.',
+  },
+  {
+    name: 'Stop Processing can no longer file a just-paid person as unpaid — the close-out prunes reconciled-paid employees',
+    status: 'In Progress',
+    shas: ['1f5b3ce4'],
+    basis:
+      'The toast had just announced a person paid and the Stop Processing dialog still counted them unpaid, because unpaidPayable read the rows before the paidElsewhere overlay. The client now iterates the overlaid rows, and the server backstop in buildCycleCloseoutRecord prunes reported-unpaid EMPLOYEES that have a paid row in the cycle and counts them as unpaid.reconciledPaid; contractors are never pruned (58 lines of new tests). In Progress, not Pending Deploy: 1f5b3ce4 is NOT an ancestor of origin/main (baa7ba21) at staging — committed locally, not pushed. Re-derive at apply time.',
+  },
+  {
+    name: 'Orphanage interns — @pathway.ph profiles, own Hubstaff report and tables, a mini wizard on /orphanage, a Simple | Interns view in Accounting, and dispatch to the Orphanage queue',
+    status: 'Pending Deploy',
+    shas: ['57ca6638', '5a18b40c', '34934480', 'cd8f4365', '2b54e2fb', '1a049e76', '5cc1a5eb', 'f9acc1a5'],
+    basis:
+      'One payee class delivered end to end in a day, off the implementation plan Kane commissioned in session cc12306c and released with "Start the build!". 57ca6638 is the build: own tables (orphanage_interns / _hours / _pay via references/sql/migrate/2026-09-02_orphanage_interns.sql + apply-orphanage-interns-migration.mts), an intern Hubstaff report with the wizard\'s columns that never touches hubstaff_hours, Profiles + a mini wizard on /orphanage in the Payroll Wizard\'s shape, a Simple | Interns toggle in Accounting, accept/reject into Payment Dispatch → Orphanage, PAB ₱1,000 when every week has 5 paid hours, no Tech. Then a three-tab dialog, four polish/fix commits on it, the name split into parts composed like Simple hires (5cc1a5eb), and f9acc1a5 making the migration add the name-part columns to an already-created table. The migration was PROBED APPLIED on 2026-09-03 (plain .limit(1), negative control first): 9 interns, 10 hour rows, name parts present — so this is NOT code-complete-but-dead, whatever the memory says. Scored 8, the cap: no epic because it is one surface for one payee class, but nothing about it is a 5. All eight shas are on origin/main. Not Done: no one has run an intern week through to a paid dispatch, and the blocker below means no one can yet.',
+    blockers: [
+      'app_settings orphanage.interns.config has no shareMode (probed ABSENT 2026-09-03) — Lock in is refused until Ellie/Ralph decide system_split vs intern_remits (plan Q2)',
+    ],
+  },
+  {
+    name: 'Employee Pay Stubs are served from recovered snapshots and Profile loads in one wave',
+    status: 'Pending Deploy',
+    shas: ['1b840fc6'],
+    basis:
+      'Kane, session a0cfce5e: "It takes like a long time to load though especially the paystubs." Measured read-only first: 14 of 28 upload weeks had neither a wizard final_pay snapshot nor a staged payload, so ?summary=1 re-ran the whole-company engine (~6.6 s each, 6 at a time) on every open by every employee. One commit: a paystub-ONLY paystub.recovered.<file> key stamped with the Hubstaff upload id and never written under the wizard\'s final_pay key, a 5-minute per-process engine memo, prune-before-dedupe, the Profile identity fetch flattened from 3 hops to 1, and Profile + Pay Stubs wired into the reload cache — 290 + 72 + 64 lines of new lib with 300 lines of tests, plus the backfill script. The backfill was PROBED RUN on 2026-09-03: app_settings holds 14 paystub.recovered.* keys, one per slow week. On origin/main. Not Done: the claim is a speed-up, and only a real employee opening Pay Stubs in prod can confirm it landed.',
+  },
+  {
+    name: 'Employee My Hours calendar tiles restyled like the MESA stat cards — flat tone fills, bigger dates, warm weekend text',
+    status: 'Pending Deploy',
+    shas: ['c8e5f658', '4265bdfd', 'b1c0dcf3', 'fb26990b', '6f4ac980'],
+    basis:
+      'Five commits on one file (EmployeeMyHours.tsx) in one session (3e4c6a06: "make the calendar dates a bit bigger"): tiles styled like the MESA stat cards, then a notch smaller, month range + PAB period flattened beside the pill, flat tone fills instead of gradients, warm text on the orange weekend tint. Chrome only — no hours math moved. All on origin/main, not confirmed live. Scored 2 because it is five rounds of iteration on one component, not 1.',
+  },
+  {
+    name: 'Favicon becomes the Employee Penny chat-bubble heart',
+    status: 'Pending Deploy',
+    shas: ['30230f09'],
+    basis:
+      'Session 2fc55a85: "use the Employee - Chatbubble as our Favicon for the HRIS." Four PNGs (32/192/512 + apple-touch-icon) and the icon links in app/layout.tsx. On origin/main. A favicon is the easiest possible click-through, and it has not been reported seen in a prod tab yet.',
+  },
+  {
+    name: 'Payment Catalog Pay Processors tab — the source-of-truth registry of send-from processors and their 1:1 rails',
+    status: 'In Progress',
+    shas: ['5062ccc1', '44aa16f7'],
+    basis:
+      'Session 5a2f134a: a Pay Processors tab where processors are added, edited and classified as 1:1 (Kolan, HiGlobe) or compatible with another bank. A new PayProcessorsTab (680 lines), route, pay-processors-db and a 429-line pure lib with 258 lines of tests; the registry is the source of truth, 1:1 is modelled as WALLET_RAILS, and drift from the wallet-rail mirror is a chip, never a refusal. 44aa16f7 keeps the dialog primitive\'s padding so the footer bleeds to the edge. In Progress, not Pending Deploy: neither sha is an ancestor of origin/main (baa7ba21) at staging. Re-derive at apply time. Payment Dispatch integration is the recorded NEXT step and is not in this row.',
+  },
+  {
+    name: 'Wizard Lock-in button greys out once the cycle is locked and sent to Payment Dispatch',
+    status: 'In Progress',
+    shas: ['5982d3e6'],
+    basis:
+      'Session ac23ad6c: once the values are locked in and sent to Payment Dispatch, the button must be greyed out. A pure resolveDispatchButtonState (87 lines, 104 lines of tests) decides the button from the lock state: DISABLED while locked and dispatched, and Unlock → change → lock only re-stages. In Progress: 5982d3e6 is not an ancestor of origin/main at staging. Re-derive at apply time.',
+  },
+  {
+    name: 'Edit Department on every Payment Catalog card — rename by alias, sub-department restructure, people moves, CAS-guarded; master-list cards for managers only',
+    status: 'In Progress',
+    shas: ['7e15aed8', '67858c44'],
+    basis:
+      'Session 1a8c9a77: "add an edit department where we can edit and add Sub Departments and change stuff in there the way we would like creating a department." 7e15aed8: an 846-line EditDepartmentDialog, 813 lines of wizard steps, a 375-line staged run, the registry grown by 427 lines with 279 lines of tests, and 248 lines of new route handlers — rename keeps the registry KEY and records a previousNames alias that the rate engine and six pay readers resolve (resolve-rate-aliases tests), sub-department restructure that deletes a removed sub\'s own rate row, people moves, and a CAS 409 on concurrent edits. 67858c44: Edit on the master-list department cards too, for MANAGERS only with HSL excluded, via a 482-line EditBuiltinManagersDialog. Scored 8, the cap — a rename that re-points the rate engine is money-adjacent and the surface is five files deep. In Progress: neither sha is an ancestor of origin/main at staging. Re-derive at apply time.',
   },
 ];
 
