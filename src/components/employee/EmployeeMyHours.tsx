@@ -1613,11 +1613,11 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                     {Array.from({ length: 7 }, (_, di) => (
                       <div
                         key={di}
-                        className="flex h-16 animate-pulse flex-col justify-between rounded-xl border border-zinc-200 bg-zinc-100/60 px-2 py-1.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/30 sm:h-[4.75rem] sm:px-2.5 sm:py-2"
+                        className="flex h-[3.25rem] animate-pulse flex-col justify-between rounded-xl border border-zinc-200 bg-zinc-100/60 px-2 py-1.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/30 sm:h-[3.75rem] sm:px-2.5"
                         style={{ animationDelay: `${(wi * 7 + di) * 40}ms` }}
                       >
                         <div className="h-2.5 w-5 rounded bg-zinc-200/80 dark:bg-zinc-800/80" />
-                        <div className="h-4 w-10 rounded bg-zinc-200/80 dark:bg-zinc-800/80 sm:h-5 sm:w-12" />
+                        <div className="h-3.5 w-9 rounded bg-zinc-200/80 dark:bg-zinc-800/80 sm:h-4 sm:w-10" />
                       </div>
                     ))}
                   </div>
@@ -1659,7 +1659,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                           return (
                             <div
                               key={di}
-                              className="flex h-16 items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900/20 sm:h-[4.75rem]"
+                              className="flex h-[3.25rem] items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900/20 sm:h-[3.75rem]"
                             >
                               <span className="text-[10px] text-zinc-300 dark:text-zinc-700">—</span>
                             </div>
@@ -1847,7 +1847,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                         return (
                           <div
                             key={di}
-                            className={`group relative flex h-16 flex-col justify-between rounded-xl border px-2 py-1.5 shadow-sm transition-all duration-200 sm:h-[4.75rem] sm:px-2.5 sm:py-2 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:z-30 hover:-translate-y-px hover:shadow-md hover:ring-2 hover:ring-orange-300/50' : ''}`}
+                            className={`group relative flex h-[3.25rem] flex-col justify-between rounded-xl border px-2 py-1.5 shadow-sm transition-all duration-200 sm:h-[3.75rem] sm:px-2.5 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:z-30 hover:-translate-y-px hover:shadow-md hover:ring-2 hover:ring-orange-300/50' : ''}`}
                             title={`${titleBody}${titleDispute}${rateTooltip}`}
                             onClick={cellClickable ? handleCellClick : undefined}
                           >
@@ -1876,7 +1876,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                             {/* Label row — the stat card's uppercase caption, here the
                                 date (bigger than before) plus an optional state word. */}
                             <div className="flex items-start justify-between gap-1 leading-none">
-                              <span className="text-xs font-semibold leading-none tabular-nums opacity-70 sm:text-sm">
+                              <span className="text-[11px] font-semibold leading-none tabular-nums opacity-70 sm:text-xs">
                                 {day.dateStr}
                               </span>
                               {isHoliday && (
@@ -1912,7 +1912,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                               // show the contribution so far, still flagged in-progress.
                               <div className="flex flex-col gap-0.5">
                                 <span
-                                  className={`font-mono text-sm font-bold leading-none tabular-nums sm:text-base ${
+                                  className={`font-mono text-[13px] font-bold leading-none tabular-nums sm:text-sm ${
                                     effectivelyPasses
                                       ? 'text-emerald-700 dark:text-emerald-400'
                                       : 'text-orange-600 dark:text-orange-400'
@@ -1946,7 +1946,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                               </div>
                             ) : (
                               <div className="flex items-end justify-between gap-1">
-                                <span className={`font-mono text-base font-bold leading-none tabular-nums sm:text-xl ${hourText}`}>
+                                <span className={`font-mono text-sm font-bold leading-none tabular-nums sm:text-lg ${hourText}`}>
                                   {hours > 0 ? `${hours.toFixed(1)}h` : '—'}
                                 </span>
                                 {showRateBadge && (
