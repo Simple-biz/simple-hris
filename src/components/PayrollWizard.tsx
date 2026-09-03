@@ -236,6 +236,7 @@ import {
   payrollExportRowToAoa,
 } from '@/lib/payroll-wizard/report-rows';
 import { overlayReplayFinal, type ReplayFinalEntry } from '@/lib/payroll-wizard/replay-finals-overlay';
+import { formatLockedStamp, resolveDispatchButtonState } from '@/lib/payroll-wizard/dispatch-button-state';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import type { OffboardedRosterRow } from '@/lib/roster/offboarded-roster-row';
@@ -2442,6 +2443,20 @@ export default function PayrollWizard({
   const [usdToCopInput, setUsdToCopInput] = useState<string>('0');
   const [usdToCopSaving, setUsdToCopSaving] = useState(false);
   const [usdToCopEditing, setUsdToCopEditing] = useState(false);
+  /** Dispatch-step primary button ("Lock in Values & Send to Payment Dispatch"):
+   *  ONE resolver for `disabled` + label so the two can never disagree. Once the
+   *  cycle is locked the button is greyed out — a re-lock upserts money onto rows
+   *  the Dispatch office may already have PAID, so "unlock and re-lock" (the
+   *  Unlock button) is the only sanctioned re-stage path (paystub-dispatch.md). */
+  const dispatchButton = resolveDispatchButtonState({
+    isDispatching,
+    isReplay,
+    lockLoading: dispatchValuesLock.loading,
+    locked: dispatchValuesLock.state.locked,
+    usdToPhpRate,
+    usdToCopRate,
+  });
+  const dispatchLockedStamp = formatLockedStamp(dispatchValuesLock.state.lockedAt);
   /** The GLOBAL rates (usd_to_php_rate / usd_to_cop_rate) — what the rest of
    *  the app converts with. Shown as a reference under each Step-2 card and
    *  used as the final-pay snapshot's fx fallback while the cycle is unset.
@@ -4680,7 +4695,7 @@ export default function PayrollWizard({
     // historical periods keep the rates that were in effect then ("live cycle
     // only").
     if (!isReplay && payStructures.length > 0) {
-      const catIdx = buildCatalogRateIndex(payStructures);
+      const catIdx = buildCatalogRateIndex(payStructures, customDepartments);
       // 1) Overlay onto employees who ALREADY have a sheet-cache rate row: the
       //    individual catalog rate overrides the sheet; the department base only
       //    fills in when the row carries no sheet rate at all.
@@ -4847,7 +4862,10 @@ export default function PayrollWizard({
   const rawSheetRateIndex = useMemo(() => indexHourlyRatesByEmail(hourlyRateRows), [hourlyRateRows]);
   /** Live catalog index for the Preview rate-snapshot panels. Unlike ratesByEmail
    *  this is built even during replay — the panels always show CURRENT sources. */
-  const previewCatalogIndex = useMemo(() => buildCatalogRateIndex(payStructures), [payStructures]);
+  const previewCatalogIndex = useMemo(
+    () => buildCatalogRateIndex(payStructures, customDepartments),
+    [payStructures, customDepartments],
+  );
 
   /**
    * Rate-source snapshot for one Preview Emails person: the People-tab effective
@@ -7300,8 +7318,8 @@ export default function PayrollWizard({
   // Null during replay (catalog overlay is skipped then) so historical periods
   // prorate purely from the dated rate history.
   const catalogIndexForProration = useMemo(
-    () => (isReplay || payStructures.length === 0 ? null : buildCatalogRateIndex(payStructures)),
-    [isReplay, payStructures],
+    () => (isReplay || payStructures.length === 0 ? null : buildCatalogRateIndex(payStructures, customDepartments)),
+    [isReplay, payStructures, customDepartments],
   );
 
   const calcResults = useMemo<CalcRow[]>(() => {
@@ -18680,9 +18698,19 @@ export default function PayrollWizard({
                     <Lock className="h-4 w-4" />
                     Locked — Payment Dispatch is live for this cycle
                   </div>
+                  {(dispatchValuesLock.state.lockedBy || dispatchLockedStamp) && (
+                    <p className="text-center text-xs text-emerald-800/80 dark:text-emerald-300/80">
+                      Locked in
+                      {dispatchValuesLock.state.lockedBy ? (
+                        <> by <span className="font-semibold">{dispatchValuesLock.state.lockedBy}</span></>
+                      ) : null}
+                      {dispatchLockedStamp ? <> on {dispatchLockedStamp}</> : null}
+                    </p>
+                  )}
                   <p className="text-center text-xs text-emerald-700/80 dark:text-emerald-300/70">
-                    The Dispatch office can pay + email paystubs now. Unlock to pull the values back —
-                    Payment Dispatch clears in real time.
+                    The Dispatch office can pay + email paystubs now. The values are frozen — to change
+                    anything, Unlock, make the change, then lock in again. Unlock clears Payment Dispatch
+                    in real time.
                   </p>
                   <Button
                     variant="outline"
@@ -18748,6 +18776,23 @@ export default function PayrollWizard({
                   }
                   if (!calcSourceFile) {
                     toast.error('No pay-period file selected');
+                    return;
+                  }
+                  // Belt and braces behind the disabled button: the lock flag is
+                  // carried by a 30s poll, so a cycle locked from another tab can
+                  // surface here after the click. Never re-stage a locked cycle —
+                  // that upserts money onto rows the clerk may already have paid.
+                  if (dispatchValuesLock.loading) {
+                    toast.error('Still checking whether this cycle is locked', {
+                      description: 'Try again in a moment.',
+                    });
+                    return;
+                  }
+                  if (dispatchValuesLock.state.locked) {
+                    toast.error('This cycle is already locked in and sent', {
+                      description:
+                        'Payment Dispatch is live from these values. Unlock Payment Dispatch above if you need to change and re-send them.',
+                    });
                     return;
                   }
                   if (usdToPhpRate <= 0 || usdToCopRate <= 0) {
@@ -18865,9 +18910,16 @@ export default function PayrollWizard({
                     setIsDispatching(false);
                   }
                 }}
-                disabled={isDispatching || isReplay || usdToPhpRate <= 0 || usdToCopRate <= 0}
+                disabled={dispatchButton.disabled}
+                aria-disabled={dispatchButton.disabled}
+                data-dispatch-state={dispatchButton.reason}
               >
-                {isDispatching ? 'Sending to Dispatch…' : isReplay ? 'View-only (past period)' : (usdToPhpRate <= 0 || usdToCopRate <= 0) ? 'Set Step 2 rates first' : 'Lock in Values & Send to Payment Dispatch'}
+                {dispatchButton.reason === 'locked' ? (
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                ) : dispatchButton.reason === 'lock-loading' ? (
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                ) : null}
+                {dispatchButton.label}
               </Button>
               {/* Rate snapshots toggle — ON floats live People-tab Banking Info +
                   Payment Catalog cards beside each Preview Emails paystub so the
@@ -18905,9 +18957,16 @@ export default function PayrollWizard({
                 />
               </div>
             </div>
-            {!isReplay && (usdToPhpRate <= 0 || usdToCopRate <= 0) && (
+            {dispatchButton.reason === 'fx-missing' && (
               <p className="text-center text-sm font-medium text-amber-700 dark:text-amber-400">
                 Set this cycle&apos;s USD → PHP and USD → COP rates on Step 2 first — dispatch is blocked while either is 0.
+              </p>
+            )}
+            {dispatchButton.reason === 'locked' && (
+              <p className="max-w-lg text-center text-sm text-zinc-500 dark:text-zinc-400">
+                Already locked in and sent — this button stays off until you{' '}
+                <span className="font-medium text-zinc-700 dark:text-zinc-300">Unlock Payment Dispatch</span> above.
+                Re-sending while locked would overwrite paystubs the Dispatch office may already have paid.
               </p>
             )}
           </div>

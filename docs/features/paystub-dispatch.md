@@ -94,6 +94,21 @@ explicit, realtime, reversible flag:
   with an **Unlock** button; Unlock sets the flag `false` and **Payment Dispatch empties in real
   time**. Hook: `useWizardDispatchLock(sourceFile)` (`src/hooks/useWizardDispatchLock.ts`),
   modeled on `useDispatchLock`; only payroll/admin (elevated) can toggle, the clerk only reads.
+- **While the cycle is locked, the primary button is DISABLED** (2026-09-03, Kane: "make sure
+  this button is greyed out already"). It reads **"Locked in & sent to Payment Dispatch"** with a
+  check icon, the banner names who locked it and when (`lockedBy` / `lockedAt`), and a line under
+  the button says re-sending would overwrite paystubs the Dispatch office may already have paid.
+  **Unlock → change → lock again is the only way to re-stage** — the same "unlock and re-lock"
+  path every other doc names; clicking Lock while locked is no longer a re-lock. The button is
+  also disabled while the flag is still hydrating ("Checking lock status…"), so a fast click
+  cannot re-stage a cycle another tab locked, and the click handler re-checks both (the flag is
+  carried by a 30s poll, not Realtime — [[dispatch-wizard-values-precedence]]). Precedence
+  `dispatching → replay → lock-loading → locked → fx-missing → ready` is the pure, unit-tested
+  `resolveDispatchButtonState` (`src/lib/payroll-wizard/dispatch-button-state.ts`); `disabled`
+  and the label come from the same call so they cannot disagree. Why this is a tightening:
+  `upsertPaystubDispatchQueue` re-stages `amount_php`/`payload` onto rows already **paid**
+  ([[paystub-staged-snapshot-stale]], 2026-08-26 correction), so an accidental second click on a
+  live cycle could make an emailed payload unrecoverable.
 - `useDispatchQueue` derives `wizardReady` from this flag (an **absent flag = not locked**); when
   false it empties rows/excluded/paid and the UI shows a big **"Payroll Wizard isn't ready yet"**
   note (Accounting embed + standalone clerk page). The dispatch surfaces also subscribe to the
