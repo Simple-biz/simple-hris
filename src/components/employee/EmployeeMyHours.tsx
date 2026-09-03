@@ -1525,7 +1525,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
 
             {/* Month block is indented by the week-number gutter (column + gap) so the
                 pill's left edge levels with the first day tile below it. */}
-            <div className="flex flex-wrap items-center justify-between gap-2 pl-[1.875rem] sm:pl-9">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pl-[1.875rem] sm:pl-9">
               <div className="inline-flex items-center rounded-lg border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
                 <button
                   type="button"
@@ -1559,29 +1559,34 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                   <ChevronRight className="h-4 w-4" />
                 </button>
               </div>
-            </div>
 
-            <p className="flex items-center gap-1 pl-[1.875rem] text-[10px] text-indigo-600 dark:text-indigo-400 sm:pl-9 sm:text-[11px]">
-              <CalendarDays className="h-3 w-3 shrink-0" />
-              <span>
-                <span className="font-semibold">
-                  {MONTH_NAMES[viewMonth]} {viewYear}
-                </span>
-                {' · '}
-              {formatRangeDate(monthStart)} – {formatRangeDate(monthEnd)}
-              </span>
-            </p>
-            <p className="flex items-center gap-1 pl-[1.875rem] text-[10px] text-zinc-500 dark:text-zinc-400 sm:pl-9 sm:text-[11px]">
-              <Trophy className="h-3 w-3 shrink-0 text-indigo-500/80 dark:text-indigo-400/80" />
-              <span>
-                PAB period: {formatRangeDate(pabRange.start)} – {formatRangeDate(pabRange.end)}
-                {pabRange.isOverride ? (
-                  <span className="ml-1 rounded bg-indigo-100 px-1 py-px text-[9px] font-semibold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
-                    custom
+              {/* Month range + PAB period, flattened onto one line to the right of
+                  the pill; wraps beneath it when the header is too narrow. */}
+              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[10px] sm:text-[11px]">
+                <p className="flex items-center gap-1 text-indigo-600 dark:text-indigo-400">
+                  <CalendarDays className="h-3 w-3 shrink-0" />
+                  <span>
+                    <span className="font-semibold">
+                      {MONTH_NAMES[viewMonth]} {viewYear}
+                    </span>
+                    {' · '}
+                    {formatRangeDate(monthStart)} – {formatRangeDate(monthEnd)}
                   </span>
-                ) : null}
-              </span>
-            </p>
+                </p>
+                <span aria-hidden className="hidden h-3 w-px bg-zinc-200 dark:bg-zinc-700 sm:block" />
+                <p className="flex items-center gap-1 text-zinc-500 dark:text-zinc-400">
+                  <Trophy className="h-3 w-3 shrink-0 text-indigo-500/80 dark:text-indigo-400/80" />
+                  <span>
+                    PAB period: {formatRangeDate(pabRange.start)} – {formatRangeDate(pabRange.end)}
+                    {pabRange.isOverride ? (
+                      <span className="ml-1 rounded bg-indigo-100 px-1 py-px text-[9px] font-semibold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+                        custom
+                      </span>
+                    ) : null}
+                  </span>
+                </p>
+              </div>
+            </div>
           </CardHeader>
 
           <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 pb-4 pt-0 sm:px-6 sm:pb-6">
