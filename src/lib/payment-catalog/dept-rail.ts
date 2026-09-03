@@ -20,10 +20,14 @@ import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import type { PayStructure } from '@/lib/payment-catalog/pay-structure';
 import { normalizeNameTokens } from '@/lib/name/name-tokens';
 
-/** A rail entry, exactly the `{key, name}` shape the tab already passes around. */
+/** A rail entry, exactly the `{key, name}` shape the tab already passes around.
+ *  `aliases` are the FORMER names of a renamed in-app department (its registry
+ *  `previousNames`): a master cell written before the rename still carries the
+ *  old label and must keep landing on this entry. */
 export interface DeptRailEntry {
   key: string;
   name: string;
+  aliases?: readonly string[];
 }
 
 /** One parent and the children disclosed under it. `children` is empty for a
@@ -141,7 +145,8 @@ export function deptCellMatchesEntry(cell: string, entry: DeptRailEntry): boolea
   return (
     normalizeDeptToKey(cell) === entry.key ||
     c === rawKey ||
-    (nameKey !== '' && c === nameKey)
+    (nameKey !== '' && c === nameKey) ||
+    (entry.aliases ?? []).some((a) => a.trim().toLowerCase() === c)
   );
 }
 

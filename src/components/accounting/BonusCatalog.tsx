@@ -649,6 +649,10 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   // department_managers assignment (dept string, lower-cased -> manager emails).
   const [deptRegistry, setDeptRegistry] = useState<DepartmentRegistryEntry[]>([]);
   const [deptManagers, setDeptManagers] = useState<Record<string, string[]>>({});
+  /** app_settings revision of the registry (GET `revision`). The Edit Department
+   *  dialog hands it back so a stale save is refused (409) instead of clobbering
+   *  a teammate's edit. */
+  const [deptRegistryRevision, setDeptRegistryRevision] = useState<string | null>(null);
   // Pay Processors registry (stored rows merged over the code seeds server-side).
   const [payProcessors, setPayProcessors] = useState<PayProcessor[]>([]);
   // Set when another tab asks Pay Structure to open focused on a department.
@@ -681,7 +685,9 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
     return deptRegistry
       .filter((entry) => !builtin.has(entry.key))
       .flatMap((entry) => [
-        { key: entry.key, name: entry.name },
+        // A renamed department's former names ride along as rail aliases, so a
+        // master cell still carrying the old label homes on this entry.
+        { key: entry.key, name: entry.name, aliases: entry.previousNames ?? [] },
         ...entry.subDepartments.map((sub) => ({
           key: subDeptStructureKey(entry.key, sub.key),
           name: `${entry.name} — ${sub.name}`,
@@ -746,6 +752,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
       const sys = (await sysRes.json()) as { bonuses?: SystemBonus[]; error?: string | null };
       const dept = (await deptRes.json()) as {
         registry?: DepartmentRegistryEntry[];
+        revision?: string | null;
         managers?: Record<string, string[]>;
         error?: string | null;
       };
@@ -755,6 +762,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
       setPayStructures(pay.structures ?? []);
       setSystemBonuses(sys.bonuses ?? []);
       setDeptRegistry(dept.registry ?? []);
+      setDeptRegistryRevision(dept.revision ?? null);
       setDeptManagers(dept.managers ?? {});
       // A failed processors read keeps the PRIOR list rather than blanking it —
       // an empty tab reads as "every processor is gone", not as an error.
@@ -1147,8 +1155,9 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
                 roster={visibleRoster}
                 payStructures={payStructures}
                 registry={deptRegistry}
+                registryRevision={deptRegistryRevision}
                 managersByDept={deptManagers}
-                onCreated={() => void refetch()}
+                onChanged={() => void refetch()}
                 onOpenPayStructure={(deptKey) => {
                   setPayFocusDept(deptKey);
                   setTab('pay-structure');

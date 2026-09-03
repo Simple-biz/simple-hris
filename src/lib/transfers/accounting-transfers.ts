@@ -1,3 +1,4 @@
+import { getDepartmentRegistry } from '@/lib/departments/registry-db';
 import {
   listAllTransferRequests,
   type TransferRequestStatus,
@@ -106,8 +107,12 @@ export async function buildAccountingTransfers(): Promise<{
   if (transfers.length === 0) return { rows: [], error: null };
 
   // Payment Catalog department base rates drive the from/to rate comparison.
-  const { structures } = await listPayStructures();
-  const catalogIndex = buildCatalogRateIndex(structures);
+  const [{ structures }, deptRegistry] = await Promise.all([
+    listPayStructures(),
+    // Renamed in-app departments resolve their base rate by alias slug.
+    getDepartmentRegistry().catch(() => []),
+  ]);
+  const catalogIndex = buildCatalogRateIndex(structures, deptRegistry);
 
   const rows: AccountingTransferRow[] = transfers.map((t) => {
     const rateChange = resolveDeptRateChange(catalogIndex, t.from_department, t.to_department);

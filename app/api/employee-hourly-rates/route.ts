@@ -1,3 +1,4 @@
+import { getDepartmentRegistry } from "@/lib/departments/registry-db";
 import {
   getEmployeeHourlyRateRowByEmail,
   getEmployeeHourlyRatesRows,
@@ -39,10 +40,12 @@ export async function GET(req: NextRequest) {
       if (!isSelf && !hasRateVisibility(authz.roles)) {
         return NextResponse.json({ rows: [], error: "Forbidden" }, { status: 403 });
       }
-      const [{ row, error }, payStructures, fxValues] = await Promise.all([
+      const [{ row, error }, payStructures, fxValues, deptRegistry] = await Promise.all([
         getEmployeeHourlyRateRowByEmail(authz.effectiveEmail),
         listPayStructures(),
         getAppSettings(["usd_to_php_rate", "usd_to_cop_rate"]),
+        // Renamed in-app departments resolve their base rate by alias slug.
+        getDepartmentRegistry().catch(() => []),
       ]);
       // "Your current rate" with priority: individual catalog → sheet (the row)
       // → department base. The individual catalog rate overrides the row; the
@@ -51,7 +54,7 @@ export async function GET(req: NextRequest) {
       // history elsewhere ("live cycle only").
       let outRow = row;
       const fx = buildFxRates(fxValues);
-      const catIdx = buildCatalogRateIndex(payStructures.structures);
+      const catIdx = buildCatalogRateIndex(payStructures.structures, deptRegistry);
       const emails = [authz.effectiveEmail, row?.work_email ?? "", row?.personal_email ?? ""];
       const empCat = resolveEmployeeCatalogRate(catIdx, emails, fx);
       const hasSheet =

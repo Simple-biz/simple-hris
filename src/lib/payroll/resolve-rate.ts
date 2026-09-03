@@ -29,6 +29,7 @@
  * only for current/future periods so past replays keep resolving from dated
  * history.
  */
+import { deptKeyAliasSlugs, type DepartmentRegistryEntry } from '@/lib/departments/registry';
 import {
   type PayStructure,
   type PayCurrency,
@@ -46,6 +47,9 @@ export interface CatalogRateIndex {
   byEmail: Map<string, PayStructure>;
   /** canonical department key → department-scoped structure. */
   byDeptKey: Map<string, PayStructure>;
+  /** slug → structure key for the FORMER/CURRENT labels of renamed in-app
+   *  departments (see buildCatalogRateIndex). Absent when no registry was given. */
+  aliasKeys?: ReadonlyMap<string, string>;
 }
 
 /** A catalog rate resolved for one employee, ready for PHP pay math. */
@@ -66,7 +70,18 @@ export interface ResolvedCatalogRate {
  * Build a lookup from the flat list returned by `listPayStructures()`. When two
  * structures share a key the later one wins (matches `upsert`-by-id semantics).
  */
-export function buildCatalogRateIndex(structures: PayStructure[]): CatalogRateIndex {
+export function buildCatalogRateIndex(
+  structures: PayStructure[],
+  /**
+   * The in-app department registry, when the caller has it. A RENAMED registry
+   * department keeps its key (the slug of its ORIGINAL name), so a master cell
+   * carrying the NEW name slugs to something that is not a structure key. The
+   * registry's alias slugs (`deptKeyAliasSlugs`) close that gap here; without
+   * it, the person silently loses the department base. Optional so the eleven
+   * existing callers keep compiling — pass it wherever the registry is loaded.
+   */
+  registry: readonly DepartmentRegistryEntry[] = [],
+): CatalogRateIndex {
   const byEmail = new Map<string, PayStructure>();
   const byDeptKey = new Map<string, PayStructure>();
   for (const s of structures) {
@@ -77,7 +92,8 @@ export function buildCatalogRateIndex(structures: PayStructure[]): CatalogRateIn
       byDeptKey.set(s.departmentKey, s);
     }
   }
-  return { byEmail, byDeptKey };
+  const aliasKeys = registry.length > 0 ? deptKeyAliasSlugs(registry) : undefined;
+  return aliasKeys && aliasKeys.size > 0 ? { byEmail, byDeptKey, aliasKeys } : { byEmail, byDeptKey };
 }
 
 function toResolved(s: PayStructure, fx: FxRates): ResolvedCatalogRate {
@@ -193,7 +209,12 @@ export function resolveDeptCatalogRate(
   const slug = slugifyDeptKey(deptRaw);
   const key =
     normalizeDeptToKey(deptRaw) ??
-    (index.byDeptKey.has(deptRaw) ? deptRaw : slug && index.byDeptKey.has(slug) ? slug : null);
+    (index.byDeptKey.has(deptRaw)
+      ? deptRaw
+      : slug && index.byDeptKey.has(slug)
+        ? slug
+        // A renamed in-app department: the label's slug is an ALIAS of the key.
+        : (slug && index.aliasKeys?.get(slug)) || null);
   if (!key) return null;
   const s = index.byDeptKey.get(key);
   return s ? toResolved(s, fx) : null;

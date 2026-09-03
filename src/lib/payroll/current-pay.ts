@@ -821,7 +821,7 @@ export async function computeCurrentPay(
   // dispatch cycle, so the overlay applies to every day — "live cycle only"
   // historical gating lives in the dashboard estimate path
   // (member-monthly-pay.ts), not here.
-  const catalogIndex = buildCatalogRateIndex(payStructuresResult.structures);
+  const catalogIndex = buildCatalogRateIndex(payStructuresResult.structures, deptRegistrySafe);
 
   // ── Bonus prep ───────────────────────────────────────────────────────
   // 1. Determine the dispatch week's date range. Two paths:

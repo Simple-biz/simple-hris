@@ -8,6 +8,7 @@
  * `payment_dispatches` by the trigger in
  * `references/seed_disbursement_records_sync.sql`.
  */
+import { getDepartmentRegistry } from "@/lib/departments/registry-db";
 import {
   createSupabaseServerClient,
   createSupabaseServiceRoleClient,
@@ -987,15 +988,19 @@ export async function seedMissingDisbursementRecords(opts: {
     return rows;
   };
 
-  const [payStructuresResult, rateHistory, masterRows, hslTransferEffective] = await Promise.all([
+  const [payStructuresResult, rateHistory, masterRows, hslTransferEffective, deptRegistry] = await Promise.all([
     listPayStructures(),
     fetchAllRateHistory(),
     fetchRosterPaged(),
     // Into-HSL transfer effective dates — day-scopes the weekend premium in a
     // transfer week (resolveHslWeekScope), matching current-pay.ts.
     fetchHslTransferEffectiveByEmail(),
+    // In-app department registry, so a RENAMED department's new label still
+    // resolves its base rate (alias slugs). Best-effort like every other
+    // registry read: a failed read degrades to the pre-rename behaviour.
+    getDepartmentRegistry().catch(() => []),
   ]);
-  const catalogIndex = buildCatalogRateIndex(payStructuresResult.structures);
+  const catalogIndex = buildCatalogRateIndex(payStructuresResult.structures, deptRegistry);
 
   // HSL email set — drives the +15₱/h weekend premium, matching current-pay.ts:
   // normalized dept match so 'HSL', 'hsl:*' sub-teams and 'Hogan Smith Law'

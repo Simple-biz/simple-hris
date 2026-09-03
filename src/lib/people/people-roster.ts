@@ -1,3 +1,4 @@
+import { getDepartmentRegistry } from '@/lib/departments/registry-db';
 import 'server-only';
 
 import { normEmail } from '@/lib/email/norm-email';
@@ -162,7 +163,7 @@ export interface PeopleRateContext {
 export async function loadPeopleRateContext(): Promise<PeopleRateContext> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
 
-  const [fxRes, payStructuresRes, ratesRes] = await Promise.all([
+  const [fxRes, payStructuresRes, ratesRes, deptRegistry] = await Promise.all([
     supabase
       ? supabase.from('app_settings').select('key,value').in('key', ['usd_to_php_rate', 'usd_to_cop_rate'])
       : Promise.resolve({ data: null }),
@@ -172,6 +173,8 @@ export async function loadPeopleRateContext(): Promise<PeopleRateContext> {
     // cap. The previous raw select('*') here was silently truncated at 1000 of
     // 22k+ history rows, so sheet rates AND legacy routing were incomplete.
     getEmployeeHourlyRatesRows(),
+    // Renamed in-app departments resolve their base rate by alias slug.
+    getDepartmentRegistry().catch(() => []),
   ]);
 
   const fxValues: Record<string, string | null> = {};
@@ -179,7 +182,7 @@ export async function loadPeopleRateContext(): Promise<PeopleRateContext> {
     fxValues[r.key] = r.value;
   }
   const fx = buildFxRates(fxValues);
-  const catalogIndex = buildCatalogRateIndex(payStructuresRes.structures);
+  const catalogIndex = buildCatalogRateIndex(payStructuresRes.structures, deptRegistry);
 
   const rateByEmail = new Map<string, { reg: number | null; ot: number | null }>();
   const legacyByEmail = new Map<string, EmployeeHourlyRateRow>();

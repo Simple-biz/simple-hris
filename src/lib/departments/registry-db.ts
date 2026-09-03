@@ -2,7 +2,12 @@
 // app_settings (no dedicated table, no migration). See registry.ts for the
 // data model and why the registry exists at all.
 
-import { getAppSettingStrict, upsertAppSetting } from '@/lib/supabase/app-settings';
+import {
+  casUpdateAppSetting,
+  getAppSettingStrict,
+  getAppSettingWithMetaStrict,
+  upsertAppSetting,
+} from '@/lib/supabase/app-settings';
 import {
   DEPARTMENTS_REGISTRY_SETTING_KEY,
   type DepartmentMemberRecord,
@@ -49,6 +54,16 @@ function sanitizeEntry(raw: unknown): DepartmentRegistryEntry | null {
   const members = (Array.isArray(r.members) ? r.members : [])
     .map(sanitizeMember)
     .filter((m): m is DepartmentMemberRecord => m !== null);
+  // Former names (a rename keeps the key). Trimmed, de-duplicated, never the
+  // current name — so deptEntryLabels() is exactly "name + previousNames".
+  const seenLabels = new Set([name.toLowerCase()]);
+  const previousNames = (Array.isArray(r.previousNames) ? r.previousNames : [])
+    .map((v) => (typeof v === 'string' ? v.trim() : ''))
+    .filter((v) => {
+      if (!v || seenLabels.has(v.toLowerCase())) return false;
+      seenLabels.add(v.toLowerCase());
+      return true;
+    });
   return {
     key,
     name,
@@ -56,24 +71,80 @@ function sanitizeEntry(raw: unknown): DepartmentRegistryEntry | null {
     members,
     createdBy: typeof r.createdBy === 'string' ? r.createdBy : null,
     createdAt: typeof r.createdAt === 'string' ? r.createdAt : new Date(0).toISOString(),
+    ...(previousNames.length > 0 ? { previousNames } : {}),
+    ...(typeof r.updatedBy === 'string' ? { updatedBy: r.updatedBy } : {}),
+    ...(typeof r.updatedAt === 'string' ? { updatedAt: r.updatedAt } : {}),
   };
 }
 
-/** Reads the registry. THROWS on a failed read (a transient DB error must not
- *  be mistaken for "no custom departments" -- a later save would then wipe the
- *  registry). An absent key is genuinely an empty registry. */
-export async function getDepartmentRegistry(): Promise<DepartmentRegistryEntry[]> {
-  const value = await getAppSettingStrict(DEPARTMENTS_REGISTRY_SETTING_KEY);
+/** Parses the stored JSON. Corrupt JSON reads as empty but is NEVER persisted
+ *  over here — only an explicit save may overwrite. */
+function parseRegistry(value: string | null): DepartmentRegistryEntry[] {
   if (!value) return [];
   try {
     const parsed: unknown = JSON.parse(value);
     if (!Array.isArray(parsed)) return [];
     return parsed.map(sanitizeEntry).filter((e): e is DepartmentRegistryEntry => e !== null);
   } catch {
-    // Corrupt JSON: surface as empty but DO NOT persist anything over it here;
-    // only an explicit save may overwrite.
     return [];
   }
+}
+
+/** Reads the registry. THROWS on a failed read (a transient DB error must not
+ *  be mistaken for "no custom departments" -- a later save would then wipe the
+ *  registry). An absent key is genuinely an empty registry. */
+export async function getDepartmentRegistry(): Promise<DepartmentRegistryEntry[]> {
+  return parseRegistry(await getAppSettingStrict(DEPARTMENTS_REGISTRY_SETTING_KEY));
+}
+
+/**
+ * The registry plus its REVISION — `app_settings.updated_at` for the key (null
+ * when the key does not exist yet). The Edit Department dialog carries the
+ * revision it loaded back on save so {@link replaceDepartmentRegistryEntry}
+ * can refuse a stale write. THROWS on a failed read, like getDepartmentRegistry.
+ */
+export async function getDepartmentRegistryWithRevision(): Promise<{
+  registry: DepartmentRegistryEntry[];
+  revision: string | null;
+}> {
+  const meta = await getAppSettingWithMetaStrict(DEPARTMENTS_REGISTRY_SETTING_KEY);
+  if (!meta) return { registry: [], revision: null };
+  return { registry: parseRegistry(meta.value), revision: meta.updatedAt };
+}
+
+/**
+ * Replaces ONE entry (matched by key) with a compare-and-swap on the registry
+ * revision: the write lands only if `app_settings.updated_at` still equals
+ * `expectedRevision`. Two accountants editing departments at once therefore
+ * cannot silently overwrite each other — the loser gets `conflict: true` and
+ * reloads. `error` is reserved for a write that genuinely failed.
+ */
+export async function replaceDepartmentRegistryEntry(
+  entry: DepartmentRegistryEntry,
+  expectedRevision: string | null,
+): Promise<{ ok: boolean; conflict: boolean; error: string | null; revision: string | null }> {
+  let loaded: { registry: DepartmentRegistryEntry[]; revision: string | null };
+  try {
+    loaded = await getDepartmentRegistryWithRevision();
+  } catch (e) {
+    return {
+      ok: false,
+      conflict: false,
+      error: e instanceof Error ? e.message : 'Could not read the department registry',
+      revision: null,
+    };
+  }
+  if ((loaded.revision ?? null) !== (expectedRevision ?? null)) {
+    return { ok: false, conflict: true, error: null, revision: loaded.revision };
+  }
+  if (!loaded.registry.some((e) => e.key === entry.key)) {
+    return { ok: false, conflict: false, error: `Department "${entry.key}" is not in the registry`, revision: loaded.revision };
+  }
+  const next = loaded.registry.filter((e) => e.key !== entry.key);
+  next.push(entry);
+  next.sort((a, b) => a.name.localeCompare(b.name));
+  const res = await casUpdateAppSetting(DEPARTMENTS_REGISTRY_SETTING_KEY, JSON.stringify(next), loaded.revision);
+  return { ok: res.ok, conflict: res.conflict, error: res.error, revision: res.updatedAt ?? loaded.revision };
 }
 
 /** Inserts or replaces one entry (matched by key) and persists the registry. */

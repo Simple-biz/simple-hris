@@ -1,8 +1,19 @@
 // Payment Catalog -- Departments.
 //
-// GET  -> { registry, managers } : the in-app department registry plus every
-//         active department_managers assignment grouped by department (lower-
-//         cased), so the Department tab can label each department's manager(s).
+// GET  -> { registry, revision, managers } : the in-app department registry, its
+//         revision (app_settings.updated_at — the Edit dialog hands it back so a
+//         stale save is refused) plus every active department_managers
+//         assignment grouped by department (lower-cased), so the Department tab
+//         can label each department's manager(s).
+// PATCH -> edits ONE department (see docs/features/payment-catalog-departments.md
+//         §6), streaming the same ndjson stage protocol:
+//           1. "department" -- the whole entry (name, sub-departments, members)
+//                              in ONE compare-and-swap write; 409 when stale
+//           2. "managers"   -- department_managers grants diffed against the
+//                              previous manager set, under managerGrantLabel()
+//           3. "rates"      -- base rates for NEW sub-departments; the own base
+//                              rate row of a REMOVED sub-department is deleted
+//         The key never changes. A rename files the old name in previousNames.
 // POST -> creates a department end-to-end, STREAMING progress as ndjson lines
 //         (one JSON CreateDepartmentEvent per line) so the wizard's staged
 //         loading animation tracks real work, not a timer:
@@ -28,25 +39,34 @@ import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import {
   assignManagerDepartment,
   listAllDepartmentManagers,
+  revokeManagerDepartment,
 } from '@/lib/supabase/department-managers';
-import { listPayStructures, upsertPayStructure } from '@/lib/supabase/pay-structures-db';
+import { deletePayStructure, listPayStructures, upsertPayStructure } from '@/lib/supabase/pay-structures-db';
 import { newPayId, type PayStructure } from '@/lib/payment-catalog/pay-structure';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import {
+  applyDepartmentEdit,
+  diffDepartmentEdit,
+  managerGrantLabel,
   slugifyDeptKey,
   subDeptStructureKey,
   validateCreateDepartmentInput,
+  validateEditDepartmentInput,
   type CreateDepartmentEvent,
   type CreateDepartmentInput,
   type CreateDepartmentStageKey,
   type DepartmentMemberRecord,
   type DepartmentRegistryEntry,
+  type EditDepartmentEvent,
+  type EditDepartmentInput,
   type NewDepartmentMember,
 } from '@/lib/departments/registry';
 import {
   getDepartmentRegistry,
+  getDepartmentRegistryWithRevision,
   mergeDepartmentMembers,
+  replaceDepartmentRegistryEntry,
   upsertDepartmentRegistryEntry,
 } from '@/lib/departments/registry-db';
 
@@ -59,11 +79,12 @@ export async function GET() {
   if (!authz.ok) return deniedResponse(authz);
 
   let registry: DepartmentRegistryEntry[];
+  let revision: string | null;
   try {
-    registry = await getDepartmentRegistry();
+    ({ registry, revision } = await getDepartmentRegistryWithRevision());
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Could not read the department registry';
-    return NextResponse.json({ registry: [], managers: {}, error: message }, { status: 500 });
+    return NextResponse.json({ registry: [], revision: null, managers: {}, error: message }, { status: 500 });
   }
 
   const { rows, error } = await listAllDepartmentManagers();
@@ -75,7 +96,7 @@ export async function GET() {
     if (!email) continue;
     (managers[dept] ??= []).push(email);
   }
-  return NextResponse.json({ registry, managers, error: error ?? null });
+  return NextResponse.json({ registry, revision, managers, error: error ?? null });
 }
 
 /** Wizard member -> stored registry record (normalized emails + attribution). */
@@ -311,4 +332,224 @@ export async function POST(request: Request) {
       'X-Accel-Buffering': 'no',
     },
   });
+}
+
+/** Shared response headers for the ndjson stage stream. */
+const NDJSON_HEADERS = {
+  'Content-Type': 'application/x-ndjson; charset=utf-8',
+  'Cache-Control': 'no-store',
+  // Defensive: some proxies buffer streamed responses without this.
+  'X-Accel-Buffering': 'no',
+};
+
+/** The message a stale save gets, everywhere it can surface. */
+const STALE_EDIT_MESSAGE = 'This department changed since you opened it. Reload and try again.';
+
+export async function PATCH(request: Request) {
+  const authz = await requireFeatureEdit('accounting', 'bonus_catalog');
+  if (!authz.ok) return deniedResponse(authz);
+  const actor = authz.sessionEmail;
+
+  let input: EditDepartmentInput;
+  try {
+    input = (await request.json()) as EditDepartmentInput;
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  if (
+    !input ||
+    typeof input.key !== 'string' ||
+    typeof input.name !== 'string' ||
+    !Array.isArray(input.subDepartments) ||
+    !Array.isArray(input.members)
+  ) {
+    return NextResponse.json({ error: 'Malformed edit payload' }, { status: 400 });
+  }
+
+  // Resolve the registry before streaming, while a clean 4xx/5xx is possible.
+  let loaded: { registry: DepartmentRegistryEntry[]; revision: string | null };
+  try {
+    loaded = await getDepartmentRegistryWithRevision();
+  } catch (e) {
+    const message = e instanceof Error ? e.message : 'Could not read the department registry';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+  const existing = loaded.registry.find((entry) => entry.key === input.key) ?? null;
+  if (!existing) {
+    return NextResponse.json({ error: 'That department is no longer in the registry.' }, { status: 404 });
+  }
+  if ((input.expectedRevision ?? null) !== (loaded.revision ?? null)) {
+    return NextResponse.json({ error: STALE_EDIT_MESSAGE, conflict: true }, { status: 409 });
+  }
+  const check = validateEditDepartmentInput(input, existing, loaded.registry);
+  if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
+
+  const diff = diffDepartmentEdit(existing, input);
+  const nowIso = new Date().toISOString();
+  const next = applyDepartmentEdit(existing, input, actor, nowIso);
+  // Grants live under the label whose slug IS the key (the original name) —
+  // manager surfaces slug the grant string to find the department, so this must
+  // not follow a rename. `existing` and `next` agree (the old name is filed in
+  // next.previousNames); read it off `existing` for clarity.
+  const grantLabel = managerGrantLabel(existing);
+  const key = existing.key;
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const emit = (event: EditDepartmentEvent) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      };
+      const fail = (stage: CreateDepartmentStageKey, message: string) => {
+        emit({ type: 'error', stage, message });
+        controller.close();
+      };
+
+      try {
+        // -- Stage 1: the entry, in one CAS write ---------------------------
+        emit({ type: 'stage', stage: 'department', status: 'start' });
+        const saved = await replaceDepartmentRegistryEntry(next, loaded.revision);
+        if (saved.conflict) return fail('department', STALE_EDIT_MESSAGE);
+        if (!saved.ok) return fail('department', saved.error ?? 'Could not save the department');
+        const deptNotes: string[] = [];
+        if (diff.renamed) deptNotes.push(`renamed to ${diff.renamed.to}`);
+        if (diff.subsAdded.length) deptNotes.push(`+${diff.subsAdded.length} sub-dept`);
+        if (diff.subsRemoved.length) deptNotes.push(`-${diff.subsRemoved.length} sub-dept`);
+        if (diff.membersAdded.length) deptNotes.push(`+${diff.membersAdded.length} people`);
+        if (diff.membersRemoved.length) deptNotes.push(`-${diff.membersRemoved.length} people`);
+        emit({
+          type: 'stage',
+          stage: 'department',
+          status: 'done',
+          note: deptNotes.length > 0 ? deptNotes.join(' · ') : 'no structural change',
+        });
+
+        // -- Stage 2: manager grants, diffed ---------------------------------
+        emit({ type: 'stage', stage: 'managers', status: 'start' });
+        for (const email of diff.managersRevoked) {
+          const res = await revokeManagerDepartment({ manager_email: email, department: grantLabel });
+          if (res.error) return fail('managers', `${email}: could not revoke manager access: ${res.error}`);
+        }
+        for (const email of diff.managersGranted) {
+          const res = await assignManagerDepartment({
+            manager_email: email,
+            department: grantLabel,
+            assigned_by: actor,
+          });
+          if (res.error) return fail('managers', `${email}: manager grant failed: ${res.error}`);
+        }
+        emit({
+          type: 'stage',
+          stage: 'managers',
+          status: 'done',
+          note:
+            diff.managersGranted.length + diff.managersRevoked.length === 0
+              ? 'unchanged'
+              : `+${diff.managersGranted.length} / -${diff.managersRevoked.length}`,
+        });
+
+        // -- Stage 3: base rates -------------------------------------------
+        // New sub-departments may carry an initial base rate (as in Create); a
+        // removed sub-department's OWN dept-scope row is deleted so no orphaned
+        // `<key>:<sub>` structure lingers (Kane, 2026-09-03). Existing subs'
+        // rates are never touched here — Pay Structure is their write path.
+        emit({ type: 'stage', stage: 'rates', status: 'start' });
+        let ratesSet = 0;
+        let ratesDeleted = 0;
+        const warnings: string[] = [];
+        const ratedNew = input.subDepartments.filter((s) => s.key == null && s.payStructure);
+        const needStructures = ratedNew.length > 0 || diff.subsRemoved.length > 0 || (existing.subDepartments.length === 0 && next.subDepartments.length > 0);
+        if (needStructures) {
+          const { structures, error: listErr } = await listPayStructures();
+          if (listErr) return fail('rates', listErr);
+          const existingFor = (structureKey: string) =>
+            structures.find((s) => s.scope === 'department' && s.departmentKey === structureKey);
+          for (const removed of diff.subsRemoved) {
+            const row = existingFor(subDeptStructureKey(key, removed.key));
+            if (!row) continue;
+            const { error: delErr } = await deletePayStructure(row.id);
+            if (delErr) return fail('rates', `${removed.name}: could not delete its base rate: ${delErr}`);
+            ratesDeleted += 1;
+          }
+          for (const sub of ratedNew) {
+            const structureKey = subDeptStructureKey(key, slugifyDeptKey(sub.name));
+            const structure: PayStructure = {
+              id: existingFor(structureKey)?.id ?? newPayId(),
+              scope: 'department',
+              departmentKey: structureKey,
+              regularRate: sub.payStructure!.regularRate,
+              otRate: sub.payStructure!.otRate,
+              currency: sub.payStructure!.currency,
+            };
+            const { error: rateErr } = await upsertPayStructure(structure, actor);
+            if (rateErr) return fail('rates', `${sub.name.trim()}: ${rateErr}`);
+            ratesSet += 1;
+          }
+          // A flat department that just gained sub-departments may still carry a
+          // department-wide rate. Create refuses that combination; an edit keeps
+          // the row (it is the fallback for unpriced subs) and says so.
+          if (existing.subDepartments.length === 0 && next.subDepartments.length > 0) {
+            const parentRow = existingFor(key);
+            if (parentRow) {
+              warnings.push(
+                `${next.name} keeps its department-wide rate (${parentRow.currency} ${parentRow.regularRate}/hr) as the fallback for sub-departments without their own rate. Remove it in Pay Structure if you don't want that.`,
+              );
+            }
+          }
+        }
+        emit({
+          type: 'stage',
+          stage: 'rates',
+          status: 'done',
+          note:
+            ratesSet + ratesDeleted === 0
+              ? 'unchanged'
+              : [ratesSet > 0 ? `${ratesSet} set` : null, ratesDeleted > 0 ? `${ratesDeleted} removed` : null]
+                  .filter(Boolean)
+                  .join(' · '),
+        });
+
+        // Audit trail (best-effort, never fails the save).
+        const whoActor = await getSessionActor();
+        void insertAuditLog({
+          user_name: whoActor.user_name,
+          user_role: whoActor.user_role,
+          action: 'department.update',
+          resource: 'payment_catalog_departments',
+          resource_id: key,
+          details: {
+            department: next.name,
+            renamed: diff.renamed,
+            grant_label: grantLabel,
+            sub_departments_added: diff.subsAdded.map((s) => s.name),
+            sub_departments_renamed: diff.subsRenamed,
+            sub_departments_removed: diff.subsRemoved.map((s) => s.name),
+            members_added: diff.membersAdded,
+            members_removed: diff.membersRemoved,
+            managers_granted: diff.managersGranted,
+            managers_revoked: diff.managersRevoked,
+            sub_reassigned: diff.subReassigned,
+            rates_set: ratesSet,
+            rates_deleted: ratesDeleted,
+          },
+        }).catch(() => undefined);
+
+        emit({
+          type: 'done',
+          summary: { key, name: next.name, diff, ratesSet, ratesDeleted, warnings },
+        });
+        controller.close();
+      } catch (e) {
+        const message = e instanceof Error ? e.message : 'Saving the department failed';
+        try {
+          emit({ type: 'error', stage: 'department', message });
+          controller.close();
+        } catch {
+          /* stream already closed */
+        }
+      }
+    },
+  });
+
+  return new Response(stream, { headers: NDJSON_HEADERS });
 }

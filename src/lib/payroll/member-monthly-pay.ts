@@ -586,7 +586,7 @@ export async function computeMemberMonthlyPay(args: {
     args.year > nowForMonth.getFullYear() ||
     (args.year === nowForMonth.getFullYear() && args.month >= nowForMonth.getMonth());
   // Priority: individual (employee) catalog → sheet rate → department base.
-  const catIdx = buildCatalogRateIndex(payStructuresResult.structures);
+  const catIdx = buildCatalogRateIndex(payStructuresResult.structures, deptRegistry ?? []);
   const empCat = viewedIsCurrentOrFuture ? resolveEmployeeCatalogRate(catIdx, aliasNorms, fx) : null;
   const deptCat = viewedIsCurrentOrFuture
     ? resolveDeptCatalogRate(catIdx, masterRow?.department ?? rateRow?.department ?? null, fx)
