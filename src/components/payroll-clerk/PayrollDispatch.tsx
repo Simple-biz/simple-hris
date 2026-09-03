@@ -961,6 +961,13 @@ export default function PayrollDispatch() {
     let notStaged = 0;
     let paidCycles = 0;
     let failedCycles = 0;
+    // Legs the server refused with 409 `already_paid`: this person was ALREADY
+    // logged paid for that cycle (a stale reload had painted them back into
+    // Pending, or another clerk got there first). Money moved once; nothing new
+    // was written. Counted apart from failures so the row is NOT restored to
+    // Pending — that restore is exactly what invited the second click.
+    let alreadyPaid = 0;
+    let lastAlreadyPaidMessage: string | null = null;
     let lastSendError: string | null = null;
     let lastDispatchError: string | null = null;
     // Payment Catalog system bonus (PAB / Tech) — `row` was priced for THIS
@@ -1019,6 +1026,7 @@ export default function PayrollDispatch() {
         const json = (await res.json()) as {
           row?: unknown;
           error?: string;
+          code?: string;
           paystub?: {
             staged: boolean;
             sent: boolean;
@@ -1026,6 +1034,11 @@ export default function PayrollDispatch() {
             amount_mismatch?: { paid: number; stub: number };
           };
         };
+        if (res.status === 409 && json.code === 'already_paid') {
+          alreadyPaid += 1;
+          lastAlreadyPaidMessage = json.error ?? null;
+          continue;
+        }
         if (!res.ok || json.error) throw new Error(json.error ?? `HTTP ${res.status}`);
         paidCycles += 1;
         // Tell the Accounting shell's lower-left "X paid Y $Z" stack — and, through
@@ -1071,6 +1084,15 @@ export default function PayrollDispatch() {
 
     // Always reconcile from the server so the queue reflects exactly what landed.
     void refresh();
+
+    if (paidCycles === 0 && alreadyPaid > 0 && failedCycles === 0) {
+      // Every leg was already paid. The row stays out of Pending (the refresh
+      // above reconciles the log views) and the clerk learns who logged it.
+      toast.info(`${row.name} was already marked paid`, {
+        description: lastAlreadyPaidMessage ?? 'No second payment was logged.',
+      });
+      return;
+    }
 
     if (paidCycles === 0) {
       // Nothing landed — restore the optimistically-removed pending row.

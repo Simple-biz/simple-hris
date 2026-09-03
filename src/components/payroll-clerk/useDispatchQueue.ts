@@ -5,6 +5,7 @@ import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates
 import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import type { CurrentPayResult, PayrollPeriod } from '@/lib/payroll/current-pay';
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
+import { createLoadFence } from '@/lib/payroll/load-fence';
 import type { PaystubQueueListItem, ArrearsEntry } from '@/lib/supabase/paystub-dispatch-queue';
 import {
   applySmallWiresWiseReroute,
@@ -1058,7 +1059,16 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
   // the last-known queue instantly instead of a skeleton; we still revalidate.
   const [state, setState] = useState<Omit<DispatchQueueState, 'refresh'>>(() => seedState(cacheKey));
 
+  // Stale-load fence. Loads start from many triggers (Mark Paid's refresh, the
+  // signature poll, a remote broadcast, tab focus) and each takes seconds. A load
+  // that started BEFORE a Mark Paid but finished AFTER it used to overwrite the
+  // optimistic removal with rows that still listed the person just paid — they
+  // reappeared in Pending and were paid again (82 doubled rows by 2026-09-03).
+  // Only the newest load may write state; anything older is dropped on arrival.
+  const fenceRef = useRef(createLoadFence());
+
   const load = useCallback(async (signal?: AbortSignal, opts?: { silent?: boolean }) => {
+    const ticket = fenceRef.current.start();
     // Silent refreshes (post-action reconciliation, or a cache-backed remount)
     // skip the loading flag so the table isn't torn down to a skeleton and
     // re-mounted — no visible reload.
@@ -1066,6 +1076,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
     try {
       const result = await loadAll(signal, sel);
       if (signal?.aborted) return;
+      if (!fenceRef.current.isCurrent(ticket)) return; // a newer load owns the screen
       // Only cache clean loads — an errored result shouldn't overwrite good data.
       if (!result.error) {
         setTabCache<CachedQueue>(cacheKey, {
@@ -1096,6 +1107,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
     } catch (e) {
       if (signal?.aborted) return;
       if (e instanceof DOMException && e.name === 'AbortError') return;
+      if (!fenceRef.current.isCurrent(ticket)) return; // stale failure — a newer load decides
       // A background revalidation that fails should keep the last good data on
       // screen rather than blanking the queue.
       if (opts?.silent && hasTabCache(cacheKey)) {

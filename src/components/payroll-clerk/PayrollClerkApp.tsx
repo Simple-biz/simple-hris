@@ -203,8 +203,19 @@ export default function PayrollClerkApp() {
       });
       const json = (await res.json()) as {
         error?: string;
+        code?: string;
         paystub?: { staged: boolean; sent: boolean; error: string | null };
       };
+      if (res.status === 409 && json.code === 'already_paid') {
+        // Already logged paid this cycle — money moved once, nothing new written.
+        // Deliberately NOT restored to Pending: that restore is what invited the
+        // second click. The refresh reconciles the log views.
+        toast.info(`${row.name} was already marked paid`, {
+          description: json.error ?? 'No second payment was logged.',
+        });
+        void refresh();
+        return;
+      }
       if (!res.ok || json.error) throw new Error(json.error ?? 'Could not log dispatch');
       if (payload.status === 'paid' && json.paystub?.sent) {
         toast.success(`${row.name} marked paid · paystub emailed`);

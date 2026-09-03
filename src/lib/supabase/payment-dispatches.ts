@@ -350,3 +350,39 @@ export async function listRecentPaidDispatches(
   const latest = rows.length > 0 ? rows[rows.length - 1].created_at : sinceIso;
   return { rows, latest, truncated: rows.length >= RECENT_PAID_LIMIT, now, error: null };
 }
+
+/**
+ * Every `paid` row already logged for ONE person in ONE cycle — the read behind
+ * the server-side double-pay guard in `POST /api/payment-dispatches`
+ * (`findDuplicatePaid` decides; this only fetches).
+ *
+ * Keyed by `cycle_source_file` when the body names one, else by `cycle_id`: the
+ * arrears "Settle" legs POST with `cycle_id: null`, so the file is the only key
+ * that identifies their cycle. Case-insensitive on the email (`ilike` with no
+ * wildcard is an equality test) because rows written before the normalisation
+ * trigger may carry mixed case. Bounded: one person in one cycle has a handful
+ * of rows at most, never a page.
+ */
+export async function listPaidDispatchesForRecipientCycle(params: {
+  cycleSourceFile: string | null;
+  cycleId: string | null;
+  recipientEmail: string;
+}): Promise<{ rows: PaymentDispatchRow[]; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return { rows: [], error: "Supabase client unavailable" };
+  const file = params.cycleSourceFile?.trim() || null;
+  if (!file && !params.cycleId) return { rows: [], error: null };
+
+  let q = supabase
+    .from("payment_dispatches")
+    .select("*")
+    .eq("status", "paid")
+    .ilike("recipient_email", params.recipientEmail.trim())
+    .order("created_at", { ascending: true })
+    .limit(50);
+  q = file ? q.eq("cycle_source_file", file) : q.eq("cycle_id", params.cycleId as string);
+
+  const { data, error } = await q;
+  if (error) return { rows: [], error: error.message };
+  return { rows: (data ?? []) as PaymentDispatchRow[], error: null };
+}

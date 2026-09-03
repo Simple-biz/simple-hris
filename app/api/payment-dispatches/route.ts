@@ -3,9 +3,16 @@ import { getServerSession } from "next-auth";
 import {
   getPaymentDispatchSignature,
   insertPaymentDispatch,
+  listPaidDispatchesForRecipientCycle,
   listPaymentDispatches,
   type InsertPaymentDispatchInput,
 } from "@/lib/supabase/payment-dispatches";
+import {
+  ALREADY_PAID_CODE,
+  alreadyPaidMessage,
+  duplicateGuardApplies,
+  findDuplicatePaid,
+} from "@/lib/payroll/dispatch-duplicate-guard";
 import {
   refreshPaystubQueuePayload,
   markPaystubSent,
@@ -95,7 +102,7 @@ export async function POST(req: NextRequest) {
   // A contractor dispatch settles exactly one approved invoice, so it must name
   // it. Neither field joins the `required` list above — an employee payment must
   // keep working with a body that has never heard of them.
-  const payeeType = body.payee_type === 'contractor' ? 'contractor' : 'employee';
+  const payeeType: 'employee' | 'contractor' = body.payee_type === 'contractor' ? 'contractor' : 'employee';
   const contractorInvoiceId =
     typeof body.contractor_invoice_id === 'string' && body.contractor_invoice_id.trim()
       ? body.contractor_invoice_id.trim()
@@ -111,6 +118,55 @@ export async function POST(req: NextRequest) {
       { row: null, error: 'contractor_invoice_id requires payee_type "contractor"' },
       { status: 400 },
     );
+  }
+
+  // ── ALREADY PAID THIS CYCLE? ───────────────────────────────────────────────
+  // Until 2026-09-03 nothing server-side stopped a second `paid` row for the
+  // same person in the same cycle — the queue's client filter was the only
+  // guard, and a stale queue reload could paint a just-paid person back into
+  // Pending (82 people doubled across five cycles). Employee `paid` rows only:
+  // contractor settlements are owned by the invoice claim below, and a
+  // not_paid / threshold / problem attempt is a log entry that must stay
+  // loggable. Keyed by source file first (arrears legs carry cycle_id null).
+  //
+  // Fails CLOSED: if the prior-payments read errors we refuse rather than risk
+  // logging a duplicate — the insert right after would need the same database.
+  const dupInput = {
+    status: body.status,
+    payeeType,
+    recipientEmail: String(body.recipient_email),
+    cycleSourceFile: body.cycle_source_file ?? null,
+    cycleId: body.cycle_id ?? null,
+  };
+  if (duplicateGuardApplies(dupInput)) {
+    const prior = await listPaidDispatchesForRecipientCycle({
+      cycleSourceFile: dupInput.cycleSourceFile,
+      cycleId: dupInput.cycleId,
+      recipientEmail: dupInput.recipientEmail,
+    });
+    if (prior.error) {
+      return NextResponse.json(
+        { row: null, error: `Could not verify prior payments — nothing was logged: ${prior.error}` },
+        { status: 500 },
+      );
+    }
+    const dup = findDuplicatePaid(dupInput, prior.rows);
+    if (dup) {
+      return NextResponse.json(
+        {
+          row: null,
+          code: ALREADY_PAID_CODE,
+          error: alreadyPaidMessage(dup),
+          existing: {
+            id: dup.id,
+            created_by: dup.created_by,
+            created_at: dup.created_at,
+            transaction_id: dup.transaction_id,
+          },
+        },
+        { status: 409 },
+      );
+    }
   }
 
   // Identify the operator for audit trail.

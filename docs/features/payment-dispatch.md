@@ -629,7 +629,7 @@ column of its own (§12.3.1).
 |---|---|---|
 | `/api/payroll-current-pay` | GET | Returns the `CurrentPayResult` from `computeCurrentPay()` |
 | `/api/payment-dispatches` | GET | Lists dispatches, optionally filtered by `?cycle_id=` |
-| `/api/payment-dispatches` | POST | Inserts a new dispatch row + writes audit-log entry `payment.dispatched`. When `status='paid'` and the Payroll Wizard staged a paystub for this `(cycle_source_file, recipient_email)`, also fires that **one** person's paystub email via `forwardPaystubDispatch` (best-effort — never fails the payment) and returns `{ paystub: { staged, sent, error } }` so the client can toast sent / failed / not-staged. Gated by `requireFeatureEdit('accounting', 'payment_dispatch')`. See [paystub-dispatch.md](./paystub-dispatch.md). |
+| `/api/payment-dispatches` | POST | Inserts a new dispatch row + writes audit-log entry `payment.dispatched`. When `status='paid'` and the Payroll Wizard staged a paystub for this `(cycle_source_file, recipient_email)`, also fires that **one** person's paystub email via `forwardPaystubDispatch` (best-effort — never fails the payment) and returns `{ paystub: { staged, sent, error } }` so the client can toast sent / failed / not-staged. Gated by `requireFeatureEdit('accounting', 'payment_dispatch')`. **Double-pay guard (2026-09-03):** before the claim/insert, a `paid` **employee** body is checked against existing `paid` rows for the same person in the same cycle — `cycle_source_file` first, `cycle_id` as the fallback (arrears legs carry `cycle_id: null`) — and refused with **409 `{ code: 'already_paid', error, existing: { id, created_by, created_at, transaction_id } }`**. `not_paid` / `threshold` / `problem` bodies and contractor settlements are never refused (the invoice claim owns those). If the prior-payments read itself fails the route returns 500 and logs nothing — it fails closed. Both Mark Paid clients treat the 409 as *settled*: an info toast naming the first payer, the row is NOT restored to Pending, and `refresh()` reconciles. Pure decision + tests: `src/lib/payroll/dispatch-duplicate-guard.ts`. See [paystub-dispatch.md](./paystub-dispatch.md). |
 | `/api/payroll-dispatch-lock` | GET | Returns `{ locked, lockedAt, lockedBy }` |
 | `/api/payroll-dispatch-lock` | POST | Toggles the lock — body: `{ locked: boolean }` — writes audit-log entry `payroll.dispatch.locked` / `payroll.dispatch.unlocked` with snapshotted operator + timestamp |
 | `/api/employee-hourly-rates` | GET | Existing route, now also returns the 8 new payment-dispatch fields |
@@ -685,7 +685,7 @@ Located at `src/components/payroll-clerk/useDispatchQueue.ts`. Joins three sourc
 2. `/api/payroll-current-pay` — per-person USD/PHP pay + cycle period
 3. `/api/payment-dispatches?cycle_id=<id>` — already-paid for the current cycle
 
-Builds a `QueueRow[]` via `buildQueueFromRates()` from `mock-queue.ts` (filename historical — it's no longer mocks). Filters out anyone whose email already has a dispatch record in the current cycle, so the same person can't be paid twice.
+Builds a `QueueRow[]` via `buildQueueFromRates()` from `mock-queue.ts` (filename historical — it's no longer mocks). Filters out anyone whose email already has a dispatch record in the current cycle, so the same person can't be paid twice. **This filter is a convenience, not the guard:** since 2026-09-03 `POST /api/payment-dispatches` refuses a second `paid` employee row for the same `(cycle_source_file, email)` with **409 `already_paid`** (see §4.3 and §12.10), and `load()` drops any result that isn't from the newest load so a stale reload can't paint a paid person back into Pending.
 
 It then reads the two wizard carriers (the staged stage + the published snapshot) and
 prices every row through them — see [§4.2.2](#422-which-figures-the-queue-actually-shows).
@@ -1495,3 +1495,56 @@ queue entirely because:
 appear, under the **Excluded** tab rather than the pending list. (Catalog-paid people with
 no rates row used to be an exception: they showed as "No bank / No rate" and were
 unpayable until `buildStagedOnlyPlacement` landed.)
+
+### 12.10 Duplicate paid rows — the 2026-09-03 incident, guard and cleanup
+
+**Symptom.** Payment Dispatch's Paid view showed cobb@ twice for the 08-23 cycle: two `paid`
+rows 50 s apart, same clerk, same amount, same Wise txn id. Not a render bug — two rows.
+
+**Scale.** A read-only sweep found **82 (cycle, person) groups with more than one `paid` row**
+across the five cycles 07-26 → 08-23 (41 in 08-23 alone; 39 rows on 2026-09-02 when two
+clerks paid concurrently). 83 extra rows, ₱992,843 of phantom "paid" money in the log. In 81
+groups the echo carried the **identical txn id** — money moved once, the log doubled, and the
+employee got a second paystub email. **One group diverged:** alonzos@, 07-26 cycle,
+2026-08-05, two different Hurupay txn ids 82 s apart, ₱9,499.67 each — a possible real double
+payment. **OPEN:** verify in Hurupay; both rows are deliberately still in the table.
+
+**Root cause — three layers, all present since April, first producing duplicates 2026-08-04.**
+1. The POST route had **no already-paid check** for employees (only the contractor invoice
+   claim), and the table has no unique index on `(cycle, email)` for paid rows. The §5 claim
+   that the queue filter "can't pay twice" rested on the client alone.
+2. `useDispatchQueue.load()` had **no stale-response fencing**. Mark Paid optimistically
+   removes the row and calls `refresh()`, but any earlier-started load (the previous
+   person's `refresh()`, the 15 s signature poll, a remote clerk's broadcast since 08-11, a
+   tab-focus refetch) that finished later called `setState(rows)` and the `useLayoutEffect`
+   `setPending(fetched)` painted the paid person **back into Pending**. The clerk marked them
+   again 7–60 s later (median 19 s).
+3. `handleConfirmPaid` falls back to the `gallerySiblings` snapshot, so a confirm proceeds
+   even after the row has left Pending.
+
+**Fix (same commit).** (1) Server guard — §4.3, `dispatch-duplicate-guard.ts` + tests. (2) A
+`createLoadFence()` ticket in `load()`: only the newest load may write state; stale successes
+AND stale failures are dropped (`load-fence.ts` + tests). (3) Both clients treat 409
+`already_paid` as settled — no restore to Pending. Layer 3 is left as is: with (1) the worst a
+snapshot confirm can do is draw the 409.
+
+**Cleanup — `scripts/dedupe-payment-dispatches.mjs`.** Dry-run by default; ALWAYS writes a
+full-row backup JSON to `references/backups/` first. A group is deleted only when every row
+shares `transaction_id`, `amount_php` **and** `amount_usd`; **the OLDEST row survives** (it
+marks when the money moved) and each later row is deleted with a `payment.undone` audit event
+(`reason: 'duplicate_paid_row'`, `kept_dispatch_id`). Divergent groups are reported and left
+alone. Because the `AFTER INSERT` mirror trigger had pointed `disbursement_records.dispatch_id`
+at the **newest** (echo) row and the `AFTER DELETE` trigger reverts a record whose `dispatch_id`
+is deleted, the script **re-touches the surviving row** (no-op UPDATE) so the mirror re-reads
+`paid` and re-points; the verify step asserts it. **Paging lesson baked in:** the first dry run
+reported 103 groups — 22 were the SAME row returned on two pages (the June backfill shares one
+`created_at` across ~800 rows and PostgREST's order over ties is unstable); the script now orders
+by `(created_at, id)`, collects by id and refuses to run if any id repeats. Dry run 2026-09-03:
+**81 identical groups → 82 rows, ₱983,343**. `--apply` is Kane's to run (it was blocked from the
+agent session); run it AFTER this build is deployed so no new echo lands mid-cleanup. Run record
+lives in the memory entry `dispatch-duplicate-paid-rows`.
+
+**Deliberately not done.** No partial unique index yet: `DATABASE_URL` is blank in
+`.env.local` so DDL can't be applied from here, and the alonzos@ pair would violate it until
+resolved. The route guard is the enforcement; the index is the follow-up once alonzos@ is
+settled.
