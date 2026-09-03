@@ -725,7 +725,11 @@ function LogoField({
 
 /** A bank with no logo yet gets a monogram tile; wallets are tinted apart from banks. */
 const BANK_TILE = 'from-slate-500 to-slate-700';
-const WALLET_TILE = 'from-violet-500 to-fuchsia-500';
+/** Emerald/teal is ALREADY what a wallet looks like in this app — HiGlobe and Kolan
+ *  wear it on the Payment Dispatch cards, and the Processors panel one tab over uses
+ *  it for the one-to-one wallet class. A wallet card here means the same thing, so it
+ *  takes the same colour rather than a new one. */
+const WALLET_TILE = ROUTING_VISUAL.one_to_one.gradient;
 
 function CurrentBanksPanel({ banks, onChanged }: { banks: BankGroup[]; onChanged: () => void }) {
   const [editing, setEditing] = useState<BankGroup | null>(null);
@@ -891,7 +895,7 @@ function BankCard({ bank, onEdit }: { bank: BankGroup; onEdit: () => void }) {
           </Chip>
         )}
         {isWallet && (
-          <Chip className="bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-950/40 dark:text-violet-300 dark:ring-violet-900/60">
+          <Chip className={ROUTING_VISUAL.one_to_one.chip}>
             <Wallet className="h-3 w-3" /> Wallet
           </Chip>
         )}
