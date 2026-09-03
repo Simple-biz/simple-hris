@@ -490,9 +490,12 @@ function ProcessorDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && !saving && onClose()}>
-      {/* Height-capped + scrolling body: a tall dialog must never clip its footer. */}
-      <DialogContent className="flex max-h-[calc(100dvh-1.5rem)] flex-col gap-0 overflow-hidden p-0 sm:max-h-[90dvh] sm:max-w-lg">
-        <DialogHeader className="shrink-0 border-b border-zinc-100 px-5 pb-3 pt-5 dark:border-zinc-800">
+      {/* Height-capped + scrolling body: a tall dialog must never clip its footer.
+          Keeps the primitive's default p-4 — DialogFooter bleeds to the popup edges
+          with -mx-4 -mb-4 and assumes that padding; a p-0 content hangs the footer
+          16px outside the rounded border on three sides. */}
+      <DialogContent className="flex max-h-[calc(100dvh-1.5rem)] flex-col overflow-hidden sm:max-h-[90dvh] sm:max-w-lg">
+        <DialogHeader className="shrink-0 pr-8">
           <DialogTitle className="flex items-center gap-2">
             <Landmark className="h-4 w-4 text-orange-500" />
             {isNew ? 'Add a pay processor' : `Edit ${processor.label}`}
@@ -506,7 +509,7 @@ function ProcessorDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
           {/* Identity */}
           <div className="flex items-start gap-3">
             <div className="shrink-0">
@@ -651,7 +654,7 @@ function ProcessorDialog({
           </Field>
         </div>
 
-        <DialogFooter className="shrink-0 border-t border-zinc-100 px-5 py-3 dark:border-zinc-800">
+        <DialogFooter className="shrink-0">
           <div className="mr-auto min-w-0 self-center text-[11px] text-red-600 dark:text-red-400">
             {!check.ok && draft.label.trim() ? check.error : null}
           </div>

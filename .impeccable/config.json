@@ -38,6 +38,15 @@
         ],
         "createdAt": "2026-09-03T14:01:02.002Z",
         "reason": "Claude triage 2026-09-03: both hits (avatar remove button L1401, resignation Withdraw L2275) are hover-only rose backgrounds paired with hover rose text; gray text applies only on the white/neutral resting state. Pre-existing lines, not touched by the perf commit."
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/components/accounting/PayProcessorsTab.tsx"
+        ],
+        "createdAt": "2026-09-03T19:20:07.505Z",
+        "reason": "Claude: both hits are icon buttons — text-zinc-400 at rest, hover:bg-orange-50 + hover:text-orange-600 change together, so gray never sits on the colored bg"
       }
     ]
   }
