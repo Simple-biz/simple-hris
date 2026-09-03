@@ -137,6 +137,7 @@ import PaymentCatalogOverview from './PaymentCatalogOverview';
 import DepartmentsTab from './DepartmentsTab';
 import PayProcessorsTab from './PayProcessorsTab';
 import { PAY_PROCESSORS_SETTING_KEY, type PayProcessor } from '@/lib/payment-catalog/pay-processors';
+import { BANKS_SETTING_KEY, type BankGroup } from '@/lib/payment-catalog/banks';
 import { subDeptStructureKey, type DepartmentRegistryEntry } from '@/lib/departments/registry';
 
 // Always render exactly 2 decimals so the exact amount is shown without ever
@@ -655,6 +656,8 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   const [deptRegistryRevision, setDeptRegistryRevision] = useState<string | null>(null);
   // Pay Processors registry (stored rows merged over the code seeds server-side).
   const [payProcessors, setPayProcessors] = useState<PayProcessor[]>([]);
+  // Current Banks — folded server-side from the payees' free-text bank cells.
+  const [banks, setBanks] = useState<BankGroup[]>([]);
   // Set when another tab asks Pay Structure to open focused on a department.
   const [payFocusDept, setPayFocusDept] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -736,12 +739,13 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   const refetch = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [catRes, payRes, sysRes, deptRes, procRes] = await Promise.all([
+      const [catRes, payRes, sysRes, deptRes, procRes, bankRes] = await Promise.all([
         fetch('/api/bonus-catalog', { cache: 'no-store' }),
         fetch('/api/payment-catalog/pay-structures', { cache: 'no-store' }),
         fetch('/api/payment-catalog/system-bonuses', { cache: 'no-store' }),
         fetch('/api/payment-catalog/departments', { cache: 'no-store' }),
         fetch('/api/payment-catalog/pay-processors', { cache: 'no-store' }),
+        fetch('/api/payment-catalog/banks', { cache: 'no-store' }),
       ]);
       const cat = (await catRes.json()) as {
         bonuses?: BonusDef[];
@@ -767,6 +771,8 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
       // A failed processors read keeps the PRIOR list rather than blanking it —
       // an empty tab reads as "every processor is gone", not as an error.
       if (Array.isArray(proc.processors) && !proc.error) setPayProcessors(proc.processors);
+      const bank = (await bankRes.json()) as { banks?: BankGroup[]; error?: string | null };
+      if (Array.isArray(bank.banks) && !bank.error) setBanks(bank.banks);
     } catch {
       /* keep prior state */
     } finally {
@@ -810,6 +816,17 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
           schema: 'public',
           table: 'app_settings',
           filter: `key=eq.${PAY_PROCESSORS_SETTING_KEY}`,
+        },
+        () => void refetch(),
+      )
+      .on(
+        'postgres_changes',
+        // Current Banks registry — logos and alias mappings.
+        {
+          event: '*',
+          schema: 'public',
+          table: 'app_settings',
+          filter: `key=eq.${BANKS_SETTING_KEY}`,
         },
         () => void refetch(),
       )
@@ -1173,7 +1190,11 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
               transition={{ duration: 0.24, ease: EASE }}
               className="h-full"
             >
-              <PayProcessorsTab processors={payProcessors} onChanged={() => void refetch()} />
+              <PayProcessorsTab
+                processors={payProcessors}
+                banks={banks}
+                onChanged={() => void refetch()}
+              />
             </motion.div>
           ) : tab === 'pay-structure' ? (
             <motion.div

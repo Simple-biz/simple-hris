@@ -22,9 +22,11 @@ import {
   Landmark,
   Pencil,
   Plus,
+  Search,
   ShieldCheck,
   Sparkles,
   Trash2,
+  UserRound,
   Wallet,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -59,6 +61,11 @@ import {
   type PayProcessorLogo,
   type PayProcessorRouting,
 } from '@/lib/payment-catalog/pay-processors';
+import {
+  BANK_NAME_MAX,
+  BANK_NOTES_MAX,
+  type BankGroup,
+} from '@/lib/payment-catalog/banks';
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 
@@ -86,12 +93,11 @@ function monogramOf(label: string): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
-export default function PayProcessorsTab({
+function ProcessorsPanel({
   processors,
   onChanged,
 }: {
   processors: PayProcessor[];
-  /** Refetch catalog data after a successful create/edit. */
   onChanged: () => void;
 }) {
   const [editing, setEditing] = useState<PayProcessor | null | 'new'>(null);
@@ -103,7 +109,7 @@ export default function PayProcessorsTab({
   const unwired = useMemo(() => active.filter((p) => !p.wiredInCode), [active]);
 
   return (
-    <div className="mx-auto max-w-5xl p-4 sm:p-6">
+    <div className="pb-6">
       {/* Header band: intro + the hero button */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -413,14 +419,9 @@ function ProcessorDialog({
   const isNew = processor === null;
   const [draft, setDraft] = useState<Draft>(() => draftFrom(processor));
   const [saving, setSaving] = useState(false);
-  const [logoError, setLogoError] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (open) {
-      setDraft(draftFrom(processor));
-      setLogoError(null);
-    }
+    if (open) setDraft(draftFrom(processor));
   }, [open, processor]);
 
   const input: PayProcessorInput = {
@@ -442,29 +443,6 @@ function ProcessorDialog({
   const drift = processor ? routingDrift({ id: processor.id, routing: draft.routing }) : null;
   const visual = ROUTING_VISUAL[draft.routing];
 
-  const pickFile = (file: File | null) => {
-    setLogoError(null);
-    if (!file) return;
-    if (!(PAY_PROCESSOR_LOGO_MIMES as readonly string[]).includes(file.type)) {
-      setLogoError('Use a PNG, SVG, WebP or JPEG.');
-      return;
-    }
-    if (file.size > PAY_PROCESSOR_LOGO_MAX_BYTES) {
-      setLogoError(`That file is ${Math.ceil(file.size / 1024)} KB — the limit is ${PAY_PROCESSOR_LOGO_MAX_BYTES / 1024} KB.`);
-      return;
-    }
-    const reader = new FileReader();
-    reader.onerror = () => setLogoError('Could not read that file.');
-    reader.onload = () => {
-      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
-      if (!dataUrl.startsWith(`data:${file.type};base64,`)) {
-        setLogoError('Could not read that file as an image.');
-        return;
-      }
-      setDraft((d) => ({ ...d, logo: { kind: 'data', dataUrl, mime: file.type, bytes: file.size } }));
-    };
-    reader.readAsDataURL(file);
-  };
 
   const save = async () => {
     if (!check.ok || saving) return;
@@ -542,50 +520,8 @@ function ProcessorDialog({
             </div>
           </div>
 
-          {/* Logo */}
-          <Field label="Logo" hint={`PNG, SVG, WebP or JPEG · up to ${PAY_PROCESSOR_LOGO_MAX_BYTES / 1024} KB · shown on a white plate`}>
-            <input
-              ref={fileRef}
-              type="file"
-              accept={ACCEPT}
-              className="hidden"
-              onChange={(e) => {
-                pickFile(e.target.files?.[0] ?? null);
-                e.target.value = '';
-              }}
-            />
-            <div
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                pickFile(e.dataTransfer.files?.[0] ?? null);
-              }}
-              className="flex items-center gap-2 rounded-lg border border-dashed border-zinc-300 bg-zinc-50/60 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/40"
-            >
-              <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
-                <ImagePlus className="mr-1 h-3.5 w-3.5" />
-                {draft.logo ? 'Replace' : 'Upload'}
-              </Button>
-              <span className="min-w-0 flex-1 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                {draft.logo
-                  ? draft.logo.kind === 'public'
-                    ? `Shipped asset ${draft.logo.src}`
-                    : `${draft.logo.mime.replace('image/', '').toUpperCase()} · ${Math.ceil(draft.logo.bytes / 1024)} KB`
-                  : 'or drop a file here'}
-              </span>
-              {draft.logo && (
-                <button
-                  type="button"
-                  onClick={() => setDraft((d) => ({ ...d, logo: null }))}
-                  aria-label="Remove logo"
-                  className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-            {logoError && <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">{logoError}</p>}
-          </Field>
+          {/* Logo — the shared picker, identical rules for processors and banks. */}
+          <LogoField logo={draft.logo} onChange={(logo) => setDraft((d) => ({ ...d, logo }))} />
 
           {/* Classification */}
           <Field label="How it pays out">
@@ -678,6 +614,539 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
         {hint && <span className="truncate text-[10.5px] text-zinc-400 dark:text-zinc-500">{hint}</span>}
       </div>
       {children}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared logo picker
+// ---------------------------------------------------------------------------
+
+const ACCEPT_LOGO = PAY_PROCESSOR_LOGO_MIMES.join(',');
+
+/**
+ * Upload / drop / clear a logo, stored inline as a data URL.
+ *
+ * ONE implementation for processors and banks, because they share one server-side
+ * validator (`validatePayProcessorLogo`): a second copy of these checks would drift
+ * from the route and offer files the API refuses. The client checks are a courtesy —
+ * the server re-checks every field, measuring the real base64 rather than trusting
+ * the size reported here.
+ */
+function LogoField({
+  logo,
+  onChange,
+}: {
+  logo: PayProcessorLogo | null;
+  onChange: (logo: PayProcessorLogo | null) => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const pickFile = (file: File | null) => {
+    setError(null);
+    if (!file) return;
+    if (!(PAY_PROCESSOR_LOGO_MIMES as readonly string[]).includes(file.type)) {
+      setError('Use a PNG, SVG, WebP or JPEG.');
+      return;
+    }
+    if (file.size > PAY_PROCESSOR_LOGO_MAX_BYTES) {
+      setError(
+        `That file is ${Math.ceil(file.size / 1024)} KB — the limit is ${PAY_PROCESSOR_LOGO_MAX_BYTES / 1024} KB.`,
+      );
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => setError('Could not read that file.');
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      if (!dataUrl.startsWith(`data:${file.type};base64,`)) {
+        setError('Could not read that file as an image.');
+        return;
+      }
+      onChange({ kind: 'data', dataUrl, mime: file.type, bytes: file.size });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <Field
+      label="Logo"
+      hint={`PNG, SVG, WebP or JPEG · up to ${PAY_PROCESSOR_LOGO_MAX_BYTES / 1024} KB · shown on a white plate`}
+    >
+      <input
+        ref={fileRef}
+        type="file"
+        accept={ACCEPT_LOGO}
+        className="hidden"
+        onChange={(e) => {
+          pickFile(e.target.files?.[0] ?? null);
+          e.target.value = '';
+        }}
+      />
+      <div
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          pickFile(e.dataTransfer.files?.[0] ?? null);
+        }}
+        className="flex items-center gap-2 rounded-lg border border-dashed border-zinc-300 bg-zinc-50/60 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/40"
+      >
+        <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
+          <ImagePlus className="mr-1 h-3.5 w-3.5" />
+          {logo ? 'Replace' : 'Upload'}
+        </Button>
+        <span className="min-w-0 flex-1 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+          {logo
+            ? logo.kind === 'public'
+              ? `Shipped asset ${logo.src}`
+              : `${logo.mime.replace('image/', '').toUpperCase()} · ${Math.ceil(logo.bytes / 1024)} KB`
+            : 'or drop a file here'}
+        </span>
+        {logo && (
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            aria-label="Remove logo"
+            className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+      {error && <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">{error}</p>}
+    </Field>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Current Banks
+// ---------------------------------------------------------------------------
+
+/** A bank with no logo yet gets a monogram tile; wallets are tinted apart from banks. */
+const BANK_TILE = 'from-slate-500 to-slate-700';
+const WALLET_TILE = 'from-violet-500 to-fuchsia-500';
+
+function CurrentBanksPanel({ banks, onChanged }: { banks: BankGroup[]; onChanged: () => void }) {
+  const [editing, setEditing] = useState<BankGroup | null>(null);
+  const [query, setQuery] = useState('');
+
+  const needsCheck = useMemo(() => banks.filter((b) => b.looksLikePerson), [banks]);
+  const unmapped = useMemo(() => banks.filter((b) => !b.official && !b.looksLikePerson), [banks]);
+  const withLogo = useMemo(() => banks.filter((b) => b.logo !== null).length, [banks]);
+  const paidTotal = useMemo(() => banks.reduce((n, b) => n + b.preferredCount, 0), [banks]);
+
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return banks;
+    // Search the raw spellings too — someone hunting "gotyme" should find the card
+    // even now that it displays its official name.
+    return banks.filter(
+      (b) => b.name.toLowerCase().includes(q) || b.spellings.some((s) => s.toLowerCase().includes(q)),
+    );
+  }, [banks, query]);
+
+  return (
+    <div className="pb-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+            <Building2 className="h-5 w-5 text-orange-500" />
+            Current Banks
+          </h2>
+          <p className="mt-0.5 max-w-xl text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+            Every bank our payees gave us, folded to its official name. {banks.length} banks across{' '}
+            {paidTotal} people, {withLogo} with a logo.
+          </p>
+        </div>
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Find a bank"
+            className="h-9 w-56 pl-8"
+          />
+        </div>
+      </div>
+
+      {(needsCheck.length > 0 || unmapped.length > 0) && (
+        <div className="mt-4 flex flex-col gap-2">
+          {unmapped.length > 0 && (
+            <Notice>
+              {unmapped.length === 1 ? 'One spelling is' : `${unmapped.length} spellings are`} not
+              mapped to an official bank yet. Open one and add its spelling to the right bank rather
+              than leaving two cards for the same bank.
+            </Notice>
+          )}
+          {needsCheck.length > 0 && (
+            <Notice>
+              {needsCheck.length === 1 ? 'One entry looks' : `${needsCheck.length} entries look`} like
+              a person&rsquo;s name typed into the bank field rather than a bank. They are shown below
+              so nothing is hidden — fix those on the person&rsquo;s own profile, not here.
+            </Notice>
+          )}
+        </div>
+      )}
+
+      <section className="mt-6">
+        {shown.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-zinc-300 bg-white/60 p-8 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950/40 dark:text-zinc-400">
+            No bank matches &ldquo;{query.trim()}&rdquo;.
+          </div>
+        ) : (
+          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+            {shown.map((b) => (
+              <BankCard key={b.key} bank={b} onEdit={() => setEditing(b)} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <p className="mt-6 text-[11px] leading-relaxed text-zinc-400 dark:text-zinc-500">
+        Counts are people whose payout goes to that bank today; the second number is people who hold
+        it on their other account. Editing a bank here never changes anyone&rsquo;s bank details.
+      </p>
+
+      <BankDialog
+        key={editing?.key ?? 'closed'}
+        open={editing !== null}
+        bank={editing}
+        onClose={() => setEditing(null)}
+        onSaved={() => {
+          setEditing(null);
+          onChanged();
+        }}
+      />
+    </div>
+  );
+}
+
+function BankCard({ bank, onEdit }: { bank: BankGroup; onEdit: () => void }) {
+  const isWallet = bank.kind === 'wallet';
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, ease: EASE }}
+      className="group relative rounded-xl border border-zinc-200 bg-white p-4 transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-950"
+    >
+      <div className="flex items-start gap-3">
+        <ProcessorLogo
+          monogram={monogramOf(bank.name)}
+          gradient={isWallet ? WALLET_TILE : BANK_TILE}
+          FallbackIcon={isWallet ? Wallet : Building2}
+          logoSrc={payProcessorLogoSrc(bank.logo) ?? undefined}
+          className="h-11 w-[80px] shrink-0"
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <h3
+              className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100"
+              title={bank.name}
+            >
+              {bank.name}
+            </h3>
+            <button
+              type="button"
+              onClick={onEdit}
+              aria-label={`Edit ${bank.name}`}
+              className="shrink-0 rounded-md p-1 text-zinc-400 transition-colors hover:bg-orange-50 hover:text-orange-600 dark:hover:bg-blue-950/40 dark:hover:text-blue-300"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+            <span className="font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">
+              {bank.preferredCount}
+            </span>{' '}
+            paid here
+            {bank.altCount > 0 && <> · {bank.altCount} on their other account</>}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2.5 dark:border-zinc-900">
+        {bank.looksLikePerson ? (
+          <Chip
+            className="bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-900/60"
+            title="This reads as a person's name, not a bank. Fix it on their profile."
+          >
+            <UserRound className="h-3 w-3" /> Check this
+          </Chip>
+        ) : bank.official ? (
+          <Chip
+            className="bg-zinc-100 text-zinc-600 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800"
+            title="Folded to its official name."
+          >
+            <ShieldCheck className="h-3 w-3" /> Official
+          </Chip>
+        ) : (
+          <Chip
+            className="bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-900/60"
+            title="No official bank claims this spelling. Open it to map it."
+          >
+            <AlertTriangle className="h-3 w-3" /> Unmapped
+          </Chip>
+        )}
+        {isWallet && (
+          <Chip className="bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-950/40 dark:text-violet-300 dark:ring-violet-900/60">
+            <Wallet className="h-3 w-3" /> Wallet
+          </Chip>
+        )}
+        {bank.spellings.length > 1 && (
+          <Chip
+            className="bg-zinc-100 text-zinc-600 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800"
+            title={bank.spellings.join('\n')}
+          >
+            {bank.spellings.length} spellings
+          </Chip>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+function BankDialog({
+  open,
+  bank,
+  onClose,
+  onSaved,
+}: {
+  open: boolean;
+  bank: BankGroup | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(bank?.name ?? '');
+  const [kind, setKind] = useState<'bank' | 'wallet'>(bank?.kind ?? 'bank');
+  const [logo, setLogo] = useState<PayProcessorLogo | null>(bank?.logo ?? null);
+  const [notes, setNotes] = useState(bank?.notes ?? '');
+  const [extra, setExtra] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open && bank) {
+      setName(bank.name);
+      setKind(bank.kind);
+      setLogo(bank.logo);
+      setNotes(bank.notes);
+      setExtra('');
+    }
+  }, [open, bank]);
+
+  if (!bank) return null;
+
+  const trimmedName = name.trim();
+  const nameError = !trimmedName
+    ? 'Give the bank a name.'
+    : trimmedName.length > BANK_NAME_MAX
+      ? `Name must be ${BANK_NAME_MAX} characters or fewer.`
+      : null;
+
+  const save = async () => {
+    if (nameError || saving) return;
+    setSaving(true);
+    try {
+      // The spellings already folded in are stored as aliases too, so the mapping
+      // survives a later change to the declared table; the textarea adds to them.
+      const aliases = [
+        ...bank.spellings,
+        ...extra.split('\n').map((s) => s.trim()).filter(Boolean),
+      ];
+      const res = await fetch('/api/payment-catalog/banks', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: bank.key, name: trimmedName, kind, logo, notes, aliases }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string | null };
+      if (!res.ok || json.error) throw new Error(json.error || `Save failed (${res.status})`);
+      toast.success(`${trimmedName} saved`);
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save the bank');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && !saving && onClose()}>
+      <DialogContent className="flex max-h-[calc(100dvh-1.5rem)] flex-col overflow-hidden sm:max-h-[90dvh] sm:max-w-lg">
+        <DialogHeader className="shrink-0 pr-8">
+          <DialogTitle className="flex items-center gap-2">
+            <Building2 className="h-4 w-4 text-orange-500" />
+            {bank.name}
+          </DialogTitle>
+          <DialogDescription>
+            {bank.preferredCount} {bank.preferredCount === 1 ? 'person is' : 'people are'} paid here.
+            Nothing on this screen changes anyone&rsquo;s bank details.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
+          <div className="flex items-start gap-3">
+            <ProcessorLogo
+              monogram={monogramOf(trimmedName || bank.name)}
+              gradient={kind === 'wallet' ? WALLET_TILE : BANK_TILE}
+              FallbackIcon={kind === 'wallet' ? Wallet : Building2}
+              logoSrc={payProcessorLogoSrc(logo) ?? undefined}
+              className="h-11 w-[80px] shrink-0"
+            />
+            <div className="min-w-0 flex-1">
+              <Field label="Official name">
+                <Input
+                  value={name}
+                  maxLength={BANK_NAME_MAX}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </Field>
+            </div>
+          </div>
+
+          <LogoField logo={logo} onChange={setLogo} />
+
+          <Field label="Kind">
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800">
+              <span className="text-xs text-zinc-700 dark:text-zinc-300">
+                {kind === 'wallet'
+                  ? 'A wallet or processor someone typed into the bank field.'
+                  : 'A bank.'}
+              </span>
+              <Switch checked={kind === 'wallet'} onCheckedChange={(v) => setKind(v ? 'wallet' : 'bank')} />
+            </label>
+          </Field>
+
+          <Field label="Spellings on file" hint={`${bank.spellings.length}`}>
+            <div className="flex flex-wrap gap-1 rounded-lg border border-zinc-200 p-2 dark:border-zinc-800">
+              {bank.spellings.map((s) => (
+                <span
+                  key={s}
+                  className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[10.5px] font-medium text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300"
+                >
+                  {s}
+                </span>
+              ))}
+            </div>
+          </Field>
+
+          <Field label="Also means this bank" hint="one spelling per line">
+            <textarea
+              value={extra}
+              rows={2}
+              placeholder="Another spelling seen on a profile"
+              onChange={(e) => setExtra(e.target.value)}
+              className="w-full resize-y rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-xs placeholder:text-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
+            />
+            <p className="mt-1 text-[10.5px] leading-relaxed text-zinc-400 dark:text-zinc-500">
+              A spelling added here merges that card into this one. It is a mapping for display —
+              the bank name on the person&rsquo;s profile stays exactly as they typed it.
+            </p>
+          </Field>
+
+          <Field label="Notes" hint={`${notes.length}/${BANK_NOTES_MAX}`}>
+            <textarea
+              value={notes}
+              maxLength={BANK_NOTES_MAX}
+              rows={2}
+              placeholder="Anything Accounting should know about this bank"
+              onChange={(e) => setNotes(e.target.value)}
+              className="w-full resize-y rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-xs placeholder:text-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
+            />
+          </Field>
+        </div>
+
+        <DialogFooter className="shrink-0">
+          <div className="mr-auto min-w-0 self-center text-[11px] text-red-600 dark:text-red-400">
+            {nameError}
+          </div>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={() => void save()} disabled={Boolean(nameError) || saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The tab shell — Processors | Current Banks
+// ---------------------------------------------------------------------------
+
+type InnerTab = 'processors' | 'banks';
+
+export default function PayProcessorsTab({
+  processors,
+  banks,
+  onChanged,
+}: {
+  processors: PayProcessor[];
+  banks: BankGroup[];
+  /** Refetch catalog data after a successful create/edit. */
+  onChanged: () => void;
+}) {
+  const [inner, setInner] = useState<InnerTab>('processors');
+
+  const tabs = [
+    {
+      id: 'processors' as const,
+      label: 'Processors',
+      icon: Landmark,
+      count: processors.filter((p) => p.status === 'active').length,
+    },
+    { id: 'banks' as const, label: 'Current Banks', icon: Building2, count: banks.length },
+  ];
+
+  return (
+    <div className="mx-auto max-w-5xl p-4 sm:p-6">
+      {/* Inner tabs sit one level below the Payment Catalog's own pill row, so they are
+          quieter by design: a bordered segmented control, not a second row of pills. */}
+      <div
+        role="tablist"
+        aria-label="Pay processor views"
+        className="mb-5 inline-flex rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-950"
+      >
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={inner === t.id}
+            onClick={() => setInner(t.id)}
+            className={cn(
+              'relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors',
+              inner === t.id
+                ? 'text-orange-900 dark:text-white'
+                : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
+            )}
+          >
+            {inner === t.id && (
+              <motion.span
+                layoutId="payProcessorInnerTab"
+                className="absolute inset-0 rounded-md bg-orange-100 dark:bg-blue-950/60"
+                transition={{ type: 'spring', stiffness: 500, damping: 36 }}
+              />
+            )}
+            <span className="relative z-10 flex items-center gap-1.5">
+              <t.icon className="h-3.5 w-3.5" />
+              {t.label}
+              <span className="rounded-full bg-orange-200/70 px-1.5 text-[10px] font-bold text-orange-800 dark:bg-blue-900/60 dark:text-blue-200">
+                {t.count}
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {inner === 'processors' ? (
+        <ProcessorsPanel processors={processors} onChanged={onChanged} />
+      ) : (
+        <CurrentBanksPanel banks={banks} onChanged={onChanged} />
+      )}
     </div>
   );
 }
