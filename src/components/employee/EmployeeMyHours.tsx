@@ -1488,7 +1488,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
           size="sm"
           className="flex min-h-[34rem] min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-md ring-1 ring-indigo-500/5 [@media(max-height:850px)]:max-h-[calc(100dvh-9rem)] dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 dark:ring-indigo-950/30 sm:min-h-[28rem] lg:max-h-[calc(100dvh-8rem)]"
         >
-          <CardHeader className="shrink-0 space-y-2 pb-2 pt-4 sm:pt-5">
+          {/* Header padding mirrors CardContent (px-4 sm:px-6) — the size="sm" default
+              is px-3, which left the month pill sitting left of the calendar grid. */}
+          <CardHeader className="shrink-0 space-y-2 px-4 pb-2 pt-4 sm:px-6 sm:pt-5">
             <div className="flex items-start justify-between gap-2">
               <CardTitle className="flex items-center gap-2 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
                 Hubstaff hours
@@ -1521,7 +1523,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
               </button>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            {/* Month block is indented by the week-number gutter (column + gap) so the
+                pill's left edge levels with the first day tile below it. */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pl-[1.875rem] sm:pl-9">
               <div className="inline-flex items-center rounded-lg border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
                 <button
                   type="button"
@@ -1557,7 +1561,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
               </div>
             </div>
 
-            <p className="flex items-center gap-1 text-[10px] text-indigo-600 dark:text-indigo-400 sm:text-[11px]">
+            <p className="flex items-center gap-1 pl-[1.875rem] text-[10px] text-indigo-600 dark:text-indigo-400 sm:pl-9 sm:text-[11px]">
               <CalendarDays className="h-3 w-3 shrink-0" />
               <span>
                 <span className="font-semibold">
@@ -1567,7 +1571,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
               {formatRangeDate(monthStart)} – {formatRangeDate(monthEnd)}
               </span>
             </p>
-            <p className="flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400 sm:text-[11px]">
+            <p className="flex items-center gap-1 pl-[1.875rem] text-[10px] text-zinc-500 dark:text-zinc-400 sm:pl-9 sm:text-[11px]">
               <Trophy className="h-3 w-3 shrink-0 text-indigo-500/80 dark:text-indigo-400/80" />
               <span>
                 PAB period: {formatRangeDate(pabRange.start)} – {formatRangeDate(pabRange.end)}
@@ -1593,23 +1597,28 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
               >
             {loading ? (
               <div className="flex flex-1 flex-col gap-0">
-                <div className="mb-1 grid grid-cols-[1.25rem_repeat(7,minmax(0,1fr))] gap-0.5 sm:grid-cols-[1.5rem_repeat(7,minmax(0,1fr))] sm:gap-1">
+                {/* Skeleton mirrors the loaded grid 1:1 — same columns, gaps, tile
+                    height and radius — so the swap to real tiles doesn't reflow. */}
+                <div className="mb-1.5 grid grid-cols-[1.5rem_repeat(7,minmax(0,1fr))] gap-1.5 pb-1 sm:grid-cols-[1.75rem_repeat(7,minmax(0,1fr))] sm:gap-2">
                   <div />
                   {Array.from({ length: 7 }, (_, i) => (
-                    <div key={i} className="mx-auto h-2 w-4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                    <div key={i} className="mx-auto h-2.5 w-5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800 sm:w-7" />
                   ))}
                 </div>
                 {Array.from({ length: 5 }, (_, wi) => (
-                  <div key={wi} className="mb-1 grid grid-cols-[1.25rem_repeat(7,minmax(0,1fr))] gap-0.5 sm:grid-cols-[1.5rem_repeat(7,minmax(0,1fr))] sm:gap-1">
-                    <div className="flex items-center justify-end">
-                      <div className="h-2 w-3 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                  <div key={wi} className="mb-1.5 grid grid-cols-[1.5rem_repeat(7,minmax(0,1fr))] gap-1.5 sm:mb-2 sm:grid-cols-[1.75rem_repeat(7,minmax(0,1fr))] sm:gap-2">
+                    <div className="flex items-center justify-end pr-0.5">
+                      <div className="h-2.5 w-3 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
                     </div>
                     {Array.from({ length: 7 }, (_, di) => (
                       <div
                         key={di}
-                        className="h-10 animate-pulse rounded-md border border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900/30"
+                        className="flex h-16 animate-pulse flex-col justify-between rounded-xl border border-zinc-200 bg-zinc-100/60 px-2 py-1.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/30 sm:h-[4.75rem] sm:px-2.5 sm:py-2"
                         style={{ animationDelay: `${(wi * 7 + di) * 40}ms` }}
-                      />
+                      >
+                        <div className="h-2.5 w-5 rounded bg-zinc-200/80 dark:bg-zinc-800/80" />
+                        <div className="h-4 w-10 rounded bg-zinc-200/80 dark:bg-zinc-800/80 sm:h-5 sm:w-12" />
+                      </div>
                     ))}
                   </div>
                 ))}
@@ -1621,23 +1630,27 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
             ) : hoursCalendar && hoursCalendar.length > 0 ? (
               <div className="flex min-h-0 flex-1 flex-col gap-0">
                 <div className="min-h-0 flex-1 overflow-x-auto overflow-y-scroll [scrollbar-gutter:stable]">
-                  <div className="sticky top-0 z-10 mb-1 grid min-w-[280px] grid-cols-[1.25rem_repeat(7,minmax(0,1fr))] gap-0.5 bg-white/95 pb-0.5 dark:bg-[#0d1117]/95 sm:min-w-0 sm:grid-cols-[1.5rem_repeat(7,minmax(0,1fr))] sm:gap-1">
+                  {/* Day tiles borrow the Accounting → MESA stat-card idiom: rounded-xl,
+                      1px border, soft shadow, tone gradient, uppercase label over a
+                      mono bold value. Same idiom, day-sized. */}
+                  <div className="sticky top-0 z-10 mb-1.5 grid min-w-[340px] grid-cols-[1.5rem_repeat(7,minmax(0,1fr))] gap-1.5 bg-white/95 pb-1 dark:bg-[#0d1117]/95 sm:min-w-0 sm:grid-cols-[1.75rem_repeat(7,minmax(0,1fr))] sm:gap-2">
                     <div />
                     {(startOnSunday
-                      ? ['S', 'M', 'T', 'W', 'T', 'F', 'S']
-                      : ['M', 'T', 'W', 'T', 'F', 'S', 'S']
+                      ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+                      : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
                     ).map((d, i) => (
-                      <div key={i} className="text-center text-[7px] font-semibold text-zinc-400 dark:text-zinc-500 sm:text-[8px]">
-                        {d}
+                      <div key={i} className="text-center text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500 sm:text-[11px]">
+                        <span className="sm:hidden">{d.charAt(0)}</span>
+                        <span className="hidden sm:inline">{d}</span>
                       </div>
                     ))}
                   </div>
                   {hoursCalendar.map((week, wi) => (
                     <div
                       key={wi}
-                      className="mb-1 grid min-w-[280px] grid-cols-[1.25rem_repeat(7,minmax(0,1fr))] items-stretch gap-0.5 sm:min-w-0 sm:grid-cols-[1.5rem_repeat(7,minmax(0,1fr))] sm:gap-1"
+                      className="mb-1.5 grid min-w-[340px] grid-cols-[1.5rem_repeat(7,minmax(0,1fr))] items-stretch gap-1.5 sm:mb-2 sm:min-w-0 sm:grid-cols-[1.75rem_repeat(7,minmax(0,1fr))] sm:gap-2"
                     >
-                      <div className="flex items-center justify-end text-[7px] font-medium text-zinc-400 dark:text-zinc-500 sm:text-[8px]">
+                      <div className="flex items-center justify-end pr-0.5 text-[10px] font-medium tabular-nums text-zinc-400 dark:text-zinc-500 sm:text-[11px]">
                         {wi + 1}
                       </div>
                       {Array.from({ length: 7 }, (_, di) => {
@@ -1646,9 +1659,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                           return (
                             <div
                               key={di}
-                              className="flex h-10 items-center justify-center rounded-md border border-dashed border-zinc-200 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900/20"
+                              className="flex h-16 items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900/20 sm:h-[4.75rem]"
                             >
-                              <span className="text-[7px] text-zinc-300 dark:text-zinc-700">—</span>
+                              <span className="text-[10px] text-zinc-300 dark:text-zinc-700">—</span>
                             </div>
                           );
                         }
@@ -1711,52 +1724,55 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                         const hslOvernight = isHsl && inMonth && hslOvernightIsos.has(dayIso);
                         const effectivelyPasses = day.passes || forgiven || orphanageForgiven || hslOvernight;
 
+                        // Tile surface — the MESA StatCard recipe per tone:
+                        // `border-{t}-200 bg-gradient-to-br from-{t}-50 to-white text-{t}-900`
+                        // and the matching dark pair. Semantic hue per state is unchanged.
                         let cellBorder: string;
                         if (!inMonth) {
                           if (hours > 0 && weekend) {
                             cellBorder =
-                              'border border-dashed border-zinc-300/90 bg-gradient-to-b from-zinc-50/60 to-orange-50/25 opacity-90 dark:border-zinc-600 dark:from-zinc-900/40 dark:to-orange-950/15';
+                              'border-dashed border-zinc-300/90 bg-gradient-to-br from-zinc-50/70 to-orange-50/30 text-zinc-700 opacity-90 shadow-none dark:border-zinc-600 dark:from-zinc-900/40 dark:to-orange-950/15 dark:text-zinc-300';
                           } else if (hours > 0) {
                             cellBorder =
-                              'border border-dashed border-indigo-200/80 bg-indigo-50/35 opacity-90 dark:border-indigo-900/50 dark:bg-indigo-950/25';
+                              'border-dashed border-indigo-200/80 bg-gradient-to-br from-indigo-50/60 to-white text-indigo-900 opacity-90 shadow-none dark:border-indigo-900/50 dark:from-indigo-950/30 dark:to-zinc-950 dark:text-indigo-100';
                           } else {
                             cellBorder =
-                              'border border-dashed border-zinc-200/90 bg-zinc-50/30 dark:border-zinc-800 dark:bg-zinc-900/15';
+                              'border-dashed border-zinc-200/90 bg-zinc-50/30 text-zinc-500 shadow-none dark:border-zinc-800 dark:bg-zinc-900/15 dark:text-zinc-400';
                           }
                         } else if (isHoliday) {
                           cellBorder =
-                            'border-blue-300 bg-blue-50 dark:border-blue-700/70 dark:bg-blue-950/40';
+                            'border-blue-200 bg-gradient-to-br from-blue-50 to-white text-blue-900 dark:border-blue-700/40 dark:from-blue-950/40 dark:to-zinc-950 dark:text-blue-100';
                         } else if (weekend && isHsl && effectivelyPasses) {
                           cellBorder =
-                            'border-emerald-300 bg-emerald-50 dark:border-emerald-700/70 dark:bg-emerald-950/40';
+                            'border-emerald-200 bg-gradient-to-br from-emerald-50 to-white text-emerald-900 dark:border-emerald-700/40 dark:from-emerald-950/40 dark:to-zinc-950 dark:text-emerald-100';
                         } else if (weekend) {
                           if (hours > 0) {
                             cellBorder =
-                              'border-zinc-300 bg-gradient-to-b from-zinc-50 to-orange-50/50 dark:border-zinc-600 dark:from-zinc-900/50 dark:to-orange-950/20';
+                              'border-zinc-200 bg-gradient-to-br from-zinc-50 to-orange-50/50 text-zinc-900 dark:border-zinc-700/60 dark:from-zinc-900/50 dark:to-orange-950/20 dark:text-zinc-100';
                           } else {
                             cellBorder =
-                              'border-zinc-200/80 bg-zinc-50/40 dark:border-zinc-800 dark:bg-zinc-900/25';
+                              'border-zinc-200 bg-zinc-50/60 text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-100';
                           }
                         } else if (effectivelyPasses) {
                           cellBorder =
-                            'border-emerald-300 bg-emerald-50 dark:border-emerald-700/70 dark:bg-emerald-950/40';
+                            'border-emerald-200 bg-gradient-to-br from-emerald-50 to-white text-emerald-900 dark:border-emerald-700/40 dark:from-emerald-950/40 dark:to-zinc-950 dark:text-emerald-100';
                         } else if (isFutureOrToday && !day.hasData) {
                           cellBorder =
-                            'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40';
+                            'border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-100';
                         } else if (!day.hasData && isPreviousWeek && !weekend) {
                           cellBorder =
-                            'border-sky-300 bg-sky-50 dark:border-sky-700/60 dark:bg-sky-950/30';
+                            'border-sky-200 bg-gradient-to-br from-sky-50 to-white text-sky-900 dark:border-sky-700/40 dark:from-sky-950/40 dark:to-zinc-950 dark:text-sky-100';
                         } else if (!day.hasData) {
                           cellBorder =
-                            'border-orange-300 bg-orange-50 dark:border-orange-700/70 dark:bg-orange-950/30';
+                            'border-orange-200 bg-gradient-to-br from-orange-50 to-white text-orange-900 dark:border-orange-700/40 dark:from-orange-950/40 dark:to-zinc-950 dark:text-orange-100';
                         } else if (isToday) {
                           // Today is still in progress — live tracked time below 7h
                           // stays orange (in-progress), never red (failed day).
                           cellBorder =
-                            'border-orange-300 bg-orange-50 dark:border-orange-700/70 dark:bg-orange-950/30';
+                            'border-orange-200 bg-gradient-to-br from-orange-50 to-white text-orange-900 dark:border-orange-700/40 dark:from-orange-950/40 dark:to-zinc-950 dark:text-orange-100';
                         } else {
                           cellBorder =
-                            'border-red-300 bg-red-50 dark:border-red-700/70 dark:bg-red-950/40';
+                            'border-red-200 bg-gradient-to-br from-red-50 to-white text-red-900 dark:border-red-700/40 dark:from-red-950/40 dark:to-zinc-950 dark:text-red-100';
                         }
 
                         let hourText: string;
@@ -1831,7 +1847,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                         return (
                           <div
                             key={di}
-                            className={`group relative flex h-10 flex-col items-center justify-center gap-px rounded-md border transition-all duration-200 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:z-30 hover:ring-2 hover:ring-orange-300/50' : ''}`}
+                            className={`group relative flex h-16 flex-col justify-between rounded-xl border px-2 py-1.5 shadow-sm transition-all duration-200 sm:h-[4.75rem] sm:px-2.5 sm:py-2 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:z-30 hover:-translate-y-px hover:shadow-md hover:ring-2 hover:ring-orange-300/50' : ''}`}
                             title={`${titleBody}${titleDispute}${rateTooltip}`}
                             onClick={cellClickable ? handleCellClick : undefined}
                           >
@@ -1857,35 +1873,46 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                                 </div>
                               </div>
                             )}
-                            <span className="text-[7px] font-medium leading-none tabular-nums text-zinc-400 dark:text-zinc-500 sm:text-[8px]">
-                              {day.dateStr}
-                            </span>
-                            {isHoliday && (
-                              <span className="pointer-events-none max-w-[calc(100%-2px)] truncate text-[6px] font-semibold leading-none tracking-tight text-blue-500 dark:text-blue-400 sm:text-[7px]">
-                                Holiday
+                            {/* Label row — the stat card's uppercase caption, here the
+                                date (bigger than before) plus an optional state word. */}
+                            <div className="flex items-start justify-between gap-1 leading-none">
+                              <span className="text-xs font-semibold leading-none tabular-nums opacity-70 sm:text-sm">
+                                {day.dateStr}
                               </span>
-                            )}
-                            {(forgiven || orphanageForgiven) && !isHoliday && (
-                              <span className="pointer-events-none max-w-[calc(100%-2px)] truncate text-[6px] font-semibold leading-none tracking-tight text-emerald-600 dark:text-emerald-400 sm:text-[7px]">
-                                Forgiven
-                              </span>
-                            )}
+                              {isHoliday && (
+                                <span className="pointer-events-none truncate text-[8px] font-semibold uppercase leading-none tracking-wide text-blue-600 dark:text-blue-400 sm:text-[9px]">
+                                  Holiday
+                                </span>
+                              )}
+                              {(forgiven || orphanageForgiven) && !isHoliday && (
+                                <span className="pointer-events-none truncate text-[8px] font-semibold uppercase leading-none tracking-wide text-emerald-600 dark:text-emerald-400 sm:text-[9px]">
+                                  Forgiven
+                                </span>
+                              )}
+                              {isToday && !isHoliday && !forgiven && !orphanageForgiven && (
+                                <span className="pointer-events-none mt-px flex h-1.5 w-1.5 shrink-0">
+                                  <span className="absolute inline-flex h-1.5 w-1.5 animate-ping rounded-full bg-orange-400 opacity-75" />
+                                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-orange-500" />
+                                </span>
+                              )}
+                            </div>
+                            {/* Value row — mono, bold, tabular: the stat card's number. */}
                             {isToday && !day.hasData ? (
-                              <div className="flex flex-col items-center gap-0.5">
+                              <div className="flex items-end gap-1">
                                 <Hourglass
-                                  className="h-3 w-3 text-orange-400 dark:text-orange-300"
+                                  className="h-3.5 w-3.5 shrink-0 text-orange-400 dark:text-orange-300"
                                   style={{ animation: 'hourglass-flip 2s ease-in-out infinite' }}
                                 />
-                                <span className="text-[6.5px] font-semibold uppercase tracking-wider leading-none text-orange-400 dark:text-orange-300 sm:text-[7.5px]">
+                                <span className="truncate text-[8px] font-semibold uppercase leading-none tracking-wider text-orange-500 dark:text-orange-300 sm:text-[9px]">
                                   In Progress
                                 </span>
                               </div>
                             ) : isToday ? (
                               // Live tracked time landed (timer running or paused) —
                               // show the contribution so far, still flagged in-progress.
-                              <div className="flex flex-col items-center gap-px">
+                              <div className="flex flex-col gap-0.5">
                                 <span
-                                  className={`font-mono text-[10px] font-bold leading-none tabular-nums sm:text-[11px] ${
+                                  className={`font-mono text-sm font-bold leading-none tabular-nums sm:text-base ${
                                     effectivelyPasses
                                       ? 'text-emerald-700 dark:text-emerald-400'
                                       : 'text-orange-600 dark:text-orange-400'
@@ -1894,46 +1921,56 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                                   {secondsToDisplay(day.seconds)}
                                 </span>
                                 <span
-                                  className={`text-[6px] font-semibold uppercase tracking-wider leading-none sm:text-[7px] ${
+                                  className={`truncate text-[8px] font-semibold uppercase leading-none tracking-wider sm:text-[9px] ${
                                     effectivelyPasses
                                       ? 'text-emerald-600 dark:text-emerald-400'
-                                      : 'text-orange-400 dark:text-orange-300'
+                                      : 'text-orange-500 dark:text-orange-300'
                                   }`}
                                 >
                                   In Progress
                                 </span>
                               </div>
                             ) : inMonth && !weekend && !day.hasData && isPreviousWeek ? (
-                              <div className="flex flex-col items-center gap-0.5">
-                                <Loader2 className="h-3 w-3 animate-spin text-sky-500 dark:text-sky-400" />
-                                <span className="text-[6.5px] font-semibold uppercase tracking-wider leading-none text-sky-600 dark:text-sky-400 sm:text-[7.5px]">
+                              <div className="flex items-end gap-1">
+                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-sky-500 dark:text-sky-400" />
+                                <span className="truncate text-[8px] font-semibold uppercase leading-none tracking-wider text-sky-600 dark:text-sky-400 sm:text-[9px]">
                                   Processing
                                 </span>
                               </div>
                             ) : inMonth && !weekend && !day.hasData && !isFutureOrToday ? (
-                              <div className="flex flex-col items-center gap-0.5">
-                                <Hourglass className="h-3 w-3 text-orange-400 dark:text-orange-300" />
-                                <span className="text-[6.5px] font-semibold uppercase tracking-wider leading-none text-orange-400 dark:text-orange-300 sm:text-[7.5px]">
+                              <div className="flex items-end gap-1">
+                                <Hourglass className="h-3.5 w-3.5 shrink-0 text-orange-400 dark:text-orange-300" />
+                                <span className="truncate text-[8px] font-semibold uppercase leading-none tracking-wider text-orange-500 dark:text-orange-300 sm:text-[9px]">
                                   Pending
                                 </span>
                               </div>
                             ) : (
-                              <span className={`font-mono text-[11px] font-bold leading-none tabular-nums sm:text-[13px] ${hourText}`}>
-                                {hours > 0 ? `${hours.toFixed(1)}h` : '—'}
-                              </span>
+                              <div className="flex items-end justify-between gap-1">
+                                <span className={`font-mono text-base font-bold leading-none tabular-nums sm:text-xl ${hourText}`}>
+                                  {hours > 0 ? `${hours.toFixed(1)}h` : '—'}
+                                </span>
+                                {showRateBadge && (
+                                  <span
+                                    className={`pointer-events-none shrink-0 rounded px-1 py-px text-[8px] font-semibold leading-tight tabular-nums sm:text-[9px] ${
+                                      isRateFlipDay
+                                        ? 'bg-emerald-500/20 text-emerald-700 ring-1 ring-emerald-500/50 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/40'
+                                        : 'opacity-60'
+                                    }`}
+                                  >
+                                    {rateLabel}
+                                  </span>
+                                )}
+                              </div>
                             )}
-                            {isToday && (
-                              <span className="pointer-events-none absolute right-1 top-1 flex h-1.5 w-1.5">
-                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-75" />
-                                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-orange-500" />
-                              </span>
-                            )}
-                            {showRateBadge && (
+                            {/* Rate badge for the status-word states (today / pending /
+                                processing), where the value row has no room for it. */}
+                            {showRateBadge &&
+                              (isToday || (inMonth && !weekend && !day.hasData && !isFutureOrToday)) && (
                               <span
-                                className={`pointer-events-none absolute bottom-0 left-0.5 rounded px-0.5 text-[7px] font-semibold leading-tight tabular-nums sm:text-[8px] ${
+                                className={`pointer-events-none absolute bottom-1.5 right-1.5 rounded px-1 py-px text-[8px] font-semibold leading-tight tabular-nums sm:bottom-2 sm:right-2 sm:text-[9px] ${
                                   isRateFlipDay
                                     ? 'bg-emerald-500/20 text-emerald-700 ring-1 ring-emerald-500/50 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/40'
-                                    : 'text-zinc-400 dark:text-zinc-500'
+                                    : 'opacity-60'
                                 }`}
                               >
                                 {rateLabel}
@@ -1945,7 +1982,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                     </div>
                   ))}
                 </div>
-                <div className="mt-3 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-200 pt-3 text-[9px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-600 sm:text-[10px]">
+                <div className="mt-3 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-200 pt-3 text-[10px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-500 sm:text-[11px]">
                   <span className="flex items-center gap-1">
                     <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 sm:h-2 sm:w-2" /> ≥ 7h (Mon–Fri)
                   </span>
