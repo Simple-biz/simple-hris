@@ -139,6 +139,17 @@ export interface CycleCloseoutUnpaid {
   truncated: number;
   /** Entries rejected at the boundary as malformed. Counted, never silent. */
   dropped: number;
+  /**
+   * Reported-unpaid EMPLOYEE entries the cycle's own dispatch rows already
+   * settled (a PAID row for that email — the same pass-1 rule as
+   * `tallyPaidDispatches`). The screen that reported them was a beat behind the
+   * server: another clerk paid the person and the queue had not reloaded yet.
+   * They are removed from `payees` so the record cannot call someone unpaid on
+   * one line and paid on the next, and COUNTED here so the removal is never
+   * silent. Contractor entries are never pruned — an invoice is not identified
+   * by email alone. Absent on records written before 2026-09-02 (parsed as 0).
+   */
+  reconciledPaid: number;
 }
 
 /**
@@ -280,7 +291,22 @@ export function buildCycleCloseoutRecord(input: {
     byProcessor[key] = acc;
   }
 
-  const { payees, truncated, dropped } = normalizeReportedUnpaid(input.reportedUnpaid);
+  const normalized = normalizeReportedUnpaid(input.reportedUnpaid);
+  // The server can't DERIVE the unpaid list, but it can DISPROVE an entry: an
+  // employee with a PAID dispatch row in this cycle is paid, whatever the
+  // reporting screen still showed. Same (kind, email) rule as the tally's pass 1.
+  const paidEmployeeEmails = new Set<string>();
+  for (const d of input.dispatches) {
+    if (d.status !== 'paid') continue;
+    if ((d.payee_type ?? 'employee') === 'contractor') continue;
+    const email = (d.recipient_email ?? '').trim().toLowerCase();
+    if (email) paidEmployeeEmails.add(email);
+  }
+  const payees = normalized.payees.filter(
+    (p) => p.payeeType === 'contractor' || !paidEmployeeEmails.has(p.email),
+  );
+  const reconciledPaid = normalized.payees.length - payees.length;
+  const { truncated, dropped } = normalized;
   let unpaidEmployees = 0;
   let unpaidContractors = 0;
   let totalUSD = 0;
@@ -323,6 +349,7 @@ export function buildCycleCloseoutRecord(input: {
       payees,
       truncated,
       dropped,
+      reconciledPaid,
     },
     records_outstanding: input.recordsOutstanding,
   };
@@ -348,6 +375,7 @@ export function parseCycleCloseout(value: string): CycleCloseoutRecord | null {
     if (!Array.isArray(parsed.unpaid.payees)) parsed.unpaid.payees = [];
     if (typeof parsed.unpaid.truncated !== 'number') parsed.unpaid.truncated = 0;
     if (typeof parsed.unpaid.dropped !== 'number') parsed.unpaid.dropped = 0;
+    if (typeof parsed.unpaid.reconciledPaid !== 'number') parsed.unpaid.reconciledPaid = 0;
     if (!parsed.byProcessor || typeof parsed.byProcessor !== 'object') parsed.byProcessor = {};
     if (typeof parsed.label !== 'string' || !parsed.label) parsed.label = parsed.source_file;
     if (typeof parsed.closed_by !== 'string' || !parsed.closed_by) {

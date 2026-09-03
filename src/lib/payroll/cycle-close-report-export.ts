@@ -295,6 +295,19 @@ export function buildFinalCloseoutCsv(model: FinalCloseReportModel): string {
       ]),
     );
   }
+  if ((record.unpaid.reconciledPaid ?? 0) > 0) {
+    // The screen that filed this list was a beat behind the server; say so, so
+    // "Payable not paid" and the paid tally are never read as contradicting.
+    lines.push(
+      csvLine([
+        textCell(
+          `NOTICE: ${record.unpaid.reconciledPaid} ${
+            record.unpaid.reconciledPaid === 1 ? 'person the screen listed' : 'people the screen listed'
+          } as unpaid had already been paid when the cycle closed (recorded under Paid, not here).`,
+        ),
+      ]),
+    );
+  }
   lines.push('');
 
   // ── Per-processor (frozen byProcessor, sum-preserving) ──

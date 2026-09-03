@@ -788,7 +788,11 @@ export default function PayrollDispatch() {
       processor: string | null;
     }[] = [];
 
-    for (const r of pending) {
+    // Same render-boundary overlay as the table: a person another screen just
+    // paid is not "payable but unpaid" for the Stop dialog, the close-out POST
+    // or the premature snapshot. `pending` itself stays whole (the celebration
+    // gate reads it); the server prunes this list again against its own rows.
+    for (const r of hidePaidElsewhere(pending, paidElsewhere)) {
       out.push({
         name: r.name || null,
         email: r.email,
@@ -822,7 +826,7 @@ export default function PayrollDispatch() {
       });
     }
     return out;
-  }, [pending, paid, blockedEmails, heldEmails]);
+  }, [pending, paidElsewhere, paid, blockedEmails, heldEmails]);
 
   const unpaidPayablePHP = useMemo(
     () => unpaidPayable.reduce((sum, r) => sum + (r.amountPHP ?? 0), 0),

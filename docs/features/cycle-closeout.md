@@ -77,6 +77,19 @@ Accounting excluded. So the list is client-reported, stored under `unpaid.source
 (`normalizeReportedUnpaid`), and cross-checked against a server-side `disbursement_records` tally
 stored as `records_outstanding`.
 
+**The server cannot derive the unpaid list, but it can disprove an entry (added 2026-09-02).**
+`buildCycleCloseoutRecord` drops any reported-unpaid **employee** whose email has a **paid**
+dispatch row in this cycle — the same (kind, email) pass-1 rule `tallyPaidDispatches` uses — and
+counts the removals in `unpaid.reconciledPaid`. The case is real and now common: another clerk
+pays someone seconds before Stop, the reporting screen has not reloaded, and without this the
+record would list the person as unpaid on one line while its own paid tally counted them on the
+next. Contractor entries are **never** pruned: an invoice is not identified by email alone, and
+a contractor with one paid and one open invoice is legitimately both. The report CSV prints a
+NOTICE line whenever `reconciledPaid > 0`; records written before this field parse it as 0.
+The Payment Dispatch screen applies the same overlay before it reports (`paidElsewhere`, see
+[dispatch-paid-toast.md](./dispatch-paid-toast.md) § "The table never lags the toast"), so the
+server prune is the backstop, not the only line.
+
 **`records_outstanding` is normally LARGER than `unpaid.count` and that is not a bug** — it counts
 excluded people too. It is an audit cross-check, never the headline. When its read fails it is
 stored as `null`, never as zero.

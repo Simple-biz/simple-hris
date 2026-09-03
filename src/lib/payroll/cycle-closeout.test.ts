@@ -276,3 +276,61 @@ describe('reopen — archive key and role gate', () => {
     assert.equal(canReopenCycle(undefined), false);
   });
 });
+
+describe('buildCycleCloseoutRecord — the server disproves what it can', () => {
+  test('a reported-unpaid EMPLOYEE with a PAID row in this cycle is removed and COUNTED', () => {
+    // Another clerk paid Anna seconds before Stop; the reporting screen had not
+    // reloaded. The record must not list her as unpaid while its own paid tally
+    // counts her — and the removal must be visible, never silent.
+    const rec = build({
+      dispatches: [dispatch({ recipient_email: 'anna@simple.biz' })],
+      reportedUnpaid: [
+        { email: 'Anna@Simple.biz', amountPHP: 5600, amountUSD: 100, reason: 'pending' },
+        { email: 'b@x.com', amountPHP: 500, amountUSD: 9, reason: 'pending' },
+      ],
+    });
+    assert.deepEqual(rec.unpaid.payees.map((p) => p.email), ['b@x.com']);
+    assert.equal(rec.unpaid.count, 1);
+    assert.equal(rec.unpaid.totalPHP, 500);
+    assert.equal(rec.unpaid.reconciledPaid, 1);
+    assert.equal(rec.paid.employeeCount, 1);
+  });
+
+  test('a superseded marker (Not Paid then Paid) still counts as paid for pruning', () => {
+    const rec = build({
+      dispatches: [
+        dispatch({ recipient_email: 'anna@simple.biz', status: 'not_paid' }),
+        dispatch({ recipient_email: 'anna@simple.biz', status: 'paid' }),
+      ],
+      reportedUnpaid: [{ email: 'anna@simple.biz', amountPHP: 5600, reason: 'pending' }],
+    });
+    assert.equal(rec.unpaid.count, 0);
+    assert.equal(rec.unpaid.reconciledPaid, 1);
+  });
+
+  test('a non-paid marker alone never prunes — Problem / Not Paid / Threshold are not payments', () => {
+    const rec = build({
+      dispatches: [dispatch({ recipient_email: 'anna@simple.biz', status: 'problem' })],
+      reportedUnpaid: [{ email: 'anna@simple.biz', amountPHP: 5600, reason: 'problem' }],
+    });
+    assert.equal(rec.unpaid.count, 1);
+    assert.equal(rec.unpaid.reconciledPaid, 0);
+  });
+
+  test('contractor entries are never pruned — an invoice is not identified by email alone', () => {
+    const rec = build({
+      dispatches: [dispatch({ recipient_email: 'c@x.com', payee_type: 'contractor' })],
+      reportedUnpaid: [{ email: 'c@x.com', amountPHP: 250, payeeType: 'contractor', reason: 'pending' }],
+    });
+    assert.equal(rec.unpaid.count, 1);
+    assert.equal(rec.unpaid.reconciledPaid, 0);
+  });
+
+  test('nothing to disprove ⇒ reconciledPaid is 0, and a pre-2026-09-02 record parses as 0', () => {
+    assert.equal(build().unpaid.reconciledPaid, 0);
+    const rec = build({ reportedUnpaid: [{ email: 'a@x.com', amountPHP: 10 }] });
+    const legacy = JSON.parse(JSON.stringify(rec)) as { unpaid: Record<string, unknown> };
+    delete legacy.unpaid.reconciledPaid;
+    assert.equal(parseCycleCloseout(JSON.stringify(legacy))?.unpaid.reconciledPaid, 0);
+  });
+});

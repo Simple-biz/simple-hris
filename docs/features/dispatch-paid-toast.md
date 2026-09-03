@@ -124,6 +124,26 @@ Consequences to know:
   de-dupe memory and double every card. The Accounting shell's own mount was removed for that
   reason; the root layout is the only one.
 
+## The pending CSV and Stop Processing read the same overlay
+
+Kane asked (2026-09-02) whether the **Export CSV** and **Stop Processing** stay accurate now
+that a remotely paid person vanishes from the table before the reload. Both read what the
+screen shows:
+
+- **Export CSV** (`ProcessorQueue`) builds from `filtered`, whose source is `visibleRows` →
+  `mainPending`, which already carries the `paidElsewhere` overlay. The file matches the table
+  row-for-row; a person paid elsewhere leaves both at the same instant. Its residual window is
+  the delivery window itself: a payment whose broadcast and poll have not landed yet (normally
+  under a second, at most 10 s) is still in the file, exactly as it is still on screen.
+- **Stop Processing** — the Stop dialog's "with N unpaid people", the close-out POST body and
+  the client-built premature snapshot all come from `unpaidPayable`, which now iterates the
+  same overlaid rows. And the **server prunes again** against its own paid rows
+  (`unpaid.reconciledPaid`, [cycle-closeout.md](./cycle-closeout.md)), so even a screen with no
+  overlay at all cannot file a paid person as unpaid.
+
+`pending` itself is untouched by both; the hero Pending count and the celebration gate still
+move only when a reload lands.
+
 ## Only a real `paid` row toasts
 
 `shouldAnnouncePaid(status)` is `status === 'paid'`. Problem / Not Paid / Threshold are markers

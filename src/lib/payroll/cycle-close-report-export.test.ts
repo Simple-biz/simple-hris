@@ -79,6 +79,7 @@ function record(over: Partial<CycleCloseoutRecord> = {}): CycleCloseoutRecord {
       ],
       truncated: 0,
       dropped: 0,
+      reconciledPaid: 0,
     },
     records_outstanding: { notPaid: 1, threshold: 1, problem: 0, neverDispatched: 3, total: 5 },
     ...over,

@@ -92,3 +92,17 @@ on, zero policies; `app_settings` "Admins only" ⇒ `postgres_changes` is dead f
 - [x] 21. `PayrollDispatch`: `paidElsewhere` overlay hides the row at the render boundary
       (`mainPending` / `copPending`), cleared when `fetched` changes. `pending` untouched.
 - [x] 22. Tests (13), docs, INDEX, memory.
+
+## Follow-up 4, same day — Export CSV + Stop Processing accuracy (hardening)
+
+Kane: "can we check the Export CSV if it is accurate in here as well — both for the export
+CSV and the Stop Processing."
+
+- [x] 23. Export CSV: verified it builds from `filtered` ← `visibleRows` ← `mainPending`, which
+      carries the overlay — already matches the table. No code change.
+- [x] 24. Stop Processing: `unpaidPayable` now iterates the overlaid rows (dialog text, POST body,
+      premature snapshot all agree with the screen). `pending` untouched.
+- [x] 25. Server backstop: `buildCycleCloseoutRecord` prunes reported-unpaid EMPLOYEES with a
+      paid row in the cycle (tally pass-1 rule), counts `unpaid.reconciledPaid`; parse repair → 0;
+      report CSV NOTICE line. 5 new tests.
+- [x] 26. Docs: cycle-closeout.md, dispatch-paid-toast.md, INDEX (close-out row), memory.
