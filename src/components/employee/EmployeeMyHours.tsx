@@ -1729,55 +1729,55 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                         const hslOvernight = isHsl && inMonth && hslOvernightIsos.has(dayIso);
                         const effectivelyPasses = day.passes || forgiven || orphanageForgiven || hslOvernight;
 
-                        // Tile surface — the MESA StatCard recipe per tone:
-                        // `border-{t}-200 bg-gradient-to-br from-{t}-50 to-white text-{t}-900`
+                        // Tile surface — the MESA StatCard recipe per tone, flat fill (no gradient):
+                        // `border-{t}-200 bg-{t}-50 text-{t}-900`
                         // and the matching dark pair. Semantic hue per state is unchanged.
                         let cellBorder: string;
                         if (!inMonth) {
                           if (hours > 0 && weekend) {
                             cellBorder =
-                              'border-dashed border-zinc-300/90 bg-gradient-to-br from-zinc-50/70 to-orange-50/30 text-zinc-700 opacity-90 shadow-none dark:border-zinc-600 dark:from-zinc-900/40 dark:to-orange-950/15 dark:text-zinc-300';
+                              'border-dashed border-zinc-300/90 bg-orange-50/30 text-zinc-700 opacity-90 shadow-none dark:border-zinc-600 dark:bg-orange-950/15 dark:text-zinc-300';
                           } else if (hours > 0) {
                             cellBorder =
-                              'border-dashed border-indigo-200/80 bg-gradient-to-br from-indigo-50/60 to-white text-indigo-900 opacity-90 shadow-none dark:border-indigo-900/50 dark:from-indigo-950/30 dark:to-zinc-950 dark:text-indigo-100';
+                              'border-dashed border-indigo-200/80 bg-indigo-50/50 text-indigo-900 opacity-90 shadow-none dark:border-indigo-900/50 dark:bg-indigo-950/30 dark:text-indigo-100';
                           } else {
                             cellBorder =
                               'border-dashed border-zinc-200/90 bg-zinc-50/30 text-zinc-500 shadow-none dark:border-zinc-800 dark:bg-zinc-900/15 dark:text-zinc-400';
                           }
                         } else if (isHoliday) {
                           cellBorder =
-                            'border-blue-200 bg-gradient-to-br from-blue-50 to-white text-blue-900 dark:border-blue-700/40 dark:from-blue-950/40 dark:to-zinc-950 dark:text-blue-100';
+                            'border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-700/40 dark:bg-blue-950/40 dark:text-blue-100';
                         } else if (weekend && isHsl && effectivelyPasses) {
                           cellBorder =
-                            'border-emerald-200 bg-gradient-to-br from-emerald-50 to-white text-emerald-900 dark:border-emerald-700/40 dark:from-emerald-950/40 dark:to-zinc-950 dark:text-emerald-100';
+                            'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-700/40 dark:bg-emerald-950/40 dark:text-emerald-100';
                         } else if (weekend) {
                           if (hours > 0) {
                             cellBorder =
-                              'border-zinc-200 bg-gradient-to-br from-zinc-50 to-orange-50/50 text-zinc-900 dark:border-zinc-700/60 dark:from-zinc-900/50 dark:to-orange-950/20 dark:text-zinc-100';
+                              'border-zinc-200 bg-orange-50/50 text-zinc-900 dark:border-zinc-700/60 dark:bg-orange-950/20 dark:text-zinc-100';
                           } else {
                             cellBorder =
                               'border-zinc-200 bg-zinc-50/60 text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-100';
                           }
                         } else if (effectivelyPasses) {
                           cellBorder =
-                            'border-emerald-200 bg-gradient-to-br from-emerald-50 to-white text-emerald-900 dark:border-emerald-700/40 dark:from-emerald-950/40 dark:to-zinc-950 dark:text-emerald-100';
+                            'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-700/40 dark:bg-emerald-950/40 dark:text-emerald-100';
                         } else if (isFutureOrToday && !day.hasData) {
                           cellBorder =
                             'border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-100';
                         } else if (!day.hasData && isPreviousWeek && !weekend) {
                           cellBorder =
-                            'border-sky-200 bg-gradient-to-br from-sky-50 to-white text-sky-900 dark:border-sky-700/40 dark:from-sky-950/40 dark:to-zinc-950 dark:text-sky-100';
+                            'border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-700/40 dark:bg-sky-950/40 dark:text-sky-100';
                         } else if (!day.hasData) {
                           cellBorder =
-                            'border-orange-200 bg-gradient-to-br from-orange-50 to-white text-orange-900 dark:border-orange-700/40 dark:from-orange-950/40 dark:to-zinc-950 dark:text-orange-100';
+                            'border-orange-200 bg-orange-50 text-orange-900 dark:border-orange-700/40 dark:bg-orange-950/40 dark:text-orange-100';
                         } else if (isToday) {
                           // Today is still in progress — live tracked time below 7h
                           // stays orange (in-progress), never red (failed day).
                           cellBorder =
-                            'border-orange-200 bg-gradient-to-br from-orange-50 to-white text-orange-900 dark:border-orange-700/40 dark:from-orange-950/40 dark:to-zinc-950 dark:text-orange-100';
+                            'border-orange-200 bg-orange-50 text-orange-900 dark:border-orange-700/40 dark:bg-orange-950/40 dark:text-orange-100';
                         } else {
                           cellBorder =
-                            'border-red-200 bg-gradient-to-br from-red-50 to-white text-red-900 dark:border-red-700/40 dark:from-red-950/40 dark:to-zinc-950 dark:text-red-100';
+                            'border-red-200 bg-red-50 text-red-900 dark:border-red-700/40 dark:bg-red-950/40 dark:text-red-100';
                         }
 
                         let hourText: string;
