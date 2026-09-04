@@ -228,15 +228,53 @@ A tab is mounted the first time it is opened and then **stays mounted**, hidden 
 
 Smoothness rules that must survive an edit, all in `performance-ui.tsx`:
 
-- **The skeleton mirrors the real grid box-for-box.** A skeleton whose layout differs from the
-  content's makes the page jump when data lands.
-- **The skeleton is first-load only**, derived from `!everLoaded && !data`. A background poll
-  never blanks a screen that was already correct.
+- **The first read raises a modal progress bar**, not a layout skeleton (Kane, 2026-09-04:
+  *"instead of skeletons lets add a modal progress bar"*). See § below.
+- **It is first-load only**, derived from `!everLoaded && !data`. A background poll never
+  blanks or covers a screen that was already correct.
 - **Every number is `tabular-nums`.** Proportional digits change width as they change value,
   so a polling counter visibly shivers.
-- **Bars animate `width` inside a fixed-height track**, starting from 0 on the next animation
-  frame (a width set in the same paint as insertion has nothing to transition from).
+- **Bars animate `transform` / `width` inside a fixed-height track**, starting from 0 on the
+  next animation frame (a value set in the same paint as insertion has nothing to transition
+  from).
 - **`motion-reduce:` on everything animated.**
+
+## The loading modal never reaches 100% on prediction
+
+`PerfLoadingModal` reuses `src/lib/payroll/step-load-prediction.ts` — the Payroll Wizard's
+step-rail predictor — rather than deriving its own maths. `payroll-wizard-step-load.md` § 6 and
+its memory note both forbid inlining that module back into a component, and the reason applies
+here with more force, not less:
+
+> A full bar on a payroll screen is a claim that the figures behind it are safe to read.
+
+So `predictedProgress` ramps to **90%** across the duration this browser remembers, then eases
+asymptotically toward **99%** if the read overruns — movement without a false finish. **Only the
+data landing fills it.** The observed duration is folded into a localStorage EMA
+(`hris.diagnosticsPerf.loadMs.v1`, keyed per tab) so the second visit predicts better than the
+first.
+
+Four behaviours that look incidental and are not:
+
+- **A failed read never completes the bar** and never trains the estimate. The modal leaves
+  immediately and the error banner takes the screen. Filling to 100% and *then* revealing an
+  error is the same false "done" the ceiling exists to prevent — and a read that died after
+  300 ms is not evidence that this tab loads in 300 ms.
+- **The fill is written to `style.transform` from a rAF loop, never React state.** A `setState`
+  per frame re-renders the whole tab while its own fetch saturates the main thread, which is
+  exactly when the bar must stay smooth. Nothing sets `transform` or `transition` through the
+  style prop; React would re-assert it on render and fight the loop.
+- **Only the landing transitions**, and it is attached one frame *before* the fill is painted.
+  Declaring the transition and changing the value in the same paint makes the bar jump to full
+  instead of travelling there.
+- **The modal is dismissable.** A modal that cannot be closed is a trap. Closing it does not
+  cancel the read; the numbers arrive underneath either way.
+
+Under `prefers-reduced-motion` there is no rAF loop at all: the bar holds one honest static
+position, which still reads as working and still cannot claim to be finished.
+
+The dialog carries `gap-0` and a `max-h` because the shared popup is a `grid gap-4` with **no
+height cap at all** — see `docs/design/responsive-design.md` § "Dialogs and modals".
 
 Both tabs poll every **120 s**, deliberately slower than the service map's 30 s: the map is a
 health feed where a mid-session outage must surface on its own, while these are records and a

@@ -106,6 +106,9 @@ export default function HrPipelinePerformance() {
       icon={<UsersGlyph />}
       generatedAt={generatedAt}
       loading={!everLoaded && !data}
+      loadingTitle="Reading the hiring pipeline"
+      loadingDetail="Checklist weeks, staged hires and their stamps."
+      tabKey="hr"
       refreshing={refreshing}
       error={error}
       onRefresh={() => void load()}

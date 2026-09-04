@@ -107,6 +107,9 @@ export default function PayrollCyclePerformance() {
       icon={<WalletGlyph />}
       generatedAt={generatedAt}
       loading={!everLoaded && !data}
+      loadingTitle="Reading pay cycles"
+      loadingDetail="Close-out records, dispatches and the ledger."
+      tabKey="cycles"
       refreshing={refreshing}
       error={error}
       onRefresh={() => void load()}

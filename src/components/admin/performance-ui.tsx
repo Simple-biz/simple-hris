@@ -7,7 +7,7 @@
  * HR's numbers never share a scoreboard, Kane 2026-09-04) but they must not
  * look like two different products. Accent is the only thing that differs:
  * **Accounting is orange, HR is teal.** Everything structural — card, rate bar,
- * skeleton, the "unmeasurable" treatment — is defined once here so the two
+ * loading modal, the "unmeasurable" treatment — is defined once here so the two
  * cannot drift.
  *
  * ── Why those two colours specifically ─────────────────────────────────────
@@ -29,16 +29,17 @@
  * into emerald, rose or violet without re-reading those two rules.
  *
  * ── The motion rules (Kane: "smooth UI") ───────────────────────────────────
- * 1. **The skeleton mirrors the real layout, box for box.** It is not a spinner
- *    and not a smaller placeholder: if the skeleton's grid differs from the
- *    content's grid, the page jumps when data lands. That jump is the whole
- *    thing this avoids.
- * 2. **The skeleton is FIRST LOAD ONLY.** A background refresh keeps the old
- *    numbers on screen and never blanks them — see `PerfShell`'s `refreshing`.
+ * 1. **The first read raises a MODAL PROGRESS BAR** ({@link PerfLoadingModal}),
+ *    not a layout skeleton (Kane, 2026-09-04). Its bar is predicted from this
+ *    browser's own history and **never reaches 100% until the data lands** —
+ *    the Payroll Wizard's rule, reusing its tested module. Read that
+ *    component's header before touching it; the invariant is load-bearing.
+ * 2. **The modal is FIRST LOAD ONLY.** A background refresh keeps the old
+ *    numbers on screen and covers nothing — see `PerfShell`'s `refreshing`.
  * 3. **Every number is `tabular-nums`.** Proportional digits change width as
  *    they change value, so a polling counter visibly shivers.
- * 4. **Bars animate width, never layout.** `transition-[width]` on a child
- *    inside a fixed-height track: nothing reflows, and it is cheap.
+ * 4. **Bars animate transform, never layout.** `scaleX` / `width` on a child
+ *    inside a fixed-height track: nothing reflows, and it composites.
  * 5. **`motion-reduce:` disables all of it.** Every animated element carries
  *    the escape hatch.
  */
@@ -47,7 +48,12 @@
 
 import * as React from 'react';
 import { cn } from '@/lib/utils';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
+import {
+  coerceEstimate,
+  foldLoadSample,
+  predictedProgress,
+} from '@/lib/payroll/step-load-prediction';
 
 export type PerfAccent = 'accounting' | 'hr';
 
@@ -248,52 +254,277 @@ export function PerfError({ message }: { message: string }) {
 }
 
 /**
- * First-load skeleton. Mirrors the tabs' real grid: a 4-up KPI row, a band of
- * month cards, then a table. Same gaps, same heights, same rounding — so the
- * swap to real content moves nothing.
+ * localStorage key holding how long each performance tab took to read last
+ * time, so the bar is predicted from this browser's own history rather than a
+ * guess. Same mechanism as the Payroll Wizard's step rail, separate namespace.
  */
-export function PerfSkeleton() {
+const PERF_LOAD_MS_KEY = 'hris.diagnosticsPerf.loadMs.v1';
+
+function readEstimate(tabKey: string): number {
+  try {
+    const raw = window.localStorage.getItem(PERF_LOAD_MS_KEY);
+    const map = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    return coerceEstimate(map?.[tabKey]);
+  } catch {
+    // A private window, blocked site data, or a hand-edited key. The default
+    // estimate is a fine answer; a broken bar is not.
+    return coerceEstimate(undefined);
+  }
+}
+
+function writeEstimate(tabKey: string, elapsedMs: number): void {
+  try {
+    const raw = window.localStorage.getItem(PERF_LOAD_MS_KEY);
+    const map = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    map[tabKey] = foldLoadSample(map?.[tabKey], elapsedMs);
+    window.localStorage.setItem(PERF_LOAD_MS_KEY, JSON.stringify(map));
+  } catch {
+    // A storage failure must never break a load.
+  }
+}
+
+/** How long the filled bar rests at 100% before the modal leaves. */
+const SETTLE_MS = 420;
+
+/**
+ * The first-load modal. Replaces the layout skeleton these tabs shipped with
+ * (Kane, 2026-09-04: *"instead of skeletons lets add a modal progress bar"*).
+ *
+ * ── The invariant, inherited and load-bearing ──────────────────────────────
+ * **The bar never reaches 100% on prediction alone.** `predictedProgress` ramps
+ * to 90% across the remembered duration, then eases asymptotically toward 99%
+ * when a read overruns — so an overrun keeps showing movement instead of
+ * parking at a dead 90%, without ever claiming to be finished. Only the data
+ * actually landing fills it.
+ *
+ * That is the Payroll Wizard step rail's rule, and this reuses its exact tested
+ * module rather than re-deriving the maths — `payroll-wizard-step-load.md` § 6
+ * and its memory note both forbid inlining it back into a component.
+ *
+ * The reason applies with more force here, not less: a full bar on a payroll
+ * screen is a claim that the figures behind it are safe to read. A bar that hit
+ * 100% early would make that claim early.
+ *
+ * ── Mechanics ──────────────────────────────────────────────────────────────
+ * The fill is written to `style.transform` from a rAF loop, never React state.
+ * A `setState` per frame re-renders the whole tab while its own fetch saturates
+ * the main thread — precisely when the bar must stay smooth. `scaleX` on a
+ * fixed-size track composites; it never reflows.
+ *
+ * It is **dismissable**, and deliberately so. A modal that cannot be closed is a
+ * trap. This one is informational: closing it does not cancel the read, and the
+ * numbers arrive underneath either way.
+ */
+export function PerfLoadingModal({
+  active,
+  failed,
+  accent,
+  tabKey,
+  title,
+  detail,
+}: {
+  /** True while the FIRST read is in flight. Never true for a background poll. */
+  active: boolean;
+  /**
+   * The read finished by FAILING.
+   *
+   * A filled bar is this component's way of saying the figures behind it are
+   * safe to read. There are no figures, so the modal leaves immediately without
+   * completing, and the shell's error banner — which can actually say what went
+   * wrong — takes the screen. Animating to 100% and then revealing an error
+   * would be the same false "done" the prediction ceiling exists to prevent.
+   */
+  failed: boolean;
+  accent: PerfAccent;
+  /** Storage key for this tab's remembered duration. */
+  tabKey: string;
+  title: string;
+  detail: string;
+}) {
+  const a = ACCENT[accent];
+  const [open, setOpen] = React.useState(false);
+  const [landed, setLanded] = React.useState(false);
+  const fillRef = React.useRef<HTMLDivElement | null>(null);
+  const rafRef = React.useRef<number | null>(null);
+  const startedAtRef = React.useRef<number>(0);
+
+  const paint = React.useCallback((p: number) => {
+    const el = fillRef.current;
+    if (el) el.style.transform = `scaleX(${Math.max(0, Math.min(1, p))})`;
+  }, []);
+
+  const prefersReduced = React.useCallback(
+    () =>
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true,
+    [],
+  );
+
+  // Ramp while the read is in flight.
+  React.useEffect(() => {
+    if (!active) return;
+    setOpen(true);
+    setLanded(false);
+    startedAtRef.current = performance.now();
+    paint(0);
+
+    // The ramp writes transform every frame, so the element must carry NO
+    // transition while it runs — a transition would chase each frame's value
+    // and lag visibly behind the true prediction. The landing adds one.
+    const el = fillRef.current;
+    if (el) el.style.transition = 'none';
+
+    if (prefersReduced()) {
+      // No per-frame animation. One honest, static position that still reads as
+      // "working" and still cannot claim to be finished.
+      paint(0.5);
+      return;
+    }
+
+    const estimate = readEstimate(tabKey);
+    const tick = () => {
+      paint(predictedProgress(performance.now() - startedAtRef.current, estimate));
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    };
+  }, [active, tabKey, paint]);
+
+  // The data landed: stop predicting, fill, remember the duration, leave.
+  React.useEffect(() => {
+    if (active || !open) return;
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+
+    // A failed read never completes the bar and never trains the estimate — a
+    // read that died after 300ms is not evidence that this tab loads in 300ms.
+    if (failed) {
+      startedAtRef.current = 0;
+      setOpen(false);
+      return;
+    }
+
+    if (startedAtRef.current > 0) {
+      writeEstimate(tabKey, performance.now() - startedAtRef.current);
+      startedAtRef.current = 0;
+    }
+    setLanded(true);
+
+    // Attach the transition and paint 1 on the NEXT frame, in that order.
+    // Setting both in this tick would change `transform` in the same paint the
+    // transition is declared, and the bar would JUMP to full instead of
+    // travelling there — the one moment in this component that is worth
+    // animating, since it is what says the figures are safe to read.
+    const el = fillRef.current;
+    let raf = 0;
+    if (el && !prefersReduced()) {
+      el.style.transition = 'transform 300ms cubic-bezier(0.22, 1, 0.36, 1)';
+      raf = requestAnimationFrame(() => paint(1));
+    } else {
+      paint(1);
+    }
+
+    const t = setTimeout(() => setOpen(false), SETTLE_MS);
+    return () => {
+      clearTimeout(t);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [active, failed, open, tabKey, paint, prefersReduced]);
+
   return (
-    <div className="flex flex-col gap-3" aria-busy="true" aria-live="polite">
-      <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <div
-            key={i}
-            className="flex items-center justify-between gap-2 rounded-xl border border-zinc-200 bg-white/80 p-3 dark:border-zinc-800 dark:bg-zinc-950/40"
-          >
-            <div className="flex min-w-0 flex-col gap-1.5">
-              <Skeleton className="h-2 w-20" />
-              <Skeleton className="h-5 w-16" />
-              <Skeleton className="h-2 w-24" />
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent
+        showCloseButton={false}
+        // `gap-0` because the shared popup is a `grid gap-4` and a `p-0` dialog
+        // otherwise inherits dead gutters; the height cap because that primitive
+        // ships with none at all. Both per docs/design/responsive-design.md
+        // § "Dialogs and modals".
+        className="flex max-h-[calc(100dvh-1.5rem)] max-w-[calc(100%-2rem)] flex-col gap-0 p-0 sm:max-w-md"
+        aria-label={title}
+      >
+        <div className="flex flex-col gap-3.5 px-5 py-5">
+          <div className="flex items-center gap-2.5">
+            <span
+              className={cn(
+                'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1',
+                a.text,
+                a.softBg,
+                a.ring,
+              )}
+            >
+              {landed ? <LandedGlyph /> : <ReadingGlyph />}
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+                {title}
+              </p>
+              <p className="mt-0.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+                {landed ? 'Ready.' : detail}
+              </p>
             </div>
-            <Skeleton className="h-8 w-8 rounded-lg" />
           </div>
-        ))}
-      </div>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 xl:grid-cols-3">
-        {[0, 1, 2].map((i) => (
+
           <div
-            key={i}
-            className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-white/80 p-3 dark:border-zinc-800 dark:bg-zinc-950/40"
+            role="progressbar"
+            aria-label={title}
+            aria-busy={!landed}
+            // Only the finished state announces a value. While predicting there
+            // is no true percentage to announce, and reading out a guess to a
+            // screen reader is worse than announcing "busy".
+            {...(landed
+              ? { 'aria-valuenow': 100, 'aria-valuemin': 0, 'aria-valuemax': 100 }
+              : {})}
+            className={cn('h-1.5 w-full overflow-hidden rounded-full', a.barTrack)}
           >
-            <Skeleton className="h-2.5 w-24" />
-            <Skeleton className="h-7 w-20" />
-            <Skeleton className="h-1.5 w-full rounded-full" />
-            <Skeleton className="h-2 w-32" />
+            {/* No `transform` or `transition` in the style prop: both are owned
+                by the effects above, and a React-managed inline value would be
+                re-asserted on every render, fighting the rAF loop. */}
+            <div ref={fillRef} className={cn('h-full w-full origin-left rounded-full', a.bar)} />
           </div>
-        ))}
-      </div>
-      <div className="rounded-xl border border-zinc-200 bg-white/80 p-3 dark:border-zinc-800 dark:bg-zinc-950/40">
-        <Skeleton className="mb-3 h-2.5 w-28" />
-        {[0, 1, 2, 3, 4].map((i) => (
-          <div key={i} className="flex items-center gap-3 py-2">
-            <Skeleton className="h-3 w-36" />
-            <Skeleton className="h-3 flex-1" />
-            <Skeleton className="h-3 w-12" />
-          </div>
-        ))}
-      </div>
-    </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ReadingGlyph() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-3.5 w-3.5"
+      aria-hidden
+    >
+      <ellipse cx="12" cy="5" rx="8" ry="3" />
+      <path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
+      <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
+    </svg>
+  );
+}
+
+function LandedGlyph() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-3.5 w-3.5"
+      aria-hidden
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
   );
 }
 
@@ -301,9 +532,10 @@ export function PerfSkeleton() {
  * The shell both tabs render into: title, a live "updated" stamp, a Refresh
  * button, and the first-load/refresh distinction.
  *
- * `refreshing` deliberately does NOT swap in the skeleton. A background poll
- * that blanks the screen is the jankiest thing a live dashboard can do — the
- * old numbers stay, the stamp dims, and the new numbers replace them in place.
+ * `loading` (the FIRST read) raises {@link PerfLoadingModal}. `refreshing` (a
+ * background poll) raises nothing at all: a poll that blanks or covers a screen
+ * which was already correct is the jankiest thing a live dashboard can do. The
+ * old numbers stay, the stamp dims, and the new ones replace them in place.
  */
 export function PerfShell({
   accent,
@@ -312,6 +544,9 @@ export function PerfShell({
   icon,
   generatedAt,
   loading,
+  loadingTitle,
+  loadingDetail,
+  tabKey,
   refreshing,
   error,
   onRefresh,
@@ -323,6 +558,12 @@ export function PerfShell({
   icon: React.ReactNode;
   generatedAt: string | null;
   loading: boolean;
+  /** Headline inside the first-load modal — name what is being read. */
+  loadingTitle: string;
+  /** One quiet line under it. */
+  loadingDetail: string;
+  /** Storage key for this tab's remembered load duration. */
+  tabKey: string;
   refreshing: boolean;
   error: string | null;
   onRefresh: () => void;
@@ -378,9 +619,18 @@ export function PerfShell({
 
       {error ? <PerfError message={error} /> : null}
 
-      {loading ? (
-        <PerfSkeleton />
-      ) : (
+      <PerfLoadingModal
+        active={loading}
+        failed={Boolean(error)}
+        accent={accent}
+        tabKey={tabKey}
+        title={loadingTitle}
+        detail={loadingDetail}
+      />
+
+      {/* No placeholder underneath. The modal owns the first-load moment, and a
+          skeleton behind it would be two loading states for one read. */}
+      {loading ? null : (
         <div className="flex flex-col gap-3 duration-300 animate-in fade-in-0 slide-in-from-bottom-1 motion-reduce:animate-none">
           {children}
         </div>
