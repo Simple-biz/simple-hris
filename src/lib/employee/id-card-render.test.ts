@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { ID_CARD_COLORS, ID_CARD_GEOMETRY, idCardFileName, trackedTotalWidth, wrapToLines } from './id-card-render';
+import { ID_CARD_COLORS, ID_CARD_GEOMETRY, ID_CARD_METAL, idCardFileName, trackedTotalWidth, wrapToLines } from './id-card-render';
 
 /** Stand-in measurer: every character is 1 unit wide. */
 const measure = (s: string) => s.length;
@@ -149,4 +149,114 @@ test('the font size is never read back off ctx.font', () => {
   // readings are wrong; one was merely survivable. Sizes are passed explicitly.
   const src = readFileSync(new URL('./id-card-render.ts', import.meta.url), 'utf8');
   assert.ok(!/parseFloat\s*\(\s*ctx\.font/.test(src), 'ctx.font must not be parsed for a size');
+});
+
+/* ── the metal surface is a contrast budget, not a taste knob ── */
+
+const channel = (c: number) => {
+  const v = c / 255;
+  return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+};
+const rgb = (hex: string) => {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255] as const;
+};
+const luminance = (hex: string) => {
+  const [r, g, b] = rgb(hex);
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+};
+const contrast = (a: string, b: string) => {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+};
+/** White laid over a colour at `alpha` — what the sheen does to the metal. */
+const litBy = (hex: string, alpha: number) => {
+  const [r, g, b] = rgb(hex);
+  const mix = (c: number) => Math.round(c + (255 - c) * alpha);
+  return `#${[mix(r), mix(g), mix(b)].map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+};
+
+test('the sheen at full strength still leaves white text on navy above AA', () => {
+  // Worst case is the LIGHTEST navy stop under the brightest point of the sweep —
+  // that is the pixel the footer serial can sit on.
+  const lightestNavy = ID_CARD_METAL.navy[ID_CARD_METAL.navy.length - 3]![1] as string;
+  const lit = litBy(lightestNavy, ID_CARD_METAL.sheenPeakAlpha);
+  const ratio = contrast('#FFFFFF', lit);
+  assert.ok(ratio >= 4.5, `white on the lit navy is ${ratio.toFixed(2)}:1, must be >= 4.5`);
+});
+
+test('raising the sheen cap past its budget would break that, which is why it is pinned', () => {
+  const lightestNavy = ID_CARD_METAL.navy[ID_CARD_METAL.navy.length - 3]![1] as string;
+  assert.ok(ID_CARD_METAL.sheenPeakAlpha <= 0.3, 'sheen peak alpha is a contrast budget');
+  // Proof the bound is real and not decorative: go well past it and AA fails.
+  assert.ok(contrast('#FFFFFF', litBy(lightestNavy, 0.55)) < 4.5);
+});
+
+test('the sweep stops at the footer band, which is where the only light-on-dark text lives', () => {
+  const { sheen, height, footer } = ID_CARD_GEOMETRY;
+  assert.ok(
+    sheen.height <= height - footer.height,
+    'the sheen region must not reach the band the serial sits on',
+  );
+});
+
+test('the EMPLOYEE ID label clears AA on the band, which the sheen never lightens', () => {
+  // Worst case is the lightest stop of the navy ramp, unlit — the sheen is
+  // excluded from this surface by the bound above.
+  const lightestNavy = ID_CARD_METAL.navy[ID_CARD_METAL.navy.length - 3]![1] as string;
+  const ratio = contrast(ID_CARD_COLORS.onNavySoft, lightestNavy);
+  assert.ok(ratio >= 4.5, `the EMPLOYEE ID label is ${ratio.toFixed(2)}:1, must be >= 4.5`);
+});
+
+test('that label would NOT have survived the sheen — which is why the bound exists', () => {
+  const lightestNavy = ID_CARD_METAL.navy[ID_CARD_METAL.navy.length - 3]![1] as string;
+  const lit = litBy(lightestNavy, ID_CARD_METAL.sheenPeakAlpha);
+  assert.ok(contrast(ID_CARD_COLORS.onNavySoft, lit) < 4.5);
+});
+
+test('the component mirrors the sheen bound instead of spanning the whole card', () => {
+  const src = readFileSync(
+    new URL('../../components/employee/EmployeeIdCard.tsx', import.meta.url),
+    'utf8',
+  );
+  const layer = /id-card-sheen[\s\S]{0,400}?/.test(src);
+  assert.ok(layer, 'sheen layer present');
+  assert.ok(/z-\[2\][^"]*h-\[89%\]/.test(src), 'the sheen layer must stop above the band');
+});
+
+test('"Not on file" ink clears AA on the darkest point of the silver body', () => {
+  const darkestSilver = ID_CARD_METAL.silver[ID_CARD_METAL.silver.length - 1]![1] as string;
+  const ratio = contrast(ID_CARD_COLORS.missing, darkestSilver);
+  assert.ok(ratio >= 4.5, `missing-value ink is ${ratio.toFixed(2)}:1, must be >= 4.5`);
+});
+
+test('value ink clears AA on the darkest point of the silver body', () => {
+  const darkestSilver = ID_CARD_METAL.silver[ID_CARD_METAL.silver.length - 1]![1] as string;
+  assert.ok(contrast(ID_CARD_COLORS.value, darkestSilver) >= 4.5);
+});
+
+test('orange is never a text colour in the badge component', () => {
+  // 2.95:1 on white — under AA even for large text. It is a fill, always.
+  const src = readFileSync(
+    new URL('../../components/employee/EmployeeIdCard.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.ok(!/text-\[#(F26F07|FF8B2D|D75E02)\]/i.test(src), 'orange must not colour text');
+});
+
+test('the badge component still declares no dark-mode variant', () => {
+  const src = readFileSync(
+    new URL('../../components/employee/EmployeeIdCard.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.ok(!/dark:/.test(src), 'the card never themes');
+});
+
+test('the sweep is stopped for viewers who ask for reduced motion', () => {
+  const src = readFileSync(
+    new URL('../../components/employee/EmployeeIdCard.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.ok(/prefers-reduced-motion/.test(src));
+  assert.ok(/animation:\s*none/.test(src));
 });

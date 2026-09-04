@@ -45,6 +45,15 @@ export const ID_CARD_GEOMETRY = {
   radius: cqw(5),
   header: { height: H * 0.46, navyBottomLeft: 0.92, navyBottomRight: 0.74, hairBottomLeft: 0.955, hairBottomRight: 0.775 },
   footer: { height: H * 0.11 },
+  /**
+   * The sweep stops at the footer band. That band carries the only light-on-dark
+   * text on the card, and at peak sheen NO mid-tone ink survives on lightened
+   * navy — the periwinkle "EMPLOYEE ID" label falls to 2.2:1. Brightening the ink
+   * cannot fix a ground that light, so the sheen simply never reaches it. Every
+   * other surface it crosses either holds no text (the header) or holds dark ink
+   * on light metal, where lightening only helps.
+   */
+  sheen: { height: H - H * 0.11 },
   padding: { x: cqw(7), top: cqw(6), bottom: cqw(21) },
   logo: { height: cqw(6.4), plateRadius: cqw(1.6), padX: cqw(2.2), padY: cqw(1.5) },
   photo: { marginTop: cqw(27), size: cqw(35), ring: cqw(1.1) },
@@ -63,8 +72,32 @@ export const ID_CARD_COLORS = {
   hair: '#E4E4EE',
   slot: '#EDEDF3',
   value: '#34364F',
-  missing: '#8A8CA2',
+  missing: '#666881',
   onNavySoft: '#A9AAD0',
+} as const;
+
+/**
+ * The milled-metal ramps, mirrored by `EmployeeIdCard.tsx`'s literal Tailwind and
+ * inline styles. Change one, change the other.
+ *
+ * `sheenPeakAlpha` is a CONTRAST budget, not a taste knob. The sweep lightens the
+ * navy behind the footer serial, and white on that lightened navy must stay above
+ * 4.5:1. At 0.28 it is 5.6:1; a test proves it and fails if the cap is raised.
+ */
+export const ID_CARD_METAL = {
+  navy: [[0, '#35366F'], [0.44, '#27285A'], [1, '#1E1F48']],
+  silver: [[0, '#FFFFFF'], [0.48, '#F7F8FC'], [1, '#ECEDF4']],
+  orange: [[0, '#FF8B2D'], [0.52, '#F26F07'], [1, '#D75E02']],
+  ring: [[0, '#FFFFFF'], [0.46, '#D7D9E6'], [1, '#FFFFFF']],
+  brushLight: 'rgba(255,255,255,0.05)',
+  brushDark: 'rgba(39,40,90,0.032)',
+  brushStep: 3,
+  brushSlopeDeg: 6,
+  sheenPeakAlpha: 0.28,
+  /** Where the frozen sweep sits in the still, as a fraction of card width. */
+  sheenCenter: 0.42,
+  sheenWidth: 0.42,
+  sheenTiltDeg: 8,
 } as const;
 
 const SANS = '"Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif';
@@ -207,6 +240,55 @@ function roundedRect(
   ctx.closePath();
 }
 
+function ramp(
+  ctx: CanvasRenderingContext2D,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  stops: readonly (readonly [number, string])[] | readonly (number | string)[][],
+): CanvasGradient {
+  const g = ctx.createLinearGradient(x0, y0, x1, y1);
+  for (const stop of stops as readonly [number, string][]) g.addColorStop(stop[0], stop[1]);
+  return g;
+}
+
+/**
+ * Anisotropic brush lines — the thing that actually reads as metal. A gradient on
+ * its own reads as a gradient. Near-horizontal, 1px, barely-there alpha; the
+ * caller clips to the surface being brushed.
+ */
+function brushLines(ctx: CanvasRenderingContext2D, color: string): void {
+  const rise = W * Math.tan((ID_CARD_METAL.brushSlopeDeg * Math.PI) / 180);
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  for (let y = -rise; y < H + rise; y += ID_CARD_METAL.brushStep) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y + rise);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Fill a clipped region with a ramp, then brush it. */
+function paintMetal(
+  ctx: CanvasRenderingContext2D,
+  path: () => void,
+  stops: readonly (readonly [number, string])[] | readonly (number | string)[][],
+  brush: string,
+  box: { x: number; y: number; w: number; h: number },
+): void {
+  ctx.save();
+  path();
+  ctx.clip();
+  ctx.fillStyle = ramp(ctx, box.x, box.y, box.x + box.w * 0.42, box.y + box.h, stops);
+  ctx.fillRect(box.x, box.y, box.w, box.h);
+  brushLines(ctx, brush);
+  ctx.restore();
+}
+
 function polygon(ctx: CanvasRenderingContext2D, pts: [number, number][]): void {
   ctx.beginPath();
   pts.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
@@ -263,14 +345,16 @@ export async function renderIdCardPng(card: IdCard): Promise<Blob> {
   roundedRect(ctx, 0, 0, W, H, G.radius);
   ctx.save();
   ctx.clip();
-  ctx.fillStyle = C.card;
-  ctx.fillRect(0, 0, W, H);
+  paintMetal(ctx, () => roundedRect(ctx, 0, 0, W, H, G.radius), ID_CARD_METAL.silver, ID_CARD_METAL.brushDark, { x: 0, y: 0, w: W, h: H });
 
   /* header — navy panel, grey hairline, one orange block */
   const hz = G.header.height;
-  ctx.fillStyle = C.navy;
-  polygon(ctx, [[0, 0], [W, 0], [W, hz * G.header.navyBottomRight], [0, hz * G.header.navyBottomLeft]]);
-  ctx.fill();
+  const headerPath = () =>
+    polygon(ctx, [[0, 0], [W, 0], [W, hz * G.header.navyBottomRight], [0, hz * G.header.navyBottomLeft]]);
+  paintMetal(ctx, headerPath, ID_CARD_METAL.navy, ID_CARD_METAL.brushLight, { x: 0, y: 0, w: W, h: hz });
+  // The lit lip of a milled plate — 1px of light, not a bevel.
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.fillRect(0, 0, W, cqw(0.3));
 
   ctx.fillStyle = C.hair;
   polygon(ctx, [
@@ -283,13 +367,54 @@ export async function renderIdCardPng(card: IdCard): Promise<Blob> {
 
   const amberW = cqw(15);
   const amberX = W - cqw(8) - amberW;
-  ctx.fillStyle = C.orange;
+  ctx.fillStyle = ramp(ctx, amberX, -cqw(7), amberX + amberW, cqw(16), ID_CARD_METAL.orange);
   roundedRect(ctx, amberX, -cqw(7), amberW, cqw(23), { tl: 0, tr: 0, br: cqw(7.5), bl: cqw(7.5) });
   ctx.fill();
 
   /* footer band — STRAIGHT top edge (employee-id-card.md) */
-  ctx.fillStyle = C.navy;
-  ctx.fillRect(0, H - G.footer.height, W, G.footer.height);
+  const bandTop = H - G.footer.height;
+  paintMetal(
+    ctx,
+    () => ctx.rect(0, bandTop, W, G.footer.height),
+    ID_CARD_METAL.navy,
+    ID_CARD_METAL.brushLight,
+    { x: 0, y: bandTop, w: W, h: G.footer.height },
+  );
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.fillRect(0, bandTop, W, cqw(0.3));
+
+  /* The specular sweep, frozen. On screen it travels; a still catches it once.
+     Drawn over every metal surface and UNDER every glyph — the draw order below
+     is the contrast guarantee, not a stacking preference. */
+  {
+    const sw = W * ID_CARD_METAL.sheenWidth;
+    ctx.save();
+    ctx.translate(W * ID_CARD_METAL.sheenCenter, H / 2);
+    ctx.rotate((ID_CARD_METAL.sheenTiltDeg * Math.PI) / 180);
+    const peak = ID_CARD_METAL.sheenPeakAlpha;
+    ctx.fillStyle = ramp(ctx, -sw / 2, 0, sw / 2, 0, [
+      [0, 'rgba(255,255,255,0)'],
+      [0.34, `rgba(255,255,255,${peak * 0.29})`],
+      [0.5, `rgba(255,255,255,${peak})`],
+      [0.66, `rgba(255,255,255,${peak * 0.29})`],
+      [1, 'rgba(255,255,255,0)'],
+    ]);
+    ctx.fillRect(-sw / 2, -H, sw, H * 2);
+    ctx.restore();
+  }
+  // Repaint the band over the sheen's tail: the rotated rect is clipped by the
+  // card, not by the band, so this is what actually enforces G.sheen.height.
+  {
+    paintMetal(
+      ctx,
+      () => ctx.rect(0, bandTop, W, G.footer.height),
+      ID_CARD_METAL.navy,
+      ID_CARD_METAL.brushLight,
+      { x: 0, y: bandTop, w: W, h: G.footer.height },
+    );
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.fillRect(0, bandTop, W, cqw(0.3));
+  }
 
   if (card.employeeId) {
     const midY = H - G.footer.height / 2;
@@ -331,7 +456,7 @@ export async function renderIdCardPng(card: IdCard): Promise<Blob> {
     const dh = ar >= 1 ? rInner * 2 : (rInner * 2) / ar;
     ctx.drawImage(photo, cx - dw / 2, cy - dh / 2, dw, dh);
   } else {
-    ctx.fillStyle = C.slot;
+    ctx.fillStyle = ramp(ctx, cx - rInner, cy - rInner, cx + rInner, cy + rInner, ID_CARD_METAL.silver);
     ctx.fillRect(cx - rInner, cy - rInner, rInner * 2, rInner * 2);
     ctx.fillStyle = C.navy;
     ctx.font = `600 ${cqw(11)}px ${SANS}`;
@@ -341,7 +466,7 @@ export async function renderIdCardPng(card: IdCard): Promise<Blob> {
   }
   ctx.restore();
 
-  ctx.strokeStyle = C.card;
+  ctx.strokeStyle = ramp(ctx, cx - rOuter, cy - rOuter, cx + rOuter, cy + rOuter, ID_CARD_METAL.ring);
   ctx.lineWidth = G.photo.ring;
   ctx.beginPath();
   ctx.arc(cx, cy, rInner + G.photo.ring / 2, 0, Math.PI * 2);
@@ -362,7 +487,7 @@ export async function renderIdCardPng(card: IdCard): Promise<Blob> {
 
   /* the orange rule — a FILL, never text */
   const ruleY = y + G.name.size * 0.34 + G.rule.marginTop;
-  ctx.fillStyle = C.orange;
+  ctx.fillStyle = ramp(ctx, cx - G.rule.width / 2, ruleY, cx + G.rule.width / 2, ruleY + G.rule.height, ID_CARD_METAL.orange);
   ctx.fillRect(cx - G.rule.width / 2, ruleY, G.rule.width, G.rule.height);
 
   /* department — already through formatDeptLabel, omitted when blank */
