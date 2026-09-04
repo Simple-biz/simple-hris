@@ -6,9 +6,27 @@
  * The two tabs are deliberately SEPARATE surfaces (Accounting's numbers and
  * HR's numbers never share a scoreboard, Kane 2026-09-04) but they must not
  * look like two different products. Accent is the only thing that differs:
- * Accounting is amber/orange, HR is indigo/violet. Everything structural —
- * card, rate bar, skeleton, the "unmeasurable" treatment — is defined once here
- * so the two cannot drift.
+ * **Accounting is orange, HR is teal.** Everything structural — card, rate bar,
+ * skeleton, the "unmeasurable" treatment — is defined once here so the two
+ * cannot drift.
+ *
+ * ── Why those two colours specifically ─────────────────────────────────────
+ * Neither is a free choice; this app's palette already carries meaning.
+ *
+ * - **Amber is WARNING ONLY** (`wizard-step2-header-cards`,
+ *   `hsl-branch-list-and-overlay`). It cannot also be Accounting's identity —
+ *   the `warn` KPI tone below is the only amber on these tabs, which is the
+ *   whole point of it being amber. Accounting takes **orange**, which is what
+ *   the Diagnostics header itself already uses.
+ * - **Green means a verdict** in this codebase (Ready = green on the shared
+ *   StatusChip). A rate bar encodes MAGNITUDE, not judgement, so a bar filling
+ *   green would quietly congratulate a 40% week. HR takes **teal**, which the
+ *   wizard's header cards already establish as the neutral-KPI colour ("COP
+ *   teal NOT amber").
+ *
+ * So: no verdict colour is ever used for an identity or a magnitude here, and
+ * amber is reserved for the one thing it means. Do not "brighten" either accent
+ * into emerald, rose or violet without re-reading those two rules.
  *
  * ── The motion rules (Kane: "smooth UI") ───────────────────────────────────
  * 1. **The skeleton mirrors the real layout, box for box.** It is not a spinner
@@ -47,22 +65,22 @@ export const ACCENT: Record<
   }
 > = {
   accounting: {
-    text: 'text-amber-700 dark:text-amber-400',
-    softBg: 'bg-amber-50 dark:bg-amber-500/10',
-    ring: 'ring-amber-100 dark:ring-amber-500/20',
-    bar: 'bg-gradient-to-r from-amber-400 to-orange-500 dark:from-amber-500 dark:to-orange-500',
-    barTrack: 'bg-amber-100/70 dark:bg-amber-950/50',
-    chip: 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300',
-    headerIcon: 'bg-gradient-to-br from-amber-500 to-orange-600 shadow-orange-500/20',
+    text: 'text-orange-700 dark:text-orange-400',
+    softBg: 'bg-orange-50 dark:bg-orange-500/10',
+    ring: 'ring-orange-100 dark:ring-orange-500/20',
+    bar: 'bg-gradient-to-r from-orange-400 to-orange-500 dark:from-orange-500 dark:to-orange-600',
+    barTrack: 'bg-orange-100/70 dark:bg-orange-950/50',
+    chip: 'border-orange-200 bg-orange-50 text-orange-800 dark:border-orange-900/60 dark:bg-orange-950/40 dark:text-orange-300',
+    headerIcon: 'bg-gradient-to-br from-orange-500 to-orange-600 shadow-orange-500/20',
   },
   hr: {
-    text: 'text-indigo-700 dark:text-indigo-400',
-    softBg: 'bg-indigo-50 dark:bg-indigo-500/10',
-    ring: 'ring-indigo-100 dark:ring-indigo-500/20',
-    bar: 'bg-gradient-to-r from-indigo-400 to-violet-500 dark:from-indigo-500 dark:to-violet-500',
-    barTrack: 'bg-indigo-100/70 dark:bg-indigo-950/50',
-    chip: 'border-indigo-200 bg-indigo-50 text-indigo-800 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-300',
-    headerIcon: 'bg-gradient-to-br from-indigo-500 to-violet-600 shadow-indigo-500/20',
+    text: 'text-teal-700 dark:text-teal-400',
+    softBg: 'bg-teal-50 dark:bg-teal-500/10',
+    ring: 'ring-teal-100 dark:ring-teal-500/20',
+    bar: 'bg-gradient-to-r from-teal-400 to-teal-500 dark:from-teal-500 dark:to-teal-600',
+    barTrack: 'bg-teal-100/70 dark:bg-teal-950/50',
+    chip: 'border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-900/60 dark:bg-teal-950/40 dark:text-teal-300',
+    headerIcon: 'bg-gradient-to-br from-teal-500 to-teal-700 shadow-teal-500/20',
   },
 };
 

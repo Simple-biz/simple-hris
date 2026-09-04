@@ -9,7 +9,7 @@ many reached the Global Master List). Admin-only, inheriting the Diagnostics gat
 The two are **separate surfaces on purpose** (Kane, 2026-09-04: *"add KPI Cards as well,
 separate HR from accounting"*). They measure different populations over different
 denominators, and one blended company-performance number would be wrong in both directions.
-Each tab owns its KPI cards, its accent (Accounting amber, HR indigo) and its own caveats.
+Each tab owns its KPI cards, its accent (Accounting orange, HR teal) and its own caveats.
 
 Ship commit: see `git log` for `feat(diagnostics)` on 2026-09-04.
 
@@ -26,6 +26,22 @@ Ship commit: see `git log` for `feat(diagnostics)` on 2026-09-04.
 | HR tab | [`src/components/admin/HrPipelinePerformance.tsx`](../../src/components/admin/HrPipelinePerformance.tsx) |
 | Shared chrome (KPI card, rate bar, skeleton) | [`src/components/admin/performance-ui.tsx`](../../src/components/admin/performance-ui.tsx) |
 | Listed-per-week reader | [`src/lib/supabase/hr-new-hire-checklist.ts`](../../src/lib/supabase/hr-new-hire-checklist.ts) → `listChecklistWeekCounts` |
+
+## The accents are not free choices
+
+**Accounting is orange, HR is teal**, and neither may be "brightened" without re-reading two
+existing rules:
+
+- **Amber means WARNING, only** (`wizard-step2-header-cards`, `hsl-branch-list-and-overlay`).
+  It cannot also be an identity colour. The `warn` KPI tone, the unpaid count and the
+  never-staged count are the *only* amber on these tabs — that is what makes amber legible.
+  Accounting therefore takes **orange**, which the Diagnostics header already uses.
+- **Green is a verdict** here (Ready = green on the shared StatusChip). A rate bar encodes
+  **magnitude, not judgement**, so a bar filling green would quietly congratulate a 40% week.
+  HR takes **teal**, which the wizard's header cards already establish as the neutral-KPI
+  colour ("COP teal NOT amber").
+
+No verdict colour is used for an identity or a magnitude anywhere on these tabs.
 
 ## The payroll rate has exactly one source, and the alternatives are poison
 
