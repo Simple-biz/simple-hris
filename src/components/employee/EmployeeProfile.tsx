@@ -34,9 +34,12 @@ import { Button } from '@/components/ui/button';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { DatePicker } from '@/components/ui/date-picker';
 import EmployeeAvatar from './EmployeeAvatar';
+import EmployeeIdCard from './EmployeeIdCard';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
+import { buildIdCard } from '@/lib/employee/id-card';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { useEmployeeCachedState } from '@/hooks/useEmployeeCachedState';
 import {
   OFFICIAL_USD_TO_PHP_RATE,
@@ -143,7 +146,7 @@ function matchesEmployeeEmail(emp: EmployeeRow, n: string): boolean {
 
 /* ───────── Visual primitives ───────── */
 
-type TabId = 'overview' | 'compensation' | 'payStubs' | 'payment' | 'skillsets' | 'reports' | 'requestDocuments' | 'resign';
+type TabId = 'overview' | 'id' | 'compensation' | 'payStubs' | 'payment' | 'skillsets' | 'reports' | 'requestDocuments' | 'resign';
 
 interface SkillSetFields {
   role_title: string;
@@ -501,6 +504,7 @@ function TabBar({
 }) {
   const tabs: { id: TabId; label: string; sub: string }[] = [
     { id: 'overview', label: 'Overview', sub: hasAddress ? 'Identity, employment, address' : 'Identity & employment' },
+    { id: 'id', label: 'ID', sub: 'Your employee ID card' },
     { id: 'compensation', label: 'Compensation', sub: 'Rates & currency' },
     { id: 'payStubs', label: 'Pay Stubs', sub: 'Weekly statements & exports' },
     { id: 'payment', label: 'Payment', sub: 'Disbursement details' },
@@ -1302,6 +1306,30 @@ export default function EmployeeProfile({
       .join(', ') ||
     null;
 
+  // The ID card reads the ROSTER address (`global_master_list.full_address`), the
+  // same column Overview shows — never `employee_ids.full_address`, which the
+  // Payment tab lets the employee edit for payout purposes. The two can disagree,
+  // and an identity document follows the roster.
+  const idCard = useMemo(
+    () =>
+      buildIdCard({
+        name: master?.name ?? null,
+        workEmail,
+        fallbackEmail: employeeEmail,
+        department: master?.department ?? null,
+        fullAddress: master?.full_address ?? null,
+        street: master?.street ?? null,
+        city: master?.city ?? null,
+        province: master?.province ?? null,
+        postalCode: master?.postal_code ?? null,
+        startDate: master?.start_date ?? null,
+        employeeId: master?.employee_id ?? null,
+        photoUrl: displayProfilePhotoUrl,
+        googlePhotoUrl,
+      }),
+    [master, workEmail, employeeEmail, displayProfilePhotoUrl, googlePhotoUrl],
+  );
+
   const needsProfilePhoto = !displayProfilePhotoUrl && !googlePhotoUrl;
   const needsPayoutSetup = !isPayoutComplete((bankInfo as unknown as Record<string, unknown>) ?? null);
   const needsSkillSetSetup = skillSetLoaded && !hasAnySkillSetContent(skillSet);
@@ -1542,7 +1570,7 @@ export default function EmployeeProfile({
                   >
                     <Row
                       label="Department"
-                      value={employmentDepartment ?? '—'}
+                      value={employmentDepartment ? formatDeptLabel(employmentDepartment) : '—'}
                     />
                     <Row
                       label="Start Date"
@@ -1579,6 +1607,16 @@ export default function EmployeeProfile({
                   )}
 
                 </>
+              )}
+
+              {activeTab === 'id' && (
+                <div className="flex flex-col items-center gap-5 py-2">
+                  <EmployeeIdCard card={idCard} />
+                  <p className="max-w-xs text-center text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                    Read-only, from the HR master roster. Anything missing or wrong here is
+                    corrected by HR, not on this screen.
+                  </p>
+                </div>
               )}
 
               {activeTab === 'compensation' && (
