@@ -302,7 +302,7 @@ export default function WebhookAutomationDialog({ slug, label, onSaved }: Webhoo
         <>
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-4">
             {/* The one trigger */}
-            <div className="rounded-lg border-l-4 border-orange-500 bg-orange-50/70 p-3 text-xs text-orange-950 dark:bg-orange-950/20 dark:text-orange-100">
+            <div className="rounded-lg border border-orange-200 bg-orange-50/70 p-3 text-xs text-orange-950 dark:border-orange-900/50 dark:bg-orange-950/20 dark:text-orange-100">
               <div className="flex items-center gap-1.5 font-semibold">
                 <ShieldCheck className="h-3.5 w-3.5" /> Fires only when
               </div>
