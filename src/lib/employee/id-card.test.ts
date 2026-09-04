@@ -139,6 +139,18 @@ test('nothing at all still returns something renderable', () => {
   assert.equal(idCardInitials(null, null), '—');
 });
 
+// Caught by looking at a rendered badge, not by a unit test: a real roster name
+// with a quoted nickname put a quote mark on the card where a letter belongs.
+test('punctuation never becomes an initial', () => {
+  assert.equal(idCardInitials('Reroma (Teves), Jan Kane "Kane"', null), 'RK');
+  assert.equal(idCardInitials("O'Brien, Mary-Anne", null), 'OM');
+  assert.equal(idCardInitials('(Ramos), Ana', null), 'RA');
+});
+
+test('a name that is only punctuation falls back rather than printing symbols', () => {
+  assert.equal(idCardInitials('"()"', null), '—');
+});
+
 /* ── photo ladder ── */
 
 test('a manual upload outranks the Google SSO picture', () => {

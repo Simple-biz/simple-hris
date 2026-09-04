@@ -110,10 +110,28 @@ export function composeIdCardAddress(input: IdCardInput): string | null {
   return parts.length ? parts.join(', ') : null;
 }
 
-/** Up to two letters, from the display name, else the email. */
+/**
+ * Up to two letters: the first name-part and the last.
+ *
+ * Punctuation is stripped BEFORE the initials are taken, not after. Real roster
+ * names carry parenthesised maiden names and quoted nicknames — `Reroma (Teves),
+ * Jan Kane "Kane"` produced `R"` when the last "word" was `"Kane"` and its first
+ * character was the quote mark. A badge showing a punctuation glyph where a
+ * letter belongs looks broken to the person wearing it.
+ *
+ * A NAME splits on whitespace and commas only. A hyphen joins in a name —
+ * `Mary-Anne` is one given name, and splitting it would take the initial from
+ * `Anne`. An EMAIL local part is the opposite: `maria-santos` is two parts, so
+ * that fallback keeps `. _ -` as separators.
+ */
 export function idCardInitials(name: string | null, email: string | null): string {
-  const source = clean(name) ?? clean(email)?.split('@')[0] ?? '';
-  const words = source.split(/[\s._-]+/).filter(Boolean);
+  const cleanedName = clean(name);
+  const source = cleanedName ?? clean(email)?.split('@')[0] ?? '';
+  const separators = cleanedName ? /[\s,]+/ : /[\s._,-]+/;
+  const words = source
+    .split(separators)
+    .map((w) => w.replace(/[^\p{L}\p{N}]/gu, ''))
+    .filter(Boolean);
   if (words.length === 0) return '—';
   if (words.length === 1) return words[0]!.slice(0, 2).toUpperCase();
   return (words[0]![0]! + words[words.length - 1]![0]!).toUpperCase();

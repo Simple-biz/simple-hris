@@ -159,7 +159,14 @@ caught-the-light look and simply stops moving.
 ## Photo
 
 Upload → Google SSO → initials, the same ladder `EmployeeAvatar` uses, walked with `onError`
-so a dead URL degrades to initials instead of a broken frame. The card does not reuse
+so a dead URL degrades to initials instead of a broken frame.
+
+**Initials strip punctuation before taking the letter, and a name splits on whitespace and
+commas only.** Roster names carry parenthesised maiden names and quoted nicknames:
+`Reroma (Teves), Jan Kane "Kane"` rendered `R"` on a real badge, because the last "word" was
+`"Kane"` and its first character was the quote mark. A hyphen **joins** in a name —
+`Mary-Anne` is one given name — so only the email fallback keeps `. _ -` as separators. That
+one was found by rendering a badge, not by a test. The card does not reuse
 `EmployeeAvatar` because that component's initials fallback is an orange→blue gradient
 circle, which belongs to no surface on this card.
 
