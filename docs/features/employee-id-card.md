@@ -15,6 +15,7 @@ Approved comp: <https://claude.ai/code/artifact/a45d0cb3-4790-4f56-8b64-3a12fabf
 | --- | --- |
 | View-model resolution — pure, DOM-free | `src/lib/employee/id-card.ts` (+ `id-card.test.ts`) |
 | The badge — presentational only | `src/components/employee/EmployeeIdCard.tsx` |
+| PNG export — canvas painter | `src/lib/employee/id-card-render.ts` (+ `id-card-render.test.ts`) |
 | Host — section chip, render block, `buildIdCard` call | `src/components/employee/EmployeeProfile.tsx` |
 | Brand artwork | `public/simple-logo.png` (navy `#27285A`, orange `#F26F07`) |
 
@@ -125,6 +126,47 @@ so a dead URL degrades to initials instead of a broken frame. The card does not 
 `EmployeeAvatar` because that component's initials fallback is an orange→blue **gradient**
 circle, which contradicts the flat rule above.
 
+## Download PNG — two renderers, one view model
+
+Added 2026-09-04 on Kane's ask. `EmployeeIdCard.tsx` draws the badge in the DOM;
+`renderIdCardPng` in `src/lib/employee/id-card-render.ts` paints the same design onto a
+canvas at 3x and hands back a PNG. Both read the same `IdCard` from `buildIdCard`, so the
+data can never differ — but **the layout is now written twice, and that is the standing
+hazard on this surface**. `ID_CARD_GEOMETRY` holds every number as a fraction of the card's
+own width or height, which is exactly what the component's `cqw` classes are: change one,
+change the other. The Tailwind classes deliberately cannot be generated from those
+constants, because an interpolated class is absent from the build and renders unstyled.
+
+A DOM screenshot was rejected: rasterising this card means a new dependency or an SVG
+`foreignObject` clone, and both resolve container queries and Tailwind's cascade
+unreliably.
+
+**The canvas must not be tainted.** A photo drawn from another origin without CORS makes
+`toBlob` throw a `SecurityError`, which presents as a download button that does nothing at
+all. Every photo therefore loads with `crossOrigin = 'anonymous'`, and a host that will not
+send the header fails the load instead — the painter walks to the next candidate and then
+to initials. Never drop that flag to "make the photo show up".
+
+**Failures degrade; two abort loudly.** A missing photo paints initials, a blank address
+prints "Not on file" exactly as the screen does, and a blank `employee_id` hides the serial.
+The two that raise `IdCardRenderError` are an unloadable `/simple-logo.png` — an unbranded
+rectangle claiming to be a company ID is worse than no file — and a canvas the browser
+cannot encode. Both carry a sentence written for the employee, surfaced as a toast.
+
+`ctx.letterSpacing` is **not** used: it silently does nothing in older engines, which would
+collapse every tracked label in exactly the browsers hardest to spot it in. Tracked text is
+drawn one glyph at a time instead.
+
+The filename is `simple-id-<employee_id>.png`, falling back to a slug of the name and then
+to `simple-id-card.png`. Everything outside `[a-z0-9-]` is collapsed and the stem is capped,
+so a name with a quote, a slash or no Latin characters cannot produce an unsaveable file.
+
+**An elevated `?email=` viewer may download the badge they are previewing.** The doc was
+silent, and this is the decision: a download grants no access the viewer does not already
+have — the same five fields are on screen, and the card carries no bank data — so a gate
+would be theatre that also stops HR helping someone. If that ever needs to change, gate it
+where identity is resolved (`EmployeeApp.tsx`), not on the button.
+
 ## Deploy notes
 
 **No migration.** Every column already exists on `global_master_list` (`name`, `work_email`,
@@ -133,4 +175,6 @@ circle, which contradicts the flat rule above.
 values `EmployeeProfile` already fetches through `/api/employees?email=` and
 `/api/employee-master-record?email=`, both already filtered server-side to one person.
 
-No write path exists on this surface. There is no download, print or PDF in this pass.
+No write path exists on this surface. **Download PNG** is client-side only — the file is
+painted in the browser and never uploaded, so there is no route, no storage bucket and
+nothing to retain. There is still no print or PDF.

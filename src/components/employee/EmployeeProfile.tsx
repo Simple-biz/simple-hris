@@ -27,6 +27,7 @@ import {
   Receipt,
   ChevronLeft,
   ChevronRight,
+  Download,
 } from 'lucide-react';
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { toast } from 'sonner';
@@ -39,6 +40,7 @@ import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
 import { buildIdCard } from '@/lib/employee/id-card';
+import { downloadIdCardPng, IdCardRenderError } from '@/lib/employee/id-card-render';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { useEmployeeCachedState } from '@/hooks/useEmployeeCachedState';
 import {
@@ -1330,6 +1332,29 @@ export default function EmployeeProfile({
     [master, workEmail, employeeEmail, displayProfilePhotoUrl, googlePhotoUrl],
   );
 
+  // The PNG is painted on a canvas from the same view model the badge renders
+  // (src/lib/employee/id-card-render.ts). `savingId` is the double-click guard:
+  // without it a second click starts a second canvas and hands over two files.
+  const [savingId, setSavingId] = useState(false);
+  const handleDownloadId = async () => {
+    if (savingId) return;
+    setSavingId(true);
+    try {
+      await downloadIdCardPng(idCard);
+    } catch (e) {
+      // Every failure inside the painter degrades except an unloadable wordmark
+      // and an unencodable canvas, and both arrive here already worded for a
+      // human. Anything else is unexpected and says so rather than staying quiet.
+      toast.error(
+        e instanceof IdCardRenderError
+          ? e.message
+          : 'Could not save your ID card. Please try again.',
+      );
+    } finally {
+      setSavingId(false);
+    }
+  };
+
   const needsProfilePhoto = !displayProfilePhotoUrl && !googlePhotoUrl;
   const needsPayoutSetup = !isPayoutComplete((bankInfo as unknown as Record<string, unknown>) ?? null);
   const needsSkillSetSetup = skillSetLoaded && !hasAnySkillSetContent(skillSet);
@@ -1612,6 +1637,20 @@ export default function EmployeeProfile({
               {activeTab === 'id' && (
                 <div className="flex flex-col items-center gap-5 py-2">
                   <EmployeeIdCard card={idCard} />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleDownloadId}
+                    disabled={savingId}
+                    className="gap-2"
+                  >
+                    {savingId ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    ) : (
+                      <Download className="h-4 w-4" aria-hidden />
+                    )}
+                    {savingId ? 'Saving…' : 'Download PNG'}
+                  </Button>
                   <p className="max-w-xs text-center text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
                     Read-only, from the HR master roster. Anything missing or wrong here is
                     corrected by HR, not on this screen.
