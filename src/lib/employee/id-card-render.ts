@@ -120,40 +120,69 @@ export function idCardFileName(card: Pick<IdCard, 'employeeId' | 'name'>): strin
 /* ───────── canvas primitives ───────── */
 
 /**
+ * Total advance of a tracked run: the glyphs, plus `size x tracking` in each gap.
+ * Gaps only go BETWEEN glyphs, so a run never carries trailing space that would
+ * throw off right alignment or centring.
+ *
+ * Pure, and exported so the arithmetic is testable without a canvas.
+ */
+export function trackedTotalWidth(
+  charWidths: readonly number[],
+  size: number,
+  tracking: number,
+): number {
+  if (charWidths.length === 0) return 0;
+  const glyphs = charWidths.reduce((sum, w) => sum + w, 0);
+  return glyphs + size * tracking * (charWidths.length - 1);
+}
+
+/**
  * Draws letter-spaced text one glyph at a time.
  *
  * `ctx.letterSpacing` exists only in newer engines and silently does nothing in
  * the rest, which would collapse every tracked label on the card in exactly the
  * browsers hardest to notice it in. Drawing per glyph is identical everywhere.
+ *
+ * **`size` is passed in and must never be read back off `ctx.font`.** The canvas
+ * normalises that property, so it comes back as `"600 12.65px ..."` and
+ * `parseFloat` yields the WEIGHT — 600 — not the size. That shipped once: the
+ * footer serial drew at 600 x 0.05 = 30px per gap and ran straight across the
+ * "EMPLOYEE ID" label. It hid at every other call site only because weight 700
+ * serialises to the keyword `bold`, so `parseFloat` gave NaN and a fallback
+ * stood in at roughly the right size. Approximately-right-by-accident is why it
+ * took a rendered PNG to see it.
  */
 function drawTracked(
   ctx: CanvasRenderingContext2D,
   text: string,
   x: number,
   y: number,
+  size: number,
   tracking: number,
   align: 'left' | 'right' = 'left',
 ): void {
-  const em = parseFloat(ctx.font) || 10;
-  const space = em * tracking;
   const chars = [...text];
-  const total = chars.reduce((sum, c) => sum + ctx.measureText(c).width + space, 0) - space;
+  if (chars.length === 0) return;
+  const space = size * tracking;
+  const widths = chars.map((c) => ctx.measureText(c).width);
+  const total = trackedTotalWidth(widths, size, tracking);
   let cursor = align === 'right' ? x - total : x;
   const prevAlign = ctx.textAlign;
   ctx.textAlign = 'left';
-  for (const c of chars) {
+  chars.forEach((c, i) => {
     ctx.fillText(c, cursor, y);
-    cursor += ctx.measureText(c).width + space;
-  }
+    cursor += widths[i]! + space;
+  });
   ctx.textAlign = prevAlign;
 }
 
-function trackedWidth(ctx: CanvasRenderingContext2D, text: string, tracking: number): number {
-  const em = parseFloat(ctx.font) || 10;
-  const space = em * tracking;
-  const chars = [...text];
-  if (chars.length === 0) return 0;
-  return chars.reduce((sum, c) => sum + ctx.measureText(c).width + space, 0) - space;
+function trackedWidth(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  size: number,
+  tracking: number,
+): number {
+  return trackedTotalWidth([...text].map((c) => ctx.measureText(c).width), size, tracking);
 }
 
 function roundedRect(
@@ -266,11 +295,11 @@ export async function renderIdCardPng(card: IdCard): Promise<Blob> {
     const midY = H - G.footer.height / 2;
     ctx.fillStyle = C.onNavySoft;
     ctx.font = `700 ${G.serial.labelSize}px ${SANS}`;
-    drawTracked(ctx, 'EMPLOYEE ID', G.padding.x, midY + G.serial.labelSize * 0.36, G.serial.labelTracking);
+    drawTracked(ctx, 'EMPLOYEE ID', G.padding.x, midY + G.serial.labelSize * 0.36, G.serial.labelSize, G.serial.labelTracking);
 
     ctx.fillStyle = '#FFFFFF';
     ctx.font = `600 ${G.serial.valueSize}px ${MONO}`;
-    drawTracked(ctx, card.employeeId, W - G.padding.x, midY + G.serial.valueSize * 0.36, 0.05, 'right');
+    drawTracked(ctx, card.employeeId, W - G.padding.x, midY + G.serial.valueSize * 0.36, G.serial.valueSize, 0.05, 'right');
   }
 
   /* wordmark on a WHITE plate — ui-standards §6.4 */
@@ -341,12 +370,13 @@ export async function renderIdCardPng(card: IdCard): Promise<Blob> {
     ctx.fillStyle = C.navy;
     ctx.globalAlpha = 0.7;
     ctx.font = `700 ${G.role.size}px ${SANS}`;
-    const rw = trackedWidth(ctx, card.department.toUpperCase(), G.role.tracking);
+    const rw = trackedWidth(ctx, card.department.toUpperCase(), G.role.size, G.role.tracking);
     drawTracked(
       ctx,
       card.department.toUpperCase(),
       cx - rw / 2,
       ruleY + G.rule.height + G.rule.marginBottom + G.role.size,
+      G.role.size,
       G.role.tracking,
     );
     ctx.globalAlpha = 1;
@@ -360,7 +390,7 @@ export async function renderIdCardPng(card: IdCard): Promise<Blob> {
   ];
 
   ctx.font = `700 ${G.rows.labelSize}px ${SANS}`;
-  const labelW = Math.max(...rows.map((r) => trackedWidth(ctx, r.label, G.rows.labelTracking)));
+  const labelW = Math.max(...rows.map((r) => trackedWidth(ctx, r.label, G.rows.labelSize, G.rows.labelTracking)));
   const valueX = G.padding.x + labelW + G.rows.colGap;
   const valueMax = W - G.padding.x - valueX;
 
@@ -384,7 +414,7 @@ export async function renderIdCardPng(card: IdCard): Promise<Blob> {
   for (const r of wrapped) {
     ctx.fillStyle = C.navy;
     ctx.font = `700 ${G.rows.labelSize}px ${SANS}`;
-    drawTracked(ctx, r.label, G.padding.x, ry + G.rows.valueSize * 0.86, G.rows.labelTracking);
+    drawTracked(ctx, r.label, G.padding.x, ry + G.rows.valueSize * 0.86, G.rows.labelSize, G.rows.labelTracking);
 
     ctx.fillStyle = r.value ? C.value : C.missing;
     ctx.font = `500 ${G.rows.valueSize}px ${r.mono && r.value ? MONO : SANS}`;

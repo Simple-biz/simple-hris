@@ -155,7 +155,14 @@ cannot encode. Both carry a sentence written for the employee, surfaced as a toa
 
 `ctx.letterSpacing` is **not** used: it silently does nothing in older engines, which would
 collapse every tracked label in exactly the browsers hardest to spot it in. Tracked text is
-drawn one glyph at a time instead.
+drawn one glyph at a time instead, and **the font size for that spacing is passed in — never
+read back off `ctx.font`.** The canvas normalises that property, so it returns
+`"600 12.65px …"` and `parseFloat` yields the **weight**, not the size. That shipped in the
+first PNG: the footer serial spaced its glyphs at 600 × 0.05 = 30px and ran straight across
+the "EMPLOYEE ID" label. It hid at every other call site only because weight `700`
+serialises to the keyword `bold`, so `parseFloat` returned `NaN` and a fallback stood in at
+roughly the right size — approximately right by accident. A source-scan test now fails if
+`parseFloat(ctx.font)` reappears, and `trackedTotalWidth` is pinned separately.
 
 The filename is `simple-id-<employee_id>.png`, falling back to a slug of the name and then
 to `simple-id-card.png`. Everything outside `[a-z0-9-]` is collapsed and the stem is capped,

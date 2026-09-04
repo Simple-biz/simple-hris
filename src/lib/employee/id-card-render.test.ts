@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ID_CARD_COLORS, ID_CARD_GEOMETRY, idCardFileName, wrapToLines } from './id-card-render';
+import { readFileSync } from 'node:fs';
+import { ID_CARD_COLORS, ID_CARD_GEOMETRY, idCardFileName, trackedTotalWidth, wrapToLines } from './id-card-render';
 
 /** Stand-in measurer: every character is 1 unit wide. */
 const measure = (s: string) => s.length;
@@ -91,4 +92,61 @@ test('orange is present as a fill colour but navy carries the labels', () => {
   assert.equal(ID_CARD_COLORS.navy, '#27285A');
   assert.notEqual(ID_CARD_COLORS.value, ID_CARD_COLORS.orange);
   assert.notEqual(ID_CARD_COLORS.missing, ID_CARD_COLORS.orange);
+});
+
+/* ── tracked text: the bug that shipped in the first PNG ── */
+
+test('tracking adds a gap BETWEEN glyphs only, never a trailing one', () => {
+  // 3 glyphs of 10 + 2 gaps of 12 * 0.05
+  assert.equal(trackedTotalWidth([10, 10, 10], 12, 0.05), 31.2);
+});
+
+test('a single glyph carries no tracking at all', () => {
+  assert.equal(trackedTotalWidth([10], 12, 0.5), 10);
+});
+
+test('an empty run has no width', () => {
+  assert.equal(trackedTotalWidth([], 12, 0.2), 0);
+});
+
+test('the gap scales with the FONT SIZE, not the font weight', () => {
+  // The shipped bug read the size back off ctx.font, which the canvas normalises
+  // to "600 12.65px ...", so parseFloat returned the WEIGHT. At size 12.65 and
+  // tracking 0.05 one gap is 0.63px; at "600" it was 30px, and the footer serial
+  // ran straight across the EMPLOYEE ID label.
+  const correct = trackedTotalWidth([7, 7], 12.65, 0.05);
+  const weightAsSize = trackedTotalWidth([7, 7], 600, 0.05);
+  assert.ok(Math.abs(correct - 14.6325) < 1e-9);
+  assert.ok(weightAsSize > correct * 2, 'the two must not be confusable');
+});
+
+test('the footer serial fits between the card edges instead of overlapping itself', () => {
+  const { serial, padding, width } = ID_CARD_GEOMETRY;
+  // Rough advances: bold sans ~0.62em, mono ~0.6em. Generous on purpose — this
+  // guards the ORDER of magnitude, which is what the shipped bug got wrong.
+  const label = 'EMPLOYEE ID';
+  const value = '2511-0006';
+  const labelRun = trackedTotalWidth(
+    Array.from(label, () => serial.labelSize * 0.62),
+    serial.labelSize,
+    serial.labelTracking,
+  );
+  const valueRun = trackedTotalWidth(
+    Array.from(value, () => serial.valueSize * 0.6),
+    serial.valueSize,
+    0.05,
+  );
+  const available = width - padding.x * 2;
+  assert.ok(
+    labelRun + valueRun < available,
+    `serial runs ${labelRun + valueRun} must fit in ${available}`,
+  );
+});
+
+test('the font size is never read back off ctx.font', () => {
+  // ctx.font is normalised by the canvas: weight 700 comes back as the keyword
+  // "bold" (parseFloat -> NaN) and weight 600 as "600" (parseFloat -> 600). Both
+  // readings are wrong; one was merely survivable. Sizes are passed explicitly.
+  const src = readFileSync(new URL('./id-card-render.ts', import.meta.url), 'utf8');
+  assert.ok(!/parseFloat\s*\(\s*ctx\.font/.test(src), 'ctx.font must not be parsed for a size');
 });
