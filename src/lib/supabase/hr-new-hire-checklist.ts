@@ -934,3 +934,42 @@ export async function listChecklistWeeksByEmail(): Promise<{
   }
   return { weeksByEmail, error: null };
 }
+
+/**
+ * `period_start` → how many hires HR listed under it, across every week.
+ *
+ * The "listed" side of the HR pipeline funnel (Admin → Diagnostics → HR
+ * Pipeline). Deliberately a COUNT-ONLY read: the surface it feeds is an admin
+ * metrics payload that carries no PII, so this never returns a name or an email
+ * the way {@link listChecklistWeeksByEmail} must.
+ *
+ * PAGED for the same reason as its sibling — this table is past 1,400 rows and
+ * an un-ranged select is silently capped at 1,000 with NO error, which here
+ * would under-count the oldest weeks and quietly flatter the funnel.
+ *
+ * Rows with no `period_start` are excluded rather than bucketed: a listed hire
+ * with no week is not a fact about any week.
+ */
+export async function listChecklistWeekCounts(): Promise<{
+  countsByWeek: Map<string, number>;
+  error: string | null;
+}> {
+  const sb = client();
+  const { rows, error } = await selectAllPaged<{ period_start: string | null }>((from, to) =>
+    sb
+      .from(TABLE)
+      .select("period_start")
+      .not("period_start", "is", null)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (error) return { countsByWeek: new Map(), error };
+
+  const countsByWeek = new Map<string, number>();
+  for (const r of rows) {
+    const week = (r.period_start ?? "").trim();
+    if (!week) continue;
+    countsByWeek.set(week, (countsByWeek.get(week) ?? 0) + 1);
+  }
+  return { countsByWeek, error: null };
+}

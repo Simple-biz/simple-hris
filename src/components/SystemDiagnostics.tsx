@@ -86,6 +86,8 @@ import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
+import PayrollCyclePerformance from '@/components/admin/PayrollCyclePerformance';
+import HrPipelinePerformance from '@/components/admin/HrPipelinePerformance';
 
 /* ────────────────── Types ────────────────── */
 
@@ -1529,7 +1531,15 @@ function buildUnknownBaseline(now = new Date()): DiagnosticsHealthResponse {
   };
 }
 
-export default function SystemDiagnostics() {
+/**
+ * The service map — everything this file did before the tab strip existed.
+ *
+ * It is now ONE tab of three (see the default export at the bottom). Nothing in
+ * here changed: same probes, same 30s live poll, same live/mock trust contract.
+ * The only edit was moving the page's background and padding up to the shell so
+ * the three tabs sit inside one frame instead of three stacked ones.
+ */
+function ServiceMapView() {
   const [data, setData] = useState<DiagnosticsHealthResponse>(() => buildUnknownBaseline());
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -1756,7 +1766,7 @@ export default function SystemDiagnostics() {
   }, []);
 
   return (
-    <div className="flex flex-col gap-4 bg-gradient-to-br from-white via-orange-50/20 to-blue-50/20 p-4 sm:p-5 lg:h-full lg:min-h-0 lg:overflow-hidden dark:bg-none dark:bg-[#0d1117]">
+    <div className="flex flex-col gap-4 lg:min-h-0 lg:flex-1 lg:overflow-hidden">
       {/* ── Header ── */}
       <header className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 items-start gap-3">
@@ -2340,6 +2350,122 @@ function SummaryCard({
       >
         {icon}
       </span>
+    </div>
+  );
+}
+
+/* ────────────────── Tab shell ────────────────── */
+
+type DiagnosticsTab = 'map' | 'cycles' | 'hr';
+
+const DIAG_TABS: ReadonlyArray<{ id: DiagnosticsTab; label: string; hint: string }> = [
+  { id: 'map', label: 'Service Map', hint: 'Live health of the stack' },
+  { id: 'cycles', label: 'Payroll Cycles', hint: 'Accounting — pay cycle success rate' },
+  { id: 'hr', label: 'HR Pipeline', hint: 'HR — hires that reached the master list' },
+];
+
+/**
+ * Admin → Diagnostics.
+ *
+ * Three tabs, deliberately three SEPARATE surfaces:
+ *
+ *   Service Map      the live health probe map (unchanged)
+ *   Payroll Cycles   Accounting's score — paid vs payable per closed cycle
+ *   HR Pipeline      HR's score — listed → staged → promoted per hiring week
+ *
+ * **Accounting and HR never share a scoreboard** (Kane, 2026-09-04). They answer
+ * different questions over different denominators, and one blended "company
+ * performance" number would be meaningless in both directions. Each tab owns its
+ * own KPI cards, its own accent, and its own caveats.
+ *
+ * ── Mount-once, then hide (the smoothness rule) ────────────────────────────
+ * A tab is mounted the first time it is opened and then STAYS mounted, hidden
+ * with a class. Unmounting would throw away fetched data and React Flow's whole
+ * canvas, so every switch back would re-fetch, re-skeleton and re-layout — the
+ * exact repaint the Manager shell suffers from (see the manager-dashboard-shell
+ * cache note). Deferring the first mount until the tab is opened is what keeps
+ * the initial page from firing three requests at once.
+ *
+ * The panes are hidden with `hidden`, not unmounted and not `opacity-0`: an
+ * `opacity-0` pane still takes layout and still animates, and a display:none
+ * pane costs nothing.
+ */
+export default function SystemDiagnostics() {
+  const [tab, setTab] = useState<DiagnosticsTab>('map');
+  // Which tabs have ever been opened. The map is open on arrival, so it starts
+  // in the set; the other two mount lazily and then persist.
+  const [visited, setVisited] = useState<Set<DiagnosticsTab>>(() => new Set<DiagnosticsTab>(['map']));
+
+  const openTab = useCallback((next: DiagnosticsTab) => {
+    setTab(next);
+    setVisited((prev) => {
+      if (prev.has(next)) return prev; // stable identity — no needless rerender
+      const copy = new Set(prev);
+      copy.add(next);
+      return copy;
+    });
+  }, []);
+
+  return (
+    <div className="flex flex-col gap-3 bg-gradient-to-br from-white via-orange-50/20 to-blue-50/20 p-4 sm:p-5 lg:h-full lg:min-h-0 lg:overflow-hidden dark:bg-none dark:bg-[#0d1117]">
+      {/* ── Tab strip ── */}
+      <div
+        role="tablist"
+        aria-label="Diagnostics view"
+        className="inline-flex shrink-0 items-center gap-0.5 self-start rounded-lg border border-zinc-200 bg-white/80 p-0.5 shadow-sm backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/70"
+      >
+        {DIAG_TABS.map((t) => {
+          const active = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              title={t.hint}
+              onClick={() => openTab(t.id)}
+              className={cn(
+                'inline-flex items-center rounded-md px-3 py-1.5 text-[12px] font-medium',
+                'transition-colors duration-150 motion-reduce:transition-none',
+                active
+                  ? 'bg-zinc-900 text-white shadow-sm dark:bg-zinc-100 dark:text-zinc-900'
+                  : 'text-zinc-600 hover:bg-zinc-100/70 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-100',
+              )}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Panes. Mounted once visited, then hidden — never unmounted. ── */}
+      {visited.has('map') && (
+        <div
+          role="tabpanel"
+          aria-label="Service Map"
+          className={cn('flex-col gap-4 lg:min-h-0 lg:flex-1 lg:overflow-hidden', tab === 'map' ? 'flex' : 'hidden')}
+        >
+          <ServiceMapView />
+        </div>
+      )}
+      {visited.has('cycles') && (
+        <div
+          role="tabpanel"
+          aria-label="Payroll Cycles"
+          className={cn('min-h-0 flex-1 flex-col', tab === 'cycles' ? 'flex' : 'hidden')}
+        >
+          <PayrollCyclePerformance />
+        </div>
+      )}
+      {visited.has('hr') && (
+        <div
+          role="tabpanel"
+          aria-label="HR Pipeline"
+          className={cn('min-h-0 flex-1 flex-col', tab === 'hr' ? 'flex' : 'hidden')}
+        >
+          <HrPipelinePerformance />
+        </div>
+      )}
     </div>
   );
 }
