@@ -205,6 +205,40 @@ on all 64 sendable rows and at the top level, `orientation_default_date` 09/07/2
 "Moved from Monday (Sep 7) — Labor Day"; 2026-08-30, 2026-09-13 and 2026-11-22 all still resolve
 to their plain Monday.
 
+#### Where HR sees the date
+
+**One surface: the Lock-in confirmation dialog.** HR → New Hire Checklist → pick the week →
+**Lock in** → the third bullet (calendar-clock icon):
+
+> Orientation date: **Tuesday, Sep 8, 2026** — *Moved from Monday (Sep 7) — Labor Day*. This is
+> the date the hires will be emailed.
+
+- It renders **as soon as the dialog opens, before the HR Manager passphrase is typed**, and
+  **Cancel** backs out without sending. Looking is free; that is the point of putting it there.
+- **Lock mode only.** The Reopen dialog does not show the bullets (`mode === 'lock'`), and a
+  locked week's button says Reopen — so the date is visible on a week that is still `open`.
+- Three states, and they mirror the server exactly:
+  | Client state | Dialog says | What Lock in would do |
+  |---|---|---|
+  | calendar loading | "Checking the holiday calendar…" | — |
+  | resolved, unshifted | "Orientation date: **Monday, …** (the Monday of this week)." | sends |
+  | resolved, shifted | the date **plus the reason** | sends the shifted date |
+  | calendar unreadable | "**Orientation date unavailable** — … locking now will freeze the week but send **no emails**." | freezes, sends nothing |
+- **There is nowhere else on the HR dashboard.** The grid header shows only the week range
+  (`formatWeekLabel`), and the Orientation attendance inner tab measures **who showed up** — it
+  keys on `period_start` and has no concept of a scheduled date. `orientationLabel` has exactly two
+  references in `src/components/hr/`: the call site and the dialog.
+- **After the send**, the date lives in the `hr.new_hire_checklist.locked` audit row (fields
+  above) — but the Audit Log panel is mounted under **Admin** and **System Settings**, not on the
+  HR dashboard.
+
+**Known gap (2026-09-03, Kane asked):** HR can only see the orientation date *at the moment of
+sending*. There is no at-rest surface answering "what date is next week's orientation?" without
+opening the send dialog. A line under the week header (e.g. `Orientation: Tue Sep 8 · moved,
+Labor Day`) would close it — `resolveOrientationDate` already returns the date, the weekday, the
+shift flag and the holiday names, and the grid already holds the holiday map — but it is **not
+built**. Do not describe it as shipped.
+
 ### Lead Gen only — who is left out, and why
 
 This email **is** the Lead Gen orientation invite: it carries the orientation Zoom link, meeting ID
