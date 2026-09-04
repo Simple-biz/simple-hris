@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Send, X, Sparkles, Loader2, Trash2, Maximize2 } from 'lucide-react';
-import { AssistantContent, MessageFeedback } from './ceo-chat-message';
+import { AssistantContent, MessageFeedback, type ChatTone } from './ceo-chat-message';
 import { useCeoChat } from './use-ceo-chat';
 import {
   parseQuotaHeader,
@@ -17,6 +17,79 @@ const SUGGESTIONS = [
   'How much did we pay out last week?',
   'Help me think through a decision',
 ];
+
+/**
+ * Per-surface palette. `penny` holds the original violet/fuchsia strings
+ * verbatim, so the CEO and employee bubbles are byte-identical to before this
+ * prop existed; `console` is the Admin operator console (black + one orange
+ * accent, mono chrome), matching the Penny AI tab so Admin has ONE Penny look.
+ *
+ * The metered-quota styling is deliberately absent: only the employee surface
+ * is metered and it always runs the `penny` tone, so those branches stay as
+ * they are rather than growing a second unused palette.
+ */
+const BUBBLE_TONES: Record<ChatTone, {
+  panel: string;
+  header: string;
+  headerMark: string;
+  subtitle: string;
+  headerBtn: string;
+  body: string;
+  emptyTitle: string;
+  chip: string;
+  userMsg: string;
+  botMsg: string;
+  thinking: string;
+  composer: string;
+  field: string;
+  send: string;
+  note: string;
+}> = {
+  penny: {
+    panel:
+      'border-fuchsia-200/80 bg-white shadow-2xl shadow-fuchsia-900/15 dark:border-fuchsia-900/40 dark:bg-[#0d1117]',
+    header:
+      'bg-gradient-to-br from-violet-600 via-fuchsia-600 to-fuchsia-700 text-white dark:from-violet-700 dark:via-fuchsia-800 dark:to-fuchsia-900',
+    headerMark: 'bg-white/15 backdrop-blur-sm',
+    subtitle: 'text-fuchsia-50/80',
+    headerBtn: 'text-white/85 hover:bg-white/15 hover:text-white',
+    body: 'bg-fuchsia-50/30 dark:bg-black/20',
+    emptyTitle: 'text-zinc-700 dark:text-zinc-200',
+    chip:
+      'rounded-xl border border-fuchsia-200/70 bg-white text-[13px] text-zinc-700 shadow-sm hover:border-fuchsia-300 hover:bg-fuchsia-50 disabled:hover:border-fuchsia-200/70 disabled:hover:bg-white dark:border-fuchsia-900/40 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:disabled:hover:bg-zinc-900',
+    userMsg:
+      'rounded-2xl rounded-br-md bg-gradient-to-br from-violet-600 to-fuchsia-600 text-[13.5px] text-white shadow-sm',
+    botMsg:
+      'rounded-2xl rounded-bl-md border border-zinc-200/80 bg-white text-[13.5px] text-zinc-800 shadow-sm dark:border-zinc-700/60 dark:bg-zinc-900 dark:text-zinc-100',
+    thinking: 'text-zinc-400',
+    composer: 'border-t border-zinc-200/70 bg-white dark:border-zinc-800 dark:bg-[#0d1117]',
+    field:
+      'text-[13.5px] text-zinc-900 placeholder:text-zinc-400 dark:text-zinc-100',
+    send:
+      'rounded-lg bg-gradient-to-br from-violet-600 to-fuchsia-600 text-white hover:from-violet-700 hover:to-fuchsia-700',
+    note: 'text-zinc-400',
+  },
+  console: {
+    panel: 'border-[#26262d] bg-[#101014] shadow-2xl shadow-black/70',
+    header: 'border-b border-[#1c1c22] bg-[#0d0d11] text-[#e8ded2]',
+    headerMark: 'bg-[#ff7a1a]/15 text-[#ff7a1a]',
+    subtitle: 'font-mono text-[#8a7f73]',
+    headerBtn: 'text-[#8a7f73] hover:bg-white/[0.07] hover:text-[#ffa24d]',
+    body: 'bg-[#0b0b0d]',
+    emptyTitle: 'font-mono text-[#ffa24d]',
+    chip:
+      'rounded border border-[#2a2a31] bg-[#101014] font-mono text-[12px] text-[#e8ded2] hover:border-[#ff7a1a]/40 hover:bg-[#ff7a1a]/[0.06] disabled:hover:border-[#2a2a31] disabled:hover:bg-[#101014]',
+    userMsg:
+      'rounded border border-[#ff7a1a]/25 bg-[#ff7a1a]/[0.10] font-mono text-[12.5px] text-[#ffd9b8]',
+    botMsg: 'rounded border border-[#26262d] bg-[#101014] text-[13px] text-[#e8ded2]',
+    thinking: 'font-mono text-[#8a7f73]',
+    composer: 'border-t border-[#26262d] bg-[#0b0b0d]',
+    field:
+      'font-mono text-[12.5px] text-[#e8ded2] caret-[#ff7a1a] placeholder:text-[#4f4842]',
+    send: 'rounded bg-[#ff7a1a] text-black hover:bg-[#ffa24d]',
+    note: 'font-mono text-[#4f4842]',
+  },
+};
 
 /**
  * Floating Penny AI assistant — the always-available chat bubble. Shares its
@@ -38,6 +111,7 @@ export default function CeoChatBubble({
   extraBody,
   markSrc = '/chatbubble.png',
   greeting,
+  tone = 'penny',
 }: {
   hidden?: boolean;
   /** When provided, shows an "expand" button that opens the full Penny AI tab. */
@@ -91,7 +165,14 @@ export default function CeoChatBubble({
      */
     quiet?: boolean;
   };
+  /**
+   * Which Penny world this mount renders in. Defaults to the original violet
+   * `penny` palette; the Admin dashboard passes `console` so its bubble matches
+   * its Penny AI tab.
+   */
+  tone?: ChatTone;
 }) {
+  const T = BUBBLE_TONES[tone];
   const [open, setOpen] = useState(false);
   const [quota, setQuota] = useState<EmployeePennyQuota | null>(null);
 
@@ -300,19 +381,21 @@ export default function CeoChatBubble({
                had at bottom-24, and the height subtracts 7.5rem so a short viewport
                still leaves ~16px of clearance above the panel. Resize the button and
                these two move with it — the greeting balloon shares the anchor. */
-            className="fixed bottom-[6.5rem] right-4 z-50 flex h-[min(560px,calc(100dvh-7.5rem))] w-[min(380px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-fuchsia-200/80 bg-white shadow-2xl shadow-fuchsia-900/15 dark:border-fuchsia-900/40 dark:bg-[#0d1117] sm:right-6"
+            className={`fixed bottom-[6.5rem] right-4 z-50 flex h-[min(560px,calc(100dvh-7.5rem))] w-[min(380px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border sm:right-6 ${T.panel}`}
           >
             {/* Header */}
-            <div className="flex shrink-0 items-center justify-between gap-3 bg-gradient-to-br from-violet-600 via-fuchsia-600 to-fuchsia-700 px-4 py-3 text-white dark:from-violet-700 dark:via-fuchsia-800 dark:to-fuchsia-900">
+            <div className={`flex shrink-0 items-center justify-between gap-3 px-4 py-3 ${T.header}`}>
               <div className="flex min-w-0 items-center gap-2.5">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 backdrop-blur-sm">
+                <span
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${T.headerMark}`}
+                >
                   <Sparkles className="h-4 w-4" aria-hidden />
                 </span>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold leading-tight">Penny AI</p>
-                  <p className="truncate text-[11px] leading-tight text-fuchsia-50/80">
-                    {subtitle}
+                  <p className="truncate text-sm font-semibold leading-tight">
+                    {tone === 'console' ? 'penny@simple-hris' : 'Penny AI'}
                   </p>
+                  <p className={`truncate text-[11px] leading-tight ${T.subtitle}`}>{subtitle}</p>
                 </div>
                 {/* Questions left today. Always visible on a metered surface —
                     Kane 2026-08-19: the warning has to arrive before the lock,
@@ -344,7 +427,7 @@ export default function CeoChatBubble({
                     }}
                     aria-label="Open full Penny AI view"
                     title="Open full view"
-                    className="flex h-8 w-8 items-center justify-center rounded-full text-white/90 transition hover:bg-white/20"
+                    className={`flex h-8 w-8 items-center justify-center rounded-full transition ${T.headerBtn}`}
                   >
                     <Maximize2 className="h-4 w-4" aria-hidden />
                   </button>
@@ -355,7 +438,7 @@ export default function CeoChatBubble({
                     onClick={clearChat}
                     aria-label="Clear chat"
                     title="Clear chat"
-                    className="flex h-8 w-8 items-center justify-center rounded-full text-white/90 transition hover:bg-white/20"
+                    className={`flex h-8 w-8 items-center justify-center rounded-full transition ${T.headerBtn}`}
                   >
                     <Trash2 className="h-4 w-4" aria-hidden />
                   </button>
@@ -364,7 +447,7 @@ export default function CeoChatBubble({
                   type="button"
                   onClick={() => setOpen(false)}
                   aria-label="Close chat"
-                  className="flex h-8 w-8 items-center justify-center rounded-full text-white/90 transition hover:bg-white/20"
+                  className={`flex h-8 w-8 items-center justify-center rounded-full transition ${T.headerBtn}`}
                 >
                   <X className="h-4 w-4" aria-hidden />
                 </button>
@@ -374,11 +457,11 @@ export default function CeoChatBubble({
             {/* Messages */}
             <div
               ref={scrollRef}
-              className="flex-1 space-y-3 overflow-y-auto bg-fuchsia-50/30 px-3.5 py-4 dark:bg-black/20"
+              className={`flex-1 space-y-3 overflow-y-auto px-3.5 py-4 ${T.body}`}
             >
               {messages.length === 0 ? (
                 <div className="flex flex-col gap-3 px-1 pt-2">
-                  <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+                  <p className={`text-sm font-medium ${T.emptyTitle}`}>
                     {locked ? "That's all my questions for today" : 'Hi 👋 What can I help you with?'}
                   </p>
                   <div className="flex flex-col gap-2">
@@ -390,7 +473,7 @@ export default function CeoChatBubble({
                         // A starter chip on a locked panel would fire a send the
                         // server is certain to refuse.
                         disabled={locked}
-                        className="rounded-xl border border-fuchsia-200/70 bg-white px-3 py-2 text-left text-[13px] text-zinc-700 shadow-sm transition hover:border-fuchsia-300 hover:bg-fuchsia-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-fuchsia-200/70 disabled:hover:bg-white dark:border-fuchsia-900/40 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:disabled:hover:bg-zinc-900"
+                        className={`px-3 py-2 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${T.chip}`}
                       >
                         {s}
                       </button>
@@ -415,16 +498,16 @@ export default function CeoChatBubble({
                       <div
                         className={
                           m.role === 'user'
-                            ? 'max-w-[82%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-gradient-to-br from-violet-600 to-fuchsia-600 px-3.5 py-2 text-[13.5px] leading-relaxed text-white shadow-sm'
-                            : 'max-w-[92%] break-words rounded-2xl rounded-bl-md border border-zinc-200/80 bg-white px-3.5 py-2 text-[13.5px] leading-relaxed text-zinc-800 shadow-sm dark:border-zinc-700/60 dark:bg-zinc-900 dark:text-zinc-100'
+                            ? `max-w-[82%] whitespace-pre-wrap break-words px-3.5 py-2 leading-relaxed ${T.userMsg}`
+                            : `max-w-[92%] break-words px-3.5 py-2 leading-relaxed ${T.botMsg}`
                         }
                       >
                         {m.role === 'user' ? (
                           m.content
                         ) : m.content ? (
-                          <AssistantContent text={m.content} streaming={isStreaming} />
+                          <AssistantContent text={m.content} streaming={isStreaming} tone={tone} />
                         ) : awaitingFirstToken ? (
-                          <span className="inline-flex items-center gap-1.5 text-zinc-400">
+                          <span className={`inline-flex items-center gap-1.5 ${T.thinking}`}>
                             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
                             Thinking…
                           </span>
@@ -436,6 +519,7 @@ export default function CeoChatBubble({
                           <MessageFeedback
                             rating={m.rating}
                             onRate={(rating, comment) => void rateMessage(m, rating, comment)}
+                            tone={tone}
                           />
                         </div>
                       )}
@@ -446,7 +530,7 @@ export default function CeoChatBubble({
             </div>
 
             {/* Composer */}
-            <div className="shrink-0 border-t border-zinc-200/70 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-[#0d1117]">
+            <div className={`shrink-0 px-3 py-2.5 ${T.composer}`}>
               {/* The escalating warning: quiet above 3 left, amber at 2–3, firm at
                   the last one, and an explanation once the composer is locked.
                   `role="status"` so a screen reader hears the countdown too. */}
@@ -468,7 +552,9 @@ export default function CeoChatBubble({
                 className={`flex items-end gap-2 rounded-xl border px-2.5 py-1.5 ${
                   locked
                     ? 'border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900/60'
-                    : 'border-zinc-200 bg-zinc-50 focus-within:border-fuchsia-400 focus-within:ring-2 focus-within:ring-fuchsia-400/30 dark:border-zinc-700 dark:bg-zinc-900'
+                    : tone === 'console'
+                      ? 'border-[#2a2a31] bg-[#0b0b0d] focus-within:border-[#ff7a1a]/60 focus-within:ring-2 focus-within:ring-[#ff7a1a]/20'
+                      : 'border-zinc-200 bg-zinc-50 focus-within:border-fuchsia-400 focus-within:ring-2 focus-within:ring-fuchsia-400/30 dark:border-zinc-700 dark:bg-zinc-900'
                 }`}
               >
                 <textarea
@@ -479,14 +565,14 @@ export default function CeoChatBubble({
                   rows={1}
                   disabled={locked}
                   placeholder={locked ? 'Back tomorrow — see you then' : 'Type a message…'}
-                  className="max-h-28 min-h-[24px] flex-1 resize-none bg-transparent py-1 text-[13.5px] leading-relaxed text-zinc-900 outline-none placeholder:text-zinc-400 disabled:cursor-not-allowed dark:text-zinc-100"
+                  className={`max-h-28 min-h-[24px] flex-1 resize-none bg-transparent py-1 leading-relaxed outline-none disabled:cursor-not-allowed ${T.field}`}
                 />
                 <button
                   type="button"
                   onClick={() => void send(input)}
                   disabled={busy || locked || !input.trim()}
                   aria-label="Send message"
-                  className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-fuchsia-600 text-white transition hover:from-violet-700 hover:to-fuchsia-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  className={`mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center transition disabled:cursor-not-allowed disabled:opacity-40 ${T.send}`}
                 >
                   {busy ? (
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -495,7 +581,7 @@ export default function CeoChatBubble({
                   )}
                 </button>
               </div>
-              <p className="mt-1 px-1 text-[10.5px] text-zinc-400">
+              <p className={`mt-1 px-1 text-[10.5px] ${T.note}`}>
                 Penny AI can make mistakes. Verify important details.
               </p>
             </div>

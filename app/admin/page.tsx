@@ -17,7 +17,7 @@ import AdminDesignSpecs from '@/components/admin/AdminDesignSpecs';
 import AdminSystemSettings from '@/components/admin/AdminSystemSettings';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
 import SystemDiagnostics from '@/components/SystemDiagnostics';
-import BizAiTab from '@/components/ceo/BizAiTab';
+import AdminPennyConsole from '@/components/admin/AdminPennyConsole';
 import CeoChatBubble from '@/components/ceo/CeoChatBubble';
 import { Construction, Menu } from 'lucide-react';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
@@ -45,9 +45,8 @@ function AdminShellFallback() {
 // admin-gated backend with operations tools (audit log, diagnostics, wizard
 // state, rate/transfer/onboarding/bank history) on top of the payroll tools.
 const PENNY_ADMIN_ENDPOINT = '/api/admin/penny-chat';
-const PENNY_ADMIN_SUBTITLE = 'Audit, diagnostics & payroll operations — reads your live data';
-const PENNY_ADMIN_BLURB =
-  'Ask who did what in the audit log, how the diagnostic probes look, whether the payroll wizard is processing, or about a person’s rates, transfers, onboarding, and bank changes.';
+// The console prints its own banner (identity, read-only, audited) instead of a
+// subtitle + blurb, so those two strings retired with the old tab layout.
 const PENNY_ADMIN_TAB_SUGGESTIONS: { title: string; sub: string }[] = [
   { title: 'Has the payroll wizard started processing?', sub: 'Lock state and live dispatch progress' },
   { title: 'Run a diagnostics check — anything unhealthy?', sub: 'Live probe health across the platform' },
@@ -177,10 +176,9 @@ function AdminPageInner() {
       case 'penny-ai':
         return (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <BizAiTab
+            <AdminPennyConsole
               endpoint={PENNY_ADMIN_ENDPOINT}
-              subtitle={PENNY_ADMIN_SUBTITLE}
-              emptyBlurb={PENNY_ADMIN_BLURB}
+              adminEmail={adminEmail}
               suggestions={PENNY_ADMIN_TAB_SUGGESTIONS}
             />
           </div>
@@ -307,6 +305,9 @@ function AdminPageInner() {
         suggestions={PENNY_ADMIN_BUBBLE_SUGGESTIONS}
         hidden={activeTab === 'penny-ai'}
         onOpenFullView={() => navigate('penny-ai')}
+        // Same console world as the Penny AI tab — Admin must not have two
+        // different-looking Pennys. CEO and Employee keep the default.
+        tone="console"
       />
     </div>
   );

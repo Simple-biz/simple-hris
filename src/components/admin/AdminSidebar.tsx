@@ -141,6 +141,12 @@ export default function AdminSidebar({
     extra?: React.ReactNode,
     /** Stands in for a right-aligned badge that the collapsed 64px rail clips. */
     dot?: { show: boolean; tone?: string },
+    /**
+     * Overrides the icon's colour in BOTH states. Used only by Penny AI, whose
+     * row opens the orange operator console — the mark matches the surface it
+     * leads to. Darker orange in light mode so a 15px glyph still clears 3:1.
+     */
+    iconClassName?: string,
   ) => (
     <button
       key={id}
@@ -157,6 +163,7 @@ export default function AdminSidebar({
           className={cn(
             'h-[15px] w-[15px] shrink-0',
             activeTab === id ? 'text-white/75' : 'text-[#a1a1aa]',
+            iconClassName,
           )}
         />
         {dot?.show && (
@@ -245,7 +252,16 @@ export default function AdminSidebar({
                 badge = <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />;
                 dot = { show: true, tone: 'bg-red-500' };
               }
-              return navBtn(item.id, item.label, item.icon, badge, dot);
+              return navBtn(
+                item.id,
+                item.label,
+                item.icon,
+                badge,
+                dot,
+                // Penny AI's row wears the console's accent, so the nav item
+                // and the surface it opens read as one thing.
+                item.id === 'penny-ai' ? 'text-[#e35c00] dark:text-[#ff7a1a]' : undefined,
+              );
             })}
           </nav>
 

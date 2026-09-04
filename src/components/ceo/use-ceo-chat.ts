@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState, type RefObject } from 'react';
+import { splitFrames } from '@/lib/penny/console-stream';
 
 /**
  * Shared conversation state + streaming logic for every Penny surface. The CEO
@@ -23,6 +24,18 @@ export type CeoMsg = {
   key?: string;
   /** The viewer's rating of this reply, if any. */
   rating?: 'up' | 'down' | null;
+};
+
+/**
+ * One tool call the server reported mid-stream, stamped on arrival. Only the
+ * admin route emits these; every other surface leaves `activity` empty, which
+ * is what keeps this addition invisible to the CEO and employee widgets.
+ */
+export type PennyActivity = {
+  /** The tool name exactly as the model asked for it. */
+  name: string;
+  /** `Date.now()` when the frame arrived — the console times steps from this. */
+  at: number;
 };
 
 export function useCeoChat(opts?: {
@@ -52,6 +65,10 @@ export function useCeoChat(opts?: {
   const [messages, setMessages] = useState<CeoMsg[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  // The tool steps of the MOST RECENT question. Kept after the answer lands so
+  // the console still shows what was consulted to produce it; cleared when the
+  // next question starts.
+  const [activity, setActivity] = useState<PennyActivity[]>([]);
 
   const idRef = useRef(0);
   const nextId = () => ++idRef.current;
@@ -65,6 +82,7 @@ export function useCeoChat(opts?: {
     setMessages(history);
     setInput('');
     setBusy(true);
+    setActivity([]);
 
     const replyId = nextId();
     const replyKey =
@@ -99,13 +117,30 @@ export function useCeoChat(opts?: {
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
+      // Holds a frame that straddled a chunk boundary until its closing
+      // delimiter arrives. Never appended to the transcript.
+      let frameBuf = '';
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
         if (!chunk) continue;
+
+        // Activity frames travel in-band on this stream, so they are lifted out
+        // HERE — upstream of the transcript and therefore of every parser that
+        // reads it (the biz-report fence, the pipe tables, the Markdown pass).
+        // A route that emits no frames gets its text back unchanged.
+        const { text, frames, rest } = splitFrames(frameBuf + chunk);
+        frameBuf = rest;
+
+        if (frames.length > 0) {
+          const at = Date.now();
+          setActivity((a) => [...a, ...frames.map((f) => ({ name: f.name, at }))]);
+        }
+        if (!text) continue;
+
         setMessages((m) =>
-          m.map((msg) => (msg.id === replyId ? { ...msg, content: msg.content + chunk } : msg)),
+          m.map((msg) => (msg.id === replyId ? { ...msg, content: msg.content + text } : msg)),
         );
       }
     } catch {
@@ -125,6 +160,7 @@ export function useCeoChat(opts?: {
   function clearChat() {
     setMessages([]);
     setInput('');
+    setActivity([]);
   }
 
   // Record a thumbs up/down (and optional comment) for one reply. Optimistic;
@@ -176,6 +212,9 @@ export function useCeoChat(opts?: {
     rateMessage,
     lastMsg,
     awaitingFirstToken,
+    /** Tool steps the server reported for the current/last question. Empty on
+     *  every surface whose route emits no activity frames. */
+    activity,
     /** False when the surface has no feedback route — hide the thumbs entirely
      *  rather than showing controls whose POST is dropped. */
     feedbackEnabled: !!feedbackEndpoint,

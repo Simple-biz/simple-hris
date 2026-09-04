@@ -5,6 +5,7 @@ import { resolveAnthropicApiKey } from '@/lib/anthropic/api-key';
 import { CEO_TOOLS, runCeoTool } from '@/lib/anthropic/ceo-tools';
 import { ADMIN_TOOLS, isAdminTool, runAdminTool } from '@/lib/anthropic/admin-tools';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { encodeFrame } from '@/lib/penny/console-stream';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -21,11 +22,39 @@ export const maxDuration = 300;
  * rate / transfer / onboarding / bank-change history.
  */
 
-const MODEL = 'claude-sonnet-5';
+const MODEL = 'claude-opus-5';
 
-// Sonnet 5 runs adaptive thinking by default and max_tokens caps thinking +
-// answer together, so leave more headroom than the CEO route's 8k.
-const MAX_TOKENS = 12000;
+/**
+ * Opus 5, upgraded from Sonnet 5 on 2026-09-04 (Kane: "upgrade the engine of
+ * Penny to Opus"). Admin only — the CEO and employee routes are untouched.
+ *
+ * What the model change forces:
+ * - Thinking is **on by default** on Opus 5 (it was opt-in on Sonnet 5), and
+ *   thinking + answer share `max_tokens`. Opus 5 also thinks harder, so the old
+ *   12k ceiling would truncate replies that used to fit.
+ * - `budget_tokens` and the sampling params (temperature/top_p/top_k) are
+ *   REMOVED on this model — sending any of them is a 400. This route sends none;
+ *   do not add them.
+ * - Assistant prefill is also a 400 here. This route never prefills.
+ *
+ * Cost: $5/MTok in, $25/MTok out — 2.5× Sonnet 5. The cached system prefix and
+ * the short-answer instruction in the prompt are what keep that in hand.
+ */
+const MAX_TOKENS = 32000;
+
+/**
+ * Opus 5's safety classifiers can decline a request outright (HTTP 200,
+ * `stop_reason: "refusal"`). Server-side fallback re-runs the same request on a
+ * second model inside the same call rather than handing an admin an error.
+ * Opus 4.8 is the same tier at the same price, so a rescue costs no more.
+ *
+ * The beta flag and the ARRAY form of `fallbacks` must match: this SDK
+ * (@anthropic-ai/sdk 0.105) types only the array form, whose header is exactly
+ * `server-side-fallback-2026-06-01`. Pairing it with the newer scalar
+ * (`fallbacks: "default"` + `…-07-01`) is a 400.
+ */
+const FALLBACK_BETA = 'server-side-fallback-2026-06-01';
+const FALLBACK_MODEL = 'claude-opus-4-8';
 
 const SYSTEM_PROMPT = [
   'You are Penny (also called Penny AI), the operations assistant for the',
@@ -215,7 +244,7 @@ export async function POST(request: Request) {
 
   const client = new Anthropic({ apiKey });
 
-  const convo: Anthropic.MessageParam[] = messages.map((m) => ({
+  const convo: Anthropic.Beta.BetaMessageParam[] = messages.map((m) => ({
     role: m.role,
     content: m.content,
   }));
@@ -237,14 +266,20 @@ export async function POST(request: Request) {
           if (request.signal.aborted) return;
 
           let turnText = '';
-          const claudeStream = client.messages.stream(
+          const claudeStream = client.beta.messages.stream(
             {
               model: MODEL,
               max_tokens: MAX_TOKENS,
-              // Sonnet 5: adaptive thinking (its default) reasons between tool
-              // calls; medium effort keeps latency chat-friendly.
+              betas: [FALLBACK_BETA],
+              fallbacks: [{ model: FALLBACK_MODEL }],
+              // Adaptive thinking reasons between tool calls. Effort is `high`
+              // (also Opus 5's own default) rather than the old `medium`:
+              // reconstructing who-changed-what across four history sources is
+              // exactly the intelligence-sensitive work the upgrade is for, and
+              // a wrong attribution costs more than a slower answer. Dial to
+              // `medium` if chat latency starts to bite.
               thinking: { type: 'adaptive' },
-              output_config: { effort: 'medium' },
+              output_config: { effort: 'high' },
               // Cache the static prefix (tools + system) across the loop's
               // turns and across requests — only the trailing convo varies.
               system: [
@@ -265,8 +300,24 @@ export async function POST(request: Request) {
 
           if (msg.stop_reason !== 'tool_use') {
             if (turnText.trim().length > 0) answered = true;
-            // Thinking + text share MAX_TOKENS on Sonnet 5 — never let a
-            // capped reply pass as complete.
+            // A refusal means the whole chain declined — the fallback model
+            // refused too. Say that plainly instead of letting it fall through
+            // to the generic "couldn't finish", which reads as an outage and
+            // sends an admin retrying the same question.
+            if (msg.stop_reason === 'refusal') {
+              const category = msg.stop_details?.category ?? 'unspecified';
+              controller.enqueue(
+                encoder.encode(
+                  turnText.trim().length > 0
+                    ? `\n\n[Cut off — the model declined to continue (${category}).]`
+                    : `I can't answer that one — the model declined the request (${category}). Try rephrasing, or ask for the underlying records instead.`,
+                ),
+              );
+              answered = true;
+              break;
+            }
+            // Thinking + text share MAX_TOKENS — never let a capped reply pass
+            // as complete.
             if (msg.stop_reason === 'max_tokens') {
               controller.enqueue(
                 encoder.encode('\n\n[Reply was cut short — ask me to continue for the rest.]'),
@@ -278,10 +329,17 @@ export async function POST(request: Request) {
 
           // Execute every tool the model asked for, then feed results back.
           convo.push({ role: 'assistant', content: msg.content });
-          const toolResults: Anthropic.ToolResultBlockParam[] = [];
+          const toolResults: Anthropic.Beta.BetaToolResultBlockParam[] = [];
           for (const block of msg.content) {
             if (block.type === 'tool_use') {
               toolsUsed.push(block.name);
+              // Name the tool to the console BEFORE running it, so its progress
+              // readout prints the step actually in flight rather than a
+              // plausible one on a timer. Frames are NUL-delimited and stripped
+              // by the client hook before any text reaches the transcript, so
+              // this is invisible to the CEO and employee surfaces (whose routes
+              // emit none) and to every downstream parser.
+              controller.enqueue(encoder.encode(encodeFrame({ t: 'tool', name: block.name })));
               const input = (block.input ?? {}) as Record<string, unknown>;
               const result = isAdminTool(block.name)
                 ? await runAdminTool(block.name, input)

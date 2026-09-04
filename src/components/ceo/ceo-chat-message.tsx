@@ -281,13 +281,71 @@ function renderBlocks(blocks: BlockNode[], keyPrefix: string): ReactNode {
 }
 
 /**
+ * Which palette a Penny surface renders in. `penny` is the violet/fuchsia world
+ * the CEO and employee widgets have always had — its class strings are the
+ * originals, verbatim, so adding a tone changed nothing on those surfaces.
+ * `console` is the Admin operator console: black ground, one orange accent,
+ * mono for data.
+ */
+export type ChatTone = 'penny' | 'console';
+
+const TONES: Record<ChatTone, {
+  pending: string;
+  cutOff: string;
+  th: string;
+  td: string;
+  trOdd: string;
+  rateOn: string;
+  rateOff: string;
+  commentInput: string;
+  commentSend: string;
+}> = {
+  penny: {
+    pending:
+      'border-fuchsia-200/80 bg-fuchsia-50/60 text-fuchsia-700 dark:border-fuchsia-900/40 dark:bg-fuchsia-950/20 dark:text-fuchsia-300',
+    cutOff: 'text-zinc-400',
+    th: 'border-b border-fuchsia-200/80 px-2.5 py-1.5 font-semibold text-zinc-600 dark:border-fuchsia-900/50 dark:text-zinc-300',
+    td: 'border-b border-zinc-100 px-2.5 py-1.5 text-zinc-700 dark:border-zinc-800 dark:text-zinc-200',
+    trOdd: 'odd:bg-fuchsia-50/40 dark:odd:bg-white/[0.03]',
+    rateOn: 'bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/40 dark:text-fuchsia-300',
+    rateOff: 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800',
+    commentInput:
+      'border-zinc-200 bg-white text-zinc-700 focus:border-fuchsia-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200',
+    commentSend: 'bg-fuchsia-600 text-white hover:bg-fuchsia-700',
+  },
+  console: {
+    pending: 'border-[#ff7a1a]/30 bg-[#ff7a1a]/10 font-mono text-[#ffa24d]',
+    cutOff: 'text-[#8a7f73]',
+    // Offboarded's table language: mono, uppercase, letter-spaced headers over
+    // an orange rule; figures tabular so columns of pesos line up.
+    th: 'border-b border-[#ff7a1a]/30 px-2.5 py-2 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-[#ffa24d]',
+    td: 'border-b border-white/[0.06] px-2.5 py-1.5 font-mono text-[12px] tabular-nums text-[#e8ded2]',
+    trOdd: 'odd:bg-[#ff7a1a]/[0.04]',
+    rateOn: 'bg-[#ff7a1a]/15 text-[#ffa24d]',
+    rateOff: 'text-[#8a7f73] hover:bg-white/5 hover:text-[#ffa24d]',
+    commentInput:
+      'border-[#2a2a31] bg-[#0b0b0d] font-mono text-[#e8ded2] placeholder:text-[#6e655d] focus:border-[#ff7a1a]/60',
+    commentSend: 'bg-[#ff7a1a] font-mono text-black hover:bg-[#ffa24d]',
+  },
+};
+
+/**
  * Renders an assistant message: plain text, with pipe tables shown as real
  * tables and ```biz-report blocks as a download card. `streaming` must reflect
  * whether this reply is still arriving — it's what stops an unfinished report
  * block from getting stuck on "Preparing report…" after the stream ends.
  */
-export function AssistantContent({ text, streaming = false }: { text: string; streaming?: boolean }) {
+export function AssistantContent({
+  text,
+  streaming = false,
+  tone = 'penny',
+}: {
+  text: string;
+  streaming?: boolean;
+  tone?: ChatTone;
+}) {
   const segments = parseSegments(text, streaming);
+  const t = TONES[tone];
   return (
     <div className="space-y-2">
       {segments.map((seg, idx) =>
@@ -299,7 +357,7 @@ export function AssistantContent({ text, streaming = false }: { text: string; st
           seg.pending ? (
             <div
               key={idx}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-fuchsia-200/80 bg-fuchsia-50/60 px-2.5 py-1.5 text-[12px] text-fuchsia-700 dark:border-fuchsia-900/40 dark:bg-fuchsia-950/20 dark:text-fuchsia-300"
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] ${t.pending}`}
             >
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
               Preparing report…
@@ -307,7 +365,7 @@ export function AssistantContent({ text, streaming = false }: { text: string; st
           ) : seg.report ? (
             <BizReportCard key={idx} report={seg.report} />
           ) : (
-            <div key={idx} className="text-[12px] italic text-zinc-400">
+            <div key={idx} className={`text-[12px] italic ${t.cutOff}`}>
               (The report was cut off before it finished — ask me to try again, or
               for a shorter date range.)
             </div>
@@ -320,7 +378,7 @@ export function AssistantContent({ text, streaming = false }: { text: string; st
                   {seg.headers.map((h, k) => (
                     <th
                       key={k}
-                      className={`whitespace-nowrap border-b border-fuchsia-200/80 px-2.5 py-1.5 font-semibold text-zinc-600 dark:border-fuchsia-900/50 dark:text-zinc-300 ${ALIGN_CLASS[seg.aligns[k] ?? 'left']}`}
+                      className={`whitespace-nowrap ${t.th} ${ALIGN_CLASS[seg.aligns[k] ?? 'left']}`}
                     >
                       {/* Cells get the INLINE pass only — a cell is never a
                           block, and running the block parser here would let a
@@ -332,11 +390,11 @@ export function AssistantContent({ text, streaming = false }: { text: string; st
               </thead>
               <tbody>
                 {seg.rows.map((row, ri) => (
-                  <tr key={ri} className="odd:bg-fuchsia-50/40 dark:odd:bg-white/[0.03]">
+                  <tr key={ri} className={t.trOdd}>
                     {seg.headers.map((_, ci) => (
                       <td
                         key={ci}
-                        className={`whitespace-nowrap border-b border-zinc-100 px-2.5 py-1.5 text-zinc-700 dark:border-zinc-800 dark:text-zinc-200 ${ALIGN_CLASS[seg.aligns[ci] ?? 'left']}`}
+                        className={`whitespace-nowrap ${t.td} ${ALIGN_CLASS[seg.aligns[ci] ?? 'left']}`}
                       >
                         {renderInline(parseInline(row[ci] ?? ''), `${idx}.${ri}.${ci}.`)}
                       </td>
@@ -360,12 +418,15 @@ export function AssistantContent({ text, streaming = false }: { text: string; st
 export function MessageFeedback({
   rating,
   onRate,
+  tone = 'penny',
 }: {
   rating: 'up' | 'down' | null | undefined;
   onRate: (rating: 'up' | 'down', comment?: string) => void;
+  tone?: ChatTone;
 }) {
   const [commenting, setCommenting] = useState(false);
   const [comment, setComment] = useState('');
+  const t = TONES[tone];
 
   const submitDown = () => {
     onRate('down', comment.trim() || undefined);
@@ -374,9 +435,7 @@ export function MessageFeedback({
 
   const btn = (active: boolean) =>
     `flex h-6 w-6 items-center justify-center rounded-md transition ${
-      active
-        ? 'bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/40 dark:text-fuchsia-300'
-        : 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800'
+      active ? t.rateOn : t.rateOff
     }`;
 
   return (
@@ -419,12 +478,12 @@ export function MessageFeedback({
               else if (e.key === 'Escape') setCommenting(false);
             }}
             placeholder="What was off? (optional)"
-            className="w-52 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11.5px] text-zinc-700 outline-none focus:border-fuchsia-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+            className={`w-52 rounded-md border px-2 py-1 text-[11.5px] outline-none ${t.commentInput}`}
           />
           <button
             type="button"
             onClick={submitDown}
-            className="rounded-md bg-fuchsia-600 px-2 py-1 text-[11.5px] font-medium text-white transition hover:bg-fuchsia-700"
+            className={`rounded-md px-2 py-1 text-[11.5px] font-medium transition ${t.commentSend}`}
           >
             Send
           </button>
