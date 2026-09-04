@@ -209,6 +209,51 @@ export const OFFICIAL_BANKS: OfficialBank[] = [
   { key: 'fairwinds', name: 'FAIRWINDS Credit Union', aliases: ['FAIRWINDS'] },
 ];
 
+/**
+ * Brand logos shipped in `public/banks/`, fetched and measured by
+ * `scripts/fetch-bank-logos.mts` (which records each file's source URL in
+ * `public/banks/SOURCES.json`). Keyed by official bank key; a bank absent from this
+ * map shows a monogram tile, which is a normal outcome, not a gap to paper over.
+ *
+ * Every path here is asserted to EXIST case-exactly and to be LEGIBLE ON THE WHITE
+ * PLATE by `banks.test.ts` — a referenced-but-missing file falls back to a monogram
+ * silently, and a white-inked one renders as an empty box that nothing reports.
+ */
+export const BANK_LOGO_SRC: Record<string, string> = {
+  gotyme: '/banks/gotyme.png',
+  bpi: '/banks/bpi.png',
+  bdo: '/banks/bdo.png',
+  unionbank: '/banks/unionbank.png',
+  gcash: '/banks/gcash.png',
+  wise: '/banks/wise.png',
+  rcbc: '/banks/rcbc.png',
+  landbank: '/banks/landbank.png',
+  aub: '/banks/aub.png',
+  maya: '/banks/maya.png',
+  pnb: '/banks/pnb.png',
+  cimb: '/banks/cimb.png',
+  eastwest: '/banks/eastwest.png',
+  chinabank: '/banks/chinabank.png',
+  psbank: '/banks/psbank.png',
+  maybank: '/banks/maybank.png',
+  bank_of_commerce: '/banks/bank_of_commerce.png',
+  bpi_banko: '/banks/bpi_banko.png',
+  davivienda: '/banks/davivienda.png',
+  truist: '/banks/truist.png',
+  cebuana: '/banks/cebuana.png',
+  south_state: '/banks/south_state.png',
+  fairwinds: '/banks/fairwinds.png',
+};
+
+/** The `public/` paths a BANK row may reference — its own shipped assets only. */
+export const ALLOWED_BANK_PUBLIC_LOGO_SRCS: ReadonlySet<string> = new Set(Object.values(BANK_LOGO_SRC));
+
+/** The shipped logo for an official bank key, or null. */
+export function declaredBankLogo(key: string): BankLogo | null {
+  const src = BANK_LOGO_SRC[key];
+  return src ? { kind: 'public', src } : null;
+}
+
 /** spelling key → official bank key. Built once; every official name claims itself. */
 const OFFICIAL_BY_SPELLING: Map<string, string> = (() => {
   const m = new Map<string, string>();
@@ -404,7 +449,8 @@ export function foldBankSpellings(
       altCount: a.altCount,
       spellings,
       looksLikePerson: !a.official && !entry && looksLikePersonName(fallbackName),
-      logo: entry?.logo ?? null,
+      // A registry logo wins; otherwise the shipped brand asset, if this bank has one.
+      logo: entry?.logo ?? declaredBankLogo(a.key),
       notes: entry?.notes ?? '',
     };
   });
@@ -464,9 +510,11 @@ export interface BankInput {
   notes?: string;
 }
 
-/** Same logo contract as the processors — one validator, never a second copy. */
+/** Same logo contract as the processors — one validator, never a second copy —
+ *  but scoped to the BANK assets, so a bank row cannot reference a processor file
+ *  and vice versa. */
 export function validateBankLogo(logo: unknown): Validation {
-  return validatePayProcessorLogo(logo);
+  return validatePayProcessorLogo(logo, ALLOWED_BANK_PUBLIC_LOGO_SRCS);
 }
 
 export { PAY_PROCESSOR_LOGO_MAX_BYTES as BANK_LOGO_MAX_BYTES };

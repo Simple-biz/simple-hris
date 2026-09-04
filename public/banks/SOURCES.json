@@ -1,0 +1,194 @@
+{
+  "fetchedAt": "2026-09-04T18:06:36.622Z",
+  "renderWidth": 480,
+  "note": "Bank brand logos used to identify each bank in the internal Payment Catalog. Fetched by scripts/fetch-bank-logos.mts.",
+  "files": [
+    {
+      "file": "banks/gotyme.png",
+      "wikimediaFile": "GoTyme Bank logo.svg",
+      "wiki": "commons",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/GoTyme%20Bank%20logo.svg?width=480",
+      "dimensions": "500x158",
+      "bytes": 20178
+    },
+    {
+      "file": "banks/bpi.png",
+      "wikimediaFile": "Official BPI Logo.svg",
+      "wiki": "commons",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Official%20BPI%20Logo.svg?width=480",
+      "dimensions": "500x387",
+      "bytes": 14364
+    },
+    {
+      "file": "banks/bdo.png",
+      "wikimediaFile": "BDO Unibank (logo).svg",
+      "wiki": "commons",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/BDO%20Unibank%20(logo).svg?width=480",
+      "dimensions": "500x175",
+      "bytes": 13085
+    },
+    {
+      "file": "banks/unionbank.png",
+      "wikimediaFile": "Unionbank 2018 logo.svg",
+      "wiki": "commons",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Unionbank%202018%20logo.svg?width=480",
+      "dimensions": "500x154",
+      "bytes": 8178
+    },
+    {
+      "file": "banks/gcash.png",
+      "wikimediaFile": "GCash logo.svg",
+      "wiki": "commons",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/GCash%20logo.svg?width=480",
+      "dimensions": "500x119",
+      "bytes": 15315
+    },
+    {
+      "file": "banks/wise.png",
+      "wikimediaFile": "Wise Logo 512x124.svg",
+      "wiki": "commons",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Wise%20Logo%20512x124.svg?width=480",
+      "dimensions": "500x209",
+      "bytes": 6600
+    },
+    {
+      "file": "banks/rcbc.png",
+      "wikimediaFile": "RCBC logo.svg",
+      "wiki": "commons",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/RCBC%20logo.svg?width=480",
+      "dimensions": "500x419",
+      "bytes": 20769
+    },
+    {
+      "file": "banks/landbank.png",
+      "wikimediaFile": "Landbank New.svg",
+      "wiki": "en",
+      "url": "https://en.wikipedia.org/wiki/Special:FilePath/Landbank%20New.svg?width=480",
+      "dimensions": "500x61",
+      "bytes": 12066,
+      "note": "current mark; Commons still has the older one"
+    },
+    {
+      "file": "banks/aub.png",
+      "wikimediaFile": "Asia United Bank logo.svg",
+      "wiki": "commons",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Asia%20United%20Bank%20logo.svg?width=480",
+      "dimensions": "500x140",
+      "bytes": 18263
+    },
+    {
+      "file": "banks/maya.png",
+      "wikimediaFile": "Maya logo.svg",
+      "wiki": "commons",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Maya%20logo.svg?width=480",
+      "dimensions": "500x146",
+      "bytes": 5964
+    },
+    {
+      "file": "banks/pnb.png",
+      "wikimediaFile": "Philippine-National-Bank-logo.svg",
+      "wiki": "commons",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Philippine-National-Bank-logo.svg?width=480",
+      "dimensions": "500x135",
+      "bytes": 18571
+    },
+    {
+      "file": "banks/cimb.png",
+      "wikimediaFile": "CIMB Group Logo.svg",
+      "wiki": "commons",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/CIMB%20Group%20Logo.svg?width=480",
+      "dimensions": "500x78",
+      "bytes": 8989,
+      "note": "CIMB Bank Philippines uses the group mark"
+    },
+    {
+      "file": "banks/eastwest.png",
+      "wikimediaFile": "EastWest Bank 2011 h-pos logo.svg",
+      "wiki": "commons",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/EastWest%20Bank%202011%20h-pos%20logo.svg?width=480",
+      "dimensions": "500x100",
+      "bytes": 16209
+    },
+    {
+      "file": "banks/chinabank.png",
+      "wikimediaFile": "Chinabank 2024.svg",
+      "wiki": "en",
+      "url": "https://en.wikipedia.org/wiki/Special:FilePath/Chinabank%202024.svg?width=480",
+      "dimensions": "500x93",
+      "bytes": 4618,
+      "note": "China Banking Corporation PH, 2024 refresh"
+    },
+    {
+      "file": "banks/psbank.png",
+      "wikimediaFile": "PSbank logo.svg",
+      "wiki": "en",
+      "url": "https://en.wikipedia.org/wiki/Special:FilePath/PSbank%20logo.svg?width=480",
+      "dimensions": "500x175",
+      "bytes": 28735
+    },
+    {
+      "file": "banks/maybank.png",
+      "wikimediaFile": "Maybank logo.svg",
+      "wiki": "en",
+      "url": "https://en.wikipedia.org/wiki/Special:FilePath/Maybank%20logo.svg?width=480",
+      "dimensions": "500x106",
+      "bytes": 15201
+    },
+    {
+      "file": "banks/bank_of_commerce.png",
+      "wikimediaFile": "Bank of Commerce BankCom logo.png",
+      "wiki": "en",
+      "url": "https://en.wikipedia.org/wiki/Special:FilePath/Bank%20of%20Commerce%20BankCom%20logo.png?width=480",
+      "dimensions": "250x28",
+      "bytes": 6621
+    },
+    {
+      "file": "banks/bpi_banko.png",
+      "wikimediaFile": "BPI BanKo logo.png",
+      "wiki": "en",
+      "url": "https://en.wikipedia.org/wiki/Special:FilePath/BPI%20BanKo%20logo.png?width=480",
+      "dimensions": "500x178",
+      "bytes": 42550
+    },
+    {
+      "file": "banks/davivienda.png",
+      "wikimediaFile": "Davivienda Logo.png",
+      "wiki": "commons",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Davivienda%20Logo.png?width=480",
+      "dimensions": "500x112",
+      "bytes": 21503
+    },
+    {
+      "file": "banks/truist.png",
+      "wikimediaFile": "Truist Financial logo.svg",
+      "wiki": "commons",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Truist%20Financial%20logo.svg?width=480",
+      "dimensions": "500x116",
+      "bytes": 7906
+    },
+    {
+      "file": "banks/cebuana.png",
+      "wikimediaFile": "Cebuana Lhuillier logo.png",
+      "wiki": "commons",
+      "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Cebuana%20Lhuillier%20logo.png?width=480",
+      "dimensions": "500x160",
+      "bytes": 18550
+    },
+    {
+      "file": "banks/south_state.png",
+      "wikimediaFile": "South State Bank logo.svg",
+      "wiki": "en",
+      "url": "https://en.wikipedia.org/wiki/Special:FilePath/South%20State%20Bank%20logo.svg?width=480",
+      "dimensions": "500x111",
+      "bytes": 14340
+    },
+    {
+      "file": "banks/fairwinds.png",
+      "wikimediaFile": "Logo of Fairwinds CU.svg",
+      "wiki": "en",
+      "url": "https://en.wikipedia.org/wiki/Special:FilePath/Logo%20of%20Fairwinds%20CU.svg?width=480",
+      "dimensions": "500x86",
+      "bytes": 14173
+    }
+  ]
+}

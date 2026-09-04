@@ -19,6 +19,9 @@ Shipped 2026-09-03 (commit in `git log -- src/lib/payment-catalog/banks.ts`).
 | Tab UI — inner tablist, bank cards, logo dialog | `src/components/accounting/PayProcessorsTab.tsx` |
 | Host — fetch, realtime filter | `src/components/accounting/BonusCatalog.tsx` |
 | READ-ONLY audit of the live spellings | `scripts/audit-bank-spellings.mts` |
+| Logo fetcher (dry run unless `--apply`) | `scripts/fetch-bank-logos.mts` |
+| PNG decoder + white-plate legibility | `src/lib/images/decode-png.ts` |
+| Shipped brand logos + provenance | `public/banks/*.png` · `public/banks/SOURCES.json` |
 
 ## 1. Why this surface exists at all
 
@@ -114,6 +117,45 @@ Logos reuse the processor validator and plate: PNG/SVG/WebP/JPEG, ≤150 KB, inl
 URL, rendered only through `<img src>`. One `LogoField` component serves both dialogs, so
 the client checks cannot drift from the server's.
 
+## 7. The shipped brand logos
+
+23 banks ship a real logo in **`public/banks/<key>.png`**, declared in `BANK_LOGO_SRC`
+and served by `foldBankSpellings` when no saved logo overrides it. A bank absent from
+that map shows a **monogram tile** — a normal outcome, not a gap.
+
+`scripts/fetch-bank-logos.mts` fetches them from Wikimedia
+(`Special:FilePath/<File>?width=480`, which resolves both English-Wikipedia-local and
+Commons files and renders an SVG original to PNG). It is a dry run unless given
+`--apply`, and it writes provenance to `public/banks/SOURCES.json` — a logo whose source
+is not recorded cannot be re-fetched or re-checked.
+
+Two rules govern that script, and both exist because the failure they prevent is silent:
+
+1. **Every source is DECLARED, never searched.** A Commons search for "Security Bank
+   logo" returns Bank of America's; a search for "Maribank" returns its parent Sea
+   Group's. A wrong-bank logo is worse than none — it is a confident lie on a screen
+   Accounting uses to reason about payouts. **MariBank (100 people, the third-biggest
+   bank) deliberately has no logo** for exactly this reason, as do Metrobank, Security
+   Bank, SeaBank and the small US rails.
+2. **Every download is measured before it is written.** `ProcessorLogo` falls back to a
+   monogram on a LOAD error but not on an INVISIBLE one, and the plate is `bg-white` in
+   both themes, so white-inked artwork renders as an empty box nothing reports.
+   `isLegibleOnWhite` (`src/lib/images/decode-png.ts`) rejects near-white ink, slivers
+   and transparent files. **If a logo fails, replace the artwork — never relax the
+   threshold.** `banks.test.ts` re-runs that same measurement over every shipped file,
+   plus a case-exact existence check (Windows resolves the wrong case; Linux does not).
+
+The decoder is dependency-free (node's own `zlib`; `sharp` is only a transitive Next
+package) and handles 8-bit greyscale / RGB / **palette** / RGBA. Palette support is
+load-bearing, not a nicety: Wikimedia renders Wise, Maya and Chinabank to palette PNGs,
+and without it three real logos would have been dropped for a decoder limitation rather
+than anything wrong with the artwork. `processor-logo-assets.test.ts` uses the same
+module, so the processors' Kolan check and the banks' cannot drift.
+
+**Bank logos and processor logos are separate asset lists.** `validateBankLogo` passes
+`ALLOWED_BANK_PUBLIC_LOGO_SRCS`; the processor validator keeps its own default. A bank
+row cannot reference `/Kolan.png`, and a processor row cannot reference `/banks/bpi.png`.
+
 **Access.** GET is `requireRateVisibilitySession`; POST/PATCH is
 `requireFeatureEdit('accounting','bonus_catalog')`. Writes audit `bank.create` /
 `bank.update` on `payment_catalog_banks`.
@@ -122,4 +164,7 @@ the client checks cannot drift from the server's.
 
 **No migration.** No env vars, no n8n, no storage bucket. The `app_settings` row is
 created on the first save. Re-run `node --import tsx scripts/audit-bank-spellings.mts`
-after editing `OFFICIAL_BANKS`, and before assuming a spelling is covered.
+after editing `OFFICIAL_BANKS`, and before assuming a spelling is covered. To add or
+refresh a logo: put the exact Wikimedia `File:` name in `SOURCES` in
+`scripts/fetch-bank-logos.mts`, run it **without** `--apply` to see the measurement,
+then with `--apply`, and add the path to `BANK_LOGO_SRC`.

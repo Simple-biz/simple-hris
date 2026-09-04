@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import zlib from 'node:zlib';
+import { decodePng } from '@/lib/images/decode-png';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -227,89 +227,13 @@ test('kolan.svg is the squarish MARK, with intrinsic dimensions', () => {
 // only a transitive Next.js package, absent from package.json, and a test that
 // cannot run its own assertion is not a test.
 
-interface DecodedPng {
-  width: number;
-  height: number;
-  /** RGBA, 4 bytes per pixel, top-to-bottom. */
-  rgba: Buffer;
-}
-
-function decodePng(absPath: string): DecodedPng {
-  const buf = fs.readFileSync(absPath);
-  assert.equal(
-    buf.subarray(0, 8).toString('hex'),
-    '89504e470d0a1a0a',
-    `${absPath} is not a PNG`,
-  );
-
-  const width = buf.readUInt32BE(16);
-  const height = buf.readUInt32BE(20);
-  const bitDepth = buf[24];
-  const colorType = buf[25];
-  const interlace = buf[28];
-
-  // Only the shape our brand PNGs actually use is unfiltered below. Anything else
-  // fails loud rather than being waved through unmeasured.
-  assert.equal(bitDepth, 8, `${absPath}: expected 8-bit channels, got ${bitDepth}`);
-  assert.equal(colorType, 6, `${absPath}: expected RGBA (colour type 6), got ${colorType}`);
-  assert.equal(interlace, 0, `${absPath}: interlaced PNGs are not supported here`);
-
-  const idat: Buffer[] = [];
-  for (let off = 8; off + 8 <= buf.length; ) {
-    const len = buf.readUInt32BE(off);
-    const type = buf.subarray(off + 4, off + 8).toString('latin1');
-    if (type === 'IDAT') idat.push(buf.subarray(off + 8, off + 8 + len));
-    if (type === 'IEND') break;
-    off += 12 + len; // length + type + data + CRC
-  }
-  assert.ok(idat.length > 0, `${absPath}: no IDAT chunks`);
-
-  const raw = zlib.inflateSync(Buffer.concat(idat));
-  const bpp = 4;
-  const stride = width * bpp;
-  assert.equal(raw.length, (stride + 1) * height, `${absPath}: unexpected scanline length`);
-
-  const rgba = Buffer.alloc(stride * height);
-  for (let y = 0; y < height; y++) {
-    const filter = raw[y * (stride + 1)];
-    const line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
-    for (let x = 0; x < stride; x++) {
-      const a = x >= bpp ? rgba[y * stride + x - bpp] : 0; // left
-      const b = y > 0 ? rgba[(y - 1) * stride + x] : 0; // up
-      const c = x >= bpp && y > 0 ? rgba[(y - 1) * stride + x - bpp] : 0; // up-left
-      let v = line[x];
-      switch (filter) {
-        case 0:
-          break;
-        case 1:
-          v += a;
-          break;
-        case 2:
-          v += b;
-          break;
-        case 3:
-          v += (a + b) >> 1;
-          break;
-        case 4: {
-          const p = a + b - c;
-          const pa = Math.abs(p - a);
-          const pb = Math.abs(p - b);
-          const pc = Math.abs(p - c);
-          v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
-          break;
-        }
-        default:
-          assert.fail(`${absPath}: unknown PNG filter type ${filter} on row ${y}`);
-      }
-      rgba[y * stride + x] = v & 0xff;
-    }
-  }
-
-  return { width, height, rgba };
-}
+// The PNG decoder this file used to carry inline now lives in
+// `src/lib/images/decode-png.ts`, because scripts/fetch-bank-logos.mts must apply the
+// SAME measurement at download time. One decoder, two callers — a second copy would
+// drift, and the whole point is that the check is trustworthy.
 
 test('Kolan.png is a horizontal lockup whose ink is DARK, not white', () => {
-  const png = decodePng(path.join(REPO_ROOT, 'public/Kolan.png'));
+  const png = decodePng(fs.readFileSync(path.join(REPO_ROOT, 'public/Kolan.png')), 'Kolan.png');
 
   let ink = 0;
   let dark = 0;

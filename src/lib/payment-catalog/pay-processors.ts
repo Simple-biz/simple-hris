@@ -255,12 +255,18 @@ export function base64DecodedBytes(b64: string): number {
  * caller's `bytes` claim. SVG is allowed because the tab renders logos only
  * through `<img src>`, where an SVG cannot run script.
  */
-export function validatePayProcessorLogo(logo: unknown): Validation {
+export function validatePayProcessorLogo(
+  logo: unknown,
+  /** Which `public/` paths this SURFACE ships. Defaults to the processor assets;
+   *  Current Banks passes its own set, so neither surface can reference the other's
+   *  files and no caller can widen the processor list by accident. */
+  allowedPublicSrcs: ReadonlySet<string> = ALLOWED_PUBLIC_LOGO_SRCS,
+): Validation {
   if (logo === null || logo === undefined) return { ok: true };
   if (typeof logo !== 'object') return { ok: false, error: 'Logo must be an object or null.' };
   const l = logo as Record<string, unknown>;
   if (l.kind === 'public') {
-    return typeof l.src === 'string' && ALLOWED_PUBLIC_LOGO_SRCS.has(l.src)
+    return typeof l.src === 'string' && allowedPublicSrcs.has(l.src)
       ? { ok: true }
       : { ok: false, error: 'Only the shipped brand assets may be referenced by path — upload a file instead.' };
   }

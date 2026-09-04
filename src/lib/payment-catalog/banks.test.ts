@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { decodePng, isLegibleOnWhite, measureInk } from '@/lib/images/decode-png';
+import { validatePayProcessorLogo } from './pay-processors';
 import {
+  BANK_LOGO_SRC,
   BANK_ALIASES_MAX,
   OFFICIAL_BANKS,
   applyBankPatch,
@@ -286,9 +292,12 @@ test('validateBankInput bounds the text fields and the alias list', () => {
   assert.equal(validateBankInput({ key: 'bpi', aliases: ['ok', 'y'.repeat(61)] }, live).ok, false);
 });
 
-test('validateBankInput reuses the processor logo contract', () => {
+test('validateBankInput reuses the processor logo contract, scoped to BANK assets', () => {
   const live = new Set(['bpi']);
-  assert.equal(validateBankInput({ key: 'bpi', logo: { kind: 'public', src: '/wise.png' } }, live).ok, true);
+  // `/banks/wise.png` is the bank asset; `/wise.png` is the PROCESSOR one, and a bank
+  // row may not reach for it (nor the reverse) — one validator, two asset lists.
+  assert.equal(validateBankInput({ key: 'bpi', logo: { kind: 'public', src: '/banks/wise.png' } }, live).ok, true);
+  assert.equal(validateBankInput({ key: 'bpi', logo: { kind: 'public', src: '/wise.png' } }, live).ok, false);
   assert.equal(validateBankInput({ key: 'bpi', logo: { kind: 'public', src: '/hack.png' } }, live).ok, false);
   const png = Buffer.alloc(64, 3).toString('base64');
   assert.equal(
@@ -370,4 +379,75 @@ test('the fold never returns a per-person row, whatever the input size', () => {
   const groups = foldBankSpellings(many);
   assert.equal(groups.length, 1);
   assert.equal(groups[0].preferredCount, 50);
+});
+
+// ── The shipped brand logos ──────────────────────────────────────────────────
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+
+test('every declared bank logo exists in public/ with the exact on-disk casing', () => {
+  // fs.existsSync is case-insensitive on Windows; Linux static serving is not, so a
+  // case slip renders locally and 404s in production — straight back to a monogram,
+  // silently, because ProcessorLogo only falls back on a LOAD error.
+  const dir = path.join(REPO_ROOT, 'public', 'banks');
+  const listing = fs.readdirSync(dir);
+  for (const [key, src] of Object.entries(BANK_LOGO_SRC)) {
+    assert.ok(src.startsWith('/banks/'), `${key}: ${src} must live under /banks/`);
+    assert.ok(
+      listing.includes(src.slice('/banks/'.length)),
+      `public${src} must exist case-exactly (bank ${key})`,
+    );
+  }
+});
+
+test('every shipped bank logo is LEGIBLE on the white plate', () => {
+  // The plate is bg-white in BOTH themes (ui-standards.md §6.4). White-on-transparent
+  // artwork renders as an empty box and nothing errors, so this is measured, never
+  // assumed. Same gate scripts/fetch-bank-logos.mts applies at download time — if this
+  // ever fails, replace the artwork; do NOT relax the threshold.
+  for (const [key, src] of Object.entries(BANK_LOGO_SRC)) {
+    const buf = fs.readFileSync(path.join(REPO_ROOT, 'public', src));
+    const verdict = isLegibleOnWhite(measureInk(decodePng(buf, key)));
+    assert.ok(verdict.ok, `${key} (${src}): ${verdict.ok ? '' : verdict.reason}`);
+  }
+});
+
+test('a bank group serves its shipped logo, and a saved one overrides it', () => {
+  const [seeded] = foldBankSpellings([row('BPI')]);
+  assert.deepEqual(seeded.logo, { kind: 'public', src: '/banks/bpi.png' });
+
+  const uploaded = {
+    kind: 'data' as const,
+    dataUrl: `data:image/png;base64,${Buffer.alloc(32, 9).toString('base64')}`,
+    mime: 'image/png',
+    bytes: 32,
+  };
+  const [overridden] = foldBankSpellings([row('BPI')], [entry({ key: 'bpi', logo: uploaded })]);
+  assert.deepEqual(overridden.logo, uploaded);
+
+  // A bank with no shipped asset shows a monogram — a normal outcome, not a gap.
+  const [none] = foldBankSpellings([row('Rizal Bank')]);
+  assert.equal(none.logo, null);
+});
+
+test('the bank logo allowlist is scoped: neither surface may reference the other files', () => {
+  const live = new Set(['bpi']);
+  // A bank may reference its own shipped file...
+  assert.equal(validateBankInput({ key: 'bpi', logo: { kind: 'public', src: '/banks/bpi.png' } }, live).ok, true);
+  // ...but never a processor asset, nor an arbitrary path.
+  assert.equal(validateBankInput({ key: 'bpi', logo: { kind: 'public', src: '/Kolan.png' } }, live).ok, false);
+  assert.equal(validateBankInput({ key: 'bpi', logo: { kind: 'public', src: '/banks/../secret.png' } }, live).ok, false);
+  // And the processor validator keeps its own list, unwidened.
+  assert.equal(validatePayProcessorLogo({ kind: 'public', src: '/banks/bpi.png' }).ok, false);
+  assert.equal(validatePayProcessorLogo({ kind: 'public', src: '/Kolan.png' }).ok, true);
+});
+
+test('a shipped bank logo survives a round trip through sanitize', () => {
+  const e = sanitizeBankEntry({
+    key: 'bpi',
+    name: 'BPI',
+    kind: 'bank',
+    logo: { kind: 'public', src: '/banks/bpi.png' },
+  })!;
+  assert.deepEqual(e.logo, { kind: 'public', src: '/banks/bpi.png' });
 });

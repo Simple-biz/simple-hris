@@ -56,6 +56,15 @@
         ],
         "createdAt": "2026-09-03T19:20:46.049Z",
         "reason": "Claude: pure TS lib, no JSX — both hits are doc comments that mention <img src> as the render rule for logos"
+      },
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "src/lib/processor-logo-assets.test.ts"
+        ],
+        "createdAt": "2026-09-04T18:09:55.226Z",
+        "reason": "Claude: a node:test file with no markup — both hits are the literal text <img> inside prose comments describing ProcessorLogo's plated vs un-plated surfaces"
       }
     ]
   }
