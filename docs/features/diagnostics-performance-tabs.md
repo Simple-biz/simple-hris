@@ -26,6 +26,7 @@ Ship commit: see `git log` for `feat(diagnostics)` on 2026-09-04.
 | HR tab | [`src/components/admin/HrPipelinePerformance.tsx`](../../src/components/admin/HrPipelinePerformance.tsx) |
 | Shared chrome (KPI card, rate bar, skeleton) | [`src/components/admin/performance-ui.tsx`](../../src/components/admin/performance-ui.tsx) |
 | Listed-per-week reader | [`src/lib/supabase/hr-new-hire-checklist.ts`](../../src/lib/supabase/hr-new-hire-checklist.ts) → `listChecklistWeekCounts` |
+| Cycle inventory (which cycles EXIST) | [`src/lib/payroll/cycle-inventory.ts`](../../src/lib/payroll/cycle-inventory.ts) |
 
 ## The accents are not free choices
 
@@ -62,18 +63,70 @@ measured against live production data on 2026-09-04:
 **excluded**, so it is normally *larger* than Unpaid. It is labelled audit, it has no
 percentage anywhere near it, and a failed read is rendered `unknown`, never `0`.
 
-## The series starts when close-outs started, and nothing before it is inferred
+## Every cycle is listed; only a closed one can have a rate
 
-Kane, 2026-09-04: *"only when we started."* The first close-out was filed 2026-08-10. Weeks
-paid before that are **absent from the tab**, not zero — there is no back-fill, no estimate,
-and no second series from another table. The coverage footnote names the earliest
-`period_end` on screen so the absence is visible; an absence nobody mentions reads as "we
-paid nobody".
+Superseding the original "weeks before the first close-out are absent from the tab"
+(2026-09-04, same day — Kane: *"can we add the unclosed? even though they aren't closed lets
+just label unclosed"* / *"and still add the data in there"*). What did **not** change is the
+load-bearing part: there is still exactly one rate, and it still comes only from close-outs.
 
-**A cycle that was never closed has no rate at all.** This is the
-`orientation-week-stats.ts` `measurable:false` rule applied to payroll (Kane, 2026-08-26:
-*"only produce data when it has been passed... if it hasn't been marked then just put a note
-on it"*). It is not 0% and it is not 100%.
+Undeclared cycles are read from `payment_dispatches` + `disbursement_records` by
+`listObservedCycles` and listed with their real paid figures and:
+
+| Field | Value | Why |
+| --- | --- | --- |
+| `unpaid` | **null**, not 0 | 0 is a *claim* that nobody was owed. Only a close-out knows. |
+| `payable` | **null**, not 0 | No denominator exists, which is precisely why there is no rate. |
+| `rate` | **null** | Not 0%, not 100%. |
+| `paid` | a number, **or null** | Null when the cycle has no dispatch rows at all — see below. |
+
+They **never enter a denominator**, month or all-time. A cycle whose payable count is
+unknowable cannot make a percentage more accurate; it can only make one up. Their payments
+are reported separately as `totals.paidOnUnclosed`.
+
+This is the `orientation-week-stats.ts` `measurable:false` rule applied to payroll (Kane,
+2026-08-26: *"only produce data when it has been passed... if it hasn't been marked then just
+put a note on it"*).
+
+### Three statuses, and why `pre_closeout` is separate
+
+`closed` · `unclosed` · `pre_closeout`. The last two lack a rate for the same mechanical
+reason, but a cycle that ended **before the first close-out was ever filed** could not have
+been closed — the feature did not exist. Live, that is **22 of 27 cycles**. Labelling them
+"unclosed" would read as 22 Accounting failures, so they are greyed and neutrally worded,
+never flagged amber. The boundary is the earliest **closed** `period_end`, inclusive.
+
+A **reopened** cycle correctly returns to `unclosed`: reopening archives the record under a
+different prefix and frees the live key, so the week genuinely has no declaration again.
+
+### `paid: null` means unknown, and this one was nearly a lie
+
+`payment_dispatches` only reaches back to **2026-05-24**; the ledger holds cycles from
+**2026-03-01**. The first build reported `paid: 0` for every earlier cycle — announcing that
+~700 people went unpaid in each of a dozen weeks that in fact paid everyone. That is the same
+lie the rate rules exist to prevent, relocated into a different cell. A cycle with **no
+dispatch rows at all** now reports `null`, rendered `—`. A cycle *with* dispatch rows that
+genuinely paid nobody still reports `0`.
+
+### A cycle is a PERIOD, not a file
+
+`listObservedCycles` groups dispatch and ledger rows by `(period_start, period_end)`, falling
+back to the source file only when a row has no period. Measured 2026-09-04: **Jul 26 – Aug 1
+holds rows under two different source files** (a re-upload renames the CSV), and grouping by
+file listed that one pay week twice — 1,019 paid and 1. Grouping by period also lets
+`tallyPaidDispatches` see all of a week's rows at once, so a person paid under both file names
+is counted once, which per-file tallies summed afterwards never could.
+
+Because a close-out keys on a *file*, an observed cycle carries **every** file its rows were
+found under (`sourceFiles`), and the builder suppresses it if **any** of them is declared —
+or if its period matches a closed cycle's. One pay week is one row.
+
+### A month that is not fully closed says so
+
+`MonthPerformanceRow` carries `closedCycles` / `unclosedCycles` / `preCloseoutCycles` and
+`fullyDeclared`. When `fullyDeclared` is false the card prints the coverage line. **A 98%
+headline over one closed week of four is not a 98% month**, and a reader who cannot see the
+gap will assume it is. Do not remove that line without removing the rate beside it.
 
 ## "Payable" excludes the Excluded tab, so ~98% is the correct-looking answer
 
