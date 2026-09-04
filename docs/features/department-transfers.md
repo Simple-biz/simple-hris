@@ -430,6 +430,65 @@ of all **117 applied transfers** found **11 people** silently reverted this way 
 **Prevention:** whoever re-adds Sheet rows must paste **current** department values. See the
 related "Sheet re-add with an old dept clobbers an applied transfer" rule.
 
+## 7 · Playbook: backfilling a transfer that was never filed *(2026-09-04)*
+
+**Symptom.** A person's paystub, People profile and every roster surface name a department
+they left months ago, yet the Payment Catalog, the rates sheet and a team's own roster all
+have them somewhere else — and `department_transfer_requests` holds **nothing** for them.
+
+**Cause.** The move was made at every surface *except* the HRIS. Nobody filed the transfer, and
+the master Google Sheet was never edited either, so both department sources of truth agree on
+the stale value. The Payroll Wizard derives each stub's department from `global_master_list`
+(see `paystub-dispatch.md`), so the stub is faithfully printing the HRIS. **A transfers audit
+cannot see this case** (§6's Glaiza lesson, inverted: there the Sheet moved and the record was
+missing; here neither moved).
+
+**Worked case:** `angelicac@` (Concepcion, Angelica). Master + Sheet: `Lead Gen`. Hogan roster
+(`hsl_team_members`): `collections` since 2026-05-06. Rates sheet: Hogan Smith Law since
+2026-04-07. Payment Catalog: keyed `hogan_smith_law`, ₱265, set 2026-06-15 effective 06-22.
+KPI-scored under Collections since July. Zero transfer rows, zero audit events.
+
+**Fix = file the transfer the HRIS should have had**, through the production helpers, never a
+raw `UPDATE`. `scripts/backfill-angelicac-transfer.mts` (dry-run default, `--apply` gate,
+backup to `references/backups/` first) is the worked example:
+
+1. Insert an `approved` row carrying the real history: `requested_by` / `approver_email` = the
+   admin filing it, `effective_date` = the dated fact the record is anchored to (here the
+   Payment Catalog rate's effective date; `--effective` overrides), `reason` says it is a
+   backfill. **Past effective dates are allowed** (§2).
+2. `applyDepartmentTransfer` (must resolve `moved`, exactly one row) → `updateMasterSheetDepartment`
+   (three-outcome verdict, §2) → `markTransferApplied`. Same order as Release / "Apply now", so
+   the master list, the Sheet cell and the record move together and a half-applied state is
+   visible as a `Retry` badge, not silent.
+3. One `audit_log` row (`transfer.backfilled`) naming the script and the backup file.
+   Notifications are **opt-in** (`--notify`): the UI path sends `transfer.applied` to the
+   employee and the requester, but a months-late "you have moved" message is a business call.
+
+**Guards, all failing closed:** target is a placeable `hsl:<key>` (§ `hsl-subdepartments.md` §4);
+exactly one active master row reading the source; zero existing transfer rows; the **live Sheet
+cell** reads the source too (a DB write the Sheet disagrees with is a pending clobber —
+`hsl-subdepartments.md` §9 Guard 8); and the target is read from evidence (`hsl_team_members
+.dept_key`), never guessed.
+
+**Money-path consequences to state before applying — this IS a department change for pay:**
+
+- `normalizeDeptToKey(master.Department) === 'hogan_smith_law'` is what puts a person on the
+  HSL pay path (`current-pay.ts` `hslEmails`, the Wizard's HSL rail). After the backfill they
+  price like their team: Mon–Sun week model, +₱15/h weekend hours, and **OT as the 0.5× regular
+  differential instead of the stored 1.5× OT rate** (`hsl-weekend-ot-pay.md`). For angelicac@
+  at ₱265 that is ₱132.50/h OT instead of ₱397.50/h — roughly ₱250–450 less per week on her
+  usual ~1h of OT. PAB and Tech eligibility are unchanged (HSL is eligible for both; measured
+  389/547 HSL stubs carried PAB in the 08-23 cycle, 435/533 carried Tech in 08-09).
+- The individual rate does **not** move ([transfer-does-not-rerate]) — employee-scope ₱265 stays.
+- Paid stubs stay frozen; a staged-unsent stub only re-stages on unlock + re-lock
+  (`paystub-dispatch.md`). Already-paid weeks never gain the "Lead Gen to HSL" label.
+- The applied row feeds `buildHslTransferEffectiveMap`: with a months-old effective date the
+  weekend premium is in scope for every current week. Zero weekend hours on record for her.
+- **Not done by the script:** the Payment Catalog employee row keeps `department_key =
+  hogan_smith_law` (the deleted parent), so she stays invisible in Collections rate reviews
+  until re-keyed — a separate, cosmetic decision (§11 step 4 of `hsl-subdepartments.md` skipped
+  her because her master cell read Lead Gen at the time).
+
 ## Related
 
 - **Master sync work+dept guard** — why the Sheet write-back matters: the `(Work Email, Department)`
