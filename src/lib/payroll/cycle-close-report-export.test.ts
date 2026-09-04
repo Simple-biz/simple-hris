@@ -6,11 +6,14 @@ import * as XLSX from 'xlsx';
 
 import {
   buildFinalCloseoutCsv,
+  buildFinalCloseoutWorkbook,
   buildPrematureSnapshotWorkbook,
   closeReportFilename,
   fileTimestamp,
+  finalCloseReportFilename,
   maskAccountLast4,
   projectPaidDetailRows,
+  workbookToBytes,
   type PrematureSnapshotModel,
 } from './cycle-close-report-export';
 import type { CycleCloseoutRecord } from './cycle-closeout';
@@ -440,5 +443,83 @@ describe('module boundary', () => {
     assert.ok(!src.includes('createSupabase'), 'no supabase client constructor');
     assert.ok(!src.includes("from '@supabase"), 'no raw supabase-js import');
     assert.ok(!/\bfetch\s*\(/.test(src), 'no fetch call');
+  });
+});
+
+/**
+ * FINAL workbook (2026-09-04) — the CSV's sections as sheets, attached to the
+ * celebration email alongside the CSV and PDF. Same invariants as the CSV.
+ */
+describe('final close-out workbook', () => {
+  test('every sheet leads with the FINAL banner naming the closer; no sheet says NOT YET CLOSED', () => {
+    const wb = buildFinalCloseoutWorkbook({ kind: 'final', record: record(), livePaidRows: null, generatedAt: NOW });
+    assert.deepEqual(wb.SheetNames, ['Summary', 'By processor', 'Payable, not paid']);
+    for (const name of wb.SheetNames) {
+      const first = String(sheetAoa(wb, name)[0][0]);
+      assert.match(first, /^FINAL — CYCLE CLOSE-OUT · closed 2026-08-12T15:04:05.000Z by Lenny Reyes/);
+      assert.ok(!/NOT YET CLOSED/.test(JSON.stringify(sheetAoa(wb, name))));
+    }
+  });
+
+  test('summary figures are the record verbatim; truncated rows count in the headline', () => {
+    const rec = record({ unpaid: { ...record().unpaid, truncated: 26, dropped: 1 } });
+    const rows = sheetAoa(buildFinalCloseoutWorkbook({ kind: 'final', record: rec, livePaidRows: null, generatedAt: NOW }), 'Summary');
+    const find = (label: string) => rows.find((r) => r[0] === label)?.[1];
+    assert.equal(find('Payees paid'), 3);
+    assert.equal(find('Paid USD'), 1300);
+    assert.equal(find('Payable not paid'), 28);
+    assert.ok(rows.some((r) => /NOTICE: 26 unpaid people are counted above but not listed/.test(String(r[0]))));
+  });
+
+  test('processor sheet is sum-preserving: six known rails plus strays', () => {
+    const rec = record({ byProcessor: { hurupay: { count: 2, usd: 800, php: 44800 }, legacy: { count: 1, usd: 500, php: 28000 } } });
+    const rows = sheetAoa(buildFinalCloseoutWorkbook({ kind: 'final', record: rec, livePaidRows: null, generatedAt: NOW }), 'By processor').slice(2);
+    assert.equal(rows.length, 7);
+    assert.equal(rows.reduce((s, r) => s + Number(r[2]), 0), 1300);
+    assert.ok(rows.some((r) => r[0] === 'legacy'));
+  });
+
+  test('unpaid sheet = stored payees exactly; null amounts stay blank cells', () => {
+    const rows = sheetAoa(buildFinalCloseoutWorkbook({ kind: 'final', record: record(), livePaidRows: null, generatedAt: NOW }), 'Payable, not paid');
+    assert.equal(rows.length, 2 + 2);
+    const jose = rows.find((r) => r[1] === 'jose@simple.biz')!;
+    assert.equal(jose[3], 'Held · threshold');
+    assert.equal(jose[5], null);
+    assert.equal(jose[6], null);
+  });
+
+  test('live paid rows appear only as a fourth sheet, behind the disclosure, last-4 only', () => {
+    const wb = buildFinalCloseoutWorkbook({
+      kind: 'final',
+      record: record(),
+      livePaidRows: projectPaidDetailRows([dispatch()]),
+      generatedAt: NOW,
+    });
+    assert.equal(wb.SheetNames[3], 'Paid detail (live)');
+    const rows = sheetAoa(wb, 'Paid detail (live)');
+    assert.match(String(rows[1][0]), /LIVE, NOT PART OF THE FROZEN RECORD/);
+    const json = JSON.stringify(rows);
+    assert.ok(!json.includes('001234567890'), 'full account number leaked');
+    assert.ok(!json.includes('BNORPHMM'), 'SWIFT leaked');
+    assert.ok(json.includes('···7890') || json.includes('7890'));
+  });
+
+  test('workbookToBytes yields a real xlsx (zip magic) that round-trips', () => {
+    const bytes = workbookToBytes(buildFinalCloseoutWorkbook({ kind: 'final', record: record(), livePaidRows: null, generatedAt: NOW }));
+    assert.equal(bytes[0], 0x50);
+    assert.equal(bytes[1], 0x4b);
+    const back = XLSX.read(bytes, { type: 'array' });
+    assert.deepEqual(back.SheetNames, ['Summary', 'By processor', 'Payable, not paid']);
+  });
+
+  test('the three FINAL filenames share one stem and never say report', () => {
+    const names = (['csv', 'xlsx', 'pdf'] as const).map((f) => finalCloseReportFilename('August 3-9, 2026', NOW, f));
+    assert.deepEqual(names, [
+      'cycle-closeout-August-3-9-2026-FINAL-2026-08-12 23-59-58.csv',
+      'cycle-closeout-August-3-9-2026-FINAL-2026-08-12 23-59-58.xlsx',
+      'cycle-closeout-August-3-9-2026-FINAL-2026-08-12 23-59-58.pdf',
+    ]);
+    assert.equal(names[0], closeReportFilename('final', 'August 3-9, 2026', NOW));
+    for (const n of names) assert.ok(!/report/i.test(n));
   });
 });

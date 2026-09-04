@@ -1,4 +1,9 @@
 import { getAppSetting } from "@/lib/supabase/app-settings";
+import {
+  parseWebhookConfig,
+  type WebhookConfigEntry,
+  type WebhookRecipientOverride,
+} from "@/lib/webhooks/webhook-config";
 
 /**
  * Single source of truth for resolving an outbound webhook URL by slug.
@@ -18,12 +23,6 @@ import { getAppSetting } from "@/lib/supabase/app-settings";
  */
 const WEBHOOKS_CONFIG_KEY = "webhooks.config";
 
-interface WebhookEntry {
-  slug: string;
-  url: string;
-  active: boolean;
-}
-
 export interface ResolveWebhookOptions {
   /** Legacy app_settings key holding a bare URL string (pre-slug system). */
   legacyKey?: string;
@@ -33,23 +32,25 @@ export interface ResolveWebhookOptions {
   defaultUrl?: string;
 }
 
+/** The active `webhooks.config` entry for a slug, or null. Malformed config
+ *  reads as "no entry" so the other sources still get their turn. */
+async function readActiveEntry(slug: string): Promise<WebhookConfigEntry | null> {
+  try {
+    const raw = await getAppSetting(WEBHOOKS_CONFIG_KEY);
+    const list = parseWebhookConfig(raw);
+    return list.find((e) => e.slug === slug && e.active && e.url.trim()) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function resolveWebhookUrl(
   slug: string,
   options: ResolveWebhookOptions = {},
 ): Promise<string | null> {
   // 1. Admin -> Webhooks config (active entry for this slug).
-  try {
-    const raw = await getAppSetting(WEBHOOKS_CONFIG_KEY);
-    if (raw) {
-      const list = JSON.parse(raw) as WebhookEntry[];
-      if (Array.isArray(list)) {
-        const match = list.find((e) => e.slug === slug && e.active && e.url);
-        if (match?.url) return match.url.trim();
-      }
-    }
-  } catch {
-    // Malformed config -> fall through to the other sources.
-  }
+  const entry = await readActiveEntry(slug);
+  if (entry?.url) return entry.url.trim();
 
   // 2. Legacy bare-URL key.
   if (options.legacyKey) {
@@ -69,4 +70,49 @@ export async function resolveWebhookUrl(
 
   // 4. Hardcoded default.
   return options.defaultUrl?.trim() || null;
+}
+
+/**
+ * URL plus the automation overrides an admin saved on the entry (2026-09-04).
+ *
+ * Same URL precedence as `resolveWebhookUrl`. The overrides come ONLY from the
+ * active `webhooks.config` entry — an env-var or legacy-key URL has nowhere to
+ * hang them, so both are null there. Callers that only need the URL keep using
+ * `resolveWebhookUrl`; nothing about them changed.
+ */
+export interface WebhookDelivery {
+  url: string;
+  /** 'config' when the URL came from Admin → Webhooks; otherwise no overrides apply. */
+  source: "config" | "legacy" | "env" | "default";
+  recipients: WebhookRecipientOverride | null;
+  payloadOverrides: Record<string, unknown> | null;
+}
+
+export async function resolveWebhookDelivery(
+  slug: string,
+  options: ResolveWebhookOptions = {},
+): Promise<WebhookDelivery | null> {
+  const entry = await readActiveEntry(slug);
+  if (entry?.url) {
+    return {
+      url: entry.url.trim(),
+      source: "config",
+      recipients: entry.recipients,
+      payloadOverrides: entry.payload_overrides,
+    };
+  }
+  if (options.legacyKey) {
+    try {
+      const legacy = (await getAppSetting(options.legacyKey))?.trim();
+      if (legacy) return { url: legacy, source: "legacy", recipients: null, payloadOverrides: null };
+    } catch {
+      // ignore
+    }
+  }
+  for (const name of options.envVars ?? []) {
+    const val = process.env[name]?.trim();
+    if (val) return { url: val, source: "env", recipients: null, payloadOverrides: null };
+  }
+  const def = options.defaultUrl?.trim();
+  return def ? { url: def, source: "default", recipients: null, payloadOverrides: null } : null;
 }

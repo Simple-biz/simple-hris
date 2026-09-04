@@ -368,8 +368,18 @@ export const WEBHOOK_SAMPLE_PAYLOADS: Record<string, unknown> = {
     ticket_url: 'https://app.simple.biz/tickets?ticket=128',
   },
 
+  // ONE trigger (2026-09-04): the close-out route fires this itself, server-side,
+  // right after it files a FRESH close-out record. Every figure below is read
+  // off that record. `celebrate: false` = the week's celebration was already
+  // burned (reopen → re-close) and this is a plain "close-out reports" email.
+  // The three attachments carry `content_base64` in production; the sample shows
+  // the metadata only. Admin → Webhooks → Open automation edits the recipients
+  // and adds top-level keys — the keys shown here are protected and cannot be
+  // overridden.
   payment_cycle_complete: {
     event: 'payment_cycle.completed',
+    trigger: 'cycle_closed',
+    celebrate: true,
     cycle: {
       source_file: 'hubstaff_2026-07-19_2026-07-25.csv',
       cycle_id: 'cyc_2026_07_19',
@@ -377,11 +387,12 @@ export const WEBHOOK_SAMPLE_PAYLOADS: Record<string, unknown> = {
       period_start: '2026-07-19',
       period_end: '2026-07-25',
       completed_at: '2026-08-03T09:00:00.000Z',
-      completed_by: 'accounting@simple.biz',
+      completed_by: 'Alex Rivera',
     },
     stats: {
       paid_count: 84,
-      total_count: 84,
+      total_count: 86,
+      unpaid_count: 2,
       total_paid_usd: 1200.5,
       total_paid_php: 412000,
     },
@@ -389,6 +400,12 @@ export const WEBHOOK_SAMPLE_PAYLOADS: Record<string, unknown> = {
       { email: 'carla@simple.biz', name: 'Carla' },
       { email: 'claire@simple.biz', name: 'Claire' },
     ],
+    attachments: [
+      { filename: 'cycle-closeout-Jul-19-25-2026-FINAL-2026-08-03 17-00-00.csv', content_type: 'text/csv; charset=utf-8', bytes: 4812, content_base64: '…' },
+      { filename: 'cycle-closeout-Jul-19-25-2026-FINAL-2026-08-03 17-00-00.xlsx', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', bytes: 19344, content_base64: '…' },
+      { filename: 'cycle-closeout-Jul-19-25-2026-FINAL-2026-08-03 17-00-00.pdf', content_type: 'application/pdf', bytes: 61230, content_base64: '…' },
+    ],
+    attachments_error: null,
     sent_by: 'system',
   },
 };

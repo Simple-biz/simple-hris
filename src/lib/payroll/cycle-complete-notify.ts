@@ -1,59 +1,54 @@
 import "server-only";
 
-import { resolveWebhookUrl } from "@/lib/webhooks/resolve-webhook";
+import { resolveWebhookDelivery } from "@/lib/webhooks/resolve-webhook";
+import {
+  applyRecipientOverride,
+  mergePayloadOverrides,
+  type WebhookRecipient,
+} from "@/lib/webhooks/webhook-config";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { normEmail } from "@/lib/email/norm-email";
-import type { CycleCompleteTrigger } from "@/lib/payroll/cycle-complete-trigger";
+import type { CycleCloseoutRecord } from "@/lib/payroll/cycle-closeout";
+import {
+  CYCLE_COMPLETE_TRIGGER,
+  cycleCompleteNotifiedKey,
+  cycleCompleteStatsFromRecord,
+  cycleReportSentKey,
+  isReportableCycleComplete,
+} from "@/lib/payroll/cycle-complete-trigger";
+import {
+  buildCycleCloseAttachments,
+  describeAttachments,
+  type CycleCloseAttachment,
+} from "@/lib/payroll/cycle-close-attachments";
 
 /**
- * "Payment cycle 100% complete" celebration email to the Accounting team.
+ * "Payment cycle closed" celebration email to the Accounting team.
  *
- * Fired (via /api/payment-dispatches/cycle-complete) when the Payment Dispatch
- * progress strip reaches 100% — nothing pending, nothing blocked, everyone in
- * the cycle paid. The n8n workflow (references/n8n/
- * payment-cycle-complete-celebration.workflow.json) renders the full
- * confetti-and-balloons HTML itself, so all we send is the cycle's facts plus
- * the recipient list — everyone currently holding the `accounting` role.
+ * ONE trigger (2026-09-04): `celebrateClosedCycle` is called by the close-out
+ * route — and only by it — right after a FRESH close-out record was inserted.
+ * Everything in the payload is read off that record; no request body can
+ * influence a number. History and the two false firings that forced this:
+ * `cycle-complete-trigger.ts`.
  *
- * Strictly best-effort: a webhook hiccup never breaks the dispatch screen. The
- * ROUTE owns the once-per-cycle guarantee (an app_settings claim); this module
- * only knows how to find the audience and deliver the payload.
+ * The n8n workflow (references/n8n/payment-cycle-complete-celebration.workflow.json)
+ * renders the HTML itself. We send the cycle's facts, the recipient list —
+ * everyone holding the `accounting` role, as adjusted in Admin → Webhooks → Open
+ * automation — and the three close-out files as base64 attachments.
  *
- * Uses its own webhook (slug `payment_cycle_complete`) configured in Admin ->
- * Webhooks or via N8N_PAYMENT_CYCLE_COMPLETE_WEBHOOK_URL. With nothing
- * configured this no-ops.
+ * Two claims, both plain INSERTs on `app_settings` (key = primary key):
+ *   - `dispatch.cycle_complete_notified.<file>` — the celebration, once per week
+ *     EVER. Burned by a reopen, so a reopened week never celebrates again.
+ *   - `dispatch.cycle_report_sent.<file>`      — the reports. DELETED by a reopen,
+ *     so a re-close mails the new record's files, as a plain "close-out reports"
+ *     email (`celebrate: false`).
+ * Both claimed immediately before the fetch. Delivery failure releases whichever
+ * claims this call inserted so the next close of the week can try again.
  */
 export const PAYMENT_CYCLE_COMPLETE_SLUG = "payment_cycle_complete";
 
-export interface CycleCompleteRecipient {
-  email: string;
-  name: string | null;
-}
-
-export interface CycleCompleteCelebrationInput {
-  sourceFile: string;
-  /** Which event produced this report — see `CycleCompleteTrigger`. A
-   *  `cycle_closed` report may legitimately carry a shortfall. */
-  trigger: CycleCompleteTrigger;
-  cycleId?: string | null;
-  /** Human cycle label, e.g. "Jul 19 – 25, 2026" (client-formatted). */
-  label?: string | null;
-  periodStart?: string | null;
-  periodEnd?: string | null;
-  /** Who logged the final payment (session actor of the triggering request). */
-  completedBy?: string | null;
-  /** ISO timestamp of when 100% was reached. */
-  completedAt: string;
-  stats: {
-    paid_count: number;
-    total_count: number;
-    total_paid_usd?: number | null;
-    total_paid_php?: number | null;
-    /** Payable people the cycle still owed at report time. 0 on the
-     *  `fully_paid` arm by definition; non-zero only on a close. */
-    unpaid_count?: number | null;
-  };
-}
+export type CycleCompleteRecipient = WebhookRecipient;
 
 /**
  * Everyone currently holding the `accounting` role (revoked grants excluded),
@@ -103,67 +98,228 @@ export async function listAccountingCelebrationRecipients(): Promise<CycleComple
     .sort((a, b) => (a.name ?? a.email).localeCompare(b.name ?? b.email));
 }
 
-/** Resolve the configured celebration webhook URL (Admin -> Webhooks slug first,
+/** Resolve the configured celebration webhook (Admin -> Webhooks slug first,
  *  env fallback). `null` = feature not wired up yet. */
-export async function resolveCycleCompleteWebhook(): Promise<string | null> {
-  return resolveWebhookUrl(PAYMENT_CYCLE_COMPLETE_SLUG, {
+export function resolveCycleCompleteDelivery() {
+  return resolveWebhookDelivery(PAYMENT_CYCLE_COMPLETE_SLUG, {
     envVars: ["N8N_PAYMENT_CYCLE_COMPLETE_WEBHOOK_URL"],
   });
 }
 
-/**
- * POST the celebration to n8n. The caller has already resolved the webhook and
- * the audience (and claimed the once-per-cycle marker) — this just delivers.
- */
-export async function postCycleCompleteCelebration(
-  webhook: string,
-  input: CycleCompleteCelebrationInput,
-  recipients: CycleCompleteRecipient[],
-): Promise<{ ok: boolean; sent: number; detail: string | null }> {
-  if (recipients.length === 0) return { ok: false, sent: 0, detail: "No recipients" };
+export interface CycleCompletePayloadInput {
+  record: CycleCloseoutRecord;
+  /** false = the celebration claim was already burned (reopen → re-close); the
+   *  workflow sends a plain "close-out reports" email instead of confetti. */
+  celebrate: boolean;
+  recipients: readonly WebhookRecipient[];
+  attachments: readonly CycleCloseAttachment[];
+  attachmentsError: string | null;
+  /** Set on an Admin test run; the workflow may label the subject. */
+  test?: boolean;
+}
 
+/**
+ * The payload, built from the record and nothing else. Exported so the Admin
+ * preview and test run send the exact shape production sends.
+ */
+export function buildCycleCompletePayload(input: CycleCompletePayloadInput): Record<string, unknown> {
+  const { record } = input;
+  const stats = cycleCompleteStatsFromRecord(record);
+  return {
+    event: "payment_cycle.completed",
+    trigger: CYCLE_COMPLETE_TRIGGER,
+    celebrate: input.celebrate,
+    cycle: {
+      source_file: record.source_file,
+      cycle_id: record.cycle_id,
+      label: record.label,
+      period_start: record.period_start,
+      period_end: record.period_end,
+      completed_at: record.closed_at,
+      completed_by: record.closed_by,
+    },
+    stats,
+    recipients: input.recipients.map((r) => ({ email: r.email, name: r.name })),
+    attachments: input.attachments,
+    attachments_error: input.attachmentsError,
+    sent_by: "system",
+    ...(input.test ? { test: true } : {}),
+  };
+}
+
+/** POST to n8n. The caller has already claimed; this just delivers. */
+export async function postCycleCompleteWebhook(
+  webhook: string,
+  payload: Record<string, unknown>,
+): Promise<{ ok: boolean; status: number | null; detail: string | null }> {
   // Optional shared-secret header — pair with REQUIRED_SECRET in the workflow's
   // "Build Celebration Emails" node to lock the endpoint to this server.
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const secret = process.env.N8N_PAYMENT_CYCLE_COMPLETE_SECRET?.trim();
   if (secret) headers["x-webhook-secret"] = secret;
-
   try {
     const res = await fetch(webhook, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        event: "payment_cycle.completed",
-        // Which event fired this. `cycle_closed` reports may carry
-        // `stats.unpaid_count > 0` — the workflow should not assume a clean week.
-        trigger: input.trigger,
-        cycle: {
-          source_file: input.sourceFile,
-          cycle_id: input.cycleId ?? null,
-          label: input.label ?? null,
-          period_start: input.periodStart ?? null,
-          period_end: input.periodEnd ?? null,
-          completed_at: input.completedAt,
-          completed_by: input.completedBy ?? null,
-        },
-        stats: {
-          paid_count: input.stats.paid_count,
-          total_count: input.stats.total_count,
-          total_paid_usd: input.stats.total_paid_usd ?? null,
-          total_paid_php: input.stats.total_paid_php ?? null,
-          unpaid_count: input.stats.unpaid_count ?? 0,
-        },
-        recipients,
-        sent_by: "system",
-      }),
-      signal: AbortSignal.timeout(15_000),
+      body: JSON.stringify(payload),
+      // Three attachments ride along; give n8n room to accept the body.
+      signal: AbortSignal.timeout(30_000),
     });
-    return {
-      ok: res.ok,
-      sent: res.ok ? recipients.length : 0,
-      detail: res.ok ? null : `Webhook responded ${res.status}`,
-    };
+    return { ok: res.ok, status: res.status, detail: res.ok ? null : `Webhook responded ${res.status}` };
   } catch (e) {
-    return { ok: false, sent: 0, detail: e instanceof Error ? e.message : String(e) };
+    return { ok: false, status: null, detail: e instanceof Error ? e.message : String(e) };
   }
+}
+
+export type CelebrateClosedCycleOutcome =
+  | { fired: true; celebrate: boolean; sent: number; attachments: number }
+  | {
+      fired: false;
+      reason:
+        | "not_configured"
+        | "no_recipients"
+        | "not_reportable"
+        | "already"
+        | "claim_failed"
+        | "delivery_failed"
+        | "no_db";
+      detail: string | null;
+    };
+
+/**
+ * THE trigger. Called from the close-out route after a fresh record was filed.
+ *
+ * Order: resolve webhook → audience → stats check → build attachments → CLAIM →
+ * POST → audit. Pre-checks run before the claim so an unwired environment or an
+ * empty audience never burns the week's one shot.
+ */
+export async function celebrateClosedCycle(
+  record: CycleCloseoutRecord,
+  actor: { user_name: string; user_role: string },
+): Promise<CelebrateClosedCycleOutcome> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { fired: false, reason: "no_db", detail: "Supabase client unavailable" };
+
+  const delivery = await resolveCycleCompleteDelivery();
+  if (!delivery) return { fired: false, reason: "not_configured", detail: null };
+
+  const defaults = await listAccountingCelebrationRecipients();
+  const { effective: recipients } = applyRecipientOverride(defaults, delivery.recipients);
+  if (recipients.length === 0) return { fired: false, reason: "no_recipients", detail: null };
+
+  const stats = cycleCompleteStatsFromRecord(record);
+  if (!isReportableCycleComplete({ paidCount: stats.paid_count, totalCount: stats.total_count })) {
+    return {
+      fired: false,
+      reason: "not_reportable",
+      detail: `record names ${stats.paid_count} paid of ${stats.total_count}`,
+    };
+  }
+
+  // Attachments before the claim: a slow build must not hold a claim open, and
+  // a failed build still ships the email (with `attachments_error`).
+  const built = await buildCycleCloseAttachments(supabase, record);
+
+  // ── CLAIMS, immediately before the send ────────────────────────────────────
+  const now = new Date().toISOString();
+  const celebrationKey = cycleCompleteNotifiedKey(record.source_file);
+  const reportKey = cycleReportSentKey(record.source_file);
+  const claimValue = (extra: Record<string, unknown>) =>
+    JSON.stringify({
+      at: now,
+      by: actor.user_name,
+      trigger: CYCLE_COMPLETE_TRIGGER,
+      paid_count: stats.paid_count,
+      total_count: stats.total_count,
+      unpaid_count: stats.unpaid_count,
+      notified: recipients.length,
+      ...extra,
+    });
+
+  const inserted: string[] = [];
+  const release = async () => {
+    for (const key of inserted) {
+      await supabase.from("app_settings").delete().eq("key", key);
+    }
+  };
+
+  const { error: celErr } = await supabase
+    .from("app_settings")
+    .insert({ key: celebrationKey, value: claimValue({}), updated_at: now });
+  let celebrate: boolean;
+  if (!celErr) {
+    celebrate = true;
+    inserted.push(celebrationKey);
+  } else if (celErr.code === "23505") {
+    celebrate = false; // burned (reopen) or already mailed — reports may still go
+  } else {
+    return { fired: false, reason: "claim_failed", detail: celErr.message };
+  }
+
+  if (built.attachments.length > 0 || !celebrate) {
+    const { error: repErr } = await supabase
+      .from("app_settings")
+      .insert({ key: reportKey, value: claimValue({ attachments: describeAttachments(built.attachments), celebrate }), updated_at: now });
+    if (!repErr) {
+      inserted.push(reportKey);
+    } else if (repErr.code === "23505") {
+      if (!celebrate) {
+        // Neither claim is ours: this week already celebrated AND already got
+        // its reports. Nothing to send.
+        return { fired: false, reason: "already", detail: null };
+      }
+      // Celebration is ours but a reports row already exists (cannot happen on a
+      // fresh close — the reopen deletes it — but if it did, the email still
+      // carries the files; the row is informational).
+    } else {
+      await release();
+      return { fired: false, reason: "claim_failed", detail: repErr.message };
+    }
+  }
+
+  const { payload, rejected } = mergePayloadOverrides(
+    buildCycleCompletePayload({
+      record,
+      celebrate,
+      recipients,
+      attachments: built.attachments,
+      attachmentsError: built.error,
+    }),
+    delivery.payloadOverrides,
+  );
+
+  const result = await postCycleCompleteWebhook(delivery.url, payload);
+  if (!result.ok) {
+    // Nothing was emailed — release what we claimed so the next close can retry.
+    // Best-effort: if the release itself fails the week stays claimed and stays
+    // silent rather than risking a double-send.
+    await release();
+    return { fired: false, reason: "delivery_failed", detail: result.detail };
+  }
+
+  await insertAuditLog({
+    user_name: actor.user_name,
+    user_role: actor.user_role,
+    action: "payment_cycle.completed",
+    resource: "payment_dispatches",
+    resource_id: record.source_file,
+    details: {
+      source_file: record.source_file,
+      cycle_id: record.cycle_id,
+      trigger: CYCLE_COMPLETE_TRIGGER,
+      via: "cycle_closeout",
+      celebrate,
+      ...stats,
+      notified: recipients.length,
+      recipients: recipients.map((r) => r.email),
+      recipient_override: delivery.recipients ? delivery.recipients.mode : null,
+      payload_overrides_rejected: rejected,
+      attachments: describeAttachments(built.attachments),
+      attachments_error: built.error,
+      webhook_slug: PAYMENT_CYCLE_COMPLETE_SLUG,
+      webhook_source: delivery.source,
+    },
+  }).catch(() => undefined);
+
+  return { fired: true, celebrate, sent: recipients.length, attachments: built.attachments.length };
 }

@@ -1324,153 +1324,91 @@ bundle, not the code). Starting processing now changes nothing about the layout 
 buckets and stats stay full-size. The Start-Processing flow instead shows a
 themed "Preparing Dispatch…" confirm modal.
 
-### 12.7 Cycle fully paid → confetti email to the Accounting team (2026-07-30; second trigger 2026-08-14)
+### 12.7 Cycle closed → confetti email to the Accounting team (2026-07-30; ONE server-side trigger since 2026-09-04)
 
-The screen POSTs `/api/payment-dispatches/cycle-complete` and the server emails
-**everyone holding the `accounting` role** a confetti-and-balloons
-congratulations for the payment cycle, via an n8n webhook.
+The `payment_cycle_complete` n8n email congratulates everyone holding the `accounting`
+role when a pay cycle is **closed**. Since 2026-09-04 it has **exactly one trigger, and
+it is not on this screen**: `POST /api/payment-dispatches/cycle-closeout` fires it
+itself, via `after()`, when it files a **fresh** close-out record. Every number in the
+email is read off that record. Full rules, keys, attachments and ordering live in
+[cycle-closeout.md § Celebration email](./cycle-closeout.md#celebration-email--one-trigger-fired-by-the-close-itself-2026-09-04);
+this section keeps only what Payment Dispatch itself owns.
 
-**Two trigger points, two arms of ONE boundary rule.** The rule lives in
-[`cycle-complete-trigger.ts`](../../src/lib/payroll/cycle-complete-trigger.ts)
-(pure + unit-tested) and the request body is built by a single
-`buildCycleCompleteBody` in `PayrollDispatch.tsx`, so the two paths can never
-describe one week two different ways:
+- **This screen sends nothing.** The 100%-strip effect, `buildCycleCompleteBody` and
+  `reportCycleComplete` are gone from `PayrollDispatch.tsx`, and
+  `/api/payment-dispatches/cycle-complete` is deleted. `isCycleFullyPaid`,
+  `cycleStartedCount` and `payableUnpaidCount` remain — they paint the strip and name the
+  close-out's unpaid list — but they decide nothing about email.
+- **The in-app confetti** (`ConfettiBurst` from the Start/Stop cluster) still fires on the
+  client on the same trigger: a real close by this click (`closingCycle`). Reduced motion
+  skips it.
+- **Audience and payload editor** — Admin → Webhooks → **Open automation** on the
+  `payment_cycle_complete` card: add/remove recipients on top of the accounting role, add
+  extra top-level payload keys, send a test run to yourself. The facts (`stats`, `cycle`,
+  `celebrate`, `recipients`, `attachments`) are protected there.
+  See [webhook-automations.md](./webhook-automations.md).
+- **Payload** — `{ event: 'payment_cycle.completed', trigger: 'cycle_closed', celebrate,
+  cycle: { source_file, cycle_id, label, period_start, period_end, completed_at, completed_by },
+  stats: { paid_count, total_count, unpaid_count, total_paid_usd, total_paid_php },
+  recipients: [{ email, name }], attachments: [{ filename, content_type, bytes,
+  content_base64 }] (CSV, XLSX, PDF of the close-out), attachments_error, sent_by }`.
+  **`unpaid_count` can be > 0** — the workflow words the email from it and prints 100% PAID
+  only when it is 0. `celebrate: false` = a re-close after a reopen: files only, no confetti.
+- **n8n side** — the `payment_cycle_complete` slug is active in `webhooks.config`
+  pointing at `https://simpledotbiz.app.n8n.cloud/webhook/payment-cycle-complete`. The
+  updated workflow
+  ([payment-cycle-complete-celebration.workflow.json](../../references/n8n/payment-cycle-complete-celebration.workflow.json))
+  turns `attachments` into binaries and branches on `celebrate`; **until Kane imports it the
+  live workflow sends the old email without files** (the payload is a superset — nothing
+  breaks). Import: attach a Gmail OAuth2 credential to **both** Gmail nodes, activate, keep
+  the same URL.
+- **Files** — `src/lib/payroll/cycle-complete-trigger.ts` (+ `.test.ts`) — the one trigger,
+  record-derived stats, both claim keys; `cycle-complete-notify.ts` (audience + claims + POST
+  + audit); `cycle-close-attachments.ts` (the three files); `cycle-close-report-pdf.ts`;
+  `app/api/payment-dispatches/cycle-closeout/route.ts` (the `after()` call);
+  `payment_cycle_complete` entry in `AdminWebhooks.tsx` `KNOWN_SLUGS`. No DDL.
 
-| # | `trigger` | Fires when | Requires | Added |
+#### 12.7.1 The two false 100% firings — history of the removed strip trigger
+
+**These are why the strip no longer sends anything.** Both are `fully_paid` reports whose
+body was internally consistent (`paid === total > 0`) and false, because the browser
+reported its own denominator:
+
+| When (UTC) | Tab | Week | Reported | Reality |
 |---|---|---|---|---|
-| 1 | `fully_paid` | the strip reaches 100% while the screen is open | `paid === total`, `paid > 0` (`isCycleFullyPaid`) | 2026-07-30 |
-| 2 | `cycle_closed` | **the pay cycle is closed** from the Stop dialog | `paid > 0`, `total >= paid` — a shortfall is legitimate and rides along as `unpaid_count` | 2026-08-14 |
+| 2026-08-18 20:16:53 | jakec@ | Aug 9–15 | 1 of 1 paid, $240.44 | 1,026 staged payable; the clerk was one payment in |
+| 2026-09-02 00:34:44 | lenny@ | Aug 23–29 `(1).csv` | 20 of 20 paid, $5,347.75 | 1,053 rows in the cycle; 20 dispatch rows existed, all paid, last at 00:09 |
 
-Trigger 2 exists because trigger 1 is missable — it needs a browser sitting on
-Payment Dispatch at the moment the last payment lands *and* the webhook already
-configured. **It deliberately fires on a week that still owes people** (Kane:
-"if it's closed it's closed") — the honesty is preserved in the payload, not by
-withholding the email: `trigger` and `stats.unpaid_count` tell the workflow
-exactly what it is congratulating, and the strip's arm never weakened to let this
-through. Both arms still refuse a report naming nobody paid. See
-[cycle-closeout.md](./cycle-closeout.md) § Celebration email for the ordering
-guarantees (it runs after the stop, fire-and-forget, and can never abort it), and
-§ Reopening for the one thing that permanently silences a week.
+**2026-08-18** is fully diagnosed and its client-side causes are **still OPEN** — they now
+only mis-paint the strip's percentage:
 
-- **Trigger 1 (client)** — an effect in `PayrollDispatch.tsx` right after the
-  `paidPct` computation. Gated on `hydrated && !loading && wizardReady &&
-  !error && !contractorError` so a half-loaded or errored queue can never
-  read as "everyone paid". A **past** week (CSV selector) celebrates only if
-  this session actually watched its queue finish — opening an old fully-paid
-  file stays silent.
-- **Once per cycle, ever (server)** — the route INSERTs (never upserts) an
-  `app_settings` marker `dispatch.cycle_complete_notified.<source_file>`.
-  `key` is unique, so N browsers all seeing 100% at once — **and the close
-  trigger on top of them** — produce exactly one email; whichever gets there
-  first wins and the rest are told `already`. Undo → re-pay later the same week
-  finds the marker and stays silent.
-  The marker is released only if the n8n delivery itself fails, so a transient
-  outage can be retried by reopening the screen. Pre-checks (webhook
-  configured? any accounting recipients?) run BEFORE the claim so an unwired
-  environment doesn't burn the cycle's one shot.
-- **Audience (server)** — `employee_roles` where `role='accounting'` and
-  `revoked_at IS NULL`; names resolved from `employee_ids` via a targeted
-  `.in()` (1000-row-cap safe). Same audience as `/api/ceo/accounting-team`.
-- **Payload** — `{ event: 'payment_cycle.completed', trigger:
-  'fully_paid' | 'cycle_closed', cycle: { source_file, cycle_id, label,
-  period_start, period_end, completed_at, completed_by }, stats: { paid_count,
-  total_count, unpaid_count, total_paid_usd, total_paid_php },
-  recipients: [{ email, name }] }`. **`unpaid_count` can be > 0** on a
-  `cycle_closed` report — the workflow must not assume a clean week. `completed_by` = display name of whoever's
-  browser reported 100% (best-effort from `employee_ids`, else email local
-  part). Audit log action: `payment_cycle.completed`.
-- **n8n side** — **wired and proven in production.** The `payment_cycle_complete`
-  slug is active in `webhooks.config` pointing at
-  `https://simpledotbiz.app.n8n.cloud/webhook/payment-cycle-complete` (verified
-  2026-08-14), and the week of 2026-07-26 → 2026-08-01 celebrated for real on
-  2026-08-04 (27/27 paid, 10 recipients) — the marker only survives a 2xx from
-  n8n, so its presence is delivery proof. For a rebuild: import
-  [payment-cycle-complete-celebration.workflow.json](../../references/n8n/payment-cycle-complete-celebration.workflow.json),
-  attach a Gmail OAuth2 credential to **Send Celebration (Gmail)**, activate,
-  then paste the production webhook URL into **Admin → Webhooks** under slug
-  `payment_cycle_complete` (env fallback
-  `N8N_PAYMENT_CYCLE_COMPLETE_WEBHOOK_URL`). The email (subject + body) is
-  fixed inside the workflow's **Build Celebration Emails** node — callers only
-  choose who gets it. Confetti garland + bobbing balloons are inline-block
-  spans + CSS keyframes only (no `position:absolute`), so animation-stripping
-  clients still render a tidy static garland. Optional lockdown: set
-  `REQUIRED_SECRET` in that node + `N8N_PAYMENT_CYCLE_COMPLETE_SECRET` in the
-  HRIS env (sent as `x-webhook-secret`).
-- **Files** — `src/lib/payroll/cycle-complete-trigger.ts` (+ `.test.ts`) — the
-  shared gate, `src/lib/payroll/cycle-complete-notify.ts` (audience + POST),
-  `app/api/payment-dispatches/cycle-complete/route.ts` (auth + claim + audit),
-  both trigger points in `src/components/payroll-clerk/PayrollDispatch.tsx`
-  (the 100% effect and `handleLockToggle`'s close path),
-  `payment_cycle_complete` entry in `AdminWebhooks.tsx` `KNOWN_SLUGS`.
-  No DDL — the marker rides the existing `app_settings` table.
+1. **The `hydrated` guard is inert on every realtime path.** `pending` is local state
+   copied from `fetched` by a `useLayoutEffect` that resets `hydrated` only when `loading`
+   flips true; every live path (lock flip, broadcast, the 15s poll, refocus) goes through
+   `load(undefined, { silent: true })`, and silent never sets `loading`. The wizard
+   unlock (`20:13:16`) blanked the queue; re-lock (`20:16:31`) delivered `paid` = [1 row]
+   while `pending` still held the empty array.
+2. **`isCycleFullyPaid` cannot tell "everyone got paid" from "the queue fell out from under
+   me"** — `payableUnpaidCount === 0 && paidCount > 0`, no floor, no cross-check against the
+   headcount the wizard knows.
 
-#### 12.7.1 The 2026-08-18 FALSE 100% — trigger 1 fired on a stale-empty queue (**OPEN**)
+Two smaller holes on the same load path: `payJson.error` from `/api/payroll-current-pay` is
+never inspected (only `ratesJson.error` aborts), and an empty-without-error `rates.rows`
+sends everyone to `excluded` (`no_pay`), leaving the denominator.
 
-**Trigger 1's guard list above (`hydrated && !loading && …`) does not do what it
-reads like it does.** On 2026-08-18 the Aug 9–15 week emailed all 10 accounting
-holders *"100% PAID · 1 PAYMENT SENT · $240.44"* while **1026 people were staged
-payable** and the clerk was one payment into the run. Nobody clicked anything; the
-money was fine. **The denominator was wrong.**
+**2026-09-02** had **no lock flip** — the per-cycle lock stayed `locked: true` from 23:11Z
+on 09-01 until 09-03 — so a second, undiagnosed stale-queue path exists on the client. It
+also produced **two** `payment_cycle.completed` audit rows seven seconds apart against a
+single claim marker whose `at` is the first request's; with `app_settings.key` the primary
+key that should be impossible, and it stays unexplained.
 
-Timeline (UTC): `20:13:16` the wizard's `payroll.dispatch_lock` flips **false** —
-the queue blanks, because `rows`, `excluded` and `paid` are all gated on
-`wizardReady` · `20:13:44` payment #1 is marked paid · `20:16:31` the lock flips
-back **true** · `20:16:53` a *third* person's open Payment Dispatch tab POSTs
-`{trigger:'fully_paid', paid_count:1, total_count:1, unpaid_count:0}`.
+**Neither was closed by loosening a gate or by fixing the queue.** The repair (2026-09-04)
+removed the client's ability to send: the only trigger is the close-out route, and the
+email's numbers are the filed record's. Both weeks' claim markers still exist in production
+(`notified: 10` and `notified: 11`); freeing one is the manual script in cycle-closeout.md.
+A marker's presence proves a 2xx delivery for whatever was claimed — it is *not* proof the
+week finished.
 
-Two independent defects, **both still open**:
-
-1. **The `hydrated` guard is inert on every realtime path.** `pending` is local
-   state copied from `fetched` by a `useLayoutEffect`
-   ([`PayrollDispatch.tsx:345`](../../src/components/payroll-clerk/PayrollDispatch.tsx#L345))
-   that resets `hydrated` **only when `loading` flips true**. But every live path —
-   lock flip, broadcast, the 15s poll, refocus — goes through
-   `load(undefined, { silent: true })`, and **silent never sets `loading`**
-   ([`useDispatchQueue.ts:1059`](../../src/components/payroll-clerk/useDispatchQueue.ts#L1059)).
-   So across a ~20s silent reload `loading` stays false, `hydrated` stays true, and
-   `pending` still holds the **empty** array from the unlocked window. The commit
-   that delivers `paid` = [1 row] + `wizardReady` = true renders while `pending` is
-   still `[]`, and passive effects for that commit run **before** the layout
-   effect's `setPending` re-render lands — so the celebration effect reads
-   `{pending:0, blocked:0, held:0, paid:1}`, every guard passes, and it POSTs.
-   Deterministic once the window opens, not an unlucky interleaving.
-2. **`isCycleFullyPaid` cannot tell "everyone got paid" from "the queue fell out
-   from under me."** It is `payableUnpaidCount === 0 && paidCount > 0`
-   ([`cycle-complete-trigger.ts:61`](../../src/lib/payroll/cycle-complete-trigger.ts#L61))
-   — no floor, and no cross-check against the headcount the wizard already knows
-   (`cycleStartedCount`). Anything that empties the queue while ≥1 dispatch exists
-   reads as a finished payroll; the unlock/re-lock window is merely the easiest way
-   to produce it. The server's `isReportableCycleComplete` then correctly validated
-   `1 === 1 > 0`: the body was **internally consistent**, so `unpaid_count` — the
-   entire honesty mechanism — had nothing to report.
-
-Two smaller holes found alongside, same load path: **`payJson.error` from
-`/api/payroll-current-pay` is never inspected** (only `ratesJson.error` aborts,
-[`useDispatchQueue.ts:286`](../../src/components/payroll-clerk/useDispatchQueue.ts#L286)),
-and an **empty-without-error `rates.rows`** sends everyone to `excluded` (`no_pay`),
-which is not payable and so never enters the denominator either.
-
-**Consequence — the week's ONE shot is burned.**
-`dispatch.cycle_complete_notified.<Aug 9–15>.csv` now exists with `notified: 10`,
-so the *real* completion hits 23505 and stays silent on **both** arms. Freeing it is
-deliberate and manual:
-
-```
-node --import tsx scripts/clear-cycle-complete-suppression.mts --source-file "<file>.csv" --apply --force-sent
-```
-
-(it refuses a `notified > 0` marker without `--force-sent`).
-
-**Corrects §12.7's last bullet:** a marker's presence proves a **2xx delivery for
-whatever the client claimed** — it is *not* proof the week actually finished. There
-are now two markers in production and one of them is a false positive.
-
-**Do not close this by loosening the gate.** `isCycleFullyPaid` staying strict is
-the whole reason two arms exist (§12.7, [cycle-closeout.md](./cycle-closeout.md)
-§ Celebration email). The fix belongs in the queue: make `hydrated` reset on the
-silent path too (or derive `pending` rather than copying it), and give the strip's
-arm a cross-check against `cycleStartedCount` so a collapsed denominator can never
-pass for a finished one.
 
 ### 12.8 COP-country payees show/copy native COP (2026-07-30)
 

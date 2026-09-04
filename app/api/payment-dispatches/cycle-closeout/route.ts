@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import {
   requireFeatureEdit,
   requireRateVisibilityOrFeatureEdit,
 } from "@/lib/auth/authorize-feature";
+import { celebrateClosedCycle } from "@/lib/payroll/cycle-complete-notify";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { getSessionActor } from "@/lib/auth/session-actor";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
@@ -34,6 +35,11 @@ export const runtime = "nodejs";
  *          "already closed" state; `?source_file=` returns one full record.
  * POST   — close one cycle. Plain INSERT, so the first close of a week wins and a
  *          double-click reports `already` instead of overwriting the record.
+ *          A FRESH close is also THE ONE TRIGGER of the `payment_cycle_complete`
+ *          celebration email (2026-09-04): it runs after the response via
+ *          `after()`, reads every figure off the record just filed, and attaches
+ *          the close-out files. `already:true` fires nothing. No client can
+ *          fire it — the old /cycle-complete endpoint is gone.
  * DELETE — reopen one cycle (2026-08-14). Archives the filed record, frees the
  *          live key, and permanently suppresses the celebration email. Narrower
  *          than POST: `CYCLE_REOPEN_ROLES` only.
@@ -97,7 +103,8 @@ export async function POST(req: NextRequest) {
   const actor = await getSessionActor();
   const actorEmail = actor.user_name !== "anonymous" ? actor.user_name : "";
 
-  // Pretty "closed by" credit, same treatment as the cycle-complete route.
+  // Pretty "closed by" credit — display name when we have one, else the email's
+  // local part. This is the `completed_by` the celebration email shows.
   // employee_ids can hold duplicate rows per person, so limit(1) not maybeSingle.
   let closedBy = actorEmail;
   if (closedBy) {
@@ -162,6 +169,23 @@ export async function POST(req: NextRequest) {
       unpaid_php: closeout.unpaid.totalPHP,
       records_outstanding: closeout.records_outstanding,
     },
+  });
+
+  // ── THE celebration trigger ──────────────────────────────────────────────────
+  // Runs after the response is sent, so a slow or dead n8n can never delay the
+  // close or the stop that follows it on the client. Only a FRESH record reaches
+  // here (`already` returned above). The claims are inserted inside the callback,
+  // immediately before the fetch — a callback the platform cuts short leaves no
+  // claim behind. Outcome is logged, never surfaced: the record is what matters.
+  after(async () => {
+    try {
+      const outcome = await celebrateClosedCycle(closeout, actor);
+      if (!outcome.fired) {
+        console.warn("[cycle-closeout] celebration not sent:", outcome.reason, outcome.detail ?? "");
+      }
+    } catch (e) {
+      console.warn("[cycle-closeout] celebration threw:", e);
+    }
   });
 
   return NextResponse.json({ closeout, already: false, error: null });

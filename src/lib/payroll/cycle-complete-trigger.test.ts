@@ -2,19 +2,26 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  CYCLE_COMPLETE_NOTIFIED_PREFIX,
+  CYCLE_COMPLETE_TRIGGER,
+  CYCLE_REPORT_SENT_PREFIX,
   asCycleCompleteTrigger,
+  cycleCompleteNotifiedKey,
+  cycleCompleteStatsFromRecord,
+  cycleReportSentKey,
   cycleStartedCount,
   isCycleFullyPaid,
   isReportableCycleComplete,
   payableUnpaidCount,
   type CycleSettlement,
 } from './cycle-complete-trigger';
+import { CYCLE_CLOSEOUT_PREFIX, CYCLE_REOPENED_PREFIX, type CycleCloseoutRecord } from './cycle-closeout';
 
 /**
- * `isCycleFullyPaid` — what the STRIP trigger means by 100%: nobody pending, on
- * Problem or at Threshold, and somebody actually paid. Since 2026-08-14 it gates
- * that trigger only; the CLOSE trigger fires on the close itself and reports its
- * shortfall (see `describe('report arms')` at the bottom).
+ * Since 2026-09-04 there is ONE trigger. These tests pin the failure classes
+ * that produced the two false celebrations (2026-08-18, 2026-09-02): a client
+ * naming its own denominator, an unlabelled or foreign trigger being coerced
+ * into a sendable one, and figures that do not come from the filed record.
  */
 
 const settled = (over: Partial<CycleSettlement> = {}): CycleSettlement => ({
@@ -25,105 +32,128 @@ const settled = (over: Partial<CycleSettlement> = {}): CycleSettlement => ({
   ...over,
 });
 
-test('nothing owed and somebody paid = the celebration moment', () => {
-  assert.equal(isCycleFullyPaid(settled()), true);
-  assert.equal(payableUnpaidCount(settled()), 0);
-});
-
-test('each way of being owed money silences it, one person is enough', () => {
-  assert.equal(isCycleFullyPaid(settled({ pendingCount: 1 })), false);
-  assert.equal(isCycleFullyPaid(settled({ blockedCount: 1 })), false); // Problem
-  assert.equal(isCycleFullyPaid(settled({ heldCount: 1 })), false); // Threshold
-});
-
-test('an empty cycle never celebrates, however clean it looks', () => {
-  assert.equal(isCycleFullyPaid(settled({ paidCount: 0 })), false);
-  // ...and not even when the queue is empty in every direction.
-  assert.equal(
-    isCycleFullyPaid({ pendingCount: 0, blockedCount: 0, heldCount: 0, paidCount: 0 }),
-    false,
-  );
-});
-
-test('payable-unpaid sums all three reasons; started = paid + owed', () => {
-  const s = settled({ pendingCount: 3, blockedCount: 2, heldCount: 1, paidCount: 20 });
-  assert.equal(payableUnpaidCount(s), 6);
-  assert.equal(cycleStartedCount(s), 26);
-});
-
-test('a fully-paid body always satisfies the strict arm: paid_count === total_count > 0', () => {
-  // The server 400s a `fully_paid` report in any other shape, so this
-  // equivalence is the contract for the STRIP trigger.
-  for (const pendingCount of [0, 1, 5]) {
-    for (const blockedCount of [0, 1]) {
-      for (const heldCount of [0, 2]) {
-        for (const paidCount of [0, 1, 27]) {
-          const s = { pendingCount, blockedCount, heldCount, paidCount };
-          const serverWouldAccept = isReportableCycleComplete({
-            trigger: 'fully_paid',
-            paidCount: s.paidCount,
-            totalCount: cycleStartedCount(s),
-          });
-          assert.equal(isCycleFullyPaid(s), serverWouldAccept, `mismatch at ${JSON.stringify(s)}`);
-        }
-      }
-    }
-  }
-});
-
-/**
- * The two arms (2026-08-14). Kane: "if it's closed it's closed" — a close reports
- * a real shortfall instead of pretending everyone was paid. The strip's arm did
- * NOT weaken to allow it; that is the whole reason there are two.
- */
-describe('report arms', () => {
-  const paid = (paidCount: number, totalCount: number) => ({ paidCount, totalCount });
-
-  test('a close reports its shortfall and is still sendable', () => {
-    // Carla's real week: 1051 paid, 17 payable-unpaid.
-    assert.equal(
-      isReportableCycleComplete({ trigger: 'cycle_closed', ...paid(1051, 1068) }),
-      true,
-    );
-    // The same numbers on the strip's arm stay refused — it means "100%".
-    assert.equal(
-      isReportableCycleComplete({ trigger: 'fully_paid', ...paid(1051, 1068) }),
-      false,
-    );
+describe('strip state helpers (display only — they send nothing)', () => {
+  test('nothing owed and somebody paid reads as fully paid', () => {
+    assert.equal(isCycleFullyPaid(settled()), true);
+    assert.equal(payableUnpaidCount(settled()), 0);
   });
 
-  test('nothing paid is never sendable, on EITHER arm', () => {
-    assert.equal(isReportableCycleComplete({ trigger: 'cycle_closed', ...paid(0, 40) }), false);
-    assert.equal(isReportableCycleComplete({ trigger: 'fully_paid', ...paid(0, 0) }), false);
+  test('each way of being owed money clears it; an empty cycle is never 100%', () => {
+    assert.equal(isCycleFullyPaid(settled({ pendingCount: 1 })), false);
+    assert.equal(isCycleFullyPaid(settled({ blockedCount: 1 })), false);
+    assert.equal(isCycleFullyPaid(settled({ heldCount: 1 })), false);
+    assert.equal(isCycleFullyPaid(settled({ paidCount: 0 })), false);
   });
 
-  test('more paid than the cycle held is a broken report, on EITHER arm', () => {
-    assert.equal(isReportableCycleComplete({ trigger: 'cycle_closed', ...paid(50, 40) }), false);
-    assert.equal(isReportableCycleComplete({ trigger: 'fully_paid', ...paid(50, 40) }), false);
+  test('payable-unpaid sums all three reasons; started = paid + owed', () => {
+    const s = settled({ pendingCount: 3, blockedCount: 2, heldCount: 1, paidCount: 20 });
+    assert.equal(payableUnpaidCount(s), 6);
+    assert.equal(cycleStartedCount(s), 26);
+  });
+});
+
+describe('one trigger', () => {
+  test('cycle_closed is the only label; everything else is REFUSED, never coerced', () => {
+    assert.equal(CYCLE_COMPLETE_TRIGGER, 'cycle_closed');
+    assert.equal(asCycleCompleteTrigger('cycle_closed'), 'cycle_closed');
+    // The retired strip arm must not survive as a label a caller can send.
+    assert.equal(asCycleCompleteTrigger('fully_paid'), null);
+    assert.equal(asCycleCompleteTrigger(undefined), null);
+    assert.equal(asCycleCompleteTrigger(''), null);
+    assert.equal(asCycleCompleteTrigger('nonsense'), null);
+  });
+});
+
+describe('figures come from the filed record', () => {
+  const record = (over: Partial<CycleCloseoutRecord['unpaid']> = {}): CycleCloseoutRecord => ({
+    version: 1,
+    closed_at: '2026-08-28T19:52:47.000Z',
+    closed_by: 'Carla Thomas',
+    closed_by_email: 'carla@simple.biz',
+    source_file: 'simple-biz_daily_report_2026-08-16_to_2026-08-22.csv',
+    cycle_id: 'c1',
+    label: 'Aug 16 – 22, 2026',
+    period_start: '2026-08-16',
+    period_end: '2026-08-22',
+    paid: { payeeCount: 1023, employeeCount: 1000, contractorCount: 23, dispatchCount: 1030, paidUSD: 204319.84, paidPHP: 12610617.2 },
+    byProcessor: {},
+    unpaid: {
+      source: 'dispatch_screen',
+      count: 19,
+      employeeCount: 19,
+      contractorCount: 0,
+      totalUSD: 400,
+      totalPHP: 24759.85,
+      payees: [],
+      truncated: 0,
+      dropped: 0,
+      reconciledPaid: 0,
+      ...over,
+    },
+    records_outstanding: null,
+  });
+
+  test("Carla's real week: 1023 paid, 19 owed → total 1042, honest unpaid_count", () => {
+    const s = cycleCompleteStatsFromRecord(record());
+    assert.deepEqual(s, {
+      paid_count: 1023,
+      total_count: 1042,
+      unpaid_count: 19,
+      total_paid_usd: 204319.84,
+      total_paid_php: 12610617.2,
+    });
+    assert.equal(isReportableCycleComplete({ paidCount: s.paid_count, totalCount: s.total_count }), true);
+  });
+
+  test('the storage cap never hides people: truncated rows count in unpaid', () => {
+    const s = cycleCompleteStatsFromRecord(record({ count: 1000, truncated: 26 }));
+    assert.equal(s.unpaid_count, 1026);
+    assert.equal(s.total_count, 1023 + 1026);
+  });
+
+  test('the two false weeks could not be built from a record: the record IS the denominator', () => {
+    // 2026-09-02: the browser said 20 of 20. A record for that week names every
+    // payable person, so total_count cannot collapse to the paid count unless the
+    // clerk's declared unpaid list is genuinely empty.
+    const s = cycleCompleteStatsFromRecord(record({ count: 1033 }));
+    assert.equal(s.total_count, 2056);
+    assert.notEqual(s.paid_count, s.total_count);
+  });
+});
+
+describe('boundary check', () => {
+  test('a close with a shortfall is sendable; nobody paid is not; more paid than held is not', () => {
+    assert.equal(isReportableCycleComplete({ paidCount: 1051, totalCount: 1068 }), true);
+    assert.equal(isReportableCycleComplete({ paidCount: 0, totalCount: 40 }), false);
+    assert.equal(isReportableCycleComplete({ paidCount: 0, totalCount: 0 }), false);
+    assert.equal(isReportableCycleComplete({ paidCount: 50, totalCount: 40 }), false);
   });
 
   test('non-finite counts are refused rather than coerced', () => {
-    assert.equal(
-      isReportableCycleComplete({ trigger: 'cycle_closed', ...paid(NaN, 10) }),
-      false,
-    );
-    assert.equal(
-      isReportableCycleComplete({ trigger: 'cycle_closed', ...paid(5, Infinity) }),
-      false,
-    );
+    assert.equal(isReportableCycleComplete({ paidCount: NaN, totalCount: 10 }), false);
+    assert.equal(isReportableCycleComplete({ paidCount: 5, totalCount: Infinity }), false);
+  });
+});
+
+describe('claim keys', () => {
+  test('celebration and report keys are spelled once and carry the file verbatim', () => {
+    const f = 'simple-biz_daily_report_2026-08-23_to_2026-08-29 (1).csv';
+    assert.equal(cycleCompleteNotifiedKey(f), `dispatch.cycle_complete_notified.${f}`);
+    assert.equal(cycleReportSentKey(f), `dispatch.cycle_report_sent.${f}`);
   });
 
-  test('an unlabelled trigger falls back to the STRICTER arm', () => {
-    assert.equal(asCycleCompleteTrigger(undefined), 'fully_paid');
-    assert.equal(asCycleCompleteTrigger('nonsense'), 'fully_paid');
-    assert.equal(asCycleCompleteTrigger('cycle_closed'), 'cycle_closed');
-    // …so a body that forgot the field cannot inherit the close's permission.
-    assert.equal(
-      isReportableCycleComplete({
-        trigger: asCycleCompleteTrigger(undefined),
-        ...paid(1051, 1068),
-      }),
-      false,
-    );
+  test('every dispatch. prefix is disjoint — no LIKE scan can catch a neighbour', () => {
+    const prefixes = [
+      CYCLE_COMPLETE_NOTIFIED_PREFIX,
+      CYCLE_REPORT_SENT_PREFIX,
+      CYCLE_CLOSEOUT_PREFIX,
+      CYCLE_REOPENED_PREFIX,
+    ];
+    for (const a of prefixes) {
+      for (const b of prefixes) {
+        if (a === b) continue;
+        assert.ok(!a.startsWith(b), `${a} is caught by a scan for ${b}`);
+      }
+    }
   });
 });

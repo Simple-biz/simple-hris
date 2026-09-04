@@ -28,7 +28,7 @@ import {
   type CycleCloseoutRecord,
   type CycleCloseoutRecordsOutstanding,
 } from './cycle-closeout';
-import { cycleCompleteNotifiedKey } from './cycle-complete-trigger';
+import { cycleCompleteNotifiedKey, cycleReportSentKey } from './cycle-complete-trigger';
 
 /** A close-out without its unpaid rows — what the Reports list needs to badge a
  *  card without dragging every payee across the wire. */
@@ -308,6 +308,20 @@ export async function reopenCycle(input: {
     // Could not guarantee silence → do not reopen. Reopening anyway risks the
     // celebration firing on the re-close, which is the one thing Kane ruled out.
     return miss(`Could not suppress the celebration: ${burnErr.message}`);
+  }
+
+  // 1b — free the REPORTS claim (2026-09-04). The close-out files ride the
+  // celebration email; with the celebration burned, the re-close still has to
+  // mail the NEW record's files (as a plain "close-out reports" email). Deleting
+  // a row that does not exist is a no-op, so a week that never mailed reports is
+  // unaffected. A failure here aborts like an archive failure would: the week
+  // stays closed with a burned celebration, and nothing has been lost.
+  const { error: reportErr } = await supabase
+    .from('app_settings')
+    .delete()
+    .eq('key', cycleReportSentKey(input.sourceFile));
+  if (reportErr) {
+    return miss(`Could not free the close-out reports claim: ${reportErr.message}`);
   }
 
   // 2 — archive verbatim.

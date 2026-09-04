@@ -172,6 +172,19 @@ export function closeReportFilename(kind: 'final' | 'premature', label: string, 
     : `cycle-snapshot-${slugLabel(label)}-PREMATURE-${ts}.xlsx`;
 }
 
+/** The FINAL artifact's name in any of its three formats (2026-09-04 — the
+ *  celebration email attaches all three). Same stem as `closeReportFilename`
+ *  so a downloaded CSV and an emailed one sort together. */
+export type FinalCloseReportFormat = 'csv' | 'xlsx' | 'pdf';
+
+export function finalCloseReportFilename(
+  label: string,
+  now: Date,
+  format: FinalCloseReportFormat,
+): string {
+  return `cycle-closeout-${slugLabel(label)}-FINAL-${fileTimestamp(now)}.${format}`;
+}
+
 /** Money for CSV body cells: ungrouped 2dp string; null stays BLANK (a null
  *  threshold/problem marker amount means "owed an unknown amount", never 0.00). */
 function money(v: number | null | undefined): string {
@@ -390,6 +403,141 @@ export function buildFinalCloseoutCsv(model: FinalCloseReportModel): string {
   // UTF-8 BOM so Excel auto-detects encoding for ₱ / accented names; CRLF per
   // RFC 4180 and the export-family convention.
   return '﻿' + lines.join('\r\n');
+}
+
+// ─── FINAL — XLSX, the CSV's sections as sheets (2026-09-04) ─────────────────
+
+const FINAL_BANNER = 'FINAL — CYCLE CLOSE-OUT';
+
+/**
+ * Build the FINAL close-out as a workbook: the same sections as the CSV, one
+ * sheet each, every figure from `model.record` verbatim. Exists because the
+ * celebration email attaches the close-out in three formats; this one lets
+ * Accounting sum and filter. It is a FINAL artifact and says so on every sheet
+ * (structural text — the community `xlsx` build cannot emit fills). The word
+ * "report" never appears in a title: that was the retired, gated artifact.
+ */
+export function buildFinalCloseoutWorkbook(model: FinalCloseReportModel): XLSX.WorkBook {
+  const { record } = model;
+  const wb = XLSX.utils.book_new();
+  const banner = [`${FINAL_BANNER} · closed ${record.closed_at} by ${record.closed_by}`];
+
+  // ── Sheet 1: Summary (frozen headline, verbatim) ──
+  const summary: (string | number | null)[][] = [
+    banner,
+    ['Cycle Close-Out'],
+    [record.label],
+    [
+      record.period_start && record.period_end
+        ? `Period: ${record.period_start} to ${record.period_end}`
+        : 'Period: unknown',
+    ],
+    [`Source file: ${record.source_file}`],
+    ['Pulled from Simple-HRIS System'],
+    [`Exported: ${humanTimestamp(model.generatedAt)}`],
+    [],
+    ['FROZEN AT CLOSE (server-computed)'],
+    ['Payees paid', record.paid.payeeCount],
+    ['Employees paid', record.paid.employeeCount],
+    ['Contractor invoices paid', record.paid.contractorCount],
+    ['Paid dispatch rows', record.paid.dispatchCount],
+    ['Paid USD', record.paid.paidUSD],
+    ['Paid PHP', record.paid.paidPHP],
+    ['Payable not paid', record.unpaid.count + record.unpaid.truncated],
+    ['Unpaid USD (listed rows)', record.unpaid.totalUSD],
+    ['Unpaid PHP (listed rows)', record.unpaid.totalPHP],
+  ];
+  if (record.unpaid.truncated > 0 || record.unpaid.dropped > 0) {
+    summary.push([
+      `NOTICE: ${record.unpaid.truncated} unpaid ${record.unpaid.truncated === 1 ? 'person is' : 'people are'} counted above but not listed (storage cap); ${record.unpaid.dropped} ${record.unpaid.dropped === 1 ? 'entry was' : 'entries were'} dropped as unidentifiable (no email).`,
+    ]);
+  }
+  if ((record.unpaid.reconciledPaid ?? 0) > 0) {
+    summary.push([
+      `NOTICE: ${record.unpaid.reconciledPaid} ${record.unpaid.reconciledPaid === 1 ? 'person the screen listed' : 'people the screen listed'} as unpaid had already been paid when the cycle closed (recorded under Paid, not here).`,
+    ]);
+  }
+  summary.push([]);
+  summary.push(['Audit cross-check (includes Excluded — not the headline)']);
+  const ro = record.records_outstanding;
+  summary.push([
+    ro
+      ? `disbursement_records outstanding at close: total ${ro.total} (not paid ${ro.notPaid}, threshold ${ro.threshold}, problem ${ro.problem}, never dispatched ${ro.neverDispatched})`
+      : 'disbursement_records cross-check: unavailable',
+  ]);
+  const wsSummary = XLSX.utils.aoa_to_sheet(summary);
+  wsSummary['!cols'] = [{ wch: 40 }, { wch: 16 }];
+  XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+  // ── Sheet 2: By processor (frozen, sum-preserving) ──
+  const proc: (string | number | null)[][] = [
+    banner,
+    ['Processor', 'Payments', 'USD', 'PHP'],
+    ...processorRows(record.byProcessor).map((p) => [p.id, p.count, p.usd, p.php] as (string | number)[]),
+  ];
+  const wsProc = XLSX.utils.aoa_to_sheet(proc);
+  wsProc['!cols'] = [{ wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 16 }];
+  XLSX.utils.book_append_sheet(wb, wsProc, 'By processor');
+
+  // ── Sheet 3: Payable, not paid (the stored payees, verbatim) ──
+  const unpaid: (string | number | null)[][] = [
+    banner,
+    ['Name', 'Email', 'Type', 'Reason', 'Processor', 'Amount USD', 'Amount PHP'],
+    ...record.unpaid.payees.map((p) => [
+      s(p.name),
+      p.email,
+      p.payeeType === 'contractor' ? 'Contractor' : 'Employee',
+      REASON_LABEL[p.reason],
+      s(p.processor),
+      p.amountUSD, // null stays a blank cell, never 0
+      p.amountPHP,
+    ]),
+  ];
+  const wsUnpaid = XLSX.utils.aoa_to_sheet(unpaid);
+  wsUnpaid['!cols'] = [{ wch: 26 }, { wch: 30 }, { wch: 12 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
+  XLSX.utils.book_append_sheet(wb, wsUnpaid, 'Payable, not paid');
+
+  // ── Sheet 4: Paid detail — LIVE, behind the mandatory disclosure ──
+  if (model.livePaidRows && model.livePaidRows.length > 0) {
+    const paid: (string | number | null)[][] = [
+      banner,
+      ['PAID DETAIL — LIVE, NOT PART OF THE FROZEN RECORD'],
+      [
+        'Live payment_dispatches rows as held when the report was generated — the frozen close-out stores totals only; these rows may differ from the headline in either direction if anything was paid, undone, or re-marked around the close.',
+      ],
+      [
+        'Name', 'Email', 'Type', 'Processor', 'Amount USD', 'Amount PHP',
+        'Transaction ID', 'Bank used', 'Account (last 4)', 'Date sent',
+      ],
+      ...model.livePaidRows.map((r) => [
+        s(r.name),
+        r.email,
+        r.payeeType === 'contractor' ? 'Contractor' : 'Employee',
+        s(r.processor),
+        r.amountUSD,
+        r.amountPHP,
+        s(r.transactionId),
+        s(r.bankUsed),
+        s(r.accountLast4),
+        s(r.dateSent),
+      ]),
+    ];
+    const wsPaid = XLSX.utils.aoa_to_sheet(paid);
+    wsPaid['!cols'] = [
+      { wch: 26 }, { wch: 30 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+      { wch: 12 }, { wch: 20 }, { wch: 16 }, { wch: 14 }, { wch: 12 },
+    ];
+    XLSX.utils.book_append_sheet(wb, wsPaid, 'Paid detail (live)');
+  }
+
+  return wb;
+}
+
+/** Workbook → bytes, for server-side attachment. Browser downloads keep using
+ *  `downloadWorkbookFile`; this is the Node half of the same write call. */
+export function workbookToBytes(wb: XLSX.WorkBook): Uint8Array {
+  const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
+  return new Uint8Array(out);
 }
 
 // ─── PREMATURE — XLSX, stamped NOT YET CLOSED on every sheet ─────────────────

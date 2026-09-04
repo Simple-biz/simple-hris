@@ -17,6 +17,7 @@ import {
   Search,
   X,
   Eye,
+  Workflow,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -30,6 +31,11 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { WEBHOOK_SAMPLE_PAYLOADS, genericTestPayload } from '@/lib/webhooks/sample-payloads';
+import {
+  WEBHOOK_AUTOMATIONS,
+  type WebhookRecipientOverride,
+} from '@/lib/webhooks/webhook-config';
+import WebhookAutomationDialog from './WebhookAutomationDialog';
 
 const SETTINGS_KEY = 'webhooks.config';
 
@@ -41,6 +47,11 @@ interface WebhookEntry {
   active: boolean;
   description?: string;
   updated_at?: string;
+  /** Automation overrides (2026-09-04) — written ONLY by the "Open automation"
+   *  dialog via /api/admin/webhooks/automation. Carried here so this page's
+   *  Save (URLs/labels) writes them back unchanged instead of dropping them. */
+  recipients?: WebhookRecipientOverride | null;
+  payload_overrides?: Record<string, unknown> | null;
 }
 
 const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> = [
@@ -159,9 +170,9 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
   },
   {
     slug: 'payment_cycle_complete',
-    label: 'Payment Cycle 100% → Celebrate Accounting (n8n)',
+    label: 'Payment Cycle Closed → Celebrate Accounting (n8n)',
     description:
-      'Fired ONCE per pay cycle when Payment Dispatch reaches 100% paid (nothing pending, nobody blocked). POSTs { cycle, stats, recipients } where recipients = everyone holding the accounting role; the n8n flow emails each of them a confetti-and-balloons congratulations on the completed payment cycle. The server claims a per-cycle marker before sending, so re-hitting 100% never double-mails.',
+      'Fired ONCE per pay cycle, by the server, the moment Payment Dispatch → Stop processing → "Close the pay cycle" files the close-out record — nothing else fires it (the 100%-strip trigger was removed 2026-09-04 after two false firings). POSTs { cycle, stats, recipients, attachments } read off the filed record; recipients = everyone holding the accounting role, adjustable in Open automation; attachments = the close-out CSV, XLSX and PDF. The n8n flow emails each recipient the confetti congratulations with the three files.',
   },
 ];
 
@@ -223,6 +234,7 @@ export default function AdminWebhooks() {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [viewingId, setViewingId] = useState<string | null>(null);
+  const [automationId, setAutomationId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -295,6 +307,7 @@ export default function AdminWebhooks() {
   };
 
   const viewingEntry = entries.find((e) => e.id === viewingId) ?? null;
+  const automationEntry = entries.find((e) => e.id === automationId) ?? null;
 
   const activeCount = entries.filter((e) => entryStatus(e) === 'active').length;
 
@@ -506,6 +519,18 @@ export default function AdminWebhooks() {
                     </div>
 
                     <div className="ml-auto flex items-center gap-2">
+                      {WEBHOOK_AUTOMATIONS[entry.slug] && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setAutomationId(entry.id)}
+                          className="gap-1.5 border-orange-300 text-orange-700 hover:bg-orange-50 dark:border-orange-900/60 dark:text-orange-300 dark:hover:bg-orange-950/40"
+                          title="Open the automation: recipients, payload, test run"
+                        >
+                          <Workflow className="h-3.5 w-3.5" />
+                          Open automation
+                        </Button>
+                      )}
                       <Button
                         variant="outline"
                         size="sm"
@@ -675,6 +700,24 @@ export default function AdminWebhooks() {
         <DialogContent className="overflow-hidden p-0 sm:max-w-2xl">
           {viewingEntry && (
             <ViewWebhookModal entry={viewingEntry} onCopy={copyText} />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!automationEntry} onOpenChange={(o) => !o && setAutomationId(null)}>
+        <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-5xl">
+          {automationEntry && (
+            <WebhookAutomationDialog
+              slug={automationEntry.slug}
+              label={automationEntry.label || automationEntry.slug}
+              onSaved={(slug, config, updatedAt) =>
+                // Mirror the server's write into local state so this page's own
+                // Save (URLs/labels) writes the same automation fields back.
+                setEntries((prev) =>
+                  prev.map((e) => (e.slug === slug ? { ...e, ...config, updated_at: updatedAt } : e)),
+                )
+              }
+            />
           )}
         </DialogContent>
       </Dialog>
