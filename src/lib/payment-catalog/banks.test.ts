@@ -18,8 +18,10 @@ import {
   officialKeyFor,
   sanitizeBankEntry,
   unmappedGroupKey,
+  peopleForBank,
   validateBankInput,
   type BankRegistryEntry,
+  type BankRosterPerson,
   type BankRosterRow,
 } from './banks';
 
@@ -450,4 +452,112 @@ test('a shipped bank logo survives a round trip through sanitize', () => {
     logo: { kind: 'public', src: '/banks/bpi.png' },
   })!;
   assert.deepEqual(e.logo, { kind: 'public', src: '/banks/bpi.png' });
+});
+
+// ── Who banks here ───────────────────────────────────────────────────────────
+
+const person = (
+  name: string,
+  workEmail: string,
+  bankName: string | null,
+  altBankName: string | null = null,
+  preferredSlot: 'primary' | 'alternative' = 'primary',
+): BankRosterPerson => ({ name, workEmail, bankName, altBankName, preferredSlot });
+
+test('peopleForBank lists everyone on that bank, paid-here first then by name', () => {
+  const people = peopleForBank(
+    [
+      person('Zoe Cruz', 'zoe@simple.biz', 'BPI'),
+      person('Ana Reyes', 'ana@simple.biz', 'Bank of the Philippine Islands'),
+      // Paid into their ALT bank, so BPI is only their other account.
+      person('Ben Uy', 'ben@simple.biz', 'BPI', 'GoTyme Bank', 'alternative'),
+      person('Cid Lim', 'cid@simple.biz', 'Metrobank'),
+    ],
+    'bpi',
+  );
+  assert.deepEqual(
+    people.map((p) => [p.name, p.paidHere]),
+    [
+      ['Ana Reyes', true],
+      ['Zoe Cruz', true],
+      ['Ben Uy', false],
+    ],
+  );
+  // The spelling shown is the one on THAT person's record, not the official name.
+  assert.equal(people.find((p) => p.name === 'Ana Reyes')!.spelling, 'Bank of the Philippine Islands');
+});
+
+test('peopleForBank normalises the email and never invents a row for another bank', () => {
+  const [p] = peopleForBank([person('Ana Reyes', '  Ana@Simple.BIZ ', 'GoTyme')], 'gotyme');
+  assert.equal(p.workEmail, 'ana@simple.biz');
+  assert.deepEqual(peopleForBank([person('Ana', 'a@x.com', 'GoTyme')], 'bpi'), []);
+});
+
+test('someone holding the same bank in BOTH slots appears once', () => {
+  const people = peopleForBank([person('Ana', 'a@x.com', 'BPI', 'Bank of the Philippine Islands')], 'bpi');
+  assert.equal(people.length, 1);
+  assert.equal(people[0].paidHere, true);
+});
+
+test('a registry alias moves people onto the bank that claimed the spelling', () => {
+  const rows = [person('Ana', 'a@x.com', 'Rizal Bank'), person('Ben', 'b@x.com', 'RCBC')];
+  assert.equal(peopleForBank(rows, 'rcbc').length, 1);
+  assert.equal(peopleForBank(rows, 'rcbc', [entry({ key: 'rcbc', aliases: ['Rizal Bank'] })]).length, 2);
+});
+
+test('THE LIST ALWAYS AGREES WITH THE COUNT on every card', () => {
+  // The card prints preferredCount/altCount; the dialog lists people. They come from
+  // one assignment step (assignRowToBanks) precisely so they cannot drift — a list
+  // shorter than the number above it reads as a bug for months. This is the proof.
+  const rows: BankRosterPerson[] = [
+    person('A', 'a@x.com', 'BPI'),
+    person('B', 'b@x.com', 'bpi', 'GoTyme'),
+    person('C', 'c@x.com', 'GoTyme Bank', 'BPI', 'alternative'),
+    person('D', 'd@x.com', null, 'Metrobank', 'alternative'),
+    person('E', 'e@x.com', 'Rizal Bank', 'Rizal Bank'),
+    person('F', 'f@x.com', '   ', ''),
+    person('G', 'g@x.com', 'Maya', 'Maya Bank'),
+    person('H', 'h@x.com', 'GCash', 'BDO'),
+  ];
+  const registry = [entry({ key: 'bpi', aliases: ['Some Local Spelling'] })];
+  const groups = foldBankSpellings(rows, registry);
+  assert.ok(groups.length > 0);
+  for (const g of groups) {
+    const people = peopleForBank(rows, g.key, registry);
+    assert.equal(
+      people.filter((p) => p.paidHere).length,
+      g.preferredCount,
+      `${g.name}: paid-here list (${people.filter((p) => p.paidHere).length}) must equal preferredCount (${g.preferredCount})`,
+    );
+    assert.equal(
+      people.filter((p) => !p.paidHere).length,
+      g.altCount,
+      `${g.name}: other-account list must equal altCount`,
+    );
+  }
+  // And every person is accounted for somewhere.
+  const listed = new Set(groups.flatMap((g) => peopleForBank(rows, g.key, registry).map((p) => p.workEmail)));
+  assert.equal(listed.has('f@x.com'), false, 'a blank bank cell creates no row');
+  assert.equal(listed.size, 7);
+});
+
+test('a BankPerson carries FOUR fields and nothing account-shaped', () => {
+  // employee_ids also holds account_number, swift_code, routing_number, addresses and
+  // wallet emails. This list is the one path that knows who anyone is; it must still
+  // never learn what their account is.
+  const [p] = peopleForBank([person('Ana Reyes', 'ana@simple.biz', 'BPI')], 'bpi');
+  assert.deepEqual(Object.keys(p).sort(), ['name', 'paidHere', 'spelling', 'workEmail']);
+  const serialized = JSON.stringify(p).toLowerCase();
+  for (const forbidden of ['account', 'swift', 'routing', 'address']) {
+    assert.ok(!serialized.includes(forbidden), `person payload contains "${forbidden}"`);
+  }
+});
+
+test('the identity-free fold input stays identity-free', () => {
+  // foldBankSpellings takes BankRosterRow, which has no name or email at all, so the
+  // always-fetched group payload cannot carry a person even by accident. Only the
+  // per-bank list takes BankRosterPerson.
+  const groups = foldBankSpellings([{ bankName: 'BPI', altBankName: null, preferredSlot: 'primary' }]);
+  const serialized = JSON.stringify(groups).toLowerCase();
+  assert.ok(!serialized.includes('@'), 'a group payload must never contain an email');
 });

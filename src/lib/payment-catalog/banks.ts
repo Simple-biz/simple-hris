@@ -341,6 +341,66 @@ export interface BankRosterRow {
   preferredSlot: 'primary' | 'alternative';
 }
 
+/** Resolve a raw spelling to its group. Registry aliases outrank the declared table —
+ *  they are Accounting's own corrections. */
+function groupKeyResolver(
+  registry: readonly BankRegistryEntry[],
+): (spelling: string) => { key: string; official: boolean } {
+  const claimedByRegistry = new Map<string, string>();
+  for (const entry of registry) {
+    for (const alias of entry.aliases) {
+      const k = bankSpellingKey(alias);
+      if (k) claimedByRegistry.set(k, entry.key);
+    }
+  }
+  return (spelling: string) => {
+    const sk = bankSpellingKey(spelling);
+    const claimed = claimedByRegistry.get(sk);
+    if (claimed) return { key: claimed, official: OFFICIAL_BY_KEY.has(claimed) };
+    const official = OFFICIAL_BY_SPELLING.get(sk);
+    if (official) return { key: official, official: true };
+    return { key: unmappedGroupKey(spelling), official: false };
+  };
+}
+
+/** One person's bank cells → the group(s) they land in, and on which slot. */
+interface BankHit {
+  key: string;
+  official: boolean;
+  slot: 'preferred' | 'alt';
+  spelling: string;
+}
+
+/**
+ * THE assignment rule, used by both the counts and the people list.
+ *
+ * `preferred` means this bank sits on the slot the person is actually paid into
+ * (`preferred_bank_slot`); `alt` means they hold it on the other one. A person
+ * carrying the SAME bank in both slots yields ONE hit — compared on the GROUP, not
+ * the spelling, or "BPI" in one slot and "Bank of the Philippine Islands" in the
+ * other counts one person twice on one card.
+ */
+function assignRowToBanks(
+  row: BankRosterRow,
+  groupKeyFor: (spelling: string) => { key: string; official: boolean },
+): BankHit[] {
+  const paidSlotIsAlt = row.preferredSlot === 'alternative';
+  const paidBank = String((paidSlotIsAlt ? row.altBankName : row.bankName) ?? '').trim();
+  const otherBank = String((paidSlotIsAlt ? row.bankName : row.altBankName) ?? '').trim();
+
+  const hits: BankHit[] = [];
+  if (paidBank) {
+    const g = groupKeyFor(paidBank);
+    hits.push({ key: g.key, official: g.official, slot: 'preferred', spelling: paidBank });
+  }
+  if (otherBank) {
+    const g = groupKeyFor(otherBank);
+    const sameBank = paidBank !== '' && g.key === groupKeyFor(paidBank).key;
+    if (!sameBank) hits.push({ key: g.key, official: g.official, slot: 'alt', spelling: otherBank });
+  }
+  return hits;
+}
+
 export interface BankGroup {
   /** Official key, or `unmapped:<spellingKey>`. */
   key: string;
@@ -379,25 +439,9 @@ export function foldBankSpellings(
   rows: readonly BankRosterRow[],
   registry: readonly BankRegistryEntry[] = [],
 ): BankGroup[] {
-  // Registry aliases first — they are Accounting's own corrections and outrank the
-  // declared table for the spellings they name.
-  const claimedByRegistry = new Map<string, string>();
-  for (const entry of registry) {
-    for (const alias of entry.aliases) {
-      const k = bankSpellingKey(alias);
-      if (k) claimedByRegistry.set(k, entry.key);
-    }
-  }
   const registryByKey = new Map(registry.map((e) => [e.key, e]));
 
-  const groupKeyFor = (spelling: string): { key: string; official: boolean } => {
-    const sk = bankSpellingKey(spelling);
-    const claimed = claimedByRegistry.get(sk);
-    if (claimed) return { key: claimed, official: OFFICIAL_BY_KEY.has(claimed) };
-    const official = OFFICIAL_BY_SPELLING.get(sk);
-    if (official) return { key: official, official: true };
-    return { key: unmappedGroupKey(spelling), official: false };
-  };
+  const groupKeyFor = groupKeyResolver(registry);
 
   interface Acc {
     key: string;
@@ -409,28 +453,19 @@ export function foldBankSpellings(
   }
   const acc = new Map<string, Acc>();
 
-  const add = (spelling: string | null | undefined, slot: 'preferred' | 'alt') => {
-    const s = String(spelling ?? '').trim();
-    if (!s) return;
-    const { key, official } = groupKeyFor(s);
-    const a = acc.get(key) ?? { key, official, preferredCount: 0, altCount: 0, spellings: new Map() };
-    if (slot === 'preferred') a.preferredCount += 1;
-    else a.altCount += 1;
-    a.spellings.set(s, (a.spellings.get(s) ?? 0) + 1);
-    acc.set(key, a);
-  };
-
   for (const row of rows) {
-    const paidSlotIsAlt = row.preferredSlot === 'alternative';
-    const paidBank = String(paidSlotIsAlt ? row.altBankName : row.bankName ?? '').trim();
-    const otherBank = String(paidSlotIsAlt ? row.bankName : row.altBankName ?? '').trim();
-    add(paidBank, 'preferred');
-    // Same bank in both slots is one bank, not two — compared on the GROUP, not the
-    // spelling, or "BPI" in one slot and "Bank of the Philippine Islands" in the other
-    // double-counts one person into the same card.
-    const sameBank =
-      paidBank && otherBank && groupKeyFor(paidBank).key === groupKeyFor(otherBank).key;
-    if (!sameBank) add(otherBank, 'alt');
+    // ONE assignment step feeds both the counts here and the per-bank people list
+    // (`peopleForBank`). They must never be computed twice — a list whose length
+    // disagrees with the number printed above it reads as a bug for months.
+    for (const hit of assignRowToBanks(row, groupKeyFor)) {
+      const a =
+        acc.get(hit.key) ??
+        { key: hit.key, official: hit.official, preferredCount: 0, altCount: 0, spellings: new Map() };
+      if (hit.slot === 'preferred') a.preferredCount += 1;
+      else a.altCount += 1;
+      a.spellings.set(hit.spelling, (a.spellings.get(hit.spelling) ?? 0) + 1);
+      acc.set(hit.key, a);
+    }
   }
 
   const groups: BankGroup[] = [...acc.values()].map((a) => {
@@ -477,6 +512,71 @@ export function compareBankGroups(a: BankGroup, b: BankGroup): number {
   if (a.altCount !== b.altCount) return b.altCount - a.altCount;
   return a.name.localeCompare(b.name);
 }
+
+// ── Who banks here ───────────────────────────────────────────────────────────
+
+/**
+ * A payee, for the per-bank people list ONLY.
+ *
+ * Deliberately a SEPARATE type from {@link BankRosterRow}, which carries no identity
+ * at all. The group fold takes the identity-free shape, so `foldBankSpellings` cannot
+ * emit a person even by accident — the list is the one path that knows who anyone is,
+ * and it is reached only when somebody opens a specific bank.
+ */
+export interface BankRosterPerson extends BankRosterRow {
+  name: string;
+  workEmail: string;
+}
+
+export interface BankPerson {
+  name: string;
+  workEmail: string;
+  /** True when this bank is the slot their pay actually goes to; false = their other account. */
+  paidHere: boolean;
+  /** The spelling on THEIR record, so an odd one is visible rather than folded away. */
+  spelling: string;
+}
+
+/**
+ * Everyone whose bank cells land in `key`.
+ *
+ * Shares {@link assignRowToBanks} with `foldBankSpellings`, which is the whole point:
+ * the list and the count on the card are the same computation, so they cannot
+ * disagree. `banks.test.ts` pins that as a property over every group.
+ *
+ * **Leavers are included**, matching the count (`payment-catalog-current-banks.md` §3).
+ * The Payment Catalog hides off-boarded people from its ROSTER surfaces
+ * (`bonus-catalog.md` §3.2); this list is bank-scoped rather than a roster, and a list
+ * shorter than the number printed above it reads as a bug. The caller marks who has
+ * left — that is I/O and lives in the route, not here.
+ *
+ * Sorted: paid-here first, then by name.
+ */
+export function peopleForBank(
+  rows: readonly BankRosterPerson[],
+  key: string,
+  registry: readonly BankRegistryEntry[] = [],
+): BankPerson[] {
+  const groupKeyFor = groupKeyResolver(registry);
+  const out: BankPerson[] = [];
+  for (const row of rows) {
+    for (const hit of assignRowToBanks(row, groupKeyFor)) {
+      if (hit.key !== key) continue;
+      out.push({
+        name: (row.name ?? '').trim(),
+        workEmail: (row.workEmail ?? '').trim().toLowerCase(),
+        paidHere: hit.slot === 'preferred',
+        spelling: hit.spelling,
+      });
+    }
+  }
+  return out.sort(
+    (a, b) =>
+      Number(b.paidHere) - Number(a.paidHere) ||
+      (a.name || a.workEmail).localeCompare(b.name || b.workEmail),
+  );
+}
+
 
 // ── Registry (what Accounting saves here) ────────────────────────────────────
 

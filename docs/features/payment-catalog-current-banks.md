@@ -18,6 +18,7 @@ Shipped 2026-09-03 (commit in `git log -- src/lib/payment-catalog/banks.ts`).
 | API — GET folded list · POST/PATCH registry | `app/api/payment-catalog/banks/route.ts` |
 | Tab UI — inner tablist, bank cards, logo dialog | `src/components/accounting/PayProcessorsTab.tsx` |
 | Host — fetch, realtime filter | `src/components/accounting/BonusCatalog.tsx` |
+| API — who banks here (lazy, per bank) | `app/api/payment-catalog/banks/[key]/people/route.ts` |
 | READ-ONLY audit of the live spellings | `scripts/audit-bank-spellings.mts` |
 | Logo fetcher (dry run unless `--apply`) | `scripts/fetch-bank-logos.mts` |
 | PNG decoder + white-plate legibility | `src/lib/images/decode-png.ts` |
@@ -93,14 +94,55 @@ as a bank.
 filter never hides a row** — the same rule `dept-rail.ts` follows. Fix them on the
 person's profile; this tab has no write path to anyone's bank details.
 
-## 5. The response carries banks, never people
+## 5. The list carries banks; people are a separate, explicit request
 
-`employee_ids` also holds account numbers, SWIFT codes, routing numbers, addresses and
-wallet emails. The route projects **three columns** (`bank_name`, `alt_bank_name`,
-`preferred_bank_slot`) into the fold and returns **groups with counts** — no per-person
-row exists in the payload at all. The projection is written out explicitly so a column
-added to `EmployeeIdRow` later cannot start riding along, and `banks.test.ts` asserts the
-group shape holds no account-shaped field. Kane asked for "only the bank name".
+> **Amended 2026-09-04.** This section used to read *"The response carries banks, never
+> people"* — Kane had asked for "only the bank name". He then asked for the people on each
+> bank, so the shape below replaces it. What did **not** change is the account rule.
+
+Two endpoints with deliberately different shapes:
+
+| Endpoint | Carries | When |
+| --- | --- | --- |
+| `GET /api/payment-catalog/banks` | groups + counts, **no identity at all** | always, on tab load |
+| `GET /api/payment-catalog/banks/<key>/people` | name · work email · which slot · their own spelling | only when a bank is opened |
+
+The fold takes `BankRosterRow`, a type with **no name and no email on it**, so
+`foldBankSpellings` cannot emit a person even by accident; only `peopleForBank` takes the
+`BankRosterPerson` shape. A test asserts a group payload never contains an `@`.
+
+**No account data, on either.** `employee_ids` also holds account numbers, SWIFT codes,
+routing numbers, addresses and wallet emails. Both routes write their projection out
+explicitly so a column added to `EmployeeIdRow` later cannot start riding along, a
+`BankPerson` is exactly four fields, and `banks.test.ts` asserts neither payload holds
+anything account-shaped. `bank-preferred-routing.md` is absolute about the receiving
+account, and the audited reveal-banking endpoint stays the only path to a full number.
+
+### 5.1 The list always equals the count
+
+The card prints `preferredCount` / `altCount`; the dialog lists people. Both come from
+**one** assignment step, `assignRowToBanks` — never computed twice — and a property test
+checks, for every group over a mixed fixture, that the paid-here list length equals
+`preferredCount` and the other-account list equals `altCount`. A list shorter than the
+number printed above it reads as a bug for months.
+
+### 5.2 Leavers are IN the list, and marked
+
+`bonus-catalog.md` §3.2 filters off-boarded people off the Payment Catalog's roster
+surfaces. **This list is deliberately exempt** (Kane, 2026-09-04): the count on the card
+includes leavers because the bank is still on their record (§3), so hiding them here would
+make the list disagree with the number above it. They are shown with a **Left** chip.
+
+The chip is resolved **client-side from `catalogOffboardedEmails`** — the same set every
+other catalog surface filters on, shipped to the browser already. Re-deriving it in the
+route would be a second answer to "who has left" that could drift from the first, and the
+naive shortcut (reading the raw evidence tables) marks working people as leavers: the
+reason column is free text carrying `duplicate_cleanup` on 94 rows and `temporary_pause`
+suspensions.
+
+The department beside each name comes from the roster the tab **already** holds, mapped
+client-side. This surface does no department resolution of its own, and renders through
+`formatDeptLabel` like everywhere else.
 
 `getEmployeeIds()` pages past the PostgREST 1000-row cap — at 1,995 rows a bare select
 would silently drop half the banks.

@@ -677,6 +677,17 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
     [initialData],
   );
   const visibleRoster = useMemo(() => withoutOffboarded(roster, offboardedEmails), [roster, offboardedEmails]);
+  // Current Banks enriches its people list with departments from the roster that is
+  // already loaded here — no extra request, and no department resolution of its own.
+  const deptByEmail = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of roster) {
+      const email = (r.email ?? '').trim().toLowerCase();
+      const dept = (r.department ?? '').trim();
+      if (email && dept) m.set(email, dept);
+    }
+    return m;
+  }, [roster]);
 
   // Custom departments as {key, name} for the Pay Structure rail + exports --
   // a custom key that ever collides with a built-in is dropped defensively.
@@ -1193,6 +1204,8 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
               <PayProcessorsTab
                 processors={payProcessors}
                 banks={banks}
+                offboardedEmails={offboardedEmails}
+                deptByEmail={deptByEmail}
                 onChanged={() => void refetch()}
               />
             </motion.div>

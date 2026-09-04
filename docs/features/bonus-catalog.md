@@ -289,6 +289,15 @@ structure picker, the Bonus Assignments pickers, the Department tab's roster
 autofill and headcounts, and the Summary's headcount / coverage / spend -- reads
 **one** roster, and that roster no longer contains people who have left.
 
+> **One documented exception: Pay Processors → Current Banks → a bank's People tab**
+> (Kane, 2026-09-04). That list is **bank-scoped, not a roster**: its count is "people
+> with this bank on their record", which includes leavers because the bank *is* still
+> on their record. Filtering them out would make the list disagree with the number
+> printed on the card, so leavers are listed and carry a **Left** chip instead. The
+> chip reads `catalogOffboardedEmails` -- the very set this section defines -- so the
+> exception reuses this rule's answer rather than inventing a second one. See
+> [payment-catalog-current-banks.md](./payment-catalog-current-banks.md) §5.2.
+
 **Why it needed code at all.** `active_employees` cannot answer "has this person
 left". HR keeps a leaver on the master sheet through their final pay, so they stay
 in the current upload, and `/api/hr/offboard` stamps a **duplicate**

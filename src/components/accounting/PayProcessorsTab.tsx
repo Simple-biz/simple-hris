@@ -42,6 +42,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import ProcessorLogo from '@/components/payroll-clerk/ProcessorLogo';
 import {
   PAY_PROCESSOR_BLURB_MAX,
@@ -731,7 +732,17 @@ const BANK_TILE = 'from-slate-500 to-slate-700';
  *  takes the same colour rather than a new one. */
 const WALLET_TILE = ROUTING_VISUAL.one_to_one.gradient;
 
-function CurrentBanksPanel({ banks, onChanged }: { banks: BankGroup[]; onChanged: () => void }) {
+function CurrentBanksPanel({
+  banks,
+  onChanged,
+  offboardedEmails,
+  deptByEmail,
+}: {
+  banks: BankGroup[];
+  onChanged: () => void;
+  offboardedEmails: Set<string>;
+  deptByEmail: Map<string, string>;
+}) {
   const [editing, setEditing] = useState<BankGroup | null>(null);
   const [query, setQuery] = useState('');
 
@@ -816,6 +827,8 @@ function CurrentBanksPanel({ banks, onChanged }: { banks: BankGroup[]; onChanged
         key={editing?.key ?? 'closed'}
         open={editing !== null}
         bank={editing}
+        offboardedEmails={offboardedEmails}
+        deptByEmail={deptByEmail}
         onClose={() => setEditing(null)}
         onSaved={() => {
           setEditing(null);
@@ -912,14 +925,170 @@ function BankCard({ bank, onEdit }: { bank: BankGroup; onEdit: () => void }) {
   );
 }
 
+/** One payee on a bank, as the per-bank endpoint returns them. */
+interface BankPersonRow {
+  name: string;
+  workEmail: string;
+  paidHere: boolean;
+  spelling: string;
+}
+
+/**
+ * Who banks here — lazy, fetched when a bank is opened.
+ *
+ * The bank LIST payload stays identity-free; names travel only on this explicit
+ * request. Leavers are INCLUDED so the list always matches the count on the card
+ * (Kane, 2026-09-04), and marked from the catalog's own `catalogOffboardedEmails` set
+ * — the same one every other Payment Catalog surface filters on, so this cannot drift
+ * into a second answer to "who has left".
+ */
+function BankPeople({
+  bankKey,
+  open,
+  expectedPaid,
+  expectedAlt,
+  offboardedEmails,
+  deptByEmail,
+}: {
+  bankKey: string;
+  open: boolean;
+  expectedPaid: number;
+  expectedAlt: number;
+  offboardedEmails: Set<string>;
+  deptByEmail: Map<string, string>;
+}) {
+  const [people, setPeople] = useState<BankPersonRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setPeople(null);
+    setError(null);
+    void (async () => {
+      try {
+        const res = await fetch(`/api/payment-catalog/banks/${encodeURIComponent(bankKey)}/people`, {
+          cache: 'no-store',
+        });
+        const json = (await res.json()) as { people?: BankPersonRow[]; error?: string | null };
+        if (cancelled) return;
+        if (!res.ok || json.error) throw new Error(json.error || `Could not load (${res.status})`);
+        setPeople(json.people ?? []);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load the people list');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bankKey, open]);
+
+  const shown = useMemo(() => {
+    if (!people) return [];
+    const q = query.trim().toLowerCase();
+    if (!q) return people;
+    return people.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        p.workEmail.toLowerCase().includes(q) ||
+        (deptByEmail.get(p.workEmail) ?? '').toLowerCase().includes(q),
+    );
+  }, [people, query, deptByEmail]);
+
+  const total = expectedPaid + expectedAlt;
+
+  return (
+    <Field label="Who banks here" hint={people ? `${people.length}` : undefined}>
+      {error ? (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+          {error}
+        </p>
+      ) : people === null ? (
+        <div className="space-y-1.5" aria-busy>
+          {Array.from({ length: Math.min(3, Math.max(1, total)) }).map((_, i) => (
+            <div
+              key={i}
+              className="h-8 animate-pulse rounded-md bg-zinc-100 motion-reduce:animate-none dark:bg-zinc-900"
+            />
+          ))}
+        </div>
+      ) : people.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-zinc-300 px-3 py-3 text-center text-[11px] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+          Nobody is on this bank right now.
+        </p>
+      ) : (
+        <>
+          {people.length > 12 && (
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter by name, email or department"
+              className="mb-1.5 h-8"
+            />
+          )}
+          <div className="max-h-64 divide-y divide-zinc-100 overflow-y-auto rounded-lg border border-zinc-200 dark:divide-zinc-900 dark:border-zinc-800">
+            {shown.map((p) => {
+              const left = offboardedEmails.has(p.workEmail);
+              const dept = deptByEmail.get(p.workEmail);
+              return (
+                <div key={`${p.workEmail}-${p.paidHere}`} className="flex items-center gap-2 px-2.5 py-1.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium text-zinc-800 dark:text-zinc-200">
+                      {p.name || p.workEmail}
+                    </p>
+                    <p className="truncate text-[10.5px] text-zinc-500 dark:text-zinc-400">
+                      {p.workEmail}
+                      {dept ? ` · ${formatDeptLabel(dept)}` : ''}
+                    </p>
+                  </div>
+                  {!p.paidHere && (
+                    <Chip
+                      className="bg-zinc-100 text-zinc-600 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-800"
+                      title="They hold this bank on their other account — pay goes elsewhere."
+                    >
+                      Other account
+                    </Chip>
+                  )}
+                  {left && (
+                    <Chip
+                      className="bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-900/60"
+                      title="Off-boarded. Counted here because the bank is still on their record."
+                    >
+                      Left
+                    </Chip>
+                  )}
+                </div>
+              );
+            })}
+            {shown.length === 0 && (
+              <p className="px-2.5 py-3 text-center text-[11px] text-zinc-500 dark:text-zinc-400">
+                Nobody matches &ldquo;{query.trim()}&rdquo;.
+              </p>
+            )}
+          </div>
+          <p className="mt-1 text-[10.5px] leading-relaxed text-zinc-400 dark:text-zinc-500">
+            {expectedPaid} paid here{expectedAlt > 0 && <> · {expectedAlt} on their other account</>}. People
+            who have left are included and marked, so this list always matches the count on the card.
+          </p>
+        </>
+      )}
+    </Field>
+  );
+}
+
 function BankDialog({
   open,
   bank,
+  offboardedEmails,
+  deptByEmail,
   onClose,
   onSaved,
 }: {
   open: boolean;
   bank: BankGroup | null;
+  offboardedEmails: Set<string>;
+  deptByEmail: Map<string, string>;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -928,6 +1097,7 @@ function BankDialog({
   const [logo, setLogo] = useState<PayProcessorLogo | null>(bank?.logo ?? null);
   const [notes, setNotes] = useState(bank?.notes ?? '');
   const [extra, setExtra] = useState('');
+  const [pane, setPane] = useState<'bank' | 'people'>('bank');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -937,6 +1107,7 @@ function BankDialog({
       setLogo(bank.logo);
       setNotes(bank.notes);
       setExtra('');
+      setPane('bank');
     }
   }, [open, bank]);
 
@@ -989,7 +1160,38 @@ function BankDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {/* Panes. The people list is read-only and can run to 200 names, so it gets its
+            own pane rather than pushing the editable fields off the bottom. */}
+        <div
+          role="tablist"
+          aria-label="Bank details"
+          className="mb-3 flex shrink-0 gap-1 border-b border-zinc-200 dark:border-zinc-800"
+        >
+          {[
+            { id: 'bank' as const, label: 'Bank' },
+            { id: 'people' as const, label: `People (${bank.preferredCount + bank.altCount})` },
+          ].map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={pane === t.id}
+              onClick={() => setPane(t.id)}
+              className={cn(
+                '-mb-px border-b-2 px-3 py-1.5 text-xs font-semibold transition-colors',
+                pane === t.id
+                  ? 'border-orange-500 text-orange-900 dark:border-blue-400 dark:text-white'
+                  : 'border-transparent text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1">
+          {pane === 'bank' ? (
+            <>
           <div className="flex items-start gap-3">
             <ProcessorLogo
               monogram={monogramOf(trimmedName || bank.name)}
@@ -1059,6 +1261,17 @@ function BankDialog({
               className="w-full resize-y rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 shadow-xs placeholder:text-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
             />
           </Field>
+            </>
+          ) : (
+            <BankPeople
+              bankKey={bank.key}
+              open={open && pane === 'people'}
+              expectedPaid={bank.preferredCount}
+              expectedAlt={bank.altCount}
+              offboardedEmails={offboardedEmails}
+              deptByEmail={deptByEmail}
+            />
+          )}
         </div>
 
         <DialogFooter className="shrink-0">
@@ -1086,10 +1299,16 @@ type InnerTab = 'processors' | 'banks';
 export default function PayProcessorsTab({
   processors,
   banks,
+  offboardedEmails,
+  deptByEmail,
   onChanged,
 }: {
   processors: PayProcessor[];
   banks: BankGroup[];
+  /** Who has left, from the catalog own offboarded set — marks rows, hides nobody. */
+  offboardedEmails: Set<string>;
+  /** work email → department, from the roster the tab already holds. */
+  deptByEmail: Map<string, string>;
   /** Refetch catalog data after a successful create/edit. */
   onChanged: () => void;
 }) {
@@ -1149,7 +1368,12 @@ export default function PayProcessorsTab({
       {inner === 'processors' ? (
         <ProcessorsPanel processors={processors} onChanged={onChanged} />
       ) : (
-        <CurrentBanksPanel banks={banks} onChanged={onChanged} />
+        <CurrentBanksPanel
+          banks={banks}
+          onChanged={onChanged}
+          offboardedEmails={offboardedEmails}
+          deptByEmail={deptByEmail}
+        />
       )}
     </div>
   );
