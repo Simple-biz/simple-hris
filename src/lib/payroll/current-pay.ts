@@ -58,13 +58,13 @@ import {
   computePabEligibleEmails,
   getHslAdjustedEnd,
   hasThirtyDaysFromStart,
-  isFinalPabWeek as gateIsFinalPabWeek,
   pabMonthFromWeekStart,
   parseMasterStartDate,
   parseTechBonusWeekOverrides,
   resolveIsTechBonusWeek,
   TECH_BONUS_WEEK_OVERRIDES_KEY,
 } from "@/lib/payroll/dispatch-bonuses";
+import { pabPayoutForWeek } from "@/lib/payroll/pab-payout-week";
 import {
   HSL_WEEK_MODEL_CUTOVER_KEY,
   resolveHslWeekModelWithDefault,
@@ -878,22 +878,27 @@ export async function computeCurrentPay(
     // owning Monday from the mon_sun HSL variant (always a Monday) so switching
     // the pay window to Sun→Sat never moves a week into a different payroll cycle.
     weekMonday = payWeekFromUploadStart(periodStart, true, 'mon_sun').start;
-    const pabMonth = pabMonthFromWeekStart(weekMonday);
-    const monthKey = yearMonthKey(pabMonth.year, pabMonth.month);
     const overrides = parsePabPeriodOverrides(pabOverridesValue);
+    // THE PAB PAYOUT RULE (Kane, 2026-09-08): the bonus pays on the payroll week
+    // AFTER the one that closes the period — never combined with it. So the
+    // month being PAID is the CLOSING week's month, not this week's: from
+    // September on the payout week opens in the following month (Oct 4-10 pays
+    // September), and reading the month off this week would price an unfinished
+    // period, load the wrong exclusions and scan the wrong eligibility window.
+    // Off the payout week nothing is paid, so the week keeps naming its own
+    // accrual month for display.
+    const payout = periodEnd ? pabPayoutForWeek(periodStart, periodEnd, overrides, null) : null;
+    weekIsFinalPab = payout?.pays ?? false;
+    const pabMonth = payout?.pays
+      ? { year: payout.year, month: payout.month }
+      : pabMonthFromWeekStart(weekMonday);
+    const monthKey = yearMonthKey(pabMonth.year, pabMonth.month);
     const overrideEntry = overrides.get(monthKey);
     pabRange = overrideEntry
       ? { start: overrideEntry.start, end: overrideEntry.end }
       : getPabMonthRange(pabMonth.year, pabMonth.month);
     hslAdjustedEnd = getHslAdjustedEnd(pabRange.end, hslWeekModel);
     pabExcludedEmails = parsePabPeriodExclusions(pabExclusionsValue).get(monthKey) ?? new Set<string>();
-
-    if (periodEnd) {
-      // Containment gate: this upload's week must CONTAIN the PAB period end,
-      // not merely end on/after it — otherwise every week after the payout
-      // week re-attaches PAB (see isFinalPabWeek).
-      weekIsFinalPab = gateIsFinalPabWeek(periodStart, periodEnd, pabRange.end);
-    }
     // Override-aware: a saved wizard "System Bonus" payout-week pick for this
     // month replaces the 3rd-week heuristic (see resolveIsTechBonusWeek).
     weekIsTechBonus = resolveIsTechBonusWeek(weekMonday, techWeekOverrides);

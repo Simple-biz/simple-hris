@@ -280,7 +280,13 @@ import {
   TECH_BONUS_WEEK_OVERRIDES_KEY,
 } from '@/lib/payroll/dispatch-bonuses';
 import { parseLocalDateFromIso, resolvePabRangeForMonth, yearMonthKey } from '@/lib/pab-period-settings';
-import { isPabPayoutWeekForRange } from '@/lib/payroll/pab-payout-week';
+import {
+  isPabPayoutWeekForRange,
+  pabMonthPaidByWeek,
+  pabPayoutForWeek,
+  pabPayoutWeekForPeriodEnd,
+} from '@/lib/payroll/pab-payout-week';
+import { regatePabInBonusTotals } from '@/lib/payroll/additions-pab-gate';
 import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
@@ -3187,11 +3193,11 @@ export default function PayrollWizard({
 
   /**
    * The selected file week is the PAB PAYOUT week — the one whose dispatch
-   * carries the bonus (`isFinalPabWeek` containment over the week's owning-month
-   * period end, the exact gate the money path uses). Gates whether the step-4
-   * PAB tab exists on the rail at all (Kane 2026-09-01): the review-and-forgive
-   * pass happens on the week the money moves, e.g. the Aug 23–29 file processed
-   * during Aug 30 – Sep 5 for the period that ended Aug 29.
+   * carries the bonus. Since 2026-09-08 that is the week AFTER the one closing
+   * the period (Kane: "it will never be combined"), so the Aug 2–29 period pays
+   * on the Aug 30 – Sep 5 file, not the Aug 23–29 file that closed it. Gates
+   * whether the step-4 PAB tab exists on the rail at all (Kane 2026-09-01): the
+   * review-and-forgive pass happens on the week the money moves.
    *
    * Keyed on the SELECTED FILE WEEK, never the wall clock, so replaying a past
    * payout week still shows the step (read-only — replay fidelity) and a week
@@ -3234,10 +3240,28 @@ export default function PayrollWizard({
     return contractorInvoices.filter((inv) => isInvoiceInPeriod(inv, startKey, endKey));
   }, [contractorInvoices, activeBatchDateRange]);
 
-  /** {year, month} actually in effect: the file's month when one is selected, else the picker's. */
+  /**
+   * The PAB month the wizard EVALUATES. Normally the file week's own month — the
+   * period this week's attendance accrues to. On a PAYOUT week it becomes the
+   * month being PAID, which is the CLOSING week's month: from September on the
+   * payout week opens in the following month (Oct 4–10 pays September), and
+   * evaluating October there would review an unfinished period on the step-4
+   * list, price the wrong exclusions, and paint "In Progress" pills over a
+   * bonus dispatch is actually paying.
+   *
+   * For the live Aug 2–29 period the two coincide — Aug 30 – Sep 5 still opens
+   * on an August Monday — so this changes nothing for the open run.
+   */
+  const pabEvaluatedMonth = useMemo(() => {
+    if (!pabPayoutWeekActive || !calcSourceFile) return fileMonth;
+    const r = parseDateRangeFromFilename(calcSourceFile);
+    return r ? pabMonthPaidByWeek(r.start) : fileMonth;
+  }, [pabPayoutWeekActive, calcSourceFile, fileMonth]);
+
+  /** {year, month} actually in effect: the evaluated PAB month when a file is selected, else the picker's. */
   const effectiveMonth = useMemo(
-    () => fileMonth ?? { year: pabPeriodSettings.activeMonthResolved.year, month: pabPeriodSettings.activeMonthResolved.month },
-    [fileMonth, pabPeriodSettings.activeMonthResolved.year, pabPeriodSettings.activeMonthResolved.month],
+    () => pabEvaluatedMonth ?? { year: pabPeriodSettings.activeMonthResolved.year, month: pabPeriodSettings.activeMonthResolved.month },
+    [pabEvaluatedMonth, pabPeriodSettings.activeMonthResolved.year, pabPeriodSettings.activeMonthResolved.month],
   );
   const effectiveMonthKey = yearMonthKey(effectiveMonth.year, effectiveMonth.month);
   /**
@@ -3261,9 +3285,9 @@ export default function PayrollWizard({
   const effectiveMonthRange = useMemo(() => {
     const override = pabPeriodSettings.overrides.get(effectiveMonthKey);
     if (override) return { start: override.start, end: override.end };
-    if (!fileMonth) return { start: pabPeriodSettings.activeRange.start, end: pabPeriodSettings.activeRange.end };
+    if (!pabEvaluatedMonth) return { start: pabPeriodSettings.activeRange.start, end: pabPeriodSettings.activeRange.end };
     return getPabMonthRange(effectiveMonth.year, effectiveMonth.month);
-  }, [pabPeriodSettings.overrides, pabPeriodSettings.activeRange.start, pabPeriodSettings.activeRange.end, effectiveMonthKey, effectiveMonth.year, effectiveMonth.month, fileMonth]);
+  }, [pabPeriodSettings.overrides, pabPeriodSettings.activeRange.start, pabPeriodSettings.activeRange.end, effectiveMonthKey, effectiveMonth.year, effectiveMonth.month, pabEvaluatedMonth]);
 
   /**
    * Month the PAB settings modal edits: the user's picker selection when set,
@@ -5067,6 +5091,19 @@ export default function PayrollWizard({
       monthName: monthNames[effectiveMonth.month] ?? '',
     };
   }, [effectiveMonth.year, effectiveMonth.month, effectiveMonthRange.start, effectiveMonthRange.end]);
+
+  /**
+   * WHICH payroll week pays the evaluated PAB period, and whether that is the
+   * open one. Mirrors `techBonusWeekInfo`: Tech has stated its payout week on
+   * the Additions System Bonus strip ever since it got a configurable one, while
+   * PAB derived its own silently — which is how a green +₱5,000 could sit on a
+   * week that pays nothing and nobody could see why.
+   */
+  const pabPayoutWeekInfo = useMemo(() => {
+    const w = pabPayoutWeekForPeriodEnd(pabMonthRange.end);
+    const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return { pays: pabPayoutWeekActive, start: w.start, end: w.end, label: `${fmt(w.start)} – ${fmt(w.end)}` };
+  }, [pabMonthRange.end, pabPayoutWeekActive]);
 
   /** `YYYY-MM` of the step's evaluated PAB month — the key every step-4 write
    *  and broadcast is addressed to. '' while no month resolves. */
@@ -9014,6 +9051,32 @@ export default function PayrollWizard({
   }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics, resolvedHslKpi, resolvedManagerBonus, sysBonusCfg, pabAmountForDept, techAmountForDept]);
 
   /**
+   * `bonusTotals` with the PAB term re-gated to the payout week — the figure the
+   * Additions review screen must show, because it is the figure the staged
+   * paystub pays. Before this the review screen added PAB on any week whose
+   * period had ENDED, so the Aug 30 – Sep 5 file showed +₱5,000 a week before
+   * the money moved and disagreed with Validation and the paystub.
+   *
+   * `bonusTotals` itself stays MONTH-WIDE on purpose: `dispatchData` strips its
+   * PAB/Tech terms back out by RECOMPUTING them (`toggledPab`) and re-adds the
+   * week-gated versions, so gating the map at source would subtract a PAB no
+   * longer in the sum and understate real KPI/department money by the PAB
+   * amount. The mirror below is the same expression `bonusTotals` adds with —
+   * same toggle, same allowlist, same resolver. Change one, change both.
+   */
+  const weekBonusTotals = useMemo(
+    () =>
+      regatePabInBonusTotals(bonusTotals, pabPayoutWeekActive, (email) => {
+        const deptKey = employeeDepts[email];
+        if (!deptKey) return 0;
+        if (!employeeBonuses[email]?.['perfect_attendance']) return 0;
+        if (!isDeptEligible(sysBonusCfg.pab, deptKey)) return 0;
+        return pabAmountForDept(deptKey);
+      }),
+    [bonusTotals, pabPayoutWeekActive, employeeDepts, employeeBonuses, sysBonusCfg, pabAmountForDept],
+  );
+
+  /**
    * Effective bonus per employee: the auto-computed subtotal (PAB + Tech + KPI +
    * dept bonuses) PLUS the accounting Adj. delta. The Adj. value is a signed
    * adjustment added on top — it never replaces the auto subtotal, so KPI/PAB/Tech
@@ -9029,9 +9092,9 @@ export default function PayrollWizard({
         bonusOverrides[email] ??
         (norm !== null && norm !== email ? bonusOverrides[norm] : undefined) ??
         0;
-      return (bonusTotals[email] ?? 0) + override;
+      return (weekBonusTotals[email] ?? 0) + override;
     },
-    [bonusOverrides, bonusTotals],
+    [bonusOverrides, weekBonusTotals],
   );
 
   /** Enriched dispatch rows shared by Preview Paystubs + Confirm & Dispatch. */
@@ -9102,21 +9165,6 @@ export default function PayrollWizard({
       return d.toLocaleDateString('en-CA');
     })();
 
-    const payPeriodPayload = {
-      currency: 'PHP' as const,
-      hubstaff_source_file: calcSourceFile,
-      week,
-      salary_date: salaryDateIso,
-      fx_rate: usdToPhpRate,
-      pab_evaluation: pabMonthRange
-        ? {
-            month_label: `${pabMonthRange.monthName} ${pabMonthRange.year}`,
-            range_start: pabMonthRange.start.toLocaleDateString('en-CA'),
-            range_end: pabMonthRange.end.toLocaleDateString('en-CA'),
-          }
-        : { month_label: '—', range_start: '—', range_end: '—' },
-    };
-
     // Bonus gating based on the weekly pay period:
     //  - PAB: a monthly bonus — only attach to the *final* weekly paystub of the PAB period.
     //  - Tech: unlocks on the 3rd calendar week of the PAB month (week 1 = Mon–Sun
@@ -9131,37 +9179,60 @@ export default function PayrollWizard({
     // PAB month = month of the Monday of the week containing the pay period.
     const weekStartDate = week ? parseIso(week.start) : null;
     const weekEndDate = week ? parseIso(week.end) : null;
-    const weekPabMonth = (() => {
-      if (!weekStartDate) return null;
-      // The week's OWNING Monday. Hubstaff files start on Sunday → the week's
-      // Monday is the next day (this matches both the non-HSL Sun–Sat week and the
-      // HSL Mon–Sun week, which drops the leading Sunday). A Monday start (no-file
-      // fallback / HSL) is already the Monday. Walking *back* from a Sunday (the old
-      // bug) wrongly attributed e.g. the May 31–Jun 6 week to May instead of June.
-      // Mirrors `member-monthly-pay.ts` → `weekMonForPab`.
-      const dow = weekStartDate.getDay();
-      const mon =
-        dow === 0
-          ? new Date(weekStartDate.getFullYear(), weekStartDate.getMonth(), weekStartDate.getDate() + 1)
-          : new Date(weekStartDate.getFullYear(), weekStartDate.getMonth(), weekStartDate.getDate() - (dow - 1));
-      return { year: mon.getFullYear(), month: mon.getMonth() };
-    })();
-    const weekPabRange = weekPabMonth
-      ? resolvePabRangeForMonth(weekPabMonth.year, weekPabMonth.month, pabPeriodSettings.overrides)
-      : null;
+    // THE PAB PAYOUT RULE (Kane, 2026-09-08): the bonus pays on the week AFTER
+    // the one that closes the period — never combined with it. `pabPayoutForWeek`
+    // steps back to the closing week, resolves ITS owning month's period end and
+    // checks containment there, so it also hands back the PAB month being paid.
+    // That month is not this week's own: from September on the payout week opens
+    // in the following month (Sep 7 – Oct 2 pays on Oct 4–10), and reading the
+    // month off this week's Monday would price an unfinished period.
+    const pabPayout =
+      weekStartDate && weekEndDate
+        ? pabPayoutForWeek(
+            weekStartDate,
+            weekEndDate,
+            pabPeriodSettings.overrides,
+            pabPeriodSettings.validManualRange?.end ?? null,
+          )
+        : null;
+    const weekPabMonth = pabPayout ? { year: pabPayout.year, month: pabPayout.month } : null;
+    const isFinalPabWeek = pabPayout?.pays ?? false;
 
-    const isFinalPabWeek = (() => {
-      if (!weekStartDate || !weekEndDate) return false;
-      const manualEnd = pabPeriodSettings.validManualRange?.end;
-      const periodEnd = manualEnd ?? weekPabRange?.end;
-      if (!periodEnd) return false;
-      // Shared containment gate (dispatch-bonuses.isFinalPabWeek): PAB attaches
-      // to the ONE payroll week that CONTAINS the period end — not every week
-      // on/after it. The old `weekEnd >= periodEnd` check kept PAB attached to
-      // every later week of the month whenever an override/manual range ended
-      // before the month's last payroll week ("PAB still on after payout week").
-      return gateIsFinalPabWeek(weekStartDate, weekEndDate, periodEnd);
+    /**
+     * The paystub's PAB label. On a PAYOUT week it must name the month being
+     * PAID — which from September on is NOT this file week's own month, because
+     * the payout week opens in the following month (Oct 4–10 pays September).
+     * Off the payout week nothing is being paid, so the label keeps naming the
+     * period this week's attendance accrues to.
+     */
+    const pabEvaluation = (() => {
+      if (pabPayout?.pays) {
+        const paid = resolvePabRangeForMonth(pabPayout.year, pabPayout.month, pabPeriodSettings.overrides);
+        return {
+          month_label: new Date(pabPayout.year, pabPayout.month, 1)
+            .toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+          range_start: paid.start.toLocaleDateString('en-CA'),
+          range_end: paid.end.toLocaleDateString('en-CA'),
+        };
+      }
+      return pabMonthRange
+        ? {
+            month_label: `${pabMonthRange.monthName} ${pabMonthRange.year}`,
+            range_start: pabMonthRange.start.toLocaleDateString('en-CA'),
+            range_end: pabMonthRange.end.toLocaleDateString('en-CA'),
+          }
+        : { month_label: '—', range_start: '—', range_end: '—' };
     })();
+
+    const payPeriodPayload = {
+      currency: 'PHP' as const,
+      hubstaff_source_file: calcSourceFile,
+      week,
+      salary_date: salaryDateIso,
+      fx_rate: usdToPhpRate,
+      pab_evaluation: pabEvaluation,
+    };
+
     /**
      * Tech Bonus week — the SAME override-aware gate every engine uses
      * (`resolveIsTechBonusWeek` on the week's owning Monday): a System Bonus
@@ -11730,7 +11801,10 @@ export default function PayrollWizard({
                                     type="button"
                                     onClick={() => setPabCalendarModalEmail(r.email)}
                                     title={
-                                      paStatus === 'eligible' ? 'Passed all Mon–Sun weeks in the PAB period — click to see the calendar.'
+                                      paStatus === 'eligible'
+                                        ? pabPayoutWeekInfo.pays
+                                          ? 'Passed all Mon–Sun weeks in the PAB period — this run pays it. Click to see the calendar.'
+                                          : `Passed all Mon–Sun weeks in the PAB period — pays on ${pabPayoutWeekInfo.label}, not this run. Click to see the calendar.`
                                       : paStatus === 'ineligible' ? 'Already failed at least one week — locked for this period. Click to see which day.'
                                       : 'PAB period is still running. Click to see the calendar.'
                                     }
@@ -11744,7 +11818,7 @@ export default function PayrollWizard({
                                           : 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-400/40 hover:bg-indigo-200 focus:ring-indigo-400 dark:bg-indigo-900/40 dark:text-indigo-300 dark:ring-indigo-500/30 dark:hover:bg-indigo-900/60',
                                     )}
                                   >
-                                    {paStatus === 'eligible' ? (pabDeptOk ? `+${formatPHP(pabAmountForEmail(r.email))}` : '✓ Eligible') : paStatus === 'ineligible' ? '✗ Ineligible' : '⏳ In Progress'}
+                                    {paStatus === 'eligible' ? (pabPayoutWeekInfo.pays && pabDeptOk ? `+${formatPHP(pabAmountForEmail(r.email))}` : '✓ Eligible') : paStatus === 'ineligible' ? '✗ Ineligible' : '⏳ In Progress'}
                                   </button>
                                   )}
                                 </td>
@@ -11890,7 +11964,9 @@ export default function PayrollWizard({
                               totalAdj += bonusOverrides[overrideKeyFor(r.email)] ?? 0;
                               totalOrphanage += orphanageAmounts[r.email] ?? 0;
                               const st = effectivePabStatus.get(em) ?? 'in_progress';
-                              if (st === 'eligible' && isPabDeptEligible(r.email) && !isPabExcluded(r.email)) totalPab += pabAmountForEmail(r.email);
+                              // Payout week only — the HSL footer totalled PAB on any post-period
+                              // week, overstating the section against its own dispatched paystubs.
+                              if (pabPayoutWeekActive && st === 'eligible' && isPabDeptEligible(r.email) && !isPabExcluded(r.email)) totalPab += pabAmountForEmail(r.email);
                               if (techBonusEligible.has(r.email) && isTechDeptEligible(r.email)) totalTech += techAmountForEmail(r.email);
                               if (r.hogan) totalWkndPremium += r.hogan.we_hours * 15;
                               const memail = normEmail(r.email) ?? '';
@@ -14517,6 +14593,29 @@ export default function PayrollWizard({
                           Custom
                         </span>
                       )}
+                      {/* PAB payout-week readout. The period and the payout week are two
+                          different things (Kane 2026-09-08) — the bonus pays the week AFTER
+                          the period closes — so the strip states both, exactly as it already
+                          does for Tech. Without it the period dates alone read as "PAB pays
+                          this week" on every week of the month. */}
+                      <span className="ml-2 inline-flex items-center gap-1">
+                        <span className="text-zinc-400">·</span>
+                        <span
+                          className={cn(
+                            'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold',
+                            pabPayoutWeekInfo.pays
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300'
+                              : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+                          )}
+                          title={
+                            pabPayoutWeekInfo.pays
+                              ? 'This run carries the Perfect Attendance Bonus — the payroll week after the one that closed the period.'
+                              : `The Perfect Attendance Bonus for this period pays on ${pabPayoutWeekInfo.label} — the payroll week after the one that closes it. It is never paid on the closing week.`
+                          }
+                        >
+                          PAB {pabPayoutWeekInfo.pays ? 'pays this week' : `pays ${pabPayoutWeekInfo.label}`}
+                        </span>
+                      </span>
                       {/* Tech Bonus payout-week readout for the current file's week. */}
                       {techBonusWeekInfo.weekStartDate && (
                         <span className="ml-2 inline-flex items-center gap-1">
@@ -16449,7 +16548,7 @@ export default function PayrollWizard({
                               </TableCell>
                             </TableRow>
                           ) : filteredDeptEmployees.map((emp) => {
-                            const autoBonus = bonusTotals[emp.email] ?? 0;
+                            const autoBonus = weekBonusTotals[emp.email] ?? 0;
                             // Read the Adj. through the same key resolution the pay
                             // computation uses, so the column can never show "—" for
                             // an override that IS being paid (see overrideKeyFor).
@@ -16533,8 +16632,10 @@ export default function PayrollWizard({
                                     : '⏳ In Progress';
                                   const titleText =
                                     status === 'ineligible' ? 'Already failed at least one past weekday — locked for this period. Click to see which day.'
-                                    : status === 'in_progress' ? 'No failed weekday so far — PAB period is still running; pays on the payout week if every weekday passes. Click to see the calendar.'
-                                    : 'Passed every Mon–Fri in the PAB period — click to see the calendar.';
+                                    : status === 'in_progress' ? `No failed weekday so far — PAB period is still running; pays on ${pabPayoutWeekInfo.label} if every weekday passes. Click to see the calendar.`
+                                    : pabPayoutWeekInfo.pays
+                                      ? 'Passed every Mon–Fri in the PAB period — this run pays it. Click to see the calendar.'
+                                      : `Passed every Mon–Fri in the PAB period — pays on ${pabPayoutWeekInfo.label}, not this run. Click to see the calendar.`;
                                   return (
                                     <TableCell className="px-1 py-1.5 text-center">
                                       <button
@@ -16551,7 +16652,9 @@ export default function PayrollWizard({
                                               : 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-400/40 hover:bg-indigo-200 focus:ring-indigo-400 dark:bg-indigo-900/40 dark:text-indigo-300 dark:ring-indigo-500/30 dark:hover:bg-indigo-900/60',
                                         )}
                                       >
-                                        <span>{status === 'eligible' ? (isPabDeptEligible(emp.email) ? `+${formatPHP(pabAmountForEmail(emp.email))}` : label) : label}</span>
+                                        {/* The amount states "this run pays it" — so it appears only on the
+                                            payout week. Off it the verdict still shows, without the peso figure. */}
+                                        <span>{status === 'eligible' && pabPayoutWeekInfo.pays && isPabDeptEligible(emp.email) ? `+${formatPHP(pabAmountForEmail(emp.email))}` : label}</span>
                                       </button>
                                     </TableCell>
                                   );

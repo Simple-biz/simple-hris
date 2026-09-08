@@ -331,18 +331,22 @@ export function pabMonthFromWeekStart(weekStart: Date): { year: number; month: n
 }
 
 /**
- * `true` when the dispatch week CONTAINS the PAB period's end day — i.e. this
- * is the ONE paycheck that closes the month and should carry the PAB bonus.
+ * `true` when the week CONTAINS the PAB period's end day — the CLOSING week of
+ * the period.
  *
- * Containment (weekStart ≤ periodEnd ≤ weekEnd), NOT a bare `weekEnd >=
+ * This is a primitive, not the payout verdict. Since 2026-09-08 the bonus pays
+ * on the week AFTER this one (Kane: "the payout week will always be after the
+ * PAB period … it will never be combined"), so a caller asking "does PAB pay
+ * here?" must go through `pab-payout-week.ts` — which steps back a week, calls
+ * this, and also returns the PAB month being paid. Calling this directly to
+ * gate money pays the bonus a week early, on the period's last paycheck.
+ *
+ * Containment (weekStart <= periodEnd <= weekEnd), NOT a bare `weekEnd >=
  * periodEnd`: the old lower-bound-only check kept PAB attached to every later
  * week of the month whenever an override/manual range ended before the month's
  * last payroll week ("PAB still on after the payout week"). Payroll weeks are
- * contiguous, so exactly one week contains the period end.
- *
- * Single source of truth — the Payroll Wizard, Payment Dispatch
- * (current-pay), Employee Dashboard, member monthly modal, and the HSL
- * snapshotter must all call this.
+ * contiguous, so exactly one week contains the period end — and therefore
+ * exactly one week follows it.
  */
 export function isFinalPabWeek(weekStart: Date, weekEnd: Date, pabPeriodEnd: Date): boolean {
   const endMid = new Date(
