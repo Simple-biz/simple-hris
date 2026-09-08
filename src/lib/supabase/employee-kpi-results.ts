@@ -82,9 +82,9 @@ function humanizeKey(key: string): string {
  *  (not a count), so the breakdown renders it as money rather than "× n". */
 function hslRuleMeta(
   deptKey: string,
-): Record<string, { label: string; detail: string | null; manual?: boolean }> {
+): Record<string, { label: string; detail: string | null; manual?: boolean; flatAmount?: number }> {
   const cfg = HSL_DEPTS[deptKey as HslDeptKey];
-  const out: Record<string, { label: string; detail: string | null; manual?: boolean }> = {};
+  const out: Record<string, { label: string; detail: string | null; manual?: boolean; flatAmount?: number }> = {};
   if (!cfg) return out;
   for (const rule of cfg.rules) {
     if (rule.type === 'per_unit') {
@@ -93,7 +93,7 @@ function hslRuleMeta(
     } else if (rule.type === 'tiered') {
       out[rule.key] = { label: rule.label, detail: 'tiered rate' };
     } else if (rule.type === 'flat') {
-      out[rule.key] = { label: rule.label, detail: null };
+      out[rule.key] = { label: rule.label, detail: rule.cadence === 'monthly' ? 'monthly' : null, flatAmount: rule.amount };
     } else if (rule.type === 'manual') {
       out[rule.key] = { label: rule.label, detail: 'manual amount', manual: true };
     } else if (rule.type === 'team_split') {
@@ -275,9 +275,15 @@ export async function getEmployeeKpiResults(
 
     const meta = hslRuleMeta(r.department);
     for (const [k, raw] of Object.entries(data)) {
+      const m = meta[k];
+      // A flat rule stores a TICK (true), which `num` reads as 0 — surface it as
+      // its fixed peso amount rather than hiding it as an untouched metric.
+      if (m?.flatAmount !== undefined) {
+        if (raw) p.items.push({ label: m.label, amount: m.flatAmount, value: null, detail: m.detail });
+        continue;
+      }
       const value = num(raw);
       if (value === 0) continue; // hide untouched metrics
-      const m = meta[k];
       // Manual rules store the peso amount directly — surface it as money, not a count.
       p.items.push(
         m?.manual

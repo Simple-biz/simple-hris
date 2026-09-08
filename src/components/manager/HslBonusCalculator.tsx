@@ -60,6 +60,7 @@ import {
 } from '@/lib/manager/kpi-autosave';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface EntryRow {
@@ -1538,7 +1539,7 @@ export default function HslBonusCalculator({
                     // uniform rule engine.
                     calculated_bonus: HSL_DEPTS[key].perEmployee
                       ? calcManagerBonus(email, newKpi, { periodStart: periodStart(HSL_DEPTS[key]) })
-                      : calcBonus(newKpi, HSL_DEPTS[key], e.is_manager),
+                      : calcBonus(newKpi, HSL_DEPTS[key], e.is_manager, { periodStart: periodStart(HSL_DEPTS[key]) }),
                   };
                 });
                 // For SSD, sub_team changes affect every team member's share —
@@ -1558,7 +1559,7 @@ export default function HslBonusCalculator({
                     is_manager: newIsManager,
                     calculated_bonus: HSL_DEPTS[key].perEmployee
                       ? calcManagerBonus(email, e.kpi_data, { periodStart: periodStart(HSL_DEPTS[key]) })
-                      : calcBonus(e.kpi_data, HSL_DEPTS[key], newIsManager),
+                      : calcBonus(e.kpi_data, HSL_DEPTS[key], newIsManager, { periodStart: periodStart(HSL_DEPTS[key]) }),
                   };
                 });
                 // Re-share for SSD — toggling someone's manager flag doesn't
@@ -2321,8 +2322,12 @@ function DeptBlock({
           </span>
           <StatusChip status={state.status} />
           {dept.monthlyMax && (
+            // `monthlyMax` is applied per saved ROW, and a weekly dept saves one row a
+            // week — so on a weekly dept it is a per-WEEK cap, which is what the docs
+            // say (hsl-kpi-calculator-2026-07.md: "₱3,500/wk cap"). This read "/mo"
+            // until 2026-09-08, which contradicted both the docs and the arithmetic.
             <span className="font-mono text-[9px] text-zinc-500 dark:text-zinc-500">
-              max {formatPeso(dept.monthlyMax)}/mo
+              max {formatPeso(dept.monthlyMax)}/{dept.cadence === 'weekly' ? 'wk' : 'mo'}
             </span>
           )}
           <span className="font-mono text-[10px] text-zinc-500">· {periodLabel(dept, periodStartStr)}</span>
@@ -2467,6 +2472,7 @@ function DeptBlock({
             entries={pagedEntries}
             subtotal={deptTotal}
             isLocked={readOnly}
+            periodStart={periodStartStr}
             onKpiChange={onKpiChange}
             onToggleManager={onToggleManager}
             rosterEmails={rosterEmails}
@@ -2617,6 +2623,9 @@ interface KpiTableProps {
   entries: EntryRow[];
   subtotal: number;
   isLocked: boolean;
+  /** ISO period_start of the week on screen — a `cadence: 'monthly'` flat rule
+   *  is only tickable in the final payroll week of its month. */
+  periodStart: string;
   onKpiChange: (email: string, key: string, val: number | boolean) => void;
   onToggleManager: (email: string) => void;
   rosterEmails?: Set<string>;
@@ -2643,8 +2652,11 @@ function ExtChip({ email, offboardedEmails }: { email: string; offboardedEmails?
   );
 }
 
-export function KpiTable({ dept, entries, subtotal, isLocked, onKpiChange, onToggleManager, rosterEmails, offboardedEmails, onRemoveMember }: KpiTableProps) {
+export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, onKpiChange, onToggleManager, rosterEmails, offboardedEmails, onRemoveMember }: KpiTableProps) {
   const rules = dept.rules.filter((r) => r.type !== 'team_split');
+  // Monthly flat rules (Pre/Post-Hearing's ₱2,500) open only in the month's final
+  // payroll week — the same calendar rule the wizard uses for every monthly bonus.
+  const finalWeekOfMonth = isFinalPayrollWeekOfMonth(periodStart);
 
   return (
     <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -2658,7 +2670,7 @@ export function KpiTable({ dept, entries, subtotal, isLocked, onKpiChange, onTog
                 {r.label}
                 <span className="block font-normal text-zinc-400 dark:text-zinc-600">
                   {r.type === 'per_unit' ? formatPeso(r.rate, r.currency) :
-                   r.type === 'flat' ? `${formatPeso(r.amount, r.currency)} flat` :
+                   r.type === 'flat' ? `${formatPeso(r.amount, r.currency)} flat${r.cadence === 'monthly' ? ' · monthly' : ''}` :
                    r.type === 'manual' ? 'manual ₱' :
                    'tiered'}
                 </span>
@@ -2715,12 +2727,20 @@ export function KpiTable({ dept, entries, subtotal, isLocked, onKpiChange, onTog
                   {r.type === 'flat' ? (
                     r.managerOnly && !e.is_manager ? (
                       <span className="text-zinc-300 dark:text-zinc-700">n/a</span>
+                    ) : r.cadence === 'monthly' && !finalWeekOfMonth ? (
+                      <span
+                        className="font-mono text-[9px] uppercase tracking-wider text-zinc-300 dark:text-zinc-700"
+                        title={`${r.label} is a monthly bonus — tick it in the last payroll week of the month`}
+                      >
+                        final wk
+                      </span>
                     ) : (
                       <input
                         type="checkbox"
                         className="accent-amber-500"
                         checked={Boolean(e.kpi_data[r.key])}
                         disabled={isLocked}
+                        aria-label={`${r.label} for ${e.employee_name}`}
                         onChange={(ev) => onKpiChange(e.employee_email, r.key, ev.target.checked)}
                       />
                     )

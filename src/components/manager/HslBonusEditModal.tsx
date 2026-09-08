@@ -171,7 +171,7 @@ export default function HslBonusEditModal({
         return {
           ...e,
           kpi_data: newKpi,
-          calculated_bonus: calcBonus(newKpi, dept, e.is_manager),
+          calculated_bonus: calcBonus(newKpi, dept, e.is_manager, { periodStart }),
         };
       });
       return recomputeSsdEntries(deptKey, next, subTeams);
@@ -187,7 +187,7 @@ export default function HslBonusEditModal({
         return {
           ...e,
           is_manager: newIsManager,
-          calculated_bonus: calcBonus(e.kpi_data, dept, newIsManager),
+          calculated_bonus: calcBonus(e.kpi_data, dept, newIsManager, { periodStart }),
         };
       });
       return recomputeSsdEntries(deptKey, next, subTeams);
@@ -440,6 +440,7 @@ export default function HslBonusEditModal({
                   entries={entries}
                   subtotal={subtotal}
                   isLocked={isLocked}
+                  periodStart={periodStart}
                   onKpiChange={handleKpiChange}
                   onToggleManager={handleToggleManager}
                 />

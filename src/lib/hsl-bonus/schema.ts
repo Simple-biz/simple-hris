@@ -2,6 +2,8 @@
 // Every department's rules are declared here; the calculation engine
 // handles all of them with no department-specific branching.
 
+import { isFinalPayrollWeekOfMonth } from '../payroll/bonus-cadence';
+
 export type PeriodType = 'weekly' | 'monthly';
 export type BonusStatus = 'draft' | 'ready' | 'locked';
 export type SubTeamName = 'BLUE' | 'GREEN' | 'YELLOW' | 'ORANGE' | 'PURPLE' | 'RED';
@@ -37,6 +39,13 @@ export interface FlatRule {
   amount: number;
   currency?: 'PHP' | 'USD';
   managerOnly?: boolean;
+  /** 'monthly' → a once-a-month bonus inside a WEEKLY dept: the calculator only
+   *  lets the scorer tick it in the final payroll week of the month, and
+   *  `calcBonus` drops it for any other week it is told about. */
+  cadence?: 'monthly';
+  /** Paid ON TOP of `monthlyMax` instead of inside it — a fixed monthly bonus
+   *  must not eat the weekly KPI cap (or be eaten by it). */
+  exemptFromMonthlyMax?: boolean;
 }
 
 /** A raw peso amount the manager types in directly. The typed number IS the
@@ -254,6 +263,11 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     rules: [
       { type: 'per_unit', key: 'five_star_survey', label: '5-Star Survey', rate: 250 },
       { type: 'per_unit', key: 'portal_login',     label: 'Portal Login',  rate: 100 },
+      // Carla (2026-09-08): "They have a monthly bonus of 2500 … a checkbox that
+      // applies 2500 when checked." One tick per person per month, in the final
+      // payroll week only, and OUTSIDE the ₱3,500 weekly KPI cap — a fixed ₱2,500
+      // under a ₱3,500 cap would otherwise leave ₱1,000 of KPI room that month.
+      { type: 'flat', key: 'monthly_bonus', label: 'Monthly Bonus', amount: 2500, cadence: 'monthly', exemptFromMonthlyMax: true },
     ],
   },
 
@@ -435,8 +449,14 @@ export function calcBonus(
   kpiData: KpiData,
   dept: DeptConfig,
   isManager: boolean,
+  /** The week being scored (ISO period_start). When given, a `cadence: 'monthly'`
+   *  flat rule pays only in the final payroll week of its month; when absent the
+   *  tick is honoured as saved (the wizard pays the STORED calculated_bonus and
+   *  never recomputes a per-unit dept, so this gate lives at scoring time). */
+  opts?: { periodStart?: string },
 ): number {
   let total = 0;
+  let exempt = 0;
   for (const rule of dept.rules) {
     if (rule.type === 'per_unit') {
       if (rule.managerOnly && !isManager) continue;
@@ -450,7 +470,10 @@ export function calcBonus(
       if (band) total += n * band.rate;
     } else if (rule.type === 'flat') {
       if (rule.managerOnly && !isManager) continue;
-      if (kpiData[rule.key]) total += rule.amount;
+      if (!kpiData[rule.key]) continue;
+      if (rule.cadence === 'monthly' && opts?.periodStart && !isFinalPayrollWeekOfMonth(opts.periodStart)) continue;
+      if (rule.exemptFromMonthlyMax) exempt += rule.amount;
+      else total += rule.amount;
     } else if (rule.type === 'manual') {
       if (rule.managerOnly && !isManager) continue;
       total += Number(kpiData[rule.key] ?? 0);
@@ -458,7 +481,7 @@ export function calcBonus(
     // team_split / team_pool are calculated at the sub-team level, not per-employee here
   }
   if (dept.monthlyMax !== undefined) total = Math.min(total, dept.monthlyMax);
-  return total;
+  return total + exempt;
 }
 
 export function calcTeamSplitShare(

@@ -20,7 +20,7 @@ and employee KPI results all read.
 | `hsl_managers` *(new; specs DATED 2026-09-08)* | Managers Weekly | weekly | bespoke per-manager components — checklists through 2026-08-23, banded weekly tiers for six managers + three new members from 2026-08-30 (see below) |
 | `attestation` *(new 2026-07-21; rules extended 2026-08-24)* | Attestation | weekly | Attested Cases tiered (25→₱50 · 35→₱75 · 50+→₱100 per case; thresholds corrected 2026-07-27 to match the sheet formula — Filing Specialist still uses 30/40/50) **+ Referral Leads ×₱250 · SSA.Gov ×₱250** (see §Attestation additive terms) |
 | `case_managers` *(new 2026-07-22)* | Case Managers | weekly | Reviews ×₱250 · RFC ×₱250 · PPL ×₱100 · DME ×₱250 · Task ×₱250 · Referral Leads ×₱250 |
-| `post_hearing_prep` *(renamed)* | Pre-Hearing / Post-Hearing Prep | weekly | unchanged (Portal Login ₱100 · 5-Star ₱250, ₱3,500/wk cap) |
+| `post_hearing_prep` *(renamed; Monthly Bonus added 2026-09-08)* | Pre-Hearing / Post-Hearing Prep | weekly | Portal Login ₱100 · 5-Star ₱250, ₱3,500/wk cap **+ Monthly Bonus ₱2,500 flat checkbox** — every member, final payroll week of the month only, paid ON TOP of the cap (see §Pre/Post-Hearing monthly bonus) |
 | `case_manager` *(removed 2026-07-17; superseded by `case_managers`)* | — | — | was 6 per-unit KPI rules, ~50 members |
 | `case_mgr_no_kpi` *(removed)* | — | — | was an empty roster-only placeholder |
 | `chelzy_asst` *(removed)* | — | — | was a flat $10/mo |
@@ -87,6 +87,37 @@ formula now, not just the tiered half.
 **OPEN (unchanged):** `filing_specialist` still uses the old 30/40/50 "Attested
 Cases" bands and did **not** receive these two terms. Different dept, different
 pay — Kane has never confirmed the correction applies there.
+
+## Pre/Post-Hearing monthly bonus *(2026-09-08)*
+
+Carla T: *"They have a monthly bonus of 2500, not sure how to add this. Can we just
+get a checkbox that applies 2500 when checked."* `post_hearing_prep` gained a third
+rule: `{ type: 'flat', key: 'monthly_bonus', label: 'Monthly Bonus', amount: 2500,
+cadence: 'monthly', exemptFromMonthlyMax: true }` — the existing `flat` rule type
+(Collections has had one since day one), which `KpiTable` already draws as a checkbox.
+Two flags are new on `FlatRule`, both a pay decision rather than a convenience:
+
+- **`cadence: 'monthly'` — one tick per person per month, in the final payroll week
+  only.** The dept is weekly and the wizard pays each week's STORED `calculated_bonus`,
+  so nothing downstream could stop a tick in every week paying four times. The gate
+  therefore lives at scoring time: `KpiTable` shows "final wk" in place of the checkbox
+  in any other week (`isFinalPayrollWeekOfMonth(periodStart)`, the same calendar rule
+  the wizard uses for every monthly bonus — Aug 30 – Sep 5 is August's final week),
+  and `calcBonus` drops a monthly flat tick when told a week that isn't final
+  (`opts.periodStart`; the calculator's edit paths pass it). With no week given the
+  saved tick is honoured, because the wizard never recomputes a per-unit dept.
+- **`exemptFromMonthlyMax: true` — paid on top of the ₱3,500 cap, not inside it.**
+  A fixed ₱2,500 under a ₱3,500 cap would leave ₱1,000 of KPI room in the final week
+  and silently eat the bonus in a good week. `calcBonus` sums exempt flat rules
+  after the `Math.min(total, monthlyMax)`.
+
+**Assumptions stated, not confirmed by Carla:** every member of the dept (she said
+"they", against a 40-person row), and cap-exempt. Rows saved before the rule existed
+recompute unchanged (no key ⇒ ₱0 delta, pinned). Employee KPI Results now surfaces a
+flat tick as its peso amount (it read `true` as 0 and hid it — Collections' monthly
+flat had the same gap). **The cap label read "max ₱3,500/mo" while this doc and
+`hsl-catalog-migration.md` say "/wk" and `calcBonus` applies it per saved (weekly)
+row** — the label was the wrong one and now says `/wk` on weekly depts.
 
 ## Managers Weekly (`hsl_managers`)
 
