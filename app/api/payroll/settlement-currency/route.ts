@@ -25,11 +25,16 @@ export const runtime = 'nodejs';
 type SessionLike = { user?: { email?: string | null; roles?: string[] } | null } | null;
 
 /** Roles that read a pay surface showing settlement figures: department
- *  managers (KPI Calculator), Accounting (Payroll Wizard, Payment Dispatch),
- *  and admin. The payload carries no amounts — only country-derived currency
- *  markers and the org's two FX rates — but it does reveal which staff are
- *  foreign-settled, so it stays behind a role. */
-const ALLOWED_ROLES = ['manager', 'accounting', 'admin'] as const;
+ *  managers AND QC officers (both drive `DeptBonusCalculator` — the QC first-pass
+ *  view is the same table), Accounting (Payroll Wizard, Payment Dispatch), and
+ *  admin. The payload carries no amounts — only country-derived currency markers
+ *  and the org's two FX rates — but it does reveal which staff are
+ *  foreign-settled, so it stays behind a role.
+ *
+ *  `qc` was missing on the first cut, and the symptom is silent: a QC officer got
+ *  a 403, the marker never arrived, and every Colombian's row rendered in pesos
+ *  with no sticker — indistinguishable from "this person is Filipino". */
+const ALLOWED_ROLES = ['manager', 'qc', 'accounting', 'admin'] as const;
 
 /** Cap on how many emails one call may ask about — the largest caller is the
  *  Payroll Wizard's whole-cycle roster (~1,300). Bounded so a malformed client

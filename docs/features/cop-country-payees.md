@@ -84,6 +84,13 @@ the bug, not a redundancy.
 | **Per surface** (a list of emails) | `POST /api/payroll/settlement-currency` → `{ byEmail, rate }` | Manager KPI Calculator, Payroll Wizard |
 | **Single person** | `resolveCountryCurrencyForEmails(emails)` (`src/lib/payroll/cop-country.ts`) | the paystub readers (`app/api/employee/paystub`, `app/api/accounting/paystub`) |
 
+> **The route must admit every role that renders the surface.** `qc` was missing on the
+> first cut and the symptom was silent: `DeptBonusCalculator` also drives the **QC first-pass**
+> view, so a QC officer's fetch 403'd, no marker arrived, and every Colombian's row rendered
+> in pesos with no sticker — indistinguishable from "this person is Filipino". Allowed roles
+> are now `manager`, `qc`, `accounting`, `admin`, pinned by a test. If a Colombian ever shows
+> no chip, check the role list before anything else.
+
 The marker is **best-effort**: no matching submission, an unmapped country, or a DB error →
 no marker, and the surface renders plain pesos. The route is the one exception that reports
 rather than degrades: a *partial* identity read would silently UNDER-mark people, so a read
@@ -179,12 +186,61 @@ Note the pivot: `computeAmount` — *the same chokepoint that produces the peso 
 the settlement conversion happen. The settlement currency is never handed to
 `computeAmount` or `phpPerUnit` (section 0).
 
-**Column subtotals became `Money` bags.** A column is one bonus, so its footer used to be a
-single number. A department can now mix PHP-settled and COP-settled people, and adding
-pesos to Colombian pesos produces a meaningless figure — so `colMeta.subtotal` and
-`sharedMeta.subtotal` are `Record<PayCurrency, number>` rendered through the existing
-`fmtTotals`. A wholly-Filipino column still reads as one plain peso sum, so nothing changed
-for the departments that have no foreign-settled staff.
+### The display hierarchy (Kane, 2026-09-08)
+
+> *"For the Lead Gen Total only the COP should be the highlighted value while the PHP should
+> be secondary only but in the total field there should be USD, COP and PHP."*
+
+**What they are paid is the headline; the peso is a quiet second line.** Every
+member-scoped figure renders as:
+
+```
+$COP1.401.733        <- headline, emerald, the money that lands in their bank
+≈ ₱28,000.00         <- PesoSubline: the peso this converts FROM
+```
+
+and every TOTAL adds the USD anchor, because for a department whose legs are in different
+currencies USD is the only single number that compares:
+
+```
+$COP1.401.733        <- headline
+≈ $446.43 · ₱28,000.00
+```
+
+`SettledTotalCell` renders that pairing everywhere a total appears — member row total, each
+column subtotal, the individual-bonus subtotal, the department subtotal and the grand
+total. `PesoSubline` does it for the individual cells.
+
+**Neither extra line ever appears for a peso-settled person.** `PesoSubline` returns null
+when the figure is already pesos (restating it is noise), and the peso leg of a total is
+suppressed unless a non-PHP leg exists. A Filipino's row is therefore unchanged except that
+totals gain the `~ $USD` anchor.
+
+**The USD line obeys the same FX licence as the headline** — `usdFromPhp` returns null
+unless the rate is `live`, and guards its divisor rather than returning `Infinity`. An
+unconfirmed rate produces *no line*, never a plausible number.
+
+### Two numbers, carried together: `SettledTotal`
+
+```ts
+type SettledTotal = { money: Money; php: number };
+```
+
+`money` is what recipients actually get, split by currency — those legs cannot be summed.
+`php` is the PHP-**equivalent** of the whole thing: the pivot every leg converted through,
+the only figure comparable across a mixed department, and the same number
+`bonus_catalog_applied.amount` holds and the Wizard pays. Keeping both is what allows a COP
+headline with a peso reconciliation line instead of forcing a choice between the currency
+someone is paid in and the currency the books are kept in.
+
+`settledFigure` returns `{ amt, cur, php }` from a single `computeAmount` call, so the
+headline and its subline can never disagree about the same bonus.
+
+**Column subtotals became `SettledTotal`s.** A column is one bonus, so its footer used to be
+a single number. A department can now mix PHP-settled and COP-settled people, and adding
+pesos to Colombian pesos produces a meaningless figure. A wholly-Filipino column still
+reads as one plain peso sum, so nothing changed for the departments that have no
+foreign-settled staff.
 
 **The team-bonus input stays in the catalog currency.** `perPerson` is the number the
 manager *typed once* for the whole team — an input, not a payout — so the header shows it

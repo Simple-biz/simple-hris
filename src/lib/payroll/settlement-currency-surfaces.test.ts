@@ -18,11 +18,30 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const read = (rel: string) => fs.readFileSync(path.join(process.cwd(), rel), 'utf8');
+/** Source, with line endings normalised to LF. The working tree is CRLF on
+ *  Windows, so any guard that anchors on a newline would silently stop matching
+ *  — and a source guard that quietly matches nothing is worse than no guard. */
+const read = (rel: string) =>
+  fs.readFileSync(path.join(process.cwd(), rel), 'utf8').replace(/\r\n/g, '\n');
 
 const KPI = 'src/components/manager/DeptBonusCalculator.tsx';
 const WIZARD = 'src/components/PayrollWizard.tsx';
 const LIB = 'src/lib/payroll/settlement-currency.ts';
+const ROUTE = 'app/api/payroll/settlement-currency/route.ts';
+
+/** The source of one top-level `function <name>(...)`, sliced by name rather
+ *  than matched across lines so these guards don't hinge on newline handling.
+ *
+ *  The terminator is `\n}\n` — a brace alone on its own line — NOT `\n}`, which
+ *  also matches the `}: {` closing a destructured parameter list and would slice
+ *  off the whole body of any component that takes props that way. */
+function functionBody(src: string, name: string): string {
+  const at = src.indexOf(`function ${name}(`);
+  assert.ok(at > 0, `${name} must exist`);
+  const end = src.indexOf('\n}\n', at);
+  assert.ok(end > at, `${name} must be a top-level function`);
+  return src.slice(at, end);
+}
 
 test('the KPI Calculator saves the CATALOG currency, never the settlement one', () => {
   const src = read(KPI);
@@ -82,6 +101,46 @@ test('a native figure only ever comes from settlementAmountFromPhp', () => {
   );
 });
 
+test('the USD equivalence line refuses an unlicensed rate', () => {
+  // Totals carry a "~ $USD · ₱PHP" line under the native headline. USD is a
+  // CONVERSION, so it is subject to the same licence as the headline: an unset
+  // per-cycle rate or the official placeholders must produce no line at all,
+  // never a plausible-looking number.
+  const src = read(KPI);
+  const usd = functionBody(src, 'usdFromPhp');
+  assert.ok(
+    usd.includes("rate.status !== 'live'"),
+    'usdFromPhp must return null unless the rate is live',
+  );
+  assert.ok(
+    usd.includes('usdToPhp <= 0'),
+    'and must guard the divisor rather than returning Infinity',
+  );
+  // The peso subline is the PHP PIVOT, not a conversion — but it must only show
+  // where the headline is NOT already pesos, or it just repeats itself.
+  assert.ok(
+    functionBody(src, 'PesoSubline').includes("fig.cur === 'PHP') return null"),
+    'PesoSubline must render nothing for a peso-settled figure',
+  );
+});
+
+test('a settled total keeps BOTH the native bag and the PHP pivot', () => {
+  // The native legs cannot be summed across currencies, and the PHP pivot is
+  // the only figure comparable across a mixed department (and the one the
+  // Wizard pays). Collapsing to either alone loses something that is needed.
+  const src = read(KPI);
+  assert.match(
+    src,
+    /type SettledTotal = \{ money: Money; php: number \}/,
+    'SettledTotal must carry the native bag AND the peso pivot',
+  );
+  const fig = src.slice(src.indexOf('const settledFigure = useCallback('));
+  assert.ok(
+    /\{ amt: number; cur: PayCurrency; php: number \}/.test(fig),
+    'settledFigure must return the peso pivot alongside the native figure',
+  );
+});
+
 test('both settlement surfaces resolve FX provenance from the shared route, not app-settings', () => {
   // /api/app-settings hands back a raw value that the effectiveUsdTo*RateFromStored
   // helpers would silently turn into the official placeholder. The settlement
@@ -96,11 +155,24 @@ test('both settlement surfaces resolve FX provenance from the shared route, not 
   }
 });
 
+test('the settlement route admits every role that renders the KPI Calculator', () => {
+  // DeptBonusCalculator serves BOTH managers and QC officers (the QC first-pass
+  // view is the same table). A missing role is silent: the fetch 403s, no marker
+  // arrives, and every Colombian renders in pesos with no sticker — which reads
+  // as "this person is Filipino".
+  const src = read(ROUTE);
+  const m = /const ALLOWED_ROLES = \[([^\]]*)\]/.exec(src);
+  assert.ok(m, 'ALLOWED_ROLES must be a literal list');
+  for (const role of ['manager', 'qc', 'accounting', 'admin']) {
+    assert.ok(m[1]!.includes(`'${role}'`), `ALLOWED_ROLES must include ${role}`);
+  }
+});
+
 test('the settlement route pages every identity read', () => {
   // PostgREST caps at 1000 rows even with an explicit .range(), and the roster
   // passed 1,000 people in Jul 2026 — an un-paged read would silently drop the
   // tail of the alphabet and quietly un-mark those Colombians.
-  const src = read('app/api/payroll/settlement-currency/route.ts');
+  const src = read(ROUTE);
   const selects = [...src.matchAll(/\.from\('([^']+)'\)/g)].map((m) => m[1]!);
   assert.deepEqual(
     selects.sort(),
@@ -120,15 +192,17 @@ test('the route memoizes the marker map but NEVER the FX rate', () => {
   // the money-sensitive half — Accounting sets it mid-cycle — so it must be read
   // fresh on every request, and a partial (read-error) build must never be
   // cached and served as the truth.
-  const src = read('app/api/payroll/settlement-currency/route.ts');
-  assert.ok(/markerCache = \{ at: Date\.now\(\), byEmail: byEmailMap \}/.test(src),
-    'the completed marker map is memoized');
-  // The cache is written only AFTER the read-error guard returns.
+  const src = read(ROUTE);
+  assert.ok(
+    /markerCache = \{ at: Date\.now\(\), byEmail: byEmailMap \}/.test(src),
+    'the completed marker map is memoized',
+  );
   const guardAt = src.indexOf('Identity read failed');
   const writeAt = src.indexOf('markerCache = { at:');
-  assert.ok(guardAt > 0 && writeAt > guardAt,
-    'the memo write must come after the read-failure guard, so a partial map is never cached');
-  // Nothing caches the rate.
+  assert.ok(
+    guardAt > 0 && writeAt > guardAt,
+    'the memo write must come after the read-failure guard, so a partial map is never cached',
+  );
   assert.ok(!/rateCache|cachedRate/.test(src), 'the FX rate must never be cached');
   assert.ok(
     src.indexOf('resolveSettlementRate') < src.indexOf('markerCache && Date.now()'),
@@ -142,10 +216,7 @@ test('the rates bridge never hand-rolls a snake_case projection', () => {
   // with `column employee_hourly_rates.work_email does not exist` — and if the
   // caller bails on that error, EVERY marker is lost, not just the bridged
   // ones. The shared helper also owns the env-var table name and the view.
-  for (const rel of [
-    'app/api/payroll/settlement-currency/route.ts',
-    'scripts/verify-settlement-currency.mts',
-  ]) {
+  for (const rel of [ROUTE, 'scripts/verify-settlement-currency.mts']) {
     const src = read(rel);
     assert.ok(
       !/from\(["']employee_hourly_rates["']\)/.test(src),

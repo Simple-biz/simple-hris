@@ -345,6 +345,32 @@ function addMoney(a: Money, b: Money): Money {
   return out;
 }
 
+/**
+ * A total, carried in two forms at once.
+ *
+ * `money` is what the recipients ACTUALLY GET, split by currency — pesos for a
+ * Filipino, Colombian pesos for a Colombian — because those legs cannot be
+ * added together into one meaningful number.
+ *
+ * `php` is the PHP-EQUIVALENT of the whole thing: the pivot every leg was
+ * converted through, and therefore the one figure that IS comparable across a
+ * mixed department. It is also what `bonus_catalog_applied.amount` holds and
+ * what the Payroll Wizard pays, so it doubles as the reconciliation number.
+ *
+ * Keeping both is what lets a total read "$COP1.401.733" as the headline with
+ * "≈ $446.43 · ₱28,000.00" underneath, instead of forcing a choice between the
+ * currency someone is paid in and the currency the books are kept in.
+ */
+type SettledTotal = { money: Money; php: number };
+
+function zeroSettled(): SettledTotal {
+  return { money: zeroMoney(), php: 0 };
+}
+
+function addSettled(a: SettledTotal, b: SettledTotal): SettledTotal {
+  return { money: addMoney(a.money, b.money), php: a.php + b.php };
+}
+
 /** Departments whose KPI bonuses ALWAYS resolve in a forced currency, regardless
  *  of each bonus's catalog currency. Empty since the US Team / US Manager Bonus
  *  department (the only USD-forced dept) was retired (2026-07-07). Add a team
@@ -367,6 +393,14 @@ function effectiveCurrency(deptKey: string, bonus: BonusDef): PayCurrency {
 
 function moneyPositive(m: Money): boolean {
   return PAY_CURRENCIES.some((c) => m[c] > 0);
+}
+
+/** The USD equivalent of a peso figure, or null when the rate is not licensed.
+ *  USD is the org's conversion anchor, so it is the universal comparator on a
+ *  total whose legs are in different currencies. */
+function usdFromPhp(php: number, rate: SettlementRate): number | null {
+  if (rate.status !== 'live' || !Number.isFinite(php) || rate.fx.usdToPhp <= 0) return null;
+  return Math.round((php / rate.fx.usdToPhp) * 100) / 100;
 }
 
 /** Render a possibly-mixed total: only the non-zero currencies, joined by " · "
@@ -1006,18 +1040,15 @@ export default function DeptBonusCalculator({
       bonus: BonusDef,
       vars: Record<string, string> | undefined,
       email: string,
-    ): { amt: number; cur: PayCurrency } => {
+    ): { amt: number; cur: PayCurrency; php: number } => {
       const catalogCur = effectiveCurrency(deptKey, bonus);
+      const php = computeAmount(bonus, vars, fx, catalogCur);
       const settle = settlementFor(email);
       if (settle) {
-        const native = settlementAmountFromPhp(
-          computeAmount(bonus, vars, fx, catalogCur),
-          settle,
-          settlementRate,
-        );
-        if (native != null) return { amt: native, cur: settle };
+        const native = settlementAmountFromPhp(php, settle, settlementRate);
+        if (native != null) return { amt: native, cur: settle, php };
       }
-      return { amt: computeNative(bonus, vars), cur: catalogCur };
+      return { amt: computeNative(bonus, vars), cur: catalogCur, php };
     },
     [fx, settlementFor, settlementRate],
   );
@@ -1934,24 +1965,26 @@ export default function DeptBonusCalculator({
   // -- Live bonus computation ----------------------------------------------------
 
   const memberTotal = useCallback(
-    (deptKey: string, member: MemberState, shared: Record<string, AppliedState> | undefined): Money => {
+    (deptKey: string, member: MemberState, shared: Record<string, AppliedState> | undefined): SettledTotal => {
       const sharedSet = sharedCommonByDept.get(deptKey);
-      const sum: Money = zeroMoney();
+      const sum = zeroSettled();
       for (const bonus of applicableBonuses(deptKey, member.email)) {
         // Team-effort bonus: every member gets the single shared amount, each
         // converted into their OWN settlement currency.
         if (sharedSet?.has(bonus.id)) {
           const sh = shared?.[bonus.id];
           if (sh?.on) {
-            const { amt, cur } = settledFigure(deptKey, bonus, sh.vars, member.email);
-            sum[cur] += amt;
+            const { amt, cur, php } = settledFigure(deptKey, bonus, sh.vars, member.email);
+            sum.money[cur] += amt;
+            sum.php += php;
           }
           continue;
         }
         const st = member.applied[bonus.id];
         if (st?.on) {
-          const { amt, cur } = settledFigure(deptKey, bonus, st.vars, member.email);
-          sum[cur] += amt;
+          const { amt, cur, php } = settledFigure(deptKey, bonus, st.vars, member.email);
+          sum.money[cur] += amt;
+          sum.php += php;
         }
       }
       return sum;
@@ -1960,11 +1993,11 @@ export default function DeptBonusCalculator({
   );
 
   const deptTotal = useCallback(
-    (deptKey: string, st: DeptState | undefined): Money => {
-      if (!st) return zeroMoney();
-      return st.members.reduce<Money>(
-        (s, m) => addMoney(s, memberTotal(deptKey, m, st.shared)),
-        zeroMoney(),
+    (deptKey: string, st: DeptState | undefined): SettledTotal => {
+      if (!st) return zeroSettled();
+      return st.members.reduce<SettledTotal>(
+        (s, m) => addSettled(s, memberTotal(deptKey, m, st.shared)),
+        zeroSettled(),
       );
     },
     [memberTotal],
@@ -2006,12 +2039,13 @@ export default function DeptBonusCalculator({
         // single number — summing pesos and Colombian pesos into one total
         // would be a meaningless figure. `fmtTotals` renders only the non-zero
         // legs, so a wholly-Filipino column still reads as one plain peso sum.
-        const subtotal = appMembers.reduce<Money>((s, m) => {
+        const subtotal = appMembers.reduce<SettledTotal>((s, m) => {
           if (!m.applied[b.id]?.on) return s;
-          const { amt, cur } = settledFigure(key, b, m.applied[b.id]?.vars, m.email);
-          s[cur] += amt;
+          const { amt, cur, php } = settledFigure(key, b, m.applied[b.id]?.vars, m.email);
+          s.money[cur] += amt;
+          s.php += php;
           return s;
-        }, zeroMoney());
+        }, zeroSettled());
         return {
           b,
           appCount: appMembers.length,
@@ -2030,28 +2064,30 @@ export default function DeptBonusCalculator({
         const perPerson = on ? computeNative(b, sh?.vars) : 0;
         const appMembers = allMembers.filter((m) => isApplicable(m.email, b.id));
         const subtotal = on
-          ? appMembers.reduce<Money>((s, m) => {
-              const { amt, cur } = settledFigure(key, b, sh?.vars, m.email);
-              s[cur] += amt;
+          ? appMembers.reduce<SettledTotal>((s, m) => {
+              const { amt, cur, php } = settledFigure(key, b, sh?.vars, m.email);
+              s.money[cur] += amt;
+              s.php += php;
               return s;
-            }, zeroMoney())
-          : zeroMoney();
+            }, zeroSettled())
+          : zeroSettled();
         return { b, sh, on, perPerson, appCount: appMembers.length, subtotal };
       });
       // Individual bonuses can be a mix of PHP and USD, so the subtotal is split.
-      const indivSubtotal = allMembers.reduce<Money>(
+      const indivSubtotal = allMembers.reduce<SettledTotal>(
         (s, m) => {
           const ind = applicableBonuses(key, m.email).filter(
             (b) => !common.some((c) => c.id === b.id) && !sharedSet?.has(b.id),
           );
           for (const b of ind) {
             if (!m.applied[b.id]?.on) continue;
-            const { amt, cur } = settledFigure(key, b, m.applied[b.id]?.vars, m.email);
-            s[cur] += amt;
+            const { amt, cur, php } = settledFigure(key, b, m.applied[b.id]?.vars, m.email);
+            s.money[cur] += amt;
+            s.php += php;
           }
           return s;
         },
-        zeroMoney(),
+        zeroSettled(),
       );
 
       // Progress: who has any bonus turned on, and who has an ON formula bonus
@@ -2662,10 +2698,10 @@ export default function DeptBonusCalculator({
 
   // -- Derived view data ---------------------------------------------------------
 
-  const grandTotal = useMemo<Money>(() => {
-    let sum: Money = zeroMoney();
+  const grandTotal = useMemo<SettledTotal>(() => {
+    let sum = zeroSettled();
     for (const k of visibleDeptKeys) {
-      sum = addMoney(sum, deptTotal(k, state[k]));
+      sum = addSettled(sum, deptTotal(k, state[k]));
     }
     return sum;
   }, [visibleDeptKeys, state, deptTotal]);
@@ -3190,6 +3226,7 @@ export default function DeptBonusCalculator({
                                     {on ? fmtMoney(amt, fig.cur) : '—'}
                                   </span>
                                 </label>
+                                {on && <PesoSubline fig={fig} className="pl-[1.25rem]" />}
                                 {on && b.kind === 'formula' && vars.length > 0 && (
                                   <VarFields
                                     vars={vars}
@@ -3221,14 +3258,17 @@ export default function DeptBonusCalculator({
                             {!applicable ? (
                               <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-700">—</span>
                             ) : (
-                              <span
-                                className={cn(
-                                  'font-mono text-[11px] tabular-nums',
-                                  amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
-                                )}
-                              >
-                                {on ? fmtMoney(amt, fig.cur) : '—'}
-                              </span>
+                              <div className="flex flex-col">
+                                <span
+                                  className={cn(
+                                    'font-mono text-[11px] tabular-nums',
+                                    amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                                  )}
+                                >
+                                  {on ? fmtMoney(amt, fig.cur) : '—'}
+                                </span>
+                                {on && <PesoSubline fig={fig} />}
+                              </div>
                             )}
                           </td>
                         );
@@ -3270,6 +3310,11 @@ export default function DeptBonusCalculator({
                                         {on ? fmtMoney(amt, fig.cur) : '—'}
                                       </span>
                                     </label>
+                                    {on && (
+                                      <span className="flex justify-end">
+                                        <PesoSubline fig={fig} />
+                                      </span>
+                                    )}
                                     {on && b.kind === 'formula' && vars.length > 0 && (
                                       <VarFields
                                         vars={vars}
@@ -3290,14 +3335,14 @@ export default function DeptBonusCalculator({
 
                       {/* Member total (sticky) */}
                       <td className="sticky right-0 z-[2] border-l border-zinc-200/80 bg-white px-3 py-2 text-right align-top group-hover/row:bg-emerald-50/40 dark:border-zinc-800 dark:bg-[#11161c] dark:group-hover/row:bg-emerald-950/20">
-                        <span
-                          className={cn(
+                        <SettledTotalCell
+                          total={mTotal}
+                          rate={settlementRate}
+                          headlineClassName={cn(
                             'font-mono text-[12px] font-bold tabular-nums',
-                            moneyPositive(mTotal) ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                            moneyPositive(mTotal.money) ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
                           )}
-                        >
-                          {fmtTotals(mTotal)}
-                        </span>
+                        />
                       </td>
                     </motion.tr>
                   );
@@ -3315,46 +3360,51 @@ export default function DeptBonusCalculator({
                   {colMeta.map(({ b, subtotal, onCount }) => (
                     <td key={b.id} className="sticky bottom-0 z-[3] border-l border-t border-zinc-200/70 bg-zinc-100 px-2.5 py-2 dark:border-zinc-800/70 dark:bg-[#10151c]">
                       <div className="flex flex-col">
-                        <span
-                          className={cn(
+                        <SettledTotalCell
+                          total={subtotal}
+                          rate={settlementRate}
+                          align="start"
+                          headlineClassName={cn(
                             'font-mono text-[11px] font-semibold tabular-nums',
-                            moneyPositive(subtotal) ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                            moneyPositive(subtotal.money) ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
                           )}
-                        >
-                          {fmtTotals(subtotal)}
-                        </span>
+                        />
                         <span className="font-mono text-[9px] text-zinc-400">{onCount} applied</span>
                       </div>
                     </td>
                   ))}
                   {sharedMeta.map(({ b, subtotal }) => (
                     <td key={b.id} className="sticky bottom-0 z-[3] border-l border-t border-violet-200/60 bg-violet-100 px-2.5 py-2 dark:border-violet-900/40 dark:bg-violet-950/50">
-                      <span
-                        className={cn(
+                      <SettledTotalCell
+                        total={subtotal}
+                        rate={settlementRate}
+                        align="start"
+                        headlineClassName={cn(
                           'font-mono text-[11px] font-semibold tabular-nums',
-                          moneyPositive(subtotal) ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                          moneyPositive(subtotal.money) ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
                         )}
-                      >
-                        {fmtTotals(subtotal)}
-                      </span>
+                      />
                     </td>
                   ))}
                   {hasIndividual && (
                     <td className="sticky bottom-0 z-[3] border-l border-t border-zinc-200/70 bg-zinc-100 px-2.5 py-2 dark:border-zinc-800/70 dark:bg-[#10151c]">
-                      <span
-                        className={cn(
+                      <SettledTotalCell
+                        total={indivSubtotal}
+                        rate={settlementRate}
+                        align="start"
+                        headlineClassName={cn(
                           'font-mono text-[11px] font-semibold tabular-nums',
-                          moneyPositive(indivSubtotal) ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                          moneyPositive(indivSubtotal.money) ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
                         )}
-                      >
-                        {fmtTotals(indivSubtotal)}
-                      </span>
+                      />
                     </td>
                   )}
                   <td className="sticky bottom-0 right-0 z-[5] border-l border-t border-zinc-200 bg-zinc-50 px-3 py-2 text-right dark:border-zinc-800 dark:bg-[#0f141b]">
-                    <span className="font-mono text-[12px] font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400">
-                      {fmtTotals(total)}
-                    </span>
+                    <SettledTotalCell
+                      total={total}
+                      rate={settlementRate}
+                      headlineClassName="font-mono text-[12px] font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400"
+                    />
                   </td>
                 </tr>
               </tfoot>
@@ -3397,9 +3447,12 @@ export default function DeptBonusCalculator({
         <div className="flex flex-none items-center justify-between gap-4 border-t border-zinc-200/80 bg-zinc-50/70 px-4 py-3 dark:border-zinc-800 dark:bg-[#0b0e15] sm:px-5">
           <div className="min-w-0">
             <div className="font-mono text-[8px] uppercase tracking-[0.16em] text-zinc-400">Department subtotal</div>
-            <div className="tabular-nums font-mono text-2xl font-bold leading-tight text-emerald-600 dark:text-emerald-400">
-              {fmtTotals(total)}
-            </div>
+            <SettledTotalCell
+              total={total}
+              rate={settlementRate}
+              align="start"
+              headlineClassName="tabular-nums font-mono text-2xl font-bold leading-tight text-emerald-600 dark:text-emerald-400"
+            />
             <div
               className={cn(
                 'mt-0.5 flex items-center gap-1 font-mono text-[10px] uppercase tracking-wide',
@@ -3626,7 +3679,7 @@ export default function DeptBonusCalculator({
                                 <span className="block truncate text-[12.5px] font-medium text-zinc-800 dark:text-zinc-100">
                                   {DEPARTMENTS.find((d) => d.key === k)?.name ?? humanizeDeptKey(k)}
                                 </span>
-                                <span className="block font-mono text-[10px] text-zinc-400">{fmtTotals(sub)}</span>
+                                <span className="block font-mono text-[10px] text-zinc-400">{fmtTotals(sub.money)}</span>
                               </span>
                               {ready ? (
                                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" aria-hidden />
@@ -3816,7 +3869,7 @@ export default function DeptBonusCalculator({
                 Projected
               </span>
               <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                {fmtTotals(grandTotal)}
+                {fmtTotals(grandTotal.money)}
               </span>
               <span className="font-mono text-[10px] text-zinc-500">{totalPeople} ppl</span>
             </div>
@@ -3977,7 +4030,7 @@ export default function DeptBonusCalculator({
                 status={v.d?.status ?? 'draft'}
                 warn={closingSoon && !v.readOnly}
                 dirty={!!v.d?.dirty}
-                projected={v.total}
+                projected={v.total.money}
                 toFill={v.toFill}
                 hasAnyBonus={v.hasAnyBonus}
                 loading={!v.d?.loaded}
@@ -4930,6 +4983,87 @@ function PanelIconButton({ label, onClick, children, disabled }: { label: string
  *  FX-converted amounts that get paid; this chip explains why a "$50" bonus
  *  appears as a peso total. Renders nothing for PHP bonuses so the common case
  *  stays uncluttered. */
+/**
+ * A total, rendered the way a person paid in a foreign currency needs to read it:
+ * **what they actually get is the headline**, and the peso the books are kept in
+ * is a quiet second line.
+ *
+ * The equivalence line carries USD as well, because USD is the org's conversion
+ * anchor — for a mixed department whose legs are in different currencies it is
+ * the only single number that compares. So a Colombian's total reads:
+ *
+ *     $COP1.401.733            <- headline: the money that lands in their bank
+ *     ~ $446.43 · P28,000.00   <- the anchor, and the reconciliation figure
+ *
+ * A wholly peso department is unchanged apart from gaining the USD anchor: its
+ * headline IS pesos, so repeating pesos underneath would be noise and is
+ * suppressed (`showPhp`).
+ *
+ * The equivalence line appears ONLY when the FX rate is licensed. An unset or
+ * placeholder rate produces no second line at all rather than a plausible-looking
+ * fabrication — the same rule that governs the headline itself.
+ */
+/**
+ * The peso a foreign-settled figure was converted FROM — the quiet second line
+ * under a native amount, so the manager can still see the number the books use
+ * without it competing with the number the person is actually paid.
+ *
+ * Renders nothing for a peso-settled figure: there the headline already IS the
+ * peso, and repeating it would be noise.
+ */
+function PesoSubline({
+  fig,
+  className,
+}: {
+  fig: { cur: PayCurrency; php: number };
+  className?: string;
+}) {
+  if (fig.cur === 'PHP') return null;
+  return (
+    <span
+      className={cn(
+        'font-mono text-[9px] font-normal tabular-nums text-zinc-400 dark:text-zinc-500',
+        className,
+      )}
+      title="The peso figure this converts from — what the Payroll Wizard reconciles and pays."
+    >
+      &asymp;&nbsp;{fmtMoney(fig.php, 'PHP')}
+    </span>
+  );
+}
+
+function SettledTotalCell({
+  total,
+  rate,
+  headlineClassName,
+  align = 'end',
+}: {
+  total: SettledTotal;
+  rate: SettlementRate;
+  headlineClassName?: string;
+  align?: 'start' | 'end';
+}) {
+  const usd = usdFromPhp(total.php, rate);
+  // Only worth restating the peso when it is NOT already the headline.
+  const showPhp = PAY_CURRENCIES.some((c) => c !== 'PHP' && total.money[c] !== 0);
+  const parts: string[] = [];
+  if (usd != null) parts.push(fmtMoney(usd, 'USD'));
+  if (showPhp && total.php !== 0) parts.push(fmtMoney(total.php, 'PHP'));
+  return (
+    <div className={cn('flex flex-col', align === 'end' ? 'items-end' : 'items-start')}>
+      <span className={headlineClassName}>{fmtTotals(total.money)}</span>
+      {parts.length > 0 && (
+        <span
+          className="font-mono text-[9px] font-normal tabular-nums text-zinc-400 dark:text-zinc-500"
+          title="USD is the conversion anchor; the peso figure is what the Payroll Wizard reconciles and pays."
+        >
+          &asymp;&nbsp;{parts.join(' \u00b7 ')}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function BonusCurrencyTag({ bonus, fx }: { bonus: BonusDef; fx: FxRates }) {
   const currency = bonus.currency ?? 'PHP';
   if (currency === 'PHP') return null;
