@@ -224,7 +224,7 @@ on the spot. A 45s poll + a window-focus / visibility re-check back it up if
 Realtime is down. The endpoint **fails open** (never yanks on a transient lookup
 error), and a sign-out guard ref de-dupes the realtime/poll/focus burst.
 
-`middleware.ts` applies the same `iat`-vs-cutoff check on every request (map cached
+`proxy.ts` (formerly `middleware.ts`) applies the same `iat`-vs-cutoff check on every request (map cached
 ~30s), clearing the NextAuth cookies and redirecting to `/login` for any navigation
 that slips past the live watcher; the NextAuth `jwt` callback re-checks at token
 refresh.

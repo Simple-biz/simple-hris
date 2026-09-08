@@ -282,6 +282,40 @@ never appeared on that list at all. The **readiness score is unaffected**:
 - Optimistic updates with refetch-on-error; framer-motion for expand/collapse and
   card transitions.
 
+### 3.1.5 A failed read is SAID, never shown as an empty catalog *(2026-09-08)*
+
+`refetch` fills the tab from **six** endpoints. It used to `Promise.all` them,
+`?? []` every result and swallow the rest in a bare `catch`, so any failure
+painted a **confident, blank, wrong catalog** with no error and no way to tell
+"nobody has set a rate" from "the read died". Found live: a corrupt `.next/`
+made every App Router handler 404 (see
+[payment-catalog-pay-processors.md](./payment-catalog-pay-processors.md) §1 for
+the rule this generalises) and the tab simply showed nothing.
+
+Three properties now hold, and none may be relaxed:
+
+1. **`Promise.allSettled`, not `Promise.all`.** One dead endpoint used to reject
+   the batch and skip *every* `set*` call, so a single 404 froze all six lists at
+   once.
+2. **A read that did not demonstrably succeed leaves its state ALONE** — a
+   rejected fetch, a non-2xx, a non-JSON body (an HTML 404 or login page), or a
+   populated `error` field. This is the processors/banks rule extended to the
+   four readers that were still taking `?? []`: bonuses, assignments, pay
+   structures, system bonuses. An empty list must mean *empty*.
+3. **The department registry, its `revision` and its managers move together or
+   not at all.** The revision is the CAS token the Edit Department dialog hands
+   back to earn its 409; pairing it with a registry it does not describe — or
+   nulling it while keeping the rows — is how a stale save clobbers a teammate's
+   edit.
+
+Failures surface as a **rose banner naming each missing section** plus a
+**Retry** (read-only, so it carries `data-readonly-allow` and a view-only
+accountant can use it). Same posture the Wizard already took for its catalog
+fetch (`rate-catalog-source-of-truth`: "banner + Retry … was a silent `[]`").
+
+> **Known gap:** the header's emerald "Live · changes save automatically" chip is
+> unconditional, so it still reads "Live" beside the failure banner.
+
 ### 3.2 Off-boarded people are filtered out *(added 2026-08-21)*
 
 Every people-bearing surface in the tab -- Search results, the Individual pay

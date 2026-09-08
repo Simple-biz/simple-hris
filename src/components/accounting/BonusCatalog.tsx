@@ -641,6 +641,18 @@ type CatalogTab =
   | 'assignments'
   | 'system-bonuses';
 
+/** The six reads that fill the tab, in the order `refetch` consumes them. The
+ *  label is what the failure banner names, so it reads as the thing an
+ *  accountant is missing ("Pay structures"), not as a route. */
+const CATALOG_SOURCES = [
+  { label: 'Bonuses', url: '/api/bonus-catalog' },
+  { label: 'Pay structures', url: '/api/payment-catalog/pay-structures' },
+  { label: 'System bonuses', url: '/api/payment-catalog/system-bonuses' },
+  { label: 'Departments', url: '/api/payment-catalog/departments' },
+  { label: 'Pay processors', url: '/api/payment-catalog/pay-processors' },
+  { label: 'Current banks', url: '/api/payment-catalog/banks' },
+] as const;
+
 export default function BonusCatalog({ initialData }: { initialData?: InitialAccountingData | null }) {
   const [bonuses, setBonuses] = useState<BonusDef[]>([]);
   const [assignments, setAssignments] = useState<BonusAssignment[]>([]);
@@ -662,6 +674,11 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   const [payFocusDept, setPayFocusDept] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  /** Labels of the reads that did NOT land on the last refetch. Empty = clean.
+   *  A non-empty list is rendered as a banner with Retry, because the lists it
+   *  feeds deliberately keep their prior (or empty) contents — without this the
+   *  tab presents a confident, blank, wrong catalog. */
+  const [failedReads, setFailedReads] = useState<string[]>([]);
   const [tab, setTab] = useState<CatalogTab>('overview');
   const instanceId = useId();
 
@@ -750,42 +767,75 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   const refetch = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [catRes, payRes, sysRes, deptRes, procRes, bankRes] = await Promise.all([
-        fetch('/api/bonus-catalog', { cache: 'no-store' }),
-        fetch('/api/payment-catalog/pay-structures', { cache: 'no-store' }),
-        fetch('/api/payment-catalog/system-bonuses', { cache: 'no-store' }),
-        fetch('/api/payment-catalog/departments', { cache: 'no-store' }),
-        fetch('/api/payment-catalog/pay-processors', { cache: 'no-store' }),
-        fetch('/api/payment-catalog/banks', { cache: 'no-store' }),
-      ]);
-      const cat = (await catRes.json()) as {
-        bonuses?: BonusDef[];
-        assignments?: BonusAssignment[];
-        error?: string | null;
+      // `allSettled`, not `all`: one dead endpoint used to reject the whole
+      // batch, so a single 404 skipped every `set*` below and left the tab on
+      // whatever it had (empty, on first load) with nothing said. Each read now
+      // stands or falls on its own.
+      const settled = await Promise.allSettled(
+        CATALOG_SOURCES.map((s) => fetch(s.url, { cache: 'no-store' })),
+      );
+
+      const failed: string[] = [];
+      /** Parse one response, or record its label as failed and return null.
+       *  A rejected fetch, a non-2xx, a body that isn't JSON (an HTML 404 or
+       *  login page), or a populated `error` field all count as a failure — and
+       *  a failure means the caller LEAVES ITS STATE ALONE. */
+      const read = async <T,>(i: number): Promise<(T & { error?: string | null }) | null> => {
+        const r = settled[i];
+        if (r.status !== 'fulfilled' || !r.value.ok) {
+          failed.push(CATALOG_SOURCES[i].label);
+          return null;
+        }
+        try {
+          const json = (await r.value.json()) as T & { error?: string | null };
+          if (json?.error) {
+            failed.push(CATALOG_SOURCES[i].label);
+            return null;
+          }
+          return json;
+        } catch {
+          failed.push(CATALOG_SOURCES[i].label);
+          return null;
+        }
       };
-      const pay = (await payRes.json()) as { structures?: PayStructure[]; error?: string | null };
-      const sys = (await sysRes.json()) as { bonuses?: SystemBonus[]; error?: string | null };
-      const dept = (await deptRes.json()) as {
+
+      const cat = await read<{ bonuses?: BonusDef[]; assignments?: BonusAssignment[] }>(0);
+      const pay = await read<{ structures?: PayStructure[] }>(1);
+      const sys = await read<{ bonuses?: SystemBonus[] }>(2);
+      const dept = await read<{
         registry?: DepartmentRegistryEntry[];
         revision?: string | null;
         managers?: Record<string, string[]>;
-        error?: string | null;
-      };
-      const proc = (await procRes.json()) as { processors?: PayProcessor[]; error?: string | null };
-      setBonuses(cat.bonuses ?? []);
-      setAssignments(cat.assignments ?? []);
-      setPayStructures(pay.structures ?? []);
-      setSystemBonuses(sys.bonuses ?? []);
-      setDeptRegistry(dept.registry ?? []);
-      setDeptRegistryRevision(dept.revision ?? null);
-      setDeptManagers(dept.managers ?? {});
-      // A failed processors read keeps the PRIOR list rather than blanking it —
-      // an empty tab reads as "every processor is gone", not as an error.
-      if (Array.isArray(proc.processors) && !proc.error) setPayProcessors(proc.processors);
-      const bank = (await bankRes.json()) as { banks?: BankGroup[]; error?: string | null };
-      if (Array.isArray(bank.banks) && !bank.error) setBanks(bank.banks);
+      }>(3);
+      const proc = await read<{ processors?: PayProcessor[] }>(4);
+      const bank = await read<{ banks?: BankGroup[] }>(5);
+
+      // Every commit below is guarded the way the processors read always was: a
+      // failed read keeps the PRIOR list rather than blanking it — an empty tab
+      // reads as "everything is gone", not as an error
+      // (payment-catalog-pay-processors.md §1). Before this, only processors and
+      // banks were guarded; the other four took `?? []` and wiped themselves.
+      if (Array.isArray(cat?.bonuses)) setBonuses(cat.bonuses);
+      if (Array.isArray(cat?.assignments)) setAssignments(cat.assignments);
+      if (Array.isArray(pay?.structures)) setPayStructures(pay.structures);
+      if (Array.isArray(sys?.bonuses)) setSystemBonuses(sys.bonuses);
+      // Registry + revision + managers move TOGETHER or not at all. The revision
+      // is the CAS token the Edit Department dialog hands back to earn its 409,
+      // so pairing it with a registry it does not describe (or nulling it while
+      // keeping the rows) is how a stale save clobbers a teammate's edit.
+      if (dept && Array.isArray(dept.registry)) {
+        setDeptRegistry(dept.registry);
+        setDeptRegistryRevision(dept.revision ?? null);
+        setDeptManagers(dept.managers ?? {});
+      }
+      if (Array.isArray(proc?.processors)) setPayProcessors(proc.processors);
+      if (Array.isArray(bank?.banks)) setBanks(bank.banks);
+
+      setFailedReads(failed);
     } catch {
-      /* keep prior state */
+      // Unreachable in practice — every read is individually guarded above — but
+      // a throw here must still SAY so rather than present a clean empty tab.
+      setFailedReads(CATALOG_SOURCES.map((s) => s.label));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -1113,6 +1163,41 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
           ))}
         </div>
       </div>
+
+      {/* A read that did not land is SAID, never presented as an empty catalog.
+          Navigation stays live (data-readonly-allow) so a view-only accountant
+          can retry — Retry only re-reads, it writes nothing. */}
+      {failedReads.length > 0 && (
+        <div
+          role="alert"
+          data-readonly-allow
+          className="shrink-0 border-b border-rose-200 bg-rose-50 px-4 py-2.5 sm:px-6 dark:border-rose-900/60 dark:bg-rose-950/40"
+        >
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-rose-800 dark:text-rose-200">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span>
+              <strong className="font-semibold">
+                {failedReads.length === CATALOG_SOURCES.length
+                  ? 'The catalog could not be loaded.'
+                  : "Some of this catalog didn't load."}
+              </strong>{' '}
+              {failedReads.join(' · ')} —{' '}
+              {failedReads.length === CATALOG_SOURCES.length
+                ? 'nothing below is live.'
+                : 'those sections are showing stale or empty data, not zero.'}
+            </span>
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              disabled={refreshing}
+              data-readonly-allow
+              className="rounded-md border border-rose-300 bg-white px-2.5 py-1 font-medium text-rose-800 transition-colors hover:bg-rose-100 disabled:opacity-50 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-100 dark:hover:bg-rose-900"
+            >
+              {refreshing ? 'Retrying…' : 'Retry'}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <AnimatePresence mode="wait" initial={false}>
