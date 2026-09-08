@@ -208,8 +208,17 @@ $COP1.401.733        <- headline
 ```
 
 `SettledTotalCell` renders that pairing everywhere a total appears — member row total, each
-column subtotal, the individual-bonus subtotal, the department subtotal and the grand
-total. `PesoSubline` does it for the individual cells.
+column subtotal, the individual-bonus subtotal, the department subtotal and the table's
+grand total. `PesoSubline` does it for the individual cells.
+
+**Native figures stay INSIDE the calculator** (Kane, 2026-09-08: *"Remove the COP Value
+outside the calculator"*). The landing department cards, the header "Projected" chip and the
+department rail are one-glance comparisons ACROSS departments, so they show a single peso
+figure — the `php` pivot, which is also what the books and the Wizard use. The structural
+guarantee is that `fmtTotals` is the only renderer that can emit a non-peso currency and it
+has exactly **one** call site (inside `SettledTotalCell`); the landing card's `projected`
+prop is a `number`, so it cannot even be handed a currency bag. A second `fmtTotals` call
+site is how COP would leak back into the chrome, and a test counts them.
 
 **Neither extra line ever appears for a peso-settled person.** `PesoSubline` returns null
 when the figure is already pesos (restating it is noise), and the peso leg of a total is

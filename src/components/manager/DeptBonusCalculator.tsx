@@ -3701,7 +3701,7 @@ export default function DeptBonusCalculator({
                                 <span className="block truncate text-[12.5px] font-medium text-zinc-800 dark:text-zinc-100">
                                   {DEPARTMENTS.find((d) => d.key === k)?.name ?? humanizeDeptKey(k)}
                                 </span>
-                                <span className="block font-mono text-[10px] text-zinc-400">{fmtTotals(sub.money)}</span>
+                                <span className="block font-mono text-[10px] text-zinc-400">{fmtMoney(sub.php, 'PHP')}</span>
                               </span>
                               {ready ? (
                                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" aria-hidden />
@@ -3890,8 +3890,10 @@ export default function DeptBonusCalculator({
               <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
                 Projected
               </span>
+              {/* PESO only — see the `projected` prop note: native settlement
+                  figures live inside the calculator, not in the chrome. */}
               <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                {fmtTotals(grandTotal.money)}
+                {fmtMoney(grandTotal.php, 'PHP')}
               </span>
               <span className="font-mono text-[10px] text-zinc-500">{totalPeople} ppl</span>
             </div>
@@ -4052,7 +4054,7 @@ export default function DeptBonusCalculator({
                 status={v.d?.status ?? 'draft'}
                 warn={closingSoon && !v.readOnly}
                 dirty={!!v.d?.dirty}
-                projected={v.total.money}
+                projected={v.total.php}
                 toFill={v.toFill}
                 hasAnyBonus={v.hasAnyBonus}
                 loading={!v.d?.loaded}
@@ -4237,7 +4239,15 @@ function DeptSummaryRow({
   status: BonusStatus;
   warn: boolean;
   dirty: boolean;
-  projected: Money;
+  /** The department's projected spend as a PESO figure.
+   *
+   *  Deliberately the PHP pivot, not the split-by-currency bag: native
+   *  settlement figures belong INSIDE the calculator, next to the person being
+   *  paid. Out here a card is a one-glance comparison across departments, so it
+   *  needs one number in one currency — and pesos are what the books and the
+   *  Payroll Wizard use. Kane, 2026-09-08: "Remove the COP Value outside the
+   *  calculator." */
+  projected: number;
   toFill: number;
   hasAnyBonus: boolean;
   loading: boolean;
@@ -4331,7 +4341,7 @@ function DeptSummaryRow({
           className="text-right font-mono text-sm font-bold tabular-nums sm:w-28"
           style={{ color }}
         >
-          {loading ? <Skeleton className="ml-auto h-4 w-20" /> : fmtTotals(projected)}
+          {loading ? <Skeleton className="ml-auto h-4 w-20" /> : fmtMoney(projected, 'PHP')}
         </span>
 
         <ChevronRight

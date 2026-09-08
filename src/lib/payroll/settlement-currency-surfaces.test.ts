@@ -141,6 +141,32 @@ test('a settled total keeps BOTH the native bag and the PHP pivot', () => {
   );
 });
 
+test('native settlement figures stay INSIDE the calculator, never in the chrome', () => {
+  // Kane, 2026-09-08: "Remove the COP Value outside the calculator." A native
+  // figure belongs next to the person being paid. The landing cards, the header
+  // "Projected" chip and the department rail are one-glance comparisons ACROSS
+  // departments, so they need one number in one currency — the peso pivot, which
+  // is also what the books and the Payroll Wizard use.
+  //
+  // The structural guarantee: `fmtTotals` is the only renderer that can emit a
+  // non-peso currency, and it has exactly ONE call site — inside
+  // SettledTotalCell, which is only mounted within the calculator table and its
+  // own footer. Anything else formats an explicit PHP figure. A second
+  // fmtTotals call site is how COP would leak back out into the chrome.
+  const src = read(KPI);
+  const calls = [...src.matchAll(/fmtTotals\(/g)].length;
+  assert.equal(
+    calls,
+    2,
+    'expected exactly two occurrences of fmtTotals: its own definition and the single SettledTotalCell call site',
+  );
+  const cell = functionBody(src, 'SettledTotalCell');
+  assert.ok(cell.includes('fmtTotals(total.money)'), 'SettledTotalCell is that call site');
+  // And the card takes a peso scalar, so it cannot be handed a currency bag.
+  assert.match(src, /projected: number;/, 'the landing card takes a peso scalar');
+  assert.match(src, /projected=\{v\.total\.php\}/, 'and is given the peso pivot');
+});
+
 test('both settlement surfaces resolve FX provenance from the shared route, not app-settings', () => {
   // /api/app-settings hands back a raw value that the effectiveUsdTo*RateFromStored
   // helpers would silently turn into the official placeholder. The settlement
