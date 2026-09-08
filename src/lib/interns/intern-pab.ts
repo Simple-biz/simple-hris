@@ -12,8 +12,8 @@
  *
  * "Same PAB period" is enforced by the caller: `period` comes from the SAME
  * `pab-period-settings.ts` readers Simple uses (overrides included), and the
- * payout week is decided by the SAME `isFinalPabWeek` containment rule
- * (pab-payout-week-gate-and-pill). This module only judges the weeks it is
+ * payout week is decided by the SAME `pabPayoutForWeek` rule — the week AFTER
+ * the one containing the period end (pab-payout-week-gate-and-pill). This module only judges the weeks it is
  * handed. It never invents one: a Saturday inside the period with no locked
  * week is `weeks_missing`, which pays ₱0 and says why.
  *

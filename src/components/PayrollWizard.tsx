@@ -272,7 +272,6 @@ import {
   type RateConsistencyIssue,
 } from '@/lib/payroll/paystub-rate-consistency';
 import {
-  isFinalPabWeek as gateIsFinalPabWeek,
   listTechBonusWeekOptions,
   parseTechBonusWeekOverrides,
   resolveIsTechBonusWeek,

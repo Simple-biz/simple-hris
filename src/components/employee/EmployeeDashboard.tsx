@@ -54,7 +54,6 @@ import {
 import { downloadPaySnapshotPdf, type PaySnapshotPdfRow } from '@/lib/payroll/pay-snapshot-pdf';
 import {
   getHslAdjustedEnd,
-  isFinalPabWeek as gateIsFinalPabWeek,
   listTechBonusWeekOptions,
   owningMondayOf,
   parseTechBonusWeekOverrides,
@@ -100,6 +99,7 @@ import {
   resolvePabMonthFromColumns,
   resolvePabRangeForMonth,
 } from '@/lib/pab-period-settings';
+import { pabPayoutForWeek } from '@/lib/payroll/pab-payout-week';
 import {
   disputeGrantsPabForgiveness,
   isOrphanageStyleReason,
@@ -1902,6 +1902,22 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   }, [selectedFile, columns]);
 
   /** PAB month containing this file's Monday — used to gate weekly bonuses. */
+  /**
+   * THE PAB PAYOUT RULE (Kane, 2026-09-08): the bonus pays on the week AFTER the
+   * one that closes the period, so this also tells us WHICH month the selected
+   * week pays — from September on that is the previous month (the Oct 4-10
+   * paycheck carries SEPTEMBER's PAB), never the week's own.
+   */
+  const weekPabPayout = useMemo(() => {
+    if (!selectedFileWeek) return null;
+    return pabPayoutForWeek(
+      selectedFileWeek.start,
+      selectedFileWeek.end,
+      pabPeriodSettings.overrides,
+      pabPeriodSettings.validManualRange?.end ?? null,
+    );
+  }, [selectedFileWeek, pabPeriodSettings.overrides, pabPeriodSettings.validManualRange]);
+
   const weekPabRange = useMemo(() => {
     if (pabPeriodSettings.validManualRange) {
       const { start, end } = pabPeriodSettings.validManualRange;
@@ -1922,20 +1938,22 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       dow === 0
         ? new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() + 1)
         : new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() - (dow - 1));
-    const range = resolvePabRangeForMonth(mon.getFullYear(), mon.getMonth(), pabPeriodSettings.overrides);
-    return { pabMonth: { year: mon.getFullYear(), month: mon.getMonth() }, start: range.start, end: range.end };
-  }, [selectedFileWeek, pabPeriodSettings.validManualRange, pabPeriodSettings.overrides]);
+    // On a PAYOUT week the month shown is the one being PAID (the closing week's);
+    // off it, the week's own accrual month.
+    const pabMonth = weekPabPayout?.pays
+      ? { year: weekPabPayout.year, month: weekPabPayout.month }
+      : { year: mon.getFullYear(), month: mon.getMonth() };
+    const range = resolvePabRangeForMonth(pabMonth.year, pabMonth.month, pabPeriodSettings.overrides);
+    return { pabMonth, start: range.start, end: range.end };
+  }, [selectedFileWeek, pabPeriodSettings.validManualRange, pabPeriodSettings.overrides, weekPabPayout]);
 
   /**
    * When viewing a specific weekly file, PAB attaches only to the ONE week that
-   * CONTAINS the PAB period end (shared gate — same rule as the Payroll Wizard,
-   * which is the source of truth). The old `weekEnd >= periodEnd` check kept
-   * PAB on every week after the payout week.
+   * PAYS it — the week AFTER the one closing the period (shared gate, same rule
+   * as the Payroll Wizard, which is the source of truth). Showing it on the
+   * closing week told people they were paid a week before the money moved.
    */
-  const isFinalPabWeekForSelected = useMemo(() => {
-    if (!selectedFileWeek || !weekPabRange) return false;
-    return gateIsFinalPabWeek(selectedFileWeek.start, selectedFileWeek.end, weekPabRange.end);
-  }, [selectedFileWeek, weekPabRange]);
+  const isFinalPabWeekForSelected = weekPabPayout?.pays ?? false;
 
   /**
    * Total PAB bonus in PHP. Rules:

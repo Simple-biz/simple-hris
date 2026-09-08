@@ -3,7 +3,8 @@ import 'server-only';
 import { getAppSettings } from '@/lib/supabase/app-settings';
 import { PAB_PERIOD_OVERRIDES_KEY, parsePabPeriodOverrides, yearMonthKey } from '@/lib/pab-period-settings';
 import { getPabMonthRange } from '@/lib/hubstaff/calendar-column-dedupe';
-import { isFinalPabWeek, pabMonthFromWeekStart } from '@/lib/payroll/dispatch-bonuses';
+import { pabMonthFromWeekStart } from '@/lib/payroll/dispatch-bonuses';
+import { pabPayoutForWeek } from '@/lib/payroll/pab-payout-week';
 import { fetchInternHoursBySourceFile, getInternHoursUpload } from '@/lib/supabase/orphanage-intern-hours-db';
 import { listInternRates, listInternsByEmail } from '@/lib/supabase/orphanage-interns-db';
 import { listInternPayBetween, listInternPayBySourceFile, type InternPayUpsertInput } from '@/lib/supabase/orphanage-intern-pay-db';
@@ -22,11 +23,11 @@ import type { OrphanageInternHoursUploadRow, OrphanageInternPayRow, OrphanageInt
  * (`priceInternWeek`, `internPabVerdict`, `splitInternGross`).
  *
  * PAB period and payout week are resolved EXACTLY as `current-pay.ts` resolves
- * them for Simple: the week's owning month is `pabMonthFromWeekStart(Monday)`,
- * the window is the month's override in `pab_period_overrides` else
- * `getPabMonthRange`, and the payout week is the one that CONTAINS the period
- * end (`isFinalPabWeek`). "Same pay cycle as Simple" (Ralph) means the same
- * readers, not a second calendar.
+ * them for Simple: the window is the month's override in `pab_period_overrides`
+ * else `getPabMonthRange`, and the payout week is the one AFTER the week that
+ * CONTAINS the period end (`pabPayoutForWeek` — Kane 2026-09-08; it is never the
+ * closing week). "Same pay cycle as Simple" (Ralph) means the same readers, not
+ * a second calendar.
  */
 
 export interface InternWeekPricedRow {
@@ -84,15 +85,22 @@ export async function resolveInternPabWindow(weekStart: string, weekEnd: string)
 }> {
   const settings = await getAppSettings([PAB_PERIOD_OVERRIDES_KEY]);
   const overrides = parsePabPeriodOverrides(settings[PAB_PERIOD_OVERRIDES_KEY]);
-  // The owning month is MONDAY-based for every week model (current-pay.ts).
+  // THE PAB PAYOUT RULE (Kane, 2026-09-08), read from the same shared module
+  // current-pay.ts reads: the bonus pays the week AFTER the one that closes the
+  // period, and the month PAID is the closing week's — from September on that is
+  // the previous month. Off the payout week nothing pays, so the week names its
+  // own accrual month (MONDAY-based for every week model).
+  const payout = pabPayoutForWeek(parseLocal(weekStart), parseLocal(weekEnd), overrides, null);
   const monday = parseLocal(weekStart);
   monday.setDate(monday.getDate() + 1);
-  const { year, month } = pabMonthFromWeekStart(monday);
+  const { year, month } = payout.pays
+    ? { year: payout.year, month: payout.month }
+    : pabMonthFromWeekStart(monday);
   const key = yearMonthKey(year, month);
   const ov = overrides.get(key);
   const range = ov ? { start: ov.start, end: ov.end } : getPabMonthRange(year, month);
   return {
-    payoutWeek: isFinalPabWeek(parseLocal(weekStart), parseLocal(weekEnd), range.end),
+    payoutWeek: payout.pays,
     month: key,
     periodStart: isoLocal(range.start),
     periodEnd: isoLocal(range.end),

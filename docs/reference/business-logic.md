@@ -133,17 +133,39 @@ the next cycle starts.
 
 ### PAB payout week (which payroll week the ₱5,000 attaches to)
 
-The ₱5,000 attaches to exactly **one** Sun–Sat payroll week: the week that
-**contains** the PAB period end date. The shared gate is
-`isFinalPabWeek(weekStart, weekEnd, pabPeriodEnd)` in
-`src/lib/payroll/dispatch-bonuses.ts`, used by all five consumers:
+**The payout week is always AFTER the PAB period, never combined with it**
+(Kane, 2026-09-08). The ₱5,000 attaches to exactly **one** Sun–Sat payroll
+week: the week FOLLOWING the one that contains the PAB period end. The Aug 2 –
+Aug 29 period closes on the Aug 23–29 file and pays on the Aug 30 – Sep 5 file.
+
+The shared gate is `pabPayoutForWeek(weekStart, weekEnd, overrides, manualEnd)`
+in `src/lib/payroll/pab-payout-week.ts`, used by all seven consumers:
 `PayrollWizard.tsx`, `src/lib/payroll/current-pay.ts`,
-`EmployeeDashboard.tsx`, `src/lib/payroll/member-monthly-pay.ts`, and the
-inline mirror in `src/lib/payroll/hsl-week-snapshot.ts`.
+`EmployeeDashboard.tsx`, `src/lib/payroll/member-monthly-pay.ts`,
+`src/lib/payroll/hsl-week-snapshot.ts`, `src/lib/anthropic/employee-tools.ts`
+(Penny) and `src/lib/interns/intern-week-server.ts`. `isFinalPabWeek` in
+`dispatch-bonuses.ts` is now only the containment PRIMITIVE it wraps — calling
+it directly to gate money pays the bonus a week early.
+
+**It also carries the month being PAID, and that is not the payout week's own
+month.** The payout week normally opens in the following month, so the paid
+month must be read off the CLOSING week (`pabMonthPaidByWeek`):
+
+| period | closes on | pays on | pays for |
+|---|---|---|---|
+| Jul 6 – Jul 31 | Jul 26 – Aug 1 | Aug 2 – Aug 8 | **July** |
+| Aug 2 – Aug 29 | Aug 23 – Aug 29 | Aug 30 – Sep 5 | **August** |
+| Sep 7 – Oct 2 | Sep 27 – Oct 3 | Oct 4 – Oct 10 | **September** |
+
+August is the one coincidence — its custom window ends on a Saturday, so the
+following week still opens on an August Monday. Read the month off the payout
+week itself and every other month prices an unfinished period.
 
 History (2026-07-17, session `fc74c4d4`): the original condition was a lower
 bound only (`weekEnd >= periodEnd`), which re-attached PAB to **every** week
-after the payout week. Two related fixes rode along:
+after the payout week. It was replaced by containment on the period-end week,
+which stood until the 2026-09-08 rule above moved the paycheck one week on.
+Two related fixes rode along:
 
 - **Replay**: an empty locked PAB snapshot (`{}`) used to suppress live
   computation, so replaying the payout week showed ₱0/"In Progress" for
