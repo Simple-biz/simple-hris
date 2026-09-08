@@ -71,3 +71,22 @@ The bonus calculation logic for each person in the **'Julie'** sheet is structur
       * **Attendance (5000):** Fixed.
       * **Tech Allowance (1850):** Fixed.
   * **Total Bonus Formula (Row 115):** `=SUM(D111:D114)`
+-----
+
+### **2026-08-30 sheet — banded weekly tiers (approved by Rob effective Aug 24, 2026 and Austin effective Aug 31, 2026)**
+
+Ruling (Carla T, 2026-09-08): starts with the **8/30–9/5 payroll week**; the 8/23–8/29 week stays as paid under the sheet above. Star's and Ems's lines are now **earned weekly**. Ems's "Pending for Approval" row proceeds. Gyd, Eula, Andre, Vee and Jazz Redulla are **unchanged** and keep the sheet above. Each line is ONE metric for the week that lands in exactly one band; only that band pays (the scorer picks the band reached). Attendance (₱5,000) and Tech Allowance (₱1,850) are still listed on the sheet and are still paid by the PAB + Technology engine, never here.
+
+| Name | Role | Email | Metric | Bands |
+| --- | --- | --- | --- | --- |
+| Yungco, Marielace "Mariel" Buena Fe | Intake Manager | mariely@simple.biz | sign-ups | 1,500+ → ₱10,000 · 1,400–1,499 → ₱8,000 · 1,300–1,399 → ₱6,500 · 1,200–1,299 → ₱5,000 · 1,199 and below → ₱0 |
+| Abad, Danilo Jr "Dan" | Intake Team Leader | dana@simple.biz | sign-ups | same as Mariel |
+| Credo, Julie Ann "Julie" | Intake Team Leader | juliec@simple.biz | sign-ups | same as Mariel |
+| Hernandez, John Michael | Intake Team Leader | jayh@simple.biz | sign-ups | same as Mariel |
+| Santos, Sherwin *(new to the cohort)* | Lead Nurture Team Leader | sherwins@simple.biz | sign-ups | 500+ → ₱10,000 · 400–499 → ₱7,500 · 300–399 → ₱5,000 · 299 and below → ₱0 |
+| Abella, Esterlita I. "Star" | Post-Hearing Manager | stara@simple.biz | % completion | 100%+ → ₱5,000 · 90–99.99% → ₱3,500 · 85–89.99% → ₱2,500 · below 85% → ₱0 |
+| Rosales, Anna Rowella "AR" *(new to the cohort)* | Executive Guest Services Team Leader | arr@simple.biz | failovers | 0 → ₱10,000 · 1 → ₱5,000 · 2+ → ₱0 |
+| Roa, Sajda "Jazmine" *(new to the cohort)* | Mail-Sorting Team Leader | jazminer@simple.biz | weekly batches | 40–50+ → ₱2,000 · 30–39 → ₱1,500 · 29 or fewer → ₱0 |
+| Solon, Emily "Ems" | Pre-Hearing Manager | emss@simple.biz | % cases prepared | 98–100% → ₱5,000 · 95–97.99% → ₱3,500 · 87–94.99% → ₱2,500 · below 87% → ₱0 |
+
+The sheet also notes "Updated Base pay ₱355" for AR — a rate-catalog change, already applied there per Carla, not a KPI-calculator line.

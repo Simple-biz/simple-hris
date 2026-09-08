@@ -493,127 +493,352 @@ export function formatPeso(amount: number, currency: 'PHP' | 'USD' = 'PHP'): str
 
 // ── Managers Weekly — bespoke per-manager incentives ──────────────────────────
 // The "Managers Weekly" dept (key: hsl_managers) is the one dept whose scoring
-// differs per person: each manager has their own hardcoded checklist of incentive
-// components, each a fixed PHP amount earned when ticked. Amounts are sourced from
-// docs/reference/managers-logic.md (the "Julie" sheet).
+// differs per person: each manager has their own hardcoded set of incentive
+// components. Two component kinds:
+//   - 'check'  — a fixed PHP amount earned when ticked. Cumulative tiers are
+//                independent checkboxes that SUM (Andre "< 2 Days" ⇒ <3 + <2.5
+//                + <2 ⇒ ₱7,500), matching the "Julie" sheet's =SUM(...) totals.
+//   - 'banded' — ONE metric for the week (a count or a percentage) that lands in
+//                exactly one band; only the landed band pays. The 2026-08-30
+//                sheet (approved by Rob effective Aug 24 and Austin effective
+//                Aug 31; Carla 2026-09-08: starts with the 8/30–9/5 week, earned
+//                weekly, the scorer picks the band that applies).
+// Amounts are sourced from docs/reference/managers-logic.md.
 //
 // Deliberately NOT modeled here: the per-manager "Attendance" (₱5,000) and
-// "Tech Allowance" (₱1,850) lines from that sheet — those are already paid by the
-// Perfect-Attendance (PAB) + Technology bonus engine, so including them here would
-// double-pay. Cumulative tiers are expressed as independent checkboxes: hitting a
-// higher tier means the scorer ticks every lower tier too (they SUM), matching the
-// sheet's =SUM(...) totals (e.g. Andre "< 2 Days" ⇒ <3 + <2.5 + <2 ⇒ ₱7,500).
+// "Tech Allowance" (₱1,850) lines from both sheets — those are already paid by
+// the Perfect-Attendance (PAB) + Technology bonus engine, so including them here
+// would double-pay.
+//
+// SPECS ARE DATED. The wizard recomputes this dept from the saved tick marks with
+// the spec in code (it does NOT pay the frozen calculated_bonus like every other
+// HSL dept), so overwriting a manager's components would silently re-price every
+// week already paid under the old ones. A manager may therefore appear more than
+// once in HSL_MANAGERS: the version with the latest `effectiveFrom` ≤ the week's
+// period_start wins (`managerSpecFor`). A version with no `effectiveFrom` applies
+// from the dept's creation. Never edit an existing version's components — add a
+// dated one.
+//
 // Monthly components (cadence: 'monthly') are ticked only in the final payroll
 // week of the month.
 
-export interface ManagerComponent {
+export interface ManagerBand {
+  /** Inclusive lower bound of the week's achieved value. Absent = open below. */
+  from?: number;
+  /** Inclusive upper bound of the week's achieved value. Absent = open above. */
+  to?: number;
+  label: string;
+  amount: number;                  // PHP paid when the week's value lands here
+}
+
+export interface ManagerCheckComponent {
+  kind: 'check';
   key: string;
   label: string;
   amount: number;                  // PHP earned when this component is ticked
   cadence?: 'weekly' | 'monthly';  // 'monthly' → earned in the last week of the month
 }
 
+export interface ManagerBandedComponent {
+  kind: 'banded';
+  key: string;
+  label: string;
+  /** What the stored number counts — shown beside the band picker. */
+  unit: string;
+  bands: ManagerBand[];
+  cadence?: 'weekly';
+}
+
+export type ManagerComponent = ManagerCheckComponent | ManagerBandedComponent;
+
 export interface HslManagerSpec {
   email: string;
   name: string;
+  /** ISO Sunday of the first payroll week this version applies to (inclusive).
+   *  Absent = applies since the dept was created (2026-07-17). */
+  effectiveFrom?: string;
   components: ManagerComponent[];
 }
 
+/** First payroll week scored on the 2026-08-30 manager sheet (Carla, 2026-09-08). */
+export const HSL_MANAGER_SHEET_2026_08_30 = '2026-08-30';
+
+// Intake Manager + the three Intake Team Leaders share one ladder.
+const INTAKE_SIGNUP_BANDS: ManagerBand[] = [
+  { from: 1500,           label: '1,500+ sign-ups',       amount: 10000 },
+  { from: 1400, to: 1499, label: '1,400–1,499 sign-ups',  amount: 8000 },
+  { from: 1300, to: 1399, label: '1,300–1,399 sign-ups',  amount: 6500 },
+  { from: 1200, to: 1299, label: '1,200–1,299 sign-ups',  amount: 5000 },
+  {             to: 1199, label: '1,199 and below',       amount: 0 },
+];
+
 export const HSL_MANAGERS: HslManagerSpec[] = [
+  // ── Since 2026-07-17 (the "Julie" sheet) ────────────────────────────────────
   {
     email: 'gyd@simple.biz',
     name: 'Tura, Gyd',
     components: [
-      { key: 'monthly_bonus', label: 'Monthly Bonus (last week of the month)', amount: 25000, cadence: 'monthly' },
+      { kind: 'check', key: 'monthly_bonus', label: 'Monthly Bonus (last week of the month)', amount: 25000, cadence: 'monthly' },
     ],
   },
   {
     email: 'eulap@simple.biz',
     name: 'Pacheco, Eula Jane J.',
     components: [
-      { key: 'csm_9000',    label: '> 9,000 Outbound Case Status Messages',  amount: 2500 },
-      { key: 'csm_12500',   label: '> 12,500 Outbound Case Status Messages', amount: 1250 },
-      { key: 'rfc_dme_75',  label: '75 or More RFCs and DME',                amount: 2500 },
-      { key: 'rfc_dme_100', label: '100 or More RFCs and DME',              amount: 1250 },
+      { kind: 'check', key: 'csm_9000',    label: '> 9,000 Outbound Case Status Messages',  amount: 2500 },
+      { kind: 'check', key: 'csm_12500',   label: '> 12,500 Outbound Case Status Messages', amount: 1250 },
+      { kind: 'check', key: 'rfc_dme_75',  label: '75 or More RFCs and DME',                amount: 2500 },
+      { kind: 'check', key: 'rfc_dme_100', label: '100 or More RFCs and DME',              amount: 1250 },
     ],
   },
   {
     email: 'andret@simple.biz',
     name: 'Tolentino, Romel T. "Andre"',
     components: [
-      { key: 'awaiting_3',   label: 'New Clients Awaiting Filing < 3 Days',   amount: 5000 },
-      { key: 'awaiting_2_5', label: 'New Clients Awaiting Filing < 2.5 Days', amount: 1250 },
-      { key: 'awaiting_2',   label: 'New Clients Awaiting Filing < 2 Days',   amount: 1250 },
+      { kind: 'check', key: 'awaiting_3',   label: 'New Clients Awaiting Filing < 3 Days',   amount: 5000 },
+      { kind: 'check', key: 'awaiting_2_5', label: 'New Clients Awaiting Filing < 2.5 Days', amount: 1250 },
+      { kind: 'check', key: 'awaiting_2',   label: 'New Clients Awaiting Filing < 2 Days',   amount: 1250 },
     ],
   },
   {
     email: 'veec@simple.biz',
     name: 'Mortos, Veronela Clarissa "Vee"',
     components: [
-      { key: 'incomplete_5',  label: 'Hearing with Incomplete Medical Records < 5%',  amount: 2500 },
-      { key: 'incomplete_10', label: 'Hearing with Incomplete Medical Records < 10%', amount: 2500 },
+      { kind: 'check', key: 'incomplete_5',  label: 'Hearing with Incomplete Medical Records < 5%',  amount: 2500 },
+      { kind: 'check', key: 'incomplete_10', label: 'Hearing with Incomplete Medical Records < 10%', amount: 2500 },
     ],
   },
   {
     email: 'emss@simple.biz',
     name: 'Solon, Emily "Ems"',
     components: [
-      { key: 'monthly_perf', label: 'Monthly Performance Bonus', amount: 2500, cadence: 'monthly' },
+      { kind: 'check', key: 'monthly_perf', label: 'Monthly Performance Bonus', amount: 2500, cadence: 'monthly' },
     ],
   },
   {
     email: 'stara@simple.biz',
     name: 'Abella, Esterlita I. "Star"',
     components: [
-      { key: 'monthly_perf', label: 'Monthly Performance Bonus', amount: 2500, cadence: 'monthly' },
+      { kind: 'check', key: 'monthly_perf', label: 'Monthly Performance Bonus', amount: 2500, cadence: 'monthly' },
     ],
   },
   {
     email: 'jazzr@simple.biz',
     name: 'Redulla, Jazz',
     components: [
-      { key: 'monthly_perf', label: 'Monthly Performance Bonus', amount: 2500, cadence: 'monthly' },
+      { kind: 'check', key: 'monthly_perf', label: 'Monthly Performance Bonus', amount: 2500, cadence: 'monthly' },
     ],
   },
   {
     email: 'mariely@simple.biz',
     name: 'Yungco, Marielace "Mariel" Buena Fe',
     components: [
-      { key: 'closes_30',       label: 'Closes over 30% of overall leads',   amount: 2500 },
-      { key: 'form_response_1', label: 'Average Form Response < 1.0 Minutes', amount: 2500 },
+      { kind: 'check', key: 'closes_30',       label: 'Closes over 30% of overall leads',   amount: 2500 },
+      { kind: 'check', key: 'form_response_1', label: 'Average Form Response < 1.0 Minutes', amount: 2500 },
     ],
   },
   {
     email: 'dana@simple.biz',
     name: 'Abad, Danilo Jr "Dan"',
     components: [
-      { key: 'closes_30',       label: 'Closes over 30% of overall leads',   amount: 2500 },
-      { key: 'form_response_1', label: 'Average Form Response < 1.0 Minutes', amount: 2500 },
+      { kind: 'check', key: 'closes_30',       label: 'Closes over 30% of overall leads',   amount: 2500 },
+      { kind: 'check', key: 'form_response_1', label: 'Average Form Response < 1.0 Minutes', amount: 2500 },
     ],
   },
   {
     email: 'juliec@simple.biz',
     name: 'Julie Credo',
     components: [
-      { key: 'closes_30',       label: 'Closes over 30% of overall leads',   amount: 1250 },
-      { key: 'form_response_1', label: 'Average Form Response < 1.0 Minutes', amount: 1250 },
+      { kind: 'check', key: 'closes_30',       label: 'Closes over 30% of overall leads',   amount: 1250 },
+      { kind: 'check', key: 'form_response_1', label: 'Average Form Response < 1.0 Minutes', amount: 1250 },
     ],
   },
   {
     email: 'jayh@simple.biz',
     name: 'John Michael Hernandez',
     components: [
-      { key: 'closes_30',       label: 'Closes over 30% of overall leads',   amount: 1250 },
-      { key: 'form_response_1', label: 'Average Form Response < 1.0 Minutes', amount: 1250 },
+      { kind: 'check', key: 'closes_30',       label: 'Closes over 30% of overall leads',   amount: 1250 },
+      { kind: 'check', key: 'form_response_1', label: 'Average Form Response < 1.0 Minutes', amount: 1250 },
+    ],
+  },
+
+  // ── From the 2026-08-30 week (the 2026-08-24/31 sheet) ──────────────────────
+  // Gyd, Eula, Andre, Vee and Jazz Redulla are unchanged (Carla, 2026-09-08) and
+  // deliberately have no dated version. Sherwin, AR and Jazmine join the cohort.
+  {
+    email: 'mariely@simple.biz',
+    name: 'Yungco, Marielace "Mariel" Buena Fe',
+    effectiveFrom: HSL_MANAGER_SHEET_2026_08_30,
+    components: [
+      { kind: 'banded', key: 'signups_weekly', label: 'Sign-ups this week', unit: 'sign-ups', bands: INTAKE_SIGNUP_BANDS },
+    ],
+  },
+  {
+    email: 'dana@simple.biz',
+    name: 'Abad, Danilo Jr "Dan"',
+    effectiveFrom: HSL_MANAGER_SHEET_2026_08_30,
+    components: [
+      { kind: 'banded', key: 'signups_weekly', label: 'Sign-ups this week', unit: 'sign-ups', bands: INTAKE_SIGNUP_BANDS },
+    ],
+  },
+  {
+    email: 'juliec@simple.biz',
+    name: 'Credo, Julie Ann "Julie"',
+    effectiveFrom: HSL_MANAGER_SHEET_2026_08_30,
+    components: [
+      { kind: 'banded', key: 'signups_weekly', label: 'Sign-ups this week', unit: 'sign-ups', bands: INTAKE_SIGNUP_BANDS },
+    ],
+  },
+  {
+    email: 'jayh@simple.biz',
+    name: 'Hernandez, John Michael',
+    effectiveFrom: HSL_MANAGER_SHEET_2026_08_30,
+    components: [
+      { kind: 'banded', key: 'signups_weekly', label: 'Sign-ups this week', unit: 'sign-ups', bands: INTAKE_SIGNUP_BANDS },
+    ],
+  },
+  {
+    email: 'sherwins@simple.biz',
+    name: 'Santos, Sherwin',
+    effectiveFrom: HSL_MANAGER_SHEET_2026_08_30,
+    components: [
+      {
+        kind: 'banded', key: 'nurture_signups', label: 'Lead Nurture sign-ups this week', unit: 'sign-ups',
+        bands: [
+          { from: 500,          label: '500+',          amount: 10000 },
+          { from: 400, to: 499, label: '400–499',       amount: 7500 },
+          { from: 300, to: 399, label: '300–399',       amount: 5000 },
+          {            to: 299, label: '299 and below', amount: 0 },
+        ],
+      },
+    ],
+  },
+  {
+    email: 'stara@simple.biz',
+    name: 'Abella, Esterlita I. "Star"',
+    effectiveFrom: HSL_MANAGER_SHEET_2026_08_30,
+    components: [
+      {
+        kind: 'banded', key: 'completion_pct', label: 'Post-Hearing completion this week', unit: '% completion',
+        bands: [
+          { from: 100,            label: '100%+ Completion',         amount: 5000 },
+          { from: 90, to: 99.99,  label: '90% – 99.99% Completion',  amount: 3500 },
+          { from: 85, to: 89.99,  label: '85% – 89.99% Completion',  amount: 2500 },
+          {           to: 84.99,  label: 'Below 85% Completion',     amount: 0 },
+        ],
+      },
+    ],
+  },
+  {
+    email: 'arr@simple.biz',
+    name: 'Rosales, Anna Rowella "AR"',
+    effectiveFrom: HSL_MANAGER_SHEET_2026_08_30,
+    components: [
+      {
+        kind: 'banded', key: 'failovers', label: 'Executive Guest Services failovers this week', unit: 'failovers',
+        bands: [
+          { from: 0, to: 0, label: '0 failovers',  amount: 10000 },
+          { from: 1, to: 1, label: '1 failover',   amount: 5000 },
+          { from: 2,        label: '2+ failovers', amount: 0 },
+        ],
+      },
+    ],
+  },
+  {
+    email: 'jazminer@simple.biz',
+    name: 'Roa, Sajda "Jazmine"',
+    effectiveFrom: HSL_MANAGER_SHEET_2026_08_30,
+    components: [
+      {
+        kind: 'banded', key: 'weekly_batches', label: 'Mail-Sorting batches this week', unit: 'batches',
+        bands: [
+          { from: 40,         label: '40–50+ Weekly Batches',      amount: 2000 },
+          { from: 30, to: 39, label: '30–39 Weekly Batches',       amount: 1500 },
+          {           to: 29, label: '29 or fewer Weekly Batches', amount: 0 },
+        ],
+      },
+    ],
+  },
+  {
+    email: 'emss@simple.biz',
+    name: 'Solon, Emily "Ems"',
+    effectiveFrom: HSL_MANAGER_SHEET_2026_08_30,
+    components: [
+      {
+        kind: 'banded', key: 'case_prepared_pct', label: 'Pre-Hearing cases prepared this week', unit: '% prepared',
+        bands: [
+          { from: 98,            label: '98% – 100% Case Prepared',   amount: 5000 },
+          { from: 95, to: 97.99, label: '95% – 97.99% Case Prepared', amount: 3500 },
+          { from: 87, to: 94.99, label: '87% – 94.99% Case Prepared', amount: 2500 },
+          {           to: 86.99, label: 'Below 87% Case Prepared',    amount: 0 },
+        ],
+      },
     ],
   },
 ];
 
-export const HSL_MANAGERS_BY_EMAIL: Record<string, HslManagerSpec> =
-  Object.fromEntries(HSL_MANAGERS.map((m) => [m.email.toLowerCase(), m]));
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Sum a manager's ticked incentive components. Unknown emails (e.g. an external
- *  member added to the Managers dept) have no components and score ₱0.
+function assertPeriodStart(periodStart: string): void {
+  if (!ISO_DATE.test(periodStart)) {
+    throw new Error(`Managers Weekly needs an ISO period_start (YYYY-MM-DD) to pick a dated spec, got "${periodStart}"`);
+  }
+}
+
+/** The manager spec that governs the payroll week starting `periodStart`: the
+ *  version with the latest `effectiveFrom` on or before that Sunday (an undated
+ *  version applies from the dept's creation). Undefined for an email with no
+ *  spec that week — e.g. Sherwin before 2026-08-30, or an external member added
+ *  to the Managers dept, who therefore scores ₱0. */
+export function managerSpecFor(email: string, periodStart: string): HslManagerSpec | undefined {
+  assertPeriodStart(periodStart);
+  const em = email.toLowerCase();
+  let best: HslManagerSpec | undefined;
+  for (const spec of HSL_MANAGERS) {
+    if (spec.email.toLowerCase() !== em) continue;
+    const from = spec.effectiveFrom ?? '';
+    if (from > periodStart) continue;
+    if (!best || from > (best.effectiveFrom ?? '')) best = spec;
+  }
+  return best;
+}
+
+/** The Managers Weekly lineup for the week starting `periodStart` — one resolved
+ *  spec per manager who has one that week, in first-listed order. */
+export function managerCohortFor(periodStart: string): HslManagerSpec[] {
+  assertPeriodStart(periodStart);
+  const seen = new Set<string>();
+  const cohort: HslManagerSpec[] = [];
+  for (const spec of HSL_MANAGERS) {
+    const em = spec.email.toLowerCase();
+    if (seen.has(em)) continue;
+    const resolved = managerSpecFor(em, periodStart);
+    if (!resolved) continue;
+    seen.add(em);
+    cohort.push(resolved);
+  }
+  return cohort;
+}
+
+/** The band a week's achieved value lands in, or undefined when no band covers it. */
+export function landedBand(bands: ManagerBand[], value: number): ManagerBand | undefined {
+  if (!Number.isFinite(value)) return undefined;
+  return bands.find(
+    (b) => (b.from === undefined || value >= b.from) && (b.to === undefined || value <= b.to),
+  );
+}
+
+/** The number the band picker stores for a chosen band — a value that lands back
+ *  in that same band (`landedBand(bands, bandValue(b)) === b`, pinned by test).
+ *  Storing a NUMBER rather than a band name keeps `kpi_data` numeric, so a real
+ *  count typed in later scores through the same path. */
+export function bandValue(band: ManagerBand): number {
+  return band.from ?? band.to ?? 0;
+}
+
+/** Sum a manager's incentive components for the week starting `opts.periodStart`:
+ *  every ticked 'check' component plus the landed band of every 'banded' one.
+ *  Unknown emails for that week have no components and score ₱0.
  *
  *  `includeMonthly` (default true) controls whether monthly-cadence components
  *  (e.g. Gyd's ₱25,000 monthly bonus) are counted. The calculator's live display
@@ -624,14 +849,21 @@ export const HSL_MANAGERS_BY_EMAIL: Record<string, HslManagerSpec> =
 export function calcManagerBonus(
   email: string,
   kpiData: KpiData,
-  opts?: { includeMonthly?: boolean },
+  opts: { periodStart: string; includeMonthly?: boolean },
 ): number {
-  const spec = HSL_MANAGERS_BY_EMAIL[email.toLowerCase()];
+  const spec = managerSpecFor(email, opts.periodStart);
   if (!spec) return 0;
-  const includeMonthly = opts?.includeMonthly ?? true;
+  const includeMonthly = opts.includeMonthly ?? true;
   let total = 0;
   for (const c of spec.components) {
     if (c.cadence === 'monthly' && !includeMonthly) continue;
+    if (c.kind === 'banded') {
+      const v = kpiData[c.key];
+      if (typeof v !== 'number') continue; // unset (or a stale boolean) = not scored
+      const band = landedBand(c.bands, v);
+      if (band) total += band.amount;
+      continue;
+    }
     if (kpiData[c.key]) total += c.amount;
   }
   return total;

@@ -3088,7 +3088,7 @@ export default function PayrollWizard({
               const em = (e.employee_email ?? '').toLowerCase();
               if (!em || em === '__dept_meta__') continue;
               const amt = perEmployee
-                ? calcManagerBonus(em, (e.kpi_data ?? {}) as Record<string, number | boolean>, { includeMonthly: isFinalWeek })
+                ? calcManagerBonus(em, (e.kpi_data ?? {}) as Record<string, number | boolean>, { periodStart: info.period_start, includeMonthly: isFinalWeek })
                 : Math.round(e.calculated_bonus ?? 0);
               amounts[em] = Math.round((amounts[em] ?? 0) + amt);
             }

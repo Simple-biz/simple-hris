@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import {
   BonusStatus, DeptConfig, HslDeptKey, HSL_DEPTS, HSL_DEPT_KEYS,
-  HSL_MANAGERS, HSL_MANAGERS_BY_EMAIL, KpiData, ManagerComponent,
+  KpiData, ManagerComponent, bandValue, landedBand, managerCohortFor, managerSpecFor,
   SubTeamName, TeamPoolRule, TeamSplitRule, TieredRule,
   calcBonus, calcManagerBonus, calcTeamPoolShare, calcTeamSplitShare, canAccessHslDept, formatPeso,
 } from '@/lib/hsl-bonus/schema';
@@ -282,10 +282,11 @@ export function recomputeSsdEntries(
 export function recomputeManagerEntries(
   deptKey: HslDeptKey,
   entries: EntryRow[],
+  periodStart: string,
 ): EntryRow[] {
   if (!HSL_DEPTS[deptKey].perEmployee) return entries;
   return entries.map((e) => {
-    const bonus = calcManagerBonus(e.employee_email, e.kpi_data);
+    const bonus = calcManagerBonus(e.employee_email, e.kpi_data, { periodStart });
     return e.calculated_bonus === bonus ? e : { ...e, calculated_bonus: bonus };
   });
 }
@@ -356,6 +357,7 @@ export function mergeHslBranchPayload(
   key: HslDeptKey,
   payload: HslBranchPayload,
   subTeams: Record<SubTeamName, SubTeamState>,
+  periodStart: string,
 ): { entries: EntryRow[]; status: BonusStatus; rosterEmails: Set<string> } {
   const dept = HSL_DEPTS[key];
 
@@ -393,11 +395,12 @@ export function mergeHslBranchPayload(
     });
   });
 
-  // Managers Weekly dept: the roster is the hardcoded HSL_MANAGERS cohort, not
-  // hsl_team_members. Seed any manager not already present so the dept always
+  // Managers Weekly dept: the roster is the hardcoded HSL_MANAGERS cohort FOR THIS
+  // WEEK (specs are dated — Sherwin, AR and Jazmine only exist from 2026-08-30),
+  // not hsl_team_members. Seed any manager not already present so the dept always
   // shows its full lineup even before anything has been scored.
   if (dept.perEmployee) {
-    HSL_MANAGERS.forEach((mgr) => {
+    managerCohortFor(periodStart).forEach((mgr) => {
       const email = mgr.email.toLowerCase();
       rosterEmails.add(email);
       if (byEmail.has(email)) return;
@@ -418,7 +421,7 @@ export function mergeHslBranchPayload(
   // component sums) so the dept total + table read the right values (the DB
   // persists 0 for legacy/unscored entries).
   let entries = recomputeSsdEntries(key, sorted, subTeams);
-  entries = recomputeManagerEntries(key, entries);
+  entries = recomputeManagerEntries(key, entries, periodStart);
 
   return {
     entries,
@@ -674,8 +677,8 @@ export default function HslBonusCalculator({
       const cached = cachedWeek
         ? getKpiCache<HslBranchPayload>(KPI_CACHE_KEYS.hslBranch(k, cachedWeek))
         : undefined;
-      const seeded = cached
-        ? mergeHslBranchPayload(k, cached, DEFAULT_SUB_TEAMS)
+      const seeded = cached && cachedWeek
+        ? mergeHslBranchPayload(k, cached, DEFAULT_SUB_TEAMS, cachedWeek)
         : null;
       if (seeded) seededFromCache.current = true;
       init[k] = {
@@ -999,7 +1002,7 @@ export default function HslBonusCalculator({
         // Same merge the cache seed runs, against the sub-team inputs currently
         // on screen — one derivation, so a seeded branch and a fetched branch
         // can never disagree about what a row is worth.
-        const merged = mergeHslBranchPayload(key, payload, cur.subTeams);
+        const merged = mergeHslBranchPayload(key, payload, cur.subTeams, start);
         return {
           ...prev,
           [key]: {
@@ -1534,7 +1537,7 @@ export default function HslBonusCalculator({
                     // Managers dept sums per-manager components; others use the
                     // uniform rule engine.
                     calculated_bonus: HSL_DEPTS[key].perEmployee
-                      ? calcManagerBonus(email, newKpi)
+                      ? calcManagerBonus(email, newKpi, { periodStart: periodStart(HSL_DEPTS[key]) })
                       : calcBonus(newKpi, HSL_DEPTS[key], e.is_manager),
                   };
                 });
@@ -1554,7 +1557,7 @@ export default function HslBonusCalculator({
                     ...e,
                     is_manager: newIsManager,
                     calculated_bonus: HSL_DEPTS[key].perEmployee
-                      ? calcManagerBonus(email, e.kpi_data)
+                      ? calcManagerBonus(email, e.kpi_data, { periodStart: periodStart(HSL_DEPTS[key]) })
                       : calcBonus(e.kpi_data, HSL_DEPTS[key], newIsManager),
                   };
                 });
@@ -2476,6 +2479,7 @@ function DeptBlock({
         {dept.perEmployee && (
           <HslManagersTable
             entries={pagedEntries}
+            periodStart={periodStartStr}
             subtotal={deptTotal}
             isLocked={readOnly}
             onKpiChange={onKpiChange}
@@ -2767,6 +2771,9 @@ interface HslManagersTableProps {
   entries: EntryRow[];
   subtotal: number;
   isLocked: boolean;
+  /** ISO Sunday of the week on screen — manager specs are DATED, so the table
+   *  must draw the components this week was (or will be) scored under. */
+  periodStart: string;
   onKpiChange: (email: string, key: string, val: number | boolean) => void;
   rosterEmails?: Set<string>;
   offboardedEmails?: Set<string>;
@@ -2774,10 +2781,13 @@ interface HslManagersTableProps {
 }
 
 /** The Managers Weekly dept renders one row per manager, each showing that
- *  person's own hardcoded incentive checklist (HSL_MANAGERS). Ticking a component
- *  adds its fixed amount; the row total sums every ticked component. */
+ *  person's own hardcoded incentive set for THIS week (`managerSpecFor`). A
+ *  'check' component is a tick that adds its fixed amount; a 'banded' component
+ *  is one metric whose bands are drawn as a single-pick list — choosing a band
+ *  stores that band's value (`bandValue`) and only the landed band pays. The row
+ *  total is `calcManagerBonus` for the same week. */
 export function HslManagersTable({
-  entries, subtotal, isLocked, onKpiChange, rosterEmails, offboardedEmails, onRemoveMember,
+  entries, subtotal, isLocked, periodStart, onKpiChange, rosterEmails, offboardedEmails, onRemoveMember,
 }: HslManagersTableProps) {
   return (
     <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
@@ -2786,7 +2796,7 @@ export function HslManagersTable({
           <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
             <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Manager</th>
             <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">
-              Incentives — tick what was met
+              Incentives — tick what was met · pick the band reached
             </th>
             <th className="px-3 py-2 text-right font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Bonus</th>
           </tr>
@@ -2800,7 +2810,7 @@ export function HslManagersTable({
             </tr>
           )}
           {entries.map((e) => {
-            const spec = HSL_MANAGERS_BY_EMAIL[e.employee_email.toLowerCase()];
+            const spec = managerSpecFor(e.employee_email, periodStart);
             const components: ManagerComponent[] = spec?.components ?? [];
             const isExternal = !!rosterEmails && !rosterEmails.has(e.employee_email);
             return (
@@ -2838,6 +2848,60 @@ export function HslManagersTable({
                   ) : (
                     <div className="flex flex-col gap-1.5">
                       {components.map((c) => {
+                        if (c.kind === 'banded') {
+                          const raw = e.kpi_data[c.key];
+                          const value = typeof raw === 'number' ? raw : undefined;
+                          const landed = value === undefined ? undefined : landedBand(c.bands, value);
+                          const groupName = `${e.employee_email}:${c.key}`;
+                          return (
+                            <fieldset key={c.key} className="m-0 flex min-w-0 flex-col gap-1 border-0 p-0">
+                              <legend className="mb-0.5 flex w-full items-center gap-2 px-0.5 text-[11px] font-medium text-zinc-700 dark:text-zinc-300">
+                                <span className="flex-1">{c.label}</span>
+                                <span className="font-mono text-[9px] uppercase tracking-wider text-zinc-400">{c.unit} · one band</span>
+                                {landed && !isLocked && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onKpiChange(e.employee_email, c.key, false)}
+                                    className="rounded px-1 font-mono text-[9px] uppercase tracking-wider text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                                    aria-label={`Clear ${c.label} for ${e.employee_name}`}
+                                  >
+                                    clear
+                                  </button>
+                                )}
+                              </legend>
+                              {c.bands.map((b) => {
+                                const picked = landed === b;
+                                return (
+                                  <label
+                                    key={b.label}
+                                    className={cn(
+                                      'flex items-center gap-2.5 rounded-lg border px-2.5 py-1.5 transition-colors duration-150',
+                                      picked
+                                        ? 'border-purple-300 bg-purple-50/80 text-purple-700 kpi-row-confirm dark:border-purple-700/70 dark:bg-purple-950/40 dark:text-purple-300'
+                                        : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400 dark:hover:bg-zinc-900',
+                                      isLocked ? 'cursor-default' : 'cursor-pointer',
+                                    )}
+                                  >
+                                    <input
+                                      type="radio"
+                                      name={groupName}
+                                      className="h-4 w-4 shrink-0 accent-purple-600"
+                                      checked={picked}
+                                      disabled={isLocked}
+                                      onChange={() => onKpiChange(e.employee_email, c.key, bandValue(b))}
+                                    />
+                                    <span className={cn('flex-1 text-[12px] leading-snug', picked && 'font-medium text-zinc-900 dark:text-zinc-100')}>
+                                      {b.label}
+                                    </span>
+                                    <span className={cn('shrink-0 font-mono text-[11px] tabular-nums', picked ? 'font-semibold text-purple-700 dark:text-purple-300' : 'text-zinc-400')}>
+                                      {formatPeso(b.amount)}
+                                    </span>
+                                  </label>
+                                );
+                              })}
+                            </fieldset>
+                          );
+                        }
                         const checked = Boolean(e.kpi_data[c.key]);
                         return (
                           <label
@@ -2891,7 +2955,8 @@ export function HslManagersTable({
         </tbody>
       </table>
       <p className="border-t border-zinc-200 bg-zinc-50/60 px-3 py-1.5 font-mono text-[9px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/40">
-        Tiers stack — tick every threshold that was met. Items tagged
+        Checklist tiers stack — tick every threshold that was met. Banded lines pay the one band
+        picked for the week. Items tagged
         <span className="mx-1 rounded bg-zinc-100 px-1 py-0.5 uppercase tracking-wider dark:bg-zinc-800">monthly</span>
         are earned only in the last payroll week of the month.
       </p>

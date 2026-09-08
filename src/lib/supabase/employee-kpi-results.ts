@@ -1,6 +1,6 @@
 import { createSupabaseServiceRoleClient } from './server';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
-import { HSL_DEPTS, HSL_MANAGERS_BY_EMAIL, type HslDeptKey } from '@/lib/hsl-bonus/schema';
+import { HSL_DEPTS, landedBand, managerSpecFor, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 
 // Employee-facing KPI results.
 //
@@ -246,12 +246,22 @@ export async function getEmployeeKpiResults(
     p.total += num(r.calculated_bonus);
     const data = r.kpi_data ?? {};
 
-    // Managers Weekly (perEmployee): kpi_data holds boolean component ticks and
-    // the dept has no uniform rules, so build the breakdown from the manager's
-    // own spec — each ticked component is a line carrying its fixed PHP amount.
+    // Managers Weekly (perEmployee): the dept has no uniform rules, so build the
+    // breakdown from the manager's own spec FOR THAT WEEK (specs are dated — an
+    // old week must keep reading against the components it was scored under).
+    // A ticked 'check' component is a line carrying its fixed PHP amount; a
+    // 'banded' one is a line naming the landed band and what it paid.
     if (HSL_DEPTS[r.department as HslDeptKey]?.perEmployee) {
-      const spec = HSL_MANAGERS_BY_EMAIL[(r.employee_email ?? '').toLowerCase()];
+      const spec = managerSpecFor(r.employee_email ?? '', r.period_start);
       for (const c of spec?.components ?? []) {
+        if (c.kind === 'banded') {
+          const v = data[c.key];
+          if (typeof v !== 'number') continue;
+          const band = landedBand(c.bands, v);
+          if (!band) continue;
+          p.items.push({ label: `${c.label}: ${band.label}`, amount: band.amount, value: null, detail: null });
+          continue;
+        }
         if (!data[c.key]) continue;
         p.items.push({
           label: c.label,

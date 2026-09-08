@@ -17,7 +17,7 @@ and employee KPI results all read.
 | `callback_team` *(new)* | Callback Team | weekly | Medicare Sign Ups × ₱250 |
 | `simple_texting` *(new)* | Simple Texting | weekly | Transferred Calls × ₱50 · Sign Ups × ₱250 |
 | `medical_records` *(new)* | Medical Records | weekly | Patient Portal Log Ins × ₱250 · RFC × ₱250 **⚠ CONTRADICTED BY CODE — [schema.ts:178](../../src/lib/hsl-bonus/schema.ts#L178) has `portal_login rate: 100`, not 250. The code produced every stored value, so this cell is the likely typo — but if ₱250 is right this is a live underpayment, not a doc defect. UNRESOLVED, Kane's call; see `hsl-catalog-migration.md` §1.2.** |
-| `hsl_managers` *(new)* | Managers Weekly | weekly | bespoke per-manager checklist (see below) |
+| `hsl_managers` *(new; specs DATED 2026-09-08)* | Managers Weekly | weekly | bespoke per-manager components — checklists through 2026-08-23, banded weekly tiers for six managers + three new members from 2026-08-30 (see below) |
 | `attestation` *(new 2026-07-21; rules extended 2026-08-24)* | Attestation | weekly | Attested Cases tiered (25→₱50 · 35→₱75 · 50+→₱100 per case; thresholds corrected 2026-07-27 to match the sheet formula — Filing Specialist still uses 30/40/50) **+ Referral Leads ×₱250 · SSA.Gov ×₱250** (see §Attestation additive terms) |
 | `case_managers` *(new 2026-07-22)* | Case Managers | weekly | Reviews ×₱250 · RFC ×₱250 · PPL ×₱100 · DME ×₱250 · Task ×₱250 · Referral Leads ×₱250 |
 | `post_hearing_prep` *(renamed)* | Pre-Hearing / Post-Hearing Prep | weekly | unchanged (Portal Login ₱100 · 5-Star ₱250, ₱3,500/wk cap) |
@@ -91,24 +91,67 @@ pay — Kane has never confirmed the correction applies there.
 ## Managers Weekly (`hsl_managers`)
 
 The one dept whose scoring differs **per person**. Each manager has a hardcoded
-checklist of incentive components (`HSL_MANAGERS` in `schema.ts`), each a fixed
-peso amount earned when ticked; the row total sums the ticked components
-(`calcManagerBonus`). Amounts come from `docs/reference/managers-logic.md`.
+set of incentive components (`HSL_MANAGERS` in `schema.ts`); the row total is
+`calcManagerBonus` for that week. Amounts come from `docs/reference/managers-logic.md`.
 
-- **Cohort is hardcoded** — the dept seeds its lineup from `HSL_MANAGERS`, so it
-  needs **no `hsl_team_members` roster rows**. (Gyd, Eula, Andre, Vee, Ems, Star,
-  Jazz, Mariel, Dan, Julie, Jay.)
-- **Cumulative tiers as independent checkboxes.** Hitting a higher tier means the
-  scorer ticks every lower tier too, and they SUM — matching the sheet's
+- **Cohort is hardcoded** — the dept seeds its lineup from `HSL_MANAGERS` **for the
+  week on screen** (`managerCohortFor`), so it needs **no `hsl_team_members` roster
+  rows**. Through the 2026-08-23 week: Gyd, Eula, Andre, Vee, Ems, Star, Jazz,
+  Mariel, Dan, Julie, Jay. From the 2026-08-30 week: those eleven plus Sherwin
+  (`sherwins@`), AR (`arr@`) and Jazmine (`jazminer@`).
+- **Two component kinds.** `check` — a fixed peso amount earned when ticked;
+  cumulative tiers are independent checkboxes that SUM, matching the sheet's
   `=SUM(...)` totals (e.g. Andre "< 2 Days" ⇒ <3 + <2.5 + <2 ⇒ ₱7,500).
+  `banded` — ONE metric for the week (a count or a percentage) whose bands are
+  drawn as a single-pick list; the scorer picks the band reached, the picker stores
+  that band's value (`bandValue`, a NUMBER so `kpi_data` stays numeric), and only
+  the landed band pays (`landedBand`). A boolean or absent value under a banded key
+  scores nothing.
 - **Attendance (₱5,000) and Tech Allowance (₱1,850) are deliberately excluded** —
   they are already paid by the PAB + Technology bonus engine; modeling them here
-  would double-pay.
-- **Monthly components** (Gyd's ₱25,000; Ems/Star/Jazz "Monthly Performance
-  Bonus") carry `cadence: 'monthly'` and show a "monthly" badge — the scorer ticks
-  them only in the final payroll week of the month.
-- Rendered by `HslManagersTable`; scored via `recomputeManagerEntries` /
-  `calcManagerBonus`.
+  would double-pay. Both sheets still list them; both are still excluded.
+- **Monthly components** (Gyd's ₱25,000; Jazz Redulla's "Monthly Performance
+  Bonus"; Ems's and Star's through 2026-08-23) carry `cadence: 'monthly'` and show
+  a "monthly" badge — the scorer ticks them only in the final payroll week of the
+  month. Nothing on the 2026-08-30 sheet is monthly (pinned by test).
+- Rendered by `HslManagersTable` (takes `periodStart`); scored via
+  `recomputeManagerEntries` / `calcManagerBonus`, both of which take the week.
+
+### Specs are DATED (2026-09-08)
+
+**The wizard recomputes this dept from the saved tick marks with the spec in code**
+(`PayrollWizard.tsx` `hslKpiAmounts`, the `perEmployee` branch) — it does **not**
+pay the frozen `calculated_bonus` like every other HSL dept. So overwriting a
+manager's components would silently re-price every week already paid under the old
+ones on any replay (Reports, a re-lock, the Employee KPI Results page). A manager
+may therefore appear more than once in `HSL_MANAGERS`; `managerSpecFor(email,
+period_start)` picks the version with the latest `effectiveFrom` on or before the
+week's Sunday (an undated version applies from the dept's creation). **Never edit an
+existing version's components — add a dated one.** Every caller passes the week
+(`calcManagerBonus` refuses a non-ISO `periodStart`, never silently resolves).
+
+**The 2026-08-30 sheet** (`HSL_MANAGER_SHEET_2026_08_30`). Approved by Rob effective
+Aug 24 and Austin effective Aug 31, 2026; Carla (2026-09-08) ruled: it **starts with
+the 8/30–9/5 week** (the 8/23–8/29 week was scored and PAID Sept 2–4 under the Julie
+sheet and is **not** re-opened), Star's and Ems's tiers are **earned weekly**, Ems's
+"Pending for Approval" row **proceeds**, Gyd/Eula/Andre/Vee/Jazz Redulla are
+**unchanged** (no dated version — they resolve to the very same spec object, pinned),
+AR's ₱355 base pay is a catalog matter already applied, and the scorer picks the band
+for the count or percentage accomplished that week.
+
+| Manager | Metric | Bands |
+| --- | --- | --- |
+| Mariel, Dan, Julie, Jay | sign-ups this week | 1,500+ ₱10,000 · 1,400–1,499 ₱8,000 · 1,300–1,399 ₱6,500 · 1,200–1,299 ₱5,000 · ≤1,199 ₱0 |
+| Sherwin *(new)* | Lead Nurture sign-ups | 500+ ₱10,000 · 400–499 ₱7,500 · 300–399 ₱5,000 · ≤299 ₱0 |
+| Star | Post-Hearing completion % | 100%+ ₱5,000 · 90–99.99 ₱3,500 · 85–89.99 ₱2,500 · <85 ₱0 |
+| AR *(new)* | EGS failovers | 0 → ₱10,000 · 1 → ₱5,000 · 2+ → ₱0 (**zero is the top band, not "unset"**) |
+| Jazmine *(new)* | Mail-Sorting weekly batches | 40+ ₱2,000 · 30–39 ₱1,500 · ≤29 ₱0 |
+| Ems | Pre-Hearing cases prepared % | 98–100 ₱5,000 · 95–97.99 ₱3,500 · 87–94.99 ₱2,500 · <87 ₱0 |
+
+The Julie-sheet ticks (`closes_30`, `form_response_1`, `monthly_perf`) mean nothing
+to the six re-sheeted managers from 2026-08-30, and the new keys mean nothing before
+it — both directions pinned in `schema.test.ts`, along with a recompute of the live
+2026-08-23 row shapes to exactly what was paid.
 
 ## Add external member (all HSL depts)
 
@@ -553,9 +596,11 @@ Now (`src/components/PayrollWizard.tsx`):
   processed Hubstaff week**. SSD is included, so it fully replaces the old SSD-only
   amount (no double count). It clears when no Hubstaff week is loaded, so it can
   never pay a different week's score.
-- **Managers-dept monthly components** (Gyd's ₱25k; Ems/Star/Jazz's ₱2,500) are
-  recomputed from `kpi_data` and only counted in the **final payroll week of the
-  month** (`isFinalPayrollWeekOfMonth`), matching how PAB/catalog monthly bonuses pay.
+- **Managers-dept amounts are recomputed from `kpi_data`** against the spec DATED to
+  that week (`calcManagerBonus(..., { periodStart: info.period_start })`); monthly
+  components (Gyd's ₱25k; Jazz Redulla's ₱2,500; Ems's/Star's through 2026-08-23)
+  are only counted in the **final payroll week of the month**
+  (`isFinalPayrollWeekOfMonth`), matching how PAB/catalog monthly bonuses pay.
 - The amount is **auto-applied unconditionally** in `bonusTotals` (a dedicated
   `hogan_smith_law` pass, rate-gated exactly like dispatch) — **not** behind a
   toggle. So the emailed paystub equals the HSL tab review Total Pay by construction,
