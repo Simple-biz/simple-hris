@@ -358,3 +358,42 @@ test('only post_hearing_prep carries a cap-exempt or monthly flat rule (a new on
     }
   }
 });
+
+// ── Case Managers: SSA.Gov ×₱250 (2026-09-08, Carla via Kane) ─────────────────
+// Sheet: (Reviews*250)+(RFC*250)+(PPL*100)+(DME*250)+(Task*250)+(Referral Leads*250)+(SSA.Gov*250)
+const CM = HSL_DEPTS.case_managers;
+const cmSheet = (k: Record<string, number>) =>
+  (k.reviews ?? 0) * 250 + (k.rfc ?? 0) * 250 + (k.ppl ?? 0) * 100 + (k.dme ?? 0) * 250 +
+  (k.task ?? 0) * 250 + (k.referral_leads ?? 0) * 250 + (k.ssa_gov ?? 0) * 250;
+
+test('case_managers: exactly the seven sheet terms, all per-unit, no cap, weekly', () => {
+  assert.deepEqual(
+    CM.rules.map((r) => [r.type, r.key, r.type === 'per_unit' ? r.rate : null]),
+    [
+      ['per_unit', 'reviews', 250], ['per_unit', 'rfc', 250], ['per_unit', 'ppl', 100],
+      ['per_unit', 'dme', 250], ['per_unit', 'task', 250], ['per_unit', 'referral_leads', 250],
+      ['per_unit', 'ssa_gov', 250],
+    ],
+  );
+  assert.equal(CM.monthlyMax, undefined);
+  assert.equal(CM.cadence, 'weekly');
+});
+
+test('case_managers: calcBonus reproduces the sheet with SSA.Gov added on top', () => {
+  for (const ssa_gov of [0, 1, 3, 12]) {
+    const bases: Record<string, number>[] = [{}, { reviews: 2 }, { reviews: 1, rfc: 2, ppl: 3, dme: 1, task: 4, referral_leads: 1 }, { ppl: 9 }];
+    for (const k of bases) {
+      const kpi: Record<string, number> = { ...k, ssa_gov };
+      assert.equal(calcBonus(kpi, CM, false), cmSheet(kpi), JSON.stringify(kpi));
+      assert.equal(calcBonus(kpi, CM, true), cmSheet(kpi), `manager ${JSON.stringify(kpi)}`);
+    }
+  }
+  assert.equal(calcBonus({ ssa_gov: 4 }, CM, false), 1000);
+});
+
+test('case_managers: rows saved before the SSA.Gov term recompute unchanged (not retroactive)', () => {
+  const legacy: Record<string, number>[] = [{}, { reviews: 2, dme: 1 }, { reviews: 1, rfc: 2, ppl: 3, dme: 1, task: 4, referral_leads: 1 }];
+  for (const k of legacy) {
+    assert.equal(calcBonus(k, CM, false), cmSheet(k), JSON.stringify(k));
+  }
+});

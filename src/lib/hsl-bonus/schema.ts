@@ -343,6 +343,9 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
       { type: 'per_unit', key: 'dme',            label: 'DME',            rate: 250 },
       { type: 'per_unit', key: 'task',           label: 'Task',           rate: 250 },
       { type: 'per_unit', key: 'referral_leads', label: 'Referral Leads', rate: 250 },
+      // 2026-09-08 (Carla via Kane: "SSA.GOV*250"): a seventh additive term, the same
+      // shape as Attestation's. Not retroactive — rows saved without the key read 0.
+      { type: 'per_unit', key: 'ssa_gov',        label: 'SSA.Gov',        rate: 250 },
     ],
   },
 
