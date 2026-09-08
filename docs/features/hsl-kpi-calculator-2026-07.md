@@ -622,11 +622,24 @@ never reached the paystub unless Accounting keyed it into the Adjustment column.
 Now (`src/components/PayrollWizard.tsx`):
 
 - A single always-loaded `hslKpiAmounts` map sums `calculated_bonus` per employee
-  across **all weekly HSL sub-departments** (SSD, Medical Records, Callback, Simple
-  Texting, Care, Filing, Intake, Pre/Post-Hearing, Managers Weekly), **pinned to the
-  processed Hubstaff week**. SSD is included, so it fully replaces the old SSD-only
-  amount (no double count). It clears when no Hubstaff week is loaded, so it can
-  never pay a different week's score.
+  across **every HSL sub-department that auto-dispatches** — all weekly depts
+  (Medical Records, Callback, Simple Texting, Care, Filing, Intake, Pre/Post-Hearing,
+  Attestation, Case Managers, Managers Weekly) **plus SSD Medical Records** —
+  **pinned to the processed Hubstaff week**. It clears when no Hubstaff week is
+  loaded, so it can never pay a different week's score.
+  **SSD is MONTHLY (`cadence: 'monthly'` since c0dc608e, 2026-07-18) and was
+  therefore silently dropped from auto-pay from that day** — this doc claimed it was
+  in the weekly set for seven weeks while Accounting keyed every SSD share by hand.
+  Carla (2026-09-08): SSD "is a monthly payment, typically processed in the first
+  week of the month", and it must be "combined with the weekly bonus" — so SSD
+  carries `monthlyAutoPay: true` and the set is `hslDeptAutoDispatches(dept)`
+  (tested): weekly ⇒ always; monthly ⇒ only with the flag. **The manager's Ready is
+  the trigger, not the calendar**: SSD is scored once a month and pays in whichever
+  payroll week its period is keyed to (a final-week calendar gate was drafted and
+  dropped the same day — Carla processes it "in the first week of the month", and
+  this month a week late, so a calendar rule would have fought her). A person in
+  both SSD and Medical Records gets one summed amount (₱475 + ₱1,625 = ₱2,100 in the
+  2026-08-30 week that surfaced this).
 - **Managers-dept amounts are recomputed from `kpi_data`** against the spec DATED to
   that week (`calcManagerBonus(..., { periodStart: info.period_start })`); monthly
   components (Gyd's ₱25k; Jazz Redulla's ₱2,500; Ems's/Star's through 2026-08-23)
@@ -645,11 +658,15 @@ Now (`src/components/PayrollWizard.tsx`):
 the Adjustment column by hand** — that would now double-pay. The Adjustment column is
 only for genuine one-off deltas (and is how you make a per-person exception).
 
-**Still manual (unchanged):** the three **monthly-cadence** HSL depts —
-`collections`, `healthcare_team_lead`, `collections_tl` — are excluded from auto-pay
-(monthly final-week gating for whole depts is riskier and out of scope here). Their
-review cards are badged **"manual · Adjustment"**; apply those via the Adjustment
-column as before.
+**Still manual:** the three **monthly-cadence** HSL depts without `monthlyAutoPay` —
+`collections`, `healthcare_team_lead`, `collections_tl` — are excluded from auto-pay.
+Their review cards are badged **"manual · Adjustment"**; apply those via the
+Adjustment column as before. **SSD's card never carries that badge**
+(`isManualMonthlyPeriod` = monthly AND NOT an auto-dispatching dept) — a "manual"
+badge on an auto-paid period would have Accounting key it a second time. **From the
+2026-08-30 cycle, Accounting must STOP keying SSD Medical Records into Adjustment.**
+Opting another monthly dept in is a pay decision: only SSD may carry the flag
+(pinned by test).
 
 ## First-load reveal *(2026-08-24 — the skeleton was terminal)*
 

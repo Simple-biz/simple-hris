@@ -296,7 +296,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { HSL_DEPT_KEYS, HSL_DEPTS, calcManagerBonus } from '@/lib/hsl-bonus/schema';
+import { HSL_DEPT_KEYS, HSL_DEPTS, calcManagerBonus, hslDeptAutoDispatches, type DeptConfig } from '@/lib/hsl-bonus/schema';
 import WizardCursorOverlay, { type WizardCursorOverlayHandle } from '@/components/payroll/WizardCursorOverlay';
 import LockToggleConfirmDialog, { deriveFirstName } from '@/components/payroll/LockToggleConfirmDialog';
 import { playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
@@ -3031,10 +3031,13 @@ export default function PayrollWizard({
           return;
         }
         const isFinalWeek = isFinalPayrollWeekOfMonth(hubstaffWeekStart);
-        // Weekly HSL sub-departments only — the set that auto-dispatches. Monthly-
-        // cadence depts (collections / healthcare TL / collections TL) stay manual.
-        const weeklySet = new Set<string>(
-          HSL_DEPT_KEYS.filter((k) => HSL_DEPTS[k].cadence === 'weekly'),
+        // The set that auto-dispatches: every weekly sub-department, plus a monthly one
+        // flagged `monthlyAutoPay` (SSD Medical Records) — its once-a-month share pays
+        // in the week its period is keyed to (pinned below), summed with the person's
+        // weekly amounts (Carla, 2026-09-08). Other monthly depts (collections /
+        // healthcare TL / collections TL) stay manual via Adjustment.
+        const payableSet = new Set<string>(
+          HSL_DEPT_KEYS.filter((k) => hslDeptAutoDispatches(HSL_DEPTS[k])),
         );
         const statusRes = await fetch('/api/hsl-bonus/period-status', { cache: 'no-store' });
         const statusJson = (await statusRes.json()) as {
@@ -3045,7 +3048,7 @@ export default function PayrollWizard({
         // Pin every weekly dept to the processed Hubstaff week; locked beats ready.
         const chosen = new Map<string, { period_start: string; period_end: string; status: 'ready' | 'locked' }>();
         for (const row of statusJson.rows ?? []) {
-          if (!weeklySet.has(row.department)) continue;
+          if (!payableSet.has(row.department)) continue;
           if (row.status !== 'ready' && row.status !== 'locked') continue;
           if (row.period_start !== hubstaffWeekStart) continue;
           const cur = chosen.get(row.department);
@@ -11328,9 +11331,18 @@ export default function PayrollWizard({
         // configured cadence says so. The two agree in practice; the OR is
         // deliberate so a drifting `period_type` on a monthly dept cannot silently
         // delete a hand-applied bonus from the only screen that shows it.
+        // …EXCEPT a monthly dept the wizard auto-dispatches (SSD Medical Records,
+        // `monthlyAutoPay`): its period pays through `hslKpiAmounts` in the week it is
+        // keyed to, so badging its card "manual" would have Accounting key it into
+        // Adjustment on top of the auto-pay — double-pay.
+        const autoDispatchedDept = (department: string) => {
+          const cfg = (HSL_DEPTS as Record<string, DeptConfig | undefined>)[department];
+          return !!cfg && hslDeptAutoDispatches(cfg);
+        };
         const isManualMonthlyPeriod = (p: { department: string; period_type: string }) =>
-          p.period_type === 'monthly' ||
-          (HSL_DEPTS as Record<string, { cadence?: string }>)[p.department]?.cadence === 'monthly';
+          (p.period_type === 'monthly' ||
+            (HSL_DEPTS as Record<string, { cadence?: string }>)[p.department]?.cadence === 'monthly') &&
+          !autoDispatchedDept(p.department);
         const hslMonthlyPeriods = hslStepPeriods.filter(isManualMonthlyPeriod);
         const hslPeriodDeptSet = new Set(hslMonthlyPeriods.map(p => p.department));
         // Rail lists depts alphabetically by display name ("All HSL" pinned first,

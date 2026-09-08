@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   matchHslSubDeptKey, calcBonus, HSL_DEPT_KEYS, HSL_DEPTS,
   HSL_MANAGERS, HSL_MANAGER_SHEET_2026_08_30, calcManagerBonus, managerSpecFor, managerCohortFor,
-  landedBand, bandValue, type ManagerComponent, type KpiData,
+  landedBand, bandValue, hslDeptAutoDispatches, type ManagerComponent, type KpiData,
 } from './schema';
 
 test('matchHslSubDeptKey resolves every branch display name, case/whitespace-tolerant', () => {
@@ -396,4 +396,32 @@ test('case_managers: rows saved before the SSA.Gov term recompute unchanged (not
   for (const k of legacy) {
     assert.equal(calcBonus(k, CM, false), cmSheet(k), JSON.stringify(k));
   }
+});
+
+// ── SSD Medical Records auto-dispatches in the week it is marked Ready (2026-09-08)
+// Carla: SSD "is a monthly payment, typically processed in the first week of the
+// month", and it must be "combined with the weekly bonus". `cadence: 'monthly'`
+// since 2026-07-18 had silently dropped SSD from the wizard's weekly-only auto-pay
+// set (₱475 Medical Records paid, ₱1,625 SSD share did not, 49 people). The
+// manager's Ready is the trigger — not the calendar — so the loader's period_start
+// pin is the only gate.
+test('ssd_medical_records: monthly, and the ONLY dept opted into monthly auto-dispatch', () => {
+  assert.equal(HSL_DEPTS.ssd_medical_records.cadence, 'monthly');
+  assert.equal(HSL_DEPTS.ssd_medical_records.monthlyAutoPay, true);
+  for (const k of HSL_DEPT_KEYS) {
+    if (k === 'ssd_medical_records') continue;
+    assert.notEqual(HSL_DEPTS[k].monthlyAutoPay, true, `${k} must not auto-dispatch monthly without a ruling`);
+  }
+});
+
+test('hslDeptAutoDispatches: every weekly dept, SSD, and no other monthly dept', () => {
+  for (const k of HSL_DEPT_KEYS) {
+    const d = HSL_DEPTS[k];
+    const expected = d.cadence === 'weekly' || k === 'ssd_medical_records';
+    assert.equal(hslDeptAutoDispatches(d), expected, k);
+  }
+  assert.equal(hslDeptAutoDispatches(HSL_DEPTS.collections), false);
+  assert.equal(hslDeptAutoDispatches(HSL_DEPTS.healthcare_team_lead), false);
+  assert.equal(hslDeptAutoDispatches(HSL_DEPTS.medical_records), true);
+  assert.equal(hslDeptAutoDispatches(HSL_DEPTS.ssd_medical_records), true);
 });

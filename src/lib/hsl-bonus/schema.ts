@@ -97,6 +97,14 @@ export interface DeptConfig {
   rules: BonusRule[];
   monthlyMax?: number;     // PHP cap per employee
   noKpi?: boolean;         // roster-only, no inputs
+  // A MONTHLY dept whose Ready/Locked period is auto-dispatched in the payroll week
+  // it was scored for, summed with the person's weekly HSL amounts (Carla,
+  // 2026-09-08: SSD "is a monthly payment", "typically processed in the first week
+  // of the month", that must be "combined with the weekly bonus" — the manager's
+  // Ready is the trigger, not the calendar). Without it a monthly dept stays MANUAL
+  // via Adjustment — opting a dept in is a pay decision, pinned by test. See
+  // hslDeptAutoDispatches.
+  monthlyAutoPay?: boolean;
   // Per-employee bespoke incentive sets (the "Managers Weekly" dept): each person
   // has their own hardcoded checklist of components rather than uniform dept rules.
   // The component sets live in HSL_MANAGERS; scoring uses calcManagerBonus.
@@ -151,6 +159,7 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     key: 'ssd_medical_records',
     name: 'SSD Medical Records',
     cadence: 'monthly',
+    monthlyAutoPay: true,
     color: '#10b981',
     headerBg: 'bg-emerald-950/40',
     badgeCls: 'bg-emerald-900/60 text-emerald-300',
@@ -508,6 +517,15 @@ export function calcTeamPoolShare(
 ): number {
   if (memberCount <= 0) return 0;
   return (records * rule.ratePerRecord) / memberCount;
+}
+
+/** Whether the wizard auto-dispatches this dept's Ready/Locked period in the payroll
+ *  week it is keyed to (the loader pins every period to the processed Hubstaff week).
+ *  Weekly depts: always. Monthly depts: only with `monthlyAutoPay` — SSD Medical
+ *  Records, scored once a month in whichever week Carla's team marks it Ready. Any
+ *  other monthly dept is manual via the Adjustment column, and its review card says so. */
+export function hslDeptAutoDispatches(dept: DeptConfig): boolean {
+  return dept.cadence === 'weekly' || dept.monthlyAutoPay === true;
 }
 
 export function formatPeso(amount: number, currency: 'PHP' | 'USD' = 'PHP'): string {
