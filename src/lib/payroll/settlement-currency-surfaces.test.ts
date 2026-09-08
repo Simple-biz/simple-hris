@@ -155,6 +155,48 @@ test('both settlement surfaces resolve FX provenance from the shared route, not 
   }
 });
 
+test('a settlement response is discarded ONLY on unmount, never on a dependency change', () => {
+  // The bug this pins, which shipped and reached Kane: the fetch effect used a
+  // per-effect `cancelled` flag. `settlementEmails` is derived from component
+  // state that changes on every department load and every keystroke, so the
+  // cleanup fired on the IN-FLIGHT request and threw its markers away — while
+  // those emails stayed in `askedSettlementRef`, so no retry ever came. Every
+  // Colombian then rendered in pesos with no sticker, indistinguishable from
+  // being Filipino, and the FX rate survived only because a smaller earlier
+  // batch happened not to be interrupted.
+  //
+  // Marking an email "asked" is only sound if the answer cannot be dropped.
+  for (const rel of [KPI, WIZARD]) {
+    const src = read(rel);
+    const at = src.indexOf("fetch('/api/payroll/settlement-currency'");
+    assert.ok(at > 0, `${rel}: the settlement fetch must exist`);
+    // The effect body around the fetch: back to the preceding useEffect, forward
+    // to its dependency array.
+    const start = src.lastIndexOf('useEffect(', at);
+    const end = src.indexOf('}, [settlementEmails]);', at);
+    assert.ok(start > 0 && end > at, `${rel}: could not bound the settlement effect`);
+    const effect = src.slice(start, end);
+
+    assert.ok(
+      !/\blet cancelled\b/.test(effect),
+      `${rel}: no per-effect cancelled flag — it drops in-flight markers on every state change`,
+    );
+    assert.ok(
+      !/cancelled = true/.test(effect),
+      `${rel}: the effect must not cancel its own in-flight request`,
+    );
+    assert.ok(
+      effect.includes('settlementAliveRef.current'),
+      `${rel}: a response may be dropped only when the component has unmounted`,
+    );
+    // And a failed lookup must un-ask, or the miss becomes permanent.
+    assert.ok(
+      /askedSettlementRef\.current\.delete\(e\)/.test(effect),
+      `${rel}: a failed lookup must un-ask those emails so the next change retries`,
+    );
+  }
+});
+
 test('the settlement route admits every role that renders the KPI Calculator', () => {
   // DeptBonusCalculator serves BOTH managers and QC officers (the QC first-pass
   // view is the same table). A missing role is silent: the fetch 403s, no marker

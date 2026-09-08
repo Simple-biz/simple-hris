@@ -7713,7 +7713,32 @@ export default function PayrollWizard({
    * turns amber to say why.
    */
   const [settlementRate, setSettlementRate] = useState<SettlementRate>({ status: 'unset' });
+  /**
+   * Emails already asked about, so the roster growing by one member does not
+   * re-ask for everybody.
+   *
+   * Paired with `settlementAliveRef` below, and the pairing is the whole point:
+   * marking an email "asked" is only safe if the answer can never be thrown
+   * away. The first cut used a per-effect `cancelled` flag, and because
+   * `settlementEmails` is derived from `state` — which changes on every
+   * department load and every keystroke in a variable field — the cleanup fired
+   * on the IN-FLIGHT request and discarded its markers, while the emails stayed
+   * marked asked. Result: Colombians silently rendered in pesos with no sticker,
+   * and no retry ever came. Only an UNMOUNT may discard a response now.
+   */
   const askedSettlementRef = useRef<Set<string>>(new Set());
+
+  /** False once this component has unmounted — the only reason to drop a
+   *  settlement response. A dependency change must NEVER drop one: the merge is
+   *  idempotent and keyed by email, so a late answer is always safe to apply. */
+  const settlementAliveRef = useRef(true);
+  useEffect(
+    () => () => {
+      settlementAliveRef.current = false;
+    },
+    [],
+  );
+
 
   const settlementEmails = useMemo(() => {
     const out = new Set<string>();
@@ -7728,8 +7753,7 @@ export default function PayrollWizard({
     const missing = settlementEmails.filter((e) => !askedSettlementRef.current.has(e));
     if (missing.length === 0) return;
     for (const e of missing) askedSettlementRef.current.add(e);
-    let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const res = await fetch('/api/payroll/settlement-currency', {
           method: 'POST',
@@ -7741,7 +7765,10 @@ export default function PayrollWizard({
           byEmail?: Record<string, PayCurrency>;
           rate?: { status: SettlementRate['status']; usdToPhp?: number; usdToCop?: number };
         };
-        if (cancelled) return;
+        // Only an unmount may discard this — `settlementEmails` is derived from
+        // `calcResults`, which recomputes constantly, so cancelling on a
+        // dependency change would throw away the markers and never retry.
+        if (!settlementAliveRef.current) return;
         if (json.byEmail && Object.keys(json.byEmail).length > 0) {
           setSettlementByEmail((prev) => ({ ...prev, ...json.byEmail }));
         }
@@ -7755,12 +7782,10 @@ export default function PayrollWizard({
         );
       } catch {
         // No licence to convert means pesos everywhere — never a guessed rate.
-        if (!cancelled) for (const e of missing) askedSettlementRef.current.delete(e);
+        // Un-ask so the next recompute retries.
+        for (const e of missing) askedSettlementRef.current.delete(e);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
   }, [settlementEmails]);
 
   /** This person's settlement currency, or null when they settle in pesos. */
