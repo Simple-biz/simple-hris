@@ -157,6 +157,39 @@ Example: `IF(tickets >= 10, 500, 250) * tickets` -> variables `[tickets]`; with
   > `hsl-kpi-calculator-2026-07.md` → Autosave). The FX snapshot rule is
   > unchanged: the last write of the week is the rate that sticks, exactly as
   > the last Save click was before.
+- **A SECOND currency axis, per PERSON (2026-09-08): settlement currency.**
+  Everything above is the bonus's **catalog** currency — what an amount is
+  *denominated* in. A payee also has a **settlement** currency — what *they* are
+  paid in. A Colombian's KPI bonuses are peso-denominated (catalog PHP) but
+  COP-settled: they ride the ordinary PHP rails because no COP Pay Structures
+  exist. `DeptBonusCalculator.tsx` resolves it per member from their onboarding
+  country and renders **every member-scoped figure on their row** — bonus cells,
+  team-bonus share, individual bonuses, row total — in that currency.
+  > **Never cross the two axes.** `settledFigure()` calls `computeAmount(...,
+  > effectiveCurrency(...))` FIRST to get the peso figure, and only then
+  > reconstructs the native amount from it (`settlementAmountFromPhp`). Handing a
+  > settlement currency to `computeAmount`/`phpPerUnit` reads a ₱1,200 bonus as
+  > COP 1,200 and pays ~₱18; writing a settlement figure into
+  > `bonus_catalog_applied.amount` pays ~68×. Both are pinned by
+  > `src/lib/payroll/settlement-currency-surfaces.test.ts`.
+  >
+  > **`bonus_catalog_applied.amount` did not change** — still the peso figure
+  > from the catalog currency, still what the Wizard pays verbatim. The COP a
+  > Colombian sees is a *reconstruction* of it, never a replacement.
+  >
+  > **Column subtotals became `Money` bags.** A column is one bonus, but a
+  > department can mix PHP- and COP-settled people, and pesos + Colombian pesos
+  > do not add up — so `colMeta.subtotal` / `sharedMeta.subtotal` are
+  > `Record<PayCurrency, number>` rendered via `fmtTotals`. A wholly-Filipino
+  > column still reads as one plain peso sum.
+  >
+  > **The FX rate can refuse to be used.** A settlement figure is a conversion,
+  > and both bad-rate modes are silent: this cycle's rate starts at **0**, and
+  > the official fallbacks (COP 4,000/$1, PHP 1/$1) look exactly like real rates.
+  > The marker + the rate come from `POST /api/payroll/settlement-currency`,
+  > which decides provenance server-side from the RAW `app_settings` values and
+  > only attaches numbers when `live`. Anything else → the row shows **pesos**
+  > and the chip turns amber. Full detail: `docs/features/cop-country-payees.md`.
 - **Currency-forced departments.** Some departments are paid in a fixed non-PHP
   currency regardless of each bonus's own catalog currency (e.g. US-based teams
   paid in dollars). `DeptBonusCalculator.tsx` keys this off `FORCED_DEPT_CURRENCY`
@@ -167,8 +200,16 @@ Example: `IF(tickets >= 10, 500, 250) * tickets` -> variables `[tickets]`; with
   those amounts to PHP on save exactly as an explicitly-typed bonus would
   (`computeAmount(..., effectiveCurrency(...))`), so the Payroll Wizard
   "KPI Sub." stays PHP and round-trips back to the native currency in the Payment
-  Dispatch USD/COP tab. Add an entry to `FORCED_DEPT_CURRENCY` (e.g. a Colombian
-  team → `'COP'`) to force more.
+  Dispatch USD/COP tab. Add an entry to `FORCED_DEPT_CURRENCY` to force more.
+
+  > **Do NOT use this for Colombians (or any foreign-settled individual).** It is
+  > department-granular, and the departments that have them are **mixed**: Lead
+  > Gen holds four COP payees, one USD payee and a large Filipino majority, so
+  > `FORCED_DEPT_CURRENCY['lead_gen']` would flip everybody. It is also the wrong
+  > axis — forcing changes what an amount is *denominated* in (and therefore what
+  > gets PAID), where a Colombian's amount is correctly peso-denominated and only
+  > *settled* in COP. Use the per-person settlement axis above. This map remains
+  > for a genuine whole-department redenomination, which is a different act.
 
   > **Superseded (2026-08-10):** `us_manager_bonus` was the only department this
   > ever applied to, and it is now **retired from the KPI Calculator** (see

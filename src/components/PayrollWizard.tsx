@@ -162,11 +162,17 @@ import {
 import { PayStubStatement } from '@/components/paystub/PayStubStatement';
 import {
   CURRENCY_SYMBOL,
+  CURRENCY_LOCALE,
   formatRate,
   isAutoOtRate,
   type PayStructure,
   type PayCurrency,
 } from '@/lib/payment-catalog/pay-structure';
+import {
+  settlementAmountFromPhp,
+  type SettlementRate,
+} from '@/lib/payroll/settlement-currency';
+import { SettlementChip } from '@/components/payroll/SettlementChip';
 import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from '@/lib/payment-catalog/system-bonus';
 import { normEmail } from '@/lib/email/norm-email';
 import { TIME_ADJUSTMENT_REASONS, type TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
@@ -1399,24 +1405,61 @@ function PhpWithUsd({
   phpClassName,
   usdClassName,
   align = 'end',
+  settlementCurrency,
+  settlementRate,
 }: {
   php: number;
   usdToPhp: number;
   phpClassName?: string;
   usdClassName?: string;
   align?: 'start' | 'end';
+  /** Set for a payee settled in something other than pesos (a Colombian rides
+   *  the PHP rails but is paid in COP). Their native figure REPLACES the USD
+   *  line — COP is derived through the USD anchor, so showing both would be the
+   *  same number twice — and renders teal at peso weight, because that is the
+   *  amount actually keyed into their bank.
+   *
+   *  The peso stays the headline on purpose: this column sums into a peso
+   *  footer that Accounting reconciles, and swapping the headline per-row would
+   *  make the column unscannable. Payment Dispatch shows the same pairing the
+   *  other way up (USD headline, native secondary), so the two Accounting
+   *  surfaces agree on which figure is which. */
+  settlementCurrency?: PayCurrency | null;
+  settlementRate?: SettlementRate;
 }) {
+  const native =
+    settlementRate != null
+      ? settlementAmountFromPhp(php, settlementCurrency, settlementRate)
+      : null;
   const usd = formatUsdFromPhp(php, usdToPhp);
   return (
     <div className={cn('flex flex-col gap-0.5', align === 'end' ? 'items-end' : 'items-start')}>
       <span className={phpClassName}>{formatPHP(php)}</span>
-      {usd && (
-        <span className={cn('font-mono text-[10px] font-normal text-blue-500 dark:text-blue-400', usdClassName)}>
-          ≈&nbsp;{usd}
+      {native != null && settlementCurrency ? (
+        <span
+          className="font-mono text-[10px] font-semibold text-teal-600 dark:text-teal-400"
+          title={`Paid in ${settlementCurrency} — the amount that reaches their bank`}
+        >
+          {formatSettlement(native, settlementCurrency)}
         </span>
+      ) : (
+        usd && (
+          <span className={cn('font-mono text-[10px] font-normal text-blue-500 dark:text-blue-400', usdClassName)}>
+            ≈&nbsp;{usd}
+          </span>
+        )
       )}
     </div>
   );
+}
+
+/** A native settlement figure with its currency symbol. COP has no minor unit. */
+function formatSettlement(amount: number, currency: PayCurrency): string {
+  const digits = currency === 'COP' ? 0 : 2;
+  return `${CURRENCY_SYMBOL[currency] ?? ''}${amount.toLocaleString(
+    CURRENCY_LOCALE[currency] ?? 'en-US',
+    { minimumFractionDigits: digits, maximumFractionDigits: digits },
+  )}`;
 }
 
 const SCROLLBAR_CLS =
@@ -7643,6 +7686,91 @@ export default function PayrollWizard({
   useEffect(() => {
     calcResultsRef.current = calcResults;
   }, [calcResults]);
+
+  /**
+   * SETTLEMENT currency per payee — the currency each person is actually PAID
+   * in, from the country they selected on their own onboarding paperwork.
+   *
+   * Colombians ride the ordinary PHP rails (no COP Pay Structures exist), so
+   * nothing in this wizard's pay math knows they are settled in COP. This is
+   * the marker that lets the Additions table flag them and show the COP figure
+   * that reaches their bank next to the peso figure it reconciles in.
+   *
+   * It changes NOTHING the wizard computes, stages, or dispatches: `pay_php`
+   * stays peso-denominated end to end. The one shared resolver behind the route
+   * also feeds the Manager KPI Calculator and `current-pay.ts`, so the three
+   * cannot disagree about who is Colombian.
+   * See `src/lib/payroll/settlement-currency.ts`.
+   */
+  const [settlementByEmail, setSettlementByEmail] = useState<Record<string, PayCurrency>>({});
+  /**
+   * Whether the FX rates may be used to state a native figure at all, decided
+   * SERVER-side from the RAW app_settings values. Two silent-fabrication modes
+   * make that necessary: this cycle's rate starts at 0 on every new Hubstaff
+   * upload (a COP figure would read "$COP0"), and the official fallbacks
+   * (COP 4,000/$1, PHP 1/$1) are indistinguishable from real rates. Anything
+   * but `live` carries no numbers, so the row keeps showing pesos and the chip
+   * turns amber to say why.
+   */
+  const [settlementRate, setSettlementRate] = useState<SettlementRate>({ status: 'unset' });
+  const askedSettlementRef = useRef<Set<string>>(new Set());
+
+  const settlementEmails = useMemo(() => {
+    const out = new Set<string>();
+    for (const r of calcResults) {
+      const e = normEmail(r.email);
+      if (e) out.add(e);
+    }
+    return [...out].sort();
+  }, [calcResults]);
+
+  useEffect(() => {
+    const missing = settlementEmails.filter((e) => !askedSettlementRef.current.has(e));
+    if (missing.length === 0) return;
+    for (const e of missing) askedSettlementRef.current.add(e);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/payroll/settlement-currency', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          body: JSON.stringify({ emails: missing }),
+        });
+        const json = (await res.json()) as {
+          byEmail?: Record<string, PayCurrency>;
+          rate?: { status: SettlementRate['status']; usdToPhp?: number; usdToCop?: number };
+        };
+        if (cancelled) return;
+        if (json.byEmail && Object.keys(json.byEmail).length > 0) {
+          setSettlementByEmail((prev) => ({ ...prev, ...json.byEmail }));
+        }
+        const r = json.rate;
+        setSettlementRate(
+          r?.status === 'live' && typeof r.usdToPhp === 'number' && typeof r.usdToCop === 'number'
+            ? { status: 'live', fx: { usdToPhp: r.usdToPhp, usdToCop: r.usdToCop } }
+            : r?.status === 'fallback'
+              ? { status: 'fallback' }
+              : { status: 'unset' },
+        );
+      } catch {
+        // No licence to convert means pesos everywhere — never a guessed rate.
+        if (!cancelled) for (const e of missing) askedSettlementRef.current.delete(e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [settlementEmails]);
+
+  /** This person's settlement currency, or null when they settle in pesos. */
+  const settlementFor = useCallback(
+    (email: string): PayCurrency | null => {
+      const cur = settlementByEmail[normEmail(email) ?? ''];
+      return cur && cur !== 'PHP' ? cur : null;
+    },
+    [settlementByEmail],
+  );
 
   /**
    * Step 4's list: everyone the wizard has already judged INELIGIBLE for this PAB
@@ -16313,8 +16441,14 @@ export default function PayrollWizard({
                                 className="border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30"
                               >
                                 <TableCell className="px-2 py-1.5">
-                                  <div className="whitespace-normal break-words text-[12px] font-semibold leading-tight text-zinc-800 dark:text-zinc-200">
-                                    {emp.name || '—'}
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="whitespace-normal break-words text-[12px] font-semibold leading-tight text-zinc-800 dark:text-zinc-200">
+                                      {emp.name || '—'}
+                                    </span>
+                                    <SettlementChip
+                                      currency={settlementFor(emp.email)}
+                                      rate={settlementRate}
+                                    />
                                   </div>
                                   <div className="truncate font-mono text-[9px] leading-tight text-zinc-400">
                                     {emp.email}
@@ -16668,7 +16802,12 @@ export default function PayrollWizard({
                                   {isRecalcPending ? (
                                     <span className="inline-block h-3 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
                                   ) : (
-                                    <PhpWithUsd php={finalPay} usdToPhp={usdToPhpRate} />
+                                    <PhpWithUsd
+                                      php={finalPay}
+                                      usdToPhp={usdToPhpRate}
+                                      settlementCurrency={settlementFor(emp.email)}
+                                      settlementRate={settlementRate}
+                                    />
                                   )}
                                 </TableCell>
                               </TableRow>

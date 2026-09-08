@@ -17,6 +17,7 @@ import { resolveMarkPaidDefaults } from '@/lib/payroll/mark-paid-defaults';
 import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
 import type { PaymentDispatchRow, PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
 import PaidRecordsPanel from './PaidRecordsPanel';
+import { SettlementChip } from '@/components/payroll/SettlementChip';
 
 /**
  * The sub-views the queue table can show. 'pending' is the live payable queue;
@@ -46,6 +47,18 @@ function rowSecondaryAmount(row: QueueRow): string {
 }
 function rowSecondaryNull(row: QueueRow): boolean {
   return !rowSecondaryIsCop(row) && row.amountPHP == null;
+}
+
+/** The settlement currency to STICKER on a queue row, or null for no sticker.
+ *
+ *  Only for a payee whose native figure is genuinely on the row: either they are
+ *  paid on a native Pay Structure (`payCurrency`), or they are a COP-country
+ *  payee riding the PHP rails whose `amount_cop` is present. A Colombian with a
+ *  null `amountCOP` (e.g. an arrears row) falls back to the peso secondary
+ *  line, so stickering them would label a figure that isn't there. */
+function settlementChipCurrency(row: QueueRow): PayCurrency | null {
+  if (row.payCurrency !== 'PHP') return row.payCurrency;
+  return rowSecondaryIsCop(row) ? 'COP' : null;
 }
 
 /** Under-₱7k predicate for the queue's instant filter chip — PHP-paid rows
@@ -942,6 +955,7 @@ const QueueRowItem = React.memo(function QueueRowItem({
                 <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                   {row.name}
                 </span>
+                <SettlementChip currency={settlementChipCurrency(row)} rate={{ status: 'shown' }} />
                 <motion.span
                   animate={{ rotate: isOpen ? 180 : 0 }}
                   transition={{ duration: 0.2 }}
@@ -1086,6 +1100,7 @@ const QueueRowItem = React.memo(function QueueRowItem({
             <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               {row.name}
             </span>
+            <SettlementChip currency={settlementChipCurrency(row)} rate={{ status: 'shown' }} />
             <motion.span
               animate={{ rotate: isOpen ? 180 : 0 }}
               transition={{ duration: 0.2 }}

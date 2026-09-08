@@ -119,6 +119,12 @@ import {
   PAY_CURRENCIES,
   type PayCurrency,
 } from '@/lib/payment-catalog/pay-structure';
+import {
+  isNativeSettlement,
+  settlementAmountFromPhp,
+  type SettlementRate,
+} from '@/lib/payroll/settlement-currency';
+import { SettlementChip } from '@/components/payroll/SettlementChip';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 // -- Types ---------------------------------------------------------------------
@@ -940,6 +946,82 @@ export default function DeptBonusCalculator({
     };
   }, []);
 
+  /**
+   * SETTLEMENT currency per person — the currency each member is actually PAID
+   * in, from the country they selected on their own onboarding paperwork.
+   *
+   * This is a different axis from a bonus's catalog currency (`fx` above), and
+   * the two must never be crossed: a Colombian's KPI bonuses are peso-
+   * DENOMINATED but COP-SETTLED, so their figures are the peso amount converted
+   * to COP — not the peso number relabelled, which would pay about 1.5% of it.
+   * See `src/lib/payroll/settlement-currency.ts`.
+   */
+  const [settlementByEmail, setSettlementByEmail] = useState<Record<string, PayCurrency>>({});
+  /**
+   * Whether the org's FX rates may be used to state a native figure at all,
+   * decided SERVER-side from the raw `app_settings` values. `unset` (the
+   * per-cycle rate still at 0) and `fallback` (the official COP 4,000 / PHP 1
+   * placeholders) both carry no numbers, so this component cannot convert with
+   * a rate nobody confirmed — a COP-settled member then keeps showing pesos and
+   * the toolbar says why.
+   */
+  const [settlementRate, setSettlementRate] = useState<SettlementRate>({ status: 'unset' });
+  /** Emails already asked about, so the roster growing by one external member
+   *  does not re-ask for everybody. */
+  const askedSettlementRef = useRef<Set<string>>(new Set());
+
+  /** The currency this person is settled in, or null when their paperwork says
+   *  nothing / says Philippines (nothing to convert, nothing to flag). */
+  const settlementFor = useCallback(
+    (email: string): PayCurrency | null => {
+      const cur = settlementByEmail[normEmail(email) ?? ''];
+      return isNativeSettlement(cur) ? cur! : null;
+    },
+    [settlementByEmail],
+  );
+
+  /**
+   * What ONE MEMBER's figure for ONE BONUS reads as, and in which currency —
+   * the single resolver every member-scoped cell, member total, column subtotal
+   * and department total funnels through.
+   *
+   * For a PHP-settled member (everyone Filipino) this is exactly the old
+   * behaviour: the bonus's own native amount in its own catalog currency.
+   *
+   * For a foreign-settled member it is the bonus's PHP-EQUIVALENT converted to
+   * their settlement currency. Note the pivot: `computeAmount` (the same
+   * chokepoint that produces the peso figure `saveDept` stores) resolves the
+   * catalog currency to pesos FIRST, and only then does the settlement
+   * conversion happen. The settlement currency is never handed to
+   * `computeAmount`/`phpPerUnit` — that would read a ₱1,200 bonus as COP 1,200
+   * and pay ₱18.
+   *
+   * `settlementAmountFromPhp` returns null unless the rate is licensed, so an
+   * unconfirmed or placeholder FX rate falls back to pesos rather than printing
+   * a fabricated COP number.
+   */
+  const settledFigure = useCallback(
+    (
+      deptKey: string,
+      bonus: BonusDef,
+      vars: Record<string, string> | undefined,
+      email: string,
+    ): { amt: number; cur: PayCurrency } => {
+      const catalogCur = effectiveCurrency(deptKey, bonus);
+      const settle = settlementFor(email);
+      if (settle) {
+        const native = settlementAmountFromPhp(
+          computeAmount(bonus, vars, fx, catalogCur),
+          settle,
+          settlementRate,
+        );
+        if (native != null) return { amt: native, cur: settle };
+      }
+      return { amt: computeNative(bonus, vars), cur: catalogCur };
+    },
+    [fx, settlementFor, settlementRate],
+  );
+
   const bonusById = useMemo(() => {
     const m = new Map<string, BonusDef>();
     for (const b of bonuses) m.set(b.id, b);
@@ -1212,6 +1294,68 @@ export default function DeptBonusCalculator({
   }, [isQc, isElevated, managedDepts, rosterByDept, commonByDept, individualByDept, qcRosterByDept, customManagedKeys, deptLabelByKey]);
 
   const [state, setState] = useState<AllState>({});
+
+  /** Every email on screen: the manager's roster plus any loaded/added member
+   *  (external members are scored here too, and can be foreign-settled). */
+  const settlementEmails = useMemo(() => {
+    const out = new Set<string>();
+    for (const r of teamMembers) {
+      const e = rowEmail(r);
+      if (e) out.add(e);
+      const we = normEmail(r.work_email ?? null);
+      if (we) out.add(we);
+    }
+    for (const d of Object.values(state)) {
+      for (const m of d?.members ?? []) {
+        const e = normEmail(m.email);
+        if (e) out.add(e);
+      }
+    }
+    return [...out].sort();
+  }, [teamMembers, state]);
+
+  useEffect(() => {
+    const missing = settlementEmails.filter((e) => !askedSettlementRef.current.has(e));
+    if (missing.length === 0) return;
+    for (const e of missing) askedSettlementRef.current.add(e);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/payroll/settlement-currency', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          body: JSON.stringify({ emails: missing }),
+        });
+        const json = (await res.json()) as {
+          byEmail?: Record<string, PayCurrency>;
+          rate?: SettlementRate & { usdToPhp?: number; usdToCop?: number };
+        };
+        if (cancelled) return;
+        // Merge, never replace: markers for earlier batches must survive.
+        if (json.byEmail && Object.keys(json.byEmail).length > 0) {
+          setSettlementByEmail((prev) => ({ ...prev, ...json.byEmail }));
+        }
+        const r = json.rate;
+        setSettlementRate(
+          r?.status === 'live' && typeof r.usdToPhp === 'number' && typeof r.usdToCop === 'number'
+            ? { status: 'live', fx: { usdToPhp: r.usdToPhp, usdToCop: r.usdToCop } }
+            : r?.status === 'fallback'
+              ? { status: 'fallback' }
+              : { status: 'unset' },
+        );
+      } catch {
+        // A failed lookup leaves the rate un-licensed, so every figure stays in
+        // pesos. Re-asking on the next roster change is enough; a marker that
+        // never arrives is a missing chip, never a wrong number.
+        if (!cancelled) for (const e of missing) askedSettlementRef.current.delete(e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [settlementEmails]);
+
   // Landing: filter the department cards by name.
   const [deptSearch, setDeptSearch] = useState('');
   // Per-department people search, used inside the open calculator panel.
@@ -1794,18 +1938,25 @@ export default function DeptBonusCalculator({
       const sharedSet = sharedCommonByDept.get(deptKey);
       const sum: Money = zeroMoney();
       for (const bonus of applicableBonuses(deptKey, member.email)) {
-        // Team-effort bonus: every member gets the single shared amount.
+        // Team-effort bonus: every member gets the single shared amount, each
+        // converted into their OWN settlement currency.
         if (sharedSet?.has(bonus.id)) {
           const sh = shared?.[bonus.id];
-          if (sh?.on) sum[effectiveCurrency(deptKey, bonus)] += computeNative(bonus, sh.vars);
+          if (sh?.on) {
+            const { amt, cur } = settledFigure(deptKey, bonus, sh.vars, member.email);
+            sum[cur] += amt;
+          }
           continue;
         }
         const st = member.applied[bonus.id];
-        if (st?.on) sum[effectiveCurrency(deptKey, bonus)] += computeNative(bonus, st.vars);
+        if (st?.on) {
+          const { amt, cur } = settledFigure(deptKey, bonus, st.vars, member.email);
+          sum[cur] += amt;
+        }
       }
       return sum;
     },
-    [applicableBonuses, sharedCommonByDept],
+    [applicableBonuses, sharedCommonByDept, settledFigure],
   );
 
   const deptTotal = useCallback(
@@ -1850,11 +2001,17 @@ export default function DeptBonusCalculator({
       const colMeta = normalCommon.map((b) => {
         const appMembers = allMembers.filter((m) => isApplicable(m.email, b.id));
         const onCount = appMembers.filter((m) => m.applied[b.id]?.on).length;
-        // A column is one bonus, so its subtotal is a single native currency.
-        const subtotal = appMembers.reduce(
-          (s, m) => s + (m.applied[b.id]?.on ? computeNative(b, m.applied[b.id]?.vars) : 0),
-          0,
-        );
+        // A column is ONE bonus, but a department can mix PHP-settled and
+        // COP-settled people, so the footer is a split Money bag rather than a
+        // single number — summing pesos and Colombian pesos into one total
+        // would be a meaningless figure. `fmtTotals` renders only the non-zero
+        // legs, so a wholly-Filipino column still reads as one plain peso sum.
+        const subtotal = appMembers.reduce<Money>((s, m) => {
+          if (!m.applied[b.id]?.on) return s;
+          const { amt, cur } = settledFigure(key, b, m.applied[b.id]?.vars, m.email);
+          s[cur] += amt;
+          return s;
+        }, zeroMoney());
         return {
           b,
           appCount: appMembers.length,
@@ -1867,9 +2024,19 @@ export default function DeptBonusCalculator({
       const sharedMeta = sharedCommon.map((b) => {
         const sh = d?.shared?.[b.id];
         const on = !!sh?.on;
+        // `perPerson` is the figure the manager TYPED once for the whole team,
+        // so it stays in the bonus's own catalog currency — it is an input, not
+        // a payout. Each member's cell then shows their own settled equivalent.
         const perPerson = on ? computeNative(b, sh?.vars) : 0;
-        const appCount = allMembers.filter((m) => isApplicable(m.email, b.id)).length;
-        return { b, sh, on, perPerson, subtotal: perPerson * appCount };
+        const appMembers = allMembers.filter((m) => isApplicable(m.email, b.id));
+        const subtotal = on
+          ? appMembers.reduce<Money>((s, m) => {
+              const { amt, cur } = settledFigure(key, b, sh?.vars, m.email);
+              s[cur] += amt;
+              return s;
+            }, zeroMoney())
+          : zeroMoney();
+        return { b, sh, on, perPerson, appCount: appMembers.length, subtotal };
       });
       // Individual bonuses can be a mix of PHP and USD, so the subtotal is split.
       const indivSubtotal = allMembers.reduce<Money>(
@@ -1878,7 +2045,9 @@ export default function DeptBonusCalculator({
             (b) => !common.some((c) => c.id === b.id) && !sharedSet?.has(b.id),
           );
           for (const b of ind) {
-            if (m.applied[b.id]?.on) s[effectiveCurrency(key, b)] += computeNative(b, m.applied[b.id]?.vars);
+            if (!m.applied[b.id]?.on) continue;
+            const { amt, cur } = settledFigure(key, b, m.applied[b.id]?.vars, m.email);
+            s[cur] += amt;
           }
           return s;
         },
@@ -1919,7 +2088,7 @@ export default function DeptBonusCalculator({
     [
       state, cardSearch, deptTotal, commonByDept, sharedCommonByDept,
       individualByDept, applicableBonuses, fx, memberMatchesQuery, isQc, qcLocked,
-      weekPending,
+      weekPending, settledFigure,
     ],
   );
 
@@ -2147,6 +2316,15 @@ export default function DeptBonusCalculator({
             // at apply time, like the rest of the applied row. A USD-forced
             // department (US Manager Bonus) converts too, even when the bonus
             // itself isn't tagged USD — matching what the calculator displays.
+            //
+            // DELIBERATELY `effectiveCurrency` — the bonus's CATALOG currency —
+            // and never the payee's SETTLEMENT currency. This column is
+            // peso-denominated and the Payroll Wizard pays it verbatim, so a COP
+            // figure written here would be read as pesos and pay ~68x the bonus;
+            // and handing 'COP' to computeAmount would multiply by php-per-COP
+            // and pay ~1.5% of it. What a Colombian is shown in COP is a
+            // reconstruction of THIS peso figure (`settledFigure`), never its
+            // replacement. See src/lib/payroll/settlement-currency.ts.
             amount: computeAmount(bonus, st.vars, fx, effectiveCurrency(key, bonus)),
           });
         }
@@ -2938,6 +3116,10 @@ export default function DeptBonusCalculator({
                               >
                                 {m.name}
                               </span>
+                              <SettlementChip
+                                currency={settlementFor(m.email)}
+                                rate={settlementRate}
+                              />
                               {m.external &&
                                 (offboardedEmailSet.has(canonEmail(m.email)) ? (
                                   <span
@@ -2981,7 +3163,10 @@ export default function DeptBonusCalculator({
                         const st = m.applied[b.id];
                         const on = !!st?.on;
                         const vars = bonusVariables(b);
-                        const amt = applicable && on ? computeNative(b, st?.vars) : 0;
+                        // The figure in THIS member's settlement currency —
+                        // pesos for a Filipino, COP for a Colombian.
+                        const fig = settledFigure(key, b, st?.vars, m.email);
+                        const amt = applicable && on ? fig.amt : 0;
                         return (
                           <td key={b.id} className="border-l border-zinc-100 px-2.5 py-2 align-top dark:border-zinc-800/50">
                             {!applicable ? (
@@ -3002,7 +3187,7 @@ export default function DeptBonusCalculator({
                                       amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
                                     )}
                                   >
-                                    {on ? fmtMoney(amt, effectiveCurrency(key, b)) : '—'}
+                                    {on ? fmtMoney(amt, fig.cur) : '—'}
                                   </span>
                                 </label>
                                 {on && b.kind === 'formula' && vars.length > 0 && (
@@ -3022,9 +3207,12 @@ export default function DeptBonusCalculator({
                       })}
 
                       {/* Team bonus cells (entered once in the header; read-only per person) */}
-                      {sharedMeta.map(({ b, on, perPerson }) => {
+                      {sharedMeta.map(({ b, sh, on }) => {
                         const applicable = applSet.has(b.id);
-                        const amt = applicable && on ? perPerson : 0;
+                        // The team figure is entered once, but each member
+                        // receives it in THEIR settlement currency.
+                        const fig = settledFigure(key, b, sh?.vars, m.email);
+                        const amt = applicable && on ? fig.amt : 0;
                         return (
                           <td
                             key={b.id}
@@ -3039,7 +3227,7 @@ export default function DeptBonusCalculator({
                                   amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
                                 )}
                               >
-                                {on ? fmtMoney(amt, effectiveCurrency(key, b)) : '—'}
+                                {on ? fmtMoney(amt, fig.cur) : '—'}
                               </span>
                             )}
                           </td>
@@ -3057,7 +3245,8 @@ export default function DeptBonusCalculator({
                                 const st = m.applied[b.id];
                                 const on = !!st?.on;
                                 const vars = bonusVariables(b);
-                                const amt = on ? computeNative(b, st?.vars) : 0;
+                                const fig = settledFigure(key, b, st?.vars, m.email);
+                                const amt = on ? fig.amt : 0;
                                 return (
                                   <div key={b.id} className="flex flex-col gap-0.5">
                                     <label className="flex items-center gap-1.5">
@@ -3078,7 +3267,7 @@ export default function DeptBonusCalculator({
                                           amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
                                         )}
                                       >
-                                        {on ? fmtMoney(amt, effectiveCurrency(key, b)) : '—'}
+                                        {on ? fmtMoney(amt, fig.cur) : '—'}
                                       </span>
                                     </label>
                                     {on && b.kind === 'formula' && vars.length > 0 && (
@@ -3129,10 +3318,10 @@ export default function DeptBonusCalculator({
                         <span
                           className={cn(
                             'font-mono text-[11px] font-semibold tabular-nums',
-                            subtotal > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                            moneyPositive(subtotal) ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
                           )}
                         >
-                          {fmtMoney(subtotal, effectiveCurrency(key, b))}
+                          {fmtTotals(subtotal)}
                         </span>
                         <span className="font-mono text-[9px] text-zinc-400">{onCount} applied</span>
                       </div>
@@ -3143,10 +3332,10 @@ export default function DeptBonusCalculator({
                       <span
                         className={cn(
                           'font-mono text-[11px] font-semibold tabular-nums',
-                          subtotal > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                          moneyPositive(subtotal) ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
                         )}
                       >
-                        {fmtMoney(subtotal, effectiveCurrency(key, b))}
+                        {fmtTotals(subtotal)}
                       </span>
                     </td>
                   ))}

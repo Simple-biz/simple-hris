@@ -745,6 +745,20 @@ export default function MarkPaidDialog({
                 {row?.processor ?? ''}
               </p>
               <div className="mt-1.5 flex flex-wrap items-center justify-end gap-1">
+                {/* Settlement sticker — this payee's bank settles in a currency
+                    that is not the peso, which is WHY the copyable secondary
+                    line below is a COP figure rather than the usual PHP
+                    equivalent. Rendered inline (not via the shared
+                    SettlementChip) because this header is a dark band: it takes
+                    the same on-dark badge treatment as its neighbours. */}
+                {copCountrySub && (
+                  <span
+                    className="inline-flex items-center rounded-full bg-white/20 px-2 py-0.5 font-mono text-[9.5px] font-semibold text-white backdrop-blur-sm"
+                    title="Paid in COP — this payee rides the ordinary PHP rails, so the copyable figure below is the Colombian-peso amount their bank receives."
+                  >
+                    $COP
+                  </span>
+                )}
                 {/* Sub-₱7k wires payment going out via Wise this week — tells the
                     clerk why a wires person is being keyed into Wise. */}
                 {row?.smallWiresViaWise && (

@@ -86,7 +86,10 @@ import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
 import { getDepartmentRegistry } from "@/lib/departments/registry-db";
 import { resolveDeptKeyWithRegistry } from "@/lib/departments/registry";
 import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
-import { currencyForCountry } from "@/lib/onboarding/countries";
+import {
+  buildSettlementCurrencyByEmail,
+  type OnboardingCountryRow as SettlementOnboardingRow,
+} from "@/lib/payroll/settlement-currency";
 import type { PayCurrency } from "@/lib/payment-catalog/pay-structure";
 import {
   buildCatalogRateIndex,
@@ -348,17 +351,10 @@ async function fetchMasterMin(
   }));
 }
 
-interface OnboardingCountryRow {
-  /** Email the hire submitted the paperwork under (usually their personal one). */
-  email: string | null;
-  /** HR's invite address for the same human — a second alias, never a country source. */
-  invite_personal_email: string | null;
-  /** Country the hire selected on the paperwork. Deliberately the ONLY country
-   *  source: HR's `invite_country` pick has real misclicks on never-submitted
-   *  invites (e.g. a Filipino hire invited under "Colombia"), and a wrong COP
-   *  marker would swap the peso line off their payment rows. */
-  country: string | null;
-}
+/** Onboarding country rows, shaped by the shared settlement resolver — which
+ *  deliberately has no `invite_country` field, so HR's invite-side pick (real
+ *  misclicks on never-submitted invites) can never become a country source. */
+type OnboardingCountryRow = SettlementOnboardingRow;
 
 /**
  * Country rows from the onboarding paperwork — the only place the org records
@@ -980,33 +976,17 @@ export async function computeCurrentPay(
     }
   }
 
-  // Receiving-country currency per email (onboarding paperwork → Colombia = COP).
-  // Submissions are filed under the hire's personal email, but pay entries key on
-  // the Hubstaff (work) email — bridge through the master alias map so every
-  // address of that human carries the marker.
-  const countryCurrencyByEmail = new Map<string, PayCurrency>();
-  for (const o of onboardingCountryRows) {
-    const cur = currencyForCountry(o.country);
-    if (!cur) continue;
-    for (const rawEmail of [o.email, o.invite_personal_email]) {
-      const e = normEmail(rawEmail);
-      if (!e) continue;
-      for (const alias of aliasesByEmail.get(e) ?? [e]) {
-        if (!countryCurrencyByEmail.has(alias)) countryCurrencyByEmail.set(alias, cur);
-      }
-    }
-  }
-  // Second bridge through the rates rows (work ↔ personal pairs of one human),
-  // for people whose master row is missing or carries a different personal email.
-  for (const r of rates.rows) {
-    const we = normEmail(r.work_email);
-    const pe = normEmail(r.personal_email);
-    if (!we || !pe) continue;
-    const cur = countryCurrencyByEmail.get(we) ?? countryCurrencyByEmail.get(pe);
-    if (!cur) continue;
-    if (!countryCurrencyByEmail.has(we)) countryCurrencyByEmail.set(we, cur);
-    if (!countryCurrencyByEmail.has(pe)) countryCurrencyByEmail.set(pe, cur);
-  }
+  // Receiving-country (SETTLEMENT) currency per email — the currency each payee
+  // is actually paid IN, from their onboarding paperwork. Built by the SHARED
+  // resolver so this bulk computation, the Payroll Wizard and the Manager KPI
+  // Calculator can never disagree about who is Colombian; both identity bridges
+  // (master aliases, then work↔personal rate pairs) live in there.
+  // See src/lib/payroll/settlement-currency.ts.
+  const countryCurrencyByEmail = buildSettlementCurrencyByEmail(
+    onboardingCountryRows,
+    aliasesByEmail,
+    rates.rows,
+  );
 
   // Build the US-holiday set for PAB forgiveness (same source the wizard uses).
   const usHolidayMap = getEnabledHolidayMap(
