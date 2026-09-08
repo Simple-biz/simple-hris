@@ -238,6 +238,35 @@ memo (valid legacy manual range → month override → code default).
 - Forgiveness outside the payout week still exists where it always did: the PAB Calendar
   modal (reachable from People/Overview) and the step-4 Attendance Issues panel.
 
+## Duplicate master rows: HSL wins, and the step says so
+
+**Kane, 2026-09-08**, from "reat@simple.biz has PAB lol". `reat@` carries two ACTIVE
+`global_master_list` rows — `hsl:callback_team` and `Lead Gen`. `hansc@` the same
+(`hsl:filing_specialist` + `Client - VA`). Across the roster: **267 active people have more
+than one master row with different departments, and 162 straddle HSL and non-HSL.**
+
+That is a money bug because PAB grades the two families differently — non-HSL must clear
+**every** Mon–Fri at ≥7h, HSL needs **5 of 7** Mon–Sun days with weekends droppable — and
+`isHsl` reads a SINGLE resolved key. `masterIndex.byWorkEmail` kept the first row it saw over
+a query with no `ORDER BY`, so the winner, and therefore the rule, could change between loads:
+a Lead Gen row winning costs an HSL person ₱5,000, an HSL row winning pays a Lead Gen person
+₱5,000 they did not earn.
+
+- **HSL wins.** `pickMasterRowForWorkEmail` (`src/lib/departments/master-row-tiebreak.ts`,
+  tested — including that the verdict is identical whichever order the rows arrive) gives an
+  `hsl:*` row the win. Two non-HSL rows keep first-occurrence-wins, unchanged. It matches the
+  invariant that an HSL person carries one department plus a required sub-department
+  (`hsl-subdept-restructure`), the surviving non-HSL row being the sheet sync clobbering HRIS
+  (`hris-is-dept-source-of-truth`, still open). Nobody loses PAB to a tie-break.
+- **The step flags it.** An amber strip above the "Not listed this period" line names the
+  affected people, with the full list on hover. The verdict is stable but the department is a
+  GUESS, and a stable-looking answer that hides a guess is worse than a visible warning.
+- **The data is still wrong.** `scripts/audit-duplicate-master-departments.mts` is the
+  read-only worklist (`--csv <path>`). Deduping is a separate script behind an `--apply` gate
+  with a `SELECT` backup written to disk first — only HR can say which department is real.
+- **Not the `isDeptEligible` fail-open.** Both departments here resolve to real keys; that
+  fail-open is deliberate and untouched (`system-bonus-dept-resolver-split`).
+
 ## Severity explains a verdict; it never reaches one
 
 `pabIneligibleRows` takes membership from **`effectivePabStatus`** — the same verdict the

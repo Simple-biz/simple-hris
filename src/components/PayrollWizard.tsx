@@ -287,6 +287,10 @@ import {
 } from '@/lib/payroll/pab-payout-week';
 import { regatePabInBonusTotals } from '@/lib/payroll/additions-pab-gate';
 import {
+  isAmbiguousDeptPair,
+  pickMasterRowForWorkEmail,
+} from '@/lib/departments/master-row-tiebreak';
+import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
   parseUsHolidaysList,
@@ -4834,15 +4838,32 @@ export default function PayrollWizard({
   // inside a per-employee loop is O(employees × roster) and re-runs
   // normalizeNameTokens for every comparison — that synchronous work is what made
   // the Initial Calculation skeleton stutter. Map lookups make each match O(1).
-  // First occurrence wins, mirroring `.find()` semantics.
+  // First occurrence wins, mirroring `.find()` semantics — EXCEPT for a work
+  // email carrying duplicate master rows, where HSL wins outright. 267 active
+  // people have two rows with different departments and 138 straddle HSL and
+  // non-HSL; first-wins over an unordered query let the winner (and therefore
+  // which PAB attendance rule grades them) change between loads. See
+  // `master-row-tiebreak.ts` for the ruling and the reasoning.
   const masterIndex = useMemo(() => {
     type M = typeof masterEmployees[number];
     const byWorkEmail = new Map<string, M>();
     const byPersonalEmail = new Map<string, M>();
     const byNameTokens = new Map<string, M>();
+    /** work email → the distinct department labels its duplicate rows carry.
+     *  Only populated when the rows disagree about the PAB rule. */
+    const ambiguousDepts = new Map<string, string[]>();
     for (const e of masterEmployees) {
       const we = normEmail(e.work_email);
-      if (we && !byWorkEmail.has(we)) byWorkEmail.set(we, e);
+      if (we) {
+        const incumbent = byWorkEmail.get(we);
+        if (incumbent && isAmbiguousDeptPair(incumbent.department, e.department)) {
+          const seen = ambiguousDepts.get(we) ?? [String(incumbent.department ?? '—')];
+          const label = String(e.department ?? '—');
+          if (!seen.includes(label)) seen.push(label);
+          ambiguousDepts.set(we, seen);
+        }
+        byWorkEmail.set(we, pickMasterRowForWorkEmail(incumbent, e));
+      }
       const pe = normEmail(e.personal_email);
       if (pe && !byPersonalEmail.has(pe)) byPersonalEmail.set(pe, e);
       if (e.name) {
@@ -4860,7 +4881,7 @@ export default function PayrollWizard({
         if (a && !byWorkEmail.has(a)) byWorkEmail.set(a, e);
       }
     }
-    return { byWorkEmail, byPersonalEmail, byNameTokens };
+    return { byWorkEmail, byPersonalEmail, byNameTokens, ambiguousDepts };
   }, [masterEmployees]);
 
   /**
@@ -8666,6 +8687,25 @@ export default function PayrollWizard({
     }
     return { amounts, eligible };
   }, [hslKpiAmounts, effectiveCalcResults, masterIndex]);
+
+  /**
+   * People on this week's calc whose master list carries BOTH an HSL and a
+   * non-HSL row. `pickMasterRowForWorkEmail` gives HSL the win so the verdict is
+   * at least stable (Kane 2026-09-08), but the underlying rows are still invalid
+   * data and the person is being graded under a rule that was CHOSEN, not read.
+   * Flagged here rather than left silent, because the two rules differ: non-HSL
+   * needs every Mon–Fri at 7h, HSL needs 5 of 7 with weekends droppable.
+   */
+  const pabAmbiguousDeptRows = useMemo(() => {
+    if (masterIndex.ambiguousDepts.size === 0) return [];
+    const out: Array<{ email: string; name: string; depts: string[] }> = [];
+    for (const r of effectiveCalcResults) {
+      const em = normEmail(r.email) ?? (r.email ?? '').toLowerCase();
+      const depts = masterIndex.ambiguousDepts.get(em);
+      if (depts) out.push({ email: em, name: r.name || em, depts });
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  }, [masterIndex.ambiguousDepts, effectiveCalcResults]);
 
   // PAB + Tech amounts + per-department allowlist come from the Payment Catalog
   // System Bonuses tab (prefetched into initialData). Custom `pab:*`/`tech:*`
@@ -18122,6 +18162,35 @@ export default function PayrollWizard({
                       hint={`active on the master list with hours, of ${masterEmployees.length.toLocaleString()} on the roster`}
                     />
                   </div>
+                  {pabAmbiguousDeptRows.length > 0 && (
+                    /* Two master rows, two different PAB rules. The tie-break picked
+                       HSL so the verdict cannot flip between loads, but it is a GUESS
+                       until the duplicate rows are deduped — so it is said out loud
+                       rather than hidden behind a stable-looking answer. Amber: this
+                       is a warning, not a payout. */
+                    <p className="flex items-start gap-1.5 rounded-md border border-amber-300/60 bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-300">
+                      <AlertCircle className="mt-px h-3 w-3 shrink-0" />
+                      <span>
+                        <strong>{pabAmbiguousDeptRows.length.toLocaleString()}</strong>{' '}
+                        {pabAmbiguousDeptRows.length === 1 ? 'person has' : 'people have'} duplicate
+                        master-list rows in both an HSL and a non-HSL department, which are graded by
+                        different attendance rules. HSL was applied so the verdict is stable, but the
+                        department is a guess until the duplicate rows are removed:{' '}
+                        <span
+                          className="font-medium underline decoration-dotted underline-offset-2"
+                          title={pabAmbiguousDeptRows
+                            .map((r) => `${r.name} (${r.email}) — ${r.depts.join(' | ')}`)
+                            .join('  ·  ')}
+                        >
+                          {pabAmbiguousDeptRows.slice(0, 3).map((r) => r.name).join(', ')}
+                          {pabAmbiguousDeptRows.length > 3
+                            ? ` +${pabAmbiguousDeptRows.length - 3} more`
+                            : ''}
+                        </span>
+                        . Hover for the full list.
+                      </span>
+                    </p>
+                  )}
                   {(pabGmlCounts.offRoster > 0 || pabGmlCounts.noHours > 0
                     || pabIneligible.ignoredCount > 0 || pabIneligible.pausedDeptCount > 0) && (
                     <p className="flex items-start gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
