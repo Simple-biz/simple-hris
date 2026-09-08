@@ -624,8 +624,9 @@ Now (`src/components/PayrollWizard.tsx`):
 - A single always-loaded `hslKpiAmounts` map sums `calculated_bonus` per employee
   across **every HSL sub-department that auto-dispatches** — all weekly depts
   (Medical Records, Callback, Simple Texting, Care, Filing, Intake, Pre/Post-Hearing,
-  Attestation, Case Managers, Managers Weekly) **plus SSD Medical Records** —
-  **pinned to the processed Hubstaff week**. It clears when no Hubstaff week is
+  Attestation, Case Managers, Managers Weekly) **plus the two monthly depts flagged
+  `monthlyAutoPay`, SSD Medical Records and Collections** — **pinned to the processed
+  Hubstaff week**. It clears when no Hubstaff week is
   loaded, so it can never pay a different week's score.
   **SSD is MONTHLY (`cadence: 'monthly'` since c0dc608e, 2026-07-18) and was
   therefore silently dropped from auto-pay from that day** — this doc claimed it was
@@ -658,15 +659,25 @@ Now (`src/components/PayrollWizard.tsx`):
 the Adjustment column by hand** — that would now double-pay. The Adjustment column is
 only for genuine one-off deltas (and is how you make a per-person exception).
 
-**Still manual:** the three **monthly-cadence** HSL depts without `monthlyAutoPay` —
-`collections`, `healthcare_team_lead`, `collections_tl` — are excluded from auto-pay.
-Their review cards are badged **"manual · Adjustment"**; apply those via the
-Adjustment column as before. **SSD's card never carries that badge**
-(`isManualMonthlyPeriod` = monthly AND NOT an auto-dispatching dept) — a "manual"
-badge on an auto-paid period would have Accounting key it a second time. **From the
-2026-08-30 cycle, Accounting must STOP keying SSD Medical Records into Adjustment.**
-Opting another monthly dept in is a pay decision: only SSD may carry the flag
-(pinned by test).
+**Still manual:** the **monthly-cadence** HSL depts without `monthlyAutoPay` —
+`healthcare_team_lead` (one person) and `collections_tl` (empty, purged 2026-08-04) —
+are excluded from auto-pay. Their review cards are badged **"manual · Adjustment"**;
+apply those via the Adjustment column as before. **SSD's and Collections' cards never
+carry that badge** (`isManualMonthlyPeriod` = monthly AND NOT an auto-dispatching
+dept) — a "manual" badge on an auto-paid period would have Accounting key it a
+second time. **From the 2026-08-30 cycle, Accounting must STOP keying SSD Medical
+Records and Collections into Adjustment.** Opting another monthly dept in is a pay
+decision: only those two may carry the flag (pinned by test).
+
+**Collections joined the same day (Carla, 2026-09-08):** the Monthly Flat Bonus
+"fails to come through" — in the 2026-08-30 period 30 of 39 rows carry
+`monthly_flat: true`, ₱77,000 in total, period Ready, none of it auto-dispatched.
+Same class as SSD, same fix (`monthlyAutoPay: true`). **Note how it is being scored:**
+the flat rule is `managerOnly`, so the scorer has to tick **Mgr** on every one of
+those 30 people to unlock the checkbox. Either the ₱2,500 is genuinely for everyone
+in Collections and `managerOnly` is mis-modeled, or it is not and 30 rows are wrong —
+that is a pay-rule question for Carla, left as it is here; `is_manager` on
+`hsl_bonus_entries` gates nothing else in this dept.
 
 ## First-load reveal *(2026-08-24 — the skeleton was terminal)*
 

@@ -284,6 +284,10 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     key: 'collections',
     name: 'Collections',
     cadence: 'monthly',
+    // Carla (2026-09-08): the Collections monthly flat "fails to come through" —
+    // 30 people ticked, ₱77,000 in the 08-30 period, never auto-dispatched. Same
+    // class as SSD: a monthly dept pays in the week its period is marked Ready.
+    monthlyAutoPay: true,
     color: '#f59e0b',
     headerBg: 'bg-amber-950/40',
     badgeCls: 'bg-amber-900/60 text-amber-300',

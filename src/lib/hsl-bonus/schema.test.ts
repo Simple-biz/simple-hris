@@ -405,22 +405,27 @@ test('case_managers: rows saved before the SSA.Gov term recompute unchanged (not
 // set (₱475 Medical Records paid, ₱1,625 SSD share did not, 49 people). The
 // manager's Ready is the trigger — not the calendar — so the loader's period_start
 // pin is the only gate.
-test('ssd_medical_records: monthly, and the ONLY dept opted into monthly auto-dispatch', () => {
+const MONTHLY_AUTO_DISPATCH = new Set<string>(['ssd_medical_records', 'collections']);
+test('ssd_medical_records + collections: monthly, and the ONLY depts opted into monthly auto-dispatch', () => {
   assert.equal(HSL_DEPTS.ssd_medical_records.cadence, 'monthly');
   assert.equal(HSL_DEPTS.ssd_medical_records.monthlyAutoPay, true);
+  // Carla (2026-09-08): 30 Collections people ticked manager + monthly flat and
+  // ₱77,000 never reached pay — same class as SSD, same ruling.
+  assert.equal(HSL_DEPTS.collections.cadence, 'monthly');
+  assert.equal(HSL_DEPTS.collections.monthlyAutoPay, true);
   for (const k of HSL_DEPT_KEYS) {
-    if (k === 'ssd_medical_records') continue;
+    if (MONTHLY_AUTO_DISPATCH.has(k)) continue;
     assert.notEqual(HSL_DEPTS[k].monthlyAutoPay, true, `${k} must not auto-dispatch monthly without a ruling`);
   }
 });
 
-test('hslDeptAutoDispatches: every weekly dept, SSD, and no other monthly dept', () => {
+test('hslDeptAutoDispatches: every weekly dept, SSD, Collections, and no other monthly dept', () => {
   for (const k of HSL_DEPT_KEYS) {
     const d = HSL_DEPTS[k];
-    const expected = d.cadence === 'weekly' || k === 'ssd_medical_records';
+    const expected = d.cadence === 'weekly' || MONTHLY_AUTO_DISPATCH.has(k);
     assert.equal(hslDeptAutoDispatches(d), expected, k);
   }
-  assert.equal(hslDeptAutoDispatches(HSL_DEPTS.collections), false);
+  assert.equal(hslDeptAutoDispatches(HSL_DEPTS.collections), true);
   assert.equal(hslDeptAutoDispatches(HSL_DEPTS.healthcare_team_lead), false);
   assert.equal(hslDeptAutoDispatches(HSL_DEPTS.medical_records), true);
   assert.equal(hslDeptAutoDispatches(HSL_DEPTS.ssd_medical_records), true);
