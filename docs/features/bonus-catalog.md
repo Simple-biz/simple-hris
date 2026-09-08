@@ -1020,3 +1020,96 @@ Reads coalesce a missing `cadence` to `'weekly'` (`bonus-catalog-db.ts`,
 exactly as weekly. The `/api/bonus-catalog` route passes `cadence` through
 unchanged. Migration: `references/sql/alter/add_bonus_catalog_cadence.sql`
 (adds `cadence` to both `bonus_catalog_bonuses` and `bonus_catalog_applied`).
+
+---
+
+## 8. Versioning and change history *(added 2026-09-08)*
+
+Every bonus definition carries a **version number** and the **date its current
+version takes effect**; every saved version is snapshotted, and every assignment
+change is recorded as an event. The detail modal (View mode) shows both lists
+under "Version history" / "Assignment history"; cards and the modal header carry a
+`v3 · from 2026-09-14` chip. Plan: `docs/superpowers/plans/2026-09-08-bonus-library-versioned-history.md`.
+
+**Display + audit only — the effective date never gates payout.** Kane's ruling
+(2026-09-08): the KPI Calculator keeps reading the LIVE definition
+(`DeptBonusCalculator.tsx`), and `bonus_catalog_applied` keeps its own apply-time
+snapshot (§7). A bonus raised "effective 2026-09-14" and applied on 2026-09-10 pays
+the raised amount. The history tells you *what was declared to take effect when*;
+it does not reprice anything. If that ever changes it is a money change: pull
+`bonus-calculator.md` in and run the hardening doc-check first.
+
+### Key files
+| Piece | File |
+| --- | --- |
+| Pure diff / date rules + row types | `src/lib/bonus-catalog/history.ts` (+ `.test.ts`) |
+| Save path writes versions/events | `src/lib/supabase/bonus-catalog-db.ts` (`upsertBonus`, `addAssignment`, `removeAssignment`, `listBonusHistory`) |
+| API | `app/api/bonus-catalog/route.ts` (`effectiveDate` on POST/DELETE) · `app/api/bonus-catalog/history/route.ts` (GET `?bonusId=`) |
+| UI | `BonusCatalog.tsx` — `VersionChip`, `BonusHistoryPanel`, the "Effective from" pickers in `BonusEditor` and `AssignmentsTab` |
+| DDL | `references/sql/create/2026-09-08_bonus_catalog_history.sql` · `scripts/apply-bonus-history-migration.mjs` |
+
+### Data
+`bonus_catalog_bonuses` gains `version integer not null default 1` and
+`effective_from date` (nullable — see legacy rule). Two new tables, both
+`ON DELETE CASCADE` from the bonus like assignments are:
+
+- **`bonus_catalog_bonus_history`** — one row per version: the full tracked
+  snapshot (name, description, kind, amount, formula, currency, cadence),
+  `changed_fields text[]`, `effective_from`, `note` (`created` / `edited` /
+  `baseline`), `created_by`. `UNIQUE (bonus_id, version)`.
+- **`bonus_catalog_assignment_history`** — one row per event: `added` / `removed` /
+  `exclusions_changed` / `shared_team_changed`, with scope, department, person,
+  `excluded_before` / `excluded_after`, `shared_team`, `effective_from`, `created_by`.
+
+### Rules
+
+- **A version is minted only when a TRACKED field changed.** Tracked =
+  `TRACKED_BONUS_FIELDS` in `history.ts`; `starred` is deliberately excluded (a
+  highlight is not a change to the bonus). Comparison is on NORMALISED values —
+  `undefined` vs `''`, absent currency vs `'PHP'`, `"500"` vs `500`, a stale
+  `amount` left on a formula bonus — so re-saving a legacy row unchanged does
+  **not** mint a phantom v2. The version number and `effective_from` on the live
+  row move only when a version is minted.
+- **The diff is against the STORED row, read in the same request.** Not against
+  what the client thinks it had. Two accountants saving back to back each get a
+  correct diff, and `(bonus_id, version)` is unique so a true race errors instead
+  of writing two v4s.
+- **The history write is awaited and its failure is SAID.** Unlike
+  `syncRateHistory` (fire-and-forget), a failed version/event insert comes back
+  as `historyError` on a 200 — the definition IS saved, and the client toasts a
+  warning ("saved, but its history was not recorded"). Never downgrade this to a
+  silent `void`.
+- **A missing table never blocks a save, and never reads as "no history".** Until
+  the migration lands, saves succeed without version/effective_from (the DB layer
+  retries without those columns on a missing-column error), and the panel shows
+  *"History unavailable: …"* — the §3.1.5 rule, not an empty list.
+- **Effective date is the author's, validated, never coerced.** Any real
+  `YYYY-MM-DD` is accepted (past or future); `2026-02-30`, `09/14/2026`, ISO
+  timestamps → 400. Absent ⇒ today (local calendar day). Defaults in the UI: a NEW
+  bonus is effective today; an EDIT and any assignment change default to the coming
+  Monday (`nextMondayIso`), matching Pay Structures.
+- **Assignment events from surfaces without a date picker are stamped today.**
+  The Assignments tab has one "Changes effective from" picker per department panel
+  that covers adds, removes, exclusion ticks and team-effort flips made there. The
+  Search/person tab's exclusion toggle and per-person adder send no date, so those
+  events are effective the day they were made. `removed` events are written from
+  the row read BEFORE the delete (the client only sends an id).
+- **Legacy rows: NULL `effective_from` reads as the created day, `version` = 1.**
+  The migration does NOT `UPDATE bonus_catalog_bonuses` (the touch trigger would
+  bump every `updated_at`); `bonusEffectiveFrom()` does the coalesce on read. The
+  backfill writes v1 (`note='baseline'`, `changed_fields='{}'`) per bonus and one
+  `added` event per assignment, both `created_by` = the original author (or
+  `migrated`), NOT EXISTS-guarded so re-runs are no-ops.
+- **Both history reads page** (`selectAllPaged`) even though one bonus's history
+  is tiny — PostgREST's 1000-row cap is silent.
+- **The panel refetches on `version | updated_at | assignment count`.** Realtime
+  is not subscribed for the history tables; the modal's own props change on every
+  save that matters.
+
+### Deploy notes
+- **PENDING (Kane runs):** `node scripts/apply-bonus-history-migration.mjs`
+  (`--verify` to check only). Needs `DATABASE_URL` = the **session pooler**
+  (`postgres.<ref>@aws-1-us-east-2.pooler.supabase.com:5432`, `@` in the password
+  as `%40`). Exit 0 = every bonus and assignment has a baseline row. Until it
+  runs: saves work, chips read v1, the panel says "History unavailable".
+- No env vars, no n8n, no realtime publication change.

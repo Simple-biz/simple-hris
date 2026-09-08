@@ -43,6 +43,13 @@ export interface BonusDef {
   currency?: PayCurrency;
   /** Highlighted/favorited in the Bonus Library (sorts to the top + amber star). */
   starred?: boolean;
+  /** Current version number (1 on create; bumped only when a TRACKED field
+   *  changes — see `src/lib/bonus-catalog/history.ts`). Server-assigned. */
+  version?: number;
+  /** YYYY-MM-DD the current version takes effect. Null on rows that pre-date
+   *  the history migration — read through `bonusEffectiveFrom()`. Display + audit
+   *  only: the KPI Calculator pays the live definition regardless of this date. */
+  effectiveFrom?: string | null;
   /** Author attribution (set server-side from the session). */
   createdBy?: string | null;
   createdAt?: string | null;

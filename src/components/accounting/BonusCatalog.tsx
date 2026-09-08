@@ -58,6 +58,13 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
+import {
+  bonusEffectiveFrom,
+  todayIso,
+  TRACKED_FIELD_LABELS,
+  type AssignmentEvent,
+  type BonusVersion,
+} from '@/lib/bonus-catalog/history';
 import { Input } from '@/components/ui/input';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
@@ -907,7 +914,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   const failMsg = (e: unknown) => (e instanceof Error ? e.message : 'unknown error');
 
   const upsertBonus = useCallback(
-    async (bonus: BonusDef) => {
+    async (bonus: BonusDef, effectiveDate?: string) => {
       // Optimistic: reflect immediately, reconcile from the server row.
       setBonuses((prev) =>
         prev.some((b) => b.id === bonus.id)
@@ -918,12 +925,19 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
         const res = await fetch('/api/bonus-catalog', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'bonus', bonus }),
+          // effectiveDate is the day this version takes effect (recorded on the
+          // version row; the KPI Calculator still pays the live definition).
+          // Absent (a star toggle) ⇒ the server stamps today — and a star toggle
+          // mints no version anyway.
+          body: JSON.stringify({ type: 'bonus', bonus, effectiveDate }),
         });
-        const json = (await res.json()) as { row?: BonusDef; error: string | null };
+        const json = (await res.json()) as { row?: BonusDef; error: string | null; historyError?: string | null };
         if (json.error) throw new Error(json.error);
         if (json.row) setBonuses((prev) => prev.map((b) => (b.id === json.row!.id ? json.row! : b)));
-        toast.success('Bonus saved');
+        // The definition saved but its version row did not — say so rather than
+        // let the history silently miss a version.
+        if (json.historyError) toast.warning(`Bonus saved, but its history was not recorded: ${json.historyError}`);
+        else toast.success('Bonus saved');
       } catch (e) {
         toast.error(`Could not save bonus: ${failMsg(e)}`);
         void refetch();
@@ -951,7 +965,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   );
 
   const addAssignment = useCallback(
-    async (a: BonusAssignment) => {
+    async (a: BonusAssignment, effectiveDate?: string) => {
       // Upsert in state: a brand-new assignment appends; editing a common
       // bonus's exclusion list reuses the same id and replaces it in place.
       setAssignments((prev) =>
@@ -961,11 +975,12 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
         const res = await fetch('/api/bonus-catalog', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'assignment', assignment: a }),
+          body: JSON.stringify({ type: 'assignment', assignment: a, effectiveDate }),
         });
-        const json = (await res.json()) as { row?: BonusAssignment; error: string | null };
+        const json = (await res.json()) as { row?: BonusAssignment; error: string | null; historyError?: string | null };
         if (json.error) throw new Error(json.error);
         if (json.row) setAssignments((prev) => prev.map((x) => (x.id === json.row!.id ? json.row! : x)));
+        if (json.historyError) toast.warning(`Assignment saved, but its history was not recorded: ${json.historyError}`);
       } catch (e) {
         toast.error(`Could not assign bonus: ${failMsg(e)}`);
         void refetch();
@@ -975,14 +990,15 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   );
 
   const removeAssignment = useCallback(
-    async (id: string) => {
+    async (id: string, effectiveDate?: string) => {
       setAssignments((prev) => prev.filter((x) => x.id !== id));
       try {
-        const res = await fetch(`/api/bonus-catalog?type=assignment&id=${encodeURIComponent(id)}`, {
-          method: 'DELETE',
-        });
-        const json = (await res.json()) as { error: string | null };
+        const qs = new URLSearchParams({ type: 'assignment', id });
+        if (effectiveDate) qs.set('effectiveDate', effectiveDate);
+        const res = await fetch(`/api/bonus-catalog?${qs.toString()}`, { method: 'DELETE' });
+        const json = (await res.json()) as { error: string | null; historyError?: string | null };
         if (json.error) throw new Error(json.error);
+        if (json.historyError) toast.warning(`Assignment removed, but its history was not recorded: ${json.historyError}`);
       } catch (e) {
         toast.error(`Could not remove assignment: ${failMsg(e)}`);
         void refetch();
@@ -3407,7 +3423,8 @@ function LibraryTab({
 }: {
   bonuses: BonusDef[];
   assignments: BonusAssignment[];
-  onUpsert: (b: BonusDef) => void;
+  /** `effectiveDate` (YYYY-MM-DD) is the day the saved version takes effect. */
+  onUpsert: (b: BonusDef, effectiveDate?: string) => void;
   onDelete: (id: string) => void;
   /** Live USD-anchored FX rates, used to sort by PHP-equivalent amount. */
   fx: FxRates;
@@ -3503,8 +3520,8 @@ function LibraryTab({
     setCreating(true);
   };
 
-  const upsert = (bonus: BonusDef) => {
-    onUpsert(bonus);
+  const upsert = (bonus: BonusDef, effectiveDate: string) => {
+    onUpsert(bonus, effectiveDate);
     setEditing(null);
     setCreating(false);
   };
@@ -3651,7 +3668,7 @@ function LibraryTab({
         editMode={!!viewing?.edit}
         onEditModeChange={(edit) => setViewing((v) => (v ? { ...v, edit } : v))}
         onClose={() => setViewing(null)}
-        onSave={(b) => onUpsert(b)}
+        onSave={(b, effectiveDate) => onUpsert(b, effectiveDate)}
         onDelete={(id) => {
           remove(id);
           setViewing(null);
@@ -3693,6 +3710,7 @@ function BonusCard({
             <KindBadge kind={bonus.kind} />
             <CurrencyBadge currency={bonus.currency} />
             <CadenceBadge cadence={bonus.cadence} />
+            <VersionChip bonus={bonus} compact />
           </div>
           {bonus.description && (
             <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-500">{bonus.description}</p>
@@ -3833,7 +3851,7 @@ function BonusDetailModal({
   editMode: boolean;
   onEditModeChange: (v: boolean) => void;
   onClose: () => void;
-  onSave: (b: BonusDef) => void;
+  onSave: (b: BonusDef, effectiveDate: string) => void;
   onDelete: (id: string) => void;
 }) {
   const open = !!bonus;
@@ -3893,6 +3911,7 @@ function BonusDetailModal({
                   <KindBadge kind={b.kind} />
                   <CurrencyBadge currency={b.currency} />
                   <CadenceBadge cadence={b.cadence} />
+                  <VersionChip bonus={b} />
                 </div>
                 {b.description && (
                   <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{b.description}</p>
@@ -3928,8 +3947,8 @@ function BonusDetailModal({
                       embedded
                       initial={b}
                       onCancel={() => onEditModeChange(false)}
-                      onSave={(next) => {
-                        onSave(next);
+                      onSave={(next, effectiveDate) => {
+                        onSave(next, effectiveDate);
                         onEditModeChange(false);
                       }}
                     />
@@ -3978,6 +3997,13 @@ function BonusDetailModal({
                       </div>
                     )}
 
+                    {/* Refetches when a save lands (version / updated_at) or an
+                        assignment is added/removed (count). */}
+                    <BonusHistoryPanel
+                      bonusId={b.id}
+                      refreshKey={`${b.version ?? 1}|${b.updatedAt ?? ''}|${assignments}`}
+                    />
+
                     <div className="flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800">
                       <span className="flex items-center gap-2 text-[11px] text-zinc-400">
                         {assignments} assignment{assignments === 1 ? '' : 's'}
@@ -4006,6 +4032,243 @@ function BonusDetailModal({
 }
 
 // ---------------------------------------------------------------------------
+// Version chip + history panel (display + audit only — never feeds payout)
+// ---------------------------------------------------------------------------
+
+/** "v3 · from 2026-09-14" — the current version and the day it took effect.
+ *  Rows that pre-date the history migration read as v1 from their created day. */
+function VersionChip({ bonus, compact = false }: { bonus: BonusDef; compact?: boolean }) {
+  const eff = bonusEffectiveFrom(bonus);
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-1.5 py-px text-[10px] font-medium tabular-nums text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+      title={eff ? `Version ${bonus.version ?? 1}, effective from ${eff}` : `Version ${bonus.version ?? 1}`}
+    >
+      v{bonus.version ?? 1}
+      {!compact && eff && <span className="font-normal text-zinc-400">· from {eff}</span>}
+    </span>
+  );
+}
+
+const BONUS_HISTORY_PAGE_SIZE = 5;
+
+/** Read-only pager shared by both history lists — stays live for view-only users. */
+function HistoryPager({ page, pageCount, onPage }: { page: number; pageCount: number; onPage: (p: number) => void }) {
+  if (pageCount <= 1) return null;
+  return (
+    <div data-readonly-allow className="mt-2 flex items-center justify-between">
+      <button
+        type="button"
+        aria-label="Newer"
+        disabled={page === 0}
+        onClick={() => onPage(Math.max(0, page - 1))}
+        className="rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600 disabled:opacity-30 disabled:hover:bg-transparent dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+      >
+        <ChevronLeft className="h-3.5 w-3.5" />
+      </button>
+      <span className="text-[10px] tabular-nums text-zinc-400">
+        {page + 1} / {pageCount}
+      </span>
+      <button
+        type="button"
+        aria-label="Older"
+        disabled={page >= pageCount - 1}
+        onClick={() => onPage(Math.min(pageCount - 1, page + 1))}
+        className="rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600 disabled:opacity-30 disabled:hover:bg-transparent dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+      >
+        <ChevronRight className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function deptDisplayName(key: string): string {
+  return DEPARTMENTS.find((d) => d.key === key)?.name ?? formatDeptLabel(key);
+}
+
+function assignmentEventLabel(e: AssignmentEvent): string {
+  const target = e.scope === 'employee' ? e.employeeName || e.employeeEmail || 'an employee' : `everyone in ${deptDisplayName(e.departmentKey)}`;
+  switch (e.event) {
+    case 'added':
+      return `Assigned to ${target}`;
+    case 'removed':
+      return `Removed from ${target}`;
+    case 'exclusions_changed':
+      return `Exclusions in ${deptDisplayName(e.departmentKey)}: ${e.excludedBefore.length} → ${e.excludedAfter.length}`;
+    case 'shared_team_changed':
+      return `Team effort ${e.sharedTeam ? 'on' : 'off'} for ${deptDisplayName(e.departmentKey)}`;
+  }
+}
+
+/**
+ * Every saved version of the bonus (newest first, the newest marked current)
+ * and every assignment event on it. A failed read — including the history
+ * migration not having been applied yet — is SAID, never shown as an empty
+ * history (bonus-catalog.md §3.1.5).
+ */
+function BonusHistoryPanel({ bonusId, refreshKey }: { bonusId: string; refreshKey: string }) {
+  const [versions, setVersions] = useState<BonusVersion[]>([]);
+  const [events, setEvents] = useState<AssignmentEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [vPage, setVPage] = useState(0);
+  const [ePage, setEPage] = useState(0);
+
+  useEffect(() => {
+    if (!bonusId) return;
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/bonus-catalog/history?bonusId=${encodeURIComponent(bonusId)}`)
+      .then(async (r) => (await r.json()) as { versions?: BonusVersion[]; assignmentEvents?: AssignmentEvent[]; error?: string | null })
+      .then((json) => {
+        if (cancelled) return;
+        if (json.error) {
+          setError(json.error);
+          setVersions([]);
+          setEvents([]);
+          return;
+        }
+        setError(null);
+        setVersions(json.versions ?? []);
+        setEvents(json.assignmentEvents ?? []);
+        setVPage(0);
+        setEPage(0);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : 'Could not load history');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bonusId, refreshKey]);
+
+  const vPageCount = Math.max(1, Math.ceil(versions.length / BONUS_HISTORY_PAGE_SIZE));
+  const vStart = vPage * BONUS_HISTORY_PAGE_SIZE;
+  const ePageCount = Math.max(1, Math.ceil(events.length / BONUS_HISTORY_PAGE_SIZE));
+  const eStart = ePage * BONUS_HISTORY_PAGE_SIZE;
+
+  const changedLabel = (v: BonusVersion) => {
+    if (v.note === 'baseline') return 'Imported baseline';
+    if (v.version === 1 || v.note === 'created') return 'Created';
+    if (v.changedFields.length === 0) return 'Edited';
+    return `Changed: ${v.changedFields.map((f) => TRACKED_FIELD_LABELS[f] ?? f).join(', ')}`;
+  };
+
+  return (
+    <div className="space-y-4 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+      <div>
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+          Version history
+        </p>
+        {loading ? (
+          <p className="text-xs text-zinc-400">Loading...</p>
+        ) : error ? (
+          <p className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            History unavailable: {error}
+          </p>
+        ) : versions.length === 0 ? (
+          <p className="text-xs text-zinc-400">No versions recorded yet.</p>
+        ) : (
+          <>
+            <div className="space-y-1.5">
+              {versions.slice(vStart, vStart + BONUS_HISTORY_PAGE_SIZE).map((v, i) => {
+                const isCurrent = vStart + i === 0;
+                return (
+                  <div
+                    key={v.id}
+                    className={`rounded border px-2.5 py-1.5 text-xs ${
+                      isCurrent
+                        ? 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/20'
+                        : 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="shrink-0 rounded-full bg-zinc-100 px-1.5 py-px text-[10px] font-bold tabular-nums text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                          v{v.version}
+                        </span>
+                        {v.kind === 'flat' ? (
+                          <span className="font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">
+                            {money(v.amount ?? 0, v.currency)}
+                          </span>
+                        ) : (
+                          <code className="truncate rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                            {v.formula || '(empty formula)'}
+                          </code>
+                        )}
+                        <span className="shrink-0 text-[10px] capitalize text-zinc-400">{v.cadence}</span>
+                      </span>
+                      {isCurrent && (
+                        <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400">
+                          current
+                        </span>
+                      )}
+                    </div>
+                    {v.version > 1 && v.name && (
+                      <div className="mt-0.5 truncate text-[10.5px] text-zinc-500 dark:text-zinc-400">{v.name}</div>
+                    )}
+                    <div className="mt-0.5 text-[10px] text-zinc-400">
+                      Effective {v.effectiveFrom}
+                      {v.createdBy && <span> &middot; {v.createdBy === 'migrated' ? 'imported' : shortWho(v.createdBy)}</span>}
+                      <span> &middot; {changedLabel(v)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <HistoryPager page={vPage} pageCount={vPageCount} onPage={setVPage} />
+          </>
+        )}
+      </div>
+
+      {!loading && !error && (
+        <div>
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+            Assignment history
+          </p>
+          {events.length === 0 ? (
+            <p className="text-xs text-zinc-400">No assignment changes recorded yet.</p>
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                {events.slice(eStart, eStart + BONUS_HISTORY_PAGE_SIZE).map((e) => (
+                  <div
+                    key={e.id}
+                    className="rounded border border-zinc-200 bg-white px-2.5 py-1.5 text-xs dark:border-zinc-800 dark:bg-zinc-950"
+                  >
+                    <div className="flex items-center gap-1.5 text-zinc-800 dark:text-zinc-200">
+                      {e.scope === 'employee' ? (
+                        <User className="h-3 w-3 shrink-0 text-zinc-400" />
+                      ) : (
+                        <Building2 className="h-3 w-3 shrink-0 text-zinc-400" />
+                      )}
+                      <span className={`truncate ${e.event === 'removed' ? 'text-rose-600 dark:text-rose-400' : ''}`}>
+                        {assignmentEventLabel(e)}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-[10px] text-zinc-400">
+                      Effective {e.effectiveFrom}
+                      {e.createdBy && <span> &middot; {e.createdBy === 'migrated' ? 'imported' : shortWho(e.createdBy)}</span>}
+                      {e.note === 'baseline' && <span> &middot; imported baseline</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <HistoryPager page={ePage} pageCount={ePageCount} onPage={setEPage} />
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Bonus editor (create / edit)
 // ---------------------------------------------------------------------------
 
@@ -4017,10 +4280,16 @@ function BonusEditor({
 }: {
   initial: BonusDef;
   onCancel: () => void;
-  onSave: (b: BonusDef) => void;
+  /** `effectiveDate` (YYYY-MM-DD) — the day this version takes effect. */
+  onSave: (b: BonusDef, effectiveDate: string) => void;
   /** When rendered inside the detail modal, hide the framing chrome (header + border). */
   embedded?: boolean;
 }) {
+  // A never-saved bonus (no createdAt) is effective today; an edit defaults to
+  // the coming Monday like a Pay Structure rate change. The author can pick any
+  // date — it is recorded on the version row, it never gates payout.
+  const isNew = initial.createdAt == null;
+  const [effectiveDate, setEffectiveDate] = useState<string>(() => (isNew ? todayIso() : nextMondayIso()));
   const [name, setName] = useState(initial.name);
   const [description, setDescription] = useState(initial.description ?? '');
   const [kind, setKind] = useState(initial.kind);
@@ -4075,6 +4344,21 @@ function BonusEditor({
             placeholder="Short note for the team"
           />
         </Field>
+        <div>
+          <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+            Effective from
+          </p>
+          <DatePicker
+            value={effectiveDate}
+            onChange={setEffectiveDate}
+            required
+            containerClassName="w-40"
+            className="h-9 text-sm font-medium tabular-nums focus-visible:border-emerald-500 focus-visible:ring-emerald-500/20 dark:bg-zinc-900"
+          />
+          <p className="mt-1 text-[10.5px] leading-snug text-zinc-400">
+            {isNew ? 'Recorded as version 1.' : `Saved as version ${(initial.version ?? 1) + 1} if anything changed.`}
+          </p>
+        </div>
       </div>
 
       {/* Kind + currency toggles */}
@@ -4240,7 +4524,7 @@ function BonusEditor({
         <Button
           type="button"
           disabled={!valid}
-          onClick={() => onSave(draft)}
+          onClick={() => onSave(draft, effectiveDate)}
           className="bg-orange-500 text-white hover:bg-orange-600"
         >
           Save bonus
@@ -4356,9 +4640,13 @@ function AssignmentsTab({
   roster: RosterEntry[];
   /** Custom departments created from the Department tab ({key, name}). */
   extraDepartments: { key: string; name: string }[];
-  onAdd: (a: BonusAssignment) => void;
-  onRemove: (id: string) => void;
+  /** `effectiveDate` (YYYY-MM-DD) is stamped on the assignment-history event. */
+  onAdd: (a: BonusAssignment, effectiveDate?: string) => void;
+  onRemove: (id: string, effectiveDate?: string) => void;
 }) {
+  // One effective date for every add / remove / exclusion change made in this
+  // department panel; defaults to the coming Monday like a rate change.
+  const [effectiveDate, setEffectiveDate] = useState<string>(nextMondayIso);
   const allDepts = useMemo(
     () => [
       ...DEPARTMENTS.map((d) => ({ key: d.key, name: d.name })),
@@ -4408,8 +4696,8 @@ function AssignmentsTab({
     );
   }, [roster, selectedDept, dept]);
 
-  const addAssignment = (a: BonusAssignment) => onAdd(a);
-  const removeAssignment = (id: string) => onRemove(id);
+  const addAssignment = (a: BonusAssignment) => onAdd(a, effectiveDate);
+  const removeAssignment = (id: string) => onRemove(id, effectiveDate);
 
   if (bonuses.length === 0) {
     return (
@@ -4485,6 +4773,22 @@ function AssignmentsTab({
             {dept?.name}
           </motion.h2>
         </AnimatePresence>
+
+        <div className="-mt-2 mb-4 flex flex-wrap items-center gap-3">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+            Changes effective from
+          </p>
+          <DatePicker
+            value={effectiveDate}
+            onChange={setEffectiveDate}
+            required
+            containerClassName="w-40"
+            className="h-8 text-sm font-medium tabular-nums focus-visible:border-emerald-500 focus-visible:ring-emerald-500/20 dark:bg-zinc-900"
+          />
+          <span className="text-[10.5px] text-zinc-400">
+            Recorded in each bonus&apos;s assignment history.
+          </span>
+        </div>
 
         {/* Common bonuses */}
         <Section
