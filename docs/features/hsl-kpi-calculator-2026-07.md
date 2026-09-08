@@ -646,11 +646,29 @@ Now (`src/components/PayrollWizard.tsx`):
   components (Gyd's ₱25k; Jazz Redulla's ₱2,500; Ems's/Star's through 2026-08-23)
   are only counted in the **final payroll week of the month**
   (`isFinalPayrollWeekOfMonth`), matching how PAB/catalog monthly bonuses pay.
-- The amount is **auto-applied unconditionally** in `bonusTotals` (a dedicated
-  `hogan_smith_law` pass, rate-gated exactly like dispatch) — **not** behind a
-  toggle. So the emailed paystub equals the HSL tab review Total Pay by construction,
-  with no toggle that can fall out of sync. The Additions "KPI Bonus" column shows
-  the amount as read-only ("auto-applied").
+- The amount is **auto-applied unconditionally** in `bonusTotals` (`addHslKpiBonuses`,
+  `src/lib/payroll/hsl-kpi-payout.ts`, tested) — **not** behind a toggle. So the
+  emailed paystub equals the HSL tab review Total Pay by construction, with no toggle
+  that can fall out of sync. The Additions "KPI Bonus" column shows the amount as
+  read-only ("auto-applied").
+- **Paid for EVERY scored person, not only `hogan_smith_law` home-dept rows (fixed
+  2026-09-08).** The pass used to iterate `employeeDepts` and skip anyone whose
+  resolved home dept wasn't `hogan_smith_law`, which dropped two big groups:
+  **external members** added to an HSL dept in the KPI Calculator whose master dept
+  is Lead Gen / Client-VA / Edit Team (hansc@ filing ₱250), and people with a
+  **duplicate `global_master_list` row** — an old non-HSL copy plus an `hsl:<key>`
+  copy — where `masterIndex` (first-occurrence-wins) nondeterministically picks the
+  non-HSL copy, so the same person was paid one week and dropped the next
+  (christiane@ attestation ₱2,400, debbief@ filing ₱8,050, clarizr@ collections
+  ₱2,500, maycp@ callback ₱8,000; up to ~60 people / ₱188k of exposure in the
+  2026-08-30 week). The eligibility signal is the **scored row**, not the home dept:
+  `resolvedHslKpi.amounts` already resolves identity via `masterIndex` and holds only
+  the pinned week's ready/locked scored rows, so `addHslKpiBonuses(result,
+  resolvedHslKpi.amounts)` pays exactly that set, once each. Not a double-pay vector:
+  the block is replaced not duplicated, `bonus_catalog_applied` (the
+  `resolvedManagerBonus` source) is empty for these people, and manual Adjustments
+  for them are on hold pending this fix — but going forward **Accounting must not key
+  an HSL KPI amount into Adjustment**, that is what doubles it.
 - The HSL review (step 4's HSL tab since the 2026-08-28 Additions merge; step 4 as its
   own step before that) reads the same `hslKpiAmounts` (rate-gated), and its per-dept
   cards pin weekly depts to the processed week — so review == dispatch.

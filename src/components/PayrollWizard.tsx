@@ -245,6 +245,7 @@ import { overlayReplayFinal, type ReplayFinalEntry } from '@/lib/payroll-wizard/
 import { formatLockedStamp, resolveDispatchButtonState } from '@/lib/payroll-wizard/dispatch-button-state';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { addHslKpiBonuses } from '@/lib/payroll/hsl-kpi-payout';
 import type { OffboardedRosterRow } from '@/lib/roster/offboarded-roster-row';
 import {
   deptPayPausedSettingKey,
@@ -8993,19 +8994,21 @@ export default function PayrollWizard({
       result[email] = (result[email] ?? 0) + commonTotal;
     }
 
-    // HSL weekly KPI bonus — auto-applied for every hogan_smith_law employee with
-    // a scored amount for the processed week. Added UNCONDITIONALLY (no toggle) so
-    // the dispatched paystub always equals the step-5 review Total Pay. This runs
-    // regardless of the resolvedManagerBonus short-circuit above, so a dual-dept
-    // person still gets their HSL KPI. For a one-off exception use the Adjustment
-    // column; do NOT also key HSL KPI amounts into Adjustment by hand (double-pay).
-    for (const [email, deptKey] of Object.entries(employeeDepts)) {
-      if (deptKey !== 'hogan_smith_law') continue;
-      // Resolved via masterIndex so a person whose Hubstaff login ≠ master Work
-      // Email (the key `hsl_bonus_entries.employee_email` now uses) still matches.
-      const amt = resolvedHslKpi.amounts[email] ?? 0;
-      if (amt) result[email] = (result[email] ?? 0) + amt;
-    }
+    // HSL weekly KPI bonus — auto-applied for EVERY employee with a scored amount
+    // for the processed week, NOT only those whose resolved home department is
+    // 'hogan_smith_law'. Gating on the home dept silently dropped two big groups
+    // (Carla, 2026-09-08): external members added to an HSL dept in the KPI
+    // Calculator whose master dept is Lead Gen / Client-VA / Edit Team, and people
+    // carrying a DUPLICATE master-list row whose non-HSL copy wins identity
+    // resolution (so they were paid one week, dropped the next). `resolvedHslKpi`
+    // already resolves identity via masterIndex and holds ONLY scored rows for the
+    // pinned week, so paying every entry pays exactly the right set, once each.
+    // Added UNCONDITIONALLY (no toggle) so the dispatched paystub always equals the
+    // review Total Pay, and independently of the resolvedManagerBonus short-circuit
+    // above so a dual-dept person still gets their HSL KPI. For a one-off exception
+    // use the Adjustment column; do NOT also key HSL KPI into Adjustment (double-pay).
+    // See src/lib/payroll/hsl-kpi-payout.ts (tested).
+    addHslKpiBonuses(result, resolvedHslKpi.amounts);
 
     return result;
   }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics, resolvedHslKpi, resolvedManagerBonus, sysBonusCfg, pabAmountForDept, techAmountForDept]);
