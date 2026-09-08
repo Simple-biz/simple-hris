@@ -36,13 +36,13 @@ import {
   computeEmployeeBonus,
   getHslAdjustedEnd,
   hasThirtyDaysFromStart,
+  isFinalPabWeek as gateIsFinalPabWeek,
   pabMonthFromWeekStart,
   parseMasterStartDate,
   parseTechBonusWeekOverrides,
   resolveIsTechBonusWeek,
   TECH_BONUS_WEEK_OVERRIDES_KEY,
 } from '@/lib/payroll/dispatch-bonuses';
-import { pabPayoutForWeek } from '@/lib/payroll/pab-payout-week';
 import { listSystemBonuses } from '@/lib/supabase/system-bonuses-db';
 import { listAllOrphanagePayHours } from '@/lib/supabase/orphanage-pay-db';
 import {
@@ -645,7 +645,7 @@ export async function computeMemberMonthlyPay(args: {
   const weekMondays = weekStarts;
 
   // For PAB eligibility checks: the ONE week that CONTAINS the PAB month's end
-  // is `pabPayoutForWeek` (shared payout gate). We pre-compute eligibility
+  // is `isFinalPabWeek` (shared containment gate). We pre-compute eligibility
   // for every PAB month touched by these weeks once (eligibility is
   // per-employee per-PAB-month, not per-week).
   const overrides = parsePabPeriodOverrides(pabOverridesValue);
@@ -822,15 +822,10 @@ export async function computeMemberMonthlyPay(args: {
     const weekMonForPab = isHslEmployee
       ? weekMon
       : new Date(weekMon.getFullYear(), weekMon.getMonth(), weekMon.getDate() + 1);
-    // THE PAB PAYOUT RULE (Kane, 2026-09-08): the bonus pays on the week AFTER
-    // the one that closes the period. So the month a week PAYS is the CLOSING
-    // week's month, which from September on is the previous one (the Oct 4-10
-    // paycheck carries SEPTEMBER's PAB). Off the payout week nothing is paid and
-    // the week keeps naming its own accrual month.
-    const pabPayout = pabPayoutForWeek(weekMonForPab, weekEnd, overrides, null);
-    const pabMonth = pabPayout.pays
-      ? { year: pabPayout.year, month: pabPayout.month }
-      : pabMonthFromWeekStart(weekMonForPab);
+    const pabMonth = pabMonthFromWeekStart(weekMonForPab);
+    // Only count PAB for weeks that belong to the viewed month's PAB period.
+    const pabBelongsToViewedMonth =
+      pabMonth.year === args.year && pabMonth.month === args.month;
     const overrideEntry = overrides.get(yearMonthKey(pabMonth.year, pabMonth.month));
     const pabRange = overrideEntry
       ? { start: overrideEntry.start, end: overrideEntry.end }
@@ -842,13 +837,11 @@ export async function computeMemberMonthlyPay(args: {
       pabRange.end.getDate(),
     );
     const pabMonthComplete = todayMid.getTime() > pabEndMid.getTime();
-    // The payout verdict alone decides — exactly one iterated week pays, and it
-    // pays the month it resolved above. The old `pabBelongsToViewedMonth` guard
-    // (week's own PAB month === the viewed month) has to go with the rule: under
-    // "pays the week after", the paycheck for September lands in an OCTOBER week,
-    // so that guard would reject it in both views and the bonus would vanish from
-    // the modal entirely while dispatch paid it.
-    const isFinalPab = pabPayout.pays;
+    // Containment gate (mirrors the wizard): the week must CONTAIN the PAB
+    // period end. Without weekMon in the check, every later week of the month
+    // also passed `weekEnd >= end` and PAB was double-counted after an
+    // override ended mid-month.
+    const isFinalPab = pabBelongsToViewedMonth && gateIsFinalPabWeek(weekMon, weekEnd, pabRange.end);
     // Tech bonus timing uses the Monday of the week regardless of Sun-Sat vs
     // Mon-Sun. Override-aware: honors the wizard "System Bonus" payout-week
     // pick for the month, falling back to the 3rd-week heuristic.

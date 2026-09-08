@@ -81,8 +81,7 @@ it is derived from `orphanage_dispatches` rows referencing `intern_pay_id`.
   Fixed in code; not configurable.
 - The period and the payout week resolve **exactly as `current-pay.ts` does for Simple**: owning month
   from `pabMonthFromWeekStart(Monday)`, window from `pab_period_overrides` else `getPabMonthRange`,
-  payout week = the week **after** the one containing the period end (`pabPayoutForWeek`,
-  Kane 2026-09-08 — it is never the closing week itself).
+  payout week = the week that **contains** the period end (`isFinalPabWeek`).
 - A Saturday in the period with no locked week → `weeks_missing`, ₱0, amber chip. Never a guess.
 - Non-payout weeks store `pab_php = 0, pab_mode = 'not_payout_week'`.
 

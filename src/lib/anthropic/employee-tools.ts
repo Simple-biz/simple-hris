@@ -27,13 +27,10 @@ import {
   parseTechBonusWeekOverrides,
   resolveIsTechBonusWeek,
   listTechBonusWeekOptions,
+  isFinalPabWeek,
   parseMasterStartDate,
   hasThirtyDaysFromStart,
 } from '@/lib/payroll/dispatch-bonuses';
-import {
-  isPabPayoutWeekForRange,
-  pabPayoutWeekForPeriodEnd,
-} from '@/lib/payroll/pab-payout-week';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { collapseHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { policiesForDeptKey, groupPolicies } from '@/lib/policies/team-policies';
@@ -348,16 +345,14 @@ async function getMyBonusStatus(ctx: EmployeeToolContext): Promise<ToolResult> {
   const pabEligibleDept = isDeptEligible(cfg.pab, ctx.deptKey);
   const pabAmount = systemBonusAmountForDept(cfg.pab, ctx.deptKey);
 
-  // Which pay week the PAB actually lands in. THE PAB PAYOUT RULE (Kane,
-  // 2026-09-08): the week AFTER the one that closes the period — never the
-  // closing week itself. Telling someone their bonus arrives a week before it
-  // does is the whole reason Penny asks the shared helper instead of measuring
-  // off the period end herself; `isPabPayoutWeekForRange` then confirms the
-  // named week is the one the money path would pay.
-  const pabPayWeek = pabPayoutWeekForPeriodEnd(pabRange.end);
-  const pabPayWeekStart = pabPayWeek.start;
-  const pabPayWeekEnd = pabPayWeek.end;
-  const pabWeekConfirmed = isPabPayoutWeekForRange(pabPayWeekStart, pabPayWeekEnd, overrides, null);
+  // Which pay week the PAB actually lands in: the week CONTAINING the period end
+  // (isFinalPabWeek is the single source — containment, never "week end >=
+  // period end", which used to pay it on every later week too).
+  const pabPayWeekStart = new Date(pabRange.end);
+  pabPayWeekStart.setDate(pabPayWeekStart.getDate() - ((pabPayWeekStart.getDay() + 7) % 7));
+  const pabPayWeekEnd = new Date(pabPayWeekStart);
+  pabPayWeekEnd.setDate(pabPayWeekEnd.getDate() + 6);
+  const pabWeekConfirmed = isFinalPabWeek(pabPayWeekStart, pabPayWeekEnd, pabRange.end);
 
   /* ── Tech ── */
   const techOverrides = parseTechBonusWeekOverrides(settings[TECH_BONUS_WEEK_OVERRIDES_KEY]);

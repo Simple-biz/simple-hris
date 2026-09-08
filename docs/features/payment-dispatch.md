@@ -609,7 +609,7 @@ column of its own (§12.3.1).
 | `PAB_BONUS_PHP` / `TECH_BONUS_PHP` | **Fallback** defaults (₱5,000 / ₱1,850). As of 2026-06-17 the live amounts + a per-department allowlist come from the Payment Catalog **System Bonuses** tab (`payment_catalog_system_bonuses`); `computeEmployeeBonus` takes `pabAmountPHP`/`techAmountPHP`/`pabDeptEligible`/`techDeptEligible` and the constants are only the fallback when no rows exist. See `docs/features/bonus-catalog.md` §6. |
 | `pabMonthFromWeekStart(weekStart)` | `{ year, month }` — PAB month from any week's start date |
 | `getHslAdjustedEnd(pabEnd)` | Extends end to closing Sunday for HSL Mon–Sun weeks |
-| `pabPayoutForWeek(weekStart, weekEnd, overrides, manualEnd)` | `{ pays, year, month, periodEnd }` — does this paycheck CARRY the PAB (the week after the period closes, Kane 2026-09-08), and for which month? |
+| `isFinalPabWeek(weekEnd, pabPeriodEnd)` | Boolean — is this the paycheck that closes the PAB month? |
 | `isTechBonusWeek(weekStart)` | Boolean — does the salary date (weekStart + 8d) fall in the **3rd full Mon–Sun week** of its month? Week 1 starts on the first Monday ≥ the 1st (partial pre-1st weeks excluded). Per Carla, places tech bonus 2 weeks out from PAB. |
 | `hasThirtyDaysFromStart(weekStart, startDate)` | Boolean — 30-day service check, period-Monday-relative |
 | `computePabEligibleEmails({ rows, pabRange, hslAdjustedEnd, hslEmails })` | `Set<email>` — runs the standard / HSL eligibility checks across a merged-by-email row set |

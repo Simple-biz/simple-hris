@@ -22,7 +22,6 @@ import { getAppSettings } from "@/lib/supabase/app-settings";
 import { normEmail } from "@/lib/email/norm-email";
 import { selectAllPaged } from "@/lib/supabase/select-all-paged";
 import { isHslFamilyLabel } from "@/lib/departments/hsl-subdept";
-import { pabPayoutForWeek } from "@/lib/payroll/pab-payout-week";
 import {
   getPabMonthRange,
   payWeekFromUploadStart,
@@ -195,21 +194,21 @@ export async function snapshotSourceFile(
   let weekIsFinalPab = false;
   let weekIsTechBonus = false;
   if (weekMonday) {
+    const pm = pabMonthFromMonday(weekMonday);
+    pabMonthKey = yearMonthKey(pm.year, pm.month);
     // Honor a saved PAB-period override window the same way current-pay does, so
     // the recorded final-week flag matches the live dispatch decision.
     const overrides = parsePabOverrides(opts.pabOverridesValue);
-    // THE PAB PAYOUT RULE (Kane, 2026-09-08): the bonus pays the week AFTER the
-    // one that closes the period. The containment test used to be INLINED here;
-    // it is now the shared `pabPayoutForWeek`, for exactly the reason the Tech
-    // note further down records — a frozen mirror silently disagrees with the
-    // engine paying the money the moment the rule moves. It also hands back the
-    // month being PAID, which on a payout week is the CLOSING week's, not this
-    // week's.
-    const payout =
-      periodStart && periodEnd ? pabPayoutForWeek(periodStart, periodEnd, overrides, null) : null;
-    weekIsFinalPab = payout?.pays ?? false;
-    const pm = payout?.pays ? { year: payout.year, month: payout.month } : pabMonthFromMonday(weekMonday);
-    pabMonthKey = yearMonthKey(pm.year, pm.month);
+    const ov = overrides.get(pabMonthKey);
+    const pabRange = ov ?? getPabMonthRange(pm.year, pm.month);
+    // Containment (mirror of dispatch-bonuses.isFinalPabWeek): the upload week
+    // must CONTAIN the PAB period end, not merely end on/after it — otherwise
+    // every week after the payout week re-attaches PAB.
+    if (periodStart && periodEnd) {
+      weekIsFinalPab =
+        localMidnight(periodStart) <= localMidnight(pabRange.end) &&
+        localMidnight(periodEnd) >= localMidnight(pabRange.end);
+    }
     // Override-aware shared gate: a saved wizard "System Bonus" payout-week
     // pick must flag the same week here as computeCurrentPay pays, or the
     // recorded week_is_tech_bonus contradicts the money the row snapshots.

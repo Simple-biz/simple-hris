@@ -89,8 +89,7 @@ test pins the tool description's pointer to the calendar.
 - **PAB window**: `parsePabPeriodOverrides` → `resolvePabMonthForDate` →
   `resolvePabRangeForMonth`, the same pair the employee's own Overview PAB card uses, so
   Penny and the calendar always name the same dates. The pay week is derived through
-  **`pabPayoutForWeek`** (the week AFTER the one containing the period end — Kane
-  2026-09-08; `isFinalPabWeek` alone is the closing week, one paycheck early) — see
+  **`isFinalPabWeek`** (containment: `weekStart ≤ periodEnd ≤ weekEnd`) — see
   [[pab-payout-week-gate-and-pill]] for why `weekEnd >= periodEnd` is wrong.
 - **Tech bonus week**: `resolveIsTechBonusWeek(monday, overrides)` against
   `listTechBonusWeekOptions`, never the raw heuristic. A direct `isTechBonusWeek(` call

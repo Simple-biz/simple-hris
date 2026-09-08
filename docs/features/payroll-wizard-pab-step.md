@@ -209,16 +209,14 @@ week announces itself.
 
 The gate is `isPabPayoutWeekForRange` (`src/lib/payroll/pab-payout-week.ts`, tested), which is
 nothing but the two shared pieces the money path uses: `pabMonthFromWeekStart` (a Sunday
-file-start's owning Monday is the NEXT day) and `isFinalPabWeek` (containment), applied to the
-week BEFORE the one being judged, over the same period-end resolution as the wizard's dispatch
-memo (valid legacy manual range → month override → code default).
+file-start's owning Monday is the NEXT day) and `isFinalPabWeek` (containment — the week
+CONTAINS the period end, never `weekEnd >= periodEnd`), over the same period-end resolution as
+the wizard's dispatch memo (valid legacy manual range → month override → code default).
 
-- **The payout week is the week AFTER the period, never the one that closes it** (Kane,
-  2026-09-08 — supersedes containment-on-the-period-end-week). The 2026-08 period ended Sat
-  Aug 29, so the `2026-08-23_to_2026-08-29` file CLOSES it and the `2026-08-30_to_2026-09-05`
-  file PAYS it. See `docs/reference/business-logic.md` → "PAB payout week" for the worked
-  table and for why the paid month has to be read off the closing week.
-- **Keyed on the SELECTED FILE WEEK, never the wall clock.** Wall-clock gating would break
+- **Keyed on the SELECTED FILE WEEK, never the wall clock.** The 2026-08 period ended Sat
+  Aug 29; during the operational week Aug 30 – Sep 5 the wizard is processing the
+  `2026-08-23_to_2026-08-29` file — that file contains the period end, so the tab shows all
+  week, which is what "the payout week" means in arrears. Wall-clock gating would also break
   replay: replaying a past payout week **still shows the tab** (read-only via the existing
   `isReplay`), because a replay shows the week as it was paid.
 - **Ids stay contiguous 1–9.** The step is filtered out of the rail's *render*; `nextStep` /
