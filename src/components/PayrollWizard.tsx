@@ -2039,6 +2039,14 @@ export default function PayrollWizard({
     usdToPhpRate: number;
   } | null>(null);
   const [reportsTab, setReportsTab] = useState<'salaries'>('salaries');
+  /** Name/email/department filter over the Reports step's Salaries table. DISPLAY ONLY.
+   *  The XLSX + PDF exports, the Total Outflow banner and the sub-tab chip total all keep
+   *  reading the whole `snap.employees` — the exports are the Google-Sheet validation
+   *  artifact ([[payroll-exports-itemized]]) and a search must never be able to ship a
+   *  partial one. Search must also never make a row unreachable: it matches the department
+   *  column and treats a missing department as "no department" / "—", the same property the
+   *  Payment Dispatch log filters carry ([[dispatch-log-department-filter]]). */
+  const [reportsSearch, setReportsSearch] = useState('');
   const [users, setUsers] = useState<User[]>(MOCK_USERS);
   const [timeRecords, setTimeRecords] = useState<TimeRecord[]>(MOCK_TIME_RECORDS);
   const [payments, setPayments] = useState<PaymentLineItem[]>(MOCK_PAYMENTS);
@@ -2369,6 +2377,12 @@ export default function PayrollWizard({
   /** Source file selected for Initial Calculation (step 2). Defaults to latest uploaded file. */
   const [calcSourceFile, setCalcSourceFile] = useState<string | null>(null);
   const [calcSourceFileLoading, setCalcSourceFileLoading] = useState(false);
+  // A Reports search must not outlive the week it was typed against: switching
+  // periods swaps the whole row set, and a stale needle would leave the new week's
+  // report showing "0 of N" rows the clerk never chose to hide.
+  useEffect(() => {
+    setReportsSearch('');
+  }, [calcSourceFile]);
   /** Latest selected file, readable from async callbacks — an additions load
    *  that resolves after the clerk switched periods must not apply its payload. */
   const calcSourceFileRef = useRef<string | null>(null);
@@ -19353,6 +19367,37 @@ export default function PayrollWizard({
           { id: 'salaries' as const, label: 'Salaries / Wages', count: snap.employees.length, total: totalSalaries },
         ] as const;
 
+        // ── Salaries table search (DISPLAY ONLY) ────────────────────────────────
+        // Narrows which rows the table paints. It deliberately touches NOTHING else:
+        // `totalSalaries` above (the Total Outflow banner + the sub-tab chip) and both
+        // exports keep reading `snap.employees` whole, because the XLSX/PDF are the
+        // sheet-validation artifact and a filtered export would be an unreconcilable
+        // one ([[payroll-exports-itemized]]).
+        //
+        // A filter must never make a row unreachable ([[dispatch-log-department-filter]]):
+        // the needle is tested against name, work email, personal email AND the department
+        // — and a row with no department matches "no department" / "-" / "—", so the very
+        // people whose dept failed to resolve stay findable instead of being the only ones
+        // a search can't reach.
+        const reportsNeedle = reportsSearch.trim().toLowerCase();
+        const reportRowMatches = (e: DispatchEmployee) => {
+          if (!reportsNeedle) return true;
+          const dept = e.department_name?.trim() ?? '';
+          const haystack = [
+            e.name,
+            e.email,
+            e.personal_email,
+            dept || 'no department —',
+          ].join(' ').toLowerCase();
+          return haystack.includes(reportsNeedle);
+        };
+        const visibleReportEmployees = reportsNeedle
+          ? snap.employees.filter(reportRowMatches)
+          : snap.employees;
+        const visibleReportTotal = reportsNeedle
+          ? visibleReportEmployees.reduce((s, e) => s + (e.pay_php.final ?? 0), 0)
+          : totalSalaries;
+
         return (
           <div className={cn("relative flex min-w-0 flex-col gap-5", isDraft && "isolate")}>
             {/* Simple Biz logo watermark — visible only in draft mode */}
@@ -19460,6 +19505,14 @@ export default function PayrollWizard({
                   : isReplay
                     ? `Replay of ${formatPeriodLabel(calcSourceFile)} · salaries from the dispatched snapshot.`
                     : `Dispatched ${fmt(snap.dispatchedAt)}.`}
+                {/* The search below narrows the TABLE only. Say so where the export
+                    buttons are, so nobody reads a filtered screen as a filtered file:
+                    both exports always carry the whole cycle. */}
+                {reportsNeedle && (
+                  <span className="ml-1 font-medium text-indigo-600 dark:text-indigo-400">
+                    Exports ignore the search — both files carry all {snap.employees.length} rows.
+                  </span>
+                )}
               </span>
               <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -19589,6 +19642,49 @@ export default function PayrollWizard({
             {/* Salaries / Wages */}
             {reportsTab === 'salaries' && (
               <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+                {/* Search strip — outside the scroll container so the sticky thead
+                    below keeps working. Same affordance as every other wizard table
+                    (magnifier + ✕ clear + "N of M" disclosure). */}
+                <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-zinc-50/90 px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
+                  <div className="relative min-w-[220px] flex-1">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
+                    <Input
+                      type="search"
+                      placeholder="Search by name, email or department…"
+                      value={reportsSearch}
+                      onChange={(e) => setReportsSearch(e.target.value)}
+                      className="h-9 rounded-lg border-zinc-200 bg-white pl-8 pr-8 text-xs shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+                      aria-label="Search the salaries report"
+                    />
+                    {reportsSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setReportsSearch('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                        aria-label="Clear search"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                  {reportsNeedle ? (
+                    <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Showing{' '}
+                      <span className="font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">
+                        {visibleReportEmployees.length}
+                      </span>{' '}
+                      of{' '}
+                      <span className="font-semibold tabular-nums text-zinc-700 dark:text-zinc-200">
+                        {snap.employees.length}
+                      </span>{' '}
+                      · type <span className="font-mono">no department</span> to find unresolved rows
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-zinc-400 dark:text-zinc-500 tabular-nums">
+                      {snap.employees.length} row{snap.employees.length === 1 ? '' : 's'}
+                    </span>
+                  )}
+                </div>
                 <div className="max-h-[520px] overflow-auto">
                   <table className="w-full border-collapse text-[12.5px]">
                     <thead className="sticky top-0 z-10">
@@ -19599,7 +19695,14 @@ export default function PayrollWizard({
                       </tr>
                     </thead>
                     <tbody>
-                      {snap.employees.map((e, i) => (
+                      {visibleReportEmployees.length === 0 && (
+                        <tr>
+                          <td colSpan={8} className="px-3 py-10 text-center text-sm text-zinc-400">
+                            No one in this report matches &ldquo;{reportsSearch.trim()}&rdquo;.
+                          </td>
+                        </tr>
+                      )}
+                      {visibleReportEmployees.map((e, i) => (
                         <tr key={e.email} className={cn("border-b border-zinc-100 last:border-0 dark:border-zinc-800/60", i % 2 === 1 && "bg-zinc-50/50 dark:bg-zinc-900/20")}>
                           <td className="px-3 py-2">
                             <p className="font-medium text-zinc-900 dark:text-zinc-100">{e.name}</p>
@@ -19632,6 +19735,20 @@ export default function PayrollWizard({
                       ))}
                     </tbody>
                     <tfoot>
+                      {/* Subtotal row, only while searching. The cycle Total below is
+                          NEVER narrowed by the search — it is the same figure as the
+                          Total Outflow banner and the sub-tab chip, and a search that
+                          could move it would let a filtered screen misreport the week. */}
+                      {reportsNeedle && (
+                        <tr className="border-t border-indigo-200 bg-indigo-50/60 dark:border-indigo-800/40 dark:bg-indigo-950/20">
+                          <td colSpan={7} className="px-3 py-2 text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                            Search subtotal ({visibleReportEmployees.length} of {snap.employees.length} shown)
+                          </td>
+                          <td className="px-3 py-2 font-mono font-semibold text-indigo-700 dark:text-indigo-300">
+                            <PhpWithUsd php={visibleReportTotal} usdToPhp={snap.usdToPhpRate} align="start" />
+                          </td>
+                        </tr>
+                      )}
                       <tr className="border-t-2 border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
                         <td colSpan={7} className="px-3 py-2.5 text-xs font-semibold text-zinc-600 dark:text-zinc-400">Total ({snap.employees.length} employees)</td>
                         <td className="px-3 py-2.5 font-mono font-bold text-zinc-900 dark:text-zinc-100">

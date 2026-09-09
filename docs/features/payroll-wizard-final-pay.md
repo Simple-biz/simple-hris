@@ -5,7 +5,7 @@ accounting-editable adjustments layered on top. Covers the **Initial Calculation
 and the **Additions** step (step 4) — both its shared department table and its **HSL** tab.
 
 Source: [`src/components/PayrollWizard.tsx`](../../src/components/PayrollWizard.tsx).
-Last substantive update: **2026-08-28**.
+Last substantive update: **2026-09-09**.
 
 > **Replaying a past week is a different contract.** Everything below describes
 > the live cycle. What the header's pay-period selector is allowed to show for a
@@ -13,6 +13,49 @@ Last substantive update: **2026-08-28**.
 > fall back to live computation, and the one thing (bonus **amounts**) that still
 > resolves from today's catalog — is owned by
 > [payroll-wizard-week-replay.md](./payroll-wizard-week-replay.md).
+
+---
+
+## 2026-09-09 — Reports step (9): the Salaries table has a search bar, and it is DISPLAY ONLY
+
+The step-9 Salaries / Wages table can now be narrowed by a search box. Nothing else on
+the step moves with it. This section exists because nothing owned the step-9 on-screen
+table before — only its [replay overlay](./payroll-wizard-week-replay.md) and its
+[exports](./accounting-total-payout.md) were documented — and the three decisions below
+are the ones a later change could quietly get wrong.
+
+**1. The exports ignore the search.** `Export XLSX` and `Export PDF` both keep calling
+`buildPayrollExportRows(snap.employees, snap.usdToPhpRate)` over the WHOLE snapshot. These
+files are the artifact Kane validates HRIS against the Google Sheet with (`report-rows.ts`
+pins `initial + bonuses_total + orphanage + mesaDisb − mesaDed = net`), so a filtered
+export would be an unreconcilable one — and worse, indistinguishable from a short week.
+While a search is active the toolbar says so in place:
+*"Exports ignore the search — both files carry all N rows."* **Never wire the search into
+either export**, not even as an opt-in checkbox, without a separate ruling.
+
+**2. The cycle Total never narrows.** `totalSalaries` — the header's *Total / Projected
+Outflow*, the sub-tab chip figure, and the table's bottom `Total (N employees)` row — is
+always the whole snapshot. A search adds a SECOND, indigo, explicitly-labelled row above
+it: *"Search subtotal (X of N shown)"*. Two rows rather than one mutable row, because a
+single total that silently follows a filter is how a filtered screen gets read out as the
+week's payroll.
+
+**3. A filter never hides a row.** The needle is matched against name, work email,
+personal email **and** the department — and a row with no department matches the literal
+text `no department` (and `-` / `—`), so the payees whose department failed to resolve are
+not the only ones a search cannot reach. The strip discloses `Showing X of N` and names the
+query in the zero-match state. This is the same property the Payment Dispatch log filters
+carry; see [payment-dispatch.md](./payment-dispatch.md) §3.4.3.
+
+**The search is not week-scoped state** — it holds no data, is never persisted, and the
+final-pay publisher cannot observe it, so it needs none of the
+[replay](./payroll-wizard-week-replay.md) hydrate/clear/load-marker machinery. It *is*
+cleared on every `calcSourceFile` change, so a needle typed against one week cannot leave
+the next week's report reading `0 of N`.
+
+Reports stays outside the step-load progress range
+([payroll-wizard-step-load.md](./payroll-wizard-step-load.md)) — the search adds no
+progress, prediction or readiness wiring.
 
 ---
 
