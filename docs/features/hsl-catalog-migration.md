@@ -79,14 +79,41 @@ that normalisation is the real hazard.
 
 | Source | Patient Portal Log Ins |
 |---|---|
-| [schema.ts:178](../../src/lib/hsl-bonus/schema.ts#L178) `{ type: 'per_unit', key: 'portal_login', rate: 100 }` | **₱100** |
+| [schema.ts:196](../../src/lib/hsl-bonus/schema.ts#L196) `{ type: 'per_unit', key: 'portal_login', rate: 100 }` | **₱100** |
 | [hsl-kpi-calculator-2026-07.md:19](hsl-kpi-calculator-2026-07.md) | **₱250** |
+| memory `medical-records-rfc-manual` — **a worked numeric example confirmed by Kane**: *"4 portal + ₱3 RFC → 4×250 + 3 = ₱1,003"* | **₱250** |
 
-Two governing sources disagree on a **live weekly money path**. The code produced every
-stored value, so the doc line is the likely typo — but if ₱250 is right this is an
-underpayment that predates any of this work, not a documentation defect.
-**Unresolved; Kane's call.** The doc now carries the contradiction inline rather than a
-silently corrected number.
+Three governing sources disagree on a **live weekly money path, and it is 2 against 1 for
+₱250.**
+
+**Corrected 2026-09-09 — the earlier reasoning here was incomplete.** This section used to
+say *"the code produced every stored value, so the doc line is the likely typo."* That
+weighed only two sources. The memory entry is a **third**, it is the one place a rate was
+stated **by Kane in a worked calculation**, and it agrees with the doc. So "doc typo" is no
+longer the leading explanation, and **₱100 being a live underpayment is at least as likely.**
+
+**Exposure, measured read-only against production 2026-09-09** (`hsl_bonus_entries`,
+`department = 'medical_records'`, all 359 scored rows paged):
+
+| | |
+|---|---|
+| Weeks scored | 8 — `2026-07-12` through `2026-08-30` |
+| People with at least one logged login | **33** |
+| Total `portal_login` units | **1,546** |
+| Paid at ₱100 | **₱154,600** |
+| Would be at ₱250 | **₱386,500** |
+| **Difference** | **₱231,900** |
+
+**Still unresolved; still Kane's call — and it is now a quantified ₱231.9k question, not a
+formatting nit.** Nothing was changed in code or in the rate. What is needed is one worked
+example from Carla or Kane for a *recent* week: for a person with N logins and no other
+terms, is the line ₱100×N or ₱250×N? That single number settles it.
+
+**Scope — this affects `medical_records` ONLY.** `portal_login` is also ₱100 in
+`filing_specialist` ([schema.ts:234](../../src/lib/hsl-bonus/schema.ts#L234)) and
+`post_hearing_prep` ([schema.ts:274](../../src/lib/hsl-bonus/schema.ts#L274)); the doc
+states ₱100 for Pre/Post-Hearing and states no rate for Filing Specialist, so **neither is
+contradicted.** Do not "fix" those two while resolving this one.
 
 ### 1.3 `calcBonus` does not score two of the fourteen departments
 
