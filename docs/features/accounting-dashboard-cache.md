@@ -114,6 +114,12 @@ This store is the only one of the four that keeps a skip-fetch flag
 test. That is not an inconsistency to tidy up — it is a boundary, and it is where the
 policy lives.
 
+**Kane confirmed this boundary on 2026-09-09**, asked directly whether to retire the
+flag everywhere (which is what a `no-skip-flag` test would require) or keep it and police
+where it may be used. They chose keep-and-police. So the asymmetry with the other three
+stores is a ratified decision, not an oversight and not a cleanup waiting to happen — do
+not "tidy up the inconsistency" by deleting the export.
+
 **Allowed:** lookup lists and heavy aggregate snapshots.
 
 - Worker suggestions and the Hubstaff upload list — `payroll-wizard-notes.md:120`

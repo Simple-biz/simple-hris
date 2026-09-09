@@ -110,7 +110,10 @@ shared model. Never the hire's own dates — that grouping was wrong for 46% of 
 The payload is week-independent: all hires, all checklist weeks, bucketed client-side. So:
 
 - The tab fetches **once per page session** and caches under
-  `HR_TAB_CACHE_KEYS.orientationAttendance`.
+  `HR_TAB_CACHE_KEYS.orientationAttendance`. **Re-confirmed by Kane 2026-09-09**: when the
+  rest of the HR store moved to a 30s freshness window (`hr-dashboard-cache.md`), this
+  dataset was deliberately left OUT of it. It is the one HR key that still skips
+  unconditionally while warm.
 - **Switching weeks costs no query** — the selector re-derives from memory.
 - Leaving the tab and coming back **paints instantly** instead of re-flashing a skeleton
   (HR tabs fully unmount on switch — [tab-cache.ts](src/lib/hr/tab-cache.ts)).

@@ -117,7 +117,7 @@ so it also survives a reload of the same browser tab):
 | --- | --- |
 | Notes rows (`/notes`) | Painted from cache; refreshed in the background on mount + on open. `Loading notes…` only ever shows on the session's first pull. |
 | Readiness snapshot (`/readiness`) | Painted from the cached snapshot **for that week**. Younger than 30s (the pane's own poll) → no refetch at all; older → silent revalidate behind the visible numbers; older than 6h → treated as a cold load. |
-| Worker suggestions, Hubstaff upload list | Fetched once per page session. |
+| Worker suggestions, Hubstaff upload list | Fetched once per page session. **Deliberate, and re-confirmed by Kane 2026-09-09** when the shared store's skip flag was reviewed: these are lookup lists, not a pay figure or a queue others act on, so the rule that bans `hasFetchedThisSession` elsewhere does not reach them. See `accounting-dashboard-cache.md` § *The skip-flag policy*. |
 | Offboarded final-pay list (`/offboarded`) | Same per-week stamped cache as the readiness snapshot (30s fresh window / 6h max age / 4-week trim), added 2026-08-18 — the tab shipped a day after the caching pass and had been the one pane that re-pulled on every visit. |
 
 (The Rates glance had its own cached row here until the tab was removed

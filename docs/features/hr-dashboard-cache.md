@@ -88,6 +88,9 @@ reloads" change fails loudly.
 
 ## The one dataset that keeps its once-per-session skip
 
+**Kane confirmed on 2026-09-09** that this doc stands rather than being folded into the
+window — asked as a straight either/or against `hr-orientation-attendance.md`.
+
 `orientationAttendance` (`useHrOrientationAttendance.ts`) still fetches once per page
 session and does not consult the window. That is a documented decision, not an oversight:
 `hr-orientation-attendance.md:108-126` specifies "the tab fetches **once per page
