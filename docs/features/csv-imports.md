@@ -187,6 +187,69 @@ point that trusted the browser's filename. Validator + tests:
 `payrollWeekFilenameError` in `src/lib/hubstaff/calendar-column-dedupe.ts`,
 `src/lib/hubstaff/payroll-week-filename.test.ts`.
 
+#### The junk-file heuristic is a second, UNVALIDATED filename contract
+
+The ingest contract above is not the only thing reading the name. Four modules
+independently apply the same heuristic to decide whether a filename represents a
+real payable week:
+
+```
+/backfill|time-activity|\(\d+\)|copy/i
+```
+
+| Where | What a match suppresses |
+|---|---|
+| `src/components/payroll-clerk/PayrollDispatch.tsx` (`CycleSelector`) | the week never appears in the Payment Dispatch week selector |
+| `src/lib/payroll/disbursement-reports.ts` (`isSeedableWeeklyUpload`) | `seedMissingDisbursementRecords` skips it — **the week seeds zero `disbursement_records`** |
+| `src/lib/ceo/financial-reports.ts` (`isRegularWeeklyCycle`) | dropped from the CEO financial timeline |
+| `src/lib/people/people-roster.ts` (`canonicalWeeksFromUploads`) | dropped from the Statistics trend and the People roster date range |
+
+It exists for good reasons — the additive `backfill-*` weeks, the multi-week
+`time-activity-report-*` export, and genuine duplicate re-uploads must never seed
+a phantom cycle. **But nothing validates a filename against it at ingest.** The
+name is checked for a parseable Sunday-anchored range and accepted; the heuristic
+then judges it silently, days later, in four places at once. A name can therefore
+satisfy the enforced contract in full and still be invisible to every money
+reader.
+
+**What that cost, live on 2026-09-09.** The 2026-08-23 → 08-29 week was uploaded
+as `simple-biz_daily_report_2026-08-23_to_2026-08-29 (1).csv` — the browser's
+duplicate-download suffix, added because the CSV was downloaded twice. The name
+passed ingest validation (correct range, Sunday start), so **1,101 hour rows
+landed, payroll ran, the wizard locked, and 1,069 payments were dispatched.** The
+`(1)` then matched `\(\d+\)`, and the week:
+
+- never appeared in the Payment Dispatch week selector — the reported symptom;
+- **seeded 0 of ~1,100 `disbursement_records`**, so a fully paid ₱-scale week was
+  absent from the Reports tab, CEO Financial Reports and People payroll history
+  for nine days. The neighbouring weeks carried 1,070 and 1,115 records.
+
+Repaired by renaming the upload to `…_2026-08-23_to_2026-08-29.csv` and re-seeding
+— see `scripts/rename-hubstaff-source-file.mts`.
+
+**Do not use the Payroll Wizard rename button to fix a locked, paid week.**
+`renameHubstaffSourceFile` migrates only `payroll.wizard.final_pay.<file>` out of
+`app_settings`. A week that has been through the wizard carries six more
+filename-keyed settings — `payroll.wizard.fx`, `payroll.wizard.additions`,
+`payroll.wizard.dept_pay_paused`, `payroll.dispatch_lock`,
+`accounting.overview.snapshot`, `dispatch.cycle_complete_notified`. The button
+strands all six, so the week would replay with no additions and **FX 0**, which
+Step 8 hard-gates. The script discovers every key whose suffix is the old
+filename rather than working from a hardcoded list, backs up the full restore set
+to `references/backups/` before writing, renames `disbursement_records` *before*
+`payment_dispatches` (the dispatch sync trigger matches on `cycle_source_file`),
+and re-seeds last so the existing dispatch rows stamp the fresh records paid
+instead of producing a fully-unpaid phantom cycle.
+
+**Open — the heuristic is still unguarded at ingest.** Nothing yet stops the next
+`(1)`, `copy`, or `… (2)` filename from repeating this. The live week at the time
+of writing is `simple-biz_daily_report_2026-08-30_to_2026-09-05 4.csv`, which
+survives only because a bare ` 4` happens not to match the pattern. Closing this
+properly means rejecting a heuristic-matching name at ingest (the same choke point
+that already enforces the Sunday rule) rather than loosening the heuristic in four
+places — deliberately **not** done here, because narrowing the filter is what lets
+a real duplicate re-upload seed a double cycle.
+
 **What an undatable name cost, live on 2026-08-24.** A manual upload named
 `"8:16 - 8:22 csv.csv"` was accepted and promoted to `is_current`. For ~25
 minutes: both manager KPI Calculators hung on their loading skeleton with no
