@@ -35,6 +35,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+import { clearAllAccountingCache } from '@/lib/accounting/tab-cache';
 import { normEmail } from '@/lib/email/norm-email';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
@@ -318,6 +319,13 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
             try {
               sessionStorage.removeItem(SESSION_EMAIL_KEY);
             } catch { /* ignore */ }
+            // Purge BEFORE navigating: `sessionStorage` survives the same-tab
+            // navigation `signOut` performs, so without this the roster, the
+            // dispatch queue and the payout totals would still be on disk for
+            // whoever signs in on this tab next. The session-email removal
+            // above has to come first — otherwise a read racing the purge could
+            // self-bind and re-adopt the identity we are dropping.
+            clearAllAccountingCache();
             void signOut({ callbackUrl: '/login' });
           }}
         >

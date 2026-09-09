@@ -15,6 +15,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import BizAiBadge from './BizAiBadge';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+import { clearAllAccountingCache } from '@/lib/accounting/tab-cache';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
@@ -215,6 +216,11 @@ export default function CeoSidebar({
           className="mt-3 w-full justify-start gap-3 text-[#71717a] hover:bg-red-500/10 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400"
           onClick={() => {
             try { sessionStorage.removeItem(SESSION_EMAIL_KEY); } catch { /* ignore */ }
+            // The CEO Overview KPI snapshot and the financial reports are held
+            // in the shared Accounting store, which is mirrored to
+            // `sessionStorage` and therefore survives the same-tab navigation
+            // `signOut` performs. Purge before leaving.
+            clearAllAccountingCache();
             void signOut({ callbackUrl: '/login' });
           }}
         >

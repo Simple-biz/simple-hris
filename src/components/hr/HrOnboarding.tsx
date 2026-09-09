@@ -41,7 +41,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
-import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
+import { getHrTabCache, hasHrTabCache, isHrTabCacheFresh, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import type {
   HrPendingEmployeeRow,
   HrPendingStatus,
@@ -176,8 +176,8 @@ export default function HrOnboarding({ deepLink }: { deepLink?: OnboardingDeepLi
     firstErr?: string;
   } | null>(null);
 
-  const fetchPending = useCallback(async () => {
-    setPendingLoading(true);
+  const fetchPending = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setPendingLoading(true);
     try {
       const res = await fetch('/api/hr/pending-employees', { cache: 'no-store' });
       const json = (await res.json()) as {
@@ -188,19 +188,27 @@ export default function HrOnboarding({ deepLink }: { deepLink?: OnboardingDeepLi
       setPending(json.rows ?? []);
       setHrTabCache(HR_TAB_CACHE_KEYS.pendingEmployees, json.rows ?? []);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load pending hires');
-      setPending([]);
+      // A background revalidate that blips must not blank rows already on
+      // screen, nor raise a toast the operator did not ask for.
+      if (!opts?.silent) {
+        toast.error(e instanceof Error ? e.message : 'Failed to load pending hires');
+        setPending([]);
+      }
     } finally {
-      setPendingLoading(false);
+      if (!opts?.silent) setPendingLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    // Seeded from the in-session cache on remount — skip the initial fetch when
-    // warm so switching back to this tab doesn't re-query / re-flash the table.
-    // Realtime (below) + mutations + the Refresh button keep the cache fresh.
-    if (hasHrTabCache(HR_TAB_CACHE_KEYS.pendingEmployees)) return;
-    void fetchPending();
+    // Seeded from the in-session cache on remount, so a tab switch repaints
+    // instantly. A warm entry only SUPPRESSES the fetch while it is still fresh
+    // (30s) — past that this revalidates behind the visible rows. The Realtime
+    // channel below cannot be relied on for freshness: browser
+    // `postgres_changes` is documented dead here
+    // (`memory/supabase-realtime-anon-rls-dead`), so it subscribes and never
+    // delivers.
+    if (isHrTabCacheFresh(HR_TAB_CACHE_KEYS.pendingEmployees)) return;
+    void fetchPending({ silent: hasHrTabCache(HR_TAB_CACHE_KEYS.pendingEmployees) });
   }, [fetchPending]);
 
   const fetchPendingRef = useRef(fetchPending);

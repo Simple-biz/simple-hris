@@ -10,6 +10,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+import { bindAccountingCacheIdentity } from '@/lib/accounting/tab-cache';
 import { cn } from '@/lib/utils';
 import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
 import { humanizeTabId } from '@/lib/presence/page-label';
@@ -108,6 +109,13 @@ export default function PayrollClerkApp() {
       setViewerEmail(null);
     }
   }, [emailFromQuery]);
+
+  // Bind the shared Accounting tab cache to the resolved viewer — this is what
+  // purges a previous viewer's dispatch queue when `?email=` swaps identity in
+  // the same tab. See `accounting-dashboard-cache.md`.
+  useEffect(() => {
+    bindAccountingCacheIdentity(viewerEmail);
+  }, [viewerEmail]);
 
   useEffect(() => {
     if (!mobileNavOpen) return;

@@ -37,6 +37,7 @@ import { pageLabel } from '@/lib/pages/visibility';
 import UnderConstruction from '@/components/common/UnderConstruction';
 import ConstructionBanner from '@/components/common/ConstructionBanner';
 import type { InitialAccountingData } from '@/lib/accounting/prefetch';
+import { bindAccountingCacheIdentity } from '@/lib/accounting/tab-cache';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import AccountingMesa from '@/components/payroll/AccountingMesa';
 import AccountingCollabLayer from '@/components/accounting/AccountingCollabLayer';
@@ -133,6 +134,17 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
       /* ignore */
     }
   }, [emailFromQuery]);
+
+  // Bind the Accounting tab cache to the resolved viewer. This is what PURGES
+  // on a viewer swap — an elevated viewer arriving with `?email=` writes that
+  // address to the SAME sessionStorage key in the SAME tab, so without this the
+  // previous identity's roster and payout totals would still be readable. The
+  // store self-binds for reads that happen before this effect runs (a reload
+  // seeding through `useState`), but a self-bind only ever ADOPTS an identity —
+  // dropping the other viewer's bytes is this call's job.
+  useEffect(() => {
+    bindAccountingCacheIdentity(sessionEmail);
+  }, [sessionEmail]);
 
   useEffect(() => {
     const e = (sessionEmail || '').trim();

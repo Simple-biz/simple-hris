@@ -28,7 +28,7 @@ import {
   DialogContent,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
-import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
+import { getHrTabCache, hasHrTabCache, isHrTabCacheFresh, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import type { OffboardingQueueRow } from '@/lib/supabase/offboarding-queue';
 import HrOffboardQueueProcessor from './HrOffboardQueueProcessor';
 import OffboardingWeeklyPulse from './OffboardingWeeklyPulse';
@@ -195,8 +195,8 @@ export default function HrOffboarding() {
   // The queue row being permanently deleted (HR cleanup, any status).
   const [deleteTarget, setDeleteTarget] = useState<OffboardingQueueRow | null>(null);
 
-  const fetchHistory = useCallback(async () => {
-    setHistoryLoading(true);
+  const fetchHistory = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setHistoryLoading(true);
     try {
       const res = await fetch('/api/hr/offboard-history', { cache: 'no-store' });
       const json = (await res.json()) as { rows?: HistoryRow[]; error?: string };
@@ -204,15 +204,19 @@ export default function HrOffboarding() {
       setHistory(json.rows ?? []);
       setHrTabCache(HR_TAB_CACHE_KEYS.offboardHistory, json.rows ?? []);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load offboard history');
-      setHistory([]);
+      // A background revalidate that blips keeps the visible rows and stays
+      // quiet; only a foreground load reports and clears.
+      if (!opts?.silent) {
+        toast.error(e instanceof Error ? e.message : 'Failed to load offboard history');
+        setHistory([]);
+      }
     } finally {
-      setHistoryLoading(false);
+      if (!opts?.silent) setHistoryLoading(false);
     }
   }, []);
 
-  const fetchQueue = useCallback(async () => {
-    setQueueLoading(true);
+  const fetchQueue = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setQueueLoading(true);
     try {
       const res = await fetch('/api/offboarding-queue', { cache: 'no-store' });
       const json = (await res.json()) as { rows?: OffboardingQueueRow[]; error?: string };
@@ -220,10 +224,12 @@ export default function HrOffboarding() {
       setQueue(json.rows ?? []);
       setHrTabCache(HR_TAB_CACHE_KEYS.offboardQueue, json.rows ?? []);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load offboarding queue');
-      setQueue([]);
+      if (!opts?.silent) {
+        toast.error(e instanceof Error ? e.message : 'Failed to load offboarding queue');
+        setQueue([]);
+      }
     } finally {
-      setQueueLoading(false);
+      if (!opts?.silent) setQueueLoading(false);
     }
   }, []);
 
@@ -304,11 +310,15 @@ export default function HrOffboarding() {
   }, [fetchHistory]);
 
   useEffect(() => {
-    // Skip the initial fetch for whichever data set is already cached (tab
-    // revisit) so the tables don't re-query / reload; Refresh buttons + actions
-    // still force a fresh fetch and update the cache.
-    if (!hasHrTabCache(HR_TAB_CACHE_KEYS.offboardHistory)) void fetchHistory();
-    if (!hasHrTabCache(HR_TAB_CACHE_KEYS.offboardQueue)) void fetchQueue();
+    // A tab revisit repaints from the cache instead of re-querying, but the skip
+    // only lasts while the entry is fresh (30s) — neither of these datasets has
+    // any Realtime channel, so an unconditional skip left an HR session looking
+    // at an offboarding queue and a leaver list that had not moved since the
+    // session started. Past the window each revalidates behind its visible rows.
+    const histKey = HR_TAB_CACHE_KEYS.offboardHistory;
+    const queueKey = HR_TAB_CACHE_KEYS.offboardQueue;
+    if (!isHrTabCacheFresh(histKey)) void fetchHistory({ silent: hasHrTabCache(histKey) });
+    if (!isHrTabCacheFresh(queueKey)) void fetchQueue({ silent: hasHrTabCache(queueKey) });
   }, [fetchHistory, fetchQueue]);
 
   const filteredHistory = useMemo(() => {

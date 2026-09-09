@@ -43,7 +43,7 @@ import { Select as SelectPrimitive } from '@base-ui/react/select';
 import { derivationNameParts } from '@/lib/hr/work-email';
 import { toTitleCaseNameOrNull } from '@/lib/text/sanitize-name';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
-import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
+import { getHrTabCache, hasHrTabCache, isHrTabCacheFresh, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
@@ -1045,8 +1045,8 @@ export default function HrOnboardingForm({
     error?: string;
   } | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     try {
       const res = await fetch('/api/hr/onboarding-submissions', { cache: 'no-store' });
       const json = (await res.json()) as { rows?: SubmissionRow[]; error?: string };
@@ -1055,18 +1055,27 @@ export default function HrOnboardingForm({
       setRows(normalized);
       setHrTabCache(HR_TAB_CACHE_KEYS.onboardingSubmissions, normalized);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load submissions');
-      setRows([]);
+      // A background revalidate that blips keeps the visible rows and stays
+      // quiet; only a foreground load reports and clears.
+      if (!opts?.silent) {
+        toast.error(e instanceof Error ? e.message : 'Failed to load submissions');
+        setRows([]);
+      }
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    // Skip the initial fetch when cached (tab revisit) so the table doesn't
-    // re-query / reload; mutations + the Refresh button keep the cache current.
-    if (hasHrTabCache(HR_TAB_CACHE_KEYS.onboardingSubmissions)) return;
-    void load();
+    // A tab revisit repaints from the cache instead of re-querying, but the skip
+    // only holds while the entry is fresh (30s). The Realtime channel this file
+    // opens is on pay structures, not on the submissions themselves — and
+    // browser `postgres_changes` is documented dead here
+    // (`memory/supabase-realtime-anon-rls-dead`) — so past the window this
+    // revalidates behind the visible table.
+    const key = HR_TAB_CACHE_KEYS.onboardingSubmissions;
+    if (isHrTabCacheFresh(key)) return;
+    void load({ silent: hasHrTabCache(key) });
   }, [load]);
 
   // A notification click (via HrOnboarding) asked to open a specific submission.

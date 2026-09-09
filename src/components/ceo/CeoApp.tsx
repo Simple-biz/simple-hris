@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Toaster } from '@/components/ui/sonner';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
+import { bindAccountingCacheIdentity } from '@/lib/accounting/tab-cache';
 import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
 import { humanizeTabId } from '@/lib/presence/page-label';
 import { useTabDocumentTitle } from '@/hooks/useTabDocumentTitle';
@@ -59,6 +60,13 @@ export default function CeoApp() {
       setViewerEmail(null);
     }
   }, [emailFromQuery]);
+
+  // Bind the shared Accounting tab cache to the resolved viewer — this is what
+  // purges a previous viewer's KPI snapshot and financial reports when `?email=`
+  // swaps identity in the same tab. See `accounting-dashboard-cache.md`.
+  useEffect(() => {
+    bindAccountingCacheIdentity(viewerEmail);
+  }, [viewerEmail]);
 
   useEffect(() => {
     if (!viewerEmail) return;

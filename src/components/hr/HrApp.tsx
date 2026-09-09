@@ -60,7 +60,7 @@ import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import SWall from '@/components/swall/SWall';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import type { EmployeeRow } from '@/lib/supabase/employees';
-import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
+import { getHrTabCache, hasHrTabCache, isHrTabCacheFresh, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import { sundayIso } from '@/lib/hr/hiring-week';
 import DeptFilter from './DeptFilter';
 import HrCollabLayer from './HrCollabLayer';
@@ -2676,8 +2676,8 @@ function OverviewBody() {
       : null;
   });
 
-  const fetchRoster = useCallback(async () => {
-    setLoading(true);
+  const fetchRoster = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     try {
       const res = await fetch('/api/employees', { cache: 'no-store' });
       const json = (await res.json()) as { employees?: EmployeeRow[]; error?: string };
@@ -2685,24 +2685,28 @@ function OverviewBody() {
       setRoster(json.employees ?? []);
       setHrTabCache(HR_TAB_CACHE_KEYS.overviewRoster, json.employees ?? []);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load roster');
+      // A background revalidate keeps the painted roster and stays quiet.
+      if (!opts?.silent) toast.error(e instanceof Error ? e.message : 'Failed to load roster');
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
-  // Skip the roster fetch when cached (tab revisit) so the Overview doesn't
-  // re-query / re-flash its skeleton; the Refresh action forces a fresh pull.
+  // A tab revisit paints the cached roster instead of re-flashing the skeleton,
+  // but the skip only holds while the entry is fresh (30s) — this Overview has
+  // no Realtime channel, so an unconditional skip meant the headcount never
+  // moved for the life of the page. Past the window it revalidates silently.
   useEffect(() => {
-    if (hasHrTabCache(HR_TAB_CACHE_KEYS.overviewRoster)) return;
-    void fetchRoster();
+    const key = HR_TAB_CACHE_KEYS.overviewRoster;
+    if (isHrTabCacheFresh(key)) return;
+    void fetchRoster({ silent: hasHrTabCache(key) });
   }, [fetchRoster]);
 
   // Onboarding pipeline: invites awaiting submission + submitted hires that
   // still need their workspace account set up (mirrors the Onboarding tab's
   // "Needs setup" counter: no work email yet, or account creation failed).
   useEffect(() => {
-    if (hasHrTabCache(HR_TAB_CACHE_KEYS.overviewOnboardingCounts)) return; // warm → seeded
+    if (isHrTabCacheFresh(HR_TAB_CACHE_KEYS.overviewOnboardingCounts)) return; // fresh → seeded
     let cancelled = false;
     (async () => {
       try {
@@ -2762,7 +2766,7 @@ function OverviewBody() {
     // caching a roster=0 result on cold load), and skip entirely when the bundle
     // is already cached (tab revisit) — the cards are seeded above.
     if (roster.length === 0) return;
-    if (hasHrTabCache(HR_TAB_CACHE_KEYS.overviewOffboard)) return;
+    if (isHrTabCacheFresh(HR_TAB_CACHE_KEYS.overviewOffboard)) return;
     let cancelled = false;
     (async () => {
       try {

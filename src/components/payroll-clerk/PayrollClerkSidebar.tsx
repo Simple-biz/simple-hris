@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+import { clearAllAccountingCache } from '@/lib/accounting/tab-cache';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
@@ -275,6 +276,11 @@ export default function PayrollClerkSidebar({
             } catch {
               /* ignore */
             }
+            // `useDispatchQueue` mirrors the dispatch queue — names, amounts and
+            // payout destinations — into `sessionStorage` through the shared
+            // Accounting store, and that survives the same-tab navigation
+            // `signOut` performs. Purge before leaving.
+            clearAllAccountingCache();
             void signOut({ callbackUrl: '/login' });
           }}
         >

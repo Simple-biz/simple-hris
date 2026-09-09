@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
   getHrTabCache,
+  isHrTabCacheFresh,
   setHrTabCache,
   HR_TAB_CACHE_KEYS,
 } from '@/lib/hr/tab-cache';
@@ -427,11 +428,16 @@ export default function HrNewHireChecklist({
   );
   useEffect(() => () => onScrollSurfaceChange?.(null), [onScrollSurfaceChange]);
 
-  // Load the selected week's rows + lock state when it isn't already loaded
-  // (skipped on a warm cache so tab-switches stay instant).
+  // Load the selected week's rows + lock state when it isn't already loaded.
+  // A warm cache keeps tab-switches instant, but the skip only holds while the
+  // cached week is fresh (30s) — past that this revalidates SILENTLY, so the
+  // grid never sits on a checklist another coordinator has since edited while
+  // showing no sign of a load. (`loaded` is the "have something to paint"
+  // signal; the freshness window is the "may I skip the fetch" one.)
   useEffect(() => {
-    if (!period || loaded) return;
-    void fetchPeriod(period);
+    if (!period) return;
+    if (loaded && isHrTabCacheFresh(CACHE_KEY)) return;
+    void fetchPeriod(period, { silent: loaded });
   }, [period, loaded, fetchPeriod]);
 
   useEffect(() => { void loadPeriods(); }, [loadPeriods]);

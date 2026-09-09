@@ -26,7 +26,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
-import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
+import { getHrTabCache, hasHrTabCache, isHrTabCacheFresh, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import type {
   DepartmentTransferRequestRow,
   TransferRequestStatus,
@@ -123,8 +123,8 @@ export default function HrTransfers() {
   const [viewing, setViewing] = useState<DepartmentTransferRequestRow | null>(null);
   const reduceMotion = useReducedMotion();
 
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
+  const fetchAll = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       // scope=all = the full company-wide trail. The unscoped default is the
@@ -135,15 +135,23 @@ export default function HrTransfers() {
       setRows(json.rows ?? []);
       setHrTabCache(HR_TAB_CACHE_KEYS.transfers, json.rows ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load transfer requests');
+      // A background revalidate that blips must not replace a good table with
+      // an error card — only a foreground load reports.
+      if (!opts?.silent) setError(e instanceof Error ? e.message : 'Failed to load transfer requests');
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    if (hasHrTabCache(HR_TAB_CACHE_KEYS.transfers)) return;
-    void fetchAll();
+    // A tab revisit repaints from the cache, but the skip only holds while the
+    // entry is fresh (30s). Transfer requests are decided by OTHER people and
+    // this tab has no Realtime channel, so an unconditional skip left HR reading
+    // a queue that had not moved since the page loaded. Past the window it
+    // revalidates behind the visible rows.
+    const key = HR_TAB_CACHE_KEYS.transfers;
+    if (isHrTabCacheFresh(key)) return;
+    void fetchAll({ silent: hasHrTabCache(key) });
   }, [fetchAll]);
 
   // ── KPI counts (movement metrics) — max 4 cards ──

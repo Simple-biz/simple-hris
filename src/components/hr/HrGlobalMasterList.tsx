@@ -53,7 +53,7 @@ import {
 } from '@/components/ui/dialog';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
-import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
+import { getHrTabCache, hasHrTabCache, isHrTabCacheFresh, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 import { normEmail } from '@/lib/email/norm-email';
 import { cn } from '@/lib/utils';
 import { collapseHslFamilyLabel, formatDeptLabel } from '@/lib/departments/hsl-subdept';
@@ -1072,11 +1072,16 @@ export default function HrGlobalMasterList() {
     }
   }, []);
 
-  // Cold load only — a warm cache (tab revisit) paints instantly; liveness is
-  // maintained by the Realtime + poll below.
+  // A warm cache (tab revisit) paints instantly, but the skip only holds while
+  // the entry is fresh (30s). The poll below is a backstop, not a substitute —
+  // it starts counting from THIS mount, so an unconditional skip left a returning
+  // HR user on an unrefreshed roster with nothing in flight. Past the window the
+  // reload runs in 'quiet' mode, which keeps the visible table and raises no
+  // toast on a blip.
   useEffect(() => {
-    if (hasHrTabCache(HR_TAB_CACHE_KEYS.globalMasterList)) return;
-    void fetchRoster('initial');
+    const key = HR_TAB_CACHE_KEYS.globalMasterList;
+    if (isHrTabCacheFresh(key)) return;
+    void fetchRoster(hasHrTabCache(key) ? 'quiet' : 'initial');
   }, [fetchRoster]);
 
   // Live data: Realtime on global_master_list when it's in the publication,

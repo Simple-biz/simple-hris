@@ -23,7 +23,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
-import { getTabCache, hasFetchedThisSession, markFetchedThisSession, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import type { AccountingTransferRow, TransferRateChange } from '@/lib/transfers/accounting-transfers';
 import type { TransferRequestStatus } from '@/lib/supabase/department-transfer-requests';
@@ -324,7 +324,16 @@ export default function AccountingTransfers() {
   const [rows, setRows] = useState<AccountingTransferRow[]>(
     () => getTabCache<AccountingTransferRow[]>(TAB_CACHE_KEYS.transfers) ?? [],
   );
-  const [loading, setLoading] = useState(() => !hasFetchedThisSession(TAB_CACHE_KEYS.transfers));
+  // `settled` = the fetch has answered at least once in THIS page load. It is
+  // never seeded from the cache (that would paint "settled" as a fact) and never
+  // reset, so returning to this tab cannot flash a skeleton over rows that are
+  // already on screen. The skeleton is for having nothing to show, not for
+  // having a request in flight — `manager-dashboard-cache.md` § *Loading flags
+  // are part of the rule*. An in-flight explicit Refresh keeps its own flag.
+  const [settled, setSettled] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  /** Derived, never stored: nothing has answered yet AND there is nothing to paint. */
+  const loading = !settled && rows.length === 0;
   const [error, setError] = useState<string | null>(null);
   const [retryId, setRetryId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -335,7 +344,7 @@ export default function AccountingTransfers() {
   // they swap rows in place and keep the last-good view on error, so an
   // auditing session never goes blank or (worse) silently stale.
   const fetchAll = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
+    if (!opts?.silent) setRefreshing(true);
     setError(null);
     try {
       const res = await fetch('/api/accounting/transfers', { cache: 'no-store' });
@@ -343,17 +352,28 @@ export default function AccountingTransfers() {
       if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
       setRows(json.rows ?? []);
       setTabCache(TAB_CACHE_KEYS.transfers, json.rows ?? []);
-      markFetchedThisSession(TAB_CACHE_KEYS.transfers);
     } catch (e) {
       if (!opts?.silent) setError(e instanceof Error ? e.message : 'Failed to load transfers');
     } finally {
-      if (!opts?.silent) setLoading(false);
+      // "Answered" either way — a failed load must not leave the skeleton up
+      // forever when there is nothing cached to paint.
+      setSettled(true);
+      if (!opts?.silent) setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
-    if (hasFetchedThisSession(TAB_CACHE_KEYS.transfers)) return;
-    void fetchAll();
+    // ALWAYS refetch on mount. The rows are seeded from the cache above so the
+    // table paints instantly, but a transfer queue is decided by OTHER people —
+    // this is `manager-dashboard-cache.md`'s "stale-and-stop is how two managers
+    // approve the same request twice", on the surface an auditor works from.
+    //
+    // `useLiveRefresh`'s 60s poll below is a backstop, not a substitute: it
+    // starts counting from THIS mount, so skipping the mount fetch left an
+    // auditor looking at an up-to-60s-old queue with nothing in flight. A
+    // cache-seeded mount revalidates SILENTLY, so neither the skeleton nor an
+    // error card can replace rows that are already on screen.
+    void fetchAll({ silent: hasTabCache(TAB_CACHE_KEYS.transfers) });
   }, [fetchAll]);
 
   // Keep the view live so an auditor never chases a manager over an already-
@@ -505,7 +525,7 @@ export default function AccountingTransfers() {
               onClick={() => void fetchAll()}
               className="h-8 gap-1.5 border-orange-200 text-orange-700 hover:bg-orange-50 dark:border-orange-800 dark:text-orange-300"
             >
-              <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+              <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
               <span className="hidden sm:inline">Refresh</span>
             </Button>
           </div>
