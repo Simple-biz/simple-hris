@@ -166,7 +166,7 @@ function describeUnloggableFacts(facts: TerminationFacts): string | null {
  * from `auditTerminationWriteback` once it has actually run.
  *
  * `field_writebacks` on this row is the ONLY undo data for the blank-only
- * write-back — `audit_log` cannot hold it, because `clearAuditLog()` truncates
+ * write-back — `audit_log` cannot hold it, because the retention purge prunes
  * the whole table behind DELETE /api/audit-log.
  */
 export async function createTerminationDocument(params: {
@@ -317,7 +317,7 @@ export async function createTerminationDocument(params: {
  * write-back, so its own `field_writebacks` is always `[]`.
  *
  * This is the SECOND copy of the undo data, not a replacement for
- * `termination_documents.field_writebacks`: `clearAuditLog()` truncates the
+ * `termination_documents.field_writebacks`: the retention purge prunes the
  * whole audit table behind DELETE /api/audit-log, which is exactly why
  * `bank_update_history` was split out. It exists so that a lost trail patch, or
  * a dropped table, still leaves a record of which cells were touched and what

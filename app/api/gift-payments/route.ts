@@ -5,9 +5,9 @@ import {
   type GiftPaymentDraft,
 } from '@/lib/supabase/gift-payments';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
-import { getSessionActor } from '@/lib/auth/session-actor';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
+import { auditFrom } from '@/lib/audit/context';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -45,10 +45,9 @@ export async function PUT(request: Request) {
       return sum + (Number.isFinite(v) ? v : 0);
     }, 0);
 
-    const actor = await getSessionActor();
     void insertAuditLog({
-      user_name: body.created_by ?? actor.user_name,
-      user_role: actor.user_role,
+      // Actor from the gate that just authorized this write, not from the body.
+      ...auditFrom(request, authz),
       action: 'gift.payment_edited',
       resource: 'gift_payments',
       resource_id: null,

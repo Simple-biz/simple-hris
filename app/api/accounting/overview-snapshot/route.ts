@@ -15,6 +15,13 @@ export const runtime = 'nodejs';
  * cycle) so the CEO System Overview board mirrors it instead of recomputing a
  * base figure that drifts low once PAB is added. Rate-visible only (admin /
  * accounting / ceo) — the same gate as the other payroll-figure endpoints.
+ *
+ * DELIBERATELY NOT AUDITED. This fires on every Accounting Overview load, so an
+ * event per call would bury the trail it belongs to; it also decides nothing —
+ * it republishes a figure the dashboard just computed from audited inputs. Same
+ * volume carve-out as the KPI score-saves in `memory/readiness-activity-feed.md`.
+ * The reasoning is recorded in `docs/features/audit-log.md` so the omission
+ * reads as a decision rather than an oversight.
  */
 export async function POST(req: NextRequest) {
   const authz = await requireRateVisibilitySession();

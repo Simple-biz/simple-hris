@@ -3,6 +3,7 @@ import { decideShippingDetail } from '@/lib/supabase/employee-gift-shipping';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
+import { auditFrom } from '@/lib/audit/context';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -50,8 +51,9 @@ export async function PATCH(
   }
 
   void insertAuditLog({
-    user_name: body.decided_by ?? 'orphanage_team',
-    user_role: 'orphanage_team',
+    // The DECISION field on the row may name whoever the client said; the audit
+    // actor is always the verified session.
+    ...auditFrom(req, authz),
     action: `employee_gift_shipping.${body.status}`,
     resource: 'employee_gift_shipping_details',
     resource_id: row.id,

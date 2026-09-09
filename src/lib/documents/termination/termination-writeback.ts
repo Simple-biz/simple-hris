@@ -53,7 +53,7 @@
  * `termination_documents.field_writebacks` before the next cell is touched, and
  * a failure there stops the run. A crash between two writes can therefore cost
  * at most one unrecorded cell, not all three. `audit_log` cannot serve as the
- * fallback because `clearAuditLog()` truncates the whole table behind
+ * fallback because the retention purge prunes old rows out of the table behind
  * DELETE /api/audit-log; it carries a second copy, not the copy.
  */
 import 'server-only';

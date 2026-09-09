@@ -9,6 +9,7 @@ import {
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
+import { auditFrom } from '@/lib/audit/context';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -91,8 +92,9 @@ export async function POST(req: NextRequest) {
   }
 
   void insertAuditLog({
-    user_name: body.submitter_email,
-    user_role: 'orphanage_submitter',
+    // `submitter_email` stays on the ROW as the business fact; the trail records
+    // who was actually signed in when the request was filed.
+    ...auditFrom(req, authz),
     action: 'orphanage_budget.created',
     resource: 'orphanage_budget_requests',
     resource_id: row.id,

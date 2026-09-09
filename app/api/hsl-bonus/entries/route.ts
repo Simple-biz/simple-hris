@@ -6,6 +6,8 @@ import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
 import { notifyKpiScored } from '@/lib/notifications/kpi-scored';
 import { recordNotifyFailure } from '@/lib/notifications/notify-failure-audit';
 import { getSessionActor } from '@/lib/auth/session-actor';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { auditFrom } from '@/lib/audit/context';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -24,6 +26,14 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ rows: data ?? [] });
 }
 
+/**
+ * Entry saves are DELIBERATELY NOT AUDITED. This is the KPI autosave path and
+ * the volume would swamp the trail — the standing ruling is
+ * `memory/readiness-activity-feed.md` ("KPI score-saves are deliberately
+ * unaudited (volume)"), where a manager mid-scoring appears only at Mark Ready
+ * / Lock, which ARE audited (`payroll.kpi.*`). Deletions below are a different
+ * matter: they are rare and they remove money someone was scored.
+ */
 export async function POST(req: NextRequest) {
   const authz = await requireFeatureEdit('manager', 'hsl_bonus');
   if (!authz.ok) return deniedResponse(authz);
@@ -111,6 +121,16 @@ export async function DELETE(req: NextRequest) {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
 
+  // Snapshot the scored row first: after the delete there is no other record
+  // that this person was scored this period, or for how much.
+  const { data: doomed } = await supabase
+    .from('hsl_bonus_entries')
+    .select('id, employee_name, calculated_bonus, is_manager, period_end, notes')
+    .eq('department', dept)
+    .eq('period_start', period_start)
+    .eq('employee_email', email)
+    .maybeSingle();
+
   const { error } = await supabase
     .from('hsl_bonus_entries')
     .delete()
@@ -119,5 +139,18 @@ export async function DELETE(req: NextRequest) {
     .eq('employee_email', email);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  void insertAuditLog({
+    ...auditFrom(req, authz),
+    action: 'hsl_bonus.entry_deleted',
+    resource: 'hsl_bonus_entries',
+    resource_id: email,
+    details: {
+      department: dept,
+      period_start,
+      deleted_entry: doomed ?? null,
+    },
+  });
+
   return NextResponse.json({ ok: true });
 }

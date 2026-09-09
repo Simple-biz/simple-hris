@@ -6,6 +6,8 @@ import {
 } from '@/lib/supabase/system-bonuses-db';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { auditFrom } from '@/lib/audit/context';
 import {
   isCustomSystemBonusCode,
   validateSystemBonus,
@@ -49,6 +51,22 @@ export async function POST(request: Request) {
 
   const { row, error } = await upsertSystemBonus(b, actor);
   if (error) return NextResponse.json({ error }, { status: 500 });
+
+  // These amounts are paid by the engine, so an edit is a money decision.
+  void insertAuditLog({
+    ...auditFrom(request, authz),
+    action: 'system_bonus.saved',
+    resource: 'system_bonuses',
+    resource_id: b.code,
+    details: {
+      label: b.label ?? null,
+      amount: b.amount ?? null,
+      currency: b.currency ?? null,
+      enabled: b.enabled ?? null,
+      custom: isCustomSystemBonusCode(b.code),
+    },
+  });
+
   return NextResponse.json({ row, error: null });
 }
 
@@ -63,6 +81,25 @@ export async function DELETE(request: Request) {
       { status: 400 },
     );
   }
+  // Snapshot the variant before it goes, and abandon the delete if the trail
+  // cannot record it -- nothing else keeps a copy of a custom variant.
+  const { bonuses } = await listSystemBonuses();
+  const doomed = bonuses.find((x) => x.code === code) ?? null;
+
+  const { error: auditError } = await insertAuditLog({
+    ...auditFrom(request, authz),
+    action: 'system_bonus.deleted',
+    resource: 'system_bonuses',
+    resource_id: code,
+    details: { deleted_bonus: doomed },
+  });
+  if (auditError) {
+    return NextResponse.json(
+      { error: `Delete abandoned -- the audit event could not be written: ${auditError}` },
+      { status: 500 },
+    );
+  }
+
   const { error } = await deleteSystemBonus(code);
   if (error) return NextResponse.json({ error }, { status: 500 });
   return NextResponse.json({ error: null });

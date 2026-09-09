@@ -3,6 +3,8 @@ import { getToken } from 'next-auth/jwt';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { auditFrom } from '@/lib/audit/context';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -46,6 +48,17 @@ export async function POST(req: NextRequest) {
     const {
       data: { publicUrl },
     } = sb.storage.from(BUCKET).getPublicUrl(path);
+
+    // The bucket is PUBLIC, so who put a file in it is worth recording even
+    // though the row that will reference it is saved separately.
+    void insertAuditLog({
+      ...auditFrom(req, authz),
+      action: 'orphanage_registry.photo_uploaded',
+      resource: 'orphanage-photos',
+      resource_id: path,
+      details: { bytes: file.size, content_type: file.type, url: publicUrl },
+    });
+
     return NextResponse.json({ url: publicUrl });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });

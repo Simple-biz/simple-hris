@@ -3,6 +3,7 @@ import { decideOrphanageBudgetRequest } from '@/lib/supabase/orphanage-budget-re
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
+import { auditFrom } from '@/lib/audit/context';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -66,8 +67,9 @@ export async function PATCH(
   }
 
   void insertAuditLog({
-    user_name: body.decided_by,
-    user_role: 'accounting',
+    // The decision field on the row may carry a client-supplied name; the audit
+    // actor is the verified session, and the two are worth comparing.
+    ...auditFrom(req, authz),
     action:
       body.status === 'approved'
         ? 'orphanage_budget.approved'

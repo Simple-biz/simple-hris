@@ -56,7 +56,7 @@ to invalidate any JWT already minted through this path. Remove the live value fr
 If support impersonation is genuinely wanted, it must require an **existing admin session** — never
 a shared password.
 
-## 2. BLOCKING — six API routes with no authorization at all
+## 2. BLOCKING — six API routes with no authorization at all (2 CLOSED 2026-09-09, 4 REMAIN)
 
 [route-access.ts:118](../../src/lib/auth/route-access.ts#L118) is explicit that *"`/api/*` enforces
 its own authz"* — `evaluateRouteAccess` gates **page** access, and roughly 100 API namespaces are
@@ -66,13 +66,16 @@ helper in `src/lib/auth/`. **270 are gated.** These are not:
 | Route | What an authenticated-or-not caller gets |
 |---|---|
 | [manager/member-monthly-pay](../../app/api/manager/member-monthly-pay/route.ts) | `GET ?email=&year=&month=` → **anyone's monthly pay**. Zero auth imports. |
-| [employee-gift-shipping](../../app/api/employee-gift-shipping/route.ts) | `GET` with **no** `email` → **everyone's home address**. `PUT` writes against an arbitrary `personal_email` with no ownership check. |
+| ~~[employee-gift-shipping](../../app/api/employee-gift-shipping/route.ts)~~ **CLOSED 2026-09-09** | Was: `GET` with **no** `email` → **everyone's home address**; `PUT` wrote against an arbitrary `personal_email` with no ownership check. Now `authorizeShippingAccess()` — the owner of that row (matched through their master record, so a personal email resolves) or staff with `hr / gift_tracker`; the un-scoped list is staff-only. Writes audit `employee_gift_shipping.submitted` with the `channel`. See `audit-log.md`. |
 | [hr/fpu-enrollments](../../app/api/hr/fpu-enrollments/route.ts) | Full enrollment list — name, email, department, shift. |
-| [import-daily-report](../../app/api/import-daily-report/route.ts) | Unauthenticated **CSV → Postgres write**. Payroll source data can be injected. |
+| ~~[import-daily-report](../../app/api/import-daily-report/route.ts)~~ **CLOSED 2026-09-09** | Was: unauthenticated **CSV → Postgres write**. Now `requireElevatedSession()` + a `daily_report.imported` audit event. **No component in the app fetches it** — deletion is the right end state, Kane's call (`audit-log.md` §8). |
 | [hsl-bonus/period-summary](../../app/api/hsl-bonus/period-summary/route.ts) | Bonus totals per department. |
 | [presence/last-seen](../../app/api/presence/last-seen/route.ts) | Service-role read, no session check. Found separately in session `993aad7f`. |
 
-`member-monthly-pay` is the one to fix first — pay data is what causes an actual HR incident.
+`member-monthly-pay` is the one to fix first — pay data is what causes an actual HR incident. The
+two closed above were gated as part of the audit-log pass (an ungated write has no actor to record,
+so it could not be audited honestly); `member-monthly-pay`, `hr/fpu-enrollments`,
+`hsl-bonus/period-summary` and `presence/last-seen` are **still open**.
 
 **Fix:** `authorizeEmailAccess` / `requireFeatureAccess` / `requireAdminSession` as appropriate. They
 already exist; this is wiring, not design.

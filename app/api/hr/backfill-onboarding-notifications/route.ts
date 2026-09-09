@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { auditActor } from "@/lib/audit/context";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -121,6 +123,21 @@ export async function POST() {
   if (insertErr) {
     return NextResponse.json({ created: 0, error: insertErr.message }, { status: 500 });
   }
+
+  // A one-shot backfill that fans notifications out to every HR recipient —
+  // rare, manual, and previously invisible. `POST()` takes no request object,
+  // so there is no IP to record; the actor comes from the gate.
+  void insertAuditLog({
+    ...auditActor(authz),
+    action: "hr.onboarding.notifications_backfilled",
+    resource: "employee_notifications",
+    resource_id: null,
+    details: {
+      rows_inserted: toInsert.length,
+      recipients: recipients.length,
+      submissions: recipients.length > 0 ? toInsert.length / recipients.length : 0,
+    },
+  });
 
   return NextResponse.json({ created: toInsert.length / recipients.length });
 }

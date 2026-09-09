@@ -1,11 +1,28 @@
 import { parseCsv } from "@/lib/csv/parse-csv";
 import { importDailyReportToPostgres } from "@/lib/supabase/import-daily-report";
 import { NextRequest, NextResponse } from "next/server";
+import { requireElevatedSession, deniedResponse } from "@/lib/auth/authorize-email";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { auditFrom } from "@/lib/audit/context";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+/**
+ * Daily-report CSV ingest — creates/fills a Postgres table from an uploaded
+ * file.
+ *
+ * It had NO authorization gate and NO audit event: any caller could push a CSV
+ * into the database and leave nothing behind. No component in the app fetches
+ * it (the Diagnostics "Daily Report Import" probe only READS what it produced),
+ * so gating it cannot break a caller. It is a deletion-candidate — see
+ * `docs/features/audit-log.md` — but an ungated ingest must not sit around
+ * waiting for that decision.
+ */
 export async function POST(req: NextRequest) {
+  const authz = await requireElevatedSession();
+  if (!authz.ok) return deniedResponse(authz);
+
   try {
     const form = await req.formData();
     const file = form.get("file");
@@ -41,6 +58,14 @@ export async function POST(req: NextRequest) {
       fileName: name,
       header,
       dataRows,
+    });
+
+    void insertAuditLog({
+      ...auditFrom(req, authz),
+      action: "daily_report.imported",
+      resource: tableName,
+      resource_id: name,
+      details: { file_name: name, table_name: tableName, row_count: rowCount, columns: header.length },
     });
 
     return NextResponse.json({

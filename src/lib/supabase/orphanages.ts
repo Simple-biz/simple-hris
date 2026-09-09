@@ -94,6 +94,29 @@ export async function insertOrphanage(
   return { row: data as OrphanageRow, error: null };
 }
 
+/**
+ * One row by id. Used to snapshot the BEFORE state for the audit trail: an
+ * orphanage row carries the receiving bank for the interns' orphanage share, so
+ * an edit or delete has to stay reconstructable after the fact
+ * (`docs/features/delete-authorization.md`: the event carries the prior row
+ * "so deletions remain traceable after the row is gone").
+ */
+export async function getOrphanage(
+  id: string,
+): Promise<{ row: OrphanageRow | null; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { row: null, error: 'Supabase not configured' };
+
+  const { data, error } = await supabase
+    .from('orphanages')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) return { row: null, error: error.message };
+  return { row: (data as OrphanageRow | null) ?? null, error: null };
+}
+
 export async function updateOrphanage(
   id: string,
   patch: UpdateOrphanageInput,

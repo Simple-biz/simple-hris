@@ -8,6 +8,7 @@ import {
   Banknote,
   Building2,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -39,193 +40,158 @@ import { SmoothSelect } from '@/components/ui/smooth-select';
 import { toast } from 'sonner';
 import type { AuditLogEntry } from '@/lib/supabase/audit-log';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import {
+  AUDIT_SURFACES,
+  auditSurfaceDef,
+  familiesForSurface,
+  familyForAction,
+  type AuditSurface,
+} from '@/lib/audit/registry';
 
 type SortKey = 'created_at' | 'action' | 'user_name';
 type SortDir = 'asc' | 'desc';
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+/** Retention cutoffs offered by the purge control. The API refuses anything
+ *  under `AUDIT_PURGE_MIN_AGE_DAYS` (90) whatever the client asks for. */
+const PURGE_DAY_OPTIONS = [90, 180, 365, 730] as const;
 
-type CategoryId =
-  | 'all'
-  | 'settings'
-  | 'sync'
-  | 'csv'
-  | 'mesa'
-  | 'gift'
-  | 'announcement'
-  | 'employees'
-  | 'hr'
-  | 'teams'
-  | 'auth'
-  | 'rbac'
-  | 'leave'
-  | 'disputes'
-  | 'payment';
+/** The panel's primary filter axis: one dashboard, or everything. */
+type SurfaceFilterId = 'all' | AuditSurface;
 
 interface CategoryDef {
-  id: CategoryId;
+  id: SurfaceFilterId;
   label: string;
-  /** Short label used inside the row badge so the category is visible at a glance. */
+  /** Short label used inside the row badge so the surface is visible at a glance. */
   shortLabel: string;
   Icon: React.ComponentType<{ className?: string }>;
   /** Tailwind classes for the row-level badge (icon-tile + text). */
   tone: { dot: string; chip: string };
-  /** Predicate matching action strings to this category. */
-  match: (action: string) => boolean;
 }
 
 /**
- * Categories map raw `audit_log.action` strings to the dashboard surface
- * where the action originated. Used both for the filter dropdown and for the
- * inline category badge on each row.
+ * Icon + colour per dashboard. The MEANING of an action — which dashboard it
+ * came from and what to call it — comes from `src/lib/audit/registry.ts`, the
+ * same registry that generates Admin Penny's `search_audit_log` description.
+ *
+ * This file used to own that knowledge as 14 client-side `match` predicates,
+ * which claimed no `orphanage.*`, `wizard.*`, `dispatch.*`, `documents.*`,
+ * `people.*`, `bank_*`, `ticket.*`, `time_adjustment.*`, `feature_permission.*`
+ * or `*_assistant.*` action — every one of those rows was reachable only under
+ * "All activity" and wore no badge at all. Only the chrome lives here now, so a
+ * family added to the registry shows up here without a second edit.
  */
-const CATEGORIES: CategoryDef[] = [
+const SURFACE_CHROME: Record<SurfaceFilterId, CategoryDef['tone'] & { Icon: CategoryDef['Icon'] }> = {
+  all:        { Icon: Layers,        dot: 'bg-zinc-400',     chip: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300' },
+  accounting: { Icon: PiggyBank,     dot: 'bg-emerald-500',  chip: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' },
+  payroll:    { Icon: Banknote,      dot: 'bg-orange-500',   chip: 'bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300' },
+  hr:         { Icon: Building2,     dot: 'bg-rose-500',     chip: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' },
+  orphanage:  { Icon: Gift,          dot: 'bg-pink-500',     chip: 'bg-pink-50 text-pink-700 dark:bg-pink-950/40 dark:text-pink-300' },
+  ceo:        { Icon: Eye,           dot: 'bg-violet-500',   chip: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300' },
+  manager:    { Icon: UserCog,       dot: 'bg-lime-500',     chip: 'bg-lime-50 text-lime-700 dark:bg-lime-950/40 dark:text-lime-300' },
+  employee:   { Icon: Users,         dot: 'bg-cyan-500',     chip: 'bg-cyan-50 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300' },
+  tickets:    { Icon: ClipboardList, dot: 'bg-red-500',      chip: 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300' },
+  admin:      { Icon: Settings,      dot: 'bg-indigo-500',   chip: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300' },
+};
+
+function chromeFor(id: SurfaceFilterId): CategoryDef['tone'] & { Icon: CategoryDef['Icon'] } {
+  return SURFACE_CHROME[id];
+}
+
+/** Filter options: everything, then one per dashboard, in registry order. */
+const SURFACE_FILTERS: CategoryDef[] = [
   {
     id: 'all',
     label: 'All activity',
     shortLabel: 'All',
-    Icon: Layers,
-    tone: { dot: 'bg-zinc-400', chip: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300' },
-    match: () => true,
+    Icon: chromeFor('all').Icon,
+    tone: { dot: chromeFor('all').dot, chip: chromeFor('all').chip },
   },
-  {
-    id: 'settings',
-    label: 'System Settings',
-    shortLabel: 'Settings',
-    Icon: Settings,
-    tone: { dot: 'bg-violet-500', chip: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300' },
-    match: (a) => a.startsWith('settings.'),
-  },
-  {
-    // Google-Sheet → DB syncs (rates, master list, HSL, offboarded). Listed
-    // before `csv` so e.g. `csv.rates.sync` is tagged as a sync, not an upload.
-    id: 'sync',
-    label: 'Sheet Syncs',
-    shortLabel: 'Sync',
-    Icon: FolderSync,
-    tone: { dot: 'bg-teal-500', chip: 'bg-teal-50 text-teal-700 dark:bg-teal-950/40 dark:text-teal-300' },
-    match: (a) => a.includes('.sync'),
-  },
-  {
-    id: 'csv',
-    label: 'CSV uploads',
-    shortLabel: 'CSV',
-    Icon: FileSpreadsheet,
-    tone: { dot: 'bg-blue-500', chip: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' },
-    match: (a) => a.startsWith('csv.'),
-  },
-  {
-    // MESA opt-in / disbursement decisions. Listed before `employees` so
-    // `employee.mesa.*` lands here rather than in generic Employee Management.
-    id: 'mesa',
-    label: 'MESA',
-    shortLabel: 'MESA',
-    Icon: PiggyBank,
-    tone: { dot: 'bg-green-500', chip: 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300' },
-    match: (a) => a.startsWith('mesa.') || a.startsWith('employee.mesa.'),
-  },
-  {
-    // Gift tracker: catalog, notes, shipping decisions, and gift payments.
-    id: 'gift',
-    label: 'Gift Tracker',
-    shortLabel: 'Gifts',
-    Icon: Gift,
-    tone: { dot: 'bg-pink-500', chip: 'bg-pink-50 text-pink-700 dark:bg-pink-950/40 dark:text-pink-300' },
-    match: (a) => a.startsWith('gift.') || a.startsWith('employee_gift_shipping.'),
-  },
-  {
-    id: 'announcement',
-    label: 'Announcements',
-    shortLabel: 'Posts',
-    Icon: Megaphone,
-    tone: { dot: 'bg-yellow-500', chip: 'bg-yellow-50 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-300' },
-    match: (a) => a.startsWith('announcement.'),
-  },
-  {
-    id: 'employees',
-    label: 'Employee Management',
-    shortLabel: 'Employees',
-    Icon: Users,
-    tone: { dot: 'bg-emerald-500', chip: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' },
-    match: (a) =>
-      (a.startsWith('employee.') &&
-        !a.startsWith('employee.login') &&
-        !a.startsWith('employee.password_reset') &&
-        !a.startsWith('employee.mesa.')) ||
-      a.startsWith('master.'),
-  },
-  {
-    id: 'hr',
-    label: 'HR (Onboarding / Offboarding)',
-    shortLabel: 'HR',
-    Icon: Building2,
-    tone: { dot: 'bg-rose-500', chip: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' },
-    match: (a) => a.startsWith('hr.') || a.startsWith('offboarding.'),
-  },
-  {
-    id: 'teams',
-    label: 'Teams & Transfers',
-    shortLabel: 'Teams',
-    Icon: Network,
-    tone: { dot: 'bg-indigo-500', chip: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300' },
-    match: (a) => a.startsWith('department_'),
-  },
-  {
-    id: 'auth',
-    label: 'Authentication',
-    shortLabel: 'Auth',
-    Icon: KeyRound,
-    tone: { dot: 'bg-cyan-500', chip: 'bg-cyan-50 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300' },
-    match: (a) =>
-      a.startsWith('employee.login') ||
-      a.startsWith('employee.password_reset') ||
-      a.startsWith('auth.'),
-  },
-  {
-    id: 'rbac',
-    label: 'Roles (RBAC)',
-    shortLabel: 'Roles',
-    Icon: ShieldCheck,
-    tone: { dot: 'bg-fuchsia-500', chip: 'bg-fuchsia-50 text-fuchsia-700 dark:bg-fuchsia-950/40 dark:text-fuchsia-300' },
-    match: (a) => a.startsWith('rbac.'),
-  },
-  {
-    id: 'leave',
-    label: 'Leave Management',
-    shortLabel: 'Leave',
-    Icon: UserCog,
-    tone: { dot: 'bg-lime-500', chip: 'bg-lime-50 text-lime-700 dark:bg-lime-950/40 dark:text-lime-300' },
-    match: (a) => a.startsWith('leave.'),
-  },
-  {
-    id: 'disputes',
-    label: 'PAB Issues',
-    shortLabel: 'Issues',
-    Icon: ClipboardList,
-    tone: { dot: 'bg-amber-500', chip: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' },
-    match: (a) => a.startsWith('pab_dispute.'),
-  },
-  {
-    id: 'payment',
-    label: 'Payment Dispatch',
-    shortLabel: 'Payment',
-    Icon: Banknote,
-    tone: { dot: 'bg-orange-500', chip: 'bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300' },
-    match: (a) => a.startsWith('payment.') || a.startsWith('payroll.'),
-  },
+  ...AUDIT_SURFACES.map((s) => ({
+    id: s.id as SurfaceFilterId,
+    label: s.label,
+    shortLabel: s.shortLabel,
+    Icon: chromeFor(s.id).Icon,
+    tone: { dot: chromeFor(s.id).dot, chip: chromeFor(s.id).chip },
+  })),
 ];
 
-/** First non-`all` category whose `match()` returns true; else `all`. */
+/**
+ * The badge for one row: the registry family's own label, wearing the chrome of
+ * the dashboard that family belongs to first.
+ *
+ * An action no family claims is labelled "Unregistered" rather than quietly
+ * bucketed — `src/lib/audit/registry.test.ts` fails the build when a new action
+ * is emitted without a family, so seeing this badge in production means an
+ * action arrived from outside this codebase.
+ */
 function categoryFromAction(action: string): CategoryDef {
-  for (const cat of CATEGORIES) {
-    if (cat.id !== 'all' && cat.match(action)) return cat;
+  const family = familyForAction(action);
+  if (!family) {
+    const chrome = chromeFor('all');
+    return {
+      id: 'all',
+      label: `Unregistered action: ${action}`,
+      shortLabel: 'Unregistered',
+      Icon: chrome.Icon,
+      tone: { dot: chrome.dot, chip: chrome.chip },
+    };
   }
-  return CATEGORIES[0];
+  const primary = family.surfaces[0];
+  const chrome = chromeFor(primary);
+  return {
+    id: primary,
+    label: `${auditSurfaceDef(primary).label} · ${family.label}`,
+    shortLabel: family.label,
+    Icon: chrome.Icon,
+    tone: { dot: chrome.dot, chip: chrome.chip },
+  };
 }
 
-async function loadAuditLog(limit = 500): Promise<AuditLogEntry[]> {
-  const res = await fetch(`/api/audit-log?limit=${limit}`, { cache: 'no-store' });
-  const json = (await res.json()) as { rows: AuditLogEntry[]; error: string | null };
-  return json.rows ?? [];
+/** One server-filtered page of the trail. */
+type AuditPageResult = {
+  rows: AuditLogEntry[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  searchWindow: {
+    complete: boolean;
+    events_scanned: number;
+    oldest_scanned: string | null;
+    note: string | null;
+  } | null;
+};
+
+/**
+ * Fetch one page. Filters go to Postgres — the panel used to pull the newest
+ * 500 rows and filter them in the browser, so any question about an event older
+ * than that answered "no results" over a 17k-row table (the same window-as-
+ * history failure fixed for Penny's tools in memory/penny-audit-log-visibility.md).
+ */
+async function loadAuditLog(opts: {
+  surface: SurfaceFilterId;
+  search: string;
+  before?: string | null;
+  limit?: number;
+}): Promise<AuditPageResult> {
+  const params = new URLSearchParams({ limit: String(opts.limit ?? 200) });
+  if (opts.surface !== 'all') params.set('surface', opts.surface);
+  if (opts.search.trim()) params.set('search', opts.search.trim());
+  if (opts.before) params.set('before', opts.before);
+
+  const res = await fetch(`/api/audit-log?${params.toString()}`, { cache: 'no-store' });
+  const json = (await res.json()) as {
+    rows?: AuditLogEntry[];
+    next_cursor?: string | null;
+    has_more?: boolean;
+    search_window?: AuditPageResult['searchWindow'];
+    error?: string | null;
+  };
+  if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load audit log.');
+  return {
+    rows: json.rows ?? [],
+    nextCursor: json.next_cursor ?? null,
+    hasMore: json.has_more ?? false,
+    searchWindow: json.search_window ?? null,
+  };
 }
 
 export function formatAbsoluteTime(iso: string): string {
@@ -1041,72 +1007,31 @@ export type AuditLogPanelProps = {
 export default function AuditLogPanel({ onNavigateToOtSettings, className }: AuditLogPanelProps) {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
-  const [confirmClear, setConfirmClear] = useState(false);
-  const [clearing, setClearing] = useState(false);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [searchWindow, setSearchWindow] = useState<AuditPageResult['searchWindow']>(null);
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const [purgeDays, setPurgeDays] = useState<(typeof PURGE_DAY_OPTIONS)[number]>(365);
+  const [purgePreview, setPurgePreview] = useState<number | null>(null);
+  const [purging, setPurging] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>('created_at');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(25);
-  const [categoryId, setCategoryId] = useState<CategoryId>('all');
+  const [categoryId, setCategoryId] = useState<SurfaceFilterId>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  /** The term the loaded rows were actually fetched with (search is server-side). */
+  const [appliedSearch, setAppliedSearch] = useState('');
   const [selectedEntry, setSelectedEntry] = useState<AuditLogEntry | null>(null);
 
-  /**
-   * Total count per category across the *unfiltered* loaded set, so the
-   * dropdown options show counts the user can rely on even when something
-   * is already selected.
-   */
-  const counts = useMemo(() => {
-    const out: Record<CategoryId, number> = {
-      all: auditLogs.length,
-      settings: 0,
-      sync: 0,
-      csv: 0,
-      mesa: 0,
-      gift: 0,
-      announcement: 0,
-      employees: 0,
-      hr: 0,
-      teams: 0,
-      auth: 0,
-      rbac: 0,
-      leave: 0,
-      disputes: 0,
-      payment: 0,
-    };
-    for (const entry of auditLogs) {
-      const cat = categoryFromAction(entry.action);
-      if (cat.id !== 'all') out[cat.id] += 1;
-    }
-    return out;
-  }, [auditLogs]);
-
-  const filteredLogs = useMemo(() => {
-    const cat = CATEGORIES.find((c) => c.id === categoryId) ?? CATEGORIES[0];
-    const q = searchTerm.trim().toLowerCase();
-    return auditLogs.filter((entry) => {
-      if (cat.id !== 'all' && !cat.match(entry.action)) return false;
-      if (!q) return true;
-      // Match against label, action, user_name, user_role, and any string
-      // value inside `details` so e.g. searching by recipient email works.
-      const label = formatActionLabel(entry.action, entry.details).toLowerCase();
-      if (label.includes(q)) return true;
-      if (entry.action.toLowerCase().includes(q)) return true;
-      if (entry.user_name?.toLowerCase().includes(q)) return true;
-      if (entry.user_role?.toLowerCase().includes(q)) return true;
-      if (entry.details) {
-        for (const v of Object.values(entry.details)) {
-          if (typeof v === 'string' && v.toLowerCase().includes(q)) return true;
-          if (typeof v === 'number' && String(v).includes(q)) return true;
-        }
-      }
-      return false;
-    });
-  }, [auditLogs, categoryId, searchTerm]);
-
+  // The dashboard filter and the search box are applied by the SERVER, so the
+  // loaded rows are already the answer — no second client-side pass, and no
+  // per-category counts, which would only have counted the loaded window and
+  // read as totals.
   const sortedLogs = useMemo(() => {
-    const arr = [...filteredLogs];
+    const arr = [...auditLogs];
     arr.sort((a, b) => {
       const av = (a[sortKey] ?? '') as string;
       const bv = (b[sortKey] ?? '') as string;
@@ -1114,7 +1039,7 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return arr;
-  }, [filteredLogs, sortKey, sortDir]);
+  }, [auditLogs, sortKey, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(sortedLogs.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -1123,7 +1048,7 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
 
   useEffect(() => {
     setPage(1);
-  }, [sortKey, sortDir, pageSize, categoryId, searchTerm, auditLogs.length]);
+  }, [sortKey, sortDir, pageSize, categoryId, appliedSearch, auditLogs.length]);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -1134,38 +1059,103 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
     }
   };
 
-  const refreshAuditLog = useCallback(async () => {
-    setAuditLoading(true);
-    setAuditError(null);
+  /** Load the newest page for the current dashboard + search filters. */
+  const refreshAuditLog = useCallback(
+    async (surface: SurfaceFilterId, search: string) => {
+      setAuditLoading(true);
+      setAuditError(null);
+      try {
+        const page = await loadAuditLog({ surface, search });
+        setAuditLogs(page.rows);
+        setCursor(page.nextCursor);
+        setHasMore(page.hasMore);
+        setSearchWindow(page.searchWindow);
+        setAppliedSearch(search.trim());
+      } catch (e) {
+        setAuditError(e instanceof Error ? e.message : 'Failed to load audit log.');
+      } finally {
+        setAuditLoading(false);
+      }
+    },
+    [],
+  );
+
+  /** Append the next page. Only offered when the server said there is one. */
+  const loadOlder = useCallback(async () => {
+    if (!cursor) return;
+    setLoadingOlder(true);
     try {
-      const rows = await loadAuditLog();
-      setAuditLogs(rows);
-    } catch {
-      setAuditError('Failed to load audit log.');
+      const page = await loadAuditLog({ surface: categoryId, search: appliedSearch, before: cursor });
+      setAuditLogs((prev) => {
+        const seen = new Set(prev.map((r) => r.id));
+        return [...prev, ...page.rows.filter((r) => !seen.has(r.id))];
+      });
+      setCursor(page.nextCursor);
+      setHasMore(page.hasMore);
+    } catch (e) {
+      toast.error('Failed to load older events', {
+        description: e instanceof Error ? e.message : 'Unknown error',
+      });
     } finally {
-      setAuditLoading(false);
+      setLoadingOlder(false);
     }
-  }, []);
+  }, [cursor, categoryId, appliedSearch]);
+
+  // Changing the dashboard filter re-queries the server; the search box is
+  // applied on Enter / the Search button so a half-typed word does not fire.
+  useEffect(() => {
+    void refreshAuditLog(categoryId, appliedSearch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryId]);
 
   useEffect(() => {
-    void refreshAuditLog();
-  }, [refreshAuditLog]);
+    void refreshAuditLog('all', '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const handleClearLog = useCallback(async () => {
-    setClearing(true);
+  const applySearch = useCallback(() => {
+    void refreshAuditLog(categoryId, searchTerm);
+  }, [refreshAuditLog, categoryId, searchTerm]);
+
+  /** Count what a purge would remove, without removing it. */
+  const previewPurge = useCallback(async (days: number) => {
+    setPurgePreview(null);
     try {
-      const res = await fetch('/api/audit-log', { method: 'DELETE' });
-      const json = (await res.json()) as { error: string | null };
-      if (json.error) throw new Error(json.error);
-      setAuditLogs([]);
-      setConfirmClear(false);
-      toast.success('Audit log cleared');
+      const res = await fetch(`/api/audit-log?older_than_days=${days}&preview=1`, { method: 'DELETE' });
+      const json = (await res.json()) as { matching?: number; error?: string | null };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Preview failed');
+      setPurgePreview(json.matching ?? 0);
     } catch (e) {
-      toast.error('Failed to clear log', { description: e instanceof Error ? e.message : 'Unknown error' });
-    } finally {
-      setClearing(false);
+      toast.error('Could not count old events', {
+        description: e instanceof Error ? e.message : 'Unknown error',
+      });
     }
   }, []);
+
+  /**
+   * Retention purge. This replaced "Clear Log", which truncated the entire
+   * table and could not record its own execution — the route now writes
+   * `audit.purged` BEFORE deleting and refuses if that write fails, so a pruned
+   * window always has a row above it naming who pruned it.
+   */
+  const handlePurge = useCallback(async () => {
+    setPurging(true);
+    try {
+      const res = await fetch(`/api/audit-log?older_than_days=${purgeDays}`, { method: 'DELETE' });
+      const json = (await res.json()) as { deleted?: number; error?: string | null };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Purge failed');
+      setPurgeOpen(false);
+      setPurgePreview(null);
+      toast.success(
+        `Purged ${json.deleted ?? 0} event${json.deleted === 1 ? '' : 's'} older than ${purgeDays} days`,
+      );
+      void refreshAuditLog(categoryId, appliedSearch);
+    } catch (e) {
+      toast.error('Failed to purge', { description: e instanceof Error ? e.message : 'Unknown error' });
+    } finally {
+      setPurging(false);
+    }
+  }, [purgeDays, refreshAuditLog, categoryId, appliedSearch]);
 
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col overflow-hidden', className)}>
@@ -1177,7 +1167,7 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
           <div>
             <p className="text-sm font-bold text-zinc-900 dark:text-white">Audit Log</p>
             <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
-              Same activity feed as System Settings — payroll, employees, sheet syncs, CSV, HR, login, roles, and leave
+              Every audited action, filtered by the dashboard it came from — Accounting, Payroll, HR, Orphanage, CEO, Manager, Employee, Tickets and System
             </p>
           </div>
         </div>
@@ -1187,7 +1177,7 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
             <button
               type="button"
               onClick={() => {
-                setConfirmClear(false);
+                setPurgeOpen(false);
                 onNavigateToOtSettings();
               }}
               className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 text-[10px] font-medium text-zinc-600 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
@@ -1198,40 +1188,64 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
           )}
           <button
             type="button"
-            onClick={() => void refreshAuditLog()}
-            disabled={auditLoading || clearing}
+            onClick={() => void refreshAuditLog(categoryId, appliedSearch)}
+            disabled={auditLoading || purging}
             className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-[10px] font-medium text-indigo-600 transition-colors hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800/50 dark:bg-indigo-950/20 dark:text-indigo-400"
           >
             <RefreshCw className={cn('h-3 w-3', auditLoading && 'animate-spin')} />
             Refresh
           </button>
-          {!confirmClear ? (
+          {/* Retention purge — never a wholesale clear. The old "Clear Log"
+              truncated the table and left no trace of having done so. */}
+          {!purgeOpen ? (
             <button
               type="button"
-              onClick={() => setConfirmClear(true)}
-              disabled={auditLoading || clearing || auditLogs.length === 0}
+              onClick={() => {
+                setPurgeOpen(true);
+                void previewPurge(purgeDays);
+              }}
+              disabled={auditLoading || purging}
               className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[10px] font-medium text-red-500 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-400"
             >
               <Trash2 className="h-3 w-3" />
-              Clear Log
+              Purge old
             </button>
           ) : (
             <div className="flex items-center gap-1.5 rounded-lg border border-red-300 bg-red-50 px-2.5 py-1.5 dark:border-red-700 dark:bg-red-950/30">
-              <span className="text-[10px] font-semibold text-red-600 dark:text-red-400">Sure?</span>
+              <span className="text-[10px] font-semibold text-red-700 dark:text-red-300">Purge older than</span>
+              <SmoothSelect
+                aria-label="Purge cutoff in days"
+                value={String(purgeDays)}
+                onChange={(v) => {
+                  const days = Number(v) as (typeof PURGE_DAY_OPTIONS)[number];
+                  setPurgeDays(days);
+                  void previewPurge(days);
+                }}
+                triggerClassName="w-24"
+                options={PURGE_DAY_OPTIONS.map((n) => ({ value: String(n), label: `${n} days` }))}
+              />
+              <span className="text-[10px] font-medium text-red-700 dark:text-red-300">
+                {purgePreview === null
+                  ? 'counting…'
+                  : `${purgePreview} event${purgePreview === 1 ? '' : 's'}`}
+              </span>
               <button
                 type="button"
-                onClick={() => void handleClearLog()}
-                disabled={clearing}
+                onClick={() => void handlePurge()}
+                disabled={purging || purgePreview === 0 || purgePreview === null}
                 className="flex items-center gap-1 rounded-md bg-red-500 px-2 py-0.5 text-[10px] font-bold text-white transition-colors hover:bg-red-600 disabled:opacity-60"
               >
-                {clearing ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Trash2 className="h-2.5 w-2.5" />}
-                Yes, clear
+                {purging ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Trash2 className="h-2.5 w-2.5" />}
+                Purge
               </button>
               <button
                 type="button"
-                onClick={() => setConfirmClear(false)}
-                disabled={clearing}
-                className="rounded-md px-2 py-0.5 text-[10px] font-medium text-zinc-500 transition-colors hover:text-zinc-700 dark:text-zinc-400"
+                onClick={() => {
+                  setPurgeOpen(false);
+                  setPurgePreview(null);
+                }}
+                disabled={purging}
+                className="rounded-md px-2 py-0.5 text-[10px] font-medium text-red-700 transition-colors hover:text-red-900 dark:text-red-300 dark:hover:text-red-100"
               >
                 Cancel
               </button>
@@ -1251,7 +1265,10 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
             <AlertTriangle className="h-4 w-4 flex-shrink-0" />
             {auditError}
           </div>
-        ) : auditLogs.length === 0 ? (
+        ) : auditLogs.length === 0 && categoryId === 'all' && !appliedSearch ? (
+          // Only the genuinely empty, UNFILTERED log gets the bare empty state.
+          // A filter that matches nothing keeps the filter bar on screen — the
+          // old markup hid it, stranding the user with no way to clear it.
           <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
             <ClipboardList className="h-8 w-8 text-zinc-200 dark:text-zinc-700" />
             <p className="text-sm font-medium text-zinc-400">No activity recorded yet</p>
@@ -1270,26 +1287,36 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
                 <SmoothSelect
                   aria-label="Dashboard category"
                   value={categoryId}
-                  onChange={(v) => setCategoryId(v as CategoryId)}
-                  triggerClassName="w-36"
-                  options={CATEGORIES.map((c) => ({ value: c.id, label: `${c.label} (${counts[c.id]})` }))}
+                  onChange={(v) => setCategoryId(v as SurfaceFilterId)}
+                  triggerClassName="w-40"
+                  // No counts on the options: the filter runs on the server, so
+                  // any count here would be a count of the loaded window
+                  // dressed up as a total.
+                  options={SURFACE_FILTERS.map((c) => ({ value: c.id, label: c.label }))}
                 />
               </div>
 
-              {/* Search */}
+              {/* Search — applied by the SERVER, so it needs a commit (Enter or
+                  the button) rather than filtering as you type. */}
               <div className="relative flex items-center">
                 <Search className="pointer-events-none absolute left-1.5 h-3 w-3 text-zinc-400" />
                 <input
                   type="text"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search user, email, action…"
-                  className="w-44 rounded border border-zinc-200 bg-white py-0.5 pl-5 pr-5 text-[10px] text-zinc-700 placeholder-zinc-400 focus:border-indigo-300 focus:outline-none focus:ring-1 focus:ring-indigo-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') applySearch();
+                  }}
+                  placeholder="Search user, email, action, details…"
+                  className="w-52 rounded border border-zinc-200 bg-white py-0.5 pl-5 pr-5 text-[10px] text-zinc-700 placeholder-zinc-400 focus:border-indigo-300 focus:outline-none focus:ring-1 focus:ring-indigo-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                 />
                 {searchTerm && (
                   <button
                     type="button"
-                    onClick={() => setSearchTerm('')}
+                    onClick={() => {
+                      setSearchTerm('');
+                      void refreshAuditLog(categoryId, '');
+                    }}
                     className="absolute right-1 flex h-3 w-3 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800"
                     aria-label="Clear search"
                   >
@@ -1297,6 +1324,14 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
                   </button>
                 )}
               </div>
+              <button
+                type="button"
+                onClick={applySearch}
+                disabled={auditLoading || searchTerm.trim() === appliedSearch}
+                className="rounded border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-600 transition-colors hover:bg-indigo-100 disabled:opacity-40 dark:border-indigo-800/50 dark:bg-indigo-950/20 dark:text-indigo-300"
+              >
+                Search
+              </button>
 
               {/* Sort */}
               <div className="flex items-center gap-1 border-l border-zinc-200 pl-2 dark:border-zinc-700">
@@ -1327,12 +1362,13 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
               </div>
 
               <div className="ml-auto flex items-center gap-1.5">
-                {(categoryId !== 'all' || searchTerm) && (
+                {(categoryId !== 'all' || searchTerm || appliedSearch) && (
                   <button
                     type="button"
                     onClick={() => {
                       setCategoryId('all');
                       setSearchTerm('');
+                      void refreshAuditLog('all', '');
                     }}
                     className="flex items-center gap-0.5 rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[9px] font-semibold text-zinc-500 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
                   >
@@ -1353,9 +1389,9 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
               </div>
             </div>
 
-            {/* Category chips — quick visual filter */}
+            {/* Dashboard chips — quick visual filter, one per surface */}
             <div className="mb-2 flex flex-shrink-0 flex-wrap gap-1.5">
-              {CATEGORIES.map((c) => {
+              {SURFACE_FILTERS.map((c) => {
                 const active = c.id === categoryId;
                 const CIcon = c.Icon;
                 return (
@@ -1363,6 +1399,11 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
                     key={c.id}
                     type="button"
                     onClick={() => setCategoryId(c.id)}
+                    title={
+                      c.id === 'all'
+                        ? 'Every action family'
+                        : `${c.label} — ${familiesForSurface(c.id as AuditSurface).length} action families`
+                    }
                     className={cn(
                       'flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium transition',
                       active
@@ -1372,23 +1413,51 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
                   >
                     <CIcon className="h-2.5 w-2.5" />
                     {c.shortLabel}
-                    <span className={cn('rounded px-1 text-[9px] font-bold tabular-nums', active ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/60 dark:text-indigo-100' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400')}>
-                      {counts[c.id]}
-                    </span>
                   </button>
                 );
               })}
               <span className="ml-auto self-center text-[10px] text-zinc-400">
-                {sortedLogs.length === auditLogs.length
-                  ? `${auditLogs.length} ${auditLogs.length === 1 ? 'entry' : 'entries'}`
-                  : `${sortedLogs.length} of ${auditLogs.length} entries`}
+                {auditLogs.length} loaded{hasMore ? ' · more available' : ''}
               </span>
             </div>
+
+            {/* How far the search actually reached. A free-text term cannot go
+                into SQL (details keys vary per action), so it filters a window
+                — and an unstated window is how "no results" gets mistaken for
+                "never happened". */}
+            {searchWindow && !searchWindow.complete && (
+              <div className="mb-2 flex flex-shrink-0 items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[10px] text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/20 dark:text-amber-200">
+                <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0" />
+                <span>{searchWindow.note}</span>
+              </div>
+            )}
 
             <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
               {pageRows.map((entry) => (
                 <AuditRow key={entry.id} entry={entry} onView={setSelectedEntry} />
               ))}
+              {sortedLogs.length === 0 && (
+                <div className="flex flex-col items-center justify-center gap-1.5 py-12 text-center">
+                  <Search className="h-6 w-6 text-zinc-200 dark:text-zinc-700" />
+                  <p className="text-xs font-medium text-zinc-400">No events match these filters</p>
+                  <p className="max-w-sm text-[10px] text-zinc-300 dark:text-zinc-600">
+                    {appliedSearch
+                      ? 'Try a different term, or widen the dashboard filter.'
+                      : 'Nothing has been recorded on this dashboard yet.'}
+                  </p>
+                </div>
+              )}
+              {hasMore && !appliedSearch && (
+                <button
+                  type="button"
+                  onClick={() => void loadOlder()}
+                  disabled={loadingOlder}
+                  className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-zinc-300 py-2 text-[10px] font-semibold text-zinc-500 transition-colors hover:border-indigo-300 hover:text-indigo-600 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-400"
+                >
+                  {loadingOlder ? <Loader2 className="h-3 w-3 animate-spin" /> : <ChevronDown className="h-3 w-3" />}
+                  Load older events
+                </button>
+              )}
             </div>
 
             <div className="mt-2 flex flex-shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-100 pt-2 dark:border-zinc-800">

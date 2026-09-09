@@ -6,12 +6,14 @@ import {
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
+import { auditFrom } from '@/lib/audit/context';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 interface EditBody {
-  /** Editor identity for the audit log. */
+  /** Ignored for identity — the audit actor is the verified session. Kept only
+   *  because the client still sends it; a body-supplied actor is a forged one. */
   edited_by?: string | null;
   preferred_delivery_location?: string;
   active_contact_number?: string;
@@ -49,8 +51,7 @@ export async function PATCH(
   }
 
   void insertAuditLog({
-    user_name: body.edited_by ?? 'orphanage_team',
-    user_role: 'orphanage_team',
+    ...auditFrom(req, authz),
     action: 'employee_gift_shipping.edited',
     resource: 'employee_gift_shipping_details',
     resource_id: row.id,
@@ -58,6 +59,7 @@ export async function PATCH(
       personal_email: row.personal_email,
       milestone_index: row.milestone_index,
       fields_changed: Object.keys(body).filter((k) => k !== 'edited_by'),
+      claimed_editor: body.edited_by ?? null,
     },
   });
 
@@ -65,6 +67,7 @@ export async function PATCH(
 }
 
 interface DeleteBody {
+  /** Ignored for identity — see EditBody.edited_by. */
   deleted_by?: string | null;
 }
 
@@ -92,12 +95,11 @@ export async function DELETE(
   }
 
   void insertAuditLog({
-    user_name: body.deleted_by ?? 'orphanage_team',
-    user_role: 'orphanage_team',
+    ...auditFrom(req, authz),
     action: 'employee_gift_shipping.deleted',
     resource: 'employee_gift_shipping_details',
     resource_id: id,
-    details: null,
+    details: { claimed_deleter: body.deleted_by ?? null },
   });
 
   return NextResponse.json({ error: null });

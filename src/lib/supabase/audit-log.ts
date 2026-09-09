@@ -134,9 +134,34 @@ export type NewAuditLog = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * A failed audit write used to be invisible: 182 of the 228 call sites are
+ * `void insertAuditLog(...)`, and the `{ error }` this returns went unread. A
+ * lost event is indistinguishable from an action that never happened, so the
+ * failure is at least shouted into the server log where it can be found.
+ *
+ * Callers on a destructive path must go further and READ the returned error —
+ * see `purgeAuditLogBefore` and the orphanage/HSL delete routes, which write
+ * the event first and abort the delete if it fails.
+ */
+function reportAuditWriteFailure(
+  entries: NewAuditLog[],
+  error: string,
+): void {
+  console.error('[audit] write FAILED — event lost', {
+    error,
+    count: entries.length,
+    actions: [...new Set(entries.map((e) => e.action))],
+    resources: [...new Set(entries.map((e) => e.resource))],
+  });
+}
+
 export async function insertAuditLog(entry: NewAuditLog): Promise<{ error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) return { error: 'Supabase not configured' };
+  if (!supabase) {
+    reportAuditWriteFailure([entry], 'Supabase not configured');
+    return { error: 'Supabase not configured' };
+  }
 
   const { error } = await supabase.from('audit_log').insert({
     user_name:   entry.user_name,
@@ -148,6 +173,7 @@ export async function insertAuditLog(entry: NewAuditLog): Promise<{ error: strin
     ip_address:  entry.ip_address ?? null,
   });
 
+  if (error) reportAuditWriteFailure([entry], error.message);
   return { error: error?.message ?? null };
 }
 
@@ -158,7 +184,10 @@ export async function insertAuditLog(entry: NewAuditLog): Promise<{ error: strin
  */
 export async function insertAuditLogs(entries: NewAuditLog[]): Promise<{ error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) return { error: 'Supabase not configured' };
+  if (!supabase) {
+    reportAuditWriteFailure(entries, 'Supabase not configured');
+    return { error: 'Supabase not configured' };
+  }
   if (entries.length === 0) return { error: null };
 
   const { error } = await supabase.from('audit_log').insert(
@@ -173,28 +202,165 @@ export async function insertAuditLogs(entries: NewAuditLog[]): Promise<{ error: 
     })),
   );
 
+  if (error) reportAuditWriteFailure(entries, error.message);
   return { error: error?.message ?? null };
 }
 
-export async function clearAuditLog(): Promise<{ error: string | null }> {
-  const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) return { error: 'Supabase not configured' };
+const AUDIT_SELECT =
+  'id, user_name, user_role, action, resource, resource_id, details, ip_address, created_at';
 
-  const { error } = await supabase.from('audit_log').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-  return { error: error?.message ?? null };
-}
+/** Oldest cutoff a retention purge may be given: nothing inside 90 days goes. */
+export const AUDIT_PURGE_MIN_AGE_DAYS = 90;
 
-export async function fetchAuditLog(limit = 100): Promise<{ rows: AuditLogEntry[]; error: string | null }> {
+/**
+ * Delete audit events strictly older than `beforeIso`, returning how many went.
+ *
+ * This replaced `clearAuditLog()`, which truncated the ENTIRE table behind the
+ * panel's "Clear" button. That was the most destructive action in the app and
+ * the one action that could not, by construction, leave a trace of itself —
+ * against `docs/features/delete-authorization.md`'s rule that audit logging is
+ * "proportional to the destructiveness".
+ *
+ * The caller (`DELETE /api/audit-log`) writes the `audit.purged` event FIRST and
+ * abandons the purge if that write fails, so an emptied window always has a row
+ * above it naming who emptied it. The `AUDIT_PURGE_MIN_AGE_DAYS` floor is
+ * enforced in the route, where the actor and the request are available.
+ */
+export async function purgeAuditLogBefore(
+  beforeIso: string,
+): Promise<{ deleted: number; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) return { rows: [], error: 'Supabase not configured' };
+  if (!supabase) return { deleted: 0, error: 'Supabase not configured' };
 
   const { data, error } = await supabase
     .from('audit_log')
-    .select('id, user_name, user_role, action, resource, resource_id, details, ip_address, created_at')
-    .order('created_at', { ascending: false })
-    .limit(limit);
+    .delete()
+    .lt('created_at', beforeIso)
+    .select('id');
 
-  return { rows: (data ?? []) as AuditLogEntry[], error: error?.message ?? null };
+  return { deleted: data?.length ?? 0, error: error?.message ?? null };
+}
+
+/** How many events are older than `beforeIso` — the purge preview. */
+export async function countAuditLogBefore(
+  beforeIso: string,
+): Promise<{ count: number; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { count: 0, error: 'Supabase not configured' };
+
+  const { count, error } = await supabase
+    .from('audit_log')
+    .select('id', { count: 'exact', head: true })
+    .lt('created_at', beforeIso);
+
+  // A `head: true` count cannot distinguish "no rows" from "no table" on its
+  // own — check the error before believing a zero.
+  if (error) return { count: 0, error: error.message };
+  return { count: count ?? 0, error: null };
+}
+
+export type AuditLogQuery = {
+  /** One or more comma-separated action prefixes, e.g. `'orphanage_,pab_dispute.'`. */
+  actionPrefix?: string | null;
+  /** Only events by this actor: exact for an email, contains otherwise. */
+  actor?: string | null;
+  /** Inclusive lower bound, `YYYY-MM-DD` (Asia/Manila) or a full ISO stamp. */
+  since?: string | null;
+  /** Inclusive upper bound, `YYYY-MM-DD` (Asia/Manila) or a full ISO stamp. */
+  until?: string | null;
+  /** Keyset cursor: only events strictly older than this `created_at`. */
+  before?: string | null;
+  limit?: number;
+};
+
+export type AuditLogPage = {
+  rows: AuditLogEntry[];
+  /** `created_at` to pass back as `before` for the next page; null at the end. */
+  nextCursor: string | null;
+  hasMore: boolean;
+  error: string | null;
+};
+
+const MANILA_OFFSET = '+08:00';
+const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Day bounds are Manila days — the same convention Penny's tools use. */
+function lowerBound(value: string): string {
+  return DAY_ONLY.test(value) ? `${value}T00:00:00${MANILA_OFFSET}` : value;
+}
+
+function upperBound(value: string): string {
+  if (!DAY_ONLY.test(value)) return value;
+  // Exclusive next midnight, so the last second of `until` is included.
+  const next = new Date(`${value}T00:00:00${MANILA_OFFSET}`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString();
+}
+
+/** Strip anything that could morph a PostgREST filter out of a prefix. */
+function safePrefix(raw: string): string {
+  return raw.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
+}
+
+/**
+ * One page of the audit log, filtered SERVER-side.
+ *
+ * The old signature was `fetchAuditLog(limit = 100)` and the Admin panel called
+ * it with 500, then filtered and searched that slice in the browser. With 17k+
+ * rows and 151 distinct actions, any question about an event older than the
+ * newest 500 answered "no results" — the same "a window presented as history"
+ * failure that memory/penny-audit-log-visibility.md fixed for Penny's tools and
+ * left standing on the human-facing panel. Filters now go to Postgres, and
+ * paging is keyset (`before`) rather than `.range()`, which the PostgREST
+ * 1000-row cap silently truncates.
+ */
+export async function fetchAuditLog(query: AuditLogQuery = {}): Promise<AuditLogPage> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { rows: [], nextCursor: null, hasMore: false, error: 'Supabase not configured' };
+
+  const limit = Math.min(Math.max(query.limit ?? 100, 1), 500);
+
+  let q = supabase
+    .from('audit_log')
+    .select(AUDIT_SELECT)
+    .order('created_at', { ascending: false })
+    // One extra row is the "is there another page" probe; it is never returned.
+    .limit(limit + 1);
+
+  const prefixes = (query.actionPrefix ?? '')
+    .split(',')
+    .map(safePrefix)
+    .filter(Boolean);
+  if (prefixes.length > 0) {
+    q = q.or(prefixes.map((p) => `action.ilike.${p}%`).join(','));
+  }
+
+  const actor = (query.actor ?? '').trim().toLowerCase();
+  if (actor) {
+    // Some writers stamp `user_name` with a display name rather than an email,
+    // so an email matches exactly and anything else matches as a fragment.
+    q = actor.includes('@')
+      ? q.ilike('user_name', actor.replace(/[%,()]/g, ''))
+      : q.ilike('user_name', `%${actor.replace(/[%,()]/g, '')}%`);
+  }
+
+  if (query.since) q = q.gte('created_at', lowerBound(query.since));
+  if (query.until) q = q.lt('created_at', upperBound(query.until));
+  if (query.before) q = q.lt('created_at', query.before);
+
+  const { data, error } = await q;
+  if (error) return { rows: [], nextCursor: null, hasMore: false, error: error.message };
+
+  const all = (data ?? []) as AuditLogEntry[];
+  const hasMore = all.length > limit;
+  const rows = hasMore ? all.slice(0, limit) : all;
+
+  return {
+    rows,
+    hasMore,
+    nextCursor: hasMore ? (rows[rows.length - 1]?.created_at ?? null) : null,
+    error: null,
+  };
 }
 
 /**

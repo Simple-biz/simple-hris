@@ -12,6 +12,14 @@ import { listHubstaffUploads } from '@/lib/supabase/hubstaff-hours-db';
 import { buildPaymentsLive } from '@/lib/ceo/payments-live';
 import { getPeopleBankHistory, type BankChangeEntry } from '@/lib/supabase/bank-update-history';
 import {
+  AUDIT_SURFACES,
+  describeAuditFamilies,
+  familiesForSurface,
+  familyForAction,
+  auditSurfaceDef,
+  type AuditSurface,
+} from '@/lib/audit/registry';
+import {
   withProbeTimeout,
   probeSupabase,
   probePgPool,
@@ -51,11 +59,24 @@ import {
 export const ADMIN_TOOLS: Anthropic.Tool[] = [
   {
     name: 'search_audit_log',
-    description:
-      'Search the system audit log — the trail of WHO did WHAT and WHEN across the whole HRIS. Use for any "who did / who changed / who opened / when did" question: "who opened the payroll wizard", "who raised X\'s rate", "who transferred Y", "who changed Z\'s bank info", "what happened today". Filter by action family, actor, target person, and date range.\n\nACTION FAMILIES (prefix-match with action_prefix; call list_audit_actions for the live list with counts):\n• accounting.payroll_wizard_notes. — the Payroll Notes board (row_added/row_updated/row_deleted/adjustment_bridged). Use get_payroll_notes_history instead when you need to know WHICH worker or week a note edit was about.\n• bank_update. — self-service bank changes (otp_requested/otp_verified/otp_verify_failed/saved). people.banking.updated + people.banking.revealed + people.bank_info.requested + bank_preferred.request.approved are the staff-side bank actions.\n• people.profile.updated — name / work email / personal email / department / start date / phone / address edits from the People tab. THIS is the family for "who changed X\'s name or email".\n• payroll. — rate.set, kpi.marked_ready, kpi.reopened, dispatch.locked/unlocked.\n• wizard. — opened, bonus_edited, addition_edited, cycle_selected, config.dept_pay, fx_rate_changed.\n• payment. — dispatched, undone, finalized. paystub.sent/send_failed and paystubs.staged cover paystubs.\n• hr. — the onboarding/offboarding pipeline (onboarding.link_created/submitted/set_work_email/verify_work_email/archived, orientation.marked, new_hire_checklist.*, pending.*, hire.*, employee.offboarded). offboarding. and resignation. are separate families.\n• department_transfer. (requested/released/applied_manual/cancelled/deleted) and department_manager. (assigned/revoked).\n• rbac.role. (granted/revoked) and feature_permission. (grant/revoke) — access changes.\n• csv. (master/rates/hsl syncs, upload, delete, set_current, rename), hubstaff.api_sync, offboarded.sheet.sync, screening.sheet.sync.\n• dispatch.lock_acquired/released, mesa., pab_dispute., pab_exclusion. (added/removed - zeroes a whole month of PAB for one employee; trail starts 2026-08-20, earlier entries have no author), notification.insert_failed (a notification that FAILED to insert; delivery is best-effort so the save still succeeded - details carries notification_type, origin, likely_type_check_rejection), time_adjustment., leave., ticket., documents., qc., contractor., orphanage., urgent_payment., employee_gift_shipping., settings.holidays., auth. (impersonation.signin/force_logout), employee.mesa., admin_assistant.query, ceo_assistant.\n\nCombine with find_employee first when the user names a person, then pass their email as target. For one person\'s complete cross-family history use get_change_timeline instead.',
+    description: [
+      "Search the system audit log — the trail of WHO did WHAT and WHEN across the whole HRIS. Use for any 'who did / who changed / who opened / when did' question: 'who opened the payroll wizard', 'who raised X's rate', 'who transferred Y', 'who changed Z's bank info', 'what happened today', 'what happened on the Orphanage dashboard yesterday'. Filter by dashboard, action family, actor, target person, and date range.",
+      'Pass `surface` to scope to one dashboard, or `action_prefix` for a specific family. The families below are GENERATED from src/lib/audit/registry.ts — the same registry the Admin audit panel filters by — so this list cannot drift from the log the way its hand-written predecessor did. `list_audit_actions` still reads the live table when you need exact names with counts.',
+      'ACTION FAMILIES BY DASHBOARD',
+      describeAuditFamilies(),
+      "Reading results: `people.profile.updated` is the family for 'who changed X's name or email'. An `accounting.payroll_wizard_notes.*` event carries only a note-row id — use get_payroll_notes_history to learn which worker and week. `notification.insert_failed` means a NOTIFICATION failed to insert, not that the underlying save failed. `pab_exclusion.*` has no author before 2026-08-20. An action absent before its first_seen was simply not audited yet, which is NOT evidence the underlying thing never happened.",
+      "Combine with find_employee first when the user names a person, then pass their email as target. For one person's complete cross-family history use get_change_timeline instead.",
+    ].join('\n\n'),
     input_schema: {
       type: 'object',
       properties: {
+        surface: {
+          type: 'string',
+          description:
+            'Scope to one dashboard: ' +
+            AUDIT_SURFACES.map((s) => s.id).join(' | ') +
+            '. Expands to every action family raised on that dashboard. Use for "what happened on Orphanage / HR / Accounting". Combines with action_prefix (the union of both is searched).',
+        },
         action_prefix: {
           type: 'string',
           description:
@@ -286,11 +307,17 @@ type AuditRow = {
 };
 
 function compactAuditRow(r: AuditRow) {
+  // The family/surface come from the shared registry, so Penny names an event
+  // the same way the Admin panel's badge does instead of guessing from the
+  // action string.
+  const family = familyForAction(r.action);
   return {
     when: r.created_at,
     actor: r.user_name,
     actor_role: r.user_role,
     action: r.action,
+    surface: family ? auditSurfaceDef(family.surfaces[0]).label : null,
+    family: family?.label ?? null,
     resource: r.resource,
     resource_id: r.resource_id,
     // The IP separates a staff-side edit from the employee's own submission on
@@ -395,6 +422,22 @@ async function searchAuditLog(input: Record<string, unknown>): Promise<ToolResul
     .split(',')
     .map((p) => p.replace(/[^a-z0-9._-]/g, ''))
     .filter(Boolean);
+
+  // A dashboard name expands to every family the registry says is raised there,
+  // so "what happened on Orphanage" needs no knowledge of action strings.
+  const surfaceRaw = str(input.surface).trim().toLowerCase();
+  if (surfaceRaw) {
+    const known = AUDIT_SURFACES.find((s) => s.id === surfaceRaw);
+    if (!known) {
+      return {
+        error: `Unknown surface "${surfaceRaw}". Valid: ${AUDIT_SURFACES.map((s) => s.id).join(', ')}.`,
+      };
+    }
+    for (const fam of familiesForSurface(known.id as AuditSurface)) {
+      const p = fam.match.replace(/[^a-z0-9._-]/g, '');
+      if (p && !prefixes.includes(p)) prefixes.push(p);
+    }
+  }
   const actorRaw = str(input.actor_email).trim().toLowerCase();
   const actor = normEmail(actorRaw) ?? actorRaw;
   const target = str(input.target).trim().toLowerCase();

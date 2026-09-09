@@ -101,7 +101,8 @@ function repSuppliedRate(v: unknown): number | null {
  *
  * `field_writebacks` is the ONLY undo data for the three `global_master_list`
  * cells this feature may fill — `audit_log` cannot hold it because
- * `clearAuditLog()` truncates that table behind `DELETE /api/audit-log`. The
+ * `DELETE /api/audit-log` prunes that table on a retention cutoff (it used to
+ * truncate it outright). The
  * write-back is deliberately the LAST thing that happens (a failure there must
  * not cost the rep the document), so the trail cannot be part of the original
  * insert.
@@ -426,7 +427,7 @@ export async function POST(req: NextRequest) {
         // carrying the records. The generation entry cannot: it is inserted
         // before the write-back, so its `field_writebacks` is always []. This is
         // the cheap second copy that makes the single-copy window survivable —
-        // `audit_log` is not a substitute for the row (clearAuditLog() truncates
+        // `audit_log` is not a substitute for the row (the retention purge prunes
         // it), but an unaudited irreversible write is not acceptable either.
         if (wb.applied.length > 0) {
           const wbAudit = await auditTerminationWriteback({

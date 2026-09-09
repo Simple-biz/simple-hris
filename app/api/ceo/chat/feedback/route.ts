@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
 import { upsertCeoChatFeedback, type CeoChatRating } from '@/lib/supabase/ceo-chat-feedback';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { clientIp } from '@/lib/audit/context';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -58,5 +60,24 @@ export async function POST(request: Request) {
   });
 
   if (error) return NextResponse.json({ error }, { status: 500 });
+
+  // The CEO surface is otherwise read-only, so its two write paths — the
+  // assistant query itself (`ceo_assistant.query`, written by the chat route)
+  // and this rating — are the whole of what the trail can show for it. The
+  // rated TEXT is not copied here; it is already on the feedback row, and the
+  // audit log has a wider readership than that table.
+  void insertAuditLog({
+    user_name: email,
+    user_role: roles[0] ?? 'ceo',
+    ip_address: clientIp(request),
+    action: 'ceo_assistant.feedback',
+    resource: 'ceo_chat_feedback',
+    resource_id: messageKey,
+    details: {
+      rating,
+      has_comment: typeof body.comment === 'string' && body.comment.trim().length > 0,
+    },
+  });
+
   return NextResponse.json({ ok: true });
 }

@@ -333,7 +333,7 @@ test('bytes that are not a PDF are refused before the upload', async () => {
 
 test('G7: the write-back audit row carries the undo records with null and \'\' distinguishable', async () => {
   // `termination_documents.field_writebacks` is the primary undo data, but
-  // `clearAuditLog()` truncates audit_log and a dropped table takes the other
+  // the audit-log retention purge prunes audit_log and a dropped table takes the other
   // copy with it. `before: null` (the cell did not exist) and `before: ''` (it
   // held an empty string) are DIFFERENT prior states; collapsing them is the
   // failure this record exists to prevent.

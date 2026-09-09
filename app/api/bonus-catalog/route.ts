@@ -8,6 +8,8 @@ import {
 } from '@/lib/supabase/bonus-catalog-db';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { auditFrom } from '@/lib/audit/context';
 import { validateBonus, type BonusDef, type BonusAssignment } from '@/lib/bonus-catalog/types';
 import { parseEffectiveDate } from '@/lib/bonus-catalog/history';
 
@@ -58,6 +60,26 @@ export async function POST(request: Request) {
     if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
     const { row, error, historyError } = await upsertBonus(bonus, actor, eff.iso);
     if (error) return NextResponse.json({ error }, { status: 500 });
+
+    // A bonus DEFINITION is what the KPI calculator pays from, so its edits
+    // belong in the trail even though the version/history row already records
+    // the effective date (that row is display + audit only, and it is dropped
+    // when the bonus is deleted -- see the DELETE handler).
+    void insertAuditLog({
+      ...auditFrom(request, authz),
+      action: 'bonus_catalog.definition.saved',
+      resource: 'bonus_catalog',
+      resource_id: bonus.id,
+      details: {
+        name: bonus.name,
+        effective_date: eff.iso,
+        amount: bonus.amount ?? null,
+        currency: bonus.currency ?? null,
+        kind: bonus.kind ?? null,
+        history_error: historyError ?? null,
+      },
+    });
+
     return NextResponse.json({ row, error: null, historyError });
   }
 
@@ -71,6 +93,22 @@ export async function POST(request: Request) {
     }
     const { row, error, historyError } = await addAssignment(a, actor, eff.iso);
     if (error) return NextResponse.json({ error }, { status: 500 });
+
+    void insertAuditLog({
+      ...auditFrom(request, authz),
+      action: 'bonus_catalog.assignment.added',
+      resource: 'bonus_catalog_assignments',
+      resource_id: a.id,
+      details: {
+        bonus_id: a.bonusId,
+        department_key: a.departmentKey,
+        scope: a.scope ?? null,
+        employee_email: a.employeeEmail ?? null,
+        effective_date: eff.iso,
+        history_error: historyError ?? null,
+      },
+    });
+
     return NextResponse.json({ row, error: null, historyError });
   }
 
@@ -91,6 +129,33 @@ export async function DELETE(request: Request) {
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 
   if (type === 'bonus') {
+    // Deleting a bonus cascades to its assignments AND its version history, so
+    // after this call there is no record of the definition anywhere else. The
+    // snapshot is taken and written BEFORE the delete, and the delete is
+    // abandoned if the trail cannot hold it
+    // (docs/features/delete-authorization.md: traceable after the row is gone).
+    const { bonuses, assignments } = await listBonusCatalog();
+    const doomed = bonuses.find((b) => b.id === id) ?? null;
+    const doomedAssignments = assignments.filter((a) => a.bonusId === id);
+
+    const { error: auditError } = await insertAuditLog({
+      ...auditFrom(request, authz),
+      action: 'bonus_catalog.definition.deleted',
+      resource: 'bonus_catalog',
+      resource_id: id,
+      details: {
+        deleted_definition: doomed,
+        cascaded_assignments: doomedAssignments.length,
+        cascaded_assignment_ids: doomedAssignments.map((a) => a.id),
+      },
+    });
+    if (auditError) {
+      return NextResponse.json(
+        { error: `Delete abandoned -- the audit event could not be written: ${auditError}` },
+        { status: 500 },
+      );
+    }
+
     const { error } = await deleteBonus(id);
     if (error) return NextResponse.json({ error }, { status: 500 });
     return NextResponse.json({ error: null });
@@ -100,6 +165,15 @@ export async function DELETE(request: Request) {
     if (!eff.ok) return NextResponse.json({ error: eff.error }, { status: 400 });
     const { error, historyError } = await removeAssignment(id, actor, eff.iso);
     if (error) return NextResponse.json({ error }, { status: 500 });
+
+    void insertAuditLog({
+      ...auditFrom(request, authz),
+      action: 'bonus_catalog.assignment.removed',
+      resource: 'bonus_catalog_assignments',
+      resource_id: id,
+      details: { effective_date: eff.iso, history_error: historyError ?? null },
+    });
+
     return NextResponse.json({ error: null, historyError });
   }
   return NextResponse.json({ error: 'Unknown type' }, { status: 400 });

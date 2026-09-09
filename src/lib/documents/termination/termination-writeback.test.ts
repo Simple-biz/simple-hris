@@ -523,7 +523,7 @@ test('G7: {before: null} restores null and {before: \'\'} restores \'\' — the 
   assert.equal(reverseValueForRecord(wasEmpty), '');
 
   // The records live in `termination_documents.field_writebacks` (jsonb) — the
-  // ONLY undo data that exists, since clearAuditLog() truncates audit_log. The
+  // ONLY undo data that exists, since the audit retention purge prunes audit_log. The
   // distinction has to survive the JSON trip.
   const rehydrated = JSON.parse(JSON.stringify([wasNull, wasEmpty])) as TerminationWritebackRecord[];
   assert.equal(reverseValueForRecord(rehydrated[0]), null);
