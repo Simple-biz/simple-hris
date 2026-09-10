@@ -181,6 +181,37 @@ test('no role and no completed pay cycle: both additions are omitted, not printe
   assert.notEqual(withRoleOnly.byteLength, withBoth.byteLength, 'the earned row is real content');
 });
 
+test('the SIGNED state prints the role and the earned row too — they are not draft-only', async () => {
+  // 2026-09-10: a signed copy came back without either addition while the draft
+  // had both. The cause was a stale compiled route in the dev server, not the
+  // renderer — but the renderer is the only place a real regression of that
+  // shape could live (a role clause inside an `if (!signature)` branch, say),
+  // so pin it: in the signed state each optional block still changes the bytes.
+  const sig = {
+    dataUrl: TYPED_SIGNATURE_PNG,
+    name: 'Alissa Re',
+    title: 'Payroll Coordinator',
+    email: 'payroll@simple.biz',
+    signedAtIso: GENERATED_AT,
+  };
+  const both = await renderCoeDocument({ facts: FACTS, requestId: REQUEST_ID, generatedAtIso: GENERATED_AT, signature: sig });
+  const noRole = await renderCoeDocument({
+    facts: { ...FACTS, roleTitle: null },
+    requestId: REQUEST_ID,
+    generatedAtIso: GENERATED_AT,
+    signature: sig,
+  });
+  const noRecent = await renderCoeDocument({
+    facts: { ...FACTS, recentBonuses: null },
+    requestId: REQUEST_ID,
+    generatedAtIso: GENERATED_AT,
+    signature: sig,
+  });
+  assert.equal((await PDFDocument.load(both)).getPageCount(), 1);
+  assert.notEqual(both.byteLength, noRole.byteLength, 'the role clause is drawn on the signed copy');
+  assert.notEqual(both.byteLength, noRecent.byteLength, 'the earned row is drawn on the signed copy');
+});
+
 test('a single completed cycle reads "cycle", four read "cycles", and ₱0 still prints as a figure', async () => {
   const one = await renderCoeDocument({
     facts: {

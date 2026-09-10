@@ -260,6 +260,18 @@ statements exactly, and a July hire's 12-week window had to be **clamped to the 
 pre-join weeks each ran the whole-company engine — 45 s → 4 s). Doc: `documents-tab.md` § Role and
 recent bonuses. Memory: [[coe-role-and-recent-bonuses]].
 
+**Follow-up the same evening — "in the VIEW and Employee Dashboard even when signed it is not
+there" / "harden it".** Kane's 17:14 request carried both additions on its draft; the copy signed
+at 17:15 had neither — and also the OLD whitespace, which only the layout constants set. The sign
+route's compiled chunk on disk is stamped 17:17:15, two minutes after the signature: the dev server
+(up since 09:10) had recompiled the request route at 16:57 but kept serving the pre-change module
+for `accounting/documents/[id]` until Turbopack rebuilt it. Not a code path; a stale process.
+Hardened anyway, because the same symptom is exactly what a future fork of the sign path would
+produce: `coe-request-paths.test.ts` pins two single-argument `resolveCoeFacts` calls and two
+`renderCoeDocument` calls in `requests.ts`, no other renderer, and the `recentBonuses: false`
+opt-out in Penny's tool only; `coe-document.test.ts` pins both blocks in the SIGNED state. Remedy
+for Kane: restart `next dev`, request and sign again.
+
 ---
 
 ## Open items

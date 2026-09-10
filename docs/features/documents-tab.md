@@ -244,6 +244,22 @@ Penny's `get_my_profile` calls `resolveCoeFacts(email, { recentBonuses: false })
 quotes statement figures (those go through `get_my_pay`), so it does not pay for the read and
 its answer is unchanged. `coeSummaryLabel` (the queue chip) is unchanged too.
 
+**Draft and signed copy are the same certificate** — both go through the one `resolveCoeFacts`
++ `renderCoeDocument` pair in `requests.ts`, with no options on either call, and
+[coe-request-paths.test.ts](../../src/lib/documents/coe-request-paths.test.ts) source-scans that
+shape (two resolver calls with a single argument, two renders, no other module drawing a COE,
+the `recentBonuses: false` opt-out used by Penny and nowhere else). `coe-document.test.ts` also
+pins that the role clause and the earned row are drawn in the SIGNED state, not just the draft.
+
+**If a draft carries the two additions and the signed copy does not, the server that signed is
+running stale code, not a different code path.** Seen 2026-09-10 on the local dev server:
+the request route had been recompiled at 16:57 and produced the new draft, but the sign route
+(`accounting/documents/[id]`) kept serving its pre-change module until Turbopack recompiled it
+at 17:17 — so a copy signed at 17:15 came back with neither line. The tell is that the signed
+copy also shows the OLD whitespace (16.5 pt body leading, wider gaps), which only the layout
+constants control. Fix: restart `next dev` and sign again. A production build is a single
+compile and cannot split this way; the check there is the deploy itself.
+
 ### Refusals
 
 A COE with a blank start date or a bogus rate looks forged and is useless at a bank, so
