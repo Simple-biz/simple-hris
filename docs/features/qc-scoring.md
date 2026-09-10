@@ -149,7 +149,9 @@ Shipped 2026-09-10 (same-day approval of the revised brief). Manager mode, QC de
 
 **Where it lives (Kane, 2026-09-10, later that day):** the toggle is a chip in the card header,
 beside **→ Payout** — *"Compare with your sheet"*. It is **disabled, never hidden**, while the
-week is published or the table is still loading; the hint says to reopen the week. The first
+week is published or the table is still loading; the hint says to reopen the week. While enabled
+it wears a running emerald rim (`.compare-ring`, Kane: *"an outline border color running color
+green"*) — the rim is never drawn on the disabled chip. The first
 cut was a collapsed row above the table and Kane could not find it — a hidden control is an
 unfindable one. The body unfolds below the toolbar with a height + opacity animation
 (`motion/react`, the file's `EASE`; `useReducedMotion` cuts instead). The body is never

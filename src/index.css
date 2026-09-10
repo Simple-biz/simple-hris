@@ -265,6 +265,36 @@
   .payroll-lock-ring { animation: none; }
 }
 
+/* "Compare with your sheet" chip in the Lead Gen KPI card header — Kane,
+   2026-09-10: "an outline border color running color green". Same masked-conic
+   engine as `.urgent-ring`, reusing `--urgent-angle` + `urgent-ring-spin`, in the
+   calculator's emerald so the chip reads as THE live action on the card. An
+   absolutely positioned overlay hugging the chip (see `cmpToggleShown` in
+   DeptBonusCalculator) — the chip's own border, hover and layout are untouched.
+   Only rendered while the chip is enabled: a running light on a disabled control
+   would be a lie. */
+.compare-ring {
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--urgent-angle),
+    transparent 0deg,
+    rgba(16, 185, 129, 0) 40deg,
+    #10b981 100deg,
+    #34d399 140deg,
+    #a7f3d0 165deg,
+    rgba(16, 185, 129, 0) 225deg,
+    transparent 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  animation: urgent-ring-spin 3s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .compare-ring { animation: none; }
+}
+
 /* (3) Energy sheen glinting diagonally across the surface, then resting. */
 @keyframes urgent-sheen {
   0%        { transform: translateX(-140%) skewX(-14deg); opacity: 0; }

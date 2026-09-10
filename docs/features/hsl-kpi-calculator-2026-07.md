@@ -1138,3 +1138,26 @@ order — both history, neither something a manager could predict. Departments'
 sort uses the same name resolver as `DeptSummaryRow`
 (`DEPARTMENTS[..].name ?? deptLabelByKey ?? humanizeDeptKey`), so what sorts is
 what is read; `deptLabelByKey` joined that memo's deps for it.
+
+### The card header is the control strip *(2026-09-10)*
+
+The Departments card header's chip row — `KPIs · <bonus chips> · → Payout` — now also
+carries the card's two collapsible controls, and **nothing below the header is
+open by default**:
+
+- **Compare with your sheet** (QC departments, manager mode) — the Jackie-sheet
+  Compare/Override panel (`qc-scoring.md` §Compare). Disabled, never hidden, on a
+  published week or before the table loads. While enabled it wears a **running
+  emerald rim** (`.compare-ring` in `src/index.css`, the `.urgent-ring` engine in
+  green — Kane: *"an outline border color running color green"*); the rim is not
+  rendered while disabled, because a running light on a dead control is a lie.
+- **Offboarded · last pay · N** — the `OffboardedStrip` (leavers whose final pay
+  cycle is the week in view, one click to add). It used to sit open above the table;
+  Kane, 2026-09-10: *"hide this first into a drop down as well"*. The chip shows
+  only when there is someone to show; the strip's own add rules are unchanged
+  (memory `offboarded-bonus-scoring`).
+
+Both bodies unfold below the toolbar with the same `UNFOLD` transition (height +
+opacity on the file's `EASE`; `useReducedMotion` cuts). The first cut of Compare
+was a collapsed row above the table and Kane could not find it — a control that
+exists must be visible even when it cannot act: disable it and say why.

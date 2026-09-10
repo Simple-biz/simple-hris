@@ -144,6 +144,9 @@ type BonusStatus = 'draft' | 'ready' | 'locked';
 type OpenMode = 'drawer' | 'focus' | 'modal';
 
 const EASE = [0.22, 1, 0.36, 1] as const;
+/** Height + opacity unfold for the card header's collapsible panels (Compare,
+ *  Offboarded). Paired with `initial={reduceMotion ? false : { height: 0, opacity: 0 }}`. */
+const UNFOLD = { height: { duration: 0.3, ease: EASE }, opacity: { duration: 0.22, ease: EASE } } as const;
 const PESO = '₱';
 
 /** Departments whose calculator table is paginated, and how many rows per page. */
@@ -1490,6 +1493,9 @@ export default function DeptBonusCalculator({
    *  no applied entry for that bonus at all, so Undo can remove it rather than blank it. */
   type OverrideSnapshot = Array<{ email: string; bonusId: string; before: AppliedState | undefined }>;
   const [compareOpen, setCompareOpen] = useState<Record<string, boolean>>({});
+  /** The "Offboarded · last pay" strip is collapsed behind its header chip by default
+   *  (Kane, 2026-09-10: "hide this first into a drop down as well"). Per dept. */
+  const [offboardedOpen, setOffboardedOpen] = useState<Record<string, boolean>>({});
   const [comparePaste, setComparePaste] = useState<Record<string, string>>({});
   const [compareRuns, setCompareRuns] = useState<Record<string, CompareRun | null>>({});
   const [compareBusy, setCompareBusy] = useState<Record<string, boolean>>({});
@@ -3079,6 +3085,7 @@ export default function DeptBonusCalculator({
     const cmpToggleShown = !isQc && isQcDeptKey(key);
     const cmpEnabled = cmpToggleShown && tableReady && !readOnly;
     const cmpIsOpen = cmpEnabled && !!compareOpen[key];
+    const offbIsOpen = offboardedForDept.length > 0 && !!offboardedOpen[key];
     const chipBonuses = [...v.normalCommon, ...v.sharedCommon];
 
     // Pagination (Lead Gen only today): slice the search-filtered rows into
@@ -3128,7 +3135,7 @@ export default function DeptBonusCalculator({
             </div>
           </div>
 
-          {(chipBonuses.length > 0 || cmpToggleShown) && (
+          {(chipBonuses.length > 0 || cmpToggleShown || offboardedForDept.length > 0) && (
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
               {chipBonuses.length > 0 && (
                 <>
@@ -3154,38 +3161,67 @@ export default function DeptBonusCalculator({
                 </>
               )}
               {cmpToggleShown && (
+                <span className="relative inline-flex">
+                  {/* The running emerald rim — Kane: "an outline border color running color green". */}
+                  {cmpEnabled && (
+                    <span aria-hidden className="compare-ring pointer-events-none absolute -inset-px z-10 rounded-[7px]" />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setCompareOpen((prev) => ({ ...prev, [key]: !prev[key] }))}
+                    disabled={!cmpEnabled}
+                    aria-expanded={cmpIsOpen}
+                    aria-controls={`compare-panel-${key}`}
+                    title={
+                      readOnly
+                        ? 'This week is published — reopen it before comparing or overriding'
+                        : !tableReady
+                          ? 'Loading the table…'
+                          : 'Paste your appointment sheet and compare it with the QC scores'
+                    }
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10.5px] font-medium transition-colors duration-200',
+                      cmpIsOpen
+                        ? 'border-emerald-300 bg-emerald-100 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-200'
+                        : 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300',
+                      cmpEnabled && !cmpIsOpen &&
+                        'hover:border-emerald-300 hover:text-emerald-700 dark:hover:border-emerald-700 dark:hover:text-emerald-300',
+                      !cmpEnabled && 'cursor-not-allowed opacity-50',
+                    )}
+                  >
+                    {readOnly ? <Lock className="h-2.5 w-2.5" aria-hidden /> : <Search className="h-2.5 w-2.5" aria-hidden />}
+                    Compare with your sheet
+                    {cmpRun && (
+                      <span className="font-normal opacity-70">
+                        · {cmpActionable.length === 0 ? 'all match' : `${cmpActionable.length} differ`}
+                      </span>
+                    )}
+                    <ChevronDown
+                      className={cn('h-2.5 w-2.5 transition-transform duration-200', cmpIsOpen && 'rotate-180')}
+                      aria-hidden
+                    />
+                  </button>
+                </span>
+              )}
+              {offboardedForDept.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setCompareOpen((prev) => ({ ...prev, [key]: !prev[key] }))}
-                  disabled={!cmpEnabled}
-                  aria-expanded={cmpIsOpen}
-                  aria-controls={`compare-panel-${key}`}
-                  title={
-                    readOnly
-                      ? 'This week is published — reopen it before comparing or overriding'
-                      : !tableReady
-                        ? 'Loading the table…'
-                        : 'Paste your appointment sheet and compare it with the QC scores'
-                  }
+                  onClick={() => setOffboardedOpen((prev) => ({ ...prev, [key]: !prev[key] }))}
+                  aria-expanded={offbIsOpen}
+                  aria-controls={`offboarded-panel-${key}`}
+                  title="People who left this pay week or since — open to add them so their final bonuses can be scored"
                   className={cn(
                     'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10.5px] font-medium transition-colors duration-200',
-                    cmpIsOpen
-                      ? 'border-emerald-300 bg-emerald-100 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-200'
-                      : 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300',
-                    cmpEnabled && !cmpIsOpen &&
-                      'hover:border-emerald-300 hover:text-emerald-700 dark:hover:border-emerald-700 dark:hover:text-emerald-300',
-                    !cmpEnabled && 'cursor-not-allowed opacity-50',
+                    offbIsOpen
+                      ? 'border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-700 dark:bg-amber-950/60 dark:text-amber-200'
+                      : 'border-amber-200/80 bg-amber-50/60 text-amber-700 hover:border-amber-300 hover:bg-amber-100/70 dark:border-amber-500/25 dark:bg-amber-500/[0.07] dark:text-amber-300 dark:hover:bg-amber-500/10',
                   )}
                 >
-                  {readOnly ? <Lock className="h-2.5 w-2.5" aria-hidden /> : <Search className="h-2.5 w-2.5" aria-hidden />}
-                  Compare with your sheet
-                  {cmpRun && (
-                    <span className="font-normal opacity-70">
-                      · {cmpActionable.length === 0 ? 'all match' : `${cmpActionable.length} differ`}
-                    </span>
-                  )}
+                  <UserPlus className="h-2.5 w-2.5" aria-hidden />
+                  Offboarded · last pay
+                  <span className="font-normal opacity-70">· {offboardedForDept.length}</span>
                   <ChevronDown
-                    className={cn('h-2.5 w-2.5 transition-transform duration-200', cmpIsOpen && 'rotate-180')}
+                    className={cn('h-2.5 w-2.5 transition-transform duration-200', offbIsOpen && 'rotate-180')}
                     aria-hidden
                   />
                 </button>
@@ -3233,20 +3269,34 @@ export default function DeptBonusCalculator({
         )}
 
         {/* Recently offboarded members of this dept — one click to add them so
-            their final bonuses can be scored (Kane's "Offboarded" group). */}
-        {offboardedForDept.length > 0 && (
-          <div className="flex-none border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800/70 sm:px-5">
-            <OffboardedStrip
-              people={offboardedForDept}
-              disabled={readOnly}
-              onAdd={(c) => {
-                const email = offboardedAddEmail(c, true);
-                if (!email) return 'No usable email on file.';
-                return addExternalMember(key, c.name, email);
-              }}
-            />
-          </div>
-        )}
+            their final bonuses can be scored (Kane's "Offboarded" group). Collapsed
+            behind the "Offboarded · last pay" chip in the card header by default
+            (Kane, 2026-09-10); unfolds like the Compare panel. */}
+        <AnimatePresence initial={false}>
+          {offbIsOpen && (
+            <motion.div
+              key="offboarded-panel"
+              id={`offboarded-panel-${key}`}
+              className="flex-none overflow-hidden border-b border-zinc-100 dark:border-zinc-800/70"
+              initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
+              transition={reduceMotion ? { duration: 0 } : UNFOLD}
+            >
+              <div className="px-4 py-2.5 sm:px-5">
+                <OffboardedStrip
+                  people={offboardedForDept}
+                  disabled={readOnly}
+                  onAdd={(c) => {
+                    const email = offboardedAddEmail(c, true);
+                    if (!email) return 'No usable email on file.';
+                    return addExternalMember(key, c.name, email);
+                  }}
+                />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Compare with the manager's own sheet — manager mode, QC departments, and
             only while the week is still a draft (a locked week is reopened first, via
@@ -3263,11 +3313,7 @@ export default function DeptBonusCalculator({
               initial={reduceMotion ? false : { height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
               exit={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
-              transition={
-                reduceMotion
-                  ? { duration: 0 }
-                  : { height: { duration: 0.3, ease: EASE }, opacity: { duration: 0.22, ease: EASE } }
-              }
+              transition={reduceMotion ? { duration: 0 } : UNFOLD}
             >
               <div className="px-4 py-3 sm:px-5">
                 <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
