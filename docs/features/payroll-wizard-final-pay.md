@@ -57,6 +57,58 @@ Reports stays outside the step-load progress range
 ([payroll-wizard-step-load.md](./payroll-wizard-step-load.md)) — the search adds no
 progress, prediction or readiness wiring.
 
+## 2026-09-10 — Reports exports carry the Time Adjustments columns
+
+> *"Payroll Wizard - Reports - Export CSV - Should have the Time Adjustments Columns please"*
+> (Kane). Step 9 has no literal CSV button — it has **Export XLSX** and **Export PDF**, and the
+> XLSX's `Salaries` sheet is the file meant (the code has always called it "the CSV").
+
+**What was wrong.** An approved time adjustment SETS a day's hours at calculation time, and the
+wizard folds the resulting pesos — Σ(approved − raw) over in-period dates × the regular rate —
+into Initial Pay (`effectiveCalcResults`; see
+[time-adjustment-requests.md](./time-adjustment-requests.md) § Pay wiring). Nothing itemized
+that delta: not `CalcRow`, not the staged payload, not the final-pay snapshot, not the export. So
+an adjusted row exported **Regular + OT ≠ Initial Pay** with nothing in the file explaining the
+gap — on the artifact Kane validates HRIS against the Google Sheet with.
+
+**The three columns.** `Time Adj. Hours` (SIGNED, 2dp), `Time Adj. Pay` (SIGNED ₱ — exactly what
+was added to Initial Pay) and `Time Adj. Dates` (`2026-09-01 +2.00h; 2026-09-03 -0.50h`, oldest
+first) sit **between OT and Initial Pay**, so a row reads left to right as
+`Regular + OT + Time Adj. Pay = Initial Pay`. That identity joins the two the builder already
+pinned (`payrollExportRowReconciles`), asserted only when the row can state it — the block is
+present and Regular/OT are figures (sheet-form HSL rows with null Regular/OT skip it). `Hours`
+stays the **RAW tracked** total; the correction is disclosed beside it, never folded in (Hubstaff
+data is never mutated).
+
+**Where the figures come from — the payload, never a recompute.** Reports rows ARE the staged
+dispatch payload, so the delta had to be staged: `effectiveCalcResults` now sets
+`CalcRow.timeAdjustment` on EVERY effective row (zeros + `[]` when none), the payload builder
+copies it to **`DispatchEmployee.time_adjustment`** `{ hours, pay_php, days }`, and
+`buildPayrollExportRow` reads that block. Staging zeros rather than `null` is deliberate: a file
+can then tell *no adjustment* from *staged before the block existed* — a legacy row exports BLANK
+Time Adj. cells and is not failed for a gap it cannot explain. The block explains money already
+inside `initial`; nothing may add it to a total again. `pay_php` is 0 when no rate resolved even
+if hours ≠ 0 (the fold is gated on a rate, and the export shows exactly that).
+
+**Replay.** The final-pay snapshot now stores `timeAdjustmentHours` / `timeAdjustmentPay` /
+`timeAdjustmentDays` alongside the split, and `overlayReplayFinal` applies them to the row's
+block under the standing rule — saved wins **as a unit** (hours and pesos both numeric), absent
+keeps the live block, never a zeroed one — so a replayed export's identity reads the delta **as
+paid**, not whatever has been approved for that week since
+([payroll-wizard-week-replay.md](./payroll-wizard-week-replay.md)). Hours-without-pesos (a
+half-written entry) is treated as absent.
+
+**Deliberately unchanged.** The PDF keeps its 12 fixed-width columns (a 704pt budget; it already
+omits the PAB/Tech/Other split and reconciles at Initial → Net); the step-9 on-screen table;
+`hours.total`; every peso of pay. **OPEN (finding):** the paystub's Regular/OT earnings lines do
+not itemize this delta either while `final` includes it — recorded in the 2026-09-10 session log
+(Open item 32); its own change.
+
+Tests: `report-rows.test.ts` (signed/negative delta, the undisclosed-fold bug class, no-rate
+hours, legacy blanks, sheet-form HSL, column placement) · `replay-finals-overlay.test.ts` (saved
+wins, legacy keeps live, saved zeros overlay, half-written = absent).
+Memory: [[wizard-reports-time-adjustment-columns]].
+
 ---
 
 ## 2026-08-28 — HSL and Additions are ONE step, and HSL is a TAB of it

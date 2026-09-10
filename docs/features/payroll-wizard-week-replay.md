@@ -54,7 +54,7 @@ Per-`sourceFile` state, hydrated on every selector change:
 | Do-not-pay exclusions | `payroll.wizard.exclusions.<sourceFile>` |
 | Pay-this-week / OT config | `payroll.wizard.dept_pay_paused.<sourceFile>` |
 | Cycle FX legs | `payroll.wizard.fx.<sourceFile>` (read-only on replay) |
-| Reports salary figures | `payroll.wizard.final_pay.<sourceFile>` overlay — the FULL itemized split (bonuses, Adj., orphanage, both MESA legs), not just the final; `overlayReplayFinal` |
+| Reports salary figures | `payroll.wizard.final_pay.<sourceFile>` overlay — the FULL itemized split (bonuses, Adj., orphanage, both MESA legs), not just the final; since 2026-09-10 also the approved time-adjustment delta as paid (`timeAdjustmentHours` / `Pay` / `Days` → the row's `time_adjustment` block); `overlayReplayFinal` |
 | Manager KPI amounts | `bonus_catalog_applied`, pinned to the file's week |
 | HSL KPI amounts | `hsl_bonus_entries`, pinned to the file's week |
 | Hours, rates | the file's own `hubstaff_hours` + `employee_rate_history` (the catalog overlay is skipped while `isReplay`) |
@@ -231,7 +231,13 @@ Absent fields (legacy snapshots) keep the live figure — never ₱0 (rule 3
 above) — pinned by `replay-finals-overlay.test.ts`. The replay `snap` also
 prefers the snapshot's stored `fx_rate` for its USD figures, so a
 pre-fx-record cycle no longer prices Net (USD) at today's global rate
-(display/export only, never written back).
+(display/export only, never written back). Since 2026-09-10 the overlay also
+carries the approved time-adjustment delta that was folded into the paid
+Initial Pay (`timeAdjustmentHours` / `timeAdjustmentPay` / `timeAdjustmentDays`
+→ the row's `time_adjustment` block; saved wins as a unit, absent keeps the live
+block, never a zeroed one), so the export's `Regular + OT + Time Adj. Pay =
+Initial Pay` reads the delta as paid — see
+[payroll-wizard-final-pay.md](./payroll-wizard-final-pay.md) § 2026-09-10.
 
 Closing the mid-wizard steps properly is its own change, not a one-liner: the
 finals map is email-keyed while `bonusTotals` resolves amounts per *dept*, and

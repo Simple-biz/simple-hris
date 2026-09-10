@@ -116,7 +116,11 @@ salary-only `Initial Pay (PHP)`. Rules baked in:
 The Payroll Wizard's own Reports exports (XLSX + PDF) were itemized the same day via
 `src/lib/payroll-wizard/report-rows.ts` — one shared row builder whose test pins the
 identity `initial + bonuses_total + orphanage + mesaDisb − mesaDed = net` and keeps
-the signed Adjustment out of the "Bonuses" column.
+the signed Adjustment out of the "Bonuses" column. Since 2026-09-10 the same builder
+also carries the approved time-adjustment delta (`Time Adj. Hours / Pay / Dates`,
+staged on the payload as `time_adjustment`) with a third identity,
+`regular + ot + timeAdjustPay = initial` — see
+[payroll-wizard-final-pay.md](./payroll-wizard-final-pay.md) § 2026-09-10.
 
 ---
 

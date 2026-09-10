@@ -113,6 +113,16 @@ export interface WizardFinalPayEntry extends WizardSnapshotEntry {
    *  presence never implies a figure changed. It still travels with the write
    *  so a re-lock can correct a week whose transfer was released late. */
   departmentTransfer?: DepartmentTransferBlockRaw | null;
+  /** Approved time-adjustment delta AS PAID (added 2026-09-10): the SIGNED
+   *  in-period hours (Σ approved − raw), the SIGNED pesos the wizard folded
+   *  into `initial` for them, and the dates. Written together on every new
+   *  snapshot (zeros + `[]` when none); older snapshots omit all three →
+   *  undefined, and the Reports replay overlay keeps the live recompute's
+   *  block. Read by `overlayReplayFinal` only — the statement does not (yet)
+   *  itemize this delta, so nothing on the paystub path consumes it. */
+  timeAdjustmentHours?: number | null;
+  timeAdjustmentPay?: number | null;
+  timeAdjustmentDays?: Array<{ date: string; hours: number }> | null;
 }
 
 /** The discretionary overlay recovered for one employee + week. */

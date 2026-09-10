@@ -272,6 +272,29 @@ produce: `coe-request-paths.test.ts` pins two single-argument `resolveCoeFacts` 
 opt-out in Penny's tool only; `coe-document.test.ts` pins both blocks in the SIGNED state. Remedy
 for Kane: restart `next dev`, request and sign again.
 
+### The Reports XLSX carries the Time Adjustments columns · committed with this section
+> *"Payroll Wizard - Reports - Export CSV - Should have the Time Adjustments Columns please"*
+> session `b07137f4` · routed to **`hardening`** — brief cited nine rules, zero contradictions, one
+> assumption said out loud (there is no CSV button; the XLSX `Salaries` sheet is the file meant)
+
+The gap the brief found before a line was written: an approved time adjustment SETS a day's hours
+and the wizard folds Σ(approved − raw) × regular rate into Initial Pay (`effectiveCalcResults`),
+but nothing itemized that delta — not `CalcRow`, not the staged payload, not the final-pay
+snapshot, not the export. So an adjusted row exported **Regular + OT ≠ Initial Pay** on the file
+Kane reconciles against the Google Sheet, with no column explaining why. Reports rows are the
+payload, never a recompute, so the fix is staged rather than computed at export time: every
+effective row now carries `timeAdjustment`, every payload `time_adjustment { hours, pay_php, days }`
+(zeros when none — a blank cell means "predates the block", a zero means "checked, none"), every
+snapshot `timeAdjustmentHours` / `Pay` / `Days`, and the shared builder emits **Time Adj. Hours /
+Time Adj. Pay / Time Adj. Dates** between OT and Initial Pay with a third identity in its test
+guard, `regular + ot + timeAdjustPay = initial`. `Hours` stays raw tracked. `overlayReplayFinal`
+applies the saved delta as a unit so a replay shows it as paid. PDF (704pt budget), on-screen
+table and every peso of pay unchanged; `tsc` clean; suite 2830/2832 — the 2 failures are the
+pre-existing dept-label and hours-gallery source sweeps, in files this commit does not touch.
+**Finding, not fixed:** the
+paystub's earnings lines still hide the same delta while `final` includes it — item 32. Doc:
+`payroll-wizard-final-pay.md` § 2026-09-10. Memory: [[wizard-reports-time-adjustment-columns]].
+
 ---
 
 ## Open items
@@ -315,6 +338,7 @@ keep their Sep 9 numbers; 19+ are new.
 | **29** | **~~8 commits unpushed~~ PUSHED** | Verified 2026-09-10 evening: `origin/main` = HEAD = `a56ce28c`, `git rev-list --count origin/main..HEAD` = 0. |
 | **30** | **Employee-surface + QC build plan — awaiting approval** | Session `c2cf2f89`. [implementation-plan-employee-surface-and-qc.md](../implementation-plans/implementation-plan-employee-surface-and-qc.md) sequences items 19–28 into ten `hardening` commits plus a `BLUEPRINT` brief (§13) for the two new surfaces. **Wave 1 is deadline-driven: Mon 2026-09-14**, when Jackie and nine officers test with real data — Callback out of `QC_DEPT_KEYS` (one line, Discovery precedent), Alivia's `qc` role revoked, and randomization written from scratch. **Nine questions outstanding:** Q1 retired-Callback history read path · Q2 zero-hours QC eligibility (**a ruling, not a cleanup** — every comparable predicate fails toward keeping the person) · Q3 nudge on sky "Processing" days · Q4 PAB FAQ explains the derivation vs prints Accounting's saved window · Q5 `formatStartDate` off-by-one in scope for the Profile merge · Q6 directory fallback token (**blocks Wave 6** — the derived go-by renames *Jane Marie Santos* to "Marie") · Q7 Award/Certificate leaves the employee picker · Q8 Skill Sets cap shape (**a cap of 10 on Current projects would loosen an existing cap of 2 — cannot ship**) · Q9 the QC test day, since the transcript cuts off mid-answer where Jackie raised her Monday training. Item 19 stays untouched by the plan. **Later 2026-09-10:** Kane approved and the session shipped `15dbd67f` (PAB copy + drill-in), `8ab5dcdb` + `9841c4c9` (Time Adjustments rename + nudge), `aa48e39d` (QC Wave 1), `2e56b84e` (Compare/Override/Undo), then the score-ahead build (row 31). The rest of the plan stays open. |
 | **31** | **`kpi.published` ALTER — APPLIED** | Session `c2cf2f89`, built 2026-09-10 with the score-the-upcoming-week feature (`hsl-kpi-calculator-2026-07.md` §Scoring the upcoming week). Kane ran `node scripts/apply-kpi-published-notification-type.mjs` the same day; `--verify` on a fresh connection shows `'kpi.published'` in `employee_notifications_type_check` (45 types, superset intact). **First real insert still unproven** — the next Mark Ready / Lock on any dept-week is the proof; a missing Accounting card means read `audit_log` for `notification.insert_failed` first. |
+| **32** | **Paystub earnings lines hide the time-adjustment delta** | Found 2026-09-10 while adding the Reports columns (session `b07137f4`): `effectiveCalcResults` folds Σ(approved − raw) × regular rate into `initial`, and `final` includes it, but `PayStubStatement` renders Regular (hours × rate) and OT lines only — no line for the adjustment, so an adjusted statement's lines do not sum to its total. The payload now carries `time_adjustment { hours, pay_php, days }` and the snapshot `timeAdjustmentHours/Pay/Days`, so the statement has the figure to render; rendering it (and the n8n email template) is its own `hardening` pass — PAID stubs are frozen as-paid, so only unpaid/new stubs would gain the line. The Reports PDF omits the three columns by its 704pt budget (documented in `payroll-wizard-final-pay.md` § 2026-09-10; not a defect). |
 
 **Closed since the Sep 9 log:** the 82 duplicate paid rows (item 10 — closed on Sep 3, discovered today);
 2 of 6 ungated routes (item 2); the Sep 9 meeting record is committed; every memory written on Sep 9

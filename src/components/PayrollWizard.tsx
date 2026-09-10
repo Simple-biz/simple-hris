@@ -240,6 +240,8 @@ import {
   PAYROLL_EXPORT_HEADERS,
   buildPayrollExportRows,
   payrollExportRowToAoa,
+  type ReportTimeAdjustment,
+  type ReportTimeAdjustmentDay,
 } from '@/lib/payroll-wizard/report-rows';
 import { overlayReplayFinal, type ReplayFinalEntry } from '@/lib/payroll-wizard/replay-finals-overlay';
 import { formatLockedStamp, resolveDispatchButtonState } from '@/lib/payroll-wizard/dispatch-button-state';
@@ -611,6 +613,21 @@ type CalcRow = {
   otPay: number | null;
   initialPay: number | null;
   /**
+   * Approved time-adjustment delta folded into `initialPay` by
+   * `effectiveCalcResults` (2026-09-10): SIGNED in-period hours
+   * (Σ approved − raw), the SIGNED pesos actually added (0 when no rate
+   * resolved, even if hours ≠ 0), and the dates. Set on EVERY effective row —
+   * zeros + `[]` when none — so the payload, the final-pay snapshot and the
+   * Reports exports can state Regular + OT + Time Adj. Pay = Initial Pay.
+   * Undefined only on rows that never passed through effectiveCalcResults,
+   * which by construction have no delta folded in.
+   */
+  timeAdjustment?: {
+    hours: number;
+    payPhp: number;
+    days: ReportTimeAdjustmentDay[];
+  } | null;
+  /**
    * HSL-only weekend (Sat+Sun) itemization for the paystub. Since 2026-08-11
    * `regularHours`/`regularPay` cover ALL weekend hours — past-cap included —
    * at (rate + ₱15/h premium), already INCLUDED in `regularPay` above; this is
@@ -804,7 +821,30 @@ type DispatchEmployee = {
   };
   /** Free-text reason for the accounting Adj. delta (the Adj. column note), or null. */
   adjustment_note: string | null;
+  /**
+   * Approved time-adjustment delta folded into `pay_php.initial` (2026-09-10):
+   * SIGNED in-period hours, the SIGNED pesos added, and the dates. Staged on
+   * EVERY payload — zeros + `[]` when none — so the Reports exports can state
+   * `Regular + OT + Time Adj. Pay = Initial Pay` and a file can tell "no
+   * adjustment" from "staged before the block existed" (absent). `hours.total`
+   * above stays the RAW tracked figure; this block discloses the correction
+   * beside it, never folds it in (Hubstaff data is never mutated). Explains
+   * money already inside `initial` — never add it to a total again.
+   */
+  time_adjustment: ReportTimeAdjustment;
 };
+
+/** CalcRow time adjustment → the payload-shaped `time_adjustment` block. Always
+ *  a block (zeros + `[]` when none): a row that never passed through
+ *  `effectiveCalcResults` has no delta folded into its pay, so zeros are the
+ *  truthful figure for it too. */
+function timeAdjustmentBlockFromCalcRow(r: CalcRow): ReportTimeAdjustment {
+  return {
+    hours: r.timeAdjustment?.hours ?? 0,
+    pay_php: r.timeAdjustment?.payPhp ?? 0,
+    days: (r.timeAdjustment?.days ?? []).map((d) => ({ date: d.date, hours: d.hours })),
+  };
+}
 
 /** CalcRow proration → the payload-shaped `proration` block. Only a genuine
  *  mid-week change (rateChange + segments both set) stages one. */
@@ -5814,13 +5854,17 @@ export default function PayrollWizard({
   }, [effectiveOverrides, orphanageHoursIndex, rawDayHoursByEmail]);
 
   /**
-   * Per-employee pay delta (in hours) from approved time adjustments: sum of
+   * Per-employee pay delta from approved time adjustments: the sum of
    * (approved_hours - raw tracked hours) over adjustment dates that fall within the
-   * current pay period. Positive values increase pay; folded into initialPay below.
-   * Dates outside the period are not credited here (they belong to another cycle).
+   * current pay period, plus the per-day breakdown. Positive values increase pay;
+   * folded into initialPay below and staged on the payload as `time_adjustment` so
+   * the Reports exports can disclose it (2026-09-10). Dates outside the period are
+   * not credited here (they belong to another cycle). An entry exists for anyone
+   * with ≥1 in-period approved day — even a 0h net delta — so the export can show
+   * the approved dates; the pay fold below still gates on hours ≠ 0.
    */
-  const timeAdjustDeltaHoursByEmail = useMemo<Map<string, number>>(() => {
-    const delta = new Map<string, number>();
+  const timeAdjustDeltaByEmail = useMemo<Map<string, { hours: number; days: ReportTimeAdjustmentDay[] }>>(() => {
+    const delta = new Map<string, { hours: number; days: ReportTimeAdjustmentDay[] }>();
     if (approvedTimeAdjustments.size === 0) return delta;
     const periodDates = new Set<string>();
     for (const group of allDaysColumnGroups) {
@@ -5830,12 +5874,15 @@ export default function PayrollWizard({
     for (const [em, dates] of approvedTimeAdjustments) {
       const raw = rawDayHoursByEmail.get(em);
       let d = 0;
+      const days: ReportTimeAdjustmentDay[] = [];
       for (const [date, setHours] of dates) {
         if (periodDates.size > 0 && !periodDates.has(date)) continue;
         const rawHours = raw?.get(date) ?? 0;
-        d += setHours - rawHours;
+        const dayDelta = setHours - rawHours;
+        d += dayDelta;
+        days.push({ date, hours: Math.round(dayDelta * 100) / 100 });
       }
-      if (d !== 0) delta.set(em, d);
+      if (days.length > 0) delta.set(em, { hours: d, days });
     }
     return delta;
   }, [approvedTimeAdjustments, rawDayHoursByEmail, allDaysColumnGroups]);
@@ -8258,18 +8305,31 @@ export default function PayrollWizard({
       // valued at the regular rate, folded into initialPay so all downstream totals
       // (final pay, dispatch) reflect the corrected time. Never mutates Hubstaff data.
       const em = normEmail(row.email) ?? row.email.toLowerCase();
-      const adjHours =
-        timeAdjustDeltaHoursByEmail.get(em) ?? timeAdjustDeltaHoursByEmail.get(row.email) ?? 0;
+      const ta = timeAdjustDeltaByEmail.get(em) ?? timeAdjustDeltaByEmail.get(row.email) ?? null;
+      const adjHours = ta?.hours ?? 0;
+      let adjPesos = 0;
       if (adjHours !== 0 && base.regularRate != null && base.initialPay != null) {
-        const adjPesos =
+        adjPesos =
           adjHours >= 0
             ? phpHourlyPayFromSeconds(base.regularRate, adjHours * 3600)
             : -phpHourlyPayFromSeconds(base.regularRate, -adjHours * 3600);
         base = { ...base, initialPay: Math.round((base.initialPay + adjPesos) * 100) / 100 };
       }
-      return base;
+      // Stage the delta on the row — ALWAYS, zeros when none — so the dispatch
+      // payload, the final-pay snapshot and the Reports exports can disclose it
+      // (Regular + OT + Time Adj. Pay = Initial Pay) instead of leaving an
+      // adjusted Initial Pay unexplained. `payPhp` is exactly what was added
+      // above: 0 when no rate resolved, even if hours ≠ 0.
+      return {
+        ...base,
+        timeAdjustment: {
+          hours: Math.round(adjHours * 100) / 100,
+          payPhp: adjPesos,
+          days: ta?.days ?? [],
+        },
+      };
     });
-  }, [calcResults, employeeDepts, otGlobalSuspended, otDeptEnabled, timeAdjustDeltaHoursByEmail, pausedDeptKeys]);
+  }, [calcResults, employeeDepts, otGlobalSuspended, otDeptEnabled, timeAdjustDeltaByEmail, pausedDeptKeys]);
 
   /**
    * Safety net for the "Pay this week" pause: workers who logged hours this
@@ -9459,6 +9519,7 @@ export default function PayrollWizard({
           final: finalPay,
         },
         adjustment_note: accountingAdj !== 0 ? (bonusOverrideNotes[overrideKey]?.trim() || null) : null,
+        time_adjustment: timeAdjustmentBlockFromCalcRow(r),
       };
 
       // Two independent checks, neither of which stops the run.
@@ -9854,6 +9915,15 @@ export default function PayrollWizard({
       // was effective inside this pay week; older snapshots omit the field and
       // the staged block stays untouched.
       departmentTransfer: DepartmentTransferBlockRaw | null;
+      // Approved time-adjustment delta AS PAID (2026-09-10) — the pesos are
+      // already inside `initial`; this only explains them. The Reports replay
+      // overlay reads it so a replayed export's Regular + OT + Time Adj. Pay =
+      // Initial Pay shows the delta that was paid, not today's approved set.
+      // Written together on every snapshot (zeros + [] when none); older
+      // snapshots omit all three and the overlay keeps the live block.
+      timeAdjustmentHours: number;
+      timeAdjustmentPay: number;
+      timeAdjustmentDays: ReportTimeAdjustmentDay[];
     }> = {};
     for (const r of dispatchData.rows) {
       const entry = {
@@ -9886,6 +9956,9 @@ export default function PayrollWizard({
         proration: r.proration,
         hoganSheet: r.hogan_sheet,
         departmentTransfer: r.department_transfer,
+        timeAdjustmentHours: r.time_adjustment.hours,
+        timeAdjustmentPay: r.time_adjustment.pay_php,
+        timeAdjustmentDays: r.time_adjustment.days,
       };
       const we = r.email?.trim().toLowerCase();
       const pe = r.personal_email?.trim().toLowerCase();

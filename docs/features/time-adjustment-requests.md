@@ -523,13 +523,15 @@ Approval does not modify Hubstaff data. `approved_hours` is a **SET-semantics ov
 
 1. **`effectiveOverrides` memo** — merged map of `email → (ISO date → override hours | null)`. Built by layering approved PAB disputes then overlaying approved time adjustments (time adjustments win on a same-day collision). All three PAB memos read this map.
 
-2. **`timeAdjustDeltaHoursByEmail` memo** — sums `(approved_hours − raw tracked hours)` over in-period adjustment dates per employee. Folded into `effectiveCalcResults.initialPay`:
+2. **`timeAdjustDeltaByEmail` memo** (named `timeAdjustDeltaHoursByEmail` until 2026-09-10) — sums `(approved_hours − raw tracked hours)` over in-period adjustment dates per employee and keeps the per-day breakdown. Folded into `effectiveCalcResults.initialPay`:
 ```
 adjPesos = phpHourlyPayFromSeconds(regularRate, |deltaHours| × 3600)
 newInitialPay = initialPay ± adjPesos
 ```
 
 **Email-drift caveat:** if `work_email` on the request does not match the Hubstaff row email, the delta is silently zero.
+
+**Disclosed on the payload and the Reports exports (2026-09-10).** The fold used to be invisible downstream — an adjusted row exported Regular + OT ≠ Initial Pay with no column explaining why. `effectiveCalcResults` now stages the delta on every row (`CalcRow.timeAdjustment`: signed hours, the exact signed pesos added — 0 when no rate resolved — and the dates); the dispatch payload carries it as `DispatchEmployee.time_adjustment { hours, pay_php, days }` (zeros + `[]` when none, so "none" and "predates the block" stay distinguishable); the final-pay snapshot stores it as `timeAdjustmentHours` / `timeAdjustmentPay` / `timeAdjustmentDays`; and the Payroll Wizard Reports XLSX carries it as **Time Adj. Hours / Time Adj. Pay / Time Adj. Dates** between OT and Initial Pay, with the identity `Regular + OT + Time Adj. Pay = Initial Pay` in the builder's test guard. `hours.total` stays the raw tracked figure. Owned by [payroll-wizard-final-pay.md](./payroll-wizard-final-pay.md) § 2026-09-10. The paystub's earnings lines still do **not** itemize the delta (open — session log 2026-09-10, item 32).
 
 ### `current-pay.ts` parity
 

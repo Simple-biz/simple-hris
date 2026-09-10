@@ -19,6 +19,16 @@
 // is read verbatim; an ABSENT saved field falls back to the live recompute —
 // never to ₱0. Legacy snapshots that predate a field simply keep the live
 // figure for it.
+//
+// Time adjustments (2026-09-10): the snapshot also stores the approved
+// time-adjustment delta that was folded into the paid Initial Pay
+// (`timeAdjustmentHours` / `timeAdjustmentPay` / `timeAdjustmentDays`). The
+// overlay applies it to the row's `time_adjustment` block by the same rule —
+// saved wins, absent keeps the live block — so a replayed export's
+// "Regular + OT + Time Adj. Pay = Initial Pay" reads the delta AS PAID, not
+// whatever has been approved for that week since.
+
+import type { ReportTimeAdjustment, ReportTimeAdjustmentDay } from './report-rows';
 
 /** One saved entry of the final-pay snapshot's `finals` map. Every field is
  *  optional except `final` — older snapshots omit fields they predate. */
@@ -37,11 +47,19 @@ export interface ReplayFinalEntry {
   otherBonuses?: number;
   adjustment?: number;
   orphanagePay?: number;
+  /** Approved time-adjustment delta AS PAID (added 2026-09-10). Hours and pesos
+   *  are written together; snapshots that predate them omit all three. */
+  timeAdjustmentHours?: number | null;
+  timeAdjustmentPay?: number | null;
+  timeAdjustmentDays?: ReportTimeAdjustmentDay[] | null;
 }
 
 /** The slice of a recomputed dispatch row the overlay reads and rewrites. */
 export interface ReplayOverlayRow {
   hours: { total: number; regular: number; ot: number };
+  /** Optional here only so pre-block fixtures/rows still type-check; every
+   *  payload staged since 2026-09-10 carries it. */
+  time_adjustment?: ReportTimeAdjustment | null;
   pay_php: {
     regular: number | null;
     ot: number | null;
@@ -72,6 +90,18 @@ export function overlayReplayFinal<T extends ReplayOverlayRow>(row: T, saved: Re
   const tech = num(saved.techBonus) ? saved.techBonus : p.tech_bonus;
   const other = num(saved.otherBonuses) ? saved.otherBonuses : p.other_bonuses;
   const adjustment = num(saved.adjustment) ? saved.adjustment : p.adjustment;
+  // Saved time-adjustment delta wins as a unit (hours + pesos are written
+  // together by the publisher); an absent one keeps the live block — never a
+  // zeroed one. A legacy snapshot therefore shows today's approved delta for
+  // that week, exactly as it shows today's figure for any other absent field.
+  const timeAdjustment: ReportTimeAdjustment | null | undefined =
+    num(saved.timeAdjustmentHours) && num(saved.timeAdjustmentPay)
+      ? {
+          hours: saved.timeAdjustmentHours,
+          pay_php: saved.timeAdjustmentPay,
+          days: Array.isArray(saved.timeAdjustmentDays) ? saved.timeAdjustmentDays : [],
+        }
+      : row.time_adjustment;
   return {
     ...row,
     hours: {
@@ -79,6 +109,7 @@ export function overlayReplayFinal<T extends ReplayOverlayRow>(row: T, saved: Re
       regular: num(saved.regularHours) ? saved.regularHours : row.hours.regular,
       ot: num(saved.otHours) ? saved.otHours : row.hours.ot,
     },
+    ...(timeAdjustment !== undefined ? { time_adjustment: timeAdjustment } : {}),
     pay_php: {
       ...p,
       regular: saved.regularPay !== undefined ? saved.regularPay : p.regular,
