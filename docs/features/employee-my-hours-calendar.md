@@ -44,6 +44,56 @@ Forgiveness (US holiday · approved dispute · TEMP orphanage coverage) bumps a 
 **weekday** to a full 7 h. **Weekend cells keep raw hours** — under HSL they earn credit
 on their own merit, and gifting them 7 h would hand out the 5-of-7 quota.
 
+## The missed-day nudge
+
+Shipped 2026-09-10 with the tab rename. Kane's spec: *"any day that they missed the pay that
+disqualifies them — any red … a small chat bubble will open up on that date saying 'Need a time
+adjustment?' and it will pop up for like 5 seconds; if they have multiple then every 5 seconds
+another will pop up pointing to that date and it should be random."*
+
+**Three layers, because one was not enough.** Kane, on the second pass: *"the point is that if
+people cant see it properly then they wont know where the time adjustment"*. A bubble that shows for
+five seconds and then moves on is only ever pointing at ONE day, and it is missed entirely by
+someone who looks up a second late — the same discoverability failure in a new costume. So:
+
+1. **A persistent `!` marker on every nudgeable day.** In flow, in the label row's right-hand slot —
+   the one Holiday / Forgiven / the today-dot use, each of which is mutually exclusive with red, so
+   it cannot collide and, being in flow, cannot clip on an edge row or column.
+2. **The rotating bubble** — `NUDGE_INTERVAL_MS` (5s), one at a time, **looping**. Playing the list
+   once would put the last bubble 40s in on an eight-day month.
+3. **A permanent count above the grid** — "N days this month came in under 7 hours" — which survives
+   dismissing the bubbles and does not depend on catching one.
+
+**The trigger is `isNudgeableMissedDay` in `src/lib/employee/missed-day-nudge.ts`** — one pure
+definition shared by the cycle memo and the tile, so the bubble and the colour cannot disagree. Its
+first six terms mirror the tone chain's final `else`; **change one and you must change the other**,
+and `missed-day-nudge.test.ts` walks the branches as the tripwire.
+
+- **Red-only is narrower than the feature, on purpose.** `time-adjustment-requests.md` says a request
+  is "requestable before Hubstaff upload" and works on "days with zero or missing Hubstaff data" —
+  the forgot-the-tracker case. Those render sky "Processing" or orange "Pending", never red, so the
+  nudge does not appear on them. What it buys: a no-data day is often a day the SYSTEM has not read,
+  and the leading Sunday of every 8-day Sun→Sun export is still dropped outright
+  (`docs/notes/hubstaff-sunday-overlap.md`, root cause OPEN). Requiring real hours closes that whole
+  false-positive class by construction. Widening it is a one-line change in the predicate.
+- **`canRequestAdjust` is load-bearing, not belt-and-braces.** A future day carrying partial data
+  falls through the tone chain to red, and that term is the only thing excluding it.
+- **Random, but seeded.** `orderNudgeDays` is a Fisher–Yates shuffle over a `mulberry32` seeded on
+  the joined ISO list. `Math.random()` would reshuffle on every recompute and the cycle would jump
+  mid-sequence; a seeded deal is also the only kind that can be tested.
+- **Reduced motion gets one static bubble**, no rotation — timed auto-updating content is a WCAG
+  2.2.2 concern.
+- **Paused while a bubble is hovered or focused**; a 5-second target is otherwise hard to click. The
+  bubble also hides while its own tile is hovered, so the richer hover card takes over instead of
+  stacking on it.
+- **No portal.** The bubble reuses the hover card's `absolute` + row-aware flip
+  (`wi === 0 ? 'top-full' : 'bottom-full'`), which is how that card already stays inside the
+  calendar card's `overflow-hidden`.
+- **Dismissal is per viewer, per tab** — `sessionStorage`, never `localStorage`, with the email in
+  the key so an elevated `?email=` preview cannot inherit it. Dismissing stops the bubbles; the
+  markers and the count stay.
+- **Nothing notifies.** In-page only, so `notification-alerts-view-scoped` does not apply.
+
 ## The tiles
 
 They borrow the **Accounting → MESA stat-card idiom**: `rounded-xl`, a flat tone fill, a

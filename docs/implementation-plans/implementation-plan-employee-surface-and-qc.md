@@ -30,7 +30,7 @@
 | § | Workstream | Kind | Deadline |
 |---|---|---|---|
 | 4 | QC corrections: Alivia's role, Callback out of scope, real randomization | `hardening` | **Mon 2026-09-14** |
-| 5 | ~~Rename the tab to "Time Adjustments"~~ **BUILT 2026-09-10** + the auto-playing per-day nudge (pending) | `hardening` | Carla is waiting to be shown it |
+| 5 | ~~Rename the tab to "Time Adjustments" + the auto-playing per-day nudge~~ **BUILT 2026-09-10** | `hardening` | done — show Carla |
 | 6 | ~~PAB explainer copy (4 sites) · Details → FAQs · the drill-in~~ **BUILT 2026-09-10** | `hardening` | done |
 | 7 | Profile: Overview + ID + Compensation → one pane | `hardening` | — |
 | 8 | Reports → "Badges and Certificates" (label only) | `hardening` | — |
@@ -271,6 +271,13 @@ No test pins the `'My Hours'` string (unlike `'Pay Stubs'` in Profile), so the r
 build — the risk is entirely stale copy, and the table above is the whole of it.
 
 ### 5.0b Bubble choreography (R15)
+
+> **BUILT 2026-09-10.** Landed as **three layers**, not one — Kane: *"the point is that if people
+> cant see it properly then they wont know where the time adjustment"*. A five-second bubble points
+> at one day at a time and is missed by anyone who looks up late, so it ships alongside a persistent
+> `!` on every nudgeable day and a permanent count above the grid. Trigger is the pure
+> `isNudgeableMissedDay` (10 tests). **No portal needed** — the existing hover card's row-aware flip
+> already dodges the card's `overflow-hidden`, and reusing it beat introducing portal machinery.
 
 Exactly as specified: **"Need a time adjustment?"**, on a red date, ~**5s** each, one at a time,
 advancing every 5s through the red dates in **random** order, each pointing at its own date.

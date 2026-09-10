@@ -76,6 +76,11 @@ import {
   TECH_BONUS_WEEK_OVERRIDES_KEY,
   type TechWeekOverridesMap,
 } from '@/lib/payroll/dispatch-bonuses';
+import {
+  isNudgeableMissedDay,
+  orderNudgeDays,
+  NUDGE_INTERVAL_MS,
+} from '@/lib/employee/missed-day-nudge';
 import HiddenValue from './HiddenValue';
 import TimeAdjustmentDialog from './TimeAdjustmentDialog';
 import type { TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
@@ -1178,6 +1183,133 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     return weeks.length > 0 ? weeks : null;
   }, [mergedHoursByDateKey, monthStart, monthEnd, startOnSunday]);
 
+  /**
+   * Days wearing a "Need a time adjustment?" nudge, in the order the bubbles cycle.
+   *
+   * Reproduces the same per-cell facts the tile computes, then defers the decision to
+   * `isNudgeableMissedDay` — ONE definition shared by this memo and the tile, so the
+   * bubble and the colour cannot disagree. See `missed-day-nudge.ts` for why the
+   * trigger is red-only and what that deliberately misses.
+   */
+  const nudgeDayIsos = useMemo<string[]>(() => {
+    const days = hoursCalendar?.flat() ?? [];
+    if (days.length === 0) return [];
+    const now = new Date();
+    const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const found: string[] = [];
+    for (const day of days) {
+      const inMonth = day.date.getMonth() === viewMonth && day.date.getFullYear() === viewYear;
+      const iso = `${day.date.getFullYear()}-${String(day.date.getMonth() + 1).padStart(2, '0')}-${String(day.date.getDate()).padStart(2, '0')}`;
+      const weekend = day.date.getDay() === 0 || day.date.getDay() === 6;
+      const cellMid = new Date(day.date.getFullYear(), day.date.getMonth(), day.date.getDate());
+      const dispute = inMonth ? disputesByDate.get(iso) : undefined;
+      const forgiven = !!dispute && disputeGrantsPabForgiveness(dispute) && !day.passes;
+      const orphanageForgiven =
+        inMonth && !weekend && !day.passes && orphanageCoveredKeys.has(pabDateKey(day.date));
+      const hslOvernight = isHsl && inMonth && hslOvernightIsos.has(iso);
+      if (
+        isNudgeableMissedDay({
+          inMonth,
+          weekend,
+          isHoliday: inMonth ? usHolidayDates.has(iso) : false,
+          hasData: day.hasData,
+          effectivelyPasses: day.passes || forgiven || orphanageForgiven || hslOvernight,
+          isFutureOrToday: cellMid.getTime() >= todayMid.getTime(),
+          canRequestAdjust: inMonth && cellMid.getTime() <= todayMid.getTime(),
+          hasRequest: inMonth ? !!adjustmentsByDate.get(iso) : false,
+        })
+      ) {
+        found.push(iso);
+      }
+    }
+    return orderNudgeDays(found);
+  }, [
+    hoursCalendar,
+    viewMonth,
+    viewYear,
+    disputesByDate,
+    orphanageCoveredKeys,
+    hslOvernightIsos,
+    isHsl,
+    usHolidayDates,
+    adjustmentsByDate,
+  ]);
+
+  /** Which nudge is on screen. Advances every NUDGE_INTERVAL_MS and LOOPS: playing the
+   *  list once would put the last bubble 40s in on an eight-day month, long after
+   *  anyone is still looking. */
+  const [nudgeIdx, setNudgeIdx] = useState(0);
+  /** Paused while a bubble is hovered or focused — a 5-second target is hard to click. */
+  const [nudgePaused, setNudgePaused] = useState(false);
+  const [nudgeDismissed, setNudgeDismissed] = useState(false);
+  /** Reduced motion gets ONE static bubble instead of a timed rotation: content that
+   *  changes on a timer is a WCAG 2.2.2 concern, and this file already pairs
+   *  motion-safe / motion-reduce elsewhere. */
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    setPrefersReducedMotion(mq.matches);
+    const onChange = (e: MediaQueryListEvent) => setPrefersReducedMotion(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  /** Dismissal is per VIEWER and per tab: sessionStorage never localStorage (which
+   *  outlives the browser and would strand one person's state on a shared machine),
+   *  and the email is in the key so an elevated `?email=` preview cannot inherit it. */
+  const nudgeDismissKey = email ? `emp-nudge-dismissed:${email}` : null;
+  useEffect(() => {
+    if (!nudgeDismissKey) return;
+    try {
+      setNudgeDismissed(window.sessionStorage.getItem(nudgeDismissKey) === '1');
+    } catch {
+      setNudgeDismissed(false);
+    }
+  }, [nudgeDismissKey]);
+
+  const dismissNudges = useCallback(() => {
+    setNudgeDismissed(true);
+    if (!nudgeDismissKey) return;
+    try {
+      window.sessionStorage.setItem(nudgeDismissKey, '1');
+    } catch {
+      /* private mode / blocked storage — dismissing for this render is enough */
+    }
+  }, [nudgeDismissKey]);
+
+  // Re-seat the cycle whenever the day set changes (month paged, or a day filed).
+  // Keyed on CONTENT, not array identity: the memo hands back a fresh array on any
+  // recompute (an hours refresh, a dispute landing), and restarting the rotation
+  // every time would keep dragging the employee back to the same first bubble.
+  const nudgeCycleKey = nudgeDayIsos.join('|');
+  useEffect(() => {
+    setNudgeIdx(0);
+  }, [nudgeCycleKey]);
+
+  useEffect(() => {
+    if (nudgeDismissed || prefersReducedMotion) return;
+    if (nudgeDayIsos.length < 2 || nudgePaused) return;
+    const t = window.setInterval(
+      () => setNudgeIdx((i) => (i + 1) % nudgeDayIsos.length),
+      NUDGE_INTERVAL_MS,
+    );
+    return () => window.clearInterval(t);
+  }, [nudgeCycleKey, nudgeDayIsos.length, nudgePaused, nudgeDismissed, prefersReducedMotion]);
+
+  /** The ISO currently wearing the bubble, or null when there is nothing to nudge. */
+  const activeNudgeIso = useMemo(() => {
+    if (nudgeDismissed || nudgeDayIsos.length === 0) return null;
+    if (prefersReducedMotion) return nudgeDayIsos[0] ?? null;
+    return nudgeDayIsos[nudgeIdx % nudgeDayIsos.length] ?? null;
+  }, [nudgeDayIsos, nudgeIdx, nudgeDismissed, prefersReducedMotion]);
+
+  /** Every nudgeable day carries a persistent marker, not just the one wearing the
+   *  bubble. Kane, 2026-09-10: *"if people cant see it properly then they wont know
+   *  where the time adjustment"* — a bubble that rotates leaves the other short days
+   *  looking fine, which is the same discoverability failure in a new costume. */
+  const nudgeIsoSet = useMemo(() => new Set(nudgeDayIsos), [nudgeDayIsos]);
   const monthTotalSeconds = useMemo(() => {
     const days = hoursCalendar?.flat() ?? [];
     return days.reduce((s, d) => {
@@ -1478,6 +1610,33 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
           <p className="text-xs text-zinc-600 dark:text-zinc-500">
             Your merged Hubstaff hours — open a day to request a time adjustment. Dashed cells are the adjacent month but still show that day&apos;s hours. Pay summary counts only days in the month you&apos;re viewing (e.g. all of March).
           </p>
+          {/* Always-on summary. The rotating bubble is the attention-grabber, but it is
+              only ever on ONE day at a time and it can be missed entirely by someone who
+              looks up a second late — so the count lives here too, permanently, and
+              survives dismissing the bubbles. */}
+          {nudgeDayIsos.length > 0 && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-orange-200 bg-orange-50/80 px-2.5 py-1.5 text-[11px] text-orange-900 dark:border-orange-900/50 dark:bg-orange-950/30 dark:text-orange-100">
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-orange-500 text-[9px] font-bold leading-none text-white">
+                !
+              </span>
+              <span>
+                <span className="font-semibold">
+                  {nudgeDayIsos.length} day{nudgeDayIsos.length === 1 ? '' : 's'}
+                </span>{' '}
+                this month came in under 7 hours. Click a day marked{' '}
+                <span className="font-semibold">!</span> to request a time adjustment.
+              </span>
+              {!nudgeDismissed && (
+                <button
+                  type="button"
+                  onClick={dismissNudges}
+                  className="ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-orange-700 underline decoration-orange-300 underline-offset-2 hover:text-orange-900 focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:outline-none dark:text-orange-200 dark:hover:text-white"
+                >
+                  Stop the reminders
+                </button>
+              )}
+            </div>
+          )}
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:items-stretch lg:overflow-hidden">
@@ -1861,6 +2020,39 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                             title={`${titleBody}${titleDispute}${rateTooltip}`}
                             onClick={cellClickable ? handleCellClick : undefined}
                           >
+                            {/* The nudge itself. Same absolute + row-aware flip as the hover
+                                card below, which is how it stays inside the calendar card's
+                                `overflow-hidden` without a portal. Hidden while this tile is
+                                hovered so the richer hover card takes over rather than stacking. */}
+                            {activeNudgeIso === dayIso && (
+                              <div
+                                className={`absolute left-1/2 z-30 -translate-x-1/2 group-hover:hidden ${wi === 0 ? 'top-full pt-1.5' : 'bottom-full pb-1.5'}`}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCellClick();
+                                  }}
+                                  onMouseEnter={() => setNudgePaused(true)}
+                                  onMouseLeave={() => setNudgePaused(false)}
+                                  onFocus={() => setNudgePaused(true)}
+                                  onBlur={() => setNudgePaused(false)}
+                                  className="relative block whitespace-nowrap rounded-xl border border-orange-300 bg-orange-500 px-2.5 py-1.5 text-[10px] font-semibold text-white shadow-lg transition-transform hover:scale-[1.03] focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:outline-none animate-in fade-in duration-300 motion-reduce:animate-none dark:border-orange-400/60"
+                                >
+                                  Need a time adjustment?
+                                  {/* Comic tail, pointing back at the date. */}
+                                  <span
+                                    aria-hidden
+                                    className={`absolute left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 border-orange-300 bg-orange-500 dark:border-orange-400/60 ${
+                                      wi === 0
+                                        ? '-top-1 border-l border-t'
+                                        : '-bottom-1 border-b border-r'
+                                    }`}
+                                  />
+                                </button>
+                              </div>
+                            )}
                             {cellClickable && (
                               <div className={`absolute left-1/2 z-40 hidden -translate-x-1/2 group-hover:block ${wi === 0 ? 'top-full pt-1' : 'bottom-full pb-1'}`}>
                                 <div className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-left shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
@@ -1903,6 +2095,21 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                                 <span className="pointer-events-none mt-px flex h-1.5 w-1.5 shrink-0">
                                   <span className="absolute inline-flex h-1.5 w-1.5 animate-ping rounded-full bg-orange-400 opacity-75" />
                                   <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-orange-500" />
+                                </span>
+                              )}
+                              {/* Persistent marker on EVERY day needing an adjustment, not just
+                                  the one currently wearing the bubble — a rotating bubble leaves
+                                  the other short days looking fine, which is the same
+                                  discoverability failure in a new costume. It sits in the same
+                                  right-hand slot as Holiday / Forgiven / the today dot, which are
+                                  each mutually exclusive with red, so it can never collide — and
+                                  being in flow it can never clip on an edge row or column. */}
+                              {nudgeIsoSet.has(dayIso) && !isHoliday && !forgiven && !orphanageForgiven && (
+                                <span
+                                  aria-hidden
+                                  className="pointer-events-none flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-orange-500 text-[9px] font-bold leading-none text-white"
+                                >
+                                  !
                                 </span>
                               )}
                             </div>
