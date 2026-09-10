@@ -2,8 +2,12 @@
 //
 // A standalone, accountant-authored catalog of reusable bonus definitions plus
 // the assignments that attach them either to a whole department ("common") or
-// to a single employee ("specific"). Persisted as a JSON blob in `app_settings`
-// under BONUS_CATALOG_KEY via the existing /api/app-settings route.
+// to a single employee ("specific"). Persisted in the TABLES
+// `bonus_catalog_bonuses` / `bonus_catalog_assignments` via
+// `src/lib/supabase/bonus-catalog-db.ts`. It USED to be a JSON blob in
+// `app_settings` under BONUS_CATALOG_KEY; that key has no consumers today and no
+// such row exists in production (verified 2026-09-10) — it is kept only so old
+// imports keep compiling. Do not read the catalog through it.
 //
 // This layer is intentionally decoupled from live payroll: it lets us define
 // and validate bonus rules first; wiring computed results into the Payroll

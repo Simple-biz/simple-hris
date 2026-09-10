@@ -789,6 +789,10 @@ written until Kane approves this block.** Both items are new surfaces, not edits
 
 ### 13.1 QC paste → Compare → Override + officer histogram
 
+> **BUILT 2026-09-10** (Compare/Override/Undo; the histogram is NOT built — separate brief). Q1 was
+> settled by a read-only production probe: the variable is `Appts_Set` on the dept bonus and `Appts`
+> on reinelr@'s individual bonus, so it is resolved PER MEMBER. See `qc-scoring.md` §Compare.
+
 **Surface.** Manager → KPI Calculator → Lead Gen. Jackie pastes her weekly sheet, presses
 **Compare** to see what disagrees with the officers' entries, then **Override** to replace them; plus
 a histogram of which officer is least accurate.

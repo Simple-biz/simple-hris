@@ -87,6 +87,15 @@ import {
   shouldRearmAutosave,
 } from '@/lib/manager/kpi-autosave';
 import { QC_DEPT_KEYS, isQcDeptKey } from '@/lib/qc/constants';
+import { parseAppointmentPaste, type PasteRefusal } from '@/lib/qc/paste';
+import {
+  compareAppointments,
+  overrideTargets,
+  type CompareMember,
+  type CompareResult,
+  type QcSubmissionLite,
+} from '@/lib/qc/compare';
+import { logAudit } from '@/lib/audit/client-log';
 import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
 import {
   pickCurrentSourceFile,
@@ -207,6 +216,11 @@ interface DeptAppliedPayload {
     employee_name: string | null;
     bonus_id: string;
     vars: Record<string, number> | null;
+    /** `qc_kpi_submissions.scored_by` — the officer who typed it, stamped from their
+     *  session. Present on QC rows, absent on the manager's own applied rows. The GET
+     *  always returned it; until 2026-09-10 this type dropped it on the floor, which is
+     *  why Compare could not say WHO entered a wrong score. */
+    scored_by?: string | null;
   }[];
   status: BonusStatus;
   /** The rows above came from `qc_kpi_submissions`, not the manager's own table. */
@@ -1441,6 +1455,27 @@ export default function DeptBonusCalculator({
   } | null>(null);
   // "Add External Member" modal: the dept key it's adding into (null = closed).
   const [extAddKey, setExtAddKey] = useState<string | null>(null);
+
+  // -- Compare-with-sheet (manager mode, QC departments) -------------------------
+  // Jackie pastes her sheet, Compare diffs it against the officers' first pass,
+  // Override applies her numbers, Undo puts back exactly the cells Override touched.
+  // All per department key. Nothing here is persisted: Override mutates `state`
+  // through `setVar` and the existing whole-dept autosave does the write.
+  type CompareRun = {
+    result: CompareResult;
+    parseRefusals: PasteRefusal[];
+    headerSkipped: boolean;
+    pastedCount: number;
+  };
+  /** Pre-Override value of each cell Override changed — undefined when the member had
+   *  no applied entry for that bonus at all, so Undo can remove it rather than blank it. */
+  type OverrideSnapshot = Array<{ email: string; bonusId: string; before: AppliedState | undefined }>;
+  const [compareOpen, setCompareOpen] = useState<Record<string, boolean>>({});
+  const [comparePaste, setComparePaste] = useState<Record<string, string>>({});
+  const [compareRuns, setCompareRuns] = useState<Record<string, CompareRun | null>>({});
+  const [compareBusy, setCompareBusy] = useState<Record<string, boolean>>({});
+  const [compareError, setCompareError] = useState<Record<string, string | null>>({});
+  const [overrideUndo, setOverrideUndo] = useState<Record<string, OverrideSnapshot | null>>({});
   // Recently offboarded people (final bonuses may still be owed) — fetched once
   // and shared by the per-dept Offboarded strips and the add-member modal.
   const { people: offboardedPeople, hoursWeekFloor: offboardedHoursFloor } = useOffboardedPeople(!isQc);
@@ -2195,6 +2230,172 @@ export default function DeptBonusCalculator({
     });
   }
 
+  /**
+   * The members of a department in the shape `compareAppointments` needs: their
+   * canonical (personal-first) identity, EVERY email that resolves to them (so a
+   * pasted WORK email bridges), and the one formula variable they are scored under.
+   *
+   * The variable is resolved PER MEMBER through the same `applicableBonuses` the
+   * table renders with — in production the department bonus scores `Appts_Set` but
+   * reinelr@ is excluded from it and holds an individual bonus scoring `Appts`.
+   * A bonus with several variables is only usable when one of them is unambiguously
+   * the appointment count; otherwise the member is refused rather than guessed.
+   */
+  const compareMembersFor = useCallback(
+    (deptKey: string): CompareMember[] => {
+      const d = state[deptKey];
+      if (!d) return [];
+      return d.members.map((m) => {
+        let bonusId: string | null = null;
+        let varName: string | null = null;
+        for (const b of applicableBonuses(deptKey, m.email)) {
+          const vars = bonusVariables(b);
+          if (vars.length === 0) continue;
+          const appt = vars.find((v) => /appt/i.test(v));
+          const pick = appt ?? (vars.length === 1 ? vars[0]! : null);
+          if (pick) {
+            bonusId = b.id;
+            varName = pick;
+            break;
+          }
+        }
+        return {
+          canonical: m.email,
+          emails: emailsByIdentity.get(m.email) ?? [m.email],
+          name: m.name,
+          workEmail: workEmailByIdentity.get(m.email) ?? null,
+          bonusId,
+          varName,
+        };
+      });
+    },
+    [state, applicableBonuses, emailsByIdentity, workEmailByIdentity],
+  );
+
+  /** Parse the paste, fetch the officers' current rows for this week, and diff.
+   *  Always re-fetches: the QC seed only fires on a never-saved week, and after the
+   *  manager's first save the officers' rows are never read again by the loader. */
+  const runCompare = useCallback(
+    async (deptKey: string) => {
+      const parsed = parseAppointmentPaste(comparePaste[deptKey] ?? '');
+      setCompareBusy((p) => ({ ...p, [deptKey]: true }));
+      setCompareError((p) => ({ ...p, [deptKey]: null }));
+      try {
+        const res = await fetch(
+          `/api/qc/submissions?dept=${encodeURIComponent(deptKey)}&period_start=${encodeURIComponent(weekStart)}`,
+          { cache: 'no-store' },
+        );
+        if (!res.ok) throw new Error(`Could not load the QC scores (${res.status})`);
+        const json = (await res.json()) as { rows?: DeptAppliedPayload['rows'] };
+        const qcRows: QcSubmissionLite[] = (json.rows ?? []).map((r) => ({
+          employee_email: r.employee_email,
+          bonus_id: r.bonus_id,
+          vars: r.vars,
+          scored_by: r.scored_by ?? null,
+        }));
+        const result = compareAppointments(parsed.rows, compareMembersFor(deptKey), qcRows);
+        setCompareRuns((p) => ({
+          ...p,
+          [deptKey]: { result, parseRefusals: parsed.refusals, headerSkipped: parsed.headerSkipped, pastedCount: parsed.rows.length },
+        }));
+      } catch (e) {
+        setCompareError((p) => ({ ...p, [deptKey]: e instanceof Error ? e.message : 'Compare failed' }));
+      } finally {
+        setCompareBusy((p) => ({ ...p, [deptKey]: false }));
+      }
+    },
+    [comparePaste, weekStart, compareMembersFor],
+  );
+
+  /**
+   * Jackie's numbers win (Kane, 2026-09-10). Applies to MISMATCH and PASTE_ONLY rows
+   * only — matches are already right and QC_ONLY has nothing of hers to apply.
+   *
+   * Goes through `setVar` cell by cell so `seeded` clears with `dirty` and the
+   * member's EXISTING state entry is written — never a string from the paste, which
+   * is what keeps a case-variant from becoming a second applied row. Nothing here
+   * assembles `rows[]`: the existing whole-department autosave persists the result,
+   * so people absent from the paste keep their values.
+   */
+  const applyOverride = useCallback(
+    (deptKey: string) => {
+      const run = compareRuns[deptKey];
+      const d = state[deptKey];
+      if (!run || !d) return;
+      const targets = overrideTargets(run.result);
+      if (targets.length === 0) return;
+      const snapshot: OverrideSnapshot = targets.map((t) => ({
+        email: t.canonical,
+        bonusId: t.bonusId,
+        before: d.members.find((m) => m.email === t.canonical)?.applied[t.bonusId],
+      }));
+      setOverrideUndo((p) => ({ ...p, [deptKey]: snapshot }));
+      for (const t of targets) setVar(deptKey, t.canonical, t.bonusId, t.varName, String(t.pasted));
+      // Applied-row saves are deliberately unaudited (autosave volume). This is one
+      // deliberate bulk action during a parallel test whose whole point is seeing who
+      // was wrong, so it gets one row: who, which week, from what, to what.
+      void logAudit({
+        user_name: viewerEmail ?? 'anonymous',
+        action: 'qc.compare_override_applied',
+        resource: 'qc_compare',
+        resource_id: `${deptKey}:${weekStart}`,
+        details: {
+          department: deptKey,
+          period_start: weekStart,
+          pasted_rows: run.pastedCount,
+          overridden: targets.length,
+          changes: targets.map((t) => ({
+            email: t.canonical,
+            bonus_id: t.bonusId,
+            variable: t.varName,
+            from: t.qc,
+            to: t.pasted,
+            scored_by: t.scoredBy,
+          })),
+        },
+      });
+      toast.success(
+        `Applied ${targets.length} value${targets.length === 1 ? '' : 's'} from your sheet. Undo stays available until you leave this page.`,
+      );
+    },
+    [compareRuns, state, viewerEmail, weekStart],
+  );
+
+  /** Put back exactly the cells Override changed. Edits made elsewhere since are
+   *  untouched. In memory only — gone on reload, which is the "just in case", not a
+   *  history feature. */
+  const undoOverride = useCallback(
+    (deptKey: string) => {
+      const snap = overrideUndo[deptKey];
+      if (!snap || snap.length === 0) return;
+      setState((prev) => {
+        const d = prev[deptKey];
+        if (!d) return prev;
+        return {
+          ...prev,
+          [deptKey]: {
+            ...d,
+            dirty: true,
+            seeded: false,
+            members: d.members.map((m) => {
+              const mine = snap.filter((x) => x.email === m.email);
+              if (mine.length === 0) return m;
+              const applied = { ...m.applied };
+              for (const x of mine) {
+                if (x.before === undefined) delete applied[x.bonusId];
+                else applied[x.bonusId] = x.before;
+              }
+              return { ...m, applied };
+            }),
+          },
+        };
+      });
+      setOverrideUndo((p) => ({ ...p, [deptKey]: null }));
+      toast.success('Reverted to the values before Override.');
+    },
+    [overrideUndo],
+  );
+
   /** Turn a team-effort (shared) bonus on/off for the whole department. */
   function toggleShared(deptKey: string, bonusId: string, on: boolean) {
     setState((prev) => {
@@ -2810,6 +3011,15 @@ export default function DeptBonusCalculator({
     const statusReadOnly = v.readOnly;
     const editLocked = !!lockedDepts[key];
     const readOnly = statusReadOnly || editLocked;
+    // Compare-with-sheet panel state for this department (manager mode, QC depts).
+    const cmpRun = compareRuns[key] ?? null;
+    const cmpTargets = cmpRun ? overrideTargets(cmpRun.result) : [];
+    const cmpActionable = cmpRun
+      ? cmpRun.result.entries.filter((e) => e.bucket === 'mismatch' || e.bucket === 'paste_only')
+      : [];
+    const cmpQcOnly = cmpRun ? cmpRun.result.entries.filter((e) => e.bucket === 'qc_only') : [];
+    const cmpRefusals = cmpRun ? cmpRun.parseRefusals.length + cmpRun.result.refusals.length : 0;
+    const cmpUndo = overrideUndo[key] ?? null;
     // "Add External Member": manager mode, an allowed dept, week still editable.
     const canAddExternal = !isQc && EXTERNAL_MEMBER_DEPTS.has(key) && !readOnly && !!d?.loaded;
     // Recently offboarded members of THIS department — surfaced so their final
@@ -2965,6 +3175,195 @@ export default function DeptBonusCalculator({
                 return addExternalMember(key, c.name, email);
               }}
             />
+          </div>
+        )}
+
+        {/* Compare with the manager's own sheet — manager mode, QC departments, and
+            only while the week is still a draft (a locked week is reopened first, via
+            the existing path). Paste → Compare re-fetches the officers' rows → Override
+            applies the manager's numbers → Undo puts back exactly the touched cells. */}
+        {!isQc && isQcDeptKey(key) && tableReady && !readOnly && (
+          <div className="flex-none border-b border-zinc-100 dark:border-zinc-800/70">
+            <button
+              type="button"
+              onClick={() => setCompareOpen((p) => ({ ...p, [key]: !p[key] }))}
+              aria-expanded={!!compareOpen[key]}
+              className="flex w-full items-center justify-between gap-2 px-4 py-2 text-left text-xs hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40 sm:px-5"
+            >
+              <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-medium text-zinc-700 dark:text-zinc-200">
+                <Search className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden />
+                Compare with your sheet
+                {cmpRun && (
+                  <span className="font-normal text-zinc-400">
+                    · {cmpRun.result.counts.match} match · {cmpRun.result.counts.mismatch} differ ·{' '}
+                    {cmpRun.result.counts.paste_only} unscored by QC · {cmpQcOnly.length} not in paste
+                    {cmpRefusals > 0 ? ` · ${cmpRefusals} skipped` : ''}
+                  </span>
+                )}
+              </span>
+              <ChevronDown
+                className={cn('h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform', compareOpen[key] && 'rotate-180')}
+                aria-hidden
+              />
+            </button>
+
+            {compareOpen[key] && (
+              <div className="px-4 pb-3 sm:px-5">
+                <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
+                  {/* Left: the paste */}
+                  <div className="space-y-2">
+                    <textarea
+                      value={comparePaste[key] ?? ''}
+                      onChange={(e) => {
+                        setComparePaste((p) => ({ ...p, [key]: e.target.value }));
+                        // A stale result under new text is misleading; clear it.
+                        setCompareRuns((p) => ({ ...p, [key]: null }));
+                      }}
+                      placeholder={'marcc@simple.biz\tCahig, Marc Joseph\t32\njaysonm@simple.biz\tMahinay, Jayson\t25'}
+                      rows={8}
+                      spellCheck={false}
+                      className="w-full resize-y rounded-md border border-zinc-200 bg-white px-2.5 py-2 font-mono text-[11px] leading-relaxed text-zinc-800 outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
+                      aria-label="Paste your appointment sheet"
+                    />
+                    <p className="text-[10.5px] leading-snug text-zinc-500 dark:text-zinc-400">
+                      Paste straight from the sheet: work email, name, appointments — tab-separated, no header
+                      needed. Names may contain commas; that is fine.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        size="sm"
+                        className="h-8 gap-1.5 text-xs"
+                        disabled={!!compareBusy[key] || !(comparePaste[key] ?? '').trim()}
+                        onClick={() => void runCompare(key)}
+                      >
+                        {compareBusy[key] ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+                        Compare
+                      </Button>
+                      {cmpRun && cmpTargets.length > 0 && !cmpUndo && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 gap-1.5 border-emerald-300 text-xs text-emerald-800 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300"
+                          onClick={() => applyOverride(key)}
+                          title="Your sheet wins: writes your number over every differing or missing QC score. Matches are left alone."
+                        >
+                          <Check className="h-3.5 w-3.5" /> Override {cmpTargets.length} — your sheet wins
+                        </Button>
+                      )}
+                      {cmpUndo && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 gap-1.5 text-xs"
+                          onClick={() => undoOverride(key)}
+                          title="Put back exactly the cells Override changed"
+                        >
+                          <CornerUpLeft className="h-3.5 w-3.5" /> Undo override
+                        </Button>
+                      )}
+                      {compareError[key] && (
+                        <span className="text-[11px] text-red-600 dark:text-red-400">{compareError[key]}</span>
+                      )}
+                    </div>
+                    {cmpUndo && (
+                      <p className="text-[10.5px] text-zinc-500 dark:text-zinc-400">
+                        Applied. Run Compare again to confirm everything now matches. Undo is available until you
+                        leave this page.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Right: the result */}
+                  <div className="min-w-0 space-y-2">
+                    {!cmpRun ? (
+                      <p className="pt-1 text-[11px] text-zinc-400">Differences appear here after you Compare.</p>
+                    ) : cmpActionable.length === 0 ? (
+                      <p className="flex items-center gap-1.5 pt-1 text-[11px] text-emerald-700 dark:text-emerald-400">
+                        <Check className="h-3.5 w-3.5" /> Every pasted person matches the QC score
+                        {cmpRun.pastedCount ? ` (${cmpRun.pastedCount} rows)` : ''}.
+                      </p>
+                    ) : (
+                      <div className="overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+                        <table className="w-full text-[11px]">
+                          <thead className="bg-zinc-50 text-left text-[10px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
+                            <tr>
+                              <th className="px-2.5 py-1.5 font-medium">Person</th>
+                              <th className="px-2.5 py-1.5 text-right font-medium">Your sheet</th>
+                              <th className="px-2.5 py-1.5 text-right font-medium">QC entered</th>
+                              <th className="px-2.5 py-1.5 font-medium">Scored by</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                            {cmpActionable.map((e) => (
+                              <tr key={`${e.canonical}|${e.bonusId}`}>
+                                <td className="px-2.5 py-1.5">
+                                  <div className="truncate font-medium text-zinc-800 dark:text-zinc-100">{e.name || e.canonical}</div>
+                                  <div className="truncate text-[10px] text-zinc-400">{e.workEmail ?? e.canonical}</div>
+                                </td>
+                                <td className="px-2.5 py-1.5 text-right font-mono tabular-nums text-zinc-800 dark:text-zinc-100">{e.pasted}</td>
+                                <td className="px-2.5 py-1.5 text-right font-mono tabular-nums">
+                                  {e.bucket === 'paste_only' ? (
+                                    <span className="text-zinc-400">—</span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400">
+                                      <AlertTriangle className="h-3 w-3" aria-hidden />
+                                      {e.qc}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-2.5 py-1.5 truncate text-zinc-500 dark:text-zinc-400">
+                                  {e.bucket === 'paste_only' ? 'not scored' : (e.scoredBy ?? 'unknown')}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {cmpRun && cmpQcOnly.length > 0 && (
+                      <details className="text-[11px]">
+                        <summary className="cursor-pointer text-zinc-500 hover:text-zinc-700 dark:text-zinc-400">
+                          {cmpQcOnly.length} scored by QC but not in your paste — left as they are
+                        </summary>
+                        <ul className="mt-1 space-y-0.5 pl-3 text-zinc-500 dark:text-zinc-400">
+                          {cmpQcOnly.map((e) => (
+                            <li key={`${e.canonical}|${e.bonusId}`} className="truncate">
+                              {e.name || e.canonical} · QC {e.qc} · {e.scoredBy ?? 'unknown'}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+
+                    {cmpRun && cmpRefusals > 0 && (
+                      <details className="text-[11px]" open>
+                        <summary className="cursor-pointer text-amber-700 hover:text-amber-800 dark:text-amber-400">
+                          {cmpRefusals} line{cmpRefusals === 1 ? '' : 's'} skipped — not compared, not overridden
+                        </summary>
+                        <ul className="mt-1 space-y-0.5 pl-3 text-zinc-600 dark:text-zinc-300">
+                          {cmpRun.parseRefusals.map((r) => (
+                            <li key={`p${r.line}`}>
+                              <span className="font-mono text-zinc-400">L{r.line}</span> {r.reason}
+                            </li>
+                          ))}
+                          {cmpRun.result.refusals.map((r) => (
+                            <li key={`c${r.line}`}>
+                              <span className="font-mono text-zinc-400">L{r.line}</span> {r.email ? `${r.email}: ` : ''}
+                              {r.reason}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+
+                    {cmpRun?.headerSkipped && (
+                      <p className="text-[10.5px] text-zinc-400">Header row skipped.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

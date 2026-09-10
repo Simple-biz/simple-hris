@@ -137,14 +137,97 @@ hadn't started") — the house fail-toward-keeping pattern.
   assistant". Revoking is a **soft** revoke (`revoked_at`), so it is reversible and audited —
   and because the officer set changed, it also triggers a re-deal of the current week.
 
-## Still to build
+## Compare / Override / Undo — Jackie's sheet against the officers' first pass
 
-**Paste → Compare → Override + the officer-accuracy histogram** — agreed in the 2026-09-09
-meeting, `blueprint`-gated, not started. Contract: three columns (work email, full name, total
-appointments) from Jackie's weekly payroll email, joined on **work email**. See
-[[qc-compare-override-paste-format]] for the four things the brief must settle first — chiefly
-that **absence is not zero** (`saveDeptPeriodApplied` is a replace-set, and an Override built
-from a partial paste would silently clear real scores).
+Shipped 2026-09-10 (same-day approval of the revised brief). Manager mode, QC departments,
+**draft weeks only** — a locked week is reopened through the existing path first; the panel is
+simply absent while `readOnly`.
+
+**Flow.** Jackie pastes her sheet → **Compare** → a bucketed diff → **Override** → **Undo**.
+
+| Piece | File |
+|---|---|
+| Parser (pure) | `src/lib/qc/paste.ts` · `paste.test.ts` (10) |
+| Diff (pure) | `src/lib/qc/compare.ts` · `compare.test.ts` (11) |
+| Panel + Override + Undo | `DeptBonusCalculator.tsx` — `compareMembersFor`, `runCompare`, `applyOverride`, `undoOverride`, and the panel above the officer rail |
+| Officer attribution | `DeptAppliedPayload.rows[].scored_by` — the GET always returned it; the client type dropped it until now |
+
+### The paste is TAB-only, and a line without a tab is refused
+
+`marcc@simple.biz ⇥ Cahig, Marc Joseph ⇥ 32`. Column 2 is the surname-first master name — it
+**contains a comma** and may carry a quoted nickname. So nothing CSV-shaped may touch it, and the
+orphanage paste's comma fallback (`PayrollWizard.tsx:8331`) — which would shred `Cahig, Marc`
+into two cells and shift the count — was deliberately **not** copied. Also not copied: the
+orphanage parser's silent ₱0 on a misaligned row (`Number('')` is 0 and its pricer has no
+zero refusal). Here the count must be a whole non-negative integer or the line is refused with its
+line number and reason. Column 2 is **display only**; matching never reads it.
+
+### The variable is resolved PER MEMBER — never assumed
+
+Production (read-only probe, 2026-09-10): the department bonus `bonus_mq9yxlmsyj7avdmc` scores
+**`Appts_Set`** (`=IF(Appts_Set>=10, Appts_Set*500, Appts_Set*250)`); **reinelr@ is excluded**
+from it and holds `Lead Gen (COP)` `bonus_mtddp1p5rf4hq1rw`, scoring **`Appts`** (`=Appts*14000`).
+`compareMembersFor` walks the same `applicableBonuses` the table renders with and picks the
+formula variable matching `/appt/i` (or the sole variable). A member with no such bonus is
+**refused**, not skipped. `compare.test.ts` pins both live keys as fixtures the way
+`team-rankings.test.ts` pins its own.
+
+**The catalog is tables, not a blob.** `bonus_catalog_bonuses` / `bonus_catalog_assignments` via
+`bonus-catalog-db.ts`. `BONUS_CATALOG_KEY` has no consumers and no `app_settings` row exists —
+`src/lib/bonus-catalog/types.ts`'s header said otherwise until 2026-09-10.
+
+### The join is WORK email → PERSONAL-first canonical, and ambiguity is refused
+
+Applied and QC rows key on `personal_email || work_email`; the paste supplies the work email.
+`compareAppointments` bridges through every email the master row owns and matches on the
+canonical. A pasted address that resolves to **two** people is refused as ambiguous; two pasted
+addresses resolving to the **same** person is a duplicate-person refusal (the parser can only see
+duplicate strings). Unmatched rows are listed, never created (Kane, Q5).
+
+### Four buckets; "wrong" is a count delta, in appointments
+
+MATCH · MISMATCH (with `scored_by`) · PASTE_ONLY (no QC row) · QC_ONLY (not in the paste). Kane,
+Q4: *"INACCURACY means that the values set by QC is different from the ones set by JACKIE"* — the
+officers cannot see her sheet, so any delta is a scoring error. No pesos, no tiers, no FX.
+
+### Override mutates `state` through `setVar` and NEVER assembles `rows[]`
+
+Jackie's numbers win (Kane). Override applies to **MISMATCH and PASTE_ONLY only** — matches are
+already right, QC_ONLY has nothing of hers to apply — by calling the existing `setVar` per cell.
+That is load-bearing twice over:
+
+- `saveDept` always posts the **full dept-week** and `saveDeptPeriodApplied` deletes every row not
+  in the keep-set. Letting the existing autosave run whole is what keeps people **absent from the
+  paste** exactly as they were. Absence is not zero.
+- `bonus_catalog_applied.employee_email` is stored **verbatim** and is in the conflict target;
+  `setVar` writes to the member's existing entry, so a case-variant from the paste can never become
+  a second row the wizard sums. And `setVar` clears `seeded` with `dirty`, so the autosave gate
+  treats it as a person's entry, not the load.
+
+**Undo** restores **exactly the cells Override changed**, from an in-memory snapshot taken
+immediately before — a cell that had no applied entry is removed, not blanked. Edits made elsewhere
+since are untouched. It lives until the page is left: that is the "just in case" Kane asked for,
+not a history feature (Q2).
+
+**Compare re-fetches `/api/qc/submissions` every time.** The loader's QC seed fires only on a
+never-saved week; after the manager's first save the officers' rows are never read again by it.
+No new server read was added, so no new paging obligation — but `listQcSubmissions` is unpaged
+and a single dept-week stays well under 1,000.
+
+**One audit event**, `qc.compare_override_applied` (family `qc.` by prefix): week, pasted-row
+count, and per row `from → to` with `scored_by`. Applied-row saves are otherwise deliberately
+unaudited (`audit-log.md` §6, autosave volume); this is one deliberate bulk action during a parallel
+test whose point is seeing who was wrong.
+
+**Gate** (Q6): the existing `manager/hsl_bonus` edit + `department_managers` scope. Undo is the
+same person, same gate. The 423 dispatch lockout is inherited from the existing route.
+
+### Not built, deliberately
+
+The officer-accuracy **histogram** (separate brief — it names officers' error rates to a manager
+who is not their manager). The "advanced version" where QC reviews appointments from the form and
+that count becomes the Lead Gen figure — Kane: *"another topic of discussion that we are going to
+get a hold off for now."*
 
 See also: `bonus-catalog.md` · `payment-dispatch.md` §6.3 ·
 `hsl-kpi-calculator-2026-07.md` · `hubstaff-zero-hours-gap.md`

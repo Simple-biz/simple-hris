@@ -216,7 +216,7 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     match: 'qc.',
     surfaces: ['accounting', 'manager'],
     label: 'QC scoring',
-    note: 'review.*, scores.locked/reopened',
+    note: 'review.*, scores.locked/reopened, compare_override_applied',
   },
   {
     match: 'mesa.',
