@@ -28,6 +28,7 @@ Complete documentation for all REST API endpoints. Base URL: `http://localhost:3
 14. [Paystub Dispatch Queue](#14-paystub-dispatch-queue)
 13. [Planned Endpoints (Payroll Automation)](#13-planned-endpoints-payroll-automation)
 15. [New endpoints (2026-07-08..10)](#15-new-endpoints-2026-07-0810)
+16. [Audit log + routes gated 2026-09-09](#16-audit-log--routes-gated-2026-09-09)
 
 ---
 
@@ -843,7 +844,7 @@ Imports a CSV file as a new dynamically-created PostgreSQL table.
 **Tables**: Creates a new dynamic table via direct PostgreSQL connection
 **Service Role**: Required (via `importDailyReportToPostgres()`)
 
-> **Note**: This endpoint creates arbitrary database tables. Admin-only access is critical after RBAC implementation.
+**Auth** *(since 2026-09-09, `ddf4c790`)*: `requireElevatedSession()` — this was one of the six ungated routes found by the pre-release sweep, and it is an unauthenticated **CSV → Postgres write**. Writes audit `daily_report.imported`. **No component in the app fetches it**; deletion is the right end state and is Kane's call (`features/audit-log.md` §8, `features/pre-release-security-readiness.md` §2).
 
 ---
 
@@ -2375,3 +2376,61 @@ No rate limiting is currently implemented. After RBAC:
 - CSV upload: 10 per hour per user
 - All other mutations: 60 per minute per user
 - Read endpoints: 120 per minute per user
+
+---
+
+## 16. Audit log + routes gated 2026-09-09
+
+Governing doc: [audit-log.md](../features/audit-log.md) — the action registry (`src/lib/audit/registry.ts`) is the single
+source for what an action name means; `registry.test.ts` fails the build on an `insertAuditLog` call whose action has no family.
+Actor identity on every write comes from the verified session (`auditFrom(request, authz)` / `getSessionActor()`), **never** from
+the request body.
+
+### `GET /api/audit-log`
+
+**Auth**: elevated session (`requireElevatedSession` — admin / accounting / hr_coordinator).
+
+| Param | Meaning |
+|---|---|
+| `surface` | one of `AUDIT_SURFACES` ids (a dashboard) — expands to that dashboard's action prefixes via the registry |
+| `action_prefix` | comma-separated prefixes; wins over `surface` |
+| `actor` | exact match for an email, contains-match otherwise |
+| `search` | free text over action / resource / actor / `details` — filtered in JS over a **2000-event window**, and the response says how far it reached |
+| `since`, `until` | `YYYY-MM-DD`, Asia/Manila days |
+| `before` | keyset cursor — a previous page's `next_cursor` (keyset, never `.range()`) |
+| `limit` | 1–500, default 100 |
+
+**Response** `200`: `{ rows, next_cursor, has_more, scanned, search_window, error: null }`. With `search`, `next_cursor` is
+`null` and `search_window` is `{ complete, events_scanned, oldest_scanned, note }` — an incomplete window is stated, so "no
+results" is never mistaken for "never happened".
+
+### `POST /api/audit-log`
+
+**Auth**: any signed-in session (`401` when anonymous). Body `{ action, resource, resource_id?, details? }` (`400` when
+`action`/`resource` missing). `user_name`, `user_role` and `ip_address` are stamped from the session and request — a body value
+for them is ignored.
+
+### `DELETE /api/audit-log` — retention purge, not a clear
+
+**Auth**: elevated session **and** role `admin` (`403` otherwise).
+
+| Param | Meaning |
+|---|---|
+| `older_than_days` | **required**; anything below `AUDIT_PURGE_MIN_AGE_DAYS` (**90**) is refused with `400` |
+| `preview=1` | count only → `{ preview: true, cutoff, matching }` |
+
+Writes the `audit.purged` event (cutoff, days, row count, actor, IP) **before** deleting and abandons the purge (`500`) if that
+write fails. Response `{ deleted, cutoff, error: null }`. The former wholesale `clearAuditLog()` behind a "Clear Log" button is
+gone — it was the one action that could not record itself.
+
+### Gated the same day (two of the six ungated routes)
+
+| Route | Now |
+|---|---|
+| `GET` / `PUT /api/employee-gift-shipping` | `authorizeShippingAccess()` — the row's owner (matched through their master record, so a personal email resolves) or staff holding `hr / gift_tracker`; the un-scoped list is staff-only. `PUT` audits `employee_gift_shipping.submitted` with the `channel`. |
+| `POST /api/import-daily-report` | `requireElevatedSession()` + `daily_report.imported` — see §8. Dead endpoint; delete it. |
+
+**Still ungated as of 2026-09-10:** `manager/member-monthly-pay` (anyone's monthly pay by `?email=` — fix first),
+`hr/fpu-enrollments`, `hsl-bonus/period-summary`, `presence/last-seen`. Helpers exist (`authorizeEmailAccess` /
+`requireFeatureAccess` / `requireAdminSession`); this is wiring. See
+[pre-release-security-readiness.md](../features/pre-release-security-readiness.md) §2.
