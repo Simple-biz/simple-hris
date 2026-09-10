@@ -1284,26 +1284,38 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   // recompute (an hours refresh, a dispute landing), and restarting the rotation
   // every time would keep dragging the employee back to the same first bubble.
   const nudgeCycleKey = nudgeDayIsos.join('|');
+  const nudgeCount = nudgeDayIsos.length;
   useEffect(() => {
     setNudgeIdx(0);
   }, [nudgeCycleKey]);
 
+  /**
+   * The rotation. Deps are FOUR primitives, every one of them read in the body — the
+   * modulo base and the three stop conditions.
+   *
+   * Deliberately NOT keyed on `nudgeCycleKey` or on `nudgeDayIsos`: swapping which days
+   * are in the set does not change how the counter wraps, and the effect above already
+   * re-seats the index when the set changes. Depending on both the key and the length
+   * said the same thing twice, and the interval was being torn down and rebuilt for a
+   * change it does not care about.
+   */
   useEffect(() => {
     if (nudgeDismissed || prefersReducedMotion) return;
-    if (nudgeDayIsos.length < 2 || nudgePaused) return;
+    if (nudgeCount < 2 || nudgePaused) return;
     const t = window.setInterval(
-      () => setNudgeIdx((i) => (i + 1) % nudgeDayIsos.length),
+      () => setNudgeIdx((i) => (i + 1) % nudgeCount),
       NUDGE_INTERVAL_MS,
     );
     return () => window.clearInterval(t);
-  }, [nudgeCycleKey, nudgeDayIsos.length, nudgePaused, nudgeDismissed, prefersReducedMotion]);
+  }, [nudgeCount, nudgePaused, nudgeDismissed, prefersReducedMotion]);
 
   /** The ISO currently wearing the bubble, or null when there is nothing to nudge. */
   const activeNudgeIso = useMemo(() => {
-    if (nudgeDismissed || nudgeDayIsos.length === 0) return null;
+    if (nudgeDismissed || nudgeCount === 0) return null;
     if (prefersReducedMotion) return nudgeDayIsos[0] ?? null;
-    return nudgeDayIsos[nudgeIdx % nudgeDayIsos.length] ?? null;
-  }, [nudgeDayIsos, nudgeIdx, nudgeDismissed, prefersReducedMotion]);
+    // `nudgeIdx` can outlive a shrinking list for one render; the wrap keeps it in range.
+    return nudgeDayIsos[nudgeIdx % nudgeCount] ?? null;
+  }, [nudgeDayIsos, nudgeCount, nudgeIdx, nudgeDismissed, prefersReducedMotion]);
 
   /** Every nudgeable day carries a persistent marker, not just the one wearing the
    *  bubble. Kane, 2026-09-10: *"if people cant see it properly then they wont know
