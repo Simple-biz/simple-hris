@@ -36,6 +36,9 @@ import {
 } from '@/lib/payment-catalog/pay-structure';
 import { flatAmount } from '@/lib/bonus-catalog/types';
 import { mapEmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
+import { getSkillSet } from '@/lib/supabase/employee-skill-sets';
+import { listEmployeePayStubs } from '@/lib/payroll/employee-paystubs';
+import { formatWeekHuman } from '@/lib/payroll/paystub-view';
 import { parseNameParts } from '@/lib/name/name-parts';
 import { normEmail } from '@/lib/email/norm-email';
 
@@ -70,8 +73,174 @@ export function coeWorkerName(rawName: string | null | undefined): string | null
   return composed;
 }
 
+/**
+ * The worker's self-declared role, as the certificate prints it — or null when
+ * they have not set one.
+ *
+ * The source is `employee_skill_sets.role_title`, the "Role / Title" field on
+ * the employee's own Profile → Skill Sets card (a department-specific pick list
+ * with a free-typed "Custom title…" escape, 80 chars). It is employee-authored
+ * and HR does not review it, so the certificate treats it as OPTIONAL: blank ⇒
+ * the clause is omitted entirely, never a dash and never a refusal. The human
+ * check is the one every other fact already gets — Accounting sees the role on
+ * the facts card and on the real certificate before signing.
+ */
+export function coeRoleTitle(raw: string | null | undefined): string | null {
+  const s = (raw ?? '').replace(/\s+/g, ' ').trim();
+  return s || null;
+}
+
 /** Contracted hours per week, as the certificate template states them. */
 export const COE_WEEKLY_HOURS = 40;
+
+/** How many completed pay cycles the "bonuses earned" line sums (Kane, 2026-09-10). */
+export const COE_RECENT_BONUS_CYCLES = 4;
+
+/** How far back the statements are read to find those cycles. Twelve weeks
+ *  gives a person who missed a few weeks room to still show four, while keeping
+ *  the read to a dozen files instead of the whole archive. */
+export const COE_RECENT_BONUS_LOOKBACK_DAYS = 84;
+
+/**
+ * The bonus money a worker's recent pay statements itemise, summed over their
+ * most recent completed pay cycles. Every figure is PHP because the statements
+ * are — a USD- or COP-rate person is still paid these lines in pesos.
+ */
+export interface CoeRecentBonuses {
+  /** How many completed cycles were summed — at most COE_RECENT_BONUS_CYCLES,
+   *  fewer when the person has fewer statements in the lookback window. */
+  cycles: number;
+  /** "Aug 9 – Sep 5, 2026" — oldest week's start to newest week's end. */
+  windowLabel: string;
+  /** ISO bounds of that window, for the audit trail. */
+  windowStart: string | null;
+  windowEnd: string | null;
+  /** "₱12,850" — the three lines summed, formatted for the certificate. */
+  total: string;
+  totalPhp: number;
+  attendancePhp: number;
+  technologyPhp: number;
+  performancePhp: number;
+  /** "Attendance ₱10,000 · Technology ₱1,850 · Performance ₱1,000" — only the
+   *  non-zero lines; null when every line was zero. */
+  breakdown: string | null;
+}
+
+/** The statement fields the summary reads — a structural subset of PayStubView. */
+export interface CoeStatementLike {
+  weekStart: string | null;
+  weekEnd: string | null;
+  attendanceBonus: number;
+  techBonus: number;
+  performanceBonus: number;
+}
+
+const round2 = (n: number) => Math.round((Number.isFinite(n) ? n : 0) * 100) / 100;
+
+/**
+ * Sum the bonus lines of the `cycles` most recent COMPLETED statements.
+ *
+ * "Completed" = the week ended before `todayIso` (a Manila calendar date). The
+ * in-progress week is excluded on purpose: its wizard snapshot is still moving
+ * while Accounting works the week, and a certificate must not quote a figure
+ * that can change an hour later. A completed week that is locked but not yet
+ * dispatched IS counted — the line says "earned", not "paid".
+ *
+ * What counts as a bonus is exactly what the statement itemises as one:
+ * Attendance (PAB), Technology and Performance. NOT the Adjustment (a
+ * correction, possibly negative), NOT Orphanage pay, NOT a MESA disbursement
+ * (the member's own savings coming back).
+ *
+ * Returns null when there is no completed statement at all — a brand-new hire —
+ * so the certificate omits the line rather than printing "₱0 over 0 cycles".
+ * Four completed cycles with no bonus money return a real ₱0, which is the truth.
+ */
+export function summarizeRecentBonuses(
+  statements: ReadonlyArray<CoeStatementLike>,
+  todayIso: string,
+  cycles: number = COE_RECENT_BONUS_CYCLES,
+): CoeRecentBonuses | null {
+  const completed = statements
+    .filter((s): s is CoeStatementLike & { weekEnd: string } => !!s.weekEnd && s.weekEnd < todayIso)
+    .sort((a, b) => b.weekEnd.localeCompare(a.weekEnd))
+    .slice(0, Math.max(0, cycles));
+  if (completed.length === 0) return null;
+
+  const attendancePhp = round2(completed.reduce((acc, s) => acc + (Number(s.attendanceBonus) || 0), 0));
+  const technologyPhp = round2(completed.reduce((acc, s) => acc + (Number(s.techBonus) || 0), 0));
+  const performancePhp = round2(completed.reduce((acc, s) => acc + (Number(s.performanceBonus) || 0), 0));
+  const totalPhp = round2(attendancePhp + technologyPhp + performancePhp);
+
+  const newest = completed[0];
+  const oldest = completed[completed.length - 1];
+  const windowStart = oldest.weekStart ?? oldest.weekEnd;
+  const windowEnd = newest.weekEnd;
+
+  const parts: string[] = [];
+  if (attendancePhp !== 0) parts.push(`Attendance ${formatCoeMoney(attendancePhp, 'PHP')}`);
+  if (technologyPhp !== 0) parts.push(`Technology ${formatCoeMoney(technologyPhp, 'PHP')}`);
+  if (performancePhp !== 0) parts.push(`Performance ${formatCoeMoney(performancePhp, 'PHP')}`);
+
+  return {
+    cycles: completed.length,
+    windowLabel: formatWeekHuman(windowStart, windowEnd),
+    windowStart,
+    windowEnd,
+    total: formatCoeMoney(totalPhp, 'PHP'),
+    totalPhp,
+    attendancePhp,
+    technologyPhp,
+    performancePhp,
+    breakdown: parts.length > 0 ? parts.join(' · ') : null,
+  };
+}
+
+/** Today's calendar date in Manila (YYYY-MM-DD) — the timezone payroll runs on. */
+function manilaTodayIso(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+}
+
+/** `days` calendar days before a YYYY-MM-DD date, as YYYY-MM-DD (no TZ drift). */
+function isoDaysBefore(iso: string, days: number): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return iso;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) - days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** The master list's start date as a YYYY-MM-DD day, or null when unparseable.
+ *  A date-only string is taken verbatim (never through UTC midnight); anything
+ *  else goes through Date and is read as a local calendar day. */
+function startDateIsoDay(raw: string): string | null {
+  const s = raw.trim();
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+  if (m) return m[1];
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * The earliest week END the recent-bonus read considers: the lookback cutoff,
+ * but never earlier than the worker's engagement start.
+ *
+ * Measured on live data (2026-09-10): a July hire's 12-week window reached five
+ * archive weeks they were never in, and every one of those ran the ~6 s
+ * whole-company engine (no snapshot names a person who was not there yet) —
+ * 45 s for a facts card. A week that ended before the person started cannot
+ * carry their statement, so it is not a candidate. Statements are read by week
+ * END, so a mid-week start still keeps its first (partial) week.
+ */
+export function recentBonusWindowStart(todayIso: string, startDateRaw: string): string {
+  const cutoff = isoDaysBefore(todayIso, COE_RECENT_BONUS_LOOKBACK_DAYS);
+  const start = startDateIsoDay(startDateRaw);
+  return start && start > cutoff ? start : cutoff;
+}
 
 /** One money line on the certificate, pre-formatted in its own currency. */
 export interface CoeBonusLine {
@@ -93,6 +262,8 @@ export interface CoeFacts {
   startDateRaw: string;
   /** Department label as the master list spells it ("Sales Assistant"). */
   team: string;
+  /** The role the worker set on their own profile, or null ⇒ clause omitted. */
+  roleTitle: string | null;
   weeklyHours: number;
   hourlyRate: string;
   overtimeRate: string;
@@ -103,6 +274,9 @@ export interface CoeFacts {
   standardBonuses: CoeBonusLine[];
   /** Performance bonuses reaching this person (personal + department-wide). */
   performanceBonuses: CoeBonusLine[];
+  /** Bonus money their last completed pay cycles actually itemised; null ⇒ no
+   *  completed statement yet (or the caller opted out) ⇒ line omitted. */
+  recentBonuses: CoeRecentBonuses | null;
 }
 
 /** Why a COE cannot be issued. Surfaced verbatim to the employee. */
@@ -210,10 +384,44 @@ async function fetchSheetRateFor(
 }
 
 /**
+ * The bonus money the worker's recent statements itemise — read through the
+ * SAME assembly the Pay Stubs tab and its export use (`listEmployeePayStubs`),
+ * never a private re-derivation, so the certificate and the statements it
+ * summarises cannot disagree. Bounded to the lookback window so a certificate
+ * does not pay for the whole archive.
+ */
+async function fetchRecentBonuses(
+  email: string,
+  startDateRaw: string,
+): Promise<{ recent: CoeRecentBonuses | null; error: string | null }> {
+  const today = manilaTodayIso();
+  try {
+    const { stubs } = await listEmployeePayStubs(email, {
+      sinceWeekEnd: recentBonusWindowStart(today, startDateRaw),
+    });
+    return { recent: summarizeRecentBonuses(stubs.map((s) => s.view), today), error: null };
+  } catch (e) {
+    // A failed read is an error, never a silently missing money line.
+    return {
+      recent: null,
+      error: `Could not read the recent pay statements: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
  * Resolve everything the Certificate of Engagement prints for one worker.
  * `email` is always the caller's own session email — never a query parameter.
+ *
+ * `opts.recentBonuses` (default true) reads the worker's recent statements for
+ * the "bonuses earned" line. A caller that only needs the standing terms — the
+ * Penny profile tool — passes `false` and gets `recentBonuses: null` without
+ * paying for the statement read.
  */
-export async function resolveCoeFacts(email: string): Promise<CoeFactsResult> {
+export async function resolveCoeFacts(
+  email: string,
+  opts: { recentBonuses?: boolean } = {},
+): Promise<CoeFactsResult> {
   const norm = normEmail(email) ?? email.trim().toLowerCase();
   if (!norm) return { facts: null, blocked: null, error: 'Missing employee email' };
 
@@ -282,15 +490,30 @@ export async function resolveCoeFacts(email: string): Promise<CoeFactsResult> {
     ),
   );
 
-  const [structuresRes, systemRes, catalogRes, registry, sheetRes] = await Promise.all([
-    listPayStructures(),
-    listSystemBonuses(),
-    listBonusCatalog(),
-    getDepartmentRegistry(),
-    fetchSheetRateFor(aliases),
-  ]);
+  // The profile's Skill Sets card is keyed by the WORK email (the row the
+  // employee edits is upserted under it), so read it by that, not the session
+  // alias the caller happened to sign in with.
+  const skillEmail = normEmail(master.work_email) ?? norm;
+  const includeRecent = opts.recentBonuses !== false;
+
+  const [structuresRes, systemRes, catalogRes, registry, sheetRes, skillRes, recentRes] =
+    await Promise.all([
+      listPayStructures(),
+      listSystemBonuses(),
+      listBonusCatalog(),
+      getDepartmentRegistry(),
+      fetchSheetRateFor(aliases),
+      getSkillSet(skillEmail),
+      includeRecent
+        ? fetchRecentBonuses(norm, startDateRaw)
+        : Promise.resolve({ recent: null, error: null } as Awaited<ReturnType<typeof fetchRecentBonuses>>),
+    ]);
   if (structuresRes.error) return { facts: null, blocked: null, error: structuresRes.error };
   if (sheetRes.error) return { facts: null, blocked: null, error: sheetRes.error };
+  if (skillRes.error) {
+    return { facts: null, blocked: null, error: `Could not read the profile role: ${skillRes.error}` };
+  }
+  if (recentRes.error) return { facts: null, blocked: null, error: recentRes.error };
 
   // Same index shape the Payment Catalog builds, so precedence matches exactly:
   // later-one-wins on duplicate keys.
@@ -378,6 +601,7 @@ export async function resolveCoeFacts(email: string): Promise<CoeFactsResult> {
       startDateLabel,
       startDateRaw,
       team,
+      roleTitle: coeRoleTitle(skillRes.row.role_title),
       weeklyHours: COE_WEEKLY_HOURS,
       hourlyRate: formatCoeRate(rate.regular, rate.currency),
       overtimeRate: formatCoeRate(otRate, rate.currency),
@@ -385,6 +609,7 @@ export async function resolveCoeFacts(email: string): Promise<CoeFactsResult> {
       rateSource: rate.source as CoeFacts['rateSource'],
       standardBonuses,
       performanceBonuses,
+      recentBonuses: recentRes.recent,
     },
     blocked: null,
     error: null,

@@ -45,6 +45,8 @@ export interface CoePreviewFacts {
   startDateLabel: string;
   startDateRaw: string;
   team: string;
+  /** The worker's own profile role; null ⇒ the certificate omits the clause. */
+  roleTitle: string | null;
   weeklyHours: number;
   hourlyRate: string;
   overtimeRate: string;
@@ -52,6 +54,20 @@ export interface CoePreviewFacts {
   rateSource: 'individual' | 'sheet' | 'department';
   standardBonuses: { label: string; amount: string | null; qualifier?: string }[];
   performanceBonuses: { label: string; amount: string | null }[];
+  /** Bonus lines summed over the last completed pay cycles (≤ 4), always ₱;
+   *  null ⇒ no completed statement yet ⇒ the certificate omits the line. */
+  recentBonuses: {
+    cycles: number;
+    windowLabel: string;
+    windowStart: string | null;
+    windowEnd: string | null;
+    total: string;
+    totalPhp: number;
+    attendancePhp: number;
+    technologyPhp: number;
+    performancePhp: number;
+    breakdown: string | null;
+  } | null;
 }
 
 export function isDocumentRequestType(v: string): v is DocumentRequestType {

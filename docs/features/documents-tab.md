@@ -104,7 +104,9 @@ keep working — only `DOCUMENT_TYPE_LABELS` changed.
 
 1. Employee picks the type. No file input appears; instead a read-only card loads from
    `GET /api/employee/documents/coe-preview` showing exactly what the certificate will state
-   (worker + employee id, engaged-since, team, hourly/OT rate, bonus lines). It is information,
+   (worker + employee id, engaged-since, team, the profile role when set, hourly/OT rate,
+   bonus lines, and the bonuses their last completed pay cycles itemised — see
+   [§ Role and recent bonuses](#role-and-recent-bonuses--2026-09-10)). It is information,
    not a step — Submit is live immediately. It exists so a wrong start date is caught by the
    person who would notice.
 2. `POST /api/employee/documents` with `document_type=coe` and **no file** →
@@ -176,6 +178,71 @@ Everything is printed in the worker's **own currency**: `variantForDept` supplie
 `pab:*` / `tech:*` amount, so a Colombian sees `$COP 320.000`, not `₱5,000`. A department the
 bonus allowlist excludes gets **no line at all** — the certificate never promises money the
 engine won't pay.
+
+### Role and recent bonuses — 2026-09-10
+
+Kane: *"Add role to the COE Request — if only they put the role in their profile we can pull it
+as well. And also for the bonus where all the last 4 payroll cycles bonuses are added and be
+put into the COE."* Two facts were added; **both are OPTIONAL** — absent, the certificate
+reads exactly as it did before, with no dash, no "n/a" and no new refusal code. Rule 2 above
+(refuse rather than print blanks) is for facts the certificate *must* state; these are facts
+it states *when it can*, in the same way an allowlist-excluded bonus gets no line.
+
+**The role** is `employee_skill_sets.role_title` — the "Role / Title" field on the employee's
+own Profile → Skill Sets card (a department-specific pick list from `skill-set-titles.ts`
+with a free-typed "Custom title…" escape capped at 80 characters), read by the WORK email the
+card upserts under. It prints inside the opening sentence: *"…as part of our **Sales
+Assistant**, in the role of **Senior Sales Associate**. Their work schedule…"*. It is
+employee-authored and HR does not review it, so the mitigation for a joke or stale title is
+the check every other fact already gets: Accounting sees the role on the facts card
+(employee form and Generate COE dialog alike) and on the real certificate in the queue
+before signing. `coeRoleTitle` trims and collapses whitespace; blank ⇒ `null` ⇒ clause
+omitted. A failed skill-set read is an **error** (500), never a silently dropped clause.
+
+**The recent-bonus line** — *"Bonuses earned over the last 4 pay cycles (Aug 9 – Sep 5,
+2026) ······ ₱12,850"*, with the split *"Attendance ₱10,000 · Technology ₱1,850 ·
+Performance ₱1,000"* as its qualifier — sums what the worker's own **pay statements**
+itemise, read through the SAME assembly the Pay Stubs tab and its export use
+(`listEmployeePayStubs` in `src/lib/payroll/employee-paystubs.ts`, extracted verbatim from
+the paystub route for exactly this reason — the certificate must never carry a second copy of
+the recovery arithmetic, per `paystub-dispatch.md` § Recovered-week snapshots). The decisions
+that make the figure honest, all pinned in `coe-facts.test.ts`:
+
+- **"Pay cycle" = a Sunday–Saturday statement week**, one row per week (paid > staged > newest
+  upload — the export's own dedupe). The window is **named on the line**, never "recent".
+- **Completed weeks only**: a week counts once its Saturday is *before* today in Manila. The
+  in-progress week is excluded because its wizard snapshot is still moving while Accounting
+  works it; a completed week that is locked but not yet dispatched IS counted — hence
+  **"earned", not "paid"**.
+- **"Bonus" = the statement's Attendance (PAB) + Technology + Performance lines.** NOT the
+  Adjustment (a correction, possibly negative), NOT Orphanage pay, NOT a MESA disbursement.
+- **Always ₱** — the statements are PHP, and a USD- or COP-rate person is still paid these
+  lines in pesos. The standing schedule above stays in the worker's own currency.
+- **Fewer than four completed statements** ⇒ the real count prints ("last 2 pay cycles").
+  **Zero** ⇒ `recentBonuses: null` ⇒ the row is omitted — never "₱0 over 0 cycles". Four
+  completed weeks with no bonus money ⇒ a real **₱0** with the qualifier *"No bonus lines on
+  those statements"*, which is the truth.
+- **Lookback is 12 weeks** (`COE_RECENT_BONUS_LOOKBACK_DAYS`), **clamped to the engagement
+  start date** (`recentBonusWindowStart`), passed as `sinceWeekEnd` so the read prunes the
+  archive **before** any recovery runs (~a dozen files, not thirty). A person who missed
+  several weeks still gets four if they exist inside the window. The clamp is not cosmetic:
+  measured live on 2026-09-10, a July hire's un-clamped window reached five weeks they were
+  never in, and each ran the ~6 s whole-company engine (no snapshot names someone who was
+  not there yet) — **45 s** for a facts card; clamped, the same person resolves in ~4 s. A
+  week that ended before the start date cannot carry the person's statement, so it is not a
+  candidate; weeks are read by their END, so a mid-week start keeps its first partial week.
+  Six recently-paid people probed the same day all summed to exactly what their newest four
+  completed statements itemise (Adjustments — one was ₱19,208 — correctly left out).
+- A thrown statement read is an **error** (500), never a silently missing money line.
+  Inherited softness, unchanged: the assembly ignores a failed `payment_dispatches` read the
+  way the Pay Stubs tab always has (fewer paid marks, not an error) — fixing that belongs to
+  the paystub surface, not here.
+- Re-resolved at signing like every other fact, so the window on the signed copy is the one
+  current on the signing date, not the request date (§ Draft vs signed).
+
+Penny's `get_my_profile` calls `resolveCoeFacts(email, { recentBonuses: false })`: it never
+quotes statement figures (those go through `get_my_pay`), so it does not pay for the read and
+its answer is unchanged. `coeSummaryLabel` (the queue chip) is unchanged too.
 
 ### Refusals
 
@@ -474,7 +541,15 @@ in `audit_log`.
   reloads, `₱` survives (no `PHP ` fallback), signing fills the block without adding a page,
   corrupt signature rejected, long names/teams paginate, non-Latin names degrade, wrapped lines
   can't overflow the content width, `MM.DD.YYYY` follows Manila across the dateline, per-currency
-  money formatting.
+  money formatting. Since 2026-09-10 the base fixture carries a role AND the recent-bonus row,
+  so every one-page test (full-height signature included) exercises the taller layout; a test
+  pins that omitting either really omits it (bytes differ), and that a lone cycle reads
+  "cycle" with a real ₱0.
+- [coe-facts.test.ts](../../src/lib/documents/coe-facts.test.ts) — `summarizeRecentBonuses`:
+  the four most recent COMPLETED weeks (the in-progress week excluded through its last day),
+  the three bonus lines summed and nothing else, the named window, real count under four,
+  `null` at zero completed weeks, ₱0 with no breakdown at four empty ones, order-independence,
+  2dp rounding; `coeRoleTitle` trims/collapses and blanks to `null`.
 - [person-comp.test.ts](../../src/lib/payment-catalog/person-comp.test.ts) — rate precedence
   (individual → sheet → dept base), alias matching, native currency, COP bonus variants,
   allowlist exclusion.

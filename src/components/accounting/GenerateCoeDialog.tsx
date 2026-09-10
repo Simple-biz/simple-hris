@@ -410,9 +410,11 @@ export default function GenerateCoeDialog({
                         ['Worker', facts.employeeId ? `${facts.workerName} · ${facts.employeeId}` : facts.workerName],
                         ['Engaged since', facts.startDateLabel],
                         ['Team', facts.team],
+                        // The employee's own Profile → Skill Sets entry; omitted from the certificate when blank.
+                        ...(facts.roleTitle ? ([['Role', facts.roleTitle]] as const) : []),
                         ['Hourly / OT', `${facts.hourlyRate} · ${facts.overtimeRate} per hour`],
                         ['Schedule', `${facts.weeklyHours} hours per week`],
-                      ] as const
+                      ] as ReadonlyArray<readonly [string, string]>
                     ).map(([label, value]) => (
                       <React.Fragment key={label}>
                         <dt className="text-[11.5px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
@@ -447,6 +449,22 @@ export default function GenerateCoeDialog({
                         </>
                       )}
                     </dd>
+                    {facts.recentBonuses && (
+                      <>
+                        <dt className="text-[11.5px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                          Earned recently
+                        </dt>
+                        <dd className="text-[12.5px] leading-relaxed text-zinc-800 dark:text-zinc-200">
+                          <div>
+                            {facts.recentBonuses.total} in bonuses over the last {facts.recentBonuses.cycles} pay{' '}
+                            {facts.recentBonuses.cycles === 1 ? 'cycle' : 'cycles'} ({facts.recentBonuses.windowLabel})
+                          </div>
+                          <div className="text-zinc-400 dark:text-zinc-500">
+                            {facts.recentBonuses.breakdown ?? 'No bonus lines on those statements'}
+                          </div>
+                        </dd>
+                      </>
+                    )}
                   </dl>
                 </>
               ) : null}

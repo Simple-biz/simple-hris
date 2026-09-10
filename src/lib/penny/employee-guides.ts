@@ -54,7 +54,7 @@ function coeGuide(): EmployeeGuide {
     steps: [
       'Open Profile from the sidebar, then the "Request Documents" tab.',
       'Choose the document type "Certificate of Engagement (COE)".',
-      'No file to attach — the HRIS writes the certificate for you. A preview card shows exactly what it will say: your name, employee ID, engaged-since date, team, hourly and overtime rate, and the bonus lines your team qualifies for.',
+      'No file to attach — the HRIS writes the certificate for you. A preview card shows exactly what it will say: your name, employee ID, engaged-since date, team, the role you set on Profile → Skill Sets (if you set one), hourly and overtime rate, the bonus lines your team qualifies for, and the bonuses your last completed pay cycles (up to four) actually itemised.',
       'Read that preview. It is the moment a wrong start date or rate gets caught, by the one person who would notice.',
       'Press "Request certificate".',
       'Accounting reviews and signs it. Watch the status in the same tab — pending, signed or rejected.',

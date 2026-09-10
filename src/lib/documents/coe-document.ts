@@ -50,7 +50,10 @@ const CONTENT_W = PAGE_W - MARGIN * 2;
 const BOTTOM_LIMIT = MARGIN + 14; // footer rule sits at MARGIN-16, text at MARGIN-28
 
 const BODY_SIZE = 10.5;
-const BODY_LEADING = 16.5;
+// 16.5 → 16 on 2026-09-10 when the role clause and the earned-bonus row joined
+// the page: the one-page budget is recovered from WHITESPACE (this leading and
+// the inter-block gaps below), never from content or the signature block.
+const BODY_LEADING = 16;
 
 export interface CoeRenderParams {
   facts: CoeFacts;
@@ -68,6 +71,22 @@ export interface CoeRenderParams {
     email: string;
     signedAtIso: string;
   };
+  /**
+   * Layout report, for the tests that pin the one-page constraint: how much
+   * vertical content the certificate consumed and how many points of the page
+   * budget were left. `slack` < 0 means a second page was needed. Never used in
+   * production; it exists so a future block can be sized against a measured
+   * budget instead of an eyeballed one.
+   */
+  onLayout?: (report: CoeLayoutReport) => void;
+}
+
+export interface CoeLayoutReport {
+  pages: number;
+  /** Points of content drawn, summed across pages. */
+  contentHeight: number;
+  /** Points left on a one-page budget (PAGE_H − MARGIN − BOTTOM_LIMIT − content). */
+  slack: number;
 }
 
 /** "07.31.2026" — the template's signature-block date format. */
@@ -351,7 +370,7 @@ export async function renderCoeDocument(params: CoeRenderParams): Promise<Uint8A
   rule({ thickness: 1.2, color: NAVY });
   y -= 2.6;
   rule({ width: 58, thickness: 2.4, color: ORANGE });
-  y -= 40;
+  y -= 36;
 
   // ── Document title ────────────────────────────────────────────────────────
   tracked('Certificate of Engagement', {
@@ -363,7 +382,7 @@ export async function renderCoeDocument(params: CoeRenderParams): Promise<Uint8A
   });
   y -= 14;
   rule({ width: 44, thickness: 1.6, color: ORANGE, center: true });
-  y -= 26;
+  y -= 24;
 
   // ── Who it is about ───────────────────────────────────────────────────────
   text(facts.workerName, { size: 16.5, font: bold, color: TEXT, align: 'center' });
@@ -378,9 +397,9 @@ export async function renderCoeDocument(params: CoeRenderParams): Promise<Uint8A
       .join('   ·   ');
     text(meta, { size: 8.5, color: MUTED, align: 'center' });
   }
-  y -= 19;
+  y -= 16;
   rule();
-  y -= 21;
+  y -= 19;
 
   // ── Body ──────────────────────────────────────────────────────────────────
   richParagraph([
@@ -390,6 +409,11 @@ export async function renderCoeDocument(params: CoeRenderParams): Promise<Uint8A
     { text: facts.startDateLabel, bold: true },
     { text: ' as part of our ' },
     { text: facts.team, bold: true },
+    // The role is the worker's own profile entry and OPTIONAL — absent, the
+    // sentence closes on the team exactly as it always has (no dash, no gap).
+    ...(facts.roleTitle
+      ? [{ text: ', in the role of ' }, { text: facts.roleTitle, bold: true }]
+      : []),
     { text: '. Their work schedule consists of ' },
     { text: `${facts.weeklyHours} hours per week`, bold: true },
     { text: ', with an hourly rate of ' },
@@ -398,7 +422,7 @@ export async function renderCoeDocument(params: CoeRenderParams): Promise<Uint8A
     { text: facts.overtimeRate, bold: true, color: NAVY },
     { text: ' per hour.' },
   ]);
-  y -= 15;
+  y -= 12;
 
   sectionLabel('Additional bonuses for workers who qualify');
   for (const b of facts.standardBonuses) {
@@ -411,7 +435,20 @@ export async function renderCoeDocument(params: CoeRenderParams): Promise<Uint8A
   } else {
     leaderRow('Performance Bonuses', 'None assigned at this time');
   }
-  y -= 15;
+  // What the schedule above actually produced: the bonus lines summed over the
+  // worker's most recent completed pay cycles, window named so the figure is
+  // verifiable against those statements. Omitted entirely when there is no
+  // completed statement yet — never "₱0 over 0 cycles".
+  if (facts.recentBonuses) {
+    const r = facts.recentBonuses;
+    y -= 2;
+    leaderRow(
+      `Bonuses earned over the last ${r.cycles} pay ${r.cycles === 1 ? 'cycle' : 'cycles'} (${r.windowLabel})`,
+      r.total,
+      r.breakdown ?? 'No bonus lines on those statements',
+    );
+  }
+  y -= 12;
 
   richParagraph([
     { text: 'Please note that ' },
@@ -425,7 +462,7 @@ export async function renderCoeDocument(params: CoeRenderParams): Promise<Uint8A
     { text: facts.workerName, bold: true },
     { text: '.' },
   ]);
-  y -= 13;
+  y -= 10;
 
   richParagraph(
     [
@@ -439,7 +476,7 @@ export async function renderCoeDocument(params: CoeRenderParams): Promise<Uint8A
     ],
     { size: 9, leading: 13.5, color: MUTED },
   );
-  y -= 22;
+  y -= 16;
 
   // ── Signature block ───────────────────────────────────────────────────────
   ensureSpace(signature ? 126 : 92);
@@ -504,6 +541,11 @@ export async function renderCoeDocument(params: CoeRenderParams): Promise<Uint8A
 
   // ── Footer on every page: Reference ID so page 1 stands alone ─────────────
   const pages = doc.getPages();
+  if (params.onLayout) {
+    const budget = PAGE_H - MARGIN - BOTTOM_LIMIT;
+    const contentHeight = (pages.length - 1) * budget + (PAGE_H - MARGIN - y);
+    params.onLayout({ pages: pages.length, contentHeight, slack: budget - contentHeight });
+  }
   pages.forEach((p, i) => {
     p.drawLine({
       start: { x: MARGIN, y: MARGIN - 16 },

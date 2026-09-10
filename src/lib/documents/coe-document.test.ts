@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import zlib from 'node:zlib';
 import { PDFDocument } from 'pdf-lib';
-import { renderCoeDocument, __coeInternals } from './coe-document';
+import { renderCoeDocument, __coeInternals, type CoeLayoutReport } from './coe-document';
 import { coeWorkerName, formatCoeMoney, formatCoeStartDate, type CoeFacts } from './coe-facts';
 import { RASTER_PADDING, TYPED_EXPORT_HEIGHT } from './signature-render';
 
@@ -17,6 +17,7 @@ const FACTS: CoeFacts = {
   startDateLabel: 'March 4, 2024',
   startDateRaw: '2024-03-04',
   team: 'Sales Assistant',
+  roleTitle: 'Senior Sales Associate',
   weeklyHours: 40,
   hourlyRate: '₱225.00',
   overtimeRate: '₱337.50',
@@ -27,6 +28,21 @@ const FACTS: CoeFacts = {
     { label: 'Technology Allowance', amount: '₱1,850', qualifier: 'given every 3rd paycheck of each month for active workers' },
   ],
   performanceBonuses: [{ label: 'Sales Closer Bonus', amount: '₱2,500' }],
+  // The two 2026-09-10 additions are ON in the base fixture so every one-page
+  // test below exercises the layout with both present — the role lengthens the
+  // opening paragraph and the earned line adds a leader row + qualifier.
+  recentBonuses: {
+    cycles: 4,
+    windowLabel: 'Aug 9 – Sep 5, 2026',
+    windowStart: '2026-08-09',
+    windowEnd: '2026-09-05',
+    total: '₱12,850',
+    totalPhp: 12850,
+    attendancePhp: 10000,
+    technologyPhp: 1850,
+    performancePhp: 1000,
+    breakdown: 'Attendance ₱10,000 · Technology ₱1,850 · Performance ₱1,000',
+  },
 };
 
 const REQUEST_ID = '8f3a1c22-4b7d-4c0e-9f11-2a5f6d3c7e10';
@@ -85,13 +101,15 @@ test('signing draws into the certificate and appends nothing on its own', async 
 });
 
 test('a realistic worst case still fits one page', async () => {
-  // Long compound name, long team, two standard bonuses with qualifiers and
-  // three performance bonuses is about as full as a real certificate gets.
+  // Long compound name, long team, a long self-declared role, two standard
+  // bonuses with qualifiers, three performance bonuses and the earned line is
+  // about as full as a real certificate gets.
   const bytes = await renderCoeDocument({
     facts: {
       ...FACTS,
       workerName: 'Maria Cristina Villanueva-Santos',
       team: 'Healthcare Solutions — Dental Billing',
+      roleTitle: 'Senior Dental Billing and Insurance Verification Specialist',
       performanceBonuses: [
         { label: 'Sales Closer Bonus', amount: '₱2,500' },
         { label: 'Quarterly KPI Bonus', amount: null },
@@ -137,6 +155,53 @@ test('a worker with no performance bonuses still renders (line reads "none assig
     generatedAtIso: GENERATED_AT,
   });
   assert.ok((await PDFDocument.load(bytes)).getPageCount() >= 1);
+});
+
+test('no role and no completed pay cycle: both additions are omitted, not printed blank', async () => {
+  // A brand-new hire who has not filled in Profile → Skill Sets and has no
+  // completed statement yet. The certificate must read exactly as it did
+  // before 2026-09-10 — the sentence closes on the team, no "in the role of",
+  // and no "₱0 over 0 cycles" row.
+  const withBoth = await renderCoeDocument({ facts: FACTS, requestId: REQUEST_ID, generatedAtIso: GENERATED_AT });
+  const withNeither = await renderCoeDocument({
+    facts: { ...FACTS, roleTitle: null, recentBonuses: null },
+    requestId: REQUEST_ID,
+    generatedAtIso: GENERATED_AT,
+  });
+  const withRoleOnly = await renderCoeDocument({
+    facts: { ...FACTS, recentBonuses: null },
+    requestId: REQUEST_ID,
+    generatedAtIso: GENERATED_AT,
+  });
+  assert.equal((await PDFDocument.load(withNeither)).getPageCount(), 1);
+  // Each optional block changes the rendered bytes — so omitting it really
+  // omits it (pdf-lib gives us no text extraction, so byte inequality is the
+  // available witness that the block is content, not whitespace).
+  assert.notEqual(withNeither.byteLength, withRoleOnly.byteLength, 'the role clause is real content');
+  assert.notEqual(withRoleOnly.byteLength, withBoth.byteLength, 'the earned row is real content');
+});
+
+test('a single completed cycle reads "cycle", four read "cycles", and ₱0 still prints as a figure', async () => {
+  const one = await renderCoeDocument({
+    facts: {
+      ...FACTS,
+      recentBonuses: {
+        cycles: 1,
+        windowLabel: 'Aug 30 – Sep 5, 2026',
+        windowStart: '2026-08-30',
+        windowEnd: '2026-09-05',
+        total: '₱0',
+        totalPhp: 0,
+        attendancePhp: 0,
+        technologyPhp: 0,
+        performancePhp: 0,
+        breakdown: null,
+      },
+    },
+    requestId: REQUEST_ID,
+    generatedAtIso: GENERATED_AT,
+  });
+  assert.equal((await PDFDocument.load(one)).getPageCount(), 1);
 });
 
 test('a very long name and team do not throw the layout off the page', async () => {
@@ -328,12 +393,24 @@ test('a FULL-HEIGHT typed signature still fits one page', async () => {
 
 test('the realistic worst case, signed at FULL signature height, still fits one page', async () => {
   // The worst case above, but with the 45pt of slack the 1x1 placeholder was
-  // silently granting it removed.
+  // silently granting it removed. Role + earned line included (2026-09-10).
+  //
+  // The budget is MEASURED, not eyeballed: `onLayout` reports how many points
+  // of the one-page budget the worst case leaves. Pinning a floor here means
+  // the next block's author sees the number they have to fit into, instead of
+  // discovering a second page after the fact (which is exactly how 2026-09-10
+  // went — the two additions cost 28pt and the page had 34 to give, before the
+  // inter-block whitespace was retuned to make room).
+  let report: CoeLayoutReport | null = null;
   const bytes = await renderCoeDocument({
+    onLayout: (r) => {
+      report = r;
+    },
     facts: {
       ...FACTS,
       workerName: 'Maria Cristina Villanueva-Santos',
       team: 'Healthcare Solutions — Dental Billing',
+      roleTitle: 'Senior Dental Billing and Insurance Verification Specialist',
       performanceBonuses: [
         { label: 'Sales Closer Bonus', amount: '₱2,500' },
         { label: 'Quarterly KPI Bonus', amount: null },
@@ -351,4 +428,11 @@ test('the realistic worst case, signed at FULL signature height, still fits one 
     },
   });
   assert.equal((await PDFDocument.load(bytes)).getPageCount(), 1);
+  assert.ok(report, 'the renderer reports its layout');
+  const r = report as CoeLayoutReport;
+  assert.equal(r.pages, 1);
+  // ~1.5 body lines of headroom. If this fails you have NOT broken the page yet,
+  // but the next long role or one more schedule row will — recover the budget
+  // from whitespace (leading, inter-block gaps), never from the signature block.
+  assert.ok(r.slack >= 24, `worst case leaves only ${r.slack.toFixed(1)}pt of the one-page budget`);
 });

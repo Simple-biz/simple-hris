@@ -941,9 +941,13 @@ the one-row-per-week dedupe.
 An engine run made today from today's rates table is none of those things
 (`rate-updated-at-not-evidence`: the sheet silently re-prices history), so the recovered
 figures are persisted under **`paystub.recovered.<file>`** instead, and that key has
-exactly one reader: the recovery tiers of `app/api/employee/paystub/route.ts`. It is
-consulted only when a week has no wizard snapshot and no staged payload, and it carries
-the same figures those viewers already saw.
+exactly one reader: the recovery tiers in `src/lib/payroll/employee-paystubs.ts` (moved
+there verbatim from `app/api/employee/paystub/route.ts` on 2026-09-10; the route is now a
+thin shell over that module, and the Certificate of Engagement's "bonuses earned over the
+last pay cycles" line reads the same `listEmployeePayStubs` — see
+`documents-tab.md` § Role and recent bonuses). It is consulted only when a week has no
+wizard snapshot and no staged payload, and it carries the same figures those viewers
+already saw.
 
 Shared pure module: `src/lib/payroll/paystub-recovered.ts`.
 
@@ -963,7 +967,12 @@ Shared pure module: `src/lib/payroll/paystub-recovered.ts`.
 "recovered" | null`. Precedence is never mixed: a wizard snapshot for the caller wins; else
 a matching recovered snapshot; else nothing (engine). `reconstructStubForWeek` now takes
 `disc` and `uploadId` as parameters and does **no reads of its own**; the single-week
-modal, the summary list and the all-weeks export all go through the same loader.
+modal, the summary list, the all-weeks export and (since 2026-09-10) the Certificate of
+Engagement's recent-bonus line all go through the same loader. `listEmployeePayStubs`
+takes an optional `sinceWeekEnd` cutoff that drops archive files and staged rows whose
+week ends before it **before** any recovery runs — the certificate passes a 12-week
+window so it never pays for the whole archive; with no cutoff the export behaves exactly
+as before.
 
 ### Engine memo
 

@@ -195,7 +195,10 @@ export async function runEmployeeTool(
 }
 
 async function getMyProfile(ctx: EmployeeToolContext): Promise<ToolResult> {
-  const res = await resolveCoeFacts(ctx.email);
+  // Standing terms only — the certificate's "bonuses earned over the last pay
+  // cycles" line reads the person's statements, which this tool never quotes
+  // (pay figures go through get_my_pay), so don't pay for that read here.
+  const res = await resolveCoeFacts(ctx.email, { recentBonuses: false });
   if (res.error) {
     return { error: `Could not read your employment record: ${res.error}` };
   }
