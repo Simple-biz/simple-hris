@@ -1185,7 +1185,7 @@ async function getEmployeeAccess(workEmailInput: string): Promise<ToolResult> {
     ? 'Administrator — full access to every dashboard and tab (bypasses all permission gating).'
     : roles.length > 0
       ? `Staff member with role(s): ${roles.join(', ')}.`
-      : 'Regular employee — only their own self-service portal (My Hours, pay, leave/requests). No staff dashboards.';
+      : 'Regular employee — only their own self-service portal (Time Adjustments, pay, leave/requests). No staff dashboards.';
 
   return {
     work_email: employee?.work_email ?? email,

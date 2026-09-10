@@ -145,7 +145,8 @@ export const DASHBOARD_PAGES: DashboardPages[] = [
     pages: [
       { key: 'dashboard', label: 'Overview', home: true },
       { key: 'profile', label: 'Profile' },
-      { key: 'hours', label: 'My Hours' },
+      // Label renamed 2026-09-10; `key` is the persisted contract and never changes.
+      { key: 'hours', label: 'Time Adjustments' },
       { key: 'kpi', label: 'KPI Results' },
       { key: 'leaves', label: 'Leave' },
       { key: 'mesa', label: 'MESA' },

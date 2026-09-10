@@ -539,8 +539,8 @@ function RequestTable({
                 No time adjustment requests yet
               </p>
               <p className="max-w-[46ch] text-xs text-zinc-500 dark:text-zinc-400">
-                When someone on your team files one from their My Hours calendar, it lands
-                here with their evidence attached and waits for your decision.
+                When someone on your team files one from their Time Adjustments calendar, it
+                lands here with their evidence attached and waits for your decision.
               </p>
             </div>
           )

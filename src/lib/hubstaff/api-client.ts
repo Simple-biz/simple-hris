@@ -267,7 +267,7 @@ export async function fetchDailyActivities(
 
 /**
  * Short-TTL cache in front of {@link fetchDailyActivities} for the employee-facing
- * live "My Hours" overlay. The whole org's range is fetched once and every
+ * live "Time Adjustments" (employee hours) overlay. The whole org's range is fetched once and every
  * employee's request within the TTL is served from the same promise — so N employees
  * polling costs 1–2 Hubstaff calls per TTL window (limit is 1000 req/hour), and
  * concurrent first requests dedupe onto one in-flight fetch. Per-instance memory

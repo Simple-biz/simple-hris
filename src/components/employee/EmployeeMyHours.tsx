@@ -1,7 +1,12 @@
 'use client';
 
 /**
- * My Hours — full merged Hubstaff calendar by calendar month (Jan–Dec).
+ * Time Adjustments (tab id `hours`, renamed from "My Hours" 2026-09-10) — full merged
+ * Hubstaff calendar by calendar month (Jan–Dec). The tab is named for its purpose: a day
+ * that cost PAB is where an employee files an adjustment. The id stays `hours` because it
+ * is the persisted key in `pages.visibility` (src/lib/pages/visibility.ts:26-28), and the
+ * file/component name is unchanged, so comments elsewhere still say "My Hours" as shorthand
+ * for this component.
  * Grid UX matches the dashboard PAB calendar; month navigation is explicit.
  */
 
@@ -1468,10 +1473,10 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
       <div className="mx-auto flex min-h-0 w-full max-w-[110rem] flex-1 flex-col gap-4 p-4 pb-8 sm:p-6">
         <header className="shrink-0 space-y-1">
           <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-white sm:text-xl">
-            My Hours
+            Time Adjustments
           </h1>
           <p className="text-xs text-zinc-600 dark:text-zinc-500">
-            Merged Hubstaff — calendar days match your uploads; dashed cells are the adjacent month but still show that day&apos;s hours. Pay summary counts only days in the month you&apos;re viewing (e.g. all of March).
+            Your merged Hubstaff hours — open a day to request a time adjustment. Dashed cells are the adjacent month but still show that day&apos;s hours. Pay summary counts only days in the month you&apos;re viewing (e.g. all of March).
           </p>
         </header>
 

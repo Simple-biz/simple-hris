@@ -30,7 +30,7 @@
 | § | Workstream | Kind | Deadline |
 |---|---|---|---|
 | 4 | QC corrections: Alivia's role, Callback out of scope, real randomization | `hardening` | **Mon 2026-09-14** |
-| 5 | **Rename the tab to "Time Adjustments"** + the auto-playing per-day nudge | `hardening` | Carla is waiting to be shown it |
+| 5 | ~~Rename the tab to "Time Adjustments"~~ **BUILT 2026-09-10** + the auto-playing per-day nudge (pending) | `hardening` | Carla is waiting to be shown it |
 | 6 | ~~PAB explainer copy (4 sites) · Details → FAQs · the drill-in~~ **BUILT 2026-09-10** | `hardening` | done |
 | 7 | Profile: Overview + ID + Compensation → one pane | `hardening` | — |
 | 8 | Reports → "Badges and Certificates" (label only) | `hardening` | — |
@@ -242,6 +242,16 @@ and those 200 rows are consumed **only** at `:1052-1054` as a date-keyed map ann
 what Carla was reaching for with *"I wish the history would stay here."*
 
 ### 5.0 The rename — six sites, and keep the key
+
+> **BUILT 2026-09-10.** Landed as **seven** sites, not six: the doc-check found that
+> `EmployeeApp.tsx:111-112` derives BOTH the browser title and the Admin GML live-status readout
+> from `humanizeTabId(activeTab)`, so `hours` still rendered "Hours" after the rename. Closed with
+> a one-entry `TAB_LABEL_OVERRIDES` in `src/lib/presence/page-label.ts` — an exception table for
+> ids whose display name has diverged from the id, which is narrower than the per-dashboard label
+> map that function exists to avoid. The `hours` key/id did not move anywhere.
+> `employee-my-hours-calendar.md` and INDEX row 51 were corrected in the same commit.
+> `tsc` clean; 2,748/2,750 (the two known pre-existing failures). **The bubbles are still
+> unbuilt** — §5.0b is the remaining half of this wave.
 
 **Rename the LABEL, never the key.** `visibility.ts:148` is `{ key: 'hours', label: 'My Hours' }` and
 `EmployeeSidebar.tsx:79` is `{ id: 'hours', … }`. The key/id feeds the Pages registry, feature

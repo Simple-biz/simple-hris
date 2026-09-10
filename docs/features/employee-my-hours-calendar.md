@@ -1,4 +1,16 @@
-# Employee dashboard — My Hours calendar
+# Employee dashboard — Time Adjustments calendar (tab id `hours`)
+
+> **Renamed 2026-09-10 (Kane): the tab label is "Time Adjustments", not "My Hours".** The tab is
+> named for its purpose — the day that cost you PAB is where you file. **The `id`/`key` stays
+> `hours`**: it is the persisted key in `pages.visibility` and the employee app's render switch
+> (`src/lib/pages/visibility.ts:26-28`), so moving it would orphan every saved admin visibility
+> flip. The component and this doc's filename are unchanged for the same reason, which is why
+> comments across the codebase still say "My Hours" as shorthand for `EmployeeMyHours.tsx`.
+> Renamed alongside it: the sidebar entry, the Pages-registry label, this page's H1 and sub-line,
+> the manager empty-state copy that names the employee's filing path
+> (`ManagerTimeAdjustments.tsx:542`), Penny's portal description (`ceo-tools.ts:1188`), and a
+> `TAB_LABEL_OVERRIDES` entry in `src/lib/presence/page-label.ts` — without that last one the
+> employee's own browser tab and the Admin GML live-status column would still read "Hours".
 
 Kane, 2026-09-03: *"Employee - My Hours - Calendar UI lets upgrade this please that it
 will look like Small KPI Cards from MESA under accounting make the calendar dates a bit
@@ -10,7 +22,7 @@ Shipped across five commits of live iteration: `c8e5f658` · `4265bdfd` · `b1c0
 PAB verdict maths it renders is governed by `payroll-wizard-pab-step.md` and
 `pab-exclusions.md`.
 
-Key file: `src/components/employee/EmployeeMyHours.tsx` (~2,360 lines — grid, tiles,
+Key file: `src/components/employee/EmployeeMyHours.tsx` (name unchanged by the rename) (~2,360 lines — grid, tiles,
 month/PAB header, skeleton and the eligibility walk all live here).
 
 ## The rule most likely to be violated

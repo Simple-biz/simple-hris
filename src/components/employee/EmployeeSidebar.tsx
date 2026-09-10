@@ -76,7 +76,10 @@ interface EmployeeSidebarProps {
 const navItems = [
   { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
   { id: 'profile', label: 'Profile', icon: UserCircle },
-  { id: 'hours', label: 'My Hours', icon: Clock },
+  // Renamed 2026-09-10 (Kane): the tab is named for its PURPOSE, not its contents.
+  // The `id` stays 'hours' — it is the persisted key in `pages.visibility` and the
+  // app render switch (see src/lib/pages/visibility.ts:26-28).
+  { id: 'hours', label: 'Time Adjustments', icon: Clock },
   { id: 'kpi', label: 'KPI Results', icon: Trophy },
   { id: 'leaves', label: 'Leave', icon: CalendarDays },
   // { id: 'disputes', label: 'My Disputes', icon: FileText }, // hidden — disputes now go through Orphanage Manager → Accounting flow (no employee submission)

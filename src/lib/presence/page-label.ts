@@ -32,12 +32,33 @@ export function dashboardLabelForPathname(pathname: string | null | undefined): 
   return match?.label ?? 'Simple HRIS';
 }
 
+/**
+ * Tab ids whose DISPLAY NAME has diverged from the id.
+ *
+ * This is deliberately not the per-dashboard label map `humanizeTabId` exists to
+ * avoid — it is an exception table, and an id only earns an entry when its own
+ * name can no longer be derived from it. That happens when a tab is renamed for
+ * users while its id stays frozen as a persisted key.
+ *
+ * `hours` → "Time Adjustments" (renamed 2026-09-10): the id is the key in
+ * `pages.visibility` and the employee app's render switch, so it cannot move
+ * (src/lib/pages/visibility.ts:26-28). Without this entry the sidebar would read
+ * "Time Adjustments" while the employee's own browser tab — and the Admin GML
+ * live-status column — both said "Hours".
+ */
+const TAB_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
+  hours: 'Time Adjustments',
+};
+
 /** Generic kebab-case tab id -> Title Case fallback, e.g. `'new-hire-checklist'` ->
  *  `'New Hire Checklist'`. Used uniformly by every dashboard shell so none of them
- *  need to hand-maintain a separate label map just for presence. */
+ *  need to hand-maintain a separate label map just for presence; ids listed in
+ *  {@link TAB_LABEL_OVERRIDES} resolve there first. */
 export function humanizeTabId(tabId: string | null | undefined): string | null {
   const trimmed = (tabId ?? '').trim();
   if (!trimmed) return null;
+  const override = TAB_LABEL_OVERRIDES[trimmed];
+  if (override) return override;
   return trimmed
     .split(/[-_]/)
     .filter(Boolean)
