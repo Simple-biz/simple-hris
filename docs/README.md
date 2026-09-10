@@ -134,6 +134,7 @@ docs/
 
 | Doc |
 |---|
+| [2026-09-09-carla-jackie-employee-surface-and-qc.md](./meetings/2026-09-09-carla-jackie-employee-surface-and-qc.md) — **Sep 9, 2026** Carla + Jackie: the Employee surface as the remaining 15%, Lead Gen QC hand-off (paste → Compare → Override), and **three decisions that rest on a false premise** (QC is NOT randomized, the PAB calendar already ships twice, leave is forward-dated only in the picker). One build approved (per-day time-adjustment nudge); **Pre/Post-Hearing ₱2,500 vs ₱3,500 is an unresolved contradiction — never pick one**; 11 open questions |
 | [meeting-with-carla-2026-06-16.md](./meetings/meeting-with-carla-2026-06-16.md) |
 | [meeting-2026-05-20-carla-kentshin-teal.md](./meetings/meeting-2026-05-20-carla-kentshin-teal.md) |
 | [meeting-antigravity-2026-05-13.md](./meetings/meeting-antigravity-2026-05-13.md) |
