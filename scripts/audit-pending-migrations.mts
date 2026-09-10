@@ -149,6 +149,21 @@ await probeTable('create_payroll_bank_exemptions', 'payroll_bank_exemptions');
 console.log('\n#3b No Pay Rate Ignore');
 await probeTable('create_payroll_rate_exemptions', 'payroll_rate_exemptions');
 
+console.log('\n#88/#89 QC scoring — role, tables, transfer memory');
+// Untracked until 2026-09-10, and the QC dashboard 500s without #89: the slot upsert
+// writes `roster_status` / `current_department` and conflicts on
+// (period_start, member_email, department), so a missing column THROWS rather than
+// degrading. Nine officers score real Lead Gen bonuses from 2026-09-14, and before
+// these probes existed no run of this script said anything about either migration —
+// the 2026-09-10 '26 APPLIED / 0 NOT APPLIED' was simply silent on them.
+// See docs/features/qc-scoring.md.
+await probeTable('2026-06-26_qc_role_and_tables', 'qc_score_assignments');
+await probeTable('2026-06-26_qc_role_and_tables', 'qc_kpi_submissions');
+await probeTable('2026-06-26_qc_role_and_tables', 'qc_officer_locks');
+await probeTable('2026-06-26_qc_role_and_tables', 'qc_review_status');
+await probeColumn('2026-06-26_qc_transfer_memory', 'qc_score_assignments', 'roster_status');
+await probeColumn('2026-06-26_qc_transfer_memory', 'qc_score_assignments', 'current_department');
+
 console.log('\n#4/#5 CallTools usernames');
 await probeTable('2026-07-20_employee_calltools_usernames', 'employee_calltools_usernames');
 await probeColumn('add_calltools_username_to_onboarding', 'hr_onboarding_submissions', 'calltools_username');

@@ -46,6 +46,7 @@ docs/
 | [bonus-calculator.md](./features/bonus-calculator.md) | Department + HSL bonus calculators |
 | [bonus-catalog.md](./features/bonus-catalog.md) | Payment Catalog: reusable custom bonuses (flat or Excel-formula engine) + Pay Structures, now **authoritative for hourly rates** via a compute-time overlay (`src/lib/payroll/resolve-rate.ts`, priority individual → sheet → dept base) |
 | [csv-imports.md](./features/csv-imports.md) | CSV ingest + Google Sheet sync (Admin tab, endpoints, env, schema); Hubstaff ingest blocklist + week-delete cascade (2026-07-25) |
+| [qc-scoring.md](./features/qc-scoring.md) | QC officers, the seeded-random weekly deal, the Lead Gen first pass — the surface's first doc |
 | [rbac-feature-permissions.md](./features/rbac-feature-permissions.md) | Role grants + per-tab Hidden/View/Edit overlay; Admin-provisioned, enforced across all views + API; force-logout/session reset |
 | [accounting-cobrowse.md](./features/accounting-cobrowse.md) | Live "Observe" screen mirroring in Accounting (rrweb over Realtime), built on the collab layer |
 | [orphanage-dispute-flow.md](./features/orphanage-dispute-flow.md) | Orphanage-visit / PAB dispute flow |

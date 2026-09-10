@@ -29,7 +29,7 @@
 
 | § | Workstream | Kind | Deadline |
 |---|---|---|---|
-| 4 | QC corrections: Alivia's role, Callback out of scope, real randomization | `hardening` | **Mon 2026-09-14** |
+| 4 | QC corrections — ~~Callback out of scope~~ + ~~real randomization~~ **BUILT 2026-09-10**; Alivia's role = Kane's admin click | `hardening` | **Mon 2026-09-14** |
 | 5 | ~~Rename the tab to "Time Adjustments" + the auto-playing per-day nudge~~ **BUILT 2026-09-10** | `hardening` | done — show Carla |
 | 6 | ~~PAB explainer copy (4 sites) · Details → FAQs · the drill-in~~ **BUILT 2026-09-10** | `hardening` | done |
 | 7 | Profile: Overview + ID + Compensation → one pane | `hardening` | — |
@@ -135,6 +135,22 @@ precondition for the QC Compare build, not a dependency in the other direction.
 ---
 
 ## 4. Wave 1 — QC corrections, before Monday 2026-09-14
+
+> **4.1 and 4.3 BUILT 2026-09-10.** Callback left `QC_DEPT_KEYS` (one line, Discovery precedent,
+> history retained-but-invisible). The deal is now seeded-random per `(period_start, department)`
+> in a new pure `src/lib/qc/deal.ts` over a shared `src/lib/seeded-shuffle.ts` — 9 tests including
+> the regression that the deal is NOT the alphabetical round-robin. Sticky snapshot, diff-only
+> writes, even split and regen semantics all unchanged. The surface also got its FIRST feature doc
+> (`qc-scoring.md`) + INDEX row + README row.
+>
+> **4.2 is Kane's admin click** — Admin → Roles & permissions → uncheck `qc` for Alivia. Do it
+> BEFORE the first Monday read, so the officer-set change triggers the randomized re-deal.
+>
+> **BLOCKING RISK found while building:** `scripts/audit-pending-migrations.mts` did **not** probe
+> the QC objects at all, so today's "26 APPLIED / 0 NOT APPLIED" said nothing about migrations
+> #88/#89 — and without #89 the slot upsert THROWS and the dashboard 500s on first load. Probes for
+> all four tables plus `roster_status` / `current_department` are added in the same commit.
+> **Run the audit before Monday.**
 
 Three commits. Together they make Monday's test measure what Carla thinks it measures.
 

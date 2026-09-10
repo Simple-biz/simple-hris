@@ -25,6 +25,8 @@
  * Widening the trigger is therefore a ONE-LINE change here, on purpose.
  */
 
+import { seededShuffle } from '@/lib/seeded-shuffle';
+
 /** The per-day facts the predicate needs. All derivable in a memo or in render. */
 export interface MissedDayCell {
   /** The cell falls inside the month being viewed (not a leading/trailing filler day). */
@@ -72,28 +74,6 @@ export function isNudgeableMissedDay(cell: MissedDayCell): boolean {
   return true;
 }
 
-/** FNV-1a. Small, dependency-free, and stable across runs — which is the point. */
-function hashString(s: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i += 1) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return h >>> 0;
-}
-
-/** mulberry32 — one seeded 32-bit PRNG, good enough to shuffle a dozen dates. */
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 /**
  * Kane asked for random order. This is a **seeded** shuffle, not `Math.random()`,
  * for three reasons:
@@ -107,19 +87,11 @@ function mulberry32(seed: number): () => number {
  * The seed is the ISO list itself, so a different month — or the same month after a
  * day is filed or newly falls short — is a genuinely different order.
  *
- * Fisher–Yates. Input is not mutated.
+ * Shares `seededShuffle` with the QC officer deal — one PRNG in the codebase, not
+ * a copy per caller.
  */
 export function orderNudgeDays(isos: readonly string[]): string[] {
-  const out = [...isos];
-  if (out.length < 2) return out;
-  const rand = mulberry32(hashString(out.join('|')));
-  for (let i = out.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(rand() * (i + 1));
-    const tmp = out[i]!;
-    out[i] = out[j]!;
-    out[j] = tmp;
-  }
-  return out;
+  return seededShuffle(isos, isos.join('|'));
 }
 
 /** How long one bubble stays up before the next takes over. Kane: "like 5 seconds". */

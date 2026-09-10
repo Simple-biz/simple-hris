@@ -5,6 +5,7 @@ import { getEmployeesForAuthorizedServerRoute, type EmployeeRow } from './employ
 import { listDepartmentsForManager } from './department-managers';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { QC_DEPT_KEYS, type QcDeptKey } from '@/lib/qc/constants';
+import { dealDeptSlots, leastLoadedOfficer } from '@/lib/qc/deal';
 import type { AppliedBonusRow } from './bonus-catalog-applied-db';
 
 export { QC_DEPT_KEYS };
@@ -198,8 +199,9 @@ function slotKey(email: string, dept: string): string {
 
 /**
  * Ensure `qc_score_assignments` reflects a PER-DEPARTMENT equal split of the
- * Leadgen / Callback / Discovery rosters across the active QC officers for a
- * week. A "slot" is one (member, department) pair — so a person who holds master
+ * QC-scored rosters (`QC_DEPT_KEYS` — Lead Gen only since 2026-09-10; Discovery
+ * left 2026-06-26 and Callback left with it, both retained-but-invisible) across
+ * the active QC officers for a week. A "slot" is one (member, department) pair — so a person who holds master
  * rows in two QC departments (e.g. mid-transfer) produces two slots and can be
  * scored in both.
  *
@@ -209,11 +211,14 @@ function slotKey(email: string, dept: string): string {
  * `current_department` = where they are now). This is the "memory" so their
  * Leadgen score & bonus for the week stand even after they move.
  *
- * Split: each department's live slots are round-robin'd across officers (counts
- * differ by at most 1 per dept). On the first build or when the officer SET
- * changes, the whole week is re-split; otherwise existing officer attributions
- * are kept and only new slots are balance-assigned. Writes ONLY the diff (and
- * never deletes), so a no-op read doesn't churn Realtime.
+ * Split: each department's live slots are dealt across officers in a SEEDED-RANDOM
+ * order (counts still differ by at most 1 per dept) — see `src/lib/qc/deal.ts`.
+ * Seeded on (period_start, department) so a week is reproducible on re-read but
+ * every week deals differently; an unseeded shuffle would re-split the same week
+ * on every dashboard load. On the first build or when the officer SET changes, the
+ * whole week is re-split; otherwise existing officer attributions are kept and only
+ * new slots are balance-assigned. Writes ONLY the diff (and never deletes), so a
+ * no-op read doesn't churn Realtime.
  *
  * ⚠️ REQUIRES migration #89 (references/sql/migrate/2026-06-26_qc_transfer_memory.sql):
  * the upsert writes `roster_status` / `current_department` and conflicts on
@@ -301,18 +306,30 @@ export async function ensureQcAssignmentsForPeriod(periodStart: string): Promise
     slotsByDept.set(s.dept, a);
   }
   for (const [dept, slots] of slotsByDept) {
-    const sorted = [...slots].sort((a, b) => (a.email < b.email ? -1 : a.email > b.email ? 1 : 0));
     if (regen) {
-      sorted.forEach((s, i) => officerForSlot.set(slotKey(s.email, dept), officers[i % officers.length]!));
+      // RANDOMIZED, not alphabetical. Until 2026-09-10 this sorted by email and
+      // dealt `i % officers.length`, so officer #1 held the alphabetically-first
+      // slice of Lead Gen every week — the buddy risk Carla ratified randomization
+      // to close (see src/lib/qc/deal.ts for why the shuffle is SEEDED and not
+      // `Math.random()`). Evenness is unchanged: dealing positions round-robin over
+      // a permutation still differs by at most one per officer.
+      for (const { slot, officer } of dealDeptSlots(slots, officers, periodStart, dept)) {
+        officerForSlot.set(slotKey(slot.email, dept), officer);
+      }
     } else {
-      // balance new slots within this dept against the kept attributions
+      // A slot that appeared mid-week. The sticky rule keeps every prior
+      // attribution, so this can only balance-fill against the load already on the
+      // board — never re-shuffle the week out from under an officer mid-scoring.
       const load = new Map<string, number>(officers.map((o) => [o, 0]));
       for (const [k, o] of officerForSlot) if (k.endsWith(`|${dept}`)) load.set(o, (load.get(o) ?? 0) + 1);
+      // Deterministic order for the fill itself, so two concurrent reads of the same
+      // week agree on where a new slot lands.
+      const sorted = [...slots].sort((a, b) => (a.email < b.email ? -1 : a.email > b.email ? 1 : 0));
       for (const s of sorted) {
         const key = slotKey(s.email, dept);
         if (officerForSlot.has(key)) continue;
-        let best = officers[0]!;
-        for (const o of officers) if ((load.get(o) ?? 0) < (load.get(best) ?? 0)) best = o;
+        const best = leastLoadedOfficer(officers, load);
+        if (!best) continue;
         officerForSlot.set(key, best);
         load.set(best, (load.get(best) ?? 0) + 1);
       }
