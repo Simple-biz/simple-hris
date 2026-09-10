@@ -154,6 +154,35 @@ function formatSourceFileLabel(file: string): string {
   return periodLabelFromFilename(file);
 }
 
+/**
+ * The PAB cell in the stat strip. A `<button>` when there is a calendar to drill into,
+ * otherwise the same plain cell it has always been — a disabled-looking control on a
+ * read-only stat strip reads as broken, and an inert `<button>` is worse than a `<div>`
+ * for a screen reader. Padding, ground and dark variants are identical in both branches
+ * so the strip never reflows between them.
+ */
+function PabStatCell({
+  onReveal,
+  children,
+}: {
+  onReveal: (() => void) | null;
+  children: React.ReactNode;
+}) {
+  const base = 'bg-stone-50 px-4 py-2.5 text-left dark:bg-zinc-900';
+  if (!onReveal) return <div className={base}>{children}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onReveal}
+      title="See which days counted — opens your PAB calendar"
+      aria-label="Show my PAB calendar"
+      className={`${base} w-full cursor-pointer transition-colors hover:bg-stone-100 focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-inset focus-visible:outline-none dark:hover:bg-zinc-800/70`}
+    >
+      {children}
+    </button>
+  );
+}
+
 const DAY_NAMES: Record<string, { label: string; order: number; weekday: boolean }> = {
   mon: { label: 'Mon', order: 1, weekday: true },
   tue: { label: 'Tue', order: 2, weekday: true },
@@ -519,6 +548,23 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   const [manualFileSelect, setManualFileSelect] = useState(false);
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const sourceMenuRef = useRef<HTMLDivElement | null>(null);
+  /** The PAB Calendar card, so the PAB stat cell can drill into it.
+   *  The card is on the page at EVERY breakpoint (beside Daily Hours on lg+, stacked on
+   *  mobile), so revealing it is one behaviour — there is deliberately no second calendar
+   *  in the FAQs popup, which is the rules-and-status surface. */
+  const pabCalendarRef = useRef<HTMLDivElement | null>(null);
+  /** Reveal the PAB calendar from the PAB stat cell. Scroll only — the card is always
+   *  rendered, so this never has to mount or fetch anything. `smooth` is skipped when the
+   *  viewer asked for reduced motion. */
+  const revealPabCalendar = useCallback(() => {
+    const el = pabCalendarRef.current;
+    if (!el) return;
+    const reduce =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
+  }, []);
   // Pay-week files this employee can open a stub for (paid + emailed). Drives the
   // "Open Paystubs" button beside the selector; the modal itself is session-scoped.
   // Cached as the raw week LIST, not as the Set the render wants: a Set does not
@@ -2288,13 +2334,21 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                     {' · '}
                     <span className="font-medium">End</span> {formatPabCalendarDate(pabMonthRange.end)}
                     {' · '}
-                    {pabWeekdayHours.length} Mon–Fri day{pabWeekdayHours.length !== 1 ? 's' : ''} in this PAB month
+                    {/* HSL scores 5-of-7 over whole weeks, so a weekday count says nothing to them.
+                        Non-HSL keeps its EXACT existing number — `pabWeekdayHours` counts weekdays
+                        present in the merged data, which is not the same set as `allPabDays`, and
+                        swapping it would move a displayed figure nobody asked to change. */}
+                    {isHsl
+                      ? `${pabCalendar?.length ?? 0} week${(pabCalendar?.length ?? 0) !== 1 ? 's' : ''} · 5 of 7 days needed each week`
+                      : `${pabWeekdayHours.length} Mon–Fri day${pabWeekdayHours.length !== 1 ? 's' : ''} in this PAB month`}
                   </span>
                 </p>
               )}
               {perfectAttendanceBonusStatus === 'eligible' && (
                 <p className="text-xs text-emerald-700 dark:text-emerald-400">
-                  Eligible: each Mon–Fri in the PAB date range above is logged at 7 hours or more.
+                  {isHsl
+                    ? 'Eligible: every week in the PAB date range above has at least 5 of its 7 days at 7 hours or more.'
+                    : 'Eligible: each Mon–Fri in the PAB date range above is logged at 7 hours or more.'}
                 </p>
               )}
               {perfectAttendanceBonusStatus === 'not_eligible' && (
@@ -2313,8 +2367,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
               )}
               {perfectAttendanceBonusStatus === 'pending' && (
                 <p className="text-xs text-indigo-700 dark:text-indigo-300">
-                  This PAB period is still in progress — eligibility and bonus will be finalized once all Mon–Fri days
-                  have elapsed. Not yet included in the pay summary.
+                  This PAB period is still in progress — eligibility and bonus will be finalized once{' '}
+                  {isHsl ? 'every week in the period has' : 'all Mon–Fri days have'} elapsed. Not yet included in the
+                  pay summary.
                 </p>
               )}
               {perfectAttendanceBonusStatus === 'unknown' && (
@@ -2644,8 +2699,8 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                 variant="outline"
                 size="icon"
                 className="h-9 w-9 rounded-full border-zinc-200 bg-white/90 text-zinc-700 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-300"
-                title="PAB rules, bonuses & pay snapshot"
-                aria-label="Open PAB and bonus help"
+                title="PAB & bonus FAQs"
+                aria-label="Open PAB and bonus FAQs"
                 onClick={() => setMobileHelpOpen(true)}
               >
                 <CircleHelp className="size-4.5" aria-hidden />
@@ -2698,12 +2753,12 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                 variant="outline"
                 size="sm"
                 className="h-8 gap-1.5 border-zinc-200 bg-white/70 text-xs font-medium text-zinc-700 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:border-zinc-700"
-                title="PAB rules, bonuses & pay snapshot — click to read"
-                aria-label="Open PAB and bonus help"
+                title="PAB & bonus FAQs — rules, eligibility and your pay snapshot"
+                aria-label="Open PAB and bonus FAQs"
                 onClick={() => setMobileHelpOpen(true)}
               >
                 <CircleHelp className="size-3.5" aria-hidden />
-                Details
+                FAQs
               </Button>
             </div>
           </div>
@@ -2867,7 +2922,11 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
             <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">Hourly</div>
             <div className="mt-0.5 text-sm tabular-nums text-zinc-700 dark:text-zinc-300">{regularRate != null ? formatPHP(regularRate) : '—'}</div>
           </div>
-          <div className="bg-stone-50 px-4 py-2.5 dark:bg-zinc-900">
+          {/* The PAB cell drills into the calendar. It was an inert <div>, so clicking
+              "Not met" — the thing an employee clicks first — did nothing. It becomes a
+              real control only when there is a calendar to reveal; with no rendered grid
+              it stays exactly the plain cell it was. */}
+          <PabStatCell onReveal={(pabCalendar?.length ?? 0) > 0 ? revealPabCalendar : null}>
             <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-indigo-600 dark:text-indigo-400">PAB</div>
             <div className="mt-0.5">
               {pabMergeLoading ? (
@@ -2901,7 +2960,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                 </span>
               )}
             </div>
-          </div>
+          </PabStatCell>
           <div className="bg-stone-50 px-4 py-2.5 dark:bg-zinc-900">
             <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-sky-600 dark:text-sky-400">Tech</div>
             <div className="mt-0.5">
@@ -3386,6 +3445,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                 Bumped min-h on small screens so the full PAB month fits without
                 a tight inner scroll. */}
             <Card
+              ref={pabCalendarRef}
               size="sm"
               className="flex flex-1 flex-col rounded-2xl border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-md ring-1 ring-indigo-500/5 dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 dark:ring-indigo-950/30 lg:min-h-[16rem] lg:rounded-xl lg:shadow-sm lg:ring-0"
             >
@@ -3847,7 +3907,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           showCloseButton
         >
           <DialogHeader className="border-b border-orange-100/60 px-4 py-3 dark:border-blue-950/50">
-            <DialogTitle className="text-base text-zinc-900 dark:text-white">PAB &amp; bonuses</DialogTitle>
+            <DialogTitle className="text-base text-zinc-900 dark:text-white">PAB &amp; bonus FAQs</DialogTitle>
             <DialogDescription className="text-left text-xs text-zinc-600 dark:text-zinc-400">
               Rules and your status. On mobile, your dashboard shows the hours and PAB calendar charts first — open this
               anytime for eligibility, tech bonus, and pay snapshot.
@@ -3856,11 +3916,39 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           <div className="space-y-4 px-4 py-4">
             <section className="rounded-xl border border-zinc-200/80 bg-white/90 p-3 text-[11px] leading-relaxed text-zinc-600 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-400">
               <p className="font-semibold text-zinc-800 dark:text-zinc-200">Perfect Attendance (PAB)</p>
+              {/* Leads with the window ACTUALLY IN FORCE, not the derivation. Accounting hand-sets
+                  `pab_period_overrides` most months and `getPabMonthRange` still defaults Mon–Fri
+                  (see [[pab-calendars-sun-sat-sweep]] OPEN), so teaching the derivation first tells
+                  an employee a rule that is usually not the one being applied to them. */}
+              {pabMonthRange && (
+                <p className="mt-1.5">
+                  Your PAB period is{' '}
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                    {formatPabCalendarDate(pabMonthRange.start)} – {formatPabCalendarDate(pabMonthRange.end)}
+                  </span>
+                  . Accounting sets it each month, and those are the dates in force for you.
+                </p>
+              )}
+              {isHsl ? (
+                <p className="mt-1.5">
+                  PAB runs on whole Sun–Sat weeks: you need{' '}
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300">5 of the 7 days</span> at 7 hours or
+                  more in every week of that period
+                  {(pabCalendar?.length ?? 0) > 0 ? ` (${pabCalendar?.length} this period)` : ''}. Saturday and Sunday
+                  count on their own merit, and a shift running past midnight can credit both days.
+                </p>
+              ) : (
+                <p className="mt-1.5">
+                  PAB uses every <span className="font-medium text-zinc-700 dark:text-zinc-300">Mon–Fri</span> in that
+                  period (merged Hubstaff uploads); each weekday must be ≥ 7 hours. Saturday and Sunday show on the
+                  calendar for context but never count toward it.
+                </p>
+              )}
               <p className="mt-1.5">
-                PAB uses every Mon–Fri in the PAB period (merged Hubstaff uploads); each weekday must be ≥ 7 hours. If the
-                month doesn&apos;t start on a Monday, the first week is skipped and counting starts on the{' '}
-                <span className="font-medium text-zinc-700 dark:text-zinc-300">second Monday</span> (e.g. March 2026: Mar
-                9–Apr 3). Figures are estimates until payroll confirms them.
+                A day forgiven by an approved dispute or time adjustment counts as met. A day still being processed is
+                not a miss. When Accounting has not set a month, the period runs from the first Monday on or after the
+                1st to the Friday of the last week whose Monday falls in that month — so it can end in the next month
+                (March 2026: Mar 2 – Apr 3). Figures are estimates until payroll confirms them.
               </p>
               <p className="mt-3 font-semibold text-zinc-800 dark:text-zinc-200">Technology bonus</p>
               <p className="mt-1">

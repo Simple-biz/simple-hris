@@ -31,7 +31,7 @@
 |---|---|---|---|
 | 4 | QC corrections: Alivia's role, Callback out of scope, real randomization | `hardening` | **Mon 2026-09-14** |
 | 5 | **Rename the tab to "Time Adjustments"** + the auto-playing per-day nudge | `hardening` | Carla is waiting to be shown it |
-| 6 | PAB explainer copy (**4 sites**) · Details → FAQs · the drill-in | `hardening` | — |
+| 6 | ~~PAB explainer copy (4 sites) · Details → FAQs · the drill-in~~ **BUILT 2026-09-10** | `hardening` | done |
 | 7 | Profile: Overview + ID + Compensation → one pane | `hardening` | — |
 | 8 | Reports → "Badges and Certificates" (label only) | `hardening` | — |
 | 9 | Team directory: peers stop seeing legal names | `hardening` | — |
@@ -360,6 +360,13 @@ on a ≥7h day, on a non-HSL weekend tile, or on a day outside the visible month
 ---
 
 ## 6. Wave 3 — PAB copy, the FAQs rename, and the drill-in (R9, R10)
+
+> **BUILT 2026-09-10.** Copy branched on `isHsl` at all four sites, `Details` → `FAQs` at four label
+> sites, and the PAB stat cell is now a `<button>` that reveals the on-page calendar (`PabStatCell`).
+> The surface also got its first `docs/features/INDEX.md` row. **"A calendar in the mobile popup" was
+> dropped**: the calendar renders at every breakpoint and the popup is deliberately rules-and-status,
+> as its own `DialogDescription` says. `tsc` clean; 2,748/2,750 tests pass (the two known
+> pre-existing failures, neither in this file).
 
 ### 6.1 Rewrite the explainer (three sites, not one)
 
