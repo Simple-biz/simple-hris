@@ -702,9 +702,9 @@ import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-09-03';
-export const AUDIT_RANGE = '0703c748..67858c44 (Sep 2 – Sep 3 afternoon)';
-export const AUDIT_COMMITS = 35;
+export const PASS_DATE = '2026-09-10';
+export const AUDIT_RANGE = '67858c44..a56ce28c (Sep 3 afternoon – Sep 10)';
+export const AUDIT_COMMITS = 69;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -731,129 +731,305 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // ── PASS 23 · 2026-09-03 · the range 0703c748..67858c44 (35 commits, Sep 2 – Sep 3 afternoon) ────
-  // Pass 22 landed on the board the morning of Sep 2 (79d0868bbb8d, VERIFY PASS), so its rows are
-  // history and this file holds only what happened since. Clustered by file overlap; the transcripts
-  // for the 19 sessions since Sep 2 were read to name the work (f36a97ce "Push" carries a whole
-  // feature plus 150 files of skill-mirror noise, and would have been dropped as noise otherwise).
+  // ── PASS 24 · 2026-09-10 · the range 67858c44..a56ce28c (69 commits, Sep 3 afternoon – Sep 10) ────
+  // Kane: "Monday skill all withheld SP lets move it to monday board."
   //
-  // What was MEASURED, not assumed, before staging (plain .limit(1) probes, negative control first):
-  //   • orphanage_interns / _hours / _pay EXIST (9 / 10 / 0 rows), name-part columns PRESENT — the
-  //     interns migration is applied, contrary to the memory's "PENDING --apply".
-  //   • app_settings has 14 paystub.recovered.* keys — the paystub backfill has run.
-  //   • payment_dispatches has ONE (cycle,email) group with >1 paid row, down from 81 in the dry run
-  //     of the same morning — the dedupe --apply has run; the survivor is the divergent alonzos@ pair.
-  //   • orphanage.interns.config is ABSENT — shareMode unset, so the intern Lock in is refused.
+  // WHAT "WITHHELD" TURNED OUT TO BE, measured before anything was staged. pending-sp.json reads 11
+  // entries / 0 unflushed — the ledger owes nothing. Pass 23 (710ee0892af3) was NOT the withheld half
+  // either: the Sep 3 log recorded its apply as mid-flight and unverified, and a board re-read on
+  // 2026-09-10 (verify.mts, ~17 calls) returned VERIFY PASS — all 14 rows holding their intended
+  // statuses, 254/254 plan rows present, 0 orphans, rollup 1569/874, relation 254/254. So the withheld
+  // SP is the third waiting room the skill names: 69 commits on origin/main with no row at all, plus
+  // five existing rows whose evidence has moved.
   //
-  // origin/main = baa7ba21 at staging. The six commits after it (1f5b3ce4 → 67858c44) are LOCAL
-  // ONLY, so their four rows are In Progress. If Kane pushes before this is applied, RE-DERIVE them
-  // (the ancestor check flips them to Pending Deploy) — never carry this prose forward.
+  // HEAD == origin/main (a56ce28c) at staging, so every sha in this file is an ancestor and the four
+  // rows pass 23 capped In Progress ("LOCAL ONLY at staging") advance to Pending Deploy — one step,
+  // re-derived from git, never carried forward from the staged prose. A fifth existing row advances
+  // Ready to Start → Pending Deploy because ddf4c790 did exactly what it names.
   //
-  // No row is Done on a click-through: Kane asked for the commits to be posted, which is an
-  // instruction about the write, not a confirmation about any surface. The one Done row is closed on
-  // a database measurement, with dateBasis 'external' because a script run has no commit date.
+  // TWO ROWS ARE DONE, on two different grades of evidence, said plainly:
+  //   • the Hubstaff rename chore closes on a MEASUREMENT — audit_log holds one `csv.rename` event by
+  //     script:rename-hubstaff-source-file at 2026-09-09T20:49:04Z, a negative control on a
+  //     non-existent action returns 0 rows, and the two 2.3 MB restore-set JSONs are on disk.
+  //   • the security readiness Spike closes on USE, the way pass 17 closed dev tooling: its
+  //     deliverable is a document with no prod surface, and two later commits act on it.
+  // EVERYTHING ELSE STAYS SHORT OF DONE. "Move it to the board" is an instruction about the WRITE,
+  // not a confirmation about any surface (the 2026-09-02 rule). Which of the held rows Kane has
+  // clicked through in prod is the question put to him with the review — the answer, when it comes,
+  // is recorded on each row as its basis, never assumed.
+  //
+  // THREE BLOCKERS WERE MEASURED, NOT ASSUMED. The bonus_catalog history migration is NOT applied
+  // (2026-09-10, all four objects absent, read-only). The celebration workflow import is PENDING per
+  // both governing docs (cycle-closeout.md, webhook-automations.md) and the live `payment_cycle_complete`
+  // slug is present and active — the email sends, without files. The angelicac@ backfill --apply has
+  // never run (Open item 9). And the tickets row's remaining blocker was re-measured: `ticket_replied`
+  // and `ticket_moved` are still ABSENT from webhooks.config (22 entries) — that row is unchanged and
+  // is deliberately not in this file.
+  //
+  // THE MESSAGE TRAP, twice. 482d5af6 "Push" is the entire Admin Penny console and appears in no
+  // session-log table; the transcript 989d5a3f names it. f36a97ce "Push" (PASS 23's range) carried the
+  // Manager Overview rebuild UNDER the KPI-header work pass 23 filed it as — the doc and memory both
+  // say "git log will not lead you here", and they were right. Both get rows.
+  //
+  // WHAT IS NOT IN THIS PASS, AND WHY: 13 docs-only commits (three session logs, the meeting record,
+  // the implementation plan, CLAUDE.md process rules, reference re-verification) — process, not
+  // shipped features, consistent with every prior pass. 6068f1f7 "PAB Fix!" is a tsbuildinfo-only
+  // noise commit. The two BLOCKING security items (impersonation redesign, four ungated routes) have no
+  // row because nothing has shipped for them — they are offered to Kane as Ready to Start rows, not
+  // slipped in.
+  //
+  // PATH AND COST. --only-new: no new epic, no re-scored row, no sprint move — the sanctioned lean
+  // case. 3 label gates + 33 × (lookup + create-or-set + update) ≈ 100 calls, against a full
+  // reconcile that would now re-patch 282 tasks + 37 epics before creating anything (~420 calls —
+  // pass 5 died at ~285). The trade is stated: the 28 new rows land with NO epic relation until a full
+  // reconcile adopts them by name on a later UTC day. Verify with verify-one.mts per row.
+
+  // ── new rows (28) ─────────────────────────────────────────────────────────────────────────────────
   {
-    name: 'Manager Time Adjustments becomes a master-detail review workspace on the MESA-in-blue theme, with the detail as a modal',
+    name: 'Orientation date skips enabled US holidays, iteratively — Labor Day Sep 7 moves the invite to Tue Sep 8',
     status: 'Pending Deploy',
-    shas: ['840f0f77', 'b97637e3', '0ce0fa64', 'f36a97ce'],
+    shas: ['609b84ad', '19ea1862'],
     basis:
-      'Three commits on the new ManagerTimeAdjustments.tsx (1,544 lines) and the pure time-adjustment-queue.ts (501 lines, 40 tests), with ManagerApp.tsx losing 1,051 lines; f36a97ce carries the design handoff bundle under references/design_handoff_time_adjustments/ that the build followed. Master-detail review workspace themed on MESA in blue, then the detail became a modal that fits without scrolling with a square proof image, hours rounded to 2dp for DISPLAY only, and the landing segment opens on the first queue with outstanding work because it IS the second-approver discovery path. All four shas are ancestors of origin/main; nobody has said they have reviewed a request through the new workspace in prod, so it stays short of Done.',
+      'Session 30aeefd5, closing the Sep 3 log\'s deadline item (Lock-in fires the invite Fri ~20:15 UTC). A 200-line orientation-date lib with 139 lines of tests skips enabled US holidays iteratively — Sep 7 Labor Day → Tue Sep 8 — read by the lock webhook (+103 lines of tests) and the lock dialog\'s third bullet, which renders BEFORE the passphrase so Cancel is a free look. Monday stays the default. 19ea1862 is the doc answering "where does HR see this": exactly one surface, HR → New Hire Checklist → the week → Lock in, lock mode only. Both on origin/main. Not Done: the Sep 4 lock fired, but nobody has said the Sep 8 date reached the invite in prod.',
   },
   {
-    name: 'Manager Time Adjustments flicker was a fetch-per-render loop — ref the callback, poll every 60 s',
+    name: 'Payment Catalog Current Banks tab — 129 spellings folded to 45 official names, real logos measured before they land, and a People tab per bank that marks leavers instead of hiding them',
     status: 'Pending Deploy',
-    shas: ['62c8312e'],
+    shas: ['459671ea', 'b471a7e8', '7db4ad3f', '3c478f1c'],
     basis:
-      'The bug Kane opened session 4f0ac61c on ("Fix the Polling Issue please"). The tab re-fetched on every render because the cached-state setter was in the effect deps and never bailed out; the callback is now ref\'d and the poll runs once every 60 s, pinned by a new manager-time-adjustments-live test (155 lines). Its own row rather than a line in the workspace row: a render-loop is a bug class the next reader should be able to find by name. On origin/main, not confirmed live.',
+      'Session 5a2f134a ("add a new tab within where we can see all the Current Banks that the Users added … that way we can add logos to them", then "Lets add a list of people in that bank as well"). banks.ts (581 lines) + 565 lines of tests, a route, a db module, PayProcessorsTab grown ~770 lines across the Banks and People tabs; 129 receiving-bank spellings folded to 45 official names via a DECLARED table; 23 real logos fetched into public/banks by a script that measures each PNG before it lands; wallet cards reuse the emerald the app already means wallet by. People (N) per bank lists name, work email, department, a chip when the bank is on the person\'s OTHER account, loaded only when opened. Leavers appear with a Left chip and count on the card — Kane\'s approved exception to payment-catalog-hides-offboarded, written into the doc it contradicts. All on origin/main; the Banks tab has not been reported opened in prod.',
   },
   {
-    name: 'Both KPI calculators share one header — a Departments/HSL switch, the readiness chip, the Draft/Ready/Locked ladder and the shell’s lock banner',
+    name: 'Employee ID badge as a Profile section — navy flat card that never themes, PNG download, milled-metal sheen, and two painter bugs the tests never saw',
     status: 'Pending Deploy',
-    shas: ['f36a97ce'],
+    shas: ['f731fe69', '027fce30', 'c30dbdbc', 'b99867fe', '1aaeb5ef'],
     basis:
-      'The message-trap specimen of this pass: f36a97ce is titled "Push" and, beneath ~150 files of impeccable-skill mirror noise, carries three new components (kpi-calculator-switch, kpi-readiness-chip, kpi-status-chip), a 348-line section in the HSL KPI doc, and rewrites of DeptBonusCalculator (350/348), HslBonusCalculator (192/110) and ManagerApp (802/751). The two calculators get ONE header — a Departments/HSL Branches switch in the toolbar, the Departments DeadlineBanner folded into an "N of M ready" chip, a Draft/Ready/Locked chip ladder shared by both (Ready = GREEN, Locked = black, amber = warning only), the employee shell\'s payroll-processing banner reused with a per-surface sentence, the dispatch lock passed from the shell (QCApp too), and Departments adopting the HSL branch row in a two-column grid. On origin/main; Kane asked three times that the two headers be "the same", and only he can say they render the same in prod.',
+      'Session b6fcc0e5, artifact-first then impeccable then ship. id-card.ts + id-card-render.ts (~580 lines) with ~450 lines of tests; shipped as a Profile SECTION not a tab, navy-dominant with orange never as text, flat, and verified to render unchanged in dark mode. 027fce30 downloads it as a PNG; b99867fe makes it milled metal with a slow sheen. Two of the five commits fix defects 98 passing tests did not catch, found only by driving the real painter headlessly: c30dbdbc (the serial spaced its glyphs by the font WEIGHT) and 1aaeb5ef (a quoted nickname\'s opening quote became the second initial — punctuation-leading name parts are not initials). formatStartDate is still off by one on every badge — OPEN and NOT claimed by this row. All on origin/main, not confirmed live.',
   },
   {
-    name: 'Lower-left “X paid Y $Z” toast on every dashboard while processing is on, broadcast by the server after each dispatch INSERT',
+    name: 'Pay-cycle celebration fires ONE way — from the close-out route itself — with CSV, XLSX and PDF attached; the client-side cycle-complete route is deleted',
     status: 'Pending Deploy',
-    shas: ['60ea3aeb', '64f012b6', '1128ebce', '407207a3'],
+    shas: ['88474107'],
+    blockers: [
+      'references/n8n/payment-cycle-complete-celebration.workflow.json changed (+125/−35) and is NOT imported — cycle-closeout.md § Deploy notes and webhook-automations.md both say PENDING Kane (2026-09-04). The live payment_cycle_complete slug is present and active (probed 2026-09-10), so the email sends exactly as before, without the files.',
+    ],
     basis:
-      'Four commits in one evening on one feature (dispatch-paid-toast.ts, useDispatchPaidToasts, dispatch-paid-toast.md). 60ea3aeb: the lower-left "lenny@ paid kaner@ $2,700" cards on the Accounting shell, own stack not sonner, paid rows only, chime asymmetric. 64f012b6: a 10 s poll of a new recent-paid route because the first live test (Kane localhost, Lenny on prod) showed nothing — the payer\'s build mattered. 1128ebce: mounted ONCE from the root layout for anyone with Accounting → Payment Dispatch VIEW, the first poll\'s 200/403 being the verdict. 407207a3: the SERVER broadcasts on both realtime topics right after the dispatch INSERT so the queue clears the instant the toast lands, with the recipient hidden at the render boundary and pending never touched. All on origin/main. The one live test on record predates three of the four commits, so the final shape has not been seen in prod.',
+      'Session f5b15fd7. Kane: "All I want is that this automation only triggers one way and its when stop processing and close payroll cycle is triggered from the UI — there was one instance where It was triggered accidentally … close that gap." The celebration half of 88474107 (26 files / 3,424 lines carrying two features): the accidental trigger is closed at the source — app/api/payment-dispatches/cycle-complete/route.ts (232 lines) is DELETED and only the close-out route fires the webhook, server-side; cycle-close-attachments + report export + PDF (~700 lines with tests) attach CSV/XLSX/PDF, base64, 8 MB cap; notify and trigger reworked (+242, +80). On origin/main. Not Done: the attachments half is dead until the workflow import, and no close-out has been run through it.',
   },
   {
-    name: 'Payment Dispatch refuses a second paid row per cycle — server 409 guard, stale-load fence, and a dedupe script',
+    name: 'Admin → Webhooks automation editor — recipients by role or fixed list, extra payload keys, and a Test that mails only the tester',
     status: 'Pending Deploy',
-    shas: ['d406e7c9'],
+    shas: ['88474107', '2e24032c'],
     basis:
-      'Found the same morning: cobb@ paid twice by graceh@ 50 s apart with the same txn id, and a read-only audit counted 82 (cycle, person) groups with a second paid row. One commit closes both causes — POST /api/payment-dispatches now answers 409 already_paid keyed on cycle_source_file for employee paid rows and fails CLOSED on a read error (dispatch-duplicate-guard.ts, 151 lines of tests), and useDispatchQueue.load() carries a fence that drops stale successes and failures (load-fence.ts, tested); both Mark Paid clients treat 409 as settled and never restore to Pending. The 252-line dedupe script ships in the same commit and is its own row. On origin/main. Critical priority because it is the money log; not Done because a guard on a payment route has to be seen refusing in prod before anyone credits it.',
+      'The editor half of the same commit, same session — built for the case Kane named: "if Carla resigns we can change the recipient." WebhookAutomationDialog (516 lines), a 266-line automation route, webhook-config (346) with 210 lines of tests and fixtures; recipients by role with per-person add/remove or a fixed list, extra payload keys, and a Test that sends to the tester\'s email only with a never-real week. 2e24032c is a one-line border fix. On origin/main; nobody has reported editing an automation in prod.',
   },
   {
-    name: 'Run dedupe-payment-dispatches --apply — 81 echo groups collapsed to the oldest row, alonzos@ left as divergent',
+    name: 'angelicac@ transfer backfill script — the transfer HRIS never filed, replayed through the three Release helpers in order, dry-run by default',
+    status: 'Pending Deploy',
+    shas: ['658a99ac'],
+    blockers: [
+      'scripts/backfill-angelicac-transfer.mts --apply has NEVER been run (Open item 9, dry run passed all five guards with zero writes on Sep 4). Her master row and Sheet cell still read Lead Gen; the record is not yet backfilled.',
+    ],
+    basis:
+      'Session aae1e82e. Kane: "can we hardcode or SQL Migrate as if she was ever put in HRIS?" — answered as a backfilled transfer, not a raw UPDATE: a 339-line script inserts the transfer request HRIS should have had (Lead Gen → HSL — Collections, effective 2026-06-22, overridable) and runs the SAME three production helpers the Release button runs, in the same order — master list, then the Google Sheet cell, then mark applied — so a Sheet miss surfaces as a Retry badge instead of drifting. One audit row and a JSON backup before any write; notifications off unless --notify. On origin/main. A script has no prod surface, so Done means RUN, and it has not been.',
+  },
+  {
+    name: 'Admin Penny becomes an operator console — NUL-delimited activity frames report the real tool, Opus 5 engine with refusal fallback, /clear',
+    status: 'Pending Deploy',
+    shas: ['482d5af6'],
+    basis:
+      'The message-trap specimen of this pass: 482d5af6 is titled "Push", appears in no session-log table, and is the whole feature — AdminPennyConsole (1,018 lines) replacing BizAiTab on Admin, console-stream / console-phases / console-commands libs (228 lines) with 29 tests, the penny-chat route (+70), CeoChatBubble / ceo-chat-message / use-ceo-chat taking a tone prop and an activity state, a 280-line doc. The reason it has a backend half: Penny\'s routes streamed text/plain deltas only, so a progress readout could only guess — the route now interleaves NUL-delimited JSON activity frames naming the tool actually running, and NUL is the delimiter because the model cannot emit one, so no reply can forge a frame. Engine claude-opus-5 with a refusal fallback; /clear. Transcript 989d5a3f. On origin/main; the CEO Penny, CEO bubble and employee bubble are explicitly unchanged. Not confirmed live.',
+  },
+  {
+    name: 'Diagnostics → Payroll Cycle Performance and HR Pipeline tabs — one honest rate each from close-outs, every cycle listed, and a progress bar that cannot finish early',
+    status: 'Pending Deploy',
+    shas: ['2ff4c6be', '2a26c4f6', '9c349baa', '5bf484a2'],
+    basis:
+      'Session b1b67eba, routed to blueprint with the plan approved before code. Two routes, PayrollCyclePerformance (450→616) and HrPipelinePerformance (476), performance-ui (390→700), cycle-performance + hr-pipeline-performance libs (~1,000 lines) with ~880 lines of tests, a cycle inventory. The rule: the payroll rate comes ONLY from close-outs, the one source that carries a denominator; 9c349baa lists EVERY cycle per Kane ("can we add the unclosed? … lets just label unclosed"), shown with their data and WITHOUT a denominator they do not have; 2a26c4f6 takes orange and teal because amber and green already mean something; 5bf484a2 replaces the first-load skeletons with a modal progress bar reusing step-load-prediction.ts — it never reaches 100% before the data lands and a failed read never completes it. All on origin/main, not confirmed live.',
+  },
+  {
+    name: 'A failed Payment Catalog read no longer renders an empty catalog in silence',
+    status: 'Pending Deploy',
+    shas: ['d12e8323'],
+    basis:
+      'Session c1da4d35 — the code fix that fell out of the mixed .next/ incident (a prod build and a dev build sharing one directory made every app/api route 404 while pages rendered fine). A failed catalog read used to say nothing and render an empty catalog, which made an environment fault look like a data fault; BonusCatalog now surfaces the error (+116/−31). On origin/main; a failure state is hard to click through and has not been reported seen.',
+  },
+  {
+    name: 'COP people see COP — a per-person settlement currency, display-only, on the Payroll Wizard, both KPI calculators, Mark Paid and the Processor Queue',
+    status: 'Pending Deploy',
+    shas: ['68bcc8fb', 'f1c72380', '771eb1e1'],
+    basis:
+      'Session 5357b812. Kane: "We should have a sticker or any indicator for People who are in COP or Colombian and their Bonus should be in COP NOT in PHP … this should reach Payment Dispatch and Payroll Wizard as well." A settlement-currency route (262) + lib (185) + SettlementChip (107), wired into PayrollWizard, DeptBonusCalculator, MarkPaidDialog and ProcessorQueue, ~320 lines of tests, a verify script. The line that matters, from the settlement-currency-per-person rule: CATALOG currency is the denomination converted to the peso actually paid; SETTLEMENT currency is a property of the PERSON, sourced from onboarding country, and never changes what is disbursed — FORCED_DEPT_CURRENCY was the wrong lever and was not used. f1c72380: COP is the headline and the peso the footnote on Lead Gen totals; the total line carries USD, COP and PHP. 771eb1e1 moved the native renderer inside the calculator. All on origin/main; Kane asked "Where is the COP value now?" mid-session and the answer was the bug in the next row, so the final shape has not been confirmed seen.',
+  },
+  {
+    name: 'Settlement-currency fetch was cancelled by every dependency change and never retried — only an unmount may drop a response',
+    status: 'Pending Deploy',
+    shas: ['5c5adf54'],
+    basis:
+      'Own row because it is a bug CLASS. The ≈ $446.43 USD lines WERE rendering, proving the FX rate arrived and the code was live — so the request succeeded and its answer was discarded: the fetch effect used a per-effect cancelled flag while settlementEmails derives from state that changes on every department load and keystroke, React ran cleanup on each change and killed the in-flight request, and the emails were already marked "asked" so no retry ever came. Rule: marking work already-requested is only sound if the answer can never be discarded. Now only an unmount drops a response, a dependency change must not (the merge is idempotent, keyed by email), and a failure un-asks. The identical bug was in the Payroll Wizard\'s copy and was fixed there too (42 lines of new tests). On origin/main, not confirmed live.',
+  },
+  {
+    name: 'HSL Managers Weekly realigned to the dated 2026-08-30 sheet — banded weekly tiers, three new managers, Pre/Post-Hearing ₱2,500 monthly final-week box outside the cap, Case Managers SSA.Gov ×₱250',
+    status: 'Pending Deploy',
+    shas: ['3d49ebcd', '224762e6', 'c61e1b8a'],
+    basis:
+      'Session a7f934fc — Carla: "there have been changes to the bonuses for the HSL managers. The KPI calculator isn\'t aligned with the new bonuses so the amounts are incorrect." Three of the six fixes off that report, all in schema.ts (+300) with ~290 lines of tests and HslBonusCalculator: Managers Weekly reads the DATED 2026-08-30 sheet (a new sheet is a new version, an old one is never edited), banded weekly tiers, Sherwin / AR / Jazmine added; Pre/Post-Hearing gets a ₱2,500 monthly bonus as a final-week checkbox OUTSIDE the weekly cap; Case Managers pays SSA.Gov × ₱250 — the term that had only ever reached Attestation. On origin/main; Carla has not confirmed the realigned amounts against her sheet in prod. OPEN and not settled by this row: Carla pinned ₱2,500 on 09-08 and said 3,500 on 09-09 — never pick one, never rewrite the pinned amount or its test without a worked example (pre-post-hearing-2500-vs-3500). Left with Carla, not code: PURPLE re-saves for jennylynf@ and rockym@, and emss@\'s monthly box.',
+  },
+  {
+    name: 'SSD Medical Records and Collections monthly flat bonuses auto-dispatch again — Ready is the trigger, and the monthly share sums with the weekly bonus',
+    status: 'Pending Deploy',
+    shas: ['6121626c', 'f5b75b19'],
+    basis:
+      'Same session, the systemic one Carla described across ~49 people: the weekly ₱475 landed and the ₱1,625 monthly KPI share did not. The wizard\'s monthly auto-dispatch fires in the week the period is marked Ready — Ready is the trigger, not the calendar — and the monthly share now SUMS with the weekly bonus instead of replacing it; f5b75b19 does the same for Collections, the second monthly department that never came through. Verified against live data after the fix: the Aug 30 – Sep 5 SSD period is Ready, five teams scored, 49 people, ₱95,500. Because these are now automatic they must not ALSO be typed into the Adjustment column. On origin/main. Not Done: the ₱95,500 is a calculator figure; whether it dispatched in that week\'s run is the click-through nobody has reported.',
+  },
+  {
+    name: 'HSL KPI bonus is paid for every scored person, not only hogan_smith_law home-department master rows',
+    status: 'Pending Deploy',
+    shas: ['78e69361'],
+    basis:
+      'Same session, the sixth fix: the wizard paid HSL KPI only to people whose master row said hogan_smith_law, so duplicate master rows and external members were scored and then dropped from the payout — the same coin-flip that paid people "one week and dropped them the next". hsl-kpi-payout.ts (33 lines, 35 of tests) pays every scored person. On origin/main, not confirmed against a paid run.',
+  },
+  {
+    name: 'Bonus Library carries a version and an effective date per bonus, with version and assignment history in the modal — display and audit only, the calculator pays the live definition',
+    status: 'Pending Deploy',
+    shas: ['8c2710ee'],
+    blockers: [
+      'references/sql/create/2026-09-08_bonus_catalog_history.sql is NOT applied — confirmed read-only 2026-09-10: bonus_catalog_bonus_history and bonus_catalog_assignment_history missing, bonus_catalog_bonuses.version / .effective_from missing. scripts/apply-bonus-history-migration.mjs is Kane\'s to run. The UI degrades (NULL effective_from reads as created_at) rather than breaks, so this is code-complete and half-dead, not code-complete and dead.',
+    ],
+    basis:
+      'Session 0ea9e845, routed to blueprint. Kane: "Bonus Library - Should have a history when we view the bonus so we can see changes on its effectivity date … add version as well please." 1,373 lines: a history route, bonus-catalog-db +311, BonusCatalog +329, a history lib with tests, a 105-line migration and its apply script. Every bonus carries a version and the date it took effect (a v3 · from 2026-09-14 chip); the modal shows Version history and Assignment history; Effective from pickers on create/edit and per department panel. THE LOAD-BEARING DECISION, Kane\'s: DISPLAY AND AUDIT ONLY — the KPI Calculator keeps paying the LIVE definition, not the version in effect for the week scored, and bonus-catalog.md records that pay-by-version was offered and declined. On origin/main; not Done because the history tables it displays do not exist yet.',
+  },
+  {
+    name: 'PAB step: HSL wins when a person has two master rows and the step says whose department was guessed; the Additions review re-gates PAB off payout weeks',
+    status: 'Pending Deploy',
+    shas: ['cbfd640a', '0140c07a', '7b760955', '6f15e889', '364fdfca'],
+    basis:
+      'Session 88e29eb1 — a build-and-revert afternoon, and one row describes the CURRENT rule, not both. 7b760955 implemented Kane\'s words ("The payout week will always be after the PAB Period … it will never be combined") across seven surfaces; 364fdfca reverted it the same evening because production had already paid August\'s PAB on the 08-23 file, 691 people, paid · sent — "the week after the period" meant the calendar week payroll runs in, and the file open in that week IS 08-23. The payout-week rule is therefore UNCHANGED (pab-payout-week-gate-and-pill RECONFIRMED 2026-09-08; the artifact must be named, never "this week"). What SURVIVES the arc, 521 net lines: master-row-tiebreak.ts — measured 267 active people with more than one master row, 138 straddling hsl:* and non-HSL, resolved FIRST-ROW-WINS with no ORDER BY so the winner could change between loads and PAB graded them by the wrong family; HSL now wins (Kane 2026-09-08) and the step flags whose department was guessed — plus audit-duplicate-master-departments.mts, and additions-pab-gate.ts, which re-gates PAB in the Additions review totals so the screen shows what the run pays (bonusTotals stays month-wide by design). Resolves the ambiguity, does not repair the data: the duplicate rows still need deduping. All on origin/main; not confirmed against a run.',
+  },
+  {
+    name: 'Pre-release security readiness sweep — the shared-password impersonation backdoor, six ungated API routes, the unpaid-paystub flag and zero security headers, written up from a transcript',
     status: 'Done',
-    completed: '2026-09-03',
-    dateBasis: 'external',
-    shas: ['d406e7c9'],
+    completed: '2026-09-09',
+    dateBasis: 'commit',
+    shas: ['362624c3'],
     basis:
-      'Closed on a MEASUREMENT, not an assertion. The dry run of 2026-09-03 morning reported 81 echo groups → 82 rows (₱983,343) and refused alonzos@ as divergent by design; the memory recorded the --apply as PENDING Kane. A read-only paged count of payment_dispatches later the same day (8,726 paid rows, grouped by cycle_source_file-else-cycle_id + lower(recipient_email), employee rows only) finds exactly ONE group with a second paid row — the alonzos@ pair the script skips. The cleanup ran; the only thing that could have collapsed 81 groups to the one the script refuses is the script. The date is external because a script run has no commit: it is the day the result was measured, and it is inside Sprint 28. Still OPEN and out of this row\'s scope: whether alonzos@ on the 07-26 cycle was a REAL double payment in Hurupay.',
+      'A Spike, closed on USE the way pass 17 closed dev tooling — its deliverable is a document with no prod surface to click through. Session 1a6b84b8 was asked "what are essential for an HRIS to be done before we release" and stopped four minutes in on a public shared-password impersonation backdoor (the literal default, committed to .env.example, absent from .env.local, rendered on /login in PUBLIC_PATHS), five ungated API routes out of 290 swept (a sixth, presence/last-seen, found by 993aad7f), the SHOW_UNPAID_STAGED_PAYSTUBS flag and zero security headers — and wrote nothing down. 362624c3 gave every finding a home: docs/features/pre-release-security-readiness.md (142 lines), re-verified in the tree before writing, with the praise that bounds it (evaluateRouteAccess centralized and tested, /api/employee/* scoped to the session email, 270 of 290 routes gated). USED: ddf4c790 closed two of the six routes citing it, and the Sep 10 log\'s BLOCKING items 1–2 are its rows. The remediation is NOT this row and has no row yet. Completed Date is the commit date; inside Sprint 28.',
   },
+  {
+    name: 'Payroll Wizard Reports step gets a search bar — display only, exports and the cycle Total never narrow',
+    status: 'Pending Deploy',
+    shas: ['0573d834'],
+    basis:
+      'Session 11011fc4, seven minutes, routed to hardening — safe because the brief cited "a filter never hides a row" and "exports reconcile from their own columns". The needle narrows the step-9 table and NOTHING else: both exports still build from the whole snap.employees (the toolbar says so while a search is active), the cycle Total never narrows and a labelled Search subtotal row appears instead, a payee with no department matches "no department", the needle clears on every period switch. 118 lines in PayrollWizard + the doc. On origin/main, not confirmed live.',
+  },
+  {
+    name: 'Accounting tab cache gets an identity envelope and a sign-out purge so pay data cannot survive into the next account; HR cache gains a 30 s freshness window',
+    status: 'Pending Deploy',
+    shas: ['4e8590cb', 'f5ad83ab'],
+    basis:
+      'Session e45b1682 — Kane: "Check all Dashboards from Admin to Employee see what dashboard has no proper Caching Practices … lets fix this in order and by your best recommendation." The audit split the ask into two opposite problems and this fixes the worse one: a cache that DECIDES. The Accounting/CEO/Payroll-Clerk store had no identity stamp, no schema version, no age ceiling and no purge function at all, so people:list / dispatch:queue / overview:payouts survived signOut into the next account. 21 files: accounting/tab-cache +359 with 427 lines of tests (identity + schema v + 12 h ceiling, reads fail closed, self-binds because its shells render before identity resolves, only bindAccountingCacheIdentity purges), all three sidebars remove SESSION_EMAIL_KEY first then clearAllAccountingCache(); HR gains isHrTabCacheFresh (30 s) beside hasHrTabCache — paint and may-skip are different questions — with every revalidate silent. f5ad83ab writes down that the two remaining skip-flag exceptions are ratified boundaries, pinned by tests. On origin/main; the sign-out purge has not been exercised across two accounts in prod on record. The Admin store is a separate blueprint brief, awaiting Kane (Open item 20).',
+  },
+  {
+    name: 'One audit-action registry behind the panel, Penny and every write path — source-scan test fails the build on an unregistered action, actor from the session never the body, dated purge with a 90-day floor',
+    status: 'Pending Deploy',
+    shas: ['ddf4c790'],
+    basis:
+      'Session 33c5ffd7 — Kane: "Audit Log Mechanism - let us improve this across - Accounting, CEO, HR and Orphanage." The hardening brief found there was NO governing doc for the mechanism and three private ideas of what an action name means; the panel\'s 14 hand-written predicates claimed no orphanage.*, wizard.*, dispatch.*, documents.*, people.*, bank_*, ticket.* or time_adjustment.* row existed. 34 files / 2,555 lines: registry.ts (567) is the ONE place a family means something; the panel\'s filter and badges and Penny\'s search_audit_log description are GENERATED from it; registry.test.ts source-scans every insertAuditLog call site in app/ + src/ and FAILS THE BUILD on an unregistered action (negative control first). auditFrom(request, authz) makes six routes stop taking edited_by / decided_by off the request BODY as the actor — the body value stays on the row as a business fact, recorded in details as a claim. Destructive paths audit FIRST and abandon the delete if the trail write fails. clearAuditLog (truncate, unable to record itself) is gone — DELETE prunes older than N days, floor 90, after writing audit.purged. Reads page by keyset, never .range(). Also gated: employee-gift-shipping GET+PUT and import-daily-report — 2 of the 6 ungated routes from the security sweep, closed here because an ungated write has no actor to record; four remain, and import-daily-report should be deleted (Kane\'s call). On origin/main; the panel has not been reported opened in prod since.',
+  },
+  {
+    name: 'Rename the paid 2026-08-23 Hubstaff week off its browser "(1)" suffix across every store and reseed its 1,100 disbursement records',
+    status: 'Done',
+    completed: '2026-09-09',
+    dateBasis: 'commit',
+    shas: ['25a6f677'],
+    basis:
+      'Closed on a MEASUREMENT, the way a script row must be — a script has no prod surface, so Done means RUN. Read-only probe 2026-09-10: audit_log holds exactly one csv.rename event, actor script:rename-hubstaff-source-file, at 2026-09-09T20:49:04Z; a negative control on a non-existent action returns 0 rows, so the read can detect absence; two 2.3 MB restore-set JSONs sit in references/backups/ stamped 2026-09-09 16:48. THE WORK (session 438013b6, Kane: "Payment Dispatch - Week Selector - is missing last week\'s HUBSTAFF Report"): the week was in the database, paid and locked — 1,101 hour rows, 1,069 dispatches, cycle-complete fired — under a filename carrying the browser\'s duplicate-download "(1)" suffix, which passes the ingest contract and then trips a junk-file heuristic living in FOUR independent copies (dispatch week selector, seedMissingDisbursementRecords, CEO timeline, People payroll history). Nine days invisible; the week had seeded 0 of ~1,100 records. The 361-line script discovers every app_settings key ending in the old name rather than enumerating them, backs the full restore set up first, renames disbursement_records before payment_dispatches (the sync trigger matches on cycle_source_file), and re-seeds LAST so the existing dispatch rows stamp the records paid — 1,100 / 1,051 paid vs the neighbour week\'s 1,070 / 1,023. The wizard\'s own rename button was deliberately NOT used: it migrates one key and would have stranded six others, replaying the week with FX 0. Kane approved the rename ONLY; the ingest guard and the four regex copies are Open item 23, and "the missing is 30 - 5" is Open item 24. Completed Date is the commit date, which is also the day it ran.',
+  },
+  {
+    name: 'Employee PAB card explains the right rule in all four places, and "Not met" drills into the calendar',
+    status: 'Pending Deploy',
+    shas: ['15dbd67f'],
+    basis:
+      'Session c2cf2f89, the first commit of the Sep 9 meeting\'s build plan. The room said "there\'s no calendar there" and was wrong — an HSL-aware PAB calendar ships twice — but the copy was wrong in FOUR places (the plan first counted three) and the stat cell was an inert div. +104/−16 in EmployeeDashboard: the copy states the rule the person is actually graded by, and "Not met" is a real drill-in, branched on isHsl at the four sites. On origin/main; no employee has been reported clicking it in prod.',
+  },
+  {
+    name: 'My Hours becomes Time Adjustments, and red days ask for one — a persistent mark, a 5 s looping bubble and a permanent count, shuffled by seed',
+    status: 'Pending Deploy',
+    shas: ['8ab5dcdb', '9841c4c9', '0db725af'],
+    basis:
+      'Same session — the meeting\'s ONE approved build (time-adjustment-nudge-approved). 8ab5dcdb renames the tab across 7 sites as a LABEL only (the hours key stays). 9841c4c9 is the nudge as THREE layers: a persistent mark on every red day, a 5 s looping bubble that visits red days in seeded-shuffle order, and a permanent count — all off one pure isNudgeableMissedDay (126 lines, 111 of tests). 0db725af fixes the rotation depending on the same thing twice. The trigger, resolved as the plan demanded: red is under 7 h WITH data; Carla\'s own failed click was a zero-hours day, which renders sky/orange and is NOT nudged — a blank cell can also be an ingest artifact. aa48e39d later trimmed 33 lines from the lib. All on origin/main, not confirmed live.',
+  },
+  {
+    name: 'QC weekly deal is genuinely random — seeded per (period_start, department), Callback retired from QC_DEPT_KEYS, and the surface gets its first feature doc',
+    status: 'Pending Deploy',
+    shas: ['aa48e39d'],
+    basis:
+      'Same session — HRIS-16\'s FIRST child row on the board. The meeting said "It\'s randomized already"; verified against code it was a deterministic alphabetical round-robin (qc-db.ts:304-306) so officer #1 got the alphabetically-first slice of Lead Gen every week — the buddy risk Carla was closing. deal.ts (82) over seeded-shuffle.ts (59) with 132 lines of tests including the not-alphabetical regression; Callback leaves QC_DEPT_KEYS (history retained, invisible) so Lead Gen is the only QCed department; qc-scoring.md (150 lines) is the ~7,000-line surface\'s first written record; audit-pending-migrations gains probes for the four QC tables (#88/#89 had been UNMEASURED — item 22b). Still owed and not this row: Kane unchecks Alivia\'s qc role in Admin before the first Monday read; zero-hours eligibility is Carla\'s ruling. Deadline: Jackie and nine officers test with real data Mon 2026-09-14. On origin/main, not confirmed live.',
+  },
+  {
+    name: 'QC: paste Jackie’s sheet, Compare it with the first pass in four buckets, Override via setVar only, Undo in memory',
+    status: 'Pending Deploy',
+    shas: ['2e56b84e'],
+    basis:
+      'Same session, off the qc-compare-override-paste-format brief. paste.ts (135) parses a TAB-only paste; compare.ts (241) sorts it against the QC first pass into four buckets carrying scored_by; Override writes through setVar ONLY, never rows[]; Undo is in-memory; one audit event. 261 lines of tests, 399 lines in DeptBonusCalculator. Q1 was settled by a read-only prod probe: the var is per member (Appts_Set for the dept, Appts for reinelr@). The officer histogram is a separate brief, not this row. On origin/main; Jackie has not pasted a sheet in prod.',
+  },
+  {
+    name: 'KPI calculators score the upcoming pay week before its Hubstaff file exists, and kpi.published tells Accounting on publish',
+    status: 'Pending Deploy',
+    shas: ['27b193c3', '9eea44b9'],
+    basis:
+      'Same session (hsl-kpi-calculator-2026-07.md § Scoring the upcoming week). Both pickers offer exactly ONE week past the live batch — live Sunday + 7 via upcomingWeekFor, never the clock — sync is the period_start key and no gate is loosened (isUpcomingWeek is wording only); a period-status route; kpi-published.ts (169 lines, 57 of tests) inserts a kpi.published notification for Accounting on Mark Ready / Lock. The ALTER widening employee_notifications_type_check was run by Kane the same day and 9eea44b9 records the verify: kpi.published present, 45 types, superset intact — re-read again 2026-09-10 on a fresh connection while checking the tickets row. The first REAL insert is still unproven: the next Mark Ready or Lock on any dept-week is the proof, and a missing Accounting card means read audit_log for notification.insert_failed first. On origin/main.',
+  },
+  {
+    name: 'Lead Gen card header — Compare chip beside Payout with motion, Offboarded last pay behind a header chip, week picker border restored',
+    status: 'Pending Deploy',
+    shas: ['e107ab37', 'e8e5926d', '257ecf56', 'a56ce28c'],
+    basis:
+      'Same session, four polish commits on DeptBonusCalculator in one afternoon: Compare with your sheet moves into the Lead Gen card header beside Payout and unfolds with motion; Offboarded · last pay collapses behind a header chip; the Compare chip wears a running emerald rim while live; the Departments week picker gets its thin border back because it is a control. Chrome only — no scoring math moved. Scored 2 as one component\'s iteration, not four rows. All on origin/main, not confirmed live.',
+  },
+  {
+    name: 'Manager Overview rebuilt — what needs me on the left as one ordered queue, the roster on the right, four stat cells, and no page scroll at lg and up',
+    status: 'Pending Deploy',
+    shas: ['f36a97ce', 'ba990833'],
+    basis:
+      'UNDECLARED SINCE 2026-09-02, and inside pass 23\'s own range: f36a97ce "Push" (358 files) carried this rebuild UNDER the KPI-header unification pass 23 filed it as, and the doc (manager-overview.md, ba990833) and memory both warn that git log will not lead anyone here. Session 3dab3af5, Kane: "Manager - Overview - Please redesign this and make it look like this please but use our color theme" → "Make this fit in 1 view port please". Greeting, a divided band of four stat cells (Pending approvals, Bonuses to score, Active right now, On your roster — an em-dash while a gate loads, never a zero), pending time adjustments and unscored bonus departments merged into ONE ordered "Needs you" queue with an All / Approvals / Bonuses filter (NEEDS_PREVIEW = 8, "+N more waiting" pinned BELOW the scroll), the roster on the right. Nothing on the page decides anything — every row links into the surface that owns the decision. At lg and up the page must not scroll: 0 px page scroll verified at 1440×900, 1366×768 and 1280×720; mobile still scrolls, deliberately. ManagerApp.tsx diff 1,553 lines; scoped CSS in a style block. Completed Date would be 2026-09-02, inside S28 — but it is not Done: nobody has confirmed the viewport lock in prod.',
+  },
+
+  // ── existing rows whose evidence moved (5) ────────────────────────────────────────────────────────
   {
     name: 'Stop Processing can no longer file a just-paid person as unpaid — the close-out prunes reconciled-paid employees',
-    status: 'In Progress',
+    status: 'Pending Deploy',
     shas: ['1f5b3ce4'],
     basis:
-      'The toast had just announced a person paid and the Stop Processing dialog still counted them unpaid, because unpaidPayable read the rows before the paidElsewhere overlay. The client now iterates the overlaid rows, and the server backstop in buildCycleCloseoutRecord prunes reported-unpaid EMPLOYEES that have a paid row in the cycle and counts them as unpaid.reconciledPaid; contractors are never pruned (58 lines of new tests). In Progress, not Pending Deploy: 1f5b3ce4 is NOT an ancestor of origin/main (baa7ba21) at staging — committed locally, not pushed. Re-derive at apply time.',
-  },
-  {
-    name: 'Orphanage interns — @pathway.ph profiles, own Hubstaff report and tables, a mini wizard on /orphanage, a Simple | Interns view in Accounting, and dispatch to the Orphanage queue',
-    status: 'Pending Deploy',
-    shas: ['57ca6638', '5a18b40c', '34934480', 'cd8f4365', '2b54e2fb', '1a049e76', '5cc1a5eb', 'f9acc1a5'],
-    basis:
-      'One payee class delivered end to end in a day, off the implementation plan Kane commissioned in session cc12306c and released with "Start the build!". 57ca6638 is the build: own tables (orphanage_interns / _hours / _pay via references/sql/migrate/2026-09-02_orphanage_interns.sql + apply-orphanage-interns-migration.mts), an intern Hubstaff report with the wizard\'s columns that never touches hubstaff_hours, Profiles + a mini wizard on /orphanage in the Payroll Wizard\'s shape, a Simple | Interns toggle in Accounting, accept/reject into Payment Dispatch → Orphanage, PAB ₱1,000 when every week has 5 paid hours, no Tech. Then a three-tab dialog, four polish/fix commits on it, the name split into parts composed like Simple hires (5cc1a5eb), and f9acc1a5 making the migration add the name-part columns to an already-created table. The migration was PROBED APPLIED on 2026-09-03 (plain .limit(1), negative control first): 9 interns, 10 hour rows, name parts present — so this is NOT code-complete-but-dead, whatever the memory says. Scored 8, the cap: no epic because it is one surface for one payee class, but nothing about it is a 5. All eight shas are on origin/main. Not Done: no one has run an intern week through to a paid dispatch, and the blocker below means no one can yet.',
-    blockers: [
-      'app_settings orphanage.interns.config has no shareMode (probed ABSENT 2026-09-03) — Lock in is refused until Ellie/Ralph decide system_split vs intern_remits (plan Q2)',
-    ],
-  },
-  {
-    name: 'Employee Pay Stubs are served from recovered snapshots and Profile loads in one wave',
-    status: 'Pending Deploy',
-    shas: ['1b840fc6'],
-    basis:
-      'Kane, session a0cfce5e: "It takes like a long time to load though especially the paystubs." Measured read-only first: 14 of 28 upload weeks had neither a wizard final_pay snapshot nor a staged payload, so ?summary=1 re-ran the whole-company engine (~6.6 s each, 6 at a time) on every open by every employee. One commit: a paystub-ONLY paystub.recovered.<file> key stamped with the Hubstaff upload id and never written under the wizard\'s final_pay key, a 5-minute per-process engine memo, prune-before-dedupe, the Profile identity fetch flattened from 3 hops to 1, and Profile + Pay Stubs wired into the reload cache — 290 + 72 + 64 lines of new lib with 300 lines of tests, plus the backfill script. The backfill was PROBED RUN on 2026-09-03: app_settings holds 14 paystub.recovered.* keys, one per slow week. On origin/main. Not Done: the claim is a speed-up, and only a real employee opening Pay Stubs in prod can confirm it landed.',
-  },
-  {
-    name: 'Employee My Hours calendar tiles restyled like the MESA stat cards — flat tone fills, bigger dates, warm weekend text',
-    status: 'Pending Deploy',
-    shas: ['c8e5f658', '4265bdfd', 'b1c0dcf3', 'fb26990b', '6f4ac980'],
-    basis:
-      'Five commits on one file (EmployeeMyHours.tsx) in one session (3e4c6a06: "make the calendar dates a bit bigger"): tiles styled like the MESA stat cards, then a notch smaller, month range + PAB period flattened beside the pill, flat tone fills instead of gradients, warm text on the orange weekend tint. Chrome only — no hours math moved. All on origin/main, not confirmed live. Scored 2 because it is five rounds of iteration on one component, not 1.',
-  },
-  {
-    name: 'Favicon becomes the Employee Penny chat-bubble heart',
-    status: 'Pending Deploy',
-    shas: ['30230f09'],
-    basis:
-      'Session 2fc55a85: "use the Employee - Chatbubble as our Favicon for the HRIS." Four PNGs (32/192/512 + apple-touch-icon) and the icon links in app/layout.tsx. On origin/main. A favicon is the easiest possible click-through, and it has not been reported seen in a prod tab yet.',
+      'RE-DERIVED 2026-09-10, one step: pass 23 capped this In Progress because 1f5b3ce4 was not an ancestor of origin/main at staging (baa7ba21). Kane pushed; it is now an ancestor, so the row advances to Pending Deploy and no further — nobody has said the Stop Processing dialog counted a just-paid person correctly in prod. The work is unchanged: the client iterates the overlaid rows and buildCycleCloseoutRecord prunes reported-unpaid EMPLOYEES that have a paid row in the cycle (unpaid.reconciledPaid), contractors never pruned, 58 lines of tests.',
   },
   {
     name: 'Payment Catalog Pay Processors tab — the source-of-truth registry of send-from processors and their 1:1 rails',
-    status: 'In Progress',
+    status: 'Pending Deploy',
     shas: ['5062ccc1', '44aa16f7'],
     basis:
-      'Session 5a2f134a: a Pay Processors tab where processors are added, edited and classified as 1:1 (Kolan, HiGlobe) or compatible with another bank. A new PayProcessorsTab (680 lines), route, pay-processors-db and a 429-line pure lib with 258 lines of tests; the registry is the source of truth, 1:1 is modelled as WALLET_RAILS, and drift from the wallet-rail mirror is a chip, never a refusal. 44aa16f7 keeps the dialog primitive\'s padding so the footer bleeds to the edge. In Progress, not Pending Deploy: neither sha is an ancestor of origin/main (baa7ba21) at staging. Re-derive at apply time. Payment Dispatch integration is the recorded NEXT step and is not in this row.',
+      'RE-DERIVED 2026-09-10, one step: both shas are now ancestors of origin/main (they were not at pass 23\'s staging), so In Progress → Pending Deploy. Since then 459671ea / 3c478f1c grew the same PayProcessorsTab.tsx by ~770 lines for the Current Banks and People tabs — that is the Current Banks row, not this one. Payment Dispatch integration is still the recorded NEXT step (Open item 13) and not in this row. Not confirmed opened in prod.',
   },
   {
     name: 'Wizard Lock-in button greys out once the cycle is locked and sent to Payment Dispatch',
-    status: 'In Progress',
+    status: 'Pending Deploy',
     shas: ['5982d3e6'],
     basis:
-      'Session ac23ad6c: once the values are locked in and sent to Payment Dispatch, the button must be greyed out. A pure resolveDispatchButtonState (87 lines, 104 lines of tests) decides the button from the lock state: DISABLED while locked and dispatched, and Unlock → change → lock only re-stages. In Progress: 5982d3e6 is not an ancestor of origin/main at staging. Re-derive at apply time.',
+      'RE-DERIVED 2026-09-10, one step: 5982d3e6 is now an ancestor of origin/main, so In Progress → Pending Deploy. resolveDispatchButtonState (87 lines, 104 of tests): DISABLED while locked and dispatched, Unlock → change → lock only re-stages. The 08-30 → 09-05 week was locked on 2026-09-08 by aliviah@ — whether the button greyed for her is exactly the click-through nobody has recorded.',
   },
   {
     name: 'Edit Department on every Payment Catalog card — rename by alias, sub-department restructure, people moves, CAS-guarded; master-list cards for managers only',
-    status: 'In Progress',
+    status: 'Pending Deploy',
     shas: ['7e15aed8', '67858c44'],
     basis:
-      'Session 1a8c9a77: "add an edit department where we can edit and add Sub Departments and change stuff in there the way we would like creating a department." 7e15aed8: an 846-line EditDepartmentDialog, 813 lines of wizard steps, a 375-line staged run, the registry grown by 427 lines with 279 lines of tests, and 248 lines of new route handlers — rename keeps the registry KEY and records a previousNames alias that the rate engine and six pay readers resolve (resolve-rate-aliases tests), sub-department restructure that deletes a removed sub\'s own rate row, people moves, and a CAS 409 on concurrent edits. 67858c44: Edit on the master-list department cards too, for MANAGERS only with HSL excluded, via a 482-line EditBuiltinManagersDialog. Scored 8, the cap — a rename that re-points the rate engine is money-adjacent and the surface is five files deep. In Progress: neither sha is an ancestor of origin/main at staging. Re-derive at apply time.',
+      'RE-DERIVED 2026-09-10, one step: both shas are now ancestors of origin/main, so In Progress → Pending Deploy. The 8-SP surface is unchanged — rename keeps the registry KEY and records a previousNames alias the rate engine and six pay readers resolve, sub-department restructure, people moves, CAS 409, master-list cards for managers only with HSL excluded. Money-adjacent: a rename that re-points the rate engine has to be seen doing so in prod before anyone credits it.',
+  },
+  {
+    name: 'Audit writes fail silently: insertAuditLog’s error is discarded at 197 of 201 call sites',
+    status: 'Pending Deploy',
+    shas: ['ddf4c790'],
+    basis:
+      'ADVANCED Ready to Start → Pending Deploy on 2026-09-10 because ddf4c790 does exactly what this row names, without a new row: insertAuditLog and insertAuditLogs now call reportAuditWriteFailure on every failure path — "[audit] write FAILED — event lost" with the actions and resources — so a lost event is no longer indistinguishable from an action that never happened, at every one of the void call sites at once (182 of 228 by the fix\'s own count). Destructive paths go further and READ the returned error, writing the trail first and abandoning the delete if it fails (purgeAuditLogBefore, the orphanage and HSL delete routes). The observability half is structural; the per-call-site awaiting it does not attempt, by design. On origin/main; a failed audit write has not been provoked in prod to see the log line.',
   },
 ];
 

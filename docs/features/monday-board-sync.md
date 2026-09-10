@@ -1,8 +1,8 @@
 # Monday board sync — how HRIS work reaches the Monday.com sprint board
 
 HRIS work is tracked on a **shared** Monday board in the *Ai & Automation Operations* workspace
-(`16165131`): Sprint Tasks holds ~2,172 items of which 135 are ours, Roadmap & Epics 208 of which 37
-are ours. Two things write to it, and they own **different columns**: the in-app reconciler owns
+(`16165131`): Sprint Tasks holds ~4,100 items of which 254 are ours (282 declared after pass 24),
+Roadmap & Epics 291 of which 37 are ours (re-read 2026-09-10). Two things write to it, and they own **different columns**: the in-app reconciler owns
 whether a row exists and its structure; the `monday-board-sync` skill owns execution state. Anyone
 adding board writes must keep that split or the board grows permanent duplicate rows.
 
@@ -1332,3 +1332,139 @@ Probed alive with one cheap call before planning. Full apply + `verify-one` × 3
 `verify.mts` all completed on one UTC day — a 20-row pass fits where the 28-row pass of 2026-08-20
 did not. A stale `.apply.lock` (pid 23996, dead in `tasklist`, 19h old, its pass `9d9ce8b6`
 already committed on a clean tree) was cleared on the three-way proof, not on age alone.
+
+## Pass 23 — 2026-09-03 · applied the same evening, verified 2026-09-10
+
+Approved as hash `710ee0892af3` (Kane: *"post the commits"*). **14 rows created · 240 patched ·
+14 corrected · 0 sprint moves.** The Sep 3 log recorded the apply as *mid-flight and unverified*, and
+the Sep 9 and Sep 10 logs each carried *"re-read the board before pass 24"*. `apply-result.json`
+(per-run, untracked) shows the apply completed with all fourteen board ids; a `verify.mts` re-read on
+2026-09-10 returned **VERIFY PASS** — every row holding its intended status (9 Pending Deploy, 1 Done,
+4 In Progress), 254 of 254 plan rows on the board, 0 orphans, rollup 1569 / 874, relation 254 / 254,
+all four invariants at zero.
+
+**An apply-result file is a write log, not a board state.** It sat on disk for a week while three
+session logs carried the pass as unverified, and only the re-read (≈17 calls) closed the item. The
+skill already says "never report a sync as done off the write log"; this is the corollary — never
+report it as *unverified* off the absence of one either. Re-read.
+
+## Pass 24 — 2026-09-10 · STAGED, NOT APPLIED — awaiting Kane's approval
+
+Kane: *"Monday skill all withheld SP lets move it to monday board."* Session `b309f1b7`, approval hash
+**`7b4160be5982`**. Nothing has been written to the board.
+
+### "Withheld" was measured in all three waiting rooms
+
+| Waiting room | Measured 2026-09-10 | Owed |
+|---|---|---|
+| `pending-sp.json` | 11 entries, **0 unflushed** | nothing |
+| a staged, unapplied pass | pass 23 **verified applied** (above) | nothing |
+| commits with no row | **69 commits**, `67858c44..a56ce28c`, every one an ancestor of `origin/main` (HEAD == origin/main) | this pass |
+
+Pass 22 taught that the ledger alone is not the answer; this pass adds the third room. The Sep 9 and
+Sep 10 session logs were read as the third evidence source beside the file lists and the transcripts.
+
+### What the review proposes
+
+**28 rows / 101 SP created**, all Sprint 28 (window Sep 1–12) · **33 corrections** · **0 sprint
+moves** · **0 orphans** · rollup **unchanged at 1569 / 874** · SP newly reaching Done: **5**.
+
+| Epic | Row (short) | SP | Status | Blocker |
+|---|---|---|---|---|
+| HRIS-24 | Orientation date skips US holidays (Labor Day → Tue Sep 8) | 3 | Pending Deploy | — |
+| HRIS-06 | Payment Catalog Current Banks tab + logos + People tab | 5 | Pending Deploy | — |
+| HRIS-09 | Employee ID badge (Profile section, PNG, sheen, two painter bugs) | 5 | Pending Deploy | — |
+| HRIS-03a | Pay-cycle celebration fires ONE way, CSV/XLSX/PDF attached | 5 | Pending Deploy | **n8n workflow import PENDING** (slug active, email sends without files) |
+| HRIS-15 | Admin → Webhooks automation editor | 5 | Pending Deploy | — |
+| HRIS-26 | angelicac@ transfer backfill script | 2 | Pending Deploy | **`--apply` never run** |
+| HRIS-28 | Admin Penny operator console (`482d5af6` "Push") | 5 | Pending Deploy | — |
+| HRIS-15 | Diagnostics → Payroll Cycle Performance + HR Pipeline | 5 | Pending Deploy | — |
+| HRIS-06 | Failed Payment Catalog read is no longer silent | 1 | Pending Deploy | — |
+| HRIS-02a | COP settlement currency, per person, display-only | 5 | Pending Deploy | — |
+| HRIS-06 | Settlement fetch cancelled on every dep change (bug class) | 2 | Pending Deploy | — |
+| HRIS-30 | HSL Managers Weekly → dated 08-30 sheet, Pre/Post-Hearing monthly, SSA.Gov | 5 | Pending Deploy | — (₱2,500 vs ₱3,500 stays OPEN) |
+| HRIS-30 | SSD + Collections monthly flat auto-dispatch (Ready is the trigger) | 2 | Pending Deploy | — |
+| HRIS-30 | HSL KPI paid for every scored person | 2 | Pending Deploy | — |
+| HRIS-06 | Bonus Library versions + effective dates + history | 5 | Pending Deploy | **migration NOT applied** (4 objects missing) |
+| HRIS-02b | PAB step: HSL tie-break + Additions re-gate (net of the reverted arc) | 3 | Pending Deploy | — |
+| HRIS-05 | Pre-release security readiness sweep (Spike) | 2 | **Done 2026-09-09** | — |
+| HRIS-02a | Wizard Reports search bar, display only | 1 | Pending Deploy | — |
+| HRIS-05 | Accounting cache identity envelope + sign-out purge; HR freshness window | 5 | Pending Deploy | — |
+| HRIS-15 | One audit-action registry (+2 of 6 routes gated) | 5 | Pending Deploy | — |
+| HRIS-14 | Rename the paid 08-23 Hubstaff week + reseed 1,100 records | 3 | **Done 2026-09-09** | — |
+| HRIS-09 | Employee PAB card copy ×4 + "Not met" drill-in | 2 | Pending Deploy | — |
+| HRIS-09 | My Hours → Time Adjustments + red-day nudge | 3 | Pending Deploy | — |
+| HRIS-16 | QC weekly deal genuinely random (first HRIS-16 child) | 3 | Pending Deploy | — |
+| HRIS-16 | QC paste → Compare → Override → Undo | 5 | Pending Deploy | — |
+| HRIS-06 | Score the upcoming pay week + `kpi.published` | 5 | Pending Deploy | — (ALTER applied and re-verified) |
+| HRIS-06 | Lead Gen card header polish (4 commits) | 2 | Pending Deploy | — |
+| HRIS-10 | Manager Overview rebuilt (`f36a97ce`, pass 23's range) | 5 | Pending Deploy | — |
+
+Five existing rows advance **one step each**, re-derived from git: the four pass 23 capped *In
+Progress* as "LOCAL ONLY at staging" (Stop Processing prune, Pay Processors tab, Lock-in button, Edit
+Department) are now ancestors of `origin/main` → **Pending Deploy**; and *Audit writes fail silently*
+goes Ready to Start → **Pending Deploy** because `ddf4c790` does exactly what the row names
+(`reportAuditWriteFailure` on every failure path, destructive routes read the error and abort).
+
+### Two Done rows, two grades of evidence, said plainly
+
+- **The Hubstaff rename chore (3 SP) closes on a MEASUREMENT.** A script has no prod surface, so Done
+  means *run*: `audit_log` holds exactly one `csv.rename` event by `script:rename-hubstaff-source-file`
+  at 2026-09-09T20:49:04Z, a negative control on a non-existent action returns 0 rows, and the two
+  2.3 MB restore-set JSONs are in `references/backups/`. Completed Date is the commit date, which is
+  also the day it ran.
+- **The security readiness Spike (2 SP) closes on USE**, the way pass 17 closed dev tooling: its
+  deliverable is a document, and `ddf4c790` closed two of its six routes citing it while the Sep 10
+  log's two BLOCKING items are its rows. **Flagged for Kane to veto** — the remediation is not this
+  row and has no row yet.
+
+Everything else stays short of Done. *"Move it to the board"* is an instruction about the **write**,
+not a confirmation about any surface — the 2026-09-02 rule, unchanged.
+
+### Three blockers measured, one re-measured
+
+| Row | Claim | Measured |
+|---|---|---|
+| Bonus Library history | migration pending | **NOT applied** — `bonus_catalog_bonus_history`, `bonus_catalog_assignment_history`, `.version`, `.effective_from` all missing (read-only, 2026-09-10) |
+| Celebration attachments | n8n import pending | both governing docs say **PENDING Kane**; the live `payment_cycle_complete` slug is present and active, so the email sends without files |
+| angelicac@ backfill | `--apply` never run | Open item 9; dry run passed all five guards on Sep 4 |
+| Tickets notifications (existing row) | two n8n imports pending | `ticket_replied` and `ticket_moved` **still ABSENT** from `webhooks.config` (22 entries) — row unchanged, not in this pass. The `ticket.moved` CHECK half was already closed in pass 18 and `kpi.published`'s verify re-read the constraint today: 45 types. |
+
+### The message trap, twice — and a range re-mined after its pass
+
+`482d5af6` is titled **"Push"** and is the entire Admin Penny console (1,018-line component, three
+pure libs, 30 tests, a 280-line doc). It appears in **no** session-log table; the transcript
+`989d5a3f` names it. And `f36a97ce` "Push" — inside **pass 23's own range** — carried the Manager
+Overview rebuild UNDER the KPI-header work pass 23 filed it as; the doc and memory both warn *"git log
+will not lead you here"*. A pass can miss a feature hiding beneath the one it did file; the doc index
+(`ba990833` wrote `manager-overview.md` with no row behind it) is what surfaced it.
+
+### Not in the pull, and why
+
+Thirteen docs-only commits (three session logs, the meeting record, the implementation plan,
+`CLAUDE.md` process rules, reference re-verification) — process, not shipped features, consistent
+with every prior pass. `6068f1f7` "PAB Fix!" is a `tsbuildinfo`-only noise commit. The **two BLOCKING
+security items** (impersonation redesign, four ungated routes) have no row because nothing has shipped
+for them — offered to Kane as Ready to Start rows, not slipped in.
+
+### The question put to Kane with the review
+
+Which of the held rows has he clicked through in prod? After this pass Sprint 28 would hold
+**61 of our rows / 228 SP**: 10 Done (31 SP), **48 Pending Deploy (187 SP)**, 3 Ready to Start (10 SP).
+The 48 are the 26 new rows above plus the 22 already held from passes 22–23 (Generate COE, orphanage
+step deletes, HSL KPI branch list, KPI paint cache, Manager shell cache, Payroll Notes shared rows,
+replayed-export split, Tickets, Manager Time Adjustments ×2, KPI shared header, dispatch toast,
+dispatch 409 guard, Stop Processing prune, Orphanage interns, Pay Stubs snapshots, My Hours tiles,
+favicon, Pay Processors, Lock-in, Edit Department, Audit writes). Each named confirmation becomes Done
+with the row's last-sha date as its Completed Date; the rows with a measured blocker cannot go Done on
+a confirmation alone.
+
+### Path and budget
+
+`--only-new`: no new epic, no re-scored row, no sprint move — the sanctioned lean case. **3 label
+gates + 33 × (lookup + create-or-set + update) ≈ 100 calls.** The full path would now re-patch **282
+tasks + 37 epics** before creating anything (≈420 calls); pass 5 died at ≈285, so a full reconcile no
+longer fits a UTC day beside its verify and must be its own day's work. The trade is stated: the 28
+new rows land with **no epic relation** until that reconcile adopts them by name. Spent today before
+staging: ≈17 (verify pass 23) + 2 (S28 group probe) + ≈17 (review) read calls. Verify after apply with
+`verify-one.mts` per row (33 calls), then a full `verify.mts` accepting the known relation gap.
