@@ -19,7 +19,7 @@
 | **Requested by** | Kane, from the 2026-09-09 Carla/Jackie meeting |
 | **Owner** | Kane |
 | **Governing docs read** | `payment-dispatch.md` (§6.3 QC lockout, :444 PAB rule) · `bonus-catalog.md` · `employee-my-hours-calendar.md` · `time-adjustment-requests.md` · `employee-team-directory.md` · `manager-my-team.md` · `employee-dashboard-cache.md` · `employee-id-card.md` · `documents-tab.md` · `bank-preferred-routing.md` · `hubstaff-zero-hours-gap.md` · `notification-alerts.md` · `rbac-feature-permissions.md` · `identity-resolution.md` · `gift-tracker-shipping-export.md` · `pre-release-security-readiness.md` · `docs/reference/business-logic.md` · `docs/notes/problem.md` · `docs/notes/hubstaff-sunday-overlap.md` |
-| **Memory read** | `qc-assignment-not-randomized` · `qc-compare-override-paste-format` · `time-adjustment-nudge-approved` · `employee-pab-calendar-exists-drill-in-missing` · `employee-leave-filing-stays-on` · `retro-pab-no-payment-path` · `team-directory-shows-legal-name` · `gift-tracker-no-receipt-state` · `jackie-kpi-ownership-and-va-split` · `pre-post-hearing-2500-vs-3500` · `employee-surface-is-the-remaining-15-percent` · `employee-id-card` · `pab-calendar-parity` · `pab-calendars-sun-sat-sweep` · `hubstaff-zero-hours-gap` · `onboarding-middle-name-and-order-check` · `notification-alerts-view-scoped` · `dialog-content-no-height-cap` · `blueprint-skill-plan-gate` · `hardening-skill-and-open-gaps` |
+| **Memory read** | `qc-assignment-not-randomized` · `qc-compare-override-paste-format` · `time-adjustment-nudge-approved` · `employee-pab-calendar-exists-drill-in-missing` · `employee-leave-filing-stays-on` · `retro-pab-no-payment-path` · `team-directory-shows-legal-name` · `gift-tracker-no-receipt-state` · `jackie-kpi-ownership-and-va-split` · `pre-post-hearing-2500-vs-3500` · `employee-surface-is-the-remaining-15-percent` · `employee-id-card` · `employee-dashboard-reload-cache` · `dashboard-switch-performance` · `paystub-staged-snapshot-stale` (why there is no skip flag) · `pab-calendar-parity` · `pab-calendars-sun-sat-sweep` · `hubstaff-zero-hours-gap` · `onboarding-middle-name-and-order-check` · `notification-alerts-view-scoped` · `dialog-content-no-height-cap` · `blueprint-skill-plan-gate` · `hardening-skill-and-open-gaps` |
 
 ---
 
@@ -358,14 +358,88 @@ Currency. `idCard` (`:1315`) and `handleDownloadId` (`:1339`) are already comput
 scope and move as-is. Re-word the surviving chip's `label`/`sub` — "Identity, employment, address" no
 longer describes a pane carrying a badge and two pay rates.
 
-**The one real decision this forces.** Start Date will appear **twice**, from two different parsers:
+### 7.1 Caching — the merge must not undo the 2026-09-03 work
+
+**Profile is already cached.** Four datasets since 2026-09-03 — `profileMaster`, `profileRate`,
+`profileSkillSet`, `paystubSummary` (`src/lib/employee/tab-cache.ts:338-346`) — and the six identity
+calls already run in **one** `Promise.all` wave (`:993-1001`), where they used to be three serial
+hops behind one skeleton. So this wave adds no fetches and needs no new cache key.
+
+**All three merging panes already read cached state**, which makes the merge a paint *win*:
+
+| Pane | Backing state | Cached? |
+|---|---|---|
+| Overview | `master` | **yes** — `profileMaster` (`:654`) |
+| ID | `idCard`, a `useMemo` **over `master`** (`:1315`) | **yes, transitively** — it reads the roster row, and its own comment says it deliberately never reads `employee_ids` |
+| Compensation | `rate` | **yes** — `profileRate` (`:658`) |
+
+On reload the merged pane therefore paints from `sessionStorage` at once and refreshes in place.
+
+**Five things not to do — in order of how easy they are to do by accident:**
+
+1. **Do not gate the merged pane on `bankInfoLoaded`.** This is the real regression risk. That flag
+   today scopes the Payment skeleton to `activeTab === 'payment'` (`:1897`, `:1909`), and
+   `/api/employee-ids` is **deliberately never cached** because it carries account numbers. When you
+   consolidate three render branches into one it is natural to hoist the readiness flags with them —
+   and hoisting that one makes an instantly-cached pane wait on the single uncacheable call in the
+   wave. **Payment keeps its own skeleton; the merged pane must never await it.**
+2. **Do not widen `loading`.** The whole-page `ProfileSkeleton` seeds from `master === null`, which
+   is exactly why a cached identity paints immediately. Extending it to "rate and idCard are ready
+   too" reinstates the skeleton the 09-03 work removed.
+3. **Do not add a cache key for `idCard`.** It is a derived view model, and the rule is *cache the
+   RAW payload and derive with `useMemo`* — a `Set` in a cached shape serialises to `{}` and silently
+   disabled the Paystubs button once already. It is also unwired-key territory: every key in
+   `EMPLOYEE_CACHE_KEYS` must be wired to a live call site.
+4. **Do not add a skip flag.** The merged pane keeps running its fetches unconditionally — **a cached
+   value paints, it never decides.** This is enforced, not stylistic: `no-skip-flag`
+   (`src/lib/employee/tab-cache.test.ts:323`) greps the module's exports for
+   `/fetched|revalidat|skip|ttlHit/i` and **fails the build** if any appear. The reason is money —
+   `upsertPaystubDispatchQueue` re-stages onto an already-PAID row with no post-pay detector, so a
+   skipped refetch could freeze a superseded pay figure on screen.
+5. **Do not lift a cached read above the hydration gate.** Seeding is hydration-safe *only* because
+   `renderContent` returns `null` until `employeeEmail` resolves.
+
+Identity stamping is unchanged and still load-bearing: entries are inert until
+`bindEmployeeCacheIdentity` runs and binding a different viewer **purges first** — which is what stops
+an elevated `?email=` preview of someone else's portal repainting into the viewer's own tab.
+
+**One optional addition.** `usd_to_php_rate` (`GET /api/app-settings`) feeds the Currency section and
+is the only uncached input to the merged pane that *could* be cached — a global reference value, no
+PII. Honest expectation: **it will not move the needle**, because the wave is parallel and this is
+its cheapest call. Wire it with the doc's four-step recipe or skip it deliberately.
+
+### 7.2 If Profile is the slowest surface, the cache is not the lever
+
+Two measured facts say the remaining cost is render weight, not fetch waiting:
+
+- **`EmployeeProfile.tsx` is 2,552 lines**, and the employee shell renders `Array.from(mountedTabs)`
+  and merely **hides** inactive tabs — so Profile's whole tree stays mounted beside
+  `EmployeeDashboard.tsx`'s 4,157 lines for the rest of the session.
+- **The repo contains exactly one `next/dynamic` call.** Tier 1 code-splitting is still open
+  ([[dashboard-switch-performance]]), and that memory also records that the perf work was verified by
+  `tsc` + tests only — the live feel was never clicked through.
+
+For reference, the reload cost the cache was built for is the **Overview's** ~22 `no-store` fetches;
+Profile's is six, in parallel. So the merge helps by deleting two cross-fades and two chips, but
+**the real win for this surface is code-splitting the panes** — its own change, and worth measuring
+before assuming the merge fixed it.
+
+**One cost the merge does add, stated plainly:** the ID badge currently mounts only when the ID chip
+is active; afterwards it is part of the default Profile paint. It is CSS, not canvas (the canvas path
+runs only on download), so it should be cheap — but if it is not, the fix is to lazy-render it inside
+the merged pane on scroll, **not** to un-merge.
+
+### 7.3 The one real decision this forces
+
+Start Date will appear **twice**, from two different parsers:
 `formatStartDate` (`:133-141`, `new Date(s)`) and the card's `formatIdCardDate`
 (`src/lib/employee/id-card.ts:89-95`, `parseDateOnlyLocal`). For any viewer west of UTC they differ
 by a day, so the merged pane will visibly contradict itself. Q5 decides whether the off-by-one fix is
 in scope — it is still open, flagged 2026-09-04 rather than fixed, and correcting it also shifts two
 Pay Stubs pay dates and three resignation effective dates by a day for those viewers.
 
-**Invariants.**
+### 7.4 Invariants
+
 - **Payment stays its own chip.** It is the editable payout form, deliberately uncached because it
   carries account numbers (`employee-dashboard-cache.md:121-126`), and it is the bank-preferred
   dropdown's documented home (`bank-preferred-routing.md` §1).
@@ -672,6 +746,11 @@ renamed **Badges and Certificates** pane.
   a dropped ingest Sunday.
 - **Do not build a third PAB calendar.** Two already ship; wire the inert stat cell up and fix the
   explainer in **all three** places it is wrong.
+- **The Profile merge is cache-safe and needs no new key** — all three panes already read cached
+  state, `idCard` included (it is a `useMemo` over the cached roster row). The one real risk is
+  hoisting `bankInfoLoaded` into the merged pane's gate, which would make an instantly-cached pane
+  wait on the one call that is deliberately never cached. And if Profile still feels slow, the lever
+  is **code-splitting** — 2,552 lines, kept mounted, with one `next/dynamic` call in the whole repo.
 - **Nothing in this plan touches the ₱2,500.** That needs one worked example from Carla, and the
   pinned value and its test stay as they are until she gives it.
 - **Eight of these surfaces have no INDEX row.** Wave 1 pays that down for QC; the rest is tracked as
