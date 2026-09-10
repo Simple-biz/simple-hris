@@ -125,6 +125,7 @@ docs/
 
 | Doc |
 |---|
+| [implementation-plan-employee-surface-and-qc.md](./implementation-plans/implementation-plan-employee-surface-and-qc.md) — **AWAITING APPROVAL, 2026-09-10.** The build plan for the [Sep 9 Carla/Jackie meeting](./meetings/2026-09-09-carla-jackie-employee-surface-and-qc.md): ten `hardening` commits, two `blueprint`-gated new builds (QC paste → Compare → Override; manager certificates), nine open questions. **Wave 1 — Callback out of QC scope, Alivia's role revoked, real weekly randomization — has a hard deadline of Mon 2026-09-14**, when nine QC officers test with real data. Nothing in it touches the disputed ₱2,500 |
 | [implementation-plan-rbac.md](./implementation-plans/implementation-plan-rbac.md) |
 | [implementation-plan-roles-2026-05-08.md](./implementation-plans/implementation-plan-roles-2026-05-08.md) |
 | [implementation-plan-hr-dashboard.md](./implementation-plans/implementation-plan-hr-dashboard.md) |
