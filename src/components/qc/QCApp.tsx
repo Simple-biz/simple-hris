@@ -172,7 +172,7 @@ export default function QCApp() {
   // The QC Overview's period selector AND the calculator's own WeekPicker both
   // drive this single value. The calculator follows it via `controlledWeek` and
   // reports its own picks back via `onWeekChange`.
-  const { weekOptions, currentWeekStart } = usePayWeeks();
+  const { weekOptions, currentWeekStart, upcomingWeek } = usePayWeeks();
   const [weekStart, setWeekStart] = useState<string>(() => isoWeekStart(new Date()));
 
   // A deliberate period pick — from the Overview selector OR the calculator's own
@@ -392,8 +392,9 @@ export default function QCApp() {
                 <QcOverview
                   viewerEmail={viewerEmail}
                   weekStart={weekStart}
-                  weekOptions={weekOptions}
+                  weekOptions={upcomingWeek ? [upcomingWeek, ...weekOptions] : weekOptions}
                   currentWeekStart={currentWeekStart}
+                  upcomingWeekStart={upcomingWeek?.start ?? null}
                   onSelectWeek={pickWeek}
                   assignedCount={assignedCount}
                   qcLocked={qcLocked}
@@ -508,6 +509,7 @@ function QcOverview({
   weekStart,
   weekOptions,
   currentWeekStart,
+  upcomingWeekStart,
   onSelectWeek,
   assignedCount,
   qcLocked,
@@ -522,6 +524,8 @@ function QcOverview({
   weekStart: string;
   weekOptions: PayWeek[];
   currentWeekStart: string | null;
+  /** The week after the live batch, offered before its file exists (Kane, 2026-09-10). */
+  upcomingWeekStart: string | null;
   onSelectWeek: (week: string) => void;
   assignedCount: number;
   qcLocked: boolean;
@@ -557,6 +561,7 @@ function QcOverview({
   const welcome = QC_MESSAGES[msgIdx]!;
 
   const isLive = currentWeekStart != null && weekStart === currentWeekStart;
+  const isUpcoming = upcomingWeekStart != null && weekStart === upcomingWeekStart;
   const remaining = Math.max(0, assignedCount - scoredTotal);
   const progressPct = pct(scoredTotal, assignedCount);
 
@@ -664,6 +669,7 @@ function QcOverview({
               value={weekStart}
               options={weekOptions}
               currentWeekStart={currentWeekStart}
+              upcomingWeekStart={upcomingWeekStart}
               onChange={onSelectWeek}
             />
           </div>
@@ -678,7 +684,16 @@ function QcOverview({
           case where the split was just built from the CURRENT team, since there's
           no per-week roster history. A week already being scored was split when it
           was worked, so it doesn't get the scare. */}
-      {!isLive && currentWeekStart && (
+      {isUpcoming && (
+        <div className="-mt-3 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-[12.5px] text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+          <CalendarDays className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>
+            You&rsquo;re scoring <span className="font-semibold">ahead of the Hubstaff report</span> ({weekRange(weekStart)}).
+            Your scores are saved under this week and the manager sees them the moment the report is uploaded.
+          </p>
+        </div>
+      )}
+      {!isLive && !isUpcoming && currentWeekStart && (
         <div className="-mt-3 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-[12.5px] text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
           <CalendarDays className="mt-0.5 h-4 w-4 shrink-0" />
           <p>
@@ -878,11 +893,14 @@ function PeriodSelector({
   value,
   options,
   currentWeekStart,
+  upcomingWeekStart = null,
   onChange,
 }: {
   value: string;
   options: PayWeek[];
   currentWeekStart: string | null;
+  /** Reads "Upcoming", never "Past", for the week after the live batch. */
+  upcomingWeekStart?: string | null;
   onChange: (start: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -915,6 +933,7 @@ function PeriodSelector({
 
   const idx = merged.findIndex((o) => o.start === value);
   const isLive = currentWeekStart != null && value === currentWeekStart;
+  const isUpcoming = upcomingWeekStart != null && value === upcomingWeekStart;
   const hasOlder = idx >= 0 && idx < merged.length - 1;
   const hasNewer = idx > 0;
 
@@ -943,10 +962,12 @@ function PeriodSelector({
             'rounded-full px-1.5 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide',
             isLive
               ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
-              : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+              : isUpcoming
+                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300'
+                : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
           )}
         >
-          {isLive ? 'Live' : 'Past'}
+          {isLive ? 'Live' : isUpcoming ? 'Upcoming' : 'Past'}
         </span>
         <ChevronDown className={cn('h-3.5 w-3.5 text-zinc-400 transition-transform', open && 'rotate-180')} />
       </button>

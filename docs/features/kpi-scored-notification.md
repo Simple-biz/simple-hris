@@ -128,6 +128,21 @@ Diagnostic order, so nobody goes git-hunting again: check the selected week isn'
 All Time → check `hsl_bonus_period_status` for that dept-week is `ready`/`locked` →
 check the person has rates. Only then look at code.
 
+## `kpi.published` — the Accounting sibling *(2026-09-10)*
+
+The same publish step that fires `kpi.scored` to employees now also fires
+**`kpi.published`** to Accounting role holders (`src/lib/notifications/kpi-published.ts`),
+because managers may now score and lock the upcoming pay week before its Hubstaff file
+exists and Kane asked that *"Accounting should be able to be notified when a bonus is
+added."* The two types deliberately differ in their de-dupe and must never be merged:
+`kpi.scored` re-notifies on an AMOUNT change (the employee must see the number move — a
+ruling); `kpi.published` notifies once per `(department, period_start, status)` and carries
+no amounts — Accounting reviews the week in Readiness → KPI Submissions, it does not read
+pesos off a toast. Same best-effort contract, same `recordNotifyFailure` on error, same
+CHECK-constraint footgun: its ALTER is **PENDING**. The rule lives in
+`hsl-kpi-calculator-2026-07.md` §Scoring the upcoming week; the script in its §Deploy /
+migration.
+
 ## Deploy notes
 
 - **APPLIED 2026-08-20.** `kpi.scored` is present in
@@ -141,4 +156,9 @@ check the person has rates. Only then look at code.
   (`postgres.<ref>@aws-1-us-east-2.pooler.supabase.com:5432`), not the direct
   `db.<ref>` host, which is IPv6-only and unreachable. An `@` in the password must
   be `%40`. See memory `migration-apply-needs-database-url`.
+- **PENDING 2026-09-10:** the sibling type `kpi.published` needs
+  `references/sql/alter/2026-09-10_add_kpi_published_notification_type.sql` via
+  `node scripts/apply-kpi-published-notification-type.mjs`. Until then its inserts are
+  rejected and recorded as `notification.insert_failed` — the exact shape that kept
+  `kpi.scored` dead. `scripts/audit-pending-migrations.mts` probes it.
 - No n8n changes. No env vars.

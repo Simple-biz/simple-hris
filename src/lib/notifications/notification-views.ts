@@ -77,6 +77,12 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   // dept-week — carries the peso amount. Fired on Mark Ready/Lock and on any
   // change landing on an already-published week. Employee-only, ungated.
   'kpi.scored': ['employee'],
+  // A department manager marked a dept-week's KPI bonuses Ready or Locked, so the
+  // week is scored and payable — including weeks scored AHEAD of their Hubstaff file
+  // (Kane, 2026-09-10). Fired on publish only, never per autosave. ACCOUNTING ONLY,
+  // the payroll.hours_gap rule: it is a payroll-operations signal, and employees
+  // already hear about their own amounts through kpi.scored.
+  'kpi.published': ['accounting'],
   // A QC officer locked a week of KPI scores; the reviewing dept managers act on
   // it inside the KPI Calculator, which lives on the Manager dashboard.
   'qc.scores_submitted': ['manager'],

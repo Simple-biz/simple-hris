@@ -136,6 +136,11 @@ hadn't started") — the house fail-toward-keeping pattern.
 - Officer membership is granted/revoked in **Admin → Roles & permissions**, group "Manager's
   assistant". Revoking is a **soft** revoke (`revoked_at`), so it is reversible and audited —
   and because the officer set changed, it also triggers a re-deal of the current week.
+- **The period selector offers the upcoming week** (amber *Upcoming*, never *Past*) —
+  `usePayWeeks().upcomingWeek`, the same `upcomingWeekFor` the manager calculator uses, so
+  officers can do the first pass before the Hubstaff file exists (Kane Q2, 2026-09-10).
+  Scores land under that Sunday's key and the manager sees them the moment the file uploads.
+  One week only. Rule and hazards: `hsl-kpi-calculator-2026-07.md` §Scoring the upcoming week.
 
 ## Compare / Override / Undo — Jackie's sheet against the officers' first pass
 

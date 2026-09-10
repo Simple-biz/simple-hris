@@ -142,6 +142,7 @@ await probeNotificationType('add_payroll_paid_notification_type', 'payroll.paid'
 await probeNotificationType('add_payroll_available_notification_type', 'payroll.available');
 await probeNotificationType('pab_exclusion_notification_types', 'pab.excluded');
 await probeNotificationType('pab_exclusion_notification_types', 'pab.restored');
+await probeNotificationType('2026-09-10_add_kpi_published_notification_type', 'kpi.published');
 
 console.log('\n#3 Bank Info Temporary Exemption');
 await probeTable('create_payroll_bank_exemptions', 'payroll_bank_exemptions');

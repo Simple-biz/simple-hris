@@ -8,9 +8,11 @@ import {
 } from '@/lib/hubstaff/current-upload';
 
 export interface PayWeek {
-  /** Monday-anchored ISO date, e.g. "2026-06-22". */
+  /** The upload's SUNDAY, e.g. "2026-08-30" — the date every stored KPI row is keyed on.
+   *  (This used to say "Monday-anchored"; it never was. A Monday key is invisible to every
+   *  reader — see scripts/audit-kpi-key-drift.mts.) */
   start: string;
-  /** Sunday ISO date six days after `start`. */
+  /** The Saturday six days after `start`. */
   end: string;
 }
 
@@ -22,6 +24,10 @@ export interface PayWeeks {
   currentWeekStart: string | null;
   /** True once the upload list has been fetched (success or failure). */
   loaded: boolean;
+  /** The ONE week after the live batch, offered so a manager can score it before its
+   *  Hubstaff file exists. Null until the live week is known, and null again the moment a
+   *  real file for that week is uploaded (it is then just another week). Kane, 2026-09-10. */
+  upcomingWeek: PayWeek | null;
 }
 
 function toIso(d: Date): string {
@@ -32,6 +38,35 @@ export function weekEndFromStart(startIso: string): string {
   const [y, m, d] = startIso.split('-').map(Number);
   const end = new Date(y!, m! - 1, d! + 6);
   return toIso(end);
+}
+
+/**
+ * The pay week after `currentWeekStart` — the live batch's Sunday plus seven days.
+ *
+ * This is the ONLY legitimate way to name a week that has no Hubstaff file yet.
+ * It must be derived from a real upload's Sunday and never from the clock:
+ * `isoWeekStart(new Date())` is Monday-anchored, and a KPI row written under a
+ * Monday key is invisible to every reader forever (the stranded weeks in
+ * scripts/audit-kpi-key-drift.mts). Sunday in, Sunday out — pinned by test.
+ */
+export function nextPayWeek(currentWeekStart: string): PayWeek {
+  const [y, m, d] = currentWeekStart.split('-').map(Number);
+  const start = toIso(new Date(y!, m! - 1, d! + 7));
+  return { start, end: weekEndFromStart(start) };
+}
+
+/**
+ * The upcoming week to OFFER, or null. Exactly one week ahead (Kane, 2026-09-10,
+ * Q3), and only while no uploaded file already covers it — once the real file
+ * lands it dedupes away and the week is ordinary.
+ */
+export function upcomingWeekFor(
+  currentWeekStart: string | null,
+  uploaded: readonly PayWeek[],
+): PayWeek | null {
+  if (!currentWeekStart) return null;
+  const next = nextPayWeek(currentWeekStart);
+  return uploaded.some((w) => w.start === next.start) ? null : next;
 }
 
 /**
@@ -91,5 +126,5 @@ export function usePayWeeks(): PayWeeks {
     };
   }, []);
 
-  return { weekOptions, currentWeekStart, loaded };
+  return { weekOptions, currentWeekStart, loaded, upcomingWeek: upcomingWeekFor(currentWeekStart, weekOptions) };
 }

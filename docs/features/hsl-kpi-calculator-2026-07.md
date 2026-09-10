@@ -594,6 +594,65 @@ recompute would have written **₱0 to every member of the team**.
 sub-team it belongs to has no inputs on screen (`subTeamInputsBlank`). A typed
 `0` counts as entered, so a genuine zero score still saves.
 
+## Scoring the upcoming week *(2026-09-10)*
+
+Kane: *"we should be able to see the Week 6-12 so we can put in the bonuses in for next
+week that way when the new hubstaff report is uploaded it can sync automatically layer by
+layer."* Both pickers — the manager calculator's `WeekPicker` and the QC dashboard's
+`PeriodSelector` — now offer **exactly one week past the live batch** before its Hubstaff
+file exists. It wears an amber **upcoming** chip and an `UpcomingWeekBanner`; it is never
+labelled *past* (which would be a lie). Managers may score it, Mark Ready and Lock it in
+advance (Q1); QC officers may score it too (Q2); one week only, never two (Q3).
+
+### The "sync" already existed — only the picker withheld the week
+
+Nothing new joins the bonuses to the file. Applied rows and `hsl_bonus_period_status` are
+keyed `(department, period_start)`, and the Payroll Wizard's HSL step joins on the upload's
+Sunday (`PayrollWizard.tsx` — `row.period_start !== hubstaffWeekStart` → skip). A week scored
+ahead is therefore an ordinary week the moment its file lands: the same key, read by the
+same reader, with no migration step and no "apply" button. **Do not build one.**
+
+### The week comes from the LIVE batch's Sunday — never the clock
+
+`upcomingWeekFor(currentWeekStart, uploaded)` in `src/lib/hubstaff/use-pay-weeks.ts`
+(tests beside it) is the ONE source for both pickers: live Sunday + 7, `null` until the live
+week is known, `null` again once a file for that week is uploaded (the `Map` in
+`weekOptions` dedupes it away). It must stay Sunday-anchored. The calculator's other seed —
+`isoWeekStart(new Date())` — is Monday-anchored and writes a key no reader ever asks for,
+which is the stranding bug `scripts/audit-kpi-key-drift.mts` exists to find
+([[kpi-calculator-week-unresolved-hang]]). Deriving the upcoming week from `new Date()`
+would reintroduce exactly that.
+
+### No gate was loosened
+
+`weekResolved` flips true when the LIVE batch resolves, independent of the selected week, so
+an upcoming selection passes `weekPending` on its own; `kpiAutosaveGate`'s refusal order is
+untouched and its tests still pin it. `isUpcomingWeek` is **wording only** — the chip, the
+banner, and the `ahead_of_hubstaff` flag on Accounting's card. No gate reads it, and none
+should: a gate keyed on "upcoming" would flip the moment the file uploads, mid-edit.
+
+### What looks like a bug but isn't
+
+- **Hubstaff-derived columns are empty for the upcoming week.** There are no hours rows yet.
+  They fill in when the file lands; nothing is recomputed on the bonus side.
+- **The upcoming week vanishes from the list the moment its file uploads** — it has become
+  the live week, and the week after it is the new upcoming one.
+- **A second week ahead cannot be selected.** By design; there is no API for it.
+
+### Accounting is told on PUBLISH, not per keystroke
+
+`kpi.published` (`src/lib/notifications/kpi-published.ts`, tests beside it) fires from
+`/api/hsl-bonus/period-status` when a dept-week goes `ready` or `locked` — beside
+`kpi.scored`, which tells the employees (`kpi-scored-notification.md`). Accounting role
+holders only (the `payroll.hours_gap` rule); de-duped per `(recipient, department,
+period_start, status)`, so a week says "ready" once and "locked" once and a reopen →
+re-ready is silent. Firing on every score would hit Accounting hundreds of times a week —
+autosave saves per field, and applied saves are unaudited on exactly those grounds
+(`audit-log.md` §6). The card carries no amounts; it points at Readiness → KPI Submissions.
+Failures land in `audit_log` via `recordNotifyFailure`, never `console.warn`. **Until the
+ALTER below is applied this type is dead the same way `kpi.scored` was for three days** —
+the audit row is what will say so.
+
 ## Deploy / migration
 
 Run **`references/sql/migrate/2026-07-17_hsl_bonus_dept_changes.sql`** once in
@@ -612,6 +671,20 @@ member button. `hsl_managers` needs no roster work.
 
 **No schema change to `hsl_bonus_entries`** — external members and the new depts
 reuse the existing columns; the feature is client + `schema.ts` only.
+
+### 2026-09-10 — `kpi.published` notification type — **PENDING**
+
+- `references/sql/alter/2026-09-10_add_kpi_published_notification_type.sql`, applied via
+  `node scripts/apply-kpi-published-notification-type.mjs` (verify-only: `--verify`).
+  Idempotent; restates the FULL allowed set (every type the 2026-08-21 ALTER allows plus
+  `kpi.published`) and aborts if the live constraint carries a type the file lacks.
+- Needs `DATABASE_URL` = the **session pooler** (`postgres.<ref>@aws-1-us-east-2…:5432`, an
+  `@` in the password as `%40`). The script prints the exact form on a missing var.
+- `scripts/audit-pending-migrations.mts` probes it (`probeNotificationType`). Run that before
+  believing this note either way ([[migration-pending-claims-are-folklore]]).
+- Until it lands: every `kpi.published` insert is rejected by the CHECK and recorded as
+  `notification.insert_failed` in `audit_log`. Publishing itself still succeeds.
+- No other DDL. `notification-views.ts` maps the type to `['accounting']`. No env vars, no n8n.
 
 ## Dispatch wiring (auto-pay all weekly HSL KPI bonuses)
 

@@ -7,6 +7,7 @@ import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { normalizeSource, sourceLabel, MANAGER_KPI_SOURCE } from '@/lib/payroll/readiness-audit';
 import { notifyKpiScored } from '@/lib/notifications/kpi-scored';
+import { notifyKpiPublished } from '@/lib/notifications/kpi-published';
 import { recordNotifyFailure } from '@/lib/notifications/notify-failure-audit';
 
 export async function GET(req: NextRequest) {
@@ -34,6 +35,8 @@ export async function POST(req: NextRequest) {
   const body = (await req.json()) as {
     department: string;
     period_type: string;
+    /** Client's claim that no Hubstaff file exists yet for this week (score-ahead). Wording only. */
+    ahead_of_hubstaff?: boolean;
     period_start: string;
     period_end: string;
     status: 'draft' | 'ready' | 'locked';
@@ -81,6 +84,30 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       await recordNotifyFailure({
         notificationType: 'kpi.scored',
+        origin: 'hsl-bonus/period-status',
+        error: e,
+        actor: await getSessionActor(),
+        details: { department: body.department, period_start: body.period_start, status: body.status },
+      });
+    }
+  }
+
+  // Accounting hears that the week is scored and payable (Kane, 2026-09-10) — once per
+  // (dept, week, status), best-effort, failures into audit_log not console.warn.
+  // `ahead_of_hubstaff` is the client's claim that no file exists for the week yet;
+  // it only changes the card's wording, never whether the write happens.
+  if (body.status === 'ready' || body.status === 'locked') {
+    try {
+      await notifyKpiPublished({
+        department: body.department,
+        periodStart: body.period_start,
+        periodEnd: body.period_end ?? null,
+        status: body.status,
+        aheadOfHubstaff: body.ahead_of_hubstaff === true,
+      });
+    } catch (e) {
+      await recordNotifyFailure({
+        notificationType: 'kpi.published',
         origin: 'hsl-bonus/period-status',
         error: e,
         actor: await getSessionActor(),

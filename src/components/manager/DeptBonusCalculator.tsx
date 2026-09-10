@@ -87,6 +87,7 @@ import {
   shouldRearmAutosave,
 } from '@/lib/manager/kpi-autosave';
 import { QC_DEPT_KEYS, isQcDeptKey } from '@/lib/qc/constants';
+import { upcomingWeekFor } from '@/lib/hubstaff/use-pay-weeks';
 import { parseAppointmentPaste, type PasteRefusal } from '@/lib/qc/paste';
 import {
   compareAppointments,
@@ -912,18 +913,36 @@ export default function DeptBonusCalculator({
   // and which one is the *live* payroll week (the Initialized / is_current batch).
   const [availableWeeks, setAvailableWeeks] = useState<{ start: string; end: string }[]>([]);
   const [currentWeekStart, setCurrentWeekStart] = useState<string | null>(null);
-  // Always offer the selected + live weeks even before the upload list resolves.
+  /**
+   * The ONE week after the live batch, offered so a manager can score it before its
+   * Hubstaff file exists (Kane, 2026-09-10). Derived from the live batch's Sunday —
+   * NEVER the clock, which is Monday-anchored and writes a key no reader asks for
+   * (`audit-kpi-key-drift.mts`). Null until the live week is known, and null again
+   * the moment a real file for that week uploads. Everything downstream already
+   * works: rows are keyed (department, period_start) and the wizard joins on the
+   * file's Sunday, so the picker was the only thing withholding it.
+   */
+  const upcomingWeek = useMemo(
+    () => upcomingWeekFor(currentWeekStart, availableWeeks),
+    [currentWeekStart, availableWeeks],
+  );
+  const upcomingWeekStart = upcomingWeek?.start ?? null;
+  // Always offer the selected + live weeks even before the upload list resolves,
+  // plus the upcoming week while no file covers it.
   const weekOptions = useMemo(() => {
     const map = new Map<string, { start: string; end: string }>();
     for (const w of availableWeeks) map.set(w.start, w);
+    if (upcomingWeek && !map.has(upcomingWeek.start)) map.set(upcomingWeek.start, upcomingWeek);
     for (const s of [currentWeekStart, weekStart]) {
       if (s && !map.has(s)) map.set(s, { start: s, end: weekEndFromStart(s) });
     }
     return Array.from(map.values()).sort((a, b) =>
       a.start < b.start ? 1 : a.start > b.start ? -1 : 0,
     );
-  }, [availableWeeks, currentWeekStart, weekStart]);
+  }, [availableWeeks, currentWeekStart, weekStart, upcomingWeek]);
   const isLiveWeek = currentWeekStart == null || weekStart === currentWeekStart;
+  /** Scoring ahead of the Hubstaff report. Wording only — no gate reads this. */
+  const isUpcomingWeek = upcomingWeekStart != null && weekStart === upcomingWeekStart;
 
   // Catalog (authored in Accounting -> Bonus Catalog).
   //
@@ -2760,6 +2779,8 @@ export default function DeptBonusCalculator({
           status: next,
           locked_by: viewerEmail ?? undefined,
           source: submissionSource,
+          // Wording only, on Accounting's kpi.published card. No gate reads it.
+          ahead_of_hubstaff: isUpcomingWeek,
         }),
       });
       const json = (await res.json()) as { error?: string };
@@ -4265,6 +4286,7 @@ export default function DeptBonusCalculator({
                 weekEnd={weekEnd}
                 options={weekOptions}
                 currentWeekStart={currentWeekStart}
+                upcomingWeekStart={upcomingWeekStart}
                 onChange={selectWeek}
               />
             </h2>
@@ -4381,7 +4403,16 @@ export default function DeptBonusCalculator({
           place a banner goes on the HSL side. */}
       {(!isLiveWeek || hiddenMonthlyBonusNames.length > 0) && (
       <div className="flex flex-col gap-2 px-5 pt-3">
-        {!isLiveWeek && (
+        {!isLiveWeek && isUpcomingWeek && (
+          <UpcomingWeekBanner
+            weekStart={weekStart}
+            weekEnd={weekEnd}
+            liveWeekStart={currentWeekStart}
+            liveWeekEnd={currentWeekStart ? weekEndFromStart(currentWeekStart) : ''}
+            onJumpToLive={() => currentWeekStart && selectWeek(currentWeekStart)}
+          />
+        )}
+        {!isLiveWeek && !isUpcomingWeek && (
           <PastWeekBanner
             weekStart={weekStart}
             weekEnd={weekEnd}
@@ -5533,6 +5564,16 @@ function KindDot({ kind }: { kind: BonusDef['kind'] }) {
 }
 
 /** "Live" pulse pill — marks the week accounting is currently dispatching. */
+/** The week after the live batch, before its Hubstaff file exists. Amber, not
+ *  emerald: nothing is live about it, and it must never be mistaken for "past". */
+function UpcomingBadge() {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
+      Upcoming · no Hubstaff yet
+    </span>
+  );
+}
+
 function LiveBadge() {
   return (
     <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
@@ -5568,12 +5609,16 @@ function WeekPicker({
   weekEnd,
   options,
   currentWeekStart,
+  upcomingWeekStart = null,
   onChange,
 }: {
   value: string;
   weekEnd: string;
   options: { start: string; end: string }[];
   currentWeekStart: string | null;
+  /** The week after the live batch, when no file exists for it yet. It must read
+   *  "upcoming", never "past" — the default chip for anything not live. */
+  upcomingWeekStart?: string | null;
   onChange: (start: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -5629,11 +5674,15 @@ function WeekPicker({
         className="inline-flex items-center gap-1 rounded font-mono text-xs font-normal text-zinc-500 outline-none transition-colors hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:text-zinc-200"
       >
         week of {value}
-        {!isLive && (
+        {upcomingWeekStart != null && value === upcomingWeekStart ? (
+          <span className="rounded bg-amber-100 px-1 py-px font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
+            upcoming
+          </span>
+        ) : !isLive ? (
           <span className="rounded bg-zinc-100 px-1 py-px font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
             past
           </span>
-        )}
+        ) : null}
         <ChevronDown
           className={cn('h-3 w-3 text-zinc-400 transition-transform', open && 'rotate-180')}
           aria-hidden
@@ -5703,6 +5752,7 @@ function WeekPicker({
                           {fmtWeek(o.start, o.end)}
                         </span>
                         {live && <LiveBadge />}
+                        {upcomingWeekStart != null && o.start === upcomingWeekStart && <UpcomingBadge />}
                       </button>
                     </li>
                   );
@@ -5717,6 +5767,48 @@ function WeekPicker({
 }
 
 /** Shown in place of the deadline banner while viewing a non-live (past) week. */
+/**
+ * Shown while scoring the week AFTER the live batch — before its Hubstaff file
+ * exists. Says what "upcoming" means for the money: the numbers are saved under
+ * that week's key now and are paid with it the moment the file uploads (Kane,
+ * 2026-09-10: managers may lock and submit in advance; Accounting is notified on
+ * publish). Amber because nothing here is live and nothing here is past.
+ */
+function UpcomingWeekBanner({
+  weekStart,
+  weekEnd,
+  liveWeekStart,
+  liveWeekEnd,
+  onJumpToLive,
+}: {
+  weekStart: string;
+  weekEnd: string;
+  liveWeekStart: string | null;
+  liveWeekEnd: string;
+  onJumpToLive: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-amber-300/70 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-200">
+      <CalendarDays className="h-4 w-4 shrink-0" aria-hidden />
+      <span className="font-semibold">Scoring ahead: week of {fmtWeek(weekStart, weekEnd)}.</span>
+      <span className="opacity-80">
+        No Hubstaff report for this week yet{liveWeekStart ? ` (the live week is ${fmtWeek(liveWeekStart, liveWeekEnd)})` : ''}. Bonuses you
+        enter are saved under this week and will be paid with it once its report is uploaded. Lock and submit
+        when you are done — Accounting is notified.
+      </span>
+      {liveWeekStart && (
+        <button
+          type="button"
+          onClick={onJumpToLive}
+          className="ml-auto inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-2 py-0.5 font-medium text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-transparent dark:text-amber-200 dark:hover:bg-amber-900/40"
+        >
+          <Zap className="h-3 w-3" /> Back to live
+        </button>
+      )}
+    </div>
+  );
+}
+
 function PastWeekBanner({
   weekStart,
   weekEnd,
