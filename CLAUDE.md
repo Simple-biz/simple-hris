@@ -22,6 +22,33 @@ enumerate the failure classes, prove each one closed, and **never loosen** a typ
 validation, limit, or test to make an error go away.
 If the only way to satisfy the ask is to loosen something, stop and ask.
 
+## Before answering "how are we on X" / "what is the status of X"
+
+Status lives in three places. Read them in this order, then verify in the working tree:
+
+1. `docs/audits/` — the newest `audit-*-session-log.md`, **§ Open items**. That table is the
+   current state of every unfinished thing, re-verified on the date in its header.
+2. The surface's row in `docs/features/INDEX.md` and every doc it lists.
+3. Memory. A `MEMORY.md` hook is a **pointer, not a fact** — open the file.
+
+Never answer from a hook alone, and never report something as done because a transcript said
+it was proposed. "Committed" is a `git log` fact; "applied" is a database fact.
+
+## A session that ships no code still ships its record
+
+Advisory, investigation, meeting and status sessions have produced the most important findings
+of the last two weeks and, by default, wrote them nowhere — the doc-in-the-same-commit rule
+only fires on a code commit. So, before the session ends:
+
+- A **finding** (security hole, false premise, money contradiction) → a memory entry **and** a
+  row in the newest session log's Open items (start a new log if that one is days old).
+- A **meeting** → `docs/meetings/YYYY-MM-DD-<slug>.md`, its `docs/README.md` row, and
+  wikilinks in every INDEX row it touches.
+- A **brief posted and awaiting approval** (a `blueprint` or `hardening` hard stop) → one Open
+  items line naming the session id and the questions outstanding.
+- Then **commit it**, by explicit path. Doc work left in the working tree is invisible to the
+  next session and gets swept under someone else's commit message.
+
 ## Git
 
 - Commit **directly to `main`**. No PRs, no feature branches unless asked.

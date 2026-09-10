@@ -1,0 +1,298 @@
+# Session Log — the 10 most recent Claude sessions (Sep 10, 2026)
+
+Continues [audit-2026-09-09-session-log.md](./audit-2026-09-09-session-log.md). Times are ET.
+
+Window: **`362624c3` (Sep 9 09:07) → `25a6f677` (Sep 9 16:53)** — seven commits, all on Tue Sep 9 —
+plus today's `eff439e7`, which lands work a Sep 9 session wrote and never committed.
+**Nothing in this window is pushed.** `origin/main` is still at `6068f1f7` (Sep 8 17:10);
+`git rev-list --count origin/main..main` is **8** including today's commit. Pushing is Kane's.
+
+| # | Session | When (ET) | Shipped |
+|---|---|---|---|
+| 1 | `438013b6` | Sep 9 16:38 → 17:01 | `25a6f677` — **production data changed** (rename + reseed, backed up) · one follow-up question unresolved |
+| 2 | `c2cf2f89` | Sep 9 13:31 → 14:28 | — meeting record + 11 memories + 8 INDEX rows written, **NOT committed** (API error) → landed today as `eff439e7` |
+| 3 | `33c5ffd7` | Sep 9 10:49 → 11:30 | `ddf4c790` — audit-log registry; **2 of the 6 ungated routes closed** |
+| 4 | `e45b1682` | Sep 9 09:41 → 10:59 | `4e8590cb` · `f5ad83ab` — then a **blueprint hard stop** (Admin cache), decision owed |
+| 5 | `4b3331cb` | Sep 9 09:23 → 09:40 | — **blueprint hard stop** (impersonation), Q1–Q3 owed |
+| 6 | `11011fc4` | Sep 9 09:25 → 09:32 | `0573d834` |
+| 7 | `29264e47` | Sep 9 08:58 → 09:16 | `362624c3` · `75d50864` — the Sep 9 log itself |
+| 8–10 | `ab38d267` · `a7f934fc` · `1a6b84b8` | Sep 8 | already narrated in the Sep 9 log; not repeated |
+
+---
+
+## What this pass found
+
+1. **The doc-check is working where it was designed to work.** All five sessions that edited code
+   invoked `hardening` or `blueprint` first, posted a `READ`/`RULE`/`SCOPE` brief, and shipped the
+   feature doc, INDEX row and memory entry in the same commit. Three of them found a surface with
+   **no governing doc at all** and wrote one — `audit-log.md`, `accounting-dashboard-cache.md`,
+   `hr-dashboard-cache.md`. That is the convention doing exactly what it is for.
+
+2. **It keeps failing in the same place: sessions that ship no code.** The Sep 9 log's finding #5
+   said so; it happened again the same day, worse. Session `c2cf2f89` processed the Carla/Jackie
+   meeting into a 519-line record, eleven memory files and wikilinks in eight INDEX rows — then hit
+   an API error and ended with *"Nothing is committed — say the word."* Nobody did. Two later
+   sessions saw the dirty `INDEX.md`, correctly refused to sweep another session's work
+   ([[multi-session-shared-checkout]]), and one of them therefore **left its own INDEX wikilink
+   unwritten**. The record sat 15 hours in the working tree. Two `blueprint` briefs also ended the
+   day awaiting Kane's answers with no note anywhere that a decision was owed.
+   **Fixed structurally today:** root `CLAUDE.md` gained two sections — *how to answer a status
+   question* (newest `docs/audits/` log § Open items → INDEX row → memory FILE → verify in the tree)
+   and *a session that ships no code still ships its record* (finding → memory + Open items row;
+   meeting → `docs/meetings/` + README + INDEX; unapproved brief → Open items line; **then commit**).
+   Memory: [[no-code-session-still-writes-the-record]].
+
+3. **Four memory entries written yesterday had no INDEX wikilink**, so both skills were blind to
+   them: the cache session linked *other* stores' memories into its two new rows but not its own two
+   ([[accounting-cache-envelope-and-purge]], [[hr-cache-freshness-window]]); the Hubstaff session
+   deferred its link because INDEX was dirty ([[hubstaff-filename-junk-heuristic-hides-paid-week]]);
+   and the Firebase advisory ([[firebase-scope-fcm-only]]) never had a row. All four are linked now,
+   and the three new feature docs have their `docs/README.md` rows (they had none — "half-published",
+   the exact defect the Skills row warns about).
+
+4. **Two open items from the Sep 9 log were wrong in opposite directions**, which is why the new
+   status rule says *verify, never relay*. The log (and memory) said Kane had applied
+   `gracechellem@`'s back-date — a read-only probe today shows **he has not** (no `eff 2026-08-30`
+   row; the stray `eff 09-08` row is still there). And the log carried **82 duplicate paid rows** as
+   open, "not re-verified" — a paged count today finds **one** email+file key with two paid rows
+   (the `alonzos@` divergent pair the script leaves alone by design), and `references/backups/`
+   holds three `dedupe-payment-dispatches-*.json` files from Sep 3 12:31–12:54. The `--apply` ran
+   on Sep 3 and nobody wrote it down. The Bonus Library migration, by contrast, is confirmed
+   **NOT applied** (all four objects missing) — and `scripts/audit-pending-migrations.mts` does not
+   probe it, so the folklore rule ([[migration-pending-claims-are-folklore]]) had no instrument.
+
+5. **Production data was changed yesterday, deliberately and reversibly.** `25a6f677` renamed the
+   Aug 23–29 Hubstaff upload off its browser `(1)` suffix across five stores and re-seeded 1,100
+   `disbursement_records` (1,051 paid) that a fully paid week had never had. No amounts, statuses or
+   `paid_at` moved; full restore set in `references/backups/hubstaff-rename_*.json`. Kane's follow-up
+   — *"the missing is 30 - 5"* — is **unresolved**: that week is present, in the *Current week · live*
+   slot, locked Sep 8 with **620 dispatches against 1,069** the week before. See Open item 24.
+
+6. **The meeting record corrects the room three times**, and one of its findings blocks payroll
+   code: Pre/Post-Hearing's monthly flat is pinned at **₱2,500** in code, test, two docs and memory —
+   all sourced to Carla on Sep 8 — and Carla said *"supposed to be 3500"* on Sep 9. The record and
+   [[pre-post-hearing-2500-vs-3500]] both say: **never pick one, never rewrite the pinned amount or
+   its test** without a worked example.
+
+---
+
+## Tue Sep 9
+
+### The 2026-08-23 week was paid, named badly, and invisible to every money reader · `25a6f677`
+> *"Please check - Accounting - Payment Dispatch - Week Selector - is missing last week's HUBSTAFF Report"*
+> 16:38 → 17:01 · `438013b6` · routed to **`hardening`**
+
+The week was in the database, paid and locked — 1,101 hour rows, 1,069 dispatches, cycle-complete
+fired — under the filename `…_2026-08-23_to_2026-08-29 **(1)**.csv`. The browser's duplicate-download
+suffix passes the ingest filename contract (parseable range + Sunday start) and then trips a junk-file
+heuristic, `/backfill|time-activity|\(\d+\)|copy/i`, that lives in **four independent copies**: the
+dispatch week selector (the reported symptom), `seedMissingDisbursementRecords` (so the week seeded
+**0 of ~1,100** records), the CEO financial timeline and the People payroll history. Nine days invisible.
+
+Kane approved the rename. The session did **not** use the wizard's rename button — it migrates only
+`payroll.wizard.final_pay.<file>` and would have stranded six other filename-keyed settings, replaying
+the week with no additions and **FX 0** (the backup shows the real rate was ₱62.38). The new
+[scripts/rename-hubstaff-source-file.mts](../../scripts/rename-hubstaff-source-file.mts) discovers every
+`app_settings` key ending in the old name rather than enumerating them, backs the full restore set up
+first, renames `disbursement_records` before `payment_dispatches` (the sync trigger matches on
+`cycle_source_file`), and re-seeds **last** so the existing dispatch rows stamp the records paid. Result
+against the neighbour week: 1,100 records / 1,051 paid vs 1,070 / 1,023. `csv.rename` audited.
+
+**Kane approved the rename only.** The ingest guard — reject a heuristic-matching name at the same
+choke point that enforces the Sunday rule — is OPEN, and so are the four regex copies. Narrowing the
+regex is the wrong fix ([[hubstaff-double-ingest-duplicate-batch]]).
+
+Then Kane: *"the missing is 30 - 5."* Aug 30 – Sep 5 is the `is_current` upload and sits in the
+**Current week · live** slot, which `PayrollDispatch.tsx:2636` deliberately excludes from PAST WEEKS.
+Locked 2026-09-08 by `aliviah@`, **620 dispatches (618 paid, 2 problem)** — versus 1,069 for Aug 23–29.
+The session asked what was missing about it; Kane interrupted and asked *"for 23-29 did we do
+anything?"* (answer: yes, above, fully reversible). **What "missing" meant is still open** — item 24.
+
+### The Carla/Jackie meeting — processed, verified against code, not committed · `eff439e7` (today)
+> *"process this for me please - and please make sure that we get the important part in HRIS"*
+> 13:31 → 14:28 · `c2cf2f89` · 47-agent verification workflow; every "current behavior" claim checked in the tree
+
+Full record: [2026-09-09-carla-jackie-employee-surface-and-qc.md](../meetings/2026-09-09-carla-jackie-employee-surface-and-qc.md).
+The short version, because the room got three things wrong:
+
+| Said in the meeting | Verified |
+|---|---|
+| *"It's randomized already"* (QC assignment) | **False.** Deterministic alphabetical round-robin, `qc-db.ts:304-306`; officer #1 gets the alphabetically-first slice of Lead Gen every week — the buddy risk Carla was closing. No Hubstaff join either. |
+| *"There's no calendar there"* (employee PAB) | **Wrong.** An HSL-aware PAB calendar ships on Overview and a second in My Hours. Missing: the **drill-in** (the stat cell is an inert `<div>`) and a calendar in the mobile popup. Copy wrong three ways in three places. |
+| Leave can't be backdated, so filing is safe | **Picker-only.** No server or DB bound; `today` is UTC. Conclusion still right (approved leave already explains a zero-hours week). **Do not add a hard floor** — Sick and Bereavement are filed after the fact. |
+
+**Approved for build:** exactly one thing — the per-day time-adjustment nudge ([[time-adjustment-nudge-approved]]),
+and "red" misses Carla's own zero-hours case. **Rulings:** leave filing stays on
+([[employee-leave-filing-stays-on]]); peers see quoted nickname + work email only
+([[team-directory-shows-legal-name]] — legal name in five places today, personal email via `??`,
+search matches both). **New build, unscoped:** Lead Gen QC paste → Compare → Override + officer
+histogram ([[qc-compare-override-paste-format]] — absence is NOT zero; the QC surface has essentially
+no doc). **Blocking:** [[pre-post-hearing-2500-vs-3500]]. **Open:** nothing pays a late-granted PAB
+([[retro-pab-no-payment-path]]); the gift tracker has no shipped/received state, so chasing Ellie
+cannot fix it ([[gift-tracker-no-receipt-state]]). Eleven open questions in § 8 of the record.
+
+Eight of the thirteen surfaces the meeting walked have **no INDEX row** — Profile, Skill Sets,
+Badges/Certificates, the employee PAB card, leave filing, the whole QC surface, gift receipt, any
+compliance dashboard. The QC surface is the worst: ~7,000 lines with two clauses of written record.
+
+### The audit log gets a governing doc and one registry · `ddf4c790`
+> *"Audit Log Mechanism - let us improve this across - Accounting, CEO, HR and Orphanage"*
+> 10:49 → 11:30 · `33c5ffd7` · routed to **`hardening`** — `READ none`, then a three-question hard stop, then built
+
+The brief said it plainly: **there was no governing doc for the audit-log mechanism**; the four docs in
+the neighbourhood govern *authorization*. The panel, Admin Penny and the write paths each had a private
+idea of what an action name meant, and the panel's 14 hand-written predicates claimed **no**
+`orphanage.*`, `wizard.*`, `dispatch.*`, `documents.*`, `people.*`, `bank_*`, `ticket.*` or
+`time_adjustment.*` row — those were reachable only under "All activity", badge-less.
+
+Now [audit-log.md](../features/audit-log.md) and [[audit-registry-single-source]]:
+`src/lib/audit/registry.ts` is the ONE place an action family means something; the panel's filter and
+badges and Penny's `search_audit_log` description are **generated** from it, and `registry.test.ts`
+source-scans every `insertAuditLog` call site and **fails the build** on an unregistered action.
+Actor comes from `auditFrom(request, authz)` — six routes had been taking `edited_by`/`decided_by`
+off the request **body** as the actor; that value stays on the row as a business fact and appears in
+`details` as a *claim*. Destructive paths audit **first**. The wholesale "Clear log" became a dated
+purge with a 90-day floor.
+
+The three hard-stop questions were all answered "recommended path": no wholesale clear; gate the
+gift-shipping `PUT`; gate (not delete, yet) the dead `import-daily-report`. Those last two are **2 of
+the 6 ungated routes from the security sweep, now closed** — closed *here* because an ungated write has
+no actor to record. `import-daily-report` is fetched by nothing; deletion is the right end state and is
+Kane's call (`audit-log.md` §8).
+
+### Caching — two stores that decided instead of painted · `4e8590cb` · `f5ad83ab`, then a hard stop
+> *"Check all Dashboards from Admin to Employee see what dashboard has no proper Caching Practices"* … *"lets fix this in order and by your best recommendation"*
+> 09:41 → 10:59 · `e45b1682` · read-only audit → **`hardening`** → **`blueprint`** hard stop
+
+The audit split "no proper caching" into two opposite problems. **No cache** (Admin — 65 fetches /
+36 `no-store`, zero seeding; Orphanage 48/22; Contractor, Tickets, QC Overview) is a speed problem.
+**A cache that decides** is a correctness problem and worse than none: the Accounting/CEO/Payroll-Clerk
+store had **no identity stamp, no schema version, no age ceiling and no purge function at all**, so
+`people:list` / `dispatch:queue` / `overview:payouts` survived `signOut` into the next account; and the
+HR store skipped every warm tab's mount fetch on a Realtime justification that did not hold — **ten of
+twelve datasets have no subscription**, and `postgres_changes` never reaches the anon client anyway
+([[supabase-realtime-anon-rls-dead]]).
+
+`4e8590cb` fixed the second class. The Accounting store now carries the envelope the other stores were
+written against — identity + schema v + 12 h ceiling, reads fail closed, all three sidebars remove
+`SESSION_EMAIL_KEY` **first** then `clearAllAccountingCache()`; it **self-binds** (its shells render
+before identity resolves, so inert-until-bound would silently disable it), and only
+`bindAccountingCacheIdentity` purges. HR gained `isHrTabCacheFresh` (30 s) beside `hasHrTabCache` —
+*paint* and *may-skip* are different questions — and every revalidate is silent. `f5ad83ab` then wrote
+down that the two remaining skip-flag exceptions (Notes FAB lookup lists + CEO snapshot; HR
+`orientationAttendance`) are **ratified boundaries, not oversights**, pinned by tests. Docs:
+[accounting-dashboard-cache.md](../features/accounting-dashboard-cache.md),
+[hr-dashboard-cache.md](../features/hr-dashboard-cache.md); memory
+[[accounting-cache-envelope-and-purge]], [[hr-cache-freshness-window]].
+
+Then the session posted a **`blueprint` brief for an Admin store** and stopped, as the skill requires.
+Three questions plus a sequencing call — this would be the **fifth copy** of the same cache envelope,
+and extracting a shared factory first may be the better order. **Awaiting Kane.** Nothing built. See
+[[admin-dashboard-cache-blueprint-pending]] and Open item 20.
+
+### Impersonation — Kane's ruling, and a brief waiting on three answers · no commits
+> *"How are we on the Super-admin impersonation…?"* → *"I dont want the super admin to have password anymore i Just want it to where anyone with admin provisions in HRIS can impersonate anyone through the Admin - Global Master List"*
+> 09:23 → 09:40 · `4b3331cb` · status answered from the tree, then **`blueprint`** hard stop
+
+The status answer was **nothing has changed** — checked in the working tree, not memory:
+`auth-options.ts:44-45` unchanged, password absent from `.env.local` so the literal runs, form still on
+public `/login`, no auth commits since the finding. And the design Kane was asking about does not exist
+in any form — no allowlist, no provisioned-admin check; `authorize()` has no prior session to consult.
+
+Kane's ruling turns this from "harden the backdoor" into "delete the password path and move
+impersonation behind an admin session, launched from the GML drawer." The brief names the precedent
+(the Force-logout button one section over, `app/api/auth/force-logout/route.ts`), pins the audit action
+name (`auth.impersonation.signin` — Penny's family list hard-codes it), and stops on:
+**Q1** gate mechanism — (A, recommended, no migration) the `impersonate` provider decodes the caller's
+own session cookie and demands role `admin`; (B) a single-use 60 s ticket table. **Q2** exit path —
+sign out and re-Google, or a "Return to my account" cookie. **Q3** may an admin impersonate another
+admin / CEO / Kane — impersonation inherits the *subject's* allow-listed access. Two Kane-only deploy
+steps regardless: **rotate `NEXTAUTH_SECRET`** (deleting the provider does not kill minted JWTs) and
+**check prod first** (`vercel env ls`). Open item 1.
+
+### Reports tab search — display only · `0573d834`
+> *"Payroll Wizard - Reports - lets add a search bar in here please"*
+> 09:25 → 09:32 · `11011fc4` · routed to **`hardening`**
+
+Seven minutes, and the brief is why it was safe: it cited *a filter never hides a row*
+([[dispatch-log-department-filter]]), *exports reconcile from their own columns*
+([[payroll-exports-itemized]]), and *Reports rows are the snapshot, never recomputed*. So the search
+narrows the step-9 table and **nothing else**: both exports still build from the whole `snap.employees`
+(the toolbar says so while a search is active), the cycle Total never narrows (a second, labelled
+*Search subtotal* row appears instead), a payee with no department matches `no department`, and the
+needle clears on every period switch. [[wizard-reports-search-display-only]].
+
+### The Sep 9 log, and the ₱231,900 question · `362624c3` · `75d50864`
+> *"Check the last 15 Claude sessions and update our documentations…"* → *"How about the HSL Medical Records"*
+> 08:58 → 09:16 · `29264e47`
+
+The previous pass in this chain. Its durable output beyond the log: [pre-release-security-readiness.md](../features/pre-release-security-readiness.md)
+(the Sep 8 sweep's findings, which had lived only in a transcript), and the correction that the
+`medical_records` portal-login rate is **not a doc typo** — `schema.ts:196` pays ₱100 while the doc
+*and* Kane's own worked example in memory say ₱250; 1,546 units, 33 people, 8 weeks, **₱231,900**
+between the two readings. Open item 7b; Kane's call.
+
+---
+
+## Open items
+
+Carried forward from the Sep 9 log and **re-verified 2026-09-10** unless marked otherwise. Items 1–18
+keep their Sep 9 numbers; 19+ are new.
+
+| # | Item | State |
+|---|---|---|
+| 1 | **Impersonation backdoor is live** | Re-verified in the tree: `auth-options.ts:44-45` unchanged, `.env.example:69` uncommented, no `SUPER_ADMIN_*` key in `.env.local`, form on public `/login`. **Kane ruled 2026-09-09: no password; admin-session impersonation from Admin → GML.** Blueprint brief posted (`4b3331cb`), **waiting on Q1 mechanism / Q2 exit / Q3 admin→admin.** Then rotate `NEXTAUTH_SECRET`; check prod env first. **BLOCKING the EOM release.** |
+| 2 | **Ungated API routes** | **2 of 6 CLOSED** in `ddf4c790` (`employee-gift-shipping` GET+PUT, `import-daily-report`). **4 open:** `manager/member-monthly-pay` (anyone's pay — first), `hr/fpu-enrollments`, `hsl-bonus/period-summary`, `presence/last-seen`. Helpers exist; wiring. **BLOCKING.** `import-daily-report` should be deleted, not just gated — Kane's call. |
+| 3 | **`SHOW_UNPAID_STAGED_PAYSTUBS = true`** | Unchanged (`paystub/route.ts:68`). Sits in exactly the Employee surface Carla calls the remaining 15%. Kane's decision. |
+| 4 | **No security headers** | Unchanged — no `headers` block in `next.config.ts` or `vercel.json`. |
+| 5 | **"Last signed in" — (a) or (b)** | Untouched. Decision owed (see Sep 9 log item 5 for the two shapes). |
+| 6 | **`gracechellem@` back-date** | **NOT DONE** — probe 2026-09-10: `employee_rate_history` holds `₱235 eff 07-20` ×2, `₱175 eff 09-01`, and the stray `₱175 eff 09-08`; **no `eff 2026-08-30` row.** Memory had said Kane applied it; corrected. Click-path: Payment Catalog → Pay Structure → Lead Gen → her ₱175 override → Edit → Effective from `2026-08-30` → Update, then re-lock 08-30→09-05. Two employee-scope structures still stand (₱175 lead_gen vs ₱235 hogan, newest wins). |
+| 7 | **HSL items that need Carla** | Not re-verifiable from the repo: PURPLE re-saves for `jennylynf@` + `rockym@`; `emss@`'s monthly box. And the now-automatic bonuses must not also be typed into Adjustment. |
+| 7b | **`medical_records` portal rate — ₱231,900** | Unchanged: `schema.ts:196` still `rate: 100`. Needs one worked example. **Do not change the rate either way to close it.** |
+| 7c | SSD Medical Records auto-dispatch | Fixed and verified 2026-09-09; not re-checked today. |
+| 8 | **Bonus Library migration** | **Confirmed NOT APPLIED 2026-09-10** (read-only): `bonus_catalog_bonus_history`, `bonus_catalog_assignment_history` missing; `bonus_catalog_bonuses.version` / `.effective_from` missing. File: `references/sql/create/2026-09-08_bonus_catalog_history.sql`. The UI shipped in `8c2710ee` reads NULL `effective_from` as `created_at` by design, so it degrades rather than breaks. **Gap:** `scripts/audit-pending-migrations.mts` does not probe these objects — add them. |
+| 9 | **`angelicac@` transfer backfill** | `--apply` still never run (not re-verified; dry run passed all five guards on Sep 4). |
+| 10 | **82 duplicate paid rows** | **CLOSED on Sep 3, undocumented until today.** Paged count 2026-09-10: 9,643 paid rows, **1** email+file key with two paid rows (the `alonzos@` divergent pair the script leaves alone by design). Three `references/backups/dedupe-payment-dispatches-*.json` from Sep 3 12:31–12:54. **Confirmed in `audit_log`: 82 `payment.undone` events tagged `duplicate_paid_row`, 2026-09-03 16:54–16:55 UTC (12:54 ET) — the `--apply` ran that afternoon.** Only `alonzos@` (two Hurupay txn ids 82 s apart) is left to verify in Hurupay. |
+| 11 | **MESA close-out doc** | Carried, untouched: `accounting-mesa-export.md:42` still never says a closed account's balance is released as an obligation. |
+| 12 | **Orientation no-shows → Offboarded** | Carried, untouched. Kane's call. |
+| 13 | **Pay Processors → Payment Dispatch** | Carried, untouched. |
+| 14 | **Orphanage interns migration** | `audit-pending-migrations.mts` run 2026-09-10: **26 APPLIED / 0 NOT APPLIED / 0 INCONCLUSIVE** across everything it probes. It does **not** probe the Bonus Library objects (item 8). |
+| 15 | **Monday board** | Nothing in this window touched it. Sep 4–9 deliverables have no rows. **Re-read the board before pass 24.** |
+| 16 | **`penny` CLI** | Shape only, no brief, nothing built. |
+| 17 | **2 pre-existing test failures** | Still failing today: `dept-label-render.test.ts` (raw department cell, `EmployeeIdCard.tsx:205` + `ManagerApp.tsx`) and the Manager Overview gallery hours interpolation. **2,748 / 2,750** pass. Every session yesterday re-proved they fail with its change stashed. |
+| 18 | **`MEMORY.md` caps** | **126 lines / 21.9 KB** after this pass (was 108 / 18.5 KB on Sep 9 — the meeting added 11 entries). Under both hard caps (200 lines, ~24.4 KB), **over the file's own <17 KB target** and growing ~3 KB/week. Newest at top per [[memory-index-load-cap]]. A prune is due. |
+| **19** | **Pre/Post-Hearing ₱2,500 vs ₱3,500** | **BLOCKING, Carla's ruling.** ₱2,500 pinned in `schema.ts:279`, its test, two docs, the Sep 9 log and memory — all sourced to Carla 2026-09-08; she said 3,500 on 09-09. ₱3,500 is also the weekly cap. **Never pick one; never rewrite the pinned amount or its test.** One worked example for one named person for the 08-30 final week settles it. [[pre-post-hearing-2500-vs-3500]] |
+| **20** | **Admin dashboard cache — blueprint awaiting approval** | Brief posted in `e45b1682`: Q1 AdminRoles in (rec. IN), Q2 `AuditLogPanel` shared with Accounting (rec. OUT), Q3 shared roster key (rec. shared), **plus the sequencing call** — fifth copy of the envelope vs a shared factory first. Orphanage (48/22) is next. [[admin-dashboard-cache-blueprint-pending]] |
+| **21** | **Time-adjustment nudge — approved, not built** | The meeting's only approved build. Resolve the trigger first: "red" is `<7h WITH data`; Carla's failed click was a zero-hours day, which renders sky/orange. A blank cell can also be an ingest artifact (`docs/notes/hubstaff-sunday-overlap.md`). [[time-adjustment-nudge-approved]] |
+| **22** | **QC assignment is not randomized** | Carla's anti-buddy requirement is unmet and was closed in the room on a false premise. Also: revoke Alivia's `qc` role, remove Callback from QC scope, decide zero-hours eligibility — then `blueprint` paste → Compare → Override + histogram, and give the QC surface its first feature doc + INDEX row. [[qc-assignment-not-randomized]] · [[qc-compare-override-paste-format]] |
+| **23** | **Hubstaff ingest guard** | Nothing stops the next `(1)`/`copy`/`(2)` filename; the live week `…_2026-08-30_to_2026-09-05 4.csv` survives only because a bare ` 4` does not match. Fix at ingest, never by narrowing the four regex copies. Kane approved the rename only. [[hubstaff-filename-junk-heuristic-hides-paid-week]] |
+| **24** | **"the missing is 30 - 5"** | Kane's follow-up, unresolved. Aug 30 – Sep 5 is present in the *Current week · live* slot (excluded from PAST WEEKS by design), locked 09-08 by `aliviah@` with **620 dispatches** vs 1,069 the prior week. Whether "missing" meant the slot, the lock state, or that gap is a question for Kane. |
+| **25** | **Retro-PAB has no payment path** | Carla's own unanswered question. A late-granted dispute pays nothing; only the unlabelled Adjustment column is ungated, while the approval notification promises the day "now counts" unconditionally. [[retro-pab-no-payment-path]] |
+| **26** | **Gift tracker has no receipt state** | No `shipped_at`/`received_at`; `status` is address review only. "Who got a gift" is unanswerable from HRIS; Ellie's catch-up has nowhere to land. Migration + route + control + a ledger decision. [[gift-tracker-no-receipt-state]] |
+| **27** | **Team directory shows legal names** | Carla's safety ruling; five render sites + personal-email fallback + search. Needs the fallback-token decision and client-vs-server scoping (the manager roster shares the route). [[team-directory-shows-legal-name]] |
+| **28** | **Eight employee surfaces have no INDEX row** | Profile, Skill Sets, Badges/Certificates, employee PAB card, leave filing, QC, gift receipt, compliance dashboard. Any edit there starts with `READ none`. |
+| **29** | **8 commits unpushed** | `362624c3` → `eff439e7`. `origin/main` at `6068f1f7`. Kane pushes. |
+
+**Closed since the Sep 9 log:** the 82 duplicate paid rows (item 10 — closed on Sep 3, discovered today);
+2 of 6 ungated routes (item 2); the Sep 9 meeting record is committed; every memory written on Sep 9
+has an INDEX wikilink; the three new feature docs have README rows.
+
+---
+
+## Conventions this window confirmed
+
+- **The doc-check works on code edits and fails on everything else.** Five of five code sessions read
+  the docs first; the meeting, the status question and both hard-stopped briefs left nothing durable
+  until today. `CLAUDE.md` now says what a no-code session owes, and where a status answer starts.
+- **Verify, never relay.** Two Sep 9 open items were wrong in opposite directions — one recorded as
+  done that was not, one recorded as open that had been closed six days earlier. "Applied" is a
+  database fact; "committed" is a `git log` fact; a memory hook is a pointer.
+- **`READ none` is a result, and it produces a doc.** Three surfaces got their first governing doc
+  yesterday because the skill made a session say out loud that none existed.
+- **Refusing to sweep another session's work is right, and it has a cost.** Two sessions correctly left
+  the dirty `INDEX.md` alone; one therefore shipped without its own wikilink. The fix is to commit
+  promptly, not to sweep.
+- **Name the artifact.** "The missing is 30 – 5" is ambiguous between a selector slot, a lock state and
+  a dispatch count — the same ambiguity that caused last week's PAB revert.
+- **A data change to production ships with its restore set.** The rename backed up five stores and
+  seven settings before writing, and said so in the commit.
