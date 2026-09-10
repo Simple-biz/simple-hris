@@ -3071,6 +3071,14 @@ export default function DeptBonusCalculator({
     const accentSoft = hexA(color, 0.13);
     const accentBorder = hexA(color, 0.4);
     const tableReady = !!d?.loaded && hasAnyBonus && allMembers.length > 0;
+    // The Compare control lives in the card header beside "→ Payout" (Kane, 2026-09-10:
+    // a collapsed row above the table was unfindable). Shown for every manager-mode QC
+    // dept; ENABLED only while the week is a draft with a loaded table — the rule
+    // `qc-scoring.md` §Compare pins. Disabled is not hidden: a published week shows
+    // the button with a reopen hint instead of nothing.
+    const cmpToggleShown = !isQc && isQcDeptKey(key);
+    const cmpEnabled = cmpToggleShown && tableReady && !readOnly;
+    const cmpIsOpen = cmpEnabled && !!compareOpen[key];
     const chipBonuses = [...v.normalCommon, ...v.sharedCommon];
 
     // Pagination (Lead Gen only today): slice the search-filtered rows into
@@ -3120,8 +3128,10 @@ export default function DeptBonusCalculator({
             </div>
           </div>
 
-          {chipBonuses.length > 0 && (
+          {(chipBonuses.length > 0 || cmpToggleShown) && (
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              {chipBonuses.length > 0 && (
+                <>
               <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-400">KPIs</span>
               {chipBonuses.map((b) => (
                 <span
@@ -3141,6 +3151,45 @@ export default function DeptBonusCalculator({
               <span className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300">
                 → Payout
               </span>
+                </>
+              )}
+              {cmpToggleShown && (
+                <button
+                  type="button"
+                  onClick={() => setCompareOpen((prev) => ({ ...prev, [key]: !prev[key] }))}
+                  disabled={!cmpEnabled}
+                  aria-expanded={cmpIsOpen}
+                  aria-controls={`compare-panel-${key}`}
+                  title={
+                    readOnly
+                      ? 'This week is published — reopen it before comparing or overriding'
+                      : !tableReady
+                        ? 'Loading the table…'
+                        : 'Paste your appointment sheet and compare it with the QC scores'
+                  }
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10.5px] font-medium transition-colors duration-200',
+                    cmpIsOpen
+                      ? 'border-emerald-300 bg-emerald-100 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-200'
+                      : 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300',
+                    cmpEnabled && !cmpIsOpen &&
+                      'hover:border-emerald-300 hover:text-emerald-700 dark:hover:border-emerald-700 dark:hover:text-emerald-300',
+                    !cmpEnabled && 'cursor-not-allowed opacity-50',
+                  )}
+                >
+                  {readOnly ? <Lock className="h-2.5 w-2.5" aria-hidden /> : <Search className="h-2.5 w-2.5" aria-hidden />}
+                  Compare with your sheet
+                  {cmpRun && (
+                    <span className="font-normal opacity-70">
+                      · {cmpActionable.length === 0 ? 'all match' : `${cmpActionable.length} differ`}
+                    </span>
+                  )}
+                  <ChevronDown
+                    className={cn('h-2.5 w-2.5 transition-transform duration-200', cmpIsOpen && 'rotate-180')}
+                    aria-hidden
+                  />
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -3201,35 +3250,26 @@ export default function DeptBonusCalculator({
 
         {/* Compare with the manager's own sheet — manager mode, QC departments, and
             only while the week is still a draft (a locked week is reopened first, via
-            the existing path). Paste → Compare re-fetches the officers' rows → Override
-            applies the manager's numbers → Undo puts back exactly the touched cells. */}
-        {!isQc && isQcDeptKey(key) && tableReady && !readOnly && (
-          <div className="flex-none border-b border-zinc-100 dark:border-zinc-800/70">
-            <button
-              type="button"
-              onClick={() => setCompareOpen((p) => ({ ...p, [key]: !p[key] }))}
-              aria-expanded={!!compareOpen[key]}
-              className="flex w-full items-center justify-between gap-2 px-4 py-2 text-left text-xs hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40 sm:px-5"
+            the existing path). The toggle is in the card header beside "→ Payout";
+            this is the body it opens. Paste → Compare re-fetches the officers' rows →
+            Override applies the manager's numbers → Undo puts back exactly the touched
+            cells. Height + opacity so it unfolds rather than pops; reduced motion cuts. */}
+        <AnimatePresence initial={false}>
+          {cmpIsOpen && (
+            <motion.div
+              key="compare-panel"
+              id={`compare-panel-${key}`}
+              className="flex-none overflow-hidden border-b border-zinc-100 dark:border-zinc-800/70"
+              initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
+              transition={
+                reduceMotion
+                  ? { duration: 0 }
+                  : { height: { duration: 0.3, ease: EASE }, opacity: { duration: 0.22, ease: EASE } }
+              }
             >
-              <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-medium text-zinc-700 dark:text-zinc-200">
-                <Search className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden />
-                Compare with your sheet
-                {cmpRun && (
-                  <span className="font-normal text-zinc-400">
-                    · {cmpRun.result.counts.match} match · {cmpRun.result.counts.mismatch} differ ·{' '}
-                    {cmpRun.result.counts.paste_only} unscored by QC · {cmpQcOnly.length} not in paste
-                    {cmpRefusals > 0 ? ` · ${cmpRefusals} skipped` : ''}
-                  </span>
-                )}
-              </span>
-              <ChevronDown
-                className={cn('h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform', compareOpen[key] && 'rotate-180')}
-                aria-hidden
-              />
-            </button>
-
-            {compareOpen[key] && (
-              <div className="px-4 pb-3 sm:px-5">
+              <div className="px-4 py-3 sm:px-5">
                 <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
                   {/* Left: the paste */}
                   <div className="space-y-2">
@@ -3384,9 +3424,9 @@ export default function DeptBonusCalculator({
                   </div>
                 </div>
               </div>
-            )}
-          </div>
-        )}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Body: optional QC officer rail (left) + the per-person table. The rail
             lets a manager filter the table to one QC officer's scored people. */}

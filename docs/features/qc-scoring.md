@@ -145,8 +145,15 @@ hadn't started") — the house fail-toward-keeping pattern.
 ## Compare / Override / Undo — Jackie's sheet against the officers' first pass
 
 Shipped 2026-09-10 (same-day approval of the revised brief). Manager mode, QC departments,
-**draft weeks only** — a locked week is reopened through the existing path first; the panel is
-simply absent while `readOnly`.
+**draft weeks only** — a locked week is reopened through the existing path first.
+
+**Where it lives (Kane, 2026-09-10, later that day):** the toggle is a chip in the card header,
+beside **→ Payout** — *"Compare with your sheet"*. It is **disabled, never hidden**, while the
+week is published or the table is still loading; the hint says to reopen the week. The first
+cut was a collapsed row above the table and Kane could not find it — a hidden control is an
+unfindable one. The body unfolds below the toolbar with a height + opacity animation
+(`motion/react`, the file's `EASE`; `useReducedMotion` cuts instead). The body is never
+rendered while `readOnly`, so the draft-only rule is unchanged.
 
 **Flow.** Jackie pastes her sheet → **Compare** → a bucketed diff → **Override** → **Undo**.
 
