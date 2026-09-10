@@ -234,6 +234,34 @@ between the two readings. Open item 7b; Kane's call.
 
 ---
 
+## Thu Sep 10 (later)
+
+### The COE states the profile role and the bonuses earned over the last 4 pay cycles · `47232941`
+> *"Employee - COE - Add role to the COE Request - if only they put the role in their profile we can pull it as well. And also for the bonus where all the last 4 payroll cycles bonuses are added and be put into the COE"*
+> session `91c49a23` · routed to **`hardening`** — brief cited nine rules, zero contradictions, two money-path GAPS decided in the brief and written into the doc
+
+Both new facts are **optional** — absent, the certificate reads byte-for-byte as before, no dash, no
+new refusal code (the refuse-rather-than-blank rule is for facts the certificate MUST state). The role
+is the employee's own Profile → Skill Sets entry (`employee_skill_sets.role_title`, read by WORK
+email); the check against a joke title is Accounting seeing it on the card and the real PDF before
+signing. The bonus line sums the **Attendance + Technology + Performance lines of the worker's own
+statements** over their 4 most recent COMPLETED Sunday–Saturday weeks (in-progress week excluded;
+"earned", not "paid"; never Adjustment / Orphanage / MESA; real count under four; zero completed
+weeks ⇒ row omitted).
+
+Two things worth the record. **The statements are read through ONE assembly**: the paystub route's
+all-weeks mode moved verbatim (diffed) to `src/lib/payroll/employee-paystubs.ts`, so the certificate
+carries no second copy of the recovery arithmetic and `paystub-dispatch.md` now names that module as
+the one reader of `paystub.recovered.*`. And **the one-page constraint broke on the first run** — the
+two additions cost 28pt against 34 of slack — and was recovered from whitespace only; the renderer
+now reports its layout budget (`onLayout`) and the worst-case test pins **slack ≥ 24pt**. Probed
+read-only against live data for six recently-paid people: every total matched the newest four
+statements exactly, and a July hire's 12-week window had to be **clamped to the start date** (five
+pre-join weeks each ran the whole-company engine — 45 s → 4 s). Doc: `documents-tab.md` § Role and
+recent bonuses. Memory: [[coe-role-and-recent-bonuses]].
+
+---
+
 ## Open items
 
 Carried forward from the Sep 9 log and **re-verified 2026-09-10** unless marked otherwise. Items 1–18
