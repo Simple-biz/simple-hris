@@ -31,7 +31,7 @@
 |---|---|---|---|
 | 4 | QC corrections: Alivia's role, Callback out of scope, real randomization | `hardening` | **Mon 2026-09-14** |
 | 5 | Per-day time-adjustment nudge | `hardening` | Carla is waiting to be shown it |
-| 6 | PAB explainer copy (3 sites) · Details → FAQs · the drill-in | `hardening` | — |
+| 6 | PAB explainer copy (**4 sites**) · Details → FAQs · the drill-in | `hardening` | — |
 | 7 | Profile: Overview + ID + Compensation → one pane | `hardening` | — |
 | 8 | Reports → "Badges and Certificates" (label only) | `hardening` | — |
 | 9 | Team directory: peers stop seeing legal names | `hardening` | — |
@@ -309,10 +309,30 @@ ways:
 | *"e.g. March 2026: Mar 9–Apr 3"* | **Mar 2 – Apr 3**. `business-logic.md:76-79` already prints `Start = March 2` |
 | Asserts Mon–Fri for everyone | **False for HSL** (≥5-of-7 over whole Sun–Sat weeks). `isHsl` is in scope on the same screen; only the copy ignores it |
 
-**Fix all three sites.** The two sibling statements Carla explicitly wants **kept** (`:2296-2298`,
-`:2314-2319`) carry the same Mon–Fri-only framing and are wrong for HSL for the same reason. The
-meeting flagged one line; the defect is in three places, and fixing one leaves the screen
-contradicting itself.
+**Fix all FOUR sites** (verified 2026-09-10 — the meeting flagged one, and the earlier count of
+three was also short):
+
+| Site | Copy | Why it is wrong |
+|---|---|---|
+| `:3860-3863` | the FAQ line | all three defects above |
+| `:2291` | "N **Mon–Fri days** in this PAB month" | reads `pabWeekdayHours` = `pabDailyHours.filter(d => d.weekday)` (`:1739`) — **not model-aware** |
+| `:2297` | "Eligible: each **Mon–Fri** in the PAB date range above is logged at 7 hours or more." | Mon–Fri asserted for everyone |
+| `:2318` | "…finalized once all **Mon–Fri days** have elapsed." | same |
+
+**The important distinction: the logic is already right — only the description is wrong.**
+`isPAEligible` uses `allPabDays` and `pabViolations` filters on `d.scoring` (`:1852-1861`), both of
+which are model-aware; the grid has been Sun–Sat since 2026-08-27 and its docstring says non-HSL
+weekend cells are chrome. So the screen **computes** the correct verdict for an HSL employee and then
+**explains it with the wrong rule** — which is the worst version of this bug, because the number
+looks defensible and the sentence beside it does not match it.
+
+For `:2291` the correct source already exists two lines away: **`allPabDays.length`** (the `.scoring`
+set) with a label that branches on `isHsl`. Do not "fix" it by re-deriving a second day set.
+
+Carla's `not_eligible` statement (`:2301-2313`, *"No longer Eligible for PAB, Try again next month —
+violated on …"*) is the one she praised and it is **factually correct** — `pabViolations` is
+model-aware. Keep it; while in there, its prose is worth a light polish (comma splice, inconsistent
+capitalisation), which is a copy change and nothing else.
 
 **Recommendation on what it should say:** stop explaining the derivation and print Accounting's saved
 window, because Accounting **hand-sets `pab_period_overrides`** (`EmployeeDashboard.tsx:1429-1431`) —
@@ -745,7 +765,7 @@ renamed **Badges and Certificates** pane.
   the zero-hours day Carla actually clicked — and word it as a question, because a blank cell can be
   a dropped ingest Sunday.
 - **Do not build a third PAB calendar.** Two already ship; wire the inert stat cell up and fix the
-  explainer in **all three** places it is wrong.
+  explainer in **all four** places it is wrong — the logic is already HSL-correct, only the prose is not.
 - **The Profile merge is cache-safe and needs no new key** — all three panes already read cached
   state, `idCard` included (it is a `useMemo` over the cached roster row). The one real risk is
   hoisting `bankInfoLoaded` into the merged pane's gate, which would make an instantly-cached pane
