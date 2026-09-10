@@ -1007,6 +1007,12 @@ inside it had no HSL counterpart:
   **that exact span** — same classes, inside the `<h2>` — that happens to open the
   week menu on click. A small `past` marker is the one addition. The prev/next
   arrows became **←/→ on the trigger**; the menu still lists every week.
+  **Amended 2026-09-10 (Kane, resolution (b)):** the trigger wears a **thin border**
+  again — *"add a border on that so we can see it properly"*. It is a control and
+  must read as one; HSL's `week of` is a label and stays plain. No calendar glyph,
+  no arrow buttons (←/→ stay on the trigger; the small chevron was already there).
+  The rule is now "the same header except where one of them is a control", not
+  byte-for-byte.
 - **`DeadlineBanner` / `PastWeekBanner`** (and the monthly-bonus note) rendered
   INSIDE the sticky bar, making it a full band taller than HSL's on every scroll.
   They moved **below** the bar, above the rows — the same slot HSL uses for a

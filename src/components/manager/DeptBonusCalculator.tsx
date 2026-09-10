@@ -4363,10 +4363,11 @@ export default function DeptBonusCalculator({
                     humanizeDeptKey(visibleDeptKeys[0]))
                   : 'My Departments'}
               {/* HSL prints a static "week of <date>" here. This one is the
-                  same text, and opens the week menu — the picker used to be a
-                  bordered button with prev/next arrows and a calendar glyph,
-                  which was the single biggest reason the two headers did not
-                  read as the same header. */}
+                  same text in the same slot, and opens the week menu. It lost
+                  its calendar glyph and prev/next arrows on 2026-09-02 so the two
+                  headers read as one; on 2026-09-10 Kane chose (b) — a thin border
+                  comes back (the chevron was already there), because this one is a
+                  CONTROL and must read as one, while HSL's stays a plain label. */}
               <WeekPicker
                 value={weekStart}
                 weekEnd={weekEnd}
@@ -5746,10 +5747,13 @@ function WeekPicker({
 
   return (
     <span ref={ref} className="relative ml-2 inline-flex items-center">
-      {/* Byte-for-byte the HSL header's "week of <date>" span, as a button.
-          `font-normal` matters: it sits inside an <h2> and must not inherit its
-          weight. A "past" marker is the one addition — a manager scoring a past
-          week needs that fact in the header, not only in a banner below it. */}
+      {/* The HSL header's "week of <date>" text — same font, size and slot — as a
+          button, plus a thin border (Kane, 2026-09-10, resolution (b): "add a border
+          on that so we can see it properly"; it is a control, HSL's is a label). The
+          small chevron dates from 2026-09-02. No calendar glyph, no arrow buttons —
+          ←/→ still step on the trigger. `font-normal` matters: it sits inside an <h2> and must not inherit
+          its weight. The "past" / "upcoming" marker tells a manager which week they
+          are scoring in the header itself, not only in a banner below it. */}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -5757,7 +5761,12 @@ function WeekPicker({
         aria-expanded={open}
         aria-haspopup="listbox"
         title={`${fmtWeek(value, weekEnd)} — click to change week, ←/→ to step`}
-        className="inline-flex items-center gap-1 rounded font-mono text-xs font-normal text-zinc-500 outline-none transition-colors hover:text-zinc-900 focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:text-zinc-200"
+        className={cn(
+          'inline-flex items-center gap-1 rounded-md border bg-white px-1.5 py-0.5 font-mono text-xs font-normal text-zinc-600 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-blue-500 dark:bg-zinc-900 dark:text-zinc-300',
+          open
+            ? 'border-emerald-400 text-zinc-900 dark:border-emerald-600 dark:text-zinc-100'
+            : 'border-zinc-300 hover:border-emerald-400 hover:text-zinc-900 dark:border-zinc-600 dark:hover:border-emerald-600 dark:hover:text-zinc-100',
+        )}
       >
         week of {value}
         {upcomingWeekStart != null && value === upcomingWeekStart ? (
