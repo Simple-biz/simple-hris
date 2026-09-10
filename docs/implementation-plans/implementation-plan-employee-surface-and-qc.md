@@ -68,7 +68,7 @@ Each rule is traceable to the record. Rules marked **⚑** contradict something 
 | R5 ⚑ | **The hours filter is unbuilt** — QC eligibility is start-date only, with no Hubstaff join, so zero-hours Lead Gen people are dealt to officers today. Whether to exclude them is a **ruling**, not a cleanup. | `qc-db.ts:253-258`; Kane's *"people with hours will be checked"* |
 | R6 | An employee who misses a PAB-disqualifying day is **prompted in place** to file a time adjustment — a comic-style bubble on the day itself, opening the existing form. | **The only approved build.** Carla: *"Just do it and then show me when it's done."* |
 | R7 ⚑ | The trigger cannot be "red". Red is `<7h WITH data`; Carla's own failed click was a **zero-hours** day, which renders sky or orange. | `EmployeeMyHours.tsx:1770`/`:1773`/`:1780` |
-| R8 | The My Hours **IA restructure is not approved.** Neither "replace My Hours with Time Adjustment" nor the My Hours / Time Adjustments / PAB Calendar sub-nav was accepted. | Both floated, neither decided |
+| R8 | **DECIDED 2026-09-10 (Kane): the nudge ships alone and the tab stays "My Hours."** Neither floated shape happens — not the rename to "Time Adjustments", not the My Hours / Time Adjustments / PAB Calendar sub-nav. Revisit only after Carla has seen the nudge working. | Floated in the meeting, neither accepted there; ruled on 2026-09-10 |
 | R9 ⚑ | An employee PAB calendar **already ships twice** (Overview + My Hours). Do not build a third. What is missing is the **drill-in** (the stat cell is an inert `<div>`) and a calendar **inside the mobile popup**. | `EmployeeDashboard.tsx:3385-3796` vs `:2870-2903` |
 | R10 | The PAB explainer line is rewritten, **"Details" becomes "FAQs"**, and the explicit qualify / not-qualify statements stay. | Carla: *"redo just this line"*; Kane: *"I'll just change Details to FAQs"* |
 | R11 | Overview, ID and Compensation become **one pane**. Payment is **not** folded in. | Carla's ask; `employee-dashboard-cache.md:121-126` |
@@ -227,6 +227,28 @@ produce visibly different attributions with equal counts.
 **The approved shape.** On each day tile in My Hours that cost the employee a PAB day, a
 comic-style callout: *"Missing hours? Request a time adjustment"*, opening the existing per-day
 dialog for that date.
+
+**The tab keeps its name, and this wave changes no navigation (R8, decided 2026-09-10).** Both
+alternatives were considered and dropped:
+
+- **Renaming the tab to "Time Adjustments"** — rejected. It would make the label stop describing the
+  contents (the pane is a month grid of merged Hubstaff hours), and two other surfaces describe the
+  employee's path by that name and would become wrong: `ManagerTimeAdjustments.tsx:542` (*"When
+  someone on your team files one from their My Hours calendar"*) and the Penny CEO tool description
+  at `ceo-tools.ts:1188` (*"(My Hours, pay, leave/requests)"*). The rename itself is only four edits
+  — `EmployeeSidebar.tsx:79`, `visibility.ts:148`, the H1 at `EmployeeMyHours.tsx:1471`, and comments
+  — so the cost is the downstream copy, not the rename.
+- **Carla's My Hours / Time Adjustments / PAB Calendar sub-nav** — deferred, not dead. It is cheaper
+  than it looks: all three panes already live in this one 2,361-line file (hours calendar, PAB grid,
+  `TimeAdjustmentDialog` at `:75`, and `/api/time-adjustments` already fetched at `:896-905`,
+  `limit=200`). **Worth knowing when it comes back:** those 200 rows are consumed only at
+  `:1052-1054`, as a date-keyed map annotating calendar tiles — there is **no list view**. A Time
+  Adjustments pane would give that history its first list, which is what Carla was reaching for when
+  she said *"I wish the history would stay here."*
+
+The reasoning for shipping the nudge alone: it puts the affordance on the specific day that needs
+fixing, which no tab label can do — so it addresses Carla's actual complaint without restructuring a
+surface whose hours view people already rely on.
 
 ### 5.1 The trigger — recommendation
 
