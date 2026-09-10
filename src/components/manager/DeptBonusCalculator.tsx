@@ -3132,25 +3132,25 @@ export default function DeptBonusCalculator({
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
               {chipBonuses.length > 0 && (
                 <>
-              <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-400">KPIs</span>
-              {chipBonuses.map((b) => (
-                <span
-                  key={b.id}
-                  className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10.5px] font-medium"
-                  style={{ color, backgroundColor: accentSoft, borderColor: accentBorder }}
-                  title={b.name}
-                >
-                  <span className="max-w-[12rem] truncate">{b.name}</span>
+                <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-400">KPIs</span>
+                {chipBonuses.map((b) => (
+                  <span
+                    key={b.id}
+                    className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10.5px] font-medium"
+                    style={{ color, backgroundColor: accentSoft, borderColor: accentBorder }}
+                    title={b.name}
+                  >
+                    <span className="max-w-[12rem] truncate">{b.name}</span>
+                  </span>
+                ))}
+                {hasIndividual && (
+                  <span className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+                    <User className="h-2.5 w-2.5" /> Individual
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300">
+                  → Payout
                 </span>
-              ))}
-              {hasIndividual && (
-                <span className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
-                  <User className="h-2.5 w-2.5" /> Individual
-                </span>
-              )}
-              <span className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300">
-                → Payout
-              </span>
                 </>
               )}
               {cmpToggleShown && (
