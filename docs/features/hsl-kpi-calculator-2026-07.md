@@ -649,9 +649,10 @@ period_start, status)`, so a week says "ready" once and "locked" once and a reop
 re-ready is silent. Firing on every score would hit Accounting hundreds of times a week —
 autosave saves per field, and applied saves are unaudited on exactly those grounds
 (`audit-log.md` §6). The card carries no amounts; it points at Readiness → KPI Submissions.
-Failures land in `audit_log` via `recordNotifyFailure`, never `console.warn`. **Until the
-ALTER below is applied this type is dead the same way `kpi.scored` was for three days** —
-the audit row is what will say so.
+Failures land in `audit_log` via `recordNotifyFailure`, never `console.warn`. The ALTER that
+admits the type was applied and verified 2026-09-10 (§Deploy / migration) — had it not been,
+this type would be dead the way `kpi.scored` was for three days, and that audit row is what
+would say so.
 
 ## Deploy / migration
 
@@ -672,7 +673,9 @@ member button. `hsl_managers` needs no roster work.
 **No schema change to `hsl_bonus_entries`** — external members and the new depts
 reuse the existing columns; the feature is client + `schema.ts` only.
 
-### 2026-09-10 — `kpi.published` notification type — **PENDING**
+### 2026-09-10 — `kpi.published` notification type — **APPLIED**
+
+**APPLIED 2026-09-10 by Kane, verified the same day** — `--verify` on a fresh session-pooler connection: the live CHECK now lists 45 types ending in `'kpi.published'`, every type the 2026-08-21 ALTER allowed is still present.
 
 - `references/sql/alter/2026-09-10_add_kpi_published_notification_type.sql`, applied via
   `node scripts/apply-kpi-published-notification-type.mjs` (verify-only: `--verify`).
@@ -682,8 +685,10 @@ reuse the existing columns; the feature is client + `schema.ts` only.
   `@` in the password as `%40`). The script prints the exact form on a missing var.
 - `scripts/audit-pending-migrations.mts` probes it (`probeNotificationType`). Run that before
   believing this note either way ([[migration-pending-claims-are-folklore]]).
-- Until it lands: every `kpi.published` insert is rejected by the CHECK and recorded as
-  `notification.insert_failed` in `audit_log`. Publishing itself still succeeds.
+- **Still unproven: the first real insert.** The constraint admits the type and Accounting role
+  holders exist, but no `kpi.published` row has been written yet — the next Mark Ready / Lock is
+  what proves the path. If no card appears then, read `audit_log` for
+  `notification.insert_failed` before suspecting anything else.
 - No other DDL. `notification-views.ts` maps the type to `['accounting']`. No env vars, no n8n.
 
 ## Dispatch wiring (auto-pay all weekly HSL KPI bonuses)

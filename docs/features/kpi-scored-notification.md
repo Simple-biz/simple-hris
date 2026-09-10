@@ -139,7 +139,7 @@ added."* The two types deliberately differ in their de-dupe and must never be me
 ruling); `kpi.published` notifies once per `(department, period_start, status)` and carries
 no amounts — Accounting reviews the week in Readiness → KPI Submissions, it does not read
 pesos off a toast. Same best-effort contract, same `recordNotifyFailure` on error, same
-CHECK-constraint footgun: its ALTER is **PENDING**. The rule lives in
+CHECK-constraint footgun — its ALTER was **APPLIED and verified 2026-09-10**. The rule lives in
 `hsl-kpi-calculator-2026-07.md` §Scoring the upcoming week; the script in its §Deploy /
 migration.
 
@@ -156,9 +156,9 @@ migration.
   (`postgres.<ref>@aws-1-us-east-2.pooler.supabase.com:5432`), not the direct
   `db.<ref>` host, which is IPv6-only and unreachable. An `@` in the password must
   be `%40`. See memory `migration-apply-needs-database-url`.
-- **PENDING 2026-09-10:** the sibling type `kpi.published` needs
+- **APPLIED 2026-09-10, verified:** the sibling type `kpi.published` —
   `references/sql/alter/2026-09-10_add_kpi_published_notification_type.sql` via
-  `node scripts/apply-kpi-published-notification-type.mjs`. Until then its inserts are
-  rejected and recorded as `notification.insert_failed` — the exact shape that kept
-  `kpi.scored` dead. `scripts/audit-pending-migrations.mts` probes it.
+  `node scripts/apply-kpi-published-notification-type.mjs`; `--verify` shows it in the live
+  CHECK (45 types). First real insert still unproven — the next Mark Ready / Lock proves it;
+  a missing card means read `audit_log` for `notification.insert_failed` first.
 - No n8n changes. No env vars.
