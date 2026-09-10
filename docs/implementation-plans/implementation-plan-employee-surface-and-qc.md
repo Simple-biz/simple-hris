@@ -30,7 +30,7 @@
 | § | Workstream | Kind | Deadline |
 |---|---|---|---|
 | 4 | QC corrections: Alivia's role, Callback out of scope, real randomization | `hardening` | **Mon 2026-09-14** |
-| 5 | Per-day time-adjustment nudge | `hardening` | Carla is waiting to be shown it |
+| 5 | **Rename the tab to "Time Adjustments"** + the auto-playing per-day nudge | `hardening` | Carla is waiting to be shown it |
 | 6 | PAB explainer copy (**4 sites**) · Details → FAQs · the drill-in | `hardening` | — |
 | 7 | Profile: Overview + ID + Compensation → one pane | `hardening` | — |
 | 8 | Reports → "Badges and Certificates" (label only) | `hardening` | — |
@@ -67,14 +67,15 @@ Each rule is traceable to the record. Rules marked **⚑** contradict something 
 | R4 | Alivia holds no `qc` role. | *"we have to kick Olivia out of the QC thing"* |
 | R5 ⚑ | **The hours filter is unbuilt** — QC eligibility is start-date only, with no Hubstaff join, so zero-hours Lead Gen people are dealt to officers today. Whether to exclude them is a **ruling**, not a cleanup. | `qc-db.ts:253-258`; Kane's *"people with hours will be checked"* |
 | R6 | An employee who misses a PAB-disqualifying day is **prompted in place** to file a time adjustment — a comic-style bubble on the day itself, opening the existing form. | **The only approved build.** Carla: *"Just do it and then show me when it's done."* |
-| R7 ⚑ | The trigger cannot be "red". Red is `<7h WITH data`; Carla's own failed click was a **zero-hours** day, which renders sky or orange. | `EmployeeMyHours.tsx:1770`/`:1773`/`:1780` |
-| R8 | **DECIDED 2026-09-10 (Kane): the nudge ships alone and the tab stays "My Hours."** Neither floated shape happens — not the rename to "Time Adjustments", not the My Hours / Time Adjustments / PAB Calendar sub-nav. Revisit only after Carla has seen the nudge working. | Floated in the meeting, neither accepted there; ruled on 2026-09-10 |
+| R7 ⚑ | **Red is a narrower trigger than the meeting assumed.** Red is `<7h WITH data`; Carla's own failed click was a **zero-hours** day, which renders sky "Processing" or orange "Pending" — never red. R15 chooses red anyway, so the bubble will not fire on the day she clicked. Accepted trade; keep the qualifying set behind one constant so widening is one line. | `EmployeeMyHours.tsx:1770`/`:1773`/`:1780` |
+| R8 | **DECIDED 2026-09-10 (Kane), superseding an earlier ruling the same day: the tab IS renamed "Time Adjustments", and the nudge is auto-playing.** The rename ships *with* the bubbles — the label names the tab's purpose, and the bubbles are what make it true. Carla's three-pane sub-nav is still dropped. | Kane, 2026-09-10: *"basically renaming the tab from My Hours to time adjustments + …"* |
 | R9 ⚑ | An employee PAB calendar **already ships twice** (Overview + My Hours). Do not build a third. What is missing is the **drill-in** (the stat cell is an inert `<div>`) and a calendar **inside the mobile popup**. | `EmployeeDashboard.tsx:3385-3796` vs `:2870-2903` |
 | R10 | The PAB explainer line is rewritten, **"Details" becomes "FAQs"**, and the explicit qualify / not-qualify statements stay. | Carla: *"redo just this line"*; Kane: *"I'll just change Details to FAQs"* |
 | R11 | Overview, ID and Compensation become **one pane**. Payment is **not** folded in. | Carla's ask; `employee-dashboard-cache.md:121-126` |
 | R12 | The employee "Reports" tab is renamed **Badges and Certificates**. | Carla |
 | R13 | A **peer** sees the quoted go-by and the **work** email — never the full legal name, never a personal email. | Carla's safety ruling |
 | R14 | Employee **leave filing stays enabled**. No new gate, no server date floor without a ruling. | Carla overruled Kane; he accepted |
+| R15 | The bubble says **"Need a time adjustment?"**, appears on a **red** date, shows for **~5 seconds**, and with several red dates a new one appears every 5 seconds pointing at that date, in **random** order. | Kane, 2026-09-10, verbatim spec |
 
 **Standing constraint (from `CLAUDE.md`):** no rule above may be satisfied by loosening a type,
 guard, validation, limit or test. Two places in this plan are where that temptation lives — the
@@ -228,49 +229,89 @@ produce visibly different attributions with equal counts.
 comic-style callout: *"Missing hours? Request a time adjustment"*, opening the existing per-day
 dialog for that date.
 
-**The tab keeps its name, and this wave changes no navigation (R8, decided 2026-09-10).** Both
-alternatives were considered and dropped:
+**This wave is two things: the tab is renamed, and the bubbles auto-play (R8, R15).** The rename
+works *because* of the bubbles — on its own the label would stop describing the contents, but with an
+auto-playing call to action on every red day the tab now names its **purpose**, and the hours
+calendar becomes the instrument rather than the subject.
 
-- **Renaming the tab to "Time Adjustments"** — rejected. It would make the label stop describing the
-  contents (the pane is a month grid of merged Hubstaff hours), and two other surfaces describe the
-  employee's path by that name and would become wrong: `ManagerTimeAdjustments.tsx:542` (*"When
-  someone on your team files one from their My Hours calendar"*) and the Penny CEO tool description
-  at `ceo-tools.ts:1188` (*"(My Hours, pay, leave/requests)"*). The rename itself is only four edits
-  — `EmployeeSidebar.tsx:79`, `visibility.ts:148`, the H1 at `EmployeeMyHours.tsx:1471`, and comments
-  — so the cost is the downstream copy, not the rename.
-- **Carla's My Hours / Time Adjustments / PAB Calendar sub-nav** — deferred, not dead. It is cheaper
-  than it looks: all three panes already live in this one 2,361-line file (hours calendar, PAB grid,
-  `TimeAdjustmentDialog` at `:75`, and `/api/time-adjustments` already fetched at `:896-905`,
-  `limit=200`). **Worth knowing when it comes back:** those 200 rows are consumed only at
-  `:1052-1054`, as a date-keyed map annotating calendar tiles — there is **no list view**. A Time
-  Adjustments pane would give that history its first list, which is what Carla was reaching for when
-  she said *"I wish the history would stay here."*
+Carla's three-pane sub-nav stays dropped. Worth keeping in the file for whenever it returns: all
+three panes already live in this one 2,361-line component (hours calendar, PAB grid,
+`TimeAdjustmentDialog` at `:75`, `/api/time-adjustments` already fetched at `:896-905`, `limit=200`),
+and those 200 rows are consumed **only** at `:1052-1054` as a date-keyed map annotating tiles —
+**there is no list view.** A Time Adjustments pane would give that history its first list, which is
+what Carla was reaching for with *"I wish the history would stay here."*
 
-The reasoning for shipping the nudge alone: it puts the affordance on the specific day that needs
-fixing, which no tab label can do — so it addresses Carla's actual complaint without restructuring a
-surface whose hours view people already rely on.
+### 5.0 The rename — six sites, and keep the key
 
-### 5.1 The trigger — recommendation
+**Rename the LABEL, never the key.** `visibility.ts:148` is `{ key: 'hours', label: 'My Hours' }` and
+`EmployeeSidebar.tsx:79` is `{ id: 'hours', … }`. The key/id feeds the Pages registry, feature
+permissions and the shell's `mountedTabs`, so it stays `hours` — the same rule as a department
+rename, which keeps its key and aliases the old name ([[edit-department-dialog]]).
 
-**Key the nudge to `canRequestAdjust`, not to the tile colour.**
+| Site | What |
+|---|---|
+| `EmployeeSidebar.tsx:79` | `label: 'My Hours'` → `'Time Adjustments'` (keep `id: 'hours'`, keep the `Clock` icon or swap it) |
+| `src/lib/pages/visibility.ts:148` | `label` only — **key stays `hours`** |
+| `EmployeeMyHours.tsx:1471` | the `<h1>`, and the sub-line at `:1474` still describes merged Hubstaff — reword so the page opens by saying what it is *for* |
+| `ManagerTimeAdjustments.tsx:542` | *"files one from their **My Hours** calendar"* — becomes wrong on rename day |
+| `src/lib/anthropic/ceo-tools.ts:1188` | *"(My Hours, pay, leave/requests)"* — a Penny tool description; a stale surface name here makes Penny misdirect people |
+| ~10 cross-surface comments | `orphanage-pab-coverage.ts:27`, `member-monthly-pay.ts:241`, `pab-period-settings.ts:121`, `calendar-column-dedupe.ts:587`, `api-client.ts:270`, `system-bonus.ts:27`, `PayrollWizard.tsx:10673`, `EmployeeDashboard.tsx:908` — these name the surface to explain a cross-surface invariant, so leaving them stale costs the next reader real time |
 
-The room said "any red", and R7 is why that fails: red is `<7h WITH data`
-(`EmployeeMyHours.tsx:1780`), while Carla's own failed click was a zero-hours day rendering sky
-"Processing" (`:1770`) or orange "Pending" (`:1773`). Colour is a *presentation* axis; filability is
-a *permission* axis, and they are independent in the code.
+No test pins the `'My Hours'` string (unlike `'Pay Stubs'` in Profile), so the rename cannot break the
+build — the risk is entirely stale copy, and the table above is the whole of it.
 
-So the nudge shows when **all** of these hold:
+### 5.0b Bubble choreography (R15)
 
-1. `canRequestAdjust(day)` is already true — the existing predicate, unchanged. This is the important
-   property: **the nudge can never appear where filing is impossible**, because it is keyed to the
-   same predicate that enables the click. No guard is widened to make the nudge fit.
-2. The day is not already satisfying (`hours < 7`, including no data at all).
-3. No time-adjustment request exists for that `(email, date)` — pending **or** decided. A nudge on a
-   day the employee already filed is noise, and on an approved day it is wrong.
-4. **Narrowing:** exclude non-HSL weekend tiles. They are non-scoring / display-only
-   (`calendar-column-dedupe.ts:656`) yet fully clickable today, so a nudge there would invite an
-   adjustment for a day that cannot cost PAB. This narrows the nudge; it does not touch
-   `canRequestAdjust` itself.
+Exactly as specified: **"Need a time adjustment?"**, on a red date, ~**5s** each, one at a time,
+advancing every 5s through the red dates in **random** order, each pointing at its own date.
+
+| Concern | Decision |
+|---|---|
+| **Which dates** | Red days in the **visible month** — red is the `else` branch at `EmployeeMyHours.tsx:1780` (has data, under 7h). Put the qualifying set behind **one named constant** so widening it later is a one-line change, not a hunt. |
+| **Exclusions** | Days that already have a time-adjustment row (pending *or* decided) — a bubble on a day the employee already filed is noise. Also non-HSL weekend tiles: non-scoring, so they cannot cost PAB. |
+| **Random, but stable** | Shuffle **once per (visible month, red-day set)** in a `useMemo` — not per render. A bare `Math.random()` in render reshuffles mid-cycle and the sequence jumps. |
+| **Loop, don't play once** | With 8 red days, playing once means the last bubble fires 40s in, long after most people have looked away. Cycle continuously so a late glance still catches one. |
+| **Pause + dismiss** | Pause while the bubble is hovered or focused, so it can actually be clicked. An × dismisses for the session — store that in **`sessionStorage`, never `localStorage`** (the employee-cache rule: `localStorage` outlives the browser and strands one person's state on a shared machine), and identity-stamp it so an elevated `?email=` preview cannot inherit or leak it. |
+| **Reduced motion** | `prefers-reduced-motion` → **no cycling.** Render one static marker on every qualifying day instead. Auto-updating content on a timer is a WCAG 2.2.2 concern, and this file already uses `motion-safe:` / `motion-reduce:` pairs, so this matches house style rather than inventing a rule. |
+| **Click** | Opens `TimeAdjustmentDialog` for that date — the same path the tile click uses today. No server change. |
+| **Empty state** | Every red day already filed → no bubbles at all. |
+
+**The one real implementation risk: the bubble will be clipped.** The calendar card (`:1489`) and its
+`CardContent` (`:1592`) are both `overflow-hidden`, and the card additionally carries
+`[@media(max-height:850px)]:max-h-[calc(100dvh-9rem)]`. A tile is ~40–60px, so a bubble anchored over
+one — especially in the top row or the right column — gets cut off. **Render it in a portal anchored
+to the tile's measured rect** (the repo's popover/tooltip primitives already portal), rather than
+absolutely positioning inside the grid or removing `overflow-hidden`, which is load-bearing for the
+card's rounded corners and its scroll behaviour.
+
+**One consequence to keep visible:** red is `<7h WITH data`, so a red-only trigger **will not fire on
+the zero-hours day Carla actually clicked** — that renders sky "Processing" (`:1770`) or orange
+"Pending" (`:1773`). That is the accepted trade for not nudging days whose hours simply have not been
+ingested yet (`docs/notes/hubstaff-sunday-overlap.md`). The named constant above is what makes
+widening it cheap if she asks.
+
+### 5.1 The trigger — red AND filable
+
+R15 sets the trigger to **red**. Keep one more condition on top of it, because colour and filability
+are independent axes in this code:
+
+> **red ∧ `canRequestAdjust(day)` ∧ no existing request ∧ scoring day**
+
+- **Red** — the `else` branch at `EmployeeMyHours.tsx:1780` (has data, under 7h). Kane's choice.
+- **`canRequestAdjust(day)`** — the existing predicate, unchanged. This is the load-bearing one:
+  **the bubble can never appear where filing is impossible**, because it rides the same predicate
+  that enables the click. Note it requires `inMonth` (`:1704`) while the server has no month bound —
+  do not relax that to make a bubble reachable; widening a guard for a nudge is exactly what the
+  standing constraint forbids.
+- **No existing request** for that `(email, date)`, pending *or* decided — a bubble on a day already
+  filed is noise, and on an approved day it is wrong.
+- **Scoring day** — exclude non-HSL weekend tiles. They are non-scoring / display-only
+  (`calendar-column-dedupe.ts:656`) yet fully clickable today, so a bubble there would invite an
+  adjustment for a day that cannot cost PAB. This *narrows* the set; it does not touch
+  `canRequestAdjust`.
+
+Put that intersection behind **one named constant** (R7): red-only will not fire on the zero-hours
+day Carla clicked, and if she asks for it, widening should be a one-line change in one place.
 
 ### 5.2 The honest caveat — a blank day is not proof of an absence
 
@@ -282,9 +323,9 @@ Two consequences for the copy and the trigger:
 
 - **Word the nudge as a question, never as an assertion.** *"Missing hours?"* survives a
   false positive; *"You missed this day"* does not.
-- **Sky "Processing" days are the risky class** — hours may simply not be ingested yet. Recommend
-  nudging on sky only once the processing window for that day has closed, and asking Q3 before
-  shipping otherwise.
+- **Sky "Processing" days are the risky class** — hours may simply not be ingested yet, which is
+  precisely why R15's red-only trigger excludes them (Q3, closed 2026-09-10). If the trigger is ever
+  widened past red, this is the case that needs a processing-window check first.
 
 ### 5.3 Placement
 
@@ -670,7 +711,7 @@ Each row is one reviewable commit. "Gate" is what must be true before starting.
 | 1 | `harden(qc): Lead Gen is the only QCed department` | 4.1 | Q1 (retired-history read path) | trivial |
 | 2 | *(no commit)* revoke Alivia's `qc` role in Admin | 4.2 | — | click |
 | 3 | `harden(qc): deal officer slices by a seeded weekly shuffle` **+ the QC feature doc + INDEX row** | 4.3, 10.7 | commits 1–2 | medium |
-| 4 | `feat(employee): nudge a time adjustment on days that cost PAB` | 5 | Q3 (sky days) | medium |
+| 4 | `feat(employee): the My Hours tab becomes Time Adjustments, and red days ask for one` | 5 | — (Q3 closed: red only) | medium |
 | 5 | `fix(employee): the PAB explainer was wrong in three places` | 6.1 | Q4 (copy) | small |
 | 6 | `feat(employee): PAB card drills into the calendar; Details becomes FAQs` | 6.2, 6.3 | commit 5 | small |
 | 7 | `feat(employee): one Profile pane for identity, ID and compensation` | 7 | Q5 (Start Date) | medium |
@@ -691,7 +732,7 @@ Commits 1–3 are the Monday-2026-09-14 set. 4 is next because Carla is waiting 
 |---|---|---|---|
 | Q1 | Does Accounting need a read path to Callback's retired QC history? | Carla | Yes → 4.1 grows a history view. No → one-line change, rows go invisible (the Discovery pattern). |
 | Q2 | Should zero-hours Lead Gen people be excluded from QC dealing? | Carla | Exclude → a Hubstaff join in eligibility, against a codebase where **every** comparable predicate fails toward *keeping* the person. Keep → officers keep being dealt ~193/week listed-never-scored people. **Not a cleanup either way.** |
-| Q3 | Does the nudge appear on sky "Processing" days? | Kane | Yes → risks nudging a day whose hours simply are not ingested yet (`hubstaff-sunday-overlap`). No → Carla's demonstrated click still works only once the day flips to orange. |
+| ~~Q3~~ | ~~Does the nudge appear on sky "Processing" days?~~ | — | **CLOSED 2026-09-10 (Kane): red only.** Avoids nudging a day whose hours are merely not ingested yet (`hubstaff-sunday-overlap`), at the cost of not firing on Carla's zero-hours click (R7). |
 | Q4 | Should the PAB FAQ explain the derivation at all, or just print Accounting's saved window? | Carla | Print the window → shorter, always right, and matches the card. Explain → must branch on `isHsl` and stays misleading whenever `pab_period_overrides` is hand-set. |
 | Q5 | Is the `formatStartDate` off-by-one fix in scope for the Profile merge? | Kane | In → the merged pane stops contradicting itself, and two Pay Stubs dates + three resignation dates shift a day for west-of-UTC viewers. Out → ship the merge showing two different Start Dates. |
 | Q6 | Which token does the directory show when there is no chosen nickname? | Kane | Derived go-by → *Jane Marie Santos* becomes "Marie". First name → safe but not the quoted token Carla asked for. **Blocks Wave 6.** |
@@ -783,9 +824,11 @@ renamed **Badges and Certificates** pane.
 - **Wave 1 (three commits) has a real deadline: Monday 2026-09-14.** Removing Callback from QC scope
   is a **one-line change** to `QC_DEPT_KEYS` with a documented precedent; revoking Alivia's role is a
   click; **randomization has to be written from scratch** — Carla believes it ships, and it does not.
-- **The only approved build is the nudge.** Key it to `canRequestAdjust`, not to "red" — red misses
-  the zero-hours day Carla actually clicked — and word it as a question, because a blank cell can be
-  a dropped ingest Sunday.
+- **Wave 2 is the rename plus the auto-playing nudge.** "My Hours" becomes **"Time Adjustments"**
+  (label only — the `hours` key stays), and every red day gets a "Need a time adjustment?" bubble for
+  ~5s, cycling one every 5s in random order. Six copy sites to follow, no test pins the old string.
+  Red-only is deliberate and **will not fire on the zero-hours day Carla clicked** — keep the
+  qualifying set behind one constant. Portal the bubble: the calendar card is `overflow-hidden`.
 - **Do not build a third PAB calendar.** Two already ship; wire the inert stat cell up and fix the
   explainer in **all four** places it is wrong — the logic is already HSL-correct, only the prose is not.
 - **The Profile merge is cache-safe and needs no new key** — all three panes already read cached
