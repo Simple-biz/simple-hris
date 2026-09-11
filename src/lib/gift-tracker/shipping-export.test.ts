@@ -22,8 +22,10 @@ import {
   GIFT_ROSTER_COLUMNS,
   type GiftRosterEmployeeInput,
   type GiftRosterSubmissionInput,
+  type GiftRosterReceiptInput,
 } from './shipping-export';
 import { diffDays, getCurrentShippingMilestone, parseStartDate } from '@/lib/gift-milestones';
+import { parseCsv } from './receipt-import';
 
 /** Fixed clock so milestone math is deterministic. */
 const TODAY = new Date('2026-08-19T00:00:00');
@@ -327,4 +329,166 @@ test('vestigial price fields on a submission never leak into the CSV', () => {
   assert.ok(!csv.includes('1499'));
   assert.ok(!csv.includes('Branded Hoodie'));
   assert.ok(!csv.includes('cat-7'));
+});
+
+// ---------------------------------------------------------------------------
+// Fulfilment — owed, received, and the "not recorded" state that is neither
+// ---------------------------------------------------------------------------
+
+/** Build with a fulfilment ledger attached. `emp()` started 2024-08-19, so on
+ *  TODAY (2026-08-19) milestones 1–4 have come due and 5 has not. */
+function buildWithReceipts(
+  employees: GiftRosterEmployeeInput[],
+  receipts: GiftRosterReceiptInput[],
+) {
+  return buildGiftRosterExport({
+    employees,
+    submissions: [],
+    receipts,
+    totalRoster: employees.length,
+    today: TODAY,
+  });
+}
+
+test('a due milestone with no receipt row counts as NOT RECORDED, never as owed', () => {
+  const model = buildWithReceipts([emp()], []);
+  const r = model.rows[0];
+  assert.equal(r.giftsOwed, 0);
+  assert.equal(r.giftsReceived, 0);
+  assert.equal(r.giftsNotRecorded, 4);
+  assert.equal(r.oldestOwed, '');
+  assert.equal(model.summary.peopleOwed, 0);
+  assert.equal(model.summary.peopleNotRecorded, 1);
+});
+
+test('omitting the receipts input entirely does not manufacture a backlog', () => {
+  // The whole ledger being absent must read as "nobody has said", not "nobody
+  // got anything" — otherwise a wiring mistake prints the company as owing
+  // every gift it has ever given.
+  const model = build([emp()]);
+  assert.equal(model.rows[0].giftsOwed, 0);
+  assert.equal(model.rows[0].giftsNotRecorded, 4);
+  assert.equal(model.summary.giftsOwed, 0);
+});
+
+test('an explicit false on a due milestone is owed, and names the oldest', () => {
+  const model = buildWithReceipts(
+    [emp()],
+    [
+      { work_email: 'anac@simple.biz', milestone_index: 1, received: true },
+      { work_email: 'anac@simple.biz', milestone_index: 2, received: false },
+      { work_email: 'anac@simple.biz', milestone_index: 3, received: false },
+    ],
+  );
+  const r = model.rows[0];
+  assert.equal(r.giftsReceived, 1);
+  assert.equal(r.giftsOwed, 2);
+  assert.equal(r.giftsNotRecorded, 1); // milestone 4, due, nothing on record
+  assert.equal(r.oldestOwed, '12-month');
+});
+
+test('gifts owed and people owed are counted separately and never netted', () => {
+  const model = buildWithReceipts(
+    [
+      emp({ name: 'Owed three', work_email: 'a@simple.biz', personal_email: 'a@x.com' }),
+      emp({ name: 'Owed one', work_email: 'b@simple.biz', personal_email: 'b@x.com' }),
+    ],
+    [
+      { work_email: 'a@simple.biz', milestone_index: 1, received: false },
+      { work_email: 'a@simple.biz', milestone_index: 2, received: false },
+      { work_email: 'a@simple.biz', milestone_index: 3, received: false },
+      { work_email: 'b@simple.biz', milestone_index: 1, received: false },
+    ],
+  );
+  assert.equal(model.summary.giftsOwed, 4);
+  assert.equal(model.summary.peopleOwed, 2);
+});
+
+test('a false against a milestone that has NOT come due is not owed', () => {
+  const model = buildWithReceipts(
+    [emp()],
+    [{ work_email: 'anac@simple.biz', milestone_index: 5, received: false }],
+  );
+  assert.equal(model.rows[0].giftsOwed, 0);
+});
+
+test('fulfilment is keyed on WORK email — a matching personal email does not count', () => {
+  const model = buildWithReceipts(
+    [emp()],
+    [{ work_email: 'ana.cruz@gmail.com', milestone_index: 1, received: true }],
+  );
+  assert.equal(model.rows[0].giftsReceived, 0);
+  assert.equal(model.rows[0].giftsNotRecorded, 4);
+});
+
+test('two people sharing one personal email keep separate gift histories', () => {
+  // The exact collision that kept fulfilment off employee_gift_shipping_details:
+  // russell@ and johnc@ share corpuzmachacon@gmail.com on the live roster.
+  const model = buildWithReceipts(
+    [
+      emp({ name: 'Russell', work_email: 'russell@simple.biz', personal_email: 'shared@x.com' }),
+      emp({ name: 'John C', work_email: 'johnc@simple.biz', personal_email: 'shared2@x.com' }),
+    ],
+    [
+      { work_email: 'russell@simple.biz', milestone_index: 1, received: true },
+      { work_email: 'johnc@simple.biz', milestone_index: 1, received: false },
+    ],
+  );
+  const russell = model.rows.find((r) => r.name === 'Russell')!;
+  const john = model.rows.find((r) => r.name === 'John C')!;
+  assert.equal(russell.giftsReceived, 1);
+  assert.equal(russell.giftsOwed, 0);
+  assert.equal(john.giftsReceived, 0);
+  assert.equal(john.giftsOwed, 1);
+});
+
+test('a person with no start date has no owed gifts — undatable is not overdue', () => {
+  const model = buildWithReceipts(
+    [emp({ start_date: null })],
+    [{ work_email: 'anac@simple.biz', milestone_index: 1, received: false }],
+  );
+  // A stated "not received" against a milestone that cannot be DATED is not a
+  // debt — without a start date there is no way to know the milestone arrived.
+  // It stays unresolved rather than being promoted to owed.
+  assert.equal(model.rows[0].giftsOwed, 0);
+  assert.equal(model.rows[0].giftsNotRecorded, 1);
+});
+
+test('the CSV carries the fulfilment columns and keeps them distinct', () => {
+  const headers = GIFT_ROSTER_COLUMNS.map((c) => c.header);
+  assert.ok(headers.includes('Gifts Received'));
+  assert.ok(headers.includes('Gifts Owed'));
+  assert.ok(headers.includes('Not Recorded'));
+  assert.ok(headers.includes('Oldest Owed'));
+
+  const csv = giftRosterToCsv(
+    buildWithReceipts(
+      [emp()],
+      [{ work_email: 'anac@simple.biz', milestone_index: 2, received: false }],
+    ),
+  );
+  // Parsed, never split(',') — the address column is full of commas and a naive
+  // split silently shifts every column after it.
+  const table = parseCsv(csv);
+  const cols = table.find((r) => r[0] === '#')!;
+  const cells = table[table.indexOf(cols) + 1];
+  assert.equal(cells[cols.indexOf('Gifts Owed')], '1');
+  assert.equal(cells[cols.indexOf('Not Recorded')], '3');
+  assert.equal(cells[cols.indexOf('Oldest Owed')], '12-month');
+});
+
+test('an off-roster submitter reports no fulfilment rather than a fabricated zero backlog', () => {
+  const model = buildGiftRosterExport({
+    employees: [emp()],
+    submissions: [sub({ personal_email: 'ghost@x.com' })],
+    receipts: [],
+    totalRoster: 1,
+    today: TODAY,
+  });
+  const ghost = model.rows.find((r) => r.offRoster)!;
+  assert.equal(ghost.giftsOwed, 0);
+  assert.equal(ghost.giftsNotRecorded, 0);
+  assert.equal(ghost.oldestOwed, '');
+  // The flag, not the counts, is the finding.
+  assert.equal(ghost.department, 'Off-roster');
 });

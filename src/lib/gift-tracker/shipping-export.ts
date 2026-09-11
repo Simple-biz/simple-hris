@@ -37,8 +37,10 @@ import {
   buildMilestones,
   diffDays,
   getCurrentShippingMilestone,
+  milestoneLabel as sharedMilestoneLabel,
   parseStartDate,
 } from '@/lib/gift-milestones';
+import { buildPersonReceiptSummary } from './receipts';
 
 // ---------------------------------------------------------------------------
 // Input + structured model
@@ -113,6 +115,17 @@ export interface GiftRosterRecord {
   decidedAt: string;
   /** True for a submitter who matched no active roster row — appended + flagged. */
   offRoster: boolean;
+  /**
+   * Fulfilment, from employee_gift_receipts. Counted SEPARATELY and never
+   * summed: `giftsOwed` is a debt somebody recorded, `giftsNotRecorded` is a
+   * due milestone nobody has assessed. Folding the second into the first would
+   * invent a backlog; folding it into `giftsReceived` would hide one.
+   */
+  giftsReceived: number;
+  giftsOwed: number;
+  giftsNotRecorded: number;
+  /** The oldest gift still owed ("12-month"), or '' when none. */
+  oldestOwed: string;
 }
 
 /** One submission, for the XLSX history sheet. */
@@ -149,14 +162,33 @@ export interface GiftRosterExportModel {
     dueNoSubmission: number;
     offRoster: number;
     noAddress: number;
+    /** Gifts recorded as missed. A person owed three counts three here. */
+    giftsOwed: number;
+    /** People owed at least one. Never the same number as `giftsOwed`. */
+    peopleOwed: number;
+    /** People with a due milestone nobody has assessed — NOT part of `peopleOwed`. */
+    peopleNotRecorded: number;
   };
   /** Describes the filter the rows came from, e.g. 'All employees'. */
   scopeLabel: string;
 }
 
+/**
+ * One row of the fulfilment ledger. Keyed on WORK email — the submissions table
+ * is keyed on personal_email, which is not injective on this roster, so the two
+ * deliberately do not share a key.
+ */
+export interface GiftRosterReceiptInput {
+  work_email: string;
+  milestone_index: number;
+  received: boolean;
+}
+
 export interface BuildGiftRosterInput {
   employees: readonly GiftRosterEmployeeInput[];
   submissions: readonly GiftRosterSubmissionInput[];
+  /** Fulfilment assertions. Omitted entirely = every milestone reads Not recorded. */
+  receipts?: readonly GiftRosterReceiptInput[];
   totalRoster: number;
   scopeLabel?: string;
   /** Injectable clock — the tests pin milestone math to a fixed date. */
@@ -234,7 +266,9 @@ function homeAddressOf(e: GiftRosterEmployeeInput): string {
 /** milestone_index N → the (N x 6)-month gift, e.g. 2 → "12-month". */
 export function milestoneLabel(index: number | null | undefined): string {
   if (index == null || !Number.isFinite(index) || index <= 0) return NONE_YET;
-  return `${index * 6}-month`;
+  // The "-month" spelling itself lives in gift-milestones.ts so the export, the
+  // roster and the receipts ledger cannot name the same milestone differently.
+  return sharedMilestoneLabel(index);
 }
 
 /** "In 12 days" / "Overdue by 3 days" / "Today" / "Tomorrow". */
@@ -284,6 +318,17 @@ export function buildGiftRosterExport(input: BuildGiftRosterInput): GiftRosterEx
     arr.sort((a, b) => a.milestone_index - b.milestone_index);
   }
 
+  // Fulfilment, grouped by lower-cased WORK email then milestone index.
+  const receiptsByWorkEmail = new Map<string, Map<number, boolean>>();
+  for (const r of input.receipts ?? []) {
+    const key = clean(r.work_email).toLowerCase();
+    if (!key) continue;
+    const inner = receiptsByWorkEmail.get(key) ?? new Map<number, boolean>();
+    inner.set(r.milestone_index, r.received);
+    receiptsByWorkEmail.set(key, inner);
+  }
+  const NO_RECEIPTS: ReadonlyMap<number, boolean> = new Map();
+
   const rows: GiftRosterRecord[] = [];
   const submissions: GiftSubmissionRecord[] = [];
   const matchedKeys = new Set<string>();
@@ -310,6 +355,15 @@ export function buildGiftRosterExport(input: BuildGiftRosterInput): GiftRosterEx
     const workEmail = clean(e.work_email);
     const department = clean(e.department) || DASH;
 
+    // Fulfilment runs through the SAME helper the on-screen tracker uses, so
+    // the file and the screen cannot disagree about who is owed a gift.
+    const receiptSummary = buildPersonReceiptSummary({
+      start,
+      today,
+      receiptsByIndex:
+        receiptsByWorkEmail.get((workEmail || key).toLowerCase()) ?? NO_RECEIPTS,
+    });
+
     const submittedAddress = clean(sub?.preferred_delivery_location);
     const home = homeAddressOf(e);
     const shippingAddress = submittedAddress || home;
@@ -330,6 +384,10 @@ export function buildGiftRosterExport(input: BuildGiftRosterInput): GiftRosterEx
       currentMilestone: current ? milestoneLabel(current.index) : NONE_YET,
       milestoneDate: current ? formatDate(current.date.toISOString()) : '',
       dueIn: current ? dueInLabel(diffDays(current.date, today)) : '',
+      giftsReceived: receiptSummary.receivedCount,
+      giftsOwed: receiptSummary.owedCount,
+      giftsNotRecorded: receiptSummary.unknownCount,
+      oldestOwed: receiptSummary.oldestOwed?.label ?? '',
       submitted: sub ? 'Yes' : 'No',
       status: statusLabel(sub?.status ?? null),
       shippingAddress: shippingAddress || DASH,
@@ -365,6 +423,14 @@ export function buildGiftRosterExport(input: BuildGiftRosterInput): GiftRosterEx
       currentMilestone: milestoneLabel(sub.milestone_index),
       milestoneDate: formatDate(sub.milestone_date),
       dueIn: '',
+      // An off-roster submitter has no master row, so no start date, so no
+      // milestone can be dated and nothing about fulfilment is knowable. Zeroes
+      // here mean "we cannot say", and the row is already flagged Off-roster —
+      // that flag, not these counts, is the finding.
+      giftsReceived: 0,
+      giftsOwed: 0,
+      giftsNotRecorded: 0,
+      oldestOwed: '',
       submitted: 'Yes',
       status: statusLabel(sub.status),
       shippingAddress: address || DASH,
@@ -388,6 +454,9 @@ export function buildGiftRosterExport(input: BuildGiftRosterInput): GiftRosterEx
     ).length,
     offRoster: rows.filter((r) => r.offRoster).length,
     noAddress: rows.filter((r) => r.addressSource === 'None on file').length,
+    giftsOwed: rows.reduce((n, r) => n + r.giftsOwed, 0),
+    peopleOwed: rows.filter((r) => r.giftsOwed > 0).length,
+    peopleNotRecorded: rows.filter((r) => r.giftsNotRecorded > 0).length,
   };
 
   return {
@@ -446,6 +515,12 @@ export const GIFT_ROSTER_COLUMNS: {
   { header: 'Current Milestone', get: (r) => r.currentMilestone },
   { header: 'Milestone Date', get: (r) => r.milestoneDate || DASH },
   { header: 'Due In', get: (r) => r.dueIn || DASH },
+  // Fulfilment. Three columns, never one: "owed" and "not recorded" are
+  // different findings and a reconciliation that merges them is useless.
+  { header: 'Gifts Received', get: (r) => r.giftsReceived },
+  { header: 'Gifts Owed', get: (r) => r.giftsOwed },
+  { header: 'Oldest Owed', get: (r) => r.oldestOwed || DASH },
+  { header: 'Not Recorded', get: (r) => r.giftsNotRecorded },
   { header: 'Submitted?', get: (r) => r.submitted },
   { header: 'Status', get: (r) => r.status },
   { header: 'Shipping Address', get: (r) => r.shippingAddress },
@@ -501,6 +576,8 @@ function summaryLine(model: GiftRosterExportModel): string {
     `${countLabel(s.people)} of ${model.totalRoster.toLocaleString()} in roster` +
     ` · ${s.submitted.toLocaleString()} submitted · ${s.notSubmitted.toLocaleString()} not submitted` +
     ` · ${s.dueNoSubmission.toLocaleString()} due with no submission` +
+    ` · ${s.giftsOwed.toLocaleString()} gift(s) owed to ${s.peopleOwed.toLocaleString()} person/people` +
+    ` · ${s.peopleNotRecorded.toLocaleString()} with nothing recorded` +
     ` · ${s.offRoster.toLocaleString()} off-roster · ${s.noAddress.toLocaleString()} with no address`
   );
 }
@@ -772,6 +849,9 @@ export async function generateGiftRosterPdf(
       { label: 'Submitted', value: s.submitted.toLocaleString() },
       { label: 'Not submitted', value: s.notSubmitted.toLocaleString() },
       { label: 'Due, no submission', value: s.dueNoSubmission.toLocaleString() },
+      { label: 'Gifts owed', value: s.giftsOwed.toLocaleString() },
+      { label: 'People owed', value: s.peopleOwed.toLocaleString() },
+      { label: 'Not recorded', value: s.peopleNotRecorded.toLocaleString() },
       { label: 'Off-roster', value: s.offRoster.toLocaleString() },
       { label: 'No address', value: s.noAddress.toLocaleString() },
     ];

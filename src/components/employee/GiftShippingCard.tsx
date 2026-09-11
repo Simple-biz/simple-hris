@@ -26,6 +26,8 @@ import {
   type GiftMilestone,
 } from '@/lib/gift-milestones';
 import type { EmployeeGiftShippingRow } from '@/lib/supabase/employee-gift-shipping';
+import type { EmployeeGiftReceiptRow } from '@/lib/supabase/employee-gift-receipts';
+import { receiptStateFor, type GiftReceiptState } from '@/lib/gift-tracker/receipts';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 export type GiftShippingStatus =
@@ -161,6 +163,15 @@ export default function GiftShippingCard({
   /** Switches the dialog to the celebration screen for ~2.4s after a successful save. */
   const [celebrating, setCelebrating] = useState(false);
   const [allRows, setAllRows] = useState<EmployeeGiftShippingRow[]>([]);
+  /**
+   * The employee's own fulfilment record, milestone index → received.
+   *
+   * READ ONLY here. An ABSENT key means nobody has recorded anything about that
+   * gift, which is NOT the same as "you did not get it" — the timeline shows
+   * nothing at all in that case rather than guessing, exactly as the staff
+   * tracker does (src/lib/gift-tracker/receipts.ts).
+   */
+  const [receipts, setReceipts] = useState<Map<number, boolean>>(new Map());
   const [activeTab, setActiveTab] = useState<'form' | 'history'>('form');
 
   const loadRow = useCallback(async () => {
@@ -198,6 +209,44 @@ export default function GiftShippingCard({
   useEffect(() => {
     void loadRow();
   }, [loadRow]);
+
+  /**
+   * Load this person's fulfilment record.
+   *
+   * Keyed on WORK email, because `employee_gift_receipts` is — `personal_email`
+   * is not injective on this roster and two colleagues share one. Falls back to
+   * the card's row key only when no work email is on the master row.
+   *
+   * A failure here is SILENT on purpose: the timeline still renders, every
+   * milestone simply reads as unrecorded, and the employee is not shown a
+   * scary error about a read-only enrichment. It must never fail CLOSED into
+   * "not received", which is why the fallback is an empty map rather than a map
+   * of falses.
+   */
+  const receiptKey = (prefill.workEmail || personalEmail || '').trim().toLowerCase();
+  useEffect(() => {
+    if (!receiptKey) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/employee-gift-receipts?work_email=${encodeURIComponent(receiptKey)}`,
+          { cache: 'no-store' },
+        );
+        const json = (await res.json()) as { rows?: EmployeeGiftReceiptRow[]; error?: string };
+        if (!res.ok || json.error) return;
+        if (cancelled) return;
+        const map = new Map<number, boolean>();
+        for (const r of json.rows ?? []) map.set(r.milestone_index, r.received);
+        setReceipts(map);
+      } catch {
+        /* read-only enrichment — the timeline renders without it */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [receiptKey]);
 
   // Emit state changes upward so the bell-icon badge stays in sync.
   useEffect(() => {
@@ -935,12 +984,24 @@ export default function GiftShippingCard({
           <>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5">
             <p className="mb-5 text-[11px] text-zinc-500 dark:text-zinc-400">
-              One gift every 6 months from your start date. Approved gifts show the item selected by the Orphanage team.
+              One gift every 6 months from your start date. &ldquo;Address confirmed&rdquo; means we have your
+              delivery details locked in; &ldquo;Gift received&rdquo; means it actually reached you. A milestone
+              with neither simply has not been recorded yet.
             </p>
             <div className="relative">
               {milestoneMap.map((ms, idx) => {
                 const msRow = allRows.find((r) => r.milestone_index === ms.index) ?? null;
                 const msStatus = getMsStatus(ms, allRows, milestone, today);
+                // ADDRESS REVIEW (msStatus) and FULFILMENT (msReceipt) are two
+                // different facts and this timeline used to conflate them — an
+                // approved address printed "Received" even though approving only
+                // locks the submitted details and ships nothing.
+                const msReceipt: GiftReceiptState = receiptStateFor({
+                  start: startDate,
+                  milestoneIndex: ms.index,
+                  today,
+                  received: receipts.get(ms.index),
+                });
                 const isLast = idx === milestoneMap.length - 1;
                 const isCurrent = milestone?.index === ms.index;
                 const months = ms.index * 6;
@@ -952,7 +1013,8 @@ export default function GiftShippingCard({
                         aria-hidden
                         className={cn(
                           'absolute left-[15px] top-8 bottom-0 w-0.5',
-                          msStatus === 'approved'
+                          // Follows the GIFT, not the address form.
+                          msReceipt === 'received'
                             ? 'bg-emerald-200 dark:bg-emerald-900/50'
                             : 'bg-zinc-200 dark:bg-zinc-800',
                         )}
@@ -962,7 +1024,12 @@ export default function GiftShippingCard({
                     <div
                       className={cn(
                         'relative z-10 mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 text-[11px] font-bold',
-                        msStatus === 'approved' && 'border-emerald-500 bg-emerald-500 text-white',
+                        // A filled emerald node means the GIFT arrived. An
+                        // approved ADDRESS is sky — it is a step, not the end.
+                        msReceipt === 'received' && 'border-emerald-500 bg-emerald-500 text-white',
+                        msReceipt !== 'received' &&
+                          msStatus === 'approved' &&
+                          'border-sky-400 bg-sky-50 text-sky-700 dark:bg-sky-950/40',
                         msStatus === 'pending' && 'border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/40',
                         msStatus === 'rejected' && 'border-rose-500 bg-rose-50 text-rose-700 dark:bg-rose-950/40',
                         msStatus === 'unsubmitted' && 'border-pink-500 bg-pink-50 text-pink-700 dark:bg-pink-950/40',
@@ -970,7 +1037,7 @@ export default function GiftShippingCard({
                         msStatus === 'upcoming' && 'border-zinc-200 bg-white text-zinc-300 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-600',
                       )}
                     >
-                      {msStatus === 'approved' ? (
+                      {msReceipt === 'received' ? (
                         <CheckCircle2 className="h-4 w-4" />
                       ) : msStatus === 'unsubmitted' || msStatus === 'missed' ? (
                         <Gift className="h-3.5 w-3.5" />
@@ -986,7 +1053,10 @@ export default function GiftShippingCard({
                         <span
                           className={cn(
                             'text-[13px] font-semibold leading-tight',
-                            msStatus === 'approved' && 'text-emerald-700 dark:text-emerald-400',
+                            msReceipt === 'received' && 'text-emerald-700 dark:text-emerald-400',
+                            msReceipt !== 'received' &&
+                              msStatus === 'approved' &&
+                              'text-sky-700 dark:text-sky-400',
                             msStatus === 'pending' && 'text-amber-700 dark:text-amber-400',
                             msStatus === 'rejected' && 'text-rose-700 dark:text-rose-400',
                             msStatus === 'unsubmitted' && 'text-pink-700 dark:text-pink-300',
@@ -1000,9 +1070,25 @@ export default function GiftShippingCard({
                             Current
                           </span>
                         )}
+                        {/* Address review — NOT a receipt. It used to say
+                            "Received", which told people their gift had arrived
+                            when all that happened was their address being locked. */}
                         {msStatus === 'approved' && (
+                          <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-sky-700 dark:bg-sky-900/30 dark:text-sky-400">
+                            Address confirmed
+                          </span>
+                        )}
+                        {/* The real thing. Nothing renders for a milestone
+                            nobody has recorded — silence is honest, a grey
+                            "not received" would not be. */}
+                        {msReceipt === 'received' && (
                           <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
-                            Received
+                            Gift received
+                          </span>
+                        )}
+                        {msReceipt === 'owed' && (
+                          <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                            Gift on the way
                           </span>
                         )}
                         {msStatus === 'pending' && (
@@ -1026,8 +1112,8 @@ export default function GiftShippingCard({
                           day: 'numeric',
                         })}
                         {msStatus === 'approved' && msRow?.decided_at && (
-                          <span className="ml-2 text-emerald-600 dark:text-emerald-500">
-                            · Approved{' '}
+                          <span className="ml-2 text-sky-600 dark:text-sky-500">
+                            · Address confirmed{' '}
                             {new Date(msRow.decided_at).toLocaleDateString(undefined, {
                               month: 'short',
                               day: 'numeric',

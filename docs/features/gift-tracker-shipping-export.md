@@ -1,9 +1,17 @@
 # Gift Tracker — Tenure Gift Roster export (CSV / XLSX / PDF)
 
 An **Export** dropdown on HR → Gift Tracker → **Roster** sub-tab that downloads the
-complete tenure-gift roster in three formats. It exists for one job: Kane
-reconciles it against the tenure-gift Google Sheet to confirm the right people are
-being shipped to. Shipped 2026-08-19, session `dd69f0d4`.
+complete tenure-gift roster in three formats. Shipped 2026-08-19, session `dd69f0d4`.
+
+> **The Google Sheet is no longer the ledger of record (2026-09-11).** This
+> document used to open by saying the export exists so Kane could reconcile it
+> against the tenure-gift Google Sheet. That premise is retired: the sheet was
+> imported into `employee_gift_receipts` and **HRIS now owns who has and has not
+> received a tenure gift** — see
+> [gift-tracker-receipts.md](gift-tracker-receipts.md). The export keeps its job
+> (one complete, comparable file of the whole roster) and gains four fulfilment
+> columns, but a disagreement between this file and the sheet is now the sheet
+> being stale, not HRIS.
 
 Everything runs **client-side** (in-memory Blob download, no server round-trip) —
 the roster and the submissions are already loaded in the tab.
@@ -16,7 +24,9 @@ the roster and the submissions are already loaded in the tab.
 | Tests | `src/lib/gift-tracker/shipping-export.test.ts` |
 | `GiftExportMenu` + toolbar wiring | `src/components/orphanage/GiftTracker.tsx` |
 | Milestone math (shared, not duplicated) | `src/lib/gift-milestones.ts` |
+| Fulfilment state (shared, not duplicated) | `src/lib/gift-tracker/receipts.ts` |
 | Submission read (paged) | `src/lib/supabase/employee-gift-shipping.ts` |
+| Fulfilment read (paged) | `src/lib/supabase/employee-gift-receipts.ts` |
 
 ## The grain is the master list, not the submissions table
 
@@ -25,14 +35,48 @@ decide membership. A person with no start date, no milestone reached, and no
 submission still gets a row — `Current Milestone` reads `None yet` and
 `Submitted?` reads `No`.
 
-This is the whole invariant. The export is compared against a Google Sheet, so the
-person who never filled the shipping form in is exactly the finding the comparison
-exists to produce. An export that only listed submissions would agree with the
-sheet **by omission** and hide the gap. If you are tempted to "clean up" the file
-by dropping empty rows, you have deleted the product.
+This is the whole invariant, and it survives the ledger move intact. The person
+who never filled the shipping form in is exactly the finding this file exists to
+produce; an export that only listed submissions would hide the gap **by
+omission**. If you are tempted to "clean up" the file by dropping empty rows, you
+have deleted the product.
 
 The `dueNoSubmission` counter in the PDF summary band is that gap made numeric:
 people whose milestone window is open who have not submitted.
+
+## Fulfilment columns (2026-09-11)
+
+Four columns come from `employee_gift_receipts` via `buildPersonReceiptSummary`
+— the same helper the on-screen tracker uses, so the file and the screen cannot
+disagree about who is owed a gift:
+
+| Column | Meaning |
+| --- | --- |
+| `Gifts Received` | milestones somebody recorded as given |
+| `Gifts Owed` | milestones that came due and were recorded as NOT given |
+| `Oldest Owed` | the lowest-indexed owed milestone, e.g. `12-month` |
+| `Not Recorded` | due milestones **nobody has assessed** |
+
+**`Not Recorded` is never folded into `Gifts Owed`.** A due milestone with no
+receipt row means nobody has said either way — 239 active people were absent from
+the 2026-09-11 source sheet — and counting them as owed would invent a backlog.
+Omitting the `receipts` input entirely must likewise read as "nobody has said",
+not "nobody got anything"; a test pins that, because a wiring mistake would
+otherwise print the company as owing every gift it has ever given.
+
+The summary band gains `Gifts owed` (a person owed three counts three),
+`People owed`, and `Not recorded` — three numbers, never one.
+
+**Receipts are keyed on WORK email**, not the roster key. `personal_email` is not
+injective on this roster (two people share one, a third has none), which is why
+fulfilment is a separate table — see
+[gift-tracker-receipts.md](gift-tracker-receipts.md). `exportReceipts` in
+`GiftTracker.tsx` is scoped to the rows in view, exactly like
+`exportSubmissions`, so the counts in the file match the counts on the screen.
+
+Off-roster submitters report zeroes across all four: with no master row there is
+no start date, so no milestone can be dated and nothing about fulfilment is
+knowable. The `Off-roster` flag, not those counts, is the finding.
 
 ## Off-roster submitters are appended, never dropped
 
@@ -76,6 +120,10 @@ never become the sole source of an address.
 employee dashboard uses to decide whether to show the shipping form, so the export
 and the employee's own screen can never disagree about which milestone is open.
 `Milestones Reached` is `buildMilestones(...).history.length`.
+
+The `-month` spelling itself moved **into `gift-milestones.ts`** on 2026-09-11
+when the receipts ledger needed it too; the wrapper here still owns the
+`None yet` case and delegates for the rest. Do not reintroduce a local copy.
 
 **Do not add a second date rule here.** `parseStartDate` reads a date-only
 `start_date` as UTC midnight, which renders a day early west of UTC. Production
@@ -122,10 +170,16 @@ The Roster `Card` carries `overflow-visible` — `components/ui/card.tsx` is
 
 ## Deploy notes
 
-**No migration.** Every column already exists; no new table, route, env var, cron,
-or n8n import. `npx tsc --noEmit` is clean and the 21 module tests pass.
-`next build` was **not** run — a `next dev` was live on :3000 and they share
-`.next/`.
+**No migration for this module.** Every column it reads already existed; no env
+var, cron, or n8n import. The fulfilment columns added 2026-09-11 depend on
+`employee_gift_receipts` — see
+[gift-tracker-receipts.md](gift-tracker-receipts.md) § Deploy order. When that
+table is absent the columns simply read `0` / `Not Recorded`, which is the
+correct answer rather than a crash.
+
+`npx tsc --noEmit` is clean and the module tests pass (21 at 2026-08-19, 31 after
+the fulfilment work). `next build` was **not** run in either session — a
+`next dev` was live on :3000 and they share `.next/`.
 
 Sibling: [hr-global-master-list-export.md](hr-global-master-list-export.md) — this
 module is modeled on it and the two should stay structurally in step.

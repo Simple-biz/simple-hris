@@ -28,7 +28,13 @@ import { cn } from '@/lib/utils';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { GiftTrackerNote } from '@/lib/supabase/gift-tracker-notes';
 import type { EmployeeGiftShippingRow } from '@/lib/supabase/employee-gift-shipping';
-import { CheckCircle2, Truck, Lock, Pencil, Trash2, Undo2, Shirt } from 'lucide-react';
+import type { EmployeeGiftReceiptRow } from '@/lib/supabase/employee-gift-receipts';
+import {
+  buildPersonReceiptSummary,
+  type GiftMilestoneReceipt,
+  type GiftPersonReceiptSummary,
+} from '@/lib/gift-tracker/receipts';
+import { CheckCircle2, Truck, Lock, Pencil, Trash2, Undo2, Shirt, HelpCircle, PackageCheck, PackageX } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -42,6 +48,7 @@ import {
   downloadGiftRosterCsv,
   downloadGiftRosterPdf,
   downloadGiftRosterXlsx,
+  type GiftRosterReceiptInput,
 } from '@/lib/gift-tracker/shipping-export';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
@@ -60,6 +67,7 @@ type ExportFormat = 'pdf' | 'xlsx' | 'csv';
 function GiftExportMenu({
   rows,
   submissions,
+  receipts,
   totalRoster,
   scopeLabel,
 }: {
@@ -67,6 +75,8 @@ function GiftExportMenu({
   rows: Row[];
   /** Submissions scoped to those rows, plus genuinely off-roster submitters. */
   submissions: EmployeeGiftShippingRow[];
+  /** Fulfilment assertions, keyed by WORK email — not the roster key. */
+  receipts: GiftRosterReceiptInput[];
   totalRoster: number;
   scopeLabel: string;
 }) {
@@ -104,6 +114,7 @@ function GiftExportMenu({
         const model = buildGiftRosterExport({
           employees: rows.map((r) => r.source),
           submissions,
+          receipts,
           totalRoster,
           scopeLabel,
         });
@@ -119,7 +130,7 @@ function GiftExportMenu({
         setBusy(null);
       }
     },
-    [rows, submissions, totalRoster, scopeLabel],
+    [rows, submissions, receipts, totalRoster, scopeLabel],
   );
 
   const items: { format: ExportFormat; label: string; hint: string; Icon: typeof FileText }[] = [
@@ -283,6 +294,10 @@ function classifyDaysUntil(daysUntil: number | null): GiftStatus {
   return 'far';
 }
 
+/** Shared empty map — a fresh `new Map()` per person per render would defeat
+ *  every downstream memo for no gain. */
+const EMPTY_RECEIPTS: ReadonlyMap<number, boolean> = new Map();
+
 type Row = {
   key: string;
   name: string;
@@ -297,6 +312,12 @@ type Row = {
   /** The master-list row this was derived from. The export needs the address
    *  columns, which the derived Row deliberately doesn't carry. */
   source: EmployeeRow;
+  /** The key fulfilment is recorded under. Work email, because that is what
+   *  `employee_gift_receipts` is keyed on — personal_email is not injective on
+   *  this roster and would merge two people's gift history. */
+  receiptKey: string;
+  /** Received / owed / not-due / unknown across every milestone reached. */
+  receipts: GiftPersonReceiptSummary;
 };
 
 export default function GiftTracker({ viewerEmail }: { viewerEmail: string | null }) {
@@ -312,6 +333,16 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
   const [shippingByEmail, setShippingByEmail] = useState<Map<string, EmployeeGiftShippingRow[]>>(
     new Map(),
   );
+  /**
+   * Tenure-gift fulfilment, grouped by lowercase WORK email then milestone
+   * index. An ABSENT entry means nobody has stated anything about that gift —
+   * it must never be read as "not received" (see gift-tracker/receipts.ts).
+   */
+  const [receiptsByWorkEmail, setReceiptsByWorkEmail] = useState<
+    Map<string, Map<number, boolean>>
+  >(new Map());
+  /** "<workEmail>#<milestoneIndex>" currently being written (spinner state). */
+  const [savingReceipt, setSavingReceipt] = useState<string | null>(null);
   /** Row id currently being approved/rejected (for spinner state). */
   const [decidingId, setDecidingId] = useState<string | null>(null);
   /** Row being edited by the orphanage manager (shipping fields). Null = closed. */
@@ -339,10 +370,11 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [empRes, notesRes, shipRes] = await Promise.all([
+      const [empRes, notesRes, shipRes, receiptRes] = await Promise.all([
         fetch('/api/employees', { cache: 'no-store' }),
         fetch('/api/gift-tracker-notes', { cache: 'no-store' }),
         fetch('/api/employee-gift-shipping', { cache: 'no-store' }),
+        fetch('/api/employee-gift-receipts', { cache: 'no-store' }),
       ]);
       const empJson = (await empRes.json()) as { employees?: EmployeeRow[]; error?: string };
       const notesJson = (await notesRes.json()) as { notes?: GiftTrackerNote[]; error?: string };
@@ -364,6 +396,20 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
       // Sort each employee's submissions by milestone_index ascending.
       for (const arr of shipMap.values()) arr.sort((a, b) => a.milestone_index - b.milestone_index);
       setShippingByEmail(shipMap);
+
+      const receiptJson = (await receiptRes.json()) as {
+        rows?: EmployeeGiftReceiptRow[];
+        error?: string;
+      };
+      if (receiptJson.error) throw new Error(receiptJson.error);
+      const receiptMap = new Map<string, Map<number, boolean>>();
+      for (const r of receiptJson.rows ?? []) {
+        const key = r.work_email.toLowerCase();
+        const inner = receiptMap.get(key) ?? new Map<number, boolean>();
+        inner.set(r.milestone_index, r.received);
+        receiptMap.set(key, inner);
+      }
+      setReceiptsByWorkEmail(receiptMap);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not load Gift Tracker');
     } finally {
@@ -392,6 +438,9 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         : { history: [], next: null };
       const daysUntil = next ? diffDays(next.date, today) : null;
       const status = classifyDaysUntil(daysUntil);
+      // Fulfilment is keyed on WORK email; fall back to the roster key only so
+      // a person with no work email still resolves to something stable.
+      const receiptKey = (e.work_email ?? email).toLowerCase().trim();
       out.push({
         key: email,
         name: e.name ?? email,
@@ -404,6 +453,12 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         daysUntil,
         status,
         source: e,
+        receiptKey,
+        receipts: buildPersonReceiptSummary({
+          start: startDate,
+          today,
+          receiptsByIndex: receiptsByWorkEmail.get(receiptKey) ?? EMPTY_RECEIPTS,
+        }),
       });
     }
     return out.sort((a, b) => {
@@ -412,7 +467,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
       const bRank = b.daysUntil ?? Number.POSITIVE_INFINITY;
       return aRank - bRank;
     });
-  }, [employees, today]);
+  }, [employees, today, receiptsByWorkEmail]);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -436,6 +491,27 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
    * colleague as a ghost. So: keep in-view keys, plus off-roster keys that
    * themselves match the search.
    */
+  /**
+   * Fulfilment handed to the export, flattened back to rows.
+   *
+   * Scoped to the rows IN VIEW, exactly like `exportSubmissions` — passing the
+   * whole ledger while passing only filtered employees would leave receipts
+   * belonging to nobody in the file, and the export joins on work email so they
+   * would simply be dropped. Keeping the two scopes identical is what makes the
+   * counts in the file match the counts on the screen.
+   */
+  const exportReceipts = useMemo(() => {
+    const inViewKeys = new Set(filteredRows.map((r) => r.receiptKey));
+    const out: GiftRosterReceiptInput[] = [];
+    for (const [workEmail, byIndex] of receiptsByWorkEmail) {
+      if (!inViewKeys.has(workEmail)) continue;
+      for (const [milestoneIndex, received] of byIndex) {
+        out.push({ work_email: workEmail, milestone_index: milestoneIndex, received });
+      }
+    }
+    return out;
+  }, [filteredRows, receiptsByWorkEmail]);
+
   const exportSubmissions = useMemo(() => {
     const allRosterKeys = new Set(rows.map((r) => r.key));
     const inViewKeys = new Set(filteredRows.map((r) => r.key));
@@ -459,13 +535,21 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
     let orange = 0;
     let green = 0;
     let overdue = 0;
+    // Gifts, people, and unknowns are counted SEPARATELY and never netted: one
+    // person owed three gifts is not the same finding as three people owed one.
+    let giftsOwed = 0;
+    let peopleOwed = 0;
+    let peopleUnknown = 0;
     for (const r of rows) {
       if (r.status === 'red') red += 1;
       else if (r.status === 'orange') orange += 1;
       else if (r.status === 'green') green += 1;
       else if (r.status === 'overdue') overdue += 1;
+      giftsOwed += r.receipts.owedCount;
+      if (r.receipts.owedCount > 0) peopleOwed += 1;
+      if (r.receipts.unknownCount > 0) peopleUnknown += 1;
     }
-    return { total: rows.length, red, orange, green, overdue };
+    return { total: rows.length, red, orange, green, overdue, giftsOwed, peopleOwed, peopleUnknown };
   }, [rows]);
 
   const toggleExpand = useCallback((key: string) => {
@@ -475,6 +559,84 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
       else next.add(key);
       return next;
     });
+  }, []);
+
+  /**
+   * State that a tenure gift was, or was not, given.
+   *
+   * The local map is only updated AFTER the server accepts the write. An
+   * optimistic flip here would show a gift as delivered on a failed request,
+   * and this screen is the thing HR reads to decide whether to ship one.
+   */
+  const setReceipt = useCallback(
+    async (workEmail: string, milestoneIndex: number, received: boolean) => {
+      const busyKey = `${workEmail}#${milestoneIndex}`;
+      setSavingReceipt(busyKey);
+      try {
+        const res = await fetch('/api/employee-gift-receipts', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            work_email: workEmail,
+            milestone_index: milestoneIndex,
+            received,
+          }),
+        });
+        const json = (await res.json()) as { error?: string };
+        if (!res.ok || json.error) throw new Error(json.error ?? `Request failed (${res.status})`);
+        setReceiptsByWorkEmail((prev) => {
+          const next = new Map(prev);
+          const inner = new Map(next.get(workEmail) ?? []);
+          inner.set(milestoneIndex, received);
+          next.set(workEmail, inner);
+          return next;
+        });
+        toast.success(
+          received
+            ? `Recorded: ${milestoneIndex * 6}-month gift received.`
+            : `Recorded: ${milestoneIndex * 6}-month gift NOT received.`,
+        );
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Could not record the gift');
+      } finally {
+        setSavingReceipt(null);
+      }
+    },
+    [],
+  );
+
+  /**
+   * Withdraw the statement entirely, returning the milestone to UNKNOWN.
+   *
+   * Deliberately distinct from recording "not received": "we should not have
+   * said anything" and "they did not get it" are different claims, and only the
+   * second one puts a named person on the owed list.
+   */
+  const clearReceipt = useCallback(async (workEmail: string, milestoneIndex: number) => {
+    const busyKey = `${workEmail}#${milestoneIndex}`;
+    setSavingReceipt(busyKey);
+    try {
+      const res = await fetch('/api/employee-gift-receipts', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_email: workEmail, milestone_index: milestoneIndex }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? `Request failed (${res.status})`);
+      setReceiptsByWorkEmail((prev) => {
+        const next = new Map(prev);
+        const inner = new Map(next.get(workEmail) ?? []);
+        inner.delete(milestoneIndex);
+        if (inner.size === 0) next.delete(workEmail);
+        else next.set(workEmail, inner);
+        return next;
+      });
+      toast.success(`${milestoneIndex * 6}-month gift is back to "not recorded".`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not clear the record');
+    } finally {
+      setSavingReceipt(null);
+    }
   }, []);
 
   const noteValue = useCallback(
@@ -832,13 +994,34 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
           transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           className="flex flex-col gap-6 lg:gap-8"
         >
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Gift summary">
+        <section
+          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6"
+          aria-label="Gift summary"
+        >
           <StatTile
             label="Tracked employees"
             value={stats.total}
             hint="From Global Master List"
             icon={Users}
             tone="pink"
+          />
+          <StatTile
+            label="Gifts owed"
+            value={stats.giftsOwed}
+            hint={
+              stats.giftsOwed === 0
+                ? 'Nothing recorded as missed'
+                : `${stats.peopleOwed} ${stats.peopleOwed === 1 ? 'person' : 'people'}`
+            }
+            icon={PackageX}
+            tone="red"
+          />
+          <StatTile
+            label="Not recorded"
+            value={stats.peopleUnknown}
+            hint="Due, but nobody has said"
+            icon={HelpCircle}
+            tone="slate"
           />
           <StatTile
             label="Within 1 week"
@@ -891,6 +1074,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
               <GiftExportMenu
                 rows={filteredRows}
                 submissions={exportSubmissions}
+                receipts={exportReceipts}
                 totalRoster={rows.length}
                 scopeLabel={scopeLabel}
               />
@@ -919,13 +1103,14 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                   animate="center"
                   exit="exit"
                   transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                  className="w-full min-w-[760px] text-left text-sm"
+                  className="w-full min-w-[900px] text-left text-sm"
                 >
                   <thead className="bg-gradient-to-r from-emerald-50 via-white to-emerald-50/80 text-xs text-zinc-600 dark:from-emerald-950/50 dark:via-zinc-950 dark:to-emerald-950/40 dark:text-zinc-400">
                     <tr>
                       <th className="px-4 py-3 font-semibold">Employee</th>
                       <th className="px-4 py-3 font-semibold">Start date</th>
                       <th className="px-4 py-3 font-semibold">Milestones</th>
+                      <th className="px-4 py-3 font-semibold">Fulfilment</th>
                       <th className="px-4 py-3 font-semibold">Next gift date</th>
                       <th className="px-4 py-3 font-semibold w-[1%]" />
                     </tr>
@@ -961,6 +1146,13 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                           onDeleteShipping={(sub) =>
                             void deleteShipping(sub.id, row.key, `${sub.milestone_index * 6}-month`)
                           }
+                          onSetReceipt={(milestoneIndex, received) =>
+                            void setReceipt(row.receiptKey, milestoneIndex, received)
+                          }
+                          onClearReceipt={(milestoneIndex) =>
+                            void clearReceipt(row.receiptKey, milestoneIndex)
+                          }
+                          savingReceipt={savingReceipt}
                         />
                       );
                     })}
@@ -1182,6 +1374,9 @@ function RowItem({
   deletingId,
   onEditShipping,
   onDeleteShipping,
+  onSetReceipt,
+  onClearReceipt,
+  savingReceipt,
 }: {
   row: Row;
   isOpen: boolean;
@@ -1198,6 +1393,10 @@ function RowItem({
   deletingId: string | null;
   onEditShipping: (sub: EmployeeGiftShippingRow) => void;
   onDeleteShipping: (sub: EmployeeGiftShippingRow) => void;
+  onSetReceipt: (milestoneIndex: number, received: boolean) => void;
+  onClearReceipt: (milestoneIndex: number) => void;
+  /** "<workEmail>#<milestoneIndex>" currently being written, or null. */
+  savingReceipt: string | null;
 }) {
   return (
     <>
@@ -1224,6 +1423,9 @@ function RowItem({
           >
             {row.history.length} reached
           </Badge>
+        </td>
+        <td className="px-4 py-3">
+          <ReceiptSummaryCell summary={row.receipts} />
         </td>
         <td className="whitespace-nowrap px-4 py-3">
           {row.next ? (
@@ -1261,7 +1463,7 @@ function RowItem({
       <AnimatePresence initial={false}>
         {isOpen && (
           <tr>
-            <td colSpan={5} className="bg-emerald-50/30 p-0 dark:bg-emerald-950/15">
+            <td colSpan={6} className="bg-emerald-50/30 p-0 dark:bg-emerald-950/15">
               <motion.div
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: 'auto', opacity: 1 }}
@@ -1270,37 +1472,38 @@ function RowItem({
                 className="overflow-hidden"
               >
                 <div className="grid gap-5 px-5 py-5 lg:grid-cols-3">
-                  {/* History */}
+                  {/* Milestone history — and the record of what was actually given.
+                      The two live together because they answer one question. */}
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
                       <Sparkles className="h-3.5 w-3.5" />
                       Milestone history
                     </div>
-                    {row.history.length === 0 ? (
+                    {row.receipts.milestones.length === 0 ? (
                       <p className="rounded-md border border-dashed border-emerald-200 bg-white/60 px-3 py-3 text-xs text-zinc-500 dark:border-emerald-900/50 dark:bg-zinc-950/40">
-                        No 6-month milestones reached yet.
+                        {row.startDate
+                          ? 'No 6-month milestones reached yet.'
+                          : 'No start date on file, so no milestone can be dated.'}
                       </p>
                     ) : (
                       <ol className="relative ml-1 flex flex-col gap-2 border-l-2 border-emerald-200/70 pl-4 dark:border-emerald-800/70">
-                        {row.history.map((m, idx) => (
-                          <motion.li
-                            key={m.index}
-                            initial={{ x: -10, opacity: 0 }}
-                            animate={{ x: 0, opacity: 1 }}
-                            transition={{ delay: idx * 0.03, duration: 0.25 }}
-                            className="relative"
-                          >
-                            <span className="absolute -left-[22px] top-1 h-3 w-3 rounded-full bg-gradient-to-br from-emerald-500 to-teal-700 ring-2 ring-white dark:ring-zinc-950" />
-                            <div className="flex items-baseline justify-between gap-3 rounded-md bg-white/80 px-3 py-1.5 text-xs shadow-sm dark:bg-zinc-950/55">
-                              <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                                {m.index * 6} months · #{m.index}
-                              </span>
-                              <span className="text-zinc-500 dark:text-zinc-400">{formatDate(m.date)}</span>
-                            </div>
-                          </motion.li>
+                        {row.receipts.milestones.map((m, idx) => (
+                          <MilestoneReceiptItem
+                            key={m.milestoneIndex}
+                            milestone={m}
+                            index={idx}
+                            busy={savingReceipt === `${row.receiptKey}#${m.milestoneIndex}`}
+                            anyBusy={savingReceipt !== null}
+                            onSet={(received) => onSetReceipt(m.milestoneIndex, received)}
+                            onClear={() => onClearReceipt(m.milestoneIndex)}
+                          />
                         ))}
                       </ol>
                     )}
+                    <p className="px-1 text-[10.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                      &ldquo;Not recorded&rdquo; means nobody has said either way — it is not the
+                      same as a gift that was missed.
+                    </p>
                   </div>
 
                   {/* Notes */}
@@ -1490,6 +1693,208 @@ function RowItem({
   );
 }
 
+/**
+ * How a fulfilment state is drawn. One table, used by both the roster cell and
+ * the expanded list, so a colour cannot mean two things on one screen.
+ *
+ * `unknown` is deliberately NEUTRAL, not amber. Amber would read as a milder
+ * shade of `owed`, when it is a different question entirely: nobody has looked.
+ */
+const RECEIPT_TONES: Record<
+  GiftMilestoneReceipt['state'],
+  { label: string; chip: string; Icon: React.ComponentType<{ className?: string }> }
+> = {
+  received: {
+    label: 'Received',
+    chip: 'border-emerald-300/80 bg-emerald-50 text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-950/45 dark:text-emerald-200',
+    Icon: PackageCheck,
+  },
+  owed: {
+    label: 'Owed',
+    chip: 'border-rose-300/80 bg-rose-50 text-rose-800 dark:border-rose-800/70 dark:bg-rose-950/45 dark:text-rose-200',
+    Icon: PackageX,
+  },
+  not_due: {
+    label: 'Not due',
+    chip: 'border-zinc-200 bg-white text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-400',
+    Icon: CalendarDays,
+  },
+  unknown: {
+    label: 'Not recorded',
+    chip: 'border-zinc-300/80 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-300',
+    Icon: HelpCircle,
+  },
+};
+
+/**
+ * The roster row's fulfilment summary.
+ *
+ * Owed and not-recorded are shown as SEPARATE counts and never summed — one is
+ * a debt the company knows about, the other is a question nobody has answered,
+ * and a single combined number would let the second hide inside the first.
+ */
+function ReceiptSummaryCell({ summary }: { summary: GiftPersonReceiptSummary }) {
+  if (summary.dueCount === 0) {
+    return <span className="text-xs text-zinc-400">&mdash;</span>;
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {summary.owedCount > 0 && (
+        <Badge
+          variant="outline"
+          className={cn('gap-1 px-1.5 py-0 text-[10.5px] font-semibold', RECEIPT_TONES.owed.chip)}
+        >
+          <PackageX className="h-3 w-3" />
+          {summary.owedCount} owed
+        </Badge>
+      )}
+      {summary.receivedCount > 0 && (
+        <Badge
+          variant="outline"
+          className={cn(
+            'gap-1 px-1.5 py-0 text-[10.5px] font-semibold',
+            RECEIPT_TONES.received.chip,
+          )}
+        >
+          <PackageCheck className="h-3 w-3" />
+          {summary.receivedCount}
+        </Badge>
+      )}
+      {summary.unknownCount > 0 && (
+        <Badge
+          variant="outline"
+          className={cn(
+            'gap-1 px-1.5 py-0 text-[10.5px] font-semibold',
+            RECEIPT_TONES.unknown.chip,
+          )}
+        >
+          <HelpCircle className="h-3 w-3" />
+          {summary.unknownCount} not recorded
+        </Badge>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One milestone in the expanded history, with the controls that record whether
+ * the gift was given.
+ *
+ * Three buttons, not a two-state toggle: "received", "not received" and "clear"
+ * are three different statements, and folding the third into the absence of the
+ * other two would leave no way to undo a mistake without asserting its opposite.
+ */
+function MilestoneReceiptItem({
+  milestone,
+  index,
+  busy,
+  anyBusy,
+  onSet,
+  onClear,
+}: {
+  milestone: GiftMilestoneReceipt;
+  index: number;
+  busy: boolean;
+  anyBusy: boolean;
+  onSet: (received: boolean) => void;
+  onClear: () => void;
+}) {
+  const tone = RECEIPT_TONES[milestone.state];
+  const { Icon } = tone;
+  const recorded = milestone.state === 'received' || milestone.state === 'owed';
+  return (
+    <motion.li
+      initial={{ x: -10, opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      transition={{ delay: Math.min(index, 8) * 0.03, duration: 0.25 }}
+      className="relative"
+    >
+      <span
+        className={cn(
+          'absolute -left-[22px] top-1 h-3 w-3 rounded-full ring-2 ring-white dark:ring-zinc-950',
+          milestone.state === 'received'
+            ? 'bg-gradient-to-br from-emerald-500 to-teal-700'
+            : milestone.state === 'owed'
+              ? 'bg-gradient-to-br from-rose-500 to-rose-700'
+              : 'bg-zinc-300 dark:bg-zinc-700',
+        )}
+      />
+      <div className="flex flex-col gap-1.5 rounded-md bg-white/80 px-3 py-2 text-xs shadow-sm dark:bg-zinc-950/55">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="font-medium text-zinc-800 dark:text-zinc-200">
+            {milestone.label} · #{milestone.milestoneIndex}
+          </span>
+          <span className="text-zinc-500 dark:text-zinc-400">
+            {milestone.date ? formatDate(milestone.date) : 'no date'}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge
+            variant="outline"
+            className={cn('gap-1 px-1.5 py-0 text-[10.5px] font-semibold', tone.chip)}
+          >
+            <Icon className="h-3 w-3" />
+            {tone.label}
+          </Badge>
+          {milestone.early && (
+            <Badge
+              variant="outline"
+              className="gap-1 border-amber-300/80 bg-amber-50 px-1.5 py-0 text-[10.5px] font-semibold text-amber-800 dark:border-amber-800/70 dark:bg-amber-950/45 dark:text-amber-200"
+              title="Recorded as received before this milestone arrived."
+            >
+              Recorded early
+            </Badge>
+          )}
+          <div data-readonly-allow className="ml-auto flex items-center gap-1">
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />
+            ) : (
+              <>
+                <button
+                  type="button"
+                  disabled={anyBusy || milestone.state === 'received'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSet(true);
+                  }}
+                  className="rounded border border-emerald-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-emerald-800/70 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                >
+                  Received
+                </button>
+                <button
+                  type="button"
+                  disabled={anyBusy || milestone.state === 'owed'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSet(false);
+                  }}
+                  className="rounded border border-rose-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-rose-700 transition-colors hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-rose-800/70 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                >
+                  Not yet
+                </button>
+                {recorded && (
+                  <button
+                    type="button"
+                    disabled={anyBusy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onClear();
+                    }}
+                    title="Withdraw the record — back to not recorded"
+                    className="rounded border border-zinc-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-zinc-500 transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-900/60"
+                  >
+                    Clear
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </motion.li>
+  );
+}
+
 function StatTile({
   label,
   value,
@@ -1501,13 +1906,17 @@ function StatTile({
   value: number | string;
   hint: string;
   icon: React.ComponentType<{ className?: string }>;
-  tone: 'pink' | 'red' | 'orange' | 'green';
+  tone: 'pink' | 'red' | 'orange' | 'green' | 'slate';
 }) {
-  const tones: Record<'pink' | 'red' | 'orange' | 'green', string> = {
+  // `slate` is deliberately the only colourless tone: "nobody has told us" is
+  // not a severity, and painting it amber would read as a milder version of
+  // owed rather than as a different question.
+  const tones: Record<'pink' | 'red' | 'orange' | 'green' | 'slate', string> = {
     pink: 'from-emerald-500 to-teal-700 shadow-emerald-500/30',
     red: 'from-rose-500 to-rose-800 shadow-rose-500/35',
     orange: 'from-orange-500 to-amber-600 shadow-orange-500/35',
     green: 'from-emerald-500 to-emerald-700 shadow-emerald-500/35',
+    slate: 'from-zinc-400 to-zinc-600 shadow-zinc-500/30',
   };
   return (
     <div className="group relative flex items-center gap-4 overflow-hidden rounded-xl border border-emerald-100/80 bg-white/90 px-4 py-4 ring-1 ring-emerald-500/5 backdrop-blur-sm transition-shadow hover:shadow-md hover:shadow-emerald-500/10 dark:border-emerald-950/50 dark:bg-zinc-950/75 dark:ring-emerald-400/10">

@@ -9,6 +9,21 @@ export interface GiftMilestone {
   date: Date;
 }
 
+/** Months between tenure gifts. milestone_index N is the (N x 6)-month gift. */
+export const MONTHS_PER_MILESTONE = 6;
+
+/**
+ * "6-month" / "12-month" / … The ONE spelling of a milestone's name.
+ *
+ * Lived in `gift-tracker/shipping-export.ts` alone until 2026-09-11, when the
+ * receipts ledger needed it too; the export's own wrapper still owns the
+ * "None yet" display case and delegates here for the rest, so the roster, the
+ * export and the ledger cannot label the same milestone differently.
+ */
+export function milestoneLabel(index: number): string {
+  return `${index * MONTHS_PER_MILESTONE}-month`;
+}
+
 export function parseStartDate(raw: string | null | undefined): Date | null {
   if (!raw) return null;
   const trimmed = String(raw).trim();
@@ -52,7 +67,7 @@ export function buildMilestones(
   const history: GiftMilestone[] = [];
   let next: GiftMilestone | null = null;
   for (let i = 1; i <= 60; i += 1) {
-    const date = addMonths(start, i * 6);
+    const date = addMonths(start, i * MONTHS_PER_MILESTONE);
     if (startOfDay(date).getTime() <= startOfDay(today).getTime()) {
       history.push({ index: i, date });
     } else {
@@ -81,7 +96,7 @@ export function getCurrentShippingMilestone(
   if (!start) return null;
   let active: GiftMilestone | null = null;
   for (let i = 1; i <= 60; i += 1) {
-    const date = addMonths(start, i * 6);
+    const date = addMonths(start, i * MONTHS_PER_MILESTONE);
     const daysUntil = diffDays(date, today);
     if (daysUntil <= SHIPPING_FORM_WINDOW_DAYS) {
       active = { index: i, date };

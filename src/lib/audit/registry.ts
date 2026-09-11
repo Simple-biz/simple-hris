@@ -319,6 +319,12 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     note: 'submitted/updated by the employee themself (channel employee_self) or edited/approved/deleted by staff (channel staff)',
   },
   {
+    match: 'gift_receipt.',
+    surfaces: ['hr', 'orphanage'],
+    label: 'Gift fulfilment',
+    note: "recorded (a staff member stating a tenure gift was or was not given), withdrawn (the assertion removed, returning that milestone to UNKNOWN — details carry the deleted row because nothing else records that it was ever made), imported (the sheet backfill). Separate from employee_gift_shipping.*, which is ADDRESS REVIEW and never means 'gifted'.",
+  },
+  {
     match: 'announcement.',
     surfaces: ['hr', 'employee'],
     label: 'Announcements',
