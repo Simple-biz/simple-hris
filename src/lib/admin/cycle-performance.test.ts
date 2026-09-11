@@ -25,6 +25,7 @@ import {
   monthKeyOf,
   monthLabel,
   selectTrendCycles,
+  trendRateBand,
   summariseObservedCycle,
   type ObservedCycle,
 } from '@/lib/admin/cycle-performance';
@@ -871,4 +872,51 @@ test('two cycles sharing a period end keep a total, stable order', () => {
     trendRow({ file: 'aaa', periodEnd: '2026-06-07', paid: 2 }),
   ]);
   assert.deepEqual(t.points.map((p) => p.sourceFile), ['aaa', 'zzz']);
+});
+
+/* ── trendRateBand — the one place a non-zero axis is allowed ───────────── */
+
+test('a healthy stretch gets the 95-100% window, never tighter', () => {
+  const b = trendRateBand(selectTrendCycles(LIVE_TREND).points);
+  assert.deepEqual(b, { min: 0.95, max: 1 });
+});
+
+test('a bad week EXPANDS the band rather than clipping or rescaling it away', () => {
+  const pts = selectTrendCycles([
+    trendRow({ file: 'a', periodEnd: '2026-05-31', paid: 300, status: 'closed', rate: 0.42 }),
+    trendRow({ file: 'b', periodEnd: '2026-06-07', paid: 900, status: 'closed', rate: 0.99 }),
+  ]).points;
+  assert.deepEqual(trendRateBand(pts), { min: 0.4, max: 1 });
+});
+
+test('the ceiling is ALWAYS 100% — the band never floats free of it', () => {
+  const pts = selectTrendCycles([
+    trendRow({ file: 'a', periodEnd: '2026-05-31', paid: 9, status: 'closed', rate: 0.55 }),
+  ]).points;
+  assert.equal(trendRateBand(pts).max, 1);
+});
+
+test('the floor rounds DOWN to a whole 5%, so it lands on a readable tick', () => {
+  const pts = selectTrendCycles([
+    trendRow({ file: 'a', periodEnd: '2026-05-31', paid: 9, status: 'closed', rate: 0.8712 }),
+  ]).points;
+  assert.equal(trendRateBand(pts).min, 0.85);
+});
+
+test('no rates at all gives the default window, never a zero-height band', () => {
+  assert.deepEqual(trendRateBand([]), { min: 0.95, max: 1 });
+  const pts = selectTrendCycles([
+    trendRow({ file: 'a', periodEnd: '2026-05-31', paid: 10 }),
+  ]).points;
+  assert.deepEqual(trendRateBand(pts), { min: 0.95, max: 1 });
+});
+
+test('the band always spans at least 5 points', () => {
+  for (const rate of [0.999, 0.98, 0.9501, 0.95]) {
+    const pts = selectTrendCycles([
+      trendRow({ file: 'a', periodEnd: '2026-05-31', paid: 9, status: 'closed', rate }),
+    ]).points;
+    const b = trendRateBand(pts);
+    assert.ok(b.max - b.min >= 0.05 - 1e-9, `band too tight at ${rate}: ${JSON.stringify(b)}`);
+  }
 });

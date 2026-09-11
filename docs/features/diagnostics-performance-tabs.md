@@ -27,7 +27,7 @@ Ship commit: see `git log` for `feat(diagnostics)` on 2026-09-04.
 | Shared chrome (KPI card, rate bar, loading modal, detail modal, share bar) | [`src/components/admin/performance-ui.tsx`](../../src/components/admin/performance-ui.tsx) |
 | Per-processor unpaid aggregation (the PII boundary) | [`src/lib/payroll/cycle-closeout.ts`](../../src/lib/payroll/cycle-closeout.ts) → `aggregateUnpaidByProcessor`, applied in `cycle-closeout-store.ts` → `toCycleCloseoutSummary` |
 | Processor labels (Kolan, x1153) | [`src/lib/payment-catalog/pay-processors-db.ts`](../../src/lib/payment-catalog/pay-processors-db.ts) → `readPayProcessorRegistry`, wrapped in the payroll route |
-| Trend chart rule (pure) | [`src/lib/admin/cycle-performance.ts`](../../src/lib/admin/cycle-performance.ts) → `selectTrendCycles` |
+| Trend chart rules (pure) | [`src/lib/admin/cycle-performance.ts`](../../src/lib/admin/cycle-performance.ts) → `selectTrendCycles` (the window + the four states) · `trendRateBand` (the non-zero axis) |
 | Trend chart UI | [`src/components/admin/performance-ui.tsx`](../../src/components/admin/performance-ui.tsx) → `CycleTrendChart` |
 | Read-only prod checks | `scripts/probe-closeout-by-processor.mjs` · `scripts/verify-cycle-processor-breakdown.ts` · `scripts/verify-cycle-trend.ts` |
 | Listed-per-week reader | [`src/lib/supabase/hr-new-hire-checklist.ts`](../../src/lib/supabase/hr-new-hire-checklist.ts) → `listChecklistWeekCounts` |
@@ -156,7 +156,8 @@ are not equal votes on how the month went. The month bucket is the calendar mont
 Added **2026-09-11** (Kane: *"a histogram ... where we can see weekly each cycle how successful
 it is per pay cycle as we progress"*, then *"Only the cycles where we actually started using
 HRIS even though we havent closed it ... the other weeks can be marked as NO HRIS Yet"*).
-`CycleTrendChart` sits above the month cards: one column per pay cycle, oldest on the left.
+`CycleTrendChart` sits above the month cards: a line/area point per pay cycle, oldest on the
+left.
 
 It reads nothing new — `selectTrendCycles()` derives the whole series from the `cycles` array
 the tab already polls. No route change, no migration.
@@ -176,7 +177,7 @@ rule that pre-feature weeks are never flagged as failures.
 
 ### Four states, because three would hide the most important thing on the chart
 
-`closed` (a rate — the only state that draws a rate column) · `no_denominator` (HRIS paid
+`closed` (a rate — the only state that draws a mark on the rate line) · `no_denominator` (HRIS paid
 people, nothing recorded who was owed) · `not_run` (`paid == null` — the week exists and no
 dispatch row does) · the collapsed pre-HRIS block.
 
@@ -189,32 +190,74 @@ states and it disappears.
 It must also never be confused with a week that ran and paid nobody — that week carries
 `paid: 0`, a measured fact, where `not_run` carries `paid: null`, the absence of one.
 
-### A week with no rate draws NO column — never a column of height zero
+### A week with no rate gets NO MARK — never a zero
 
-A zero-height bar reads as 0%. This tab has already been bitten by that exact lie once (the
-first build's `paid: 0` announced ~700 people unpaid in a dozen fully-paid weeks). An
-unmeasured week renders a **45° hatched track**, and `selectTrendCycles` additionally strips
-`rate` off every non-`closed` point so no renderer can draw one by accident. Both are pinned by
+A zero-height bar reads as 0%, and so does a line dipping to the floor. This tab has already
+been bitten by that exact lie once (the first build's `paid: 0` announced ~700 people unpaid in
+a dozen fully-paid weeks). An unmeasured week renders a **45° hatched band and nothing else**:
+no point, no segment, no marker. `selectTrendCycles` additionally strips `rate` off every
+non-`closed` point, so no renderer can draw one by accident even if it tries. Both are pinned by
 tests.
+
+This rule is form-independent and outlived the switch from columns to a line. Whatever the
+chart is next, it holds.
 
 ### Two strips, never two axes
 
-- **Rate, always 0–100%.** Truncating the axis to make 98.18% and 98.83% look different turns a
-  0.6-point spread into a cliff. The consequence is that the rate columns look nearly
-  identical, and that flatness **is** the finding.
-- **People paid**, its own strip with its own axis, because only 3 of 15 weeks have a rate and
-  the progress story lives here: 803 · 811 · 848 · *(stop)* · 330 · 1,007 · 1,019 · 1,051 ·
-  1,014 · 1,023 · 1,051 · 1,056.
+- **Rate** — only a closed cycle has one, so 3 of 15 live weeks are drawn. Its axis is the
+  labelled non-zero band below.
+- **People paid**, its own strip with its own axis **from zero**, because it is the series that
+  actually carries the progress story: 803 · 811 · 848 · *(stop)* · 330 · 1,007 · 1,019 ·
+  1,051 · 1,014 · 1,023 · 1,051 · 1,056.
 
-Two charts sharing an x, never two scales on one plot. Still-owed rides in the tooltip.
+Two plots sharing an x, **never two scales on one plot**. Still-owed rides in the tooltip.
 
-### Columns, not a line
+### The line BREAKS; it never interpolates
 
-The natural form for a trend is a line, and it is wrong here: a line across an unmeasured week
-either **interpolates a rate nobody declared** or shatters into loose dots. Columns cannot
-interpolate. (`src/components/ceo/financial-chart.tsx` is the app's other chart and *is* a
-line — it plots a series with no gaps. Don't copy its form here; do copy its dependency-free
-approach, since the app ships no charting library.)
+Superseding "Columns, not a line" (2026-09-11, same day — Kane: *"Not a bargraph please a line
+graph kinda Histogram"*). The original rule banned the **form** because of a **behaviour**:
+a single path through every point would draw straight across the four weeks payroll ran
+outside HRIS, asserting a number for each of them that nobody ever recorded. Banning the shape
+was the blunt way to stop that. The invariant is the behaviour:
+
+> **No segment is ever drawn into, out of, or across a week with no measurement.**
+
+`toRuns()` splits the series into runs of *consecutive* measured weeks and draws each run as
+its own path. A gap gets no point, no segment and no marker — only the hatched band underneath,
+which says a week is there and a number is not. A run of one renders as a lone marker rather
+than being silently dropped.
+
+Two related rules ride with it:
+
+- **Straight segments, never a spline.** `src/components/ceo/financial-chart.tsx` smooths with
+  Catmull-Rom, which is right for its contiguous series and wrong here: a curve overshoots
+  between two weeks and implies values no week had. Copy that file's dependency-free approach
+  — the app ships **no charting library** — never its interpolation.
+- **A hatched band is not a zero.** `not_run` (`paid == null`) and a measured zero are
+  different facts, and the old "a week with no rate draws no column" rule survives verbatim in
+  the new form: no point, no segment, no marker.
+
+### The rate axis is NOT zero-based, and that licence is spent here
+
+Superseding "Rate, always 0–100%" (2026-09-11, Kane chose the labelled band). The original rule
+was written for **bars**, where it is absolute: a bar encodes its value as *length from zero*,
+so a truncated bar axis is a straight lie about the mark. A line encodes value as *position
+against labelled ticks*, which is why the zoom is defensible — and it is necessary, because
+pinned to 0–100% the live rates (98.18 / 98.83 / 98.18) are a hairline against the ceiling and
+the chart shows nothing at all.
+
+`trendRateBand()` owns it, and it cannot zoom arbitrarily tight:
+
+| Rule | Why |
+| --- | --- |
+| the ceiling is **always 100%** | the only meaningful reference on the axis; a band floating free of it would let a bad month look like a good one rescaled |
+| the floor is `min(95%, worst rate rounded down to a whole 5%)` | a good stretch gets a 5-point window; a 40% week gives a 40–100 band |
+| the window **never narrows below 5 points** | caps the exaggeration of a small spread |
+| a bad week **expands** the band | the chart can never hide a collapse by rescaling |
+
+The axis carries **visible tick labels at both ends** and the caption says in words that it
+does not start at zero. **If this chart ever returns to bars, `trendRateBand` goes with it** —
+the licence belongs to the line form, not to the data.
 
 ### The colour is measured
 
@@ -226,9 +269,14 @@ real encoding is the hatch; separation from the orange passes regardless (ΔE 16
 normal). Required contrast relief is present: selective direct labels plus the per-cycle table
 directly below.
 
-Labels are **selective** — every closed week while there are ≤ 6, then only the best, worst and
-newest. A number over every column is noise. The state legend is **not decorative**: fill vs
-hatch is an identity encoding, and identity is never carried by appearance alone.
+Labels are **selective** — every measured week while there are ≤ 6, then only the best, worst
+and newest. A number over every point is noise. They wear **text ink, never the series
+colour**: the marker beside them already carries the identity. They are also the validator's
+required contrast relief, which is **not dismissable** — removing them does not remove the
+obligation, it just leaves the per-cycle table carrying it alone.
+
+The state legend is **not decorative**: line vs break vs hatch is an identity encoding, and
+identity is never carried by appearance alone.
 
 Verified against production by `scripts/verify-cycle-trend.ts` (read-only): 15 points,
 `hrisStart` 2026-05-31, 12 collapsed weeks, a rate on the 3 closed points and nowhere else.
@@ -483,4 +531,9 @@ production by `scripts/verify-cycle-processor-breakdown.ts`.
 to `cycle-performance.ts` and `CycleTrendChart` a pure addition to `performance-ui.tsx`; both
 derive from the `cycles` array the tab already polls. No route change, no new read, no DDL.
 Verified against production by `scripts/verify-cycle-trend.ts`; **not clicked through in a
-browser** — typecheck clean, 97 unit tests green, `/admin` compiles and redirects to login.
+browser** — typecheck clean, `/admin` compiles and redirects to login.
+
+The chart became a **line/area** on the same day (Kane: *"Not a bargraph please a line graph
+kinda Histogram"*), which rewrote two rules rather than adding any — see § "The line BREAKS"
+and § "The rate axis is NOT zero-based". Still no migration, no route change, no new read.
+103 unit tests green.

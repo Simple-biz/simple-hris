@@ -22,6 +22,7 @@ import { tallyPaidDispatches } from '@/lib/accounting/pay-cycle-report-snapshot'
 import {
   buildCyclePerformance,
   selectTrendCycles,
+  trendRateBand,
   type ObservedCycle,
 } from '@/lib/admin/cycle-performance';
 
@@ -128,10 +129,10 @@ async function main() {
   console.log(`cycles: ${perf.cycles.length} · trend points: ${trend.points.length}`);
   console.log(`HRIS starts: ${trend.hrisStart} · collapsed "No HRIS yet": ${trend.preHrisCycles} weeks to ${trend.preHrisLastPeriodEnd}`);
   console.log(`people-paid axis top: ${trend.maxPaid}\n`);
-  console.log('period end    state            rate      paid   column');
+  console.log('period end    state            rate      paid   mark');
   for (const p of trend.points) {
     const bar = p.rate == null
-      ? (p.state === 'not_run' ? '(hatch — not run)' : '(hatch — no rate)')
+      ? (p.state === 'not_run' ? '(gap — line breaks)' : '(no rate — no mark)')
       : '#'.repeat(Math.max(1, Math.round(p.rate * 28)));
     console.log(
       `${p.periodEnd}   ${p.state.padEnd(15)} ${(p.rate == null ? '—' : (p.rate * 100).toFixed(2) + '%').padStart(7)}  ` +
@@ -154,12 +155,19 @@ async function main() {
   const ends = trend.points.map((p) => p.periodEnd);
   check(JSON.stringify(ends) === JSON.stringify([...ends].sort()), 'points are oldest-first');
   check(trend.hrisStart != null && trend.points[0]!.periodEnd === trend.hrisStart,
-    'the first column IS the HRIS start week');
+    'the first point IS the HRIS start week');
   const closedInTrend = trend.points.filter((p) => p.state === 'closed').length;
   check(closedInTrend === perf.totals.measuredCycles,
-    `closed columns (${closedInTrend}) === measured cycles (${perf.totals.measuredCycles})`);
+    `closed points (${closedInTrend}) === measured cycles (${perf.totals.measuredCycles})`);
   check(trend.points.some((p) => p.state === 'not_run'),
     'the four-week stop is visible as not_run (it is the point of the chart)');
+  const band = trendRateBand(trend.points);
+  check(band.max === 1, `the rate band's ceiling is 100% (got ${band.max})`);
+  check(band.max - band.min >= 0.05, `the rate band spans >= 5 points (${band.min}–${band.max})`);
+  check(trend.points.every((p) => p.rate == null || p.rate >= band.min),
+    'every drawn rate falls inside the band — nothing is clipped off the axis');
+  console.log(`
+  rate axis: ${(band.min * 100).toFixed(0)}%–${(band.max * 100).toFixed(0)}% (NOT zero-based, by rule)`);
 
   console.log(fail === 0 ? '\nALL CHECKS PASSED' : `\n${fail} CHECK(S) FAILED`);
   process.exit(fail === 0 ? 0 : 1);

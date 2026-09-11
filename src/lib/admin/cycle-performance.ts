@@ -977,3 +977,50 @@ export function selectTrendCycles(
     maxPaid,
   };
 }
+
+/**
+ * The rate axis band for the trend LINE.
+ *
+ * ── Why this is allowed to be non-zero, and only for a line ────────────────
+ * A bar encodes its value as LENGTH FROM ZERO, so truncating a bar axis is a
+ * straight lie about the mark. A line encodes value as POSITION against
+ * labelled ticks, which is why financial charts zoom routinely — the reader is
+ * reading the ticks, not the ink.
+ *
+ * That licence is narrow and it is spent here: pinned to 0–100%, live rates of
+ * 98.18 / 98.83 / 98.18 are a hairline against the ceiling and the chart shows
+ * nothing at all. Kane, 2026-09-11, chose the labelled band over the flat line.
+ *
+ * **If this chart ever returns to bars, this function must go with it.**
+ *
+ * ── The band, and why it cannot zoom arbitrarily tight ─────────────────────
+ * The ceiling is ALWAYS 100%: it is the only meaningful reference on the axis,
+ * and a band that floats free of it would let a bad month look like a good one
+ * rescaled. The floor is the lower of 95% and the worst rate rounded down to a
+ * whole 5%, so:
+ *
+ *   - a good stretch (98.x) gets 95–100 — a 5-point window, enough to show a
+ *     0.65-point spread as visible movement without magnifying it to a cliff;
+ *   - a genuinely bad week EXPANDS the band rather than clipping (a 40% week
+ *     gives 40–100), so the chart can never hide a collapse by rescaling;
+ *   - the window never narrows below 5 points, which caps the exaggeration.
+ *
+ * Weeks with no rate are ignored — they have nothing to include.
+ */
+export function trendRateBand(points: readonly CycleTrendPoint[]): {
+  min: number;
+  max: number;
+} {
+  let worst: number | null = null;
+  for (const p of points) {
+    if (p.rate == null) continue;
+    if (worst == null || p.rate < worst) worst = p.rate;
+  }
+  // No rates at all → the default window. Never a degenerate zero-height band.
+  if (worst == null) return { min: 0.95, max: 1 };
+
+  // Round DOWN to a whole 5% so the floor is a tick a reader recognises, and
+  // clamp at 0 so a nonsense negative rate cannot invert the axis.
+  const floored = Math.floor(Math.max(0, worst) * 20) / 20;
+  return { min: Math.min(0.95, floored), max: 1 };
+}
