@@ -359,5 +359,38 @@ n8n version rejects that expression, the fallback is to remove the IF and keep o
 with-files Gmail node (an email with no files would then error on that node and be caught by
 `continueRegularOutput`). One new `app_settings` key family: `dispatch.cycle_report_sent.<source_file>`.
 
+**Two traps in that import, both verified against the LIVE workflow 2026-09-11** (Kane pasted the
+copy currently inside the automation):
+
+1. **Import OVER the existing workflow — never into a new one.** The JSON carries a top-level
+   `name` ("Payment Cycle Closed → Celebrate Accounting") that differs from the live workflow's, so
+   n8n's *Import from File* into a **new** workflow produces a SECOND workflow registering the same
+   `POST /webhook/payment-cycle-complete` path. Two workflows cannot both serve one path: n8n refuses
+   the activation or one silently shadows the other, and the symptom is a celebration that stops
+   firing rather than an error. Correct method: open the **existing** workflow → ⋮ → *Import from
+   File* → **Save**. That replaces the canvas in place, keeping the workflow id, the URL and the
+   active state.
+2. **The file carries no credentials, by design.** Both Gmail nodes have their `credentials` block
+   stripped, while the live workflow uses **`HRIS Gmail`** (id `p8yqPX6aclTGzx08`). After importing,
+   attach that credential to **`Send Email + Files (Gmail)`** *and* **`Send Email, no files (Gmail)`** —
+   missing the second is the easy mistake, and it only shows up on a cycle that has no files.
+
+**What is NOT a risk, measured:** the webhook node is renamed (`Cycle Complete Webhook` →
+`Cycle Closed Webhook`) but its `path`, `httpMethod` and `responseMode` are byte-identical
+(`payment-cycle-complete` / POST / `responseNode`), so the stored
+`https://simpledotbiz.app.n8n.cloud/webhook/payment-cycle-complete` in `webhooks.config` keeps
+working untouched — no HRIS-side change is needed. The `Has files?` guard is also safer than
+described above: it reads `Object.keys($binary || {}).length`, already null-guarded, so the
+remove-the-IF fallback should rarely be needed.
+
+**Why the live copy is provably stale:** its Code node documents its caller as
+`POST /api/payment-dispatches/cycle-complete` — the route **deleted** in `88474107`. It still
+receives traffic only because the close-out route posts to the same URL. It has one Gmail node, no
+IF, and no binary handling at all, so today's `attachments[]` are silently dropped. The repo copy
+converts each `content_base64` to binary with `prepareBinaryData` (`file0`/`file1`/`file2`) and
+renders `attachments_error` into the email when the HRIS could not build the files — so a failure to
+attach is disclosed rather than hidden.
+
+
 Audit action: `payment_cycle.closed` on resource `app_settings`, written **awaited** — it is the
 trail for a declaration that money was left unpaid.
