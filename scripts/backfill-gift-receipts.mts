@@ -52,6 +52,8 @@ import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import importModule from '../src/lib/gift-tracker/receipt-import';
 import milestonesModule from '../src/lib/gift-milestones';
+import rosterMatchModule from '../src/lib/gift-tracker/roster-match';
+import type { RosterPerson } from '../src/lib/gift-tracker/roster-match';
 import type {
   GiftReceiptAssertion,
   GiftReceiptProblem,
@@ -66,6 +68,8 @@ const { parseGiftReceiptCsv, selectAssertions } =
   importModule as unknown as typeof import('../src/lib/gift-tracker/receipt-import');
 const { fmtDateIso, parseStartDate } =
   milestonesModule as unknown as typeof import('../src/lib/gift-milestones');
+const { buildRosterIndex, matchRosterPerson } =
+  rosterMatchModule as unknown as typeof import('../src/lib/gift-tracker/roster-match');
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..');
@@ -107,8 +111,14 @@ type MasterRaw = {
   Name: string | null;
   'Work Email': string | null;
   'Personal Email': string | null;
+  'Alternate Work Email': string | null;
+  'Alternate Work Email 2': string | null;
   'Start Date': string | null;
+  employee_id: string | null;
 };
+
+const MASTER_COLS =
+  'Name,"Personal Email","Work Email","Alternate Work Email","Alternate Work Email 2","Start Date",employee_id';
 
 /**
  * PostgREST truncates at 1000 rows even with an explicit `.range()`, so every
@@ -122,7 +132,7 @@ async function pageAll(table: string): Promise<MasterRaw[]> {
   for (let from = 0; ; from += size) {
     const { data, error } = await sb
       .from(table)
-      .select('Name,"Personal Email","Work Email","Start Date"')
+      .select(MASTER_COLS)
       .order('Work Email', { ascending: true })
       .range(from, from + size - 1);
     if (error) throw new Error(`${table}: ${error.message}`);
@@ -163,21 +173,57 @@ async function main() {
   const gml = await pageAll('global_master_list');
   console.log(`Roster: ${active.length} active, ${gml.length} in the master list.`);
 
-  const byWork = new Map<string, { row: MasterRaw; resolution: Resolution }>();
-  for (const r of gml) {
-    const k = r['Work Email']?.trim().toLowerCase();
-    if (k) byWork.set(k, { row: r, resolution: 'offboarded' });
-  }
+  // Resolution runs through the SHARED resolver, not a bare work-email map.
+  //
+  // The 2026-09-11 backfill matched on work_email alone and stranded 13 people
+  // whose sheet spelling differs from the master list (lennyt@ vs lenny@).
+  // Their receipts landed under an address the Gift Tracker never looks up, so
+  // the screen showed them as "Not recorded" — the state meaning nobody has
+  // assessed this person. A silent failure that read as its own opposite.
+  //
+  // The ladder is work email → alternate work email → name AND start date, every
+  // tier EXACT, and an ambiguous tier REFUSES rather than picking. See
+  // src/lib/gift-tracker/roster-match.ts.
+  const toPerson = (r: MasterRaw, isActive: boolean): RosterPerson => ({
+    name: r.Name,
+    workEmail: r['Work Email'],
+    personalEmail: r['Personal Email'],
+    alternateWorkEmails: [r['Alternate Work Email'], r['Alternate Work Email 2']],
+    startDate: r['Start Date'],
+    employeeId: r.employee_id,
+    isActive,
+  });
+
+  const activeKeys = new Set<string>();
   for (const r of active) {
     const k = r['Work Email']?.trim().toLowerCase();
-    if (k) byWork.set(k, { row: r, resolution: 'active' });
+    if (k) activeKeys.add(k);
   }
+
+  // EVERY row goes in — the index is NOT handed a Map keyed on work email.
+  // Pre-collapsing here would discard the recycled-address collisions the
+  // resolver exists to report, and it would call an ambiguous key unambiguous.
+  // Duplicate rows for ONE human collapse inside buildRosterIndex, which prefers
+  // the active copy; rows that merely share an address stay separate.
+  const rosterIndex = buildRosterIndex([
+    ...gml.map((r) => toPerson(r, false)),
+    ...active.map((r) => toPerson(r, true)),
+  ]);
 
   // ── Select assertions ────────────────────────────────────────────────────
   const assertions: GiftReceiptAssertion[] = [];
   const problems: GiftReceiptProblem[] = [...parseProblems];
   const byResolution: Record<Resolution, number> = { active: 0, offboarded: 0, unresolved: 0 };
   const unresolved: string[] = [];
+  /** Resolved by a fallback tier — reported so a rescue is never silent. */
+  const rescued: Array<{ sheetEmail: string; resolvedTo: string; via: string; name: string }> = [];
+  /** Two or more candidates. Imported for NOBODY — a refusal, never a pick. */
+  const ambiguous: Array<{
+    workEmail: string;
+    name: string;
+    method: string;
+    candidates: string[];
+  }> = [];
   const startDivergence: Array<{ workEmail: string; sheet: string | null; master: string | null }> = [];
   const noStartDate: string[] = [];
   let skippedNotDue = 0;
@@ -186,16 +232,54 @@ async function main() {
   let received = 0;
 
   for (const row of csvRows) {
-    const hit = byWork.get(row.workEmail);
-    const resolution: Resolution = hit?.resolution ?? 'unresolved';
+    const hit = matchRosterPerson(rosterIndex, {
+      workEmail: row.workEmail,
+      name: row.name,
+      startDate: row.startDateRaw,
+      employeeId: row.employeeId,
+    });
+
+    if (hit.status === 'ambiguous') {
+      // NEVER pick. Two candidates means the sheet cannot tell us which human
+      // this is, and merging two people's gift history is permanent.
+      ambiguous.push({
+        workEmail: row.workEmail,
+        name: row.name,
+        method: hit.method,
+        candidates: hit.candidates.map((c) => `${c.name} <${c.workEmail}>`),
+      });
+      byResolution.unresolved += 1;
+      continue;
+    }
+
+    const person = hit.status === 'matched' ? hit.person : null;
+    // THE STORED KEY IS ALWAYS THE MASTER LIST'S WORK EMAIL — never the sheet's
+    // spelling. Storing the sheet's is what caused the stranding.
+    const storeKey = hit.status === 'matched' ? hit.key : row.workEmail;
+    if (hit.status === 'matched' && (hit.method !== 'work_email' || hit.supersededStaleKey)) {
+      rescued.push({
+        sheetEmail: row.workEmail,
+        resolvedTo: hit.key,
+        via: hit.supersededStaleKey
+          ? `${hit.method} (over the STALE row ${hit.supersededStaleKey})`
+          : hit.method,
+        name: row.name,
+      });
+    }
+
+    const resolution: Resolution = !person
+      ? 'unresolved'
+      : activeKeys.has(storeKey)
+        ? 'active'
+        : 'offboarded';
     byResolution[resolution] += 1;
-    if (!hit) unresolved.push(row.workEmail);
+    if (!person) unresolved.push(row.workEmail);
 
     // The master list owns start_date. Only when a person has no master row at
     // all does the sheet's own column stand in — and that is reported.
-    const masterStart = hit ? parseStartDate(hit.row['Start Date']) : null;
-    const start = masterStart ?? (hit ? null : row.startDate);
-    if (hit && !masterStart) noStartDate.push(row.workEmail);
+    const masterStart = person ? parseStartDate(person.startDate) : null;
+    const start = masterStart ?? (person ? null : row.startDate);
+    if (person && !masterStart) noStartDate.push(row.workEmail);
 
     if (masterStart && row.startDate) {
       const a = fmtDateIso(row.startDate);
@@ -204,6 +288,8 @@ async function main() {
     }
 
     const sel = selectAssertions({ row, start, today: TODAY });
+    // Re-key every assertion onto the resolved master address.
+    for (const a of sel.assertions) a.workEmail = storeKey;
     assertions.push(...sel.assertions);
     problems.push(...sel.problems);
     skippedNotDue += sel.skipped.notDue;
@@ -231,6 +317,8 @@ async function main() {
       `  offboarded             ${byResolution.offboarded}`,
       `  no master row at all   ${byResolution.unresolved}`,
       '',
+      `Resolved by a FALLBACK tier (would have been stranded): ${rescued.length}`,
+      `AMBIGUOUS — refused, imported for nobody: ${ambiguous.length}`,
       `Start-date divergence (sheet vs master list): ${startDivergence.length}`,
       `Resolved people with NO start date on the master list: ${noStartDate.length}`,
       `Problems reported: ${problems.length}`,
@@ -238,6 +326,21 @@ async function main() {
     ].join('\n'),
   );
 
+  if (rescued.length) {
+    console.log('Rescued by a fallback tier (sheet email -> master address):');
+    for (const r of rescued) {
+      console.log(`  ${r.sheetEmail.padEnd(26)} -> ${r.resolvedTo.padEnd(26)} via ${r.via}  (${r.name})`);
+    }
+    console.log('');
+  }
+  if (ambiguous.length) {
+    console.log('AMBIGUOUS — more than one candidate, so NOTHING was imported for these:');
+    for (const a of ambiguous) {
+      console.log(`  ${a.workEmail} (${a.name}) via ${a.method}`);
+      for (const c of a.candidates) console.log(`      candidate: ${c}`);
+    }
+    console.log('');
+  }
   if (unresolved.length) {
     console.log(`No master row (imported anyway, judged on the sheet's own start date):`);
     for (const e of unresolved) console.log(`  ${e}`);
@@ -281,9 +384,13 @@ async function main() {
           owed,
           skippedNotDue,
           skippedUnreadable,
+          rescued: rescued.length,
+          ambiguous: ambiguous.length,
           ...byResolution,
         },
         unresolved,
+        rescued,
+        ambiguous,
         startDivergence,
         noStartDate,
         problems,

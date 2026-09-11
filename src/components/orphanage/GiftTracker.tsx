@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion, type Variants } from 'motion/react';
 import {
   CalendarDays,
   ChevronDown,
@@ -52,6 +52,14 @@ import {
 } from '@/lib/gift-tracker/shipping-export';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import {
+  ORPHANAGE_TAB_CACHE_KEYS as GK,
+  clearOrphanageTabCachePrefix,
+  getOrphanageTabCache,
+  hasOrphanageTabCache,
+  isOrphanageTabCacheFresh,
+  setOrphanageTabCache,
+} from '@/lib/orphanage/tab-cache';
 /* ── Export menu (PDF · XLSX · CSV) ─────────────────────────────────────────
  * Lifted from HrGlobalMasterList's inline ExportMenu — the repo has no dropdown
  * primitive. Themed emerald for the Gift Tracker.
@@ -294,6 +302,58 @@ function classifyDaysUntil(daysUntil: number | null): GiftStatus {
   return 'far';
 }
 
+export type SubTab = 'roster' | 'submissions' | 'catalog';
+
+/** Left-to-right order of the sub-tabs — the axis the panel transition travels. */
+const SUB_TAB_ORDER: readonly SubTab[] = ['roster', 'submissions', 'catalog'];
+
+/**
+ * How a sub-tab panel enters and leaves.
+ *
+ * Two things were wrong with the previous transition. It used a symmetric 250ms
+ * in AND out under `mode="wait"`, so half a second passed with NOTHING on screen
+ * and the container collapsed to zero height in the gap — the jump that made
+ * switching tabs feel broken rather than animated. And it moved on the Y axis,
+ * which reads as content reloading rather than as lateral movement between
+ * siblings.
+ *
+ * Now: the exit is deliberately about half the entrance (`EXIT_MS` vs
+ * `ENTER_MS`) so the dead frame is brief, and the panel travels on X in the
+ * direction the tab bar moved. The easing is asymmetric on purpose — the outgoing
+ * panel accelerates away, the incoming one decelerates in.
+ *
+ * `dir` is `1` moving rightward through the tab order and `-1` moving left, so a
+ * panel always enters from the side you came from and leaves toward where you
+ * went.
+ */
+const ENTER_MS = 0.26;
+const EXIT_MS = 0.13;
+const SUB_TAB_SLIDE_PX = 24;
+// Tuples, not number[] — motion's Easing type is a 4-tuple and a widened array
+// fails to assign.
+const EASE_IN_PANEL = [0.22, 1, 0.36, 1] as const;
+const EASE_OUT_PANEL = [0.4, 0, 1, 1] as const;
+
+function subTabVariants(reduced: boolean): Variants {
+  // Reduced motion keeps the cross-fade — which carries the "this changed"
+  // signal — and drops only the travel. Removing the transition entirely would
+  // make the swap read as a flicker.
+  const dx = reduced ? 0 : SUB_TAB_SLIDE_PX;
+  return {
+    enter: (dir: number) => ({ opacity: 0, x: dir * dx }),
+    center: {
+      opacity: 1,
+      x: 0,
+      transition: { duration: reduced ? 0.12 : ENTER_MS, ease: EASE_IN_PANEL },
+    },
+    exit: (dir: number) => ({
+      opacity: 0,
+      x: dir * -dx,
+      transition: { duration: reduced ? 0.08 : EXIT_MS, ease: EASE_OUT_PANEL },
+    }),
+  };
+}
+
 /** Shared empty map — a fresh `new Map()` per person per render would defeat
  *  every downstream memo for no gain. */
 const EMPTY_RECEIPTS: ReadonlyMap<number, boolean> = new Map();
@@ -326,6 +386,15 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
+  /**
+   * Fulfilment filter on the roster.
+   *
+   * `owed` is the order-processing view: people with at least one gift that came
+   * due and was recorded as not given. `unrecorded` is deliberately SEPARATE and
+   * never merged into it — those are people nobody has assessed, which is a
+   * different job (find out) from owing someone a gift (ship it).
+   */
+  const [owedFilter, setOwedFilter] = useState<'all' | 'owed' | 'unrecorded' | 'received'>('all');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [draftNotes, setDraftNotes] = useState<Map<string, string>>(new Map());
   const [savingKey, setSavingKey] = useState<string | null>(null);
@@ -360,15 +429,47 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
   const [page, setPage] = useState(0);
   const [pageDir, setPageDir] = useState<1 | -1>(1);
   const PAGE_SIZE = 10;
-  const [subTab, setSubTab] = useState<'roster' | 'submissions' | 'catalog'>('roster');
+  const [subTab, setSubTab] = useState<SubTab>('roster');
+  /**
+   * Which way the next panel travels. Derived from the tab ORDER at click time,
+   * not from a ref read during render — so going Roster → Catalog slides the
+   * same way every time, and the animation encodes where you moved rather than
+   * just that something changed.
+   */
+  const [subTabDir, setSubTabDir] = useState<1 | -1>(1);
+  const reduceMotion = useReducedMotion();
+  const panelVariants = useMemo(() => subTabVariants(!!reduceMotion), [reduceMotion]);
+  const goToSubTab = useCallback(
+    (next: SubTab) => {
+      setSubTab((current) => {
+        if (current === next) return current;
+        setSubTabDir(SUB_TAB_ORDER.indexOf(next) > SUB_TAB_ORDER.indexOf(current) ? 1 : -1);
+        return next;
+      });
+    },
+    [],
+  );
   /** Submissions sub-tab filter: which statuses to show. */
   const [submissionsFilter, setSubmissionsFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
   const [submissionsSearch, setSubmissionsSearch] = useState('');
 
   const today = useMemo(() => new Date(), []);
 
-  const load = useCallback(async () => {
-    setRefreshing(true);
+  /**
+   * Fetch everything the tab needs.
+   *
+   * `silent` is the revalidate path: it raises no loading flag, blanks no rows
+   * and swallows no data — it simply replaces what is on screen when the answer
+   * arrives. Without it the freshness window would trade staleness for a
+   * skeleton flash on every tab return, which is the trade the window exists to
+   * avoid (same shape as the HR store's `{ silent }` option).
+   *
+   * `force` is the manual Refresh: it drops the cached copies FIRST so a failed
+   * fetch cannot leave a pre-refresh value sitting in the store looking fresh.
+   */
+  const load = useCallback(async (opts: { silent?: boolean; force?: boolean } = {}) => {
+    if (opts.force) clearOrphanageTabCachePrefix(GK.giftPrefix);
+    if (!opts.silent) setRefreshing(true);
     try {
       const [empRes, notesRes, shipRes, receiptRes] = await Promise.all([
         fetch('/api/employees', { cache: 'no-store' }),
@@ -380,12 +481,15 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
       const notesJson = (await notesRes.json()) as { notes?: GiftTrackerNote[]; error?: string };
       const shipJson = (await shipRes.json()) as { rows?: EmployeeGiftShippingRow[]; error?: string };
       if (empJson.error) throw new Error(empJson.error);
-      setEmployees(empJson.employees ?? []);
+      const employeeRows = empJson.employees ?? [];
+      setEmployees(employeeRows);
+      setOrphanageTabCache(GK.giftEmployees, employeeRows);
       const map = new Map<string, GiftTrackerNote>();
       for (const n of notesJson.notes ?? []) {
         map.set(n.personal_email.toLowerCase(), n);
       }
       setNotesByEmail(map);
+      setOrphanageTabCache(GK.giftNotes, notesJson.notes ?? []);
       const shipMap = new Map<string, EmployeeGiftShippingRow[]>();
       for (const r of shipJson.rows ?? []) {
         const key = r.personal_email.toLowerCase();
@@ -396,6 +500,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
       // Sort each employee's submissions by milestone_index ascending.
       for (const arr of shipMap.values()) arr.sort((a, b) => a.milestone_index - b.milestone_index);
       setShippingByEmail(shipMap);
+      setOrphanageTabCache(GK.giftShipping, shipJson.rows ?? []);
 
       const receiptJson = (await receiptRes.json()) as {
         rows?: EmployeeGiftReceiptRow[];
@@ -410,28 +515,101 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         receiptMap.set(key, inner);
       }
       setReceiptsByWorkEmail(receiptMap);
+      setOrphanageTabCache(GK.giftReceipts, receiptJson.rows ?? []);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not load Gift Tracker');
+      // A SILENT revalidate never reports over data already on screen — an error
+      // card thrown across a populated table is worse than showing rows that are
+      // a minute old. The foreground path still reports.
+      if (!opts.silent) {
+        toast.error(e instanceof Error ? e.message : 'Could not load Gift Tracker');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, []);
 
+  /**
+   * Mount: paint from cache, then decide whether the network is needed at all.
+   *
+   * The cache PAINTS; it never DECIDES. A warm entry seeds the tables so
+   * switching back costs nothing, but only a FRESH entry (< 30s) suppresses the
+   * fetch. Anything older revalidates silently behind the rows already showing.
+   * Collapsing those two questions into one is the regression — it is what left
+   * an HR session running all day on data it pulled once.
+   */
   useEffect(() => {
-    void load();
+    const cachedEmployees = getOrphanageTabCache<EmployeeRow[]>(GK.giftEmployees);
+    const cachedNotes = getOrphanageTabCache<GiftTrackerNote[]>(GK.giftNotes);
+    const cachedShipping = getOrphanageTabCache<EmployeeGiftShippingRow[]>(GK.giftShipping);
+    const cachedReceipts = getOrphanageTabCache<EmployeeGiftReceiptRow[]>(GK.giftReceipts);
+
+    if (cachedEmployees) setEmployees(cachedEmployees);
+    if (cachedNotes) {
+      const map = new Map<string, GiftTrackerNote>();
+      for (const n of cachedNotes) map.set(n.personal_email.toLowerCase(), n);
+      setNotesByEmail(map);
+    }
+    if (cachedShipping) {
+      const shipMap = new Map<string, EmployeeGiftShippingRow[]>();
+      for (const r of cachedShipping) {
+        const key = r.personal_email.toLowerCase();
+        const arr = shipMap.get(key) ?? [];
+        arr.push(r);
+        shipMap.set(key, arr);
+      }
+      for (const arr of shipMap.values()) arr.sort((a, b) => a.milestone_index - b.milestone_index);
+      setShippingByEmail(shipMap);
+    }
+    if (cachedReceipts) {
+      const receiptMap = new Map<string, Map<number, boolean>>();
+      for (const r of cachedReceipts) {
+        const key = r.work_email.toLowerCase();
+        const inner = receiptMap.get(key) ?? new Map<number, boolean>();
+        inner.set(r.milestone_index, r.received);
+        receiptMap.set(key, inner);
+      }
+      setReceiptsByWorkEmail(receiptMap);
+    }
+
+    // Something to paint ⇒ no skeleton, whatever happens next.
+    const painted = hasOrphanageTabCache(GK.giftEmployees);
+    if (painted) setLoading(false);
+
+    // Every dataset must be fresh to skip — a stale receipts ledger beside a
+    // fresh roster would show the right people with the wrong gift state.
+    const allFresh =
+      isOrphanageTabCacheFresh(GK.giftEmployees) &&
+      isOrphanageTabCacheFresh(GK.giftNotes) &&
+      isOrphanageTabCacheFresh(GK.giftShipping) &&
+      isOrphanageTabCacheFresh(GK.giftReceipts);
+    if (allFresh) return;
+
+    void load({ silent: painted });
   }, [load]);
 
   const rows: Row[] = useMemo(() => {
     const out: Row[] = [];
-    // Email is this tracker's identity key (notes, shipping, expand state are all
-    // keyed by it), so collapse any duplicate master-list rows that share an email
-    // to a single row — keeping the first. Prevents duplicate React keys.
+    // `email` is the key NOTES and SHIPPING are stored under (both of those
+    // tables key on personal_email), so it stays personal-email-first.
+    //
+    // But DEDUPING on it dropped real people. `personal_email` is not injective
+    // on this roster — johnc@simple.biz and russell@simple.biz share
+    // corpuzmachacon@gmail.com — so whichever /api/employees returned second was
+    // silently removed from the tracker entirely, taking 6 correctly-keyed gift
+    // receipts off the screen with them. Which of the two vanished was not even
+    // stable across loads.
+    //
+    // Identity for dedupe is therefore WORK email first, which is unique per
+    // person and is what the receipts ledger keys on. Only a genuinely duplicated
+    // master row collapses now.
     const seen = new Set<string>();
     for (const e of employees) {
       const email = (e.personal_email ?? e.work_email ?? '').toLowerCase().trim();
-      if (!email || seen.has(email)) continue;
-      seen.add(email);
+      const identity = (e.work_email ?? e.personal_email ?? '').toLowerCase().trim();
+      if (!identity || seen.has(identity)) continue;
+      seen.add(identity);
+      if (!email) continue;
       const startDate = parseStartDate(e.start_date);
       const { history, next } = startDate
         ? buildMilestones(startDate, today)
@@ -471,14 +649,29 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) =>
-      [r.name, r.email, r.workEmail ?? '', r.department ?? '']
-        .join(' ')
-        .toLowerCase()
-        .includes(q),
-    );
-  }, [rows, search]);
+    let out = rows;
+    if (q) {
+      out = out.filter((r) =>
+        [r.name, r.email, r.workEmail ?? '', r.department ?? '']
+          .join(' ')
+          .toLowerCase()
+          .includes(q),
+      );
+    }
+    // The fulfilment filter narrows the SAME `filteredRows` the export reads, so
+    // picking "Owed" and hitting Export produces the order list directly — no
+    // second export path to drift out of step with the screen.
+    if (owedFilter === 'owed') out = out.filter((r) => r.receipts.owedCount > 0);
+    else if (owedFilter === 'unrecorded') out = out.filter((r) => r.receipts.unknownCount > 0);
+    else if (owedFilter === 'received') out = out.filter((r) => r.receipts.receivedCount > 0);
+    return out;
+  }, [rows, search, owedFilter]);
+
+  // Reset paging whenever the visible set changes — otherwise narrowing to
+  // "Owed" while on page 4 shows an empty table that reads as "nobody is owed".
+  useEffect(() => {
+    setPage(0);
+  }, [owedFilter]);
 
   /**
    * Submissions handed to the export, scoped to match the rows in view.
@@ -527,8 +720,20 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
 
   const scopeLabel = useMemo(() => {
     const q = search.trim();
-    return q ? `All employees matching "${q}"` : 'All employees';
-  }, [search]);
+    // The label is stamped into every export's provenance preamble. It has to
+    // name the fulfilment filter too: a file containing only the people we owe,
+    // labelled "All employees", is a file that misreports its own scope — and
+    // this one gets handed to whoever places the orders.
+    const base =
+      owedFilter === 'owed'
+        ? 'Employees owed a gift'
+        : owedFilter === 'unrecorded'
+          ? 'Employees with an unrecorded gift'
+          : owedFilter === 'received'
+            ? 'Employees with a recorded gift'
+            : 'All employees';
+    return q ? `${base} matching "${q}"` : base;
+  }, [search, owedFilter]);
 
   const stats = useMemo(() => {
     let red = 0;
@@ -540,6 +745,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
     let giftsOwed = 0;
     let peopleOwed = 0;
     let peopleUnknown = 0;
+    let peopleReceived = 0;
     for (const r of rows) {
       if (r.status === 'red') red += 1;
       else if (r.status === 'orange') orange += 1;
@@ -548,8 +754,19 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
       giftsOwed += r.receipts.owedCount;
       if (r.receipts.owedCount > 0) peopleOwed += 1;
       if (r.receipts.unknownCount > 0) peopleUnknown += 1;
+      if (r.receipts.receivedCount > 0) peopleReceived += 1;
     }
-    return { total: rows.length, red, orange, green, overdue, giftsOwed, peopleOwed, peopleUnknown };
+    return {
+      total: rows.length,
+      red,
+      orange,
+      green,
+      overdue,
+      giftsOwed,
+      peopleOwed,
+      peopleUnknown,
+      peopleReceived,
+    };
   }, [rows]);
 
   const toggleExpand = useCallback((key: string) => {
@@ -584,6 +801,10 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         });
         const json = (await res.json()) as { error?: string };
         if (!res.ok || json.error) throw new Error(json.error ?? `Request failed (${res.status})`);
+        // The cached copies describe the PRE-write world now. Drop them so a
+        // later remount re-pulls instead of repainting a gift as still owed
+        // right after it was recorded as received.
+        clearOrphanageTabCachePrefix(GK.giftPrefix);
         setReceiptsByWorkEmail((prev) => {
           const next = new Map(prev);
           const inner = new Map(next.get(workEmail) ?? []);
@@ -623,6 +844,10 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
       });
       const json = (await res.json()) as { error?: string };
       if (!res.ok || json.error) throw new Error(json.error ?? `Request failed (${res.status})`);
+      // The cached copies describe the PRE-write world now. Drop them so a
+      // later remount re-pulls instead of repainting a gift as still owed
+      // right after it was recorded as received.
+      clearOrphanageTabCachePrefix(GK.giftPrefix);
       setReceiptsByWorkEmail((prev) => {
         const next = new Map(prev);
         const inner = new Map(next.get(workEmail) ?? []);
@@ -673,6 +898,10 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         });
         const json = (await res.json()) as { error?: string };
         if (!res.ok || json.error) throw new Error(json.error ?? 'Failed');
+        // The cached copies describe the PRE-write world now. Drop them so a
+        // later remount re-pulls instead of repainting a gift as still owed
+        // right after it was recorded as received.
+        clearOrphanageTabCachePrefix(GK.giftPrefix);
         setNotesByEmail((prev) => {
           const next = new Map(prev);
           next.set(row.key, {
@@ -720,6 +949,10 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         });
         const json = (await res.json()) as { row?: EmployeeGiftShippingRow; error?: string };
         if (!res.ok || json.error || !json.row) throw new Error(json.error ?? 'Failed');
+        // The cached copies describe the PRE-write world now. Drop them so a
+        // later remount re-pulls instead of repainting a gift as still owed
+        // right after it was recorded as received.
+        clearOrphanageTabCachePrefix(GK.giftPrefix);
         setShippingByEmail((prev) => {
           const next = new Map(prev);
           const arr = (next.get(emailKey) ?? []).map((r) => (r.id === json.row!.id ? json.row! : r));
@@ -754,6 +987,10 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         const json = (await res.json()) as { row?: EmployeeGiftShippingRow; error?: string };
         if (!res.ok || json.error || !json.row) throw new Error(json.error ?? 'Failed');
         const updated = json.row;
+        // The cached copies describe the PRE-write world now. Drop them so a
+        // later remount re-pulls instead of repainting a gift as still owed
+        // right after it was recorded as received.
+        clearOrphanageTabCachePrefix(GK.giftPrefix);
         setShippingByEmail((prev) => {
           const next = new Map(prev);
           const arr = (next.get(emailKey) ?? []).map((r) =>
@@ -807,6 +1044,10 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
       if (!res.ok || json.error || !json.row) throw new Error(json.error ?? 'Failed');
       const updated = json.row;
       const emailKey = editDraft.emailKey;
+      // The cached copies describe the PRE-write world now. Drop them so a
+      // later remount re-pulls instead of repainting a gift as still owed
+      // right after it was recorded as received.
+      clearOrphanageTabCachePrefix(GK.giftPrefix);
       setShippingByEmail((prev) => {
         const next = new Map(prev);
         const arr = (next.get(emailKey) ?? []).map((r) => (r.id === updated.id ? updated : r));
@@ -840,6 +1081,10 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         });
         const json = (await res.json()) as { error?: string };
         if (!res.ok || json.error) throw new Error(json.error ?? 'Failed');
+        // The cached copies describe the PRE-write world now. Drop them so a
+        // later remount re-pulls instead of repainting a gift as still owed
+        // right after it was recorded as received.
+        clearOrphanageTabCachePrefix(GK.giftPrefix);
         setShippingByEmail((prev) => {
           const next = new Map(prev);
           const arr = (next.get(emailKey) ?? []).filter((r) => r.id !== rowId);
@@ -905,7 +1150,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                 variant="outline"
                 size="sm"
                 className="border-white/35 bg-white/10 text-white backdrop-blur-sm hover:bg-white/20 hover:text-white"
-                onClick={() => void load()}
+                onClick={() => void load({ force: true })}
                 disabled={refreshing}
               >
                 <RefreshCw
@@ -925,13 +1170,13 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         >
           <SubTabButton
             active={subTab === 'roster'}
-            onClick={() => setSubTab('roster')}
+            onClick={() => goToSubTab('roster')}
             Icon={Users}
             label="Roster"
           />
           <SubTabButton
             active={subTab === 'submissions'}
-            onClick={() => setSubTab('submissions')}
+            onClick={() => goToSubTab('submissions')}
             Icon={Truck}
             label="Submissions"
             badge={
@@ -944,30 +1189,35 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
           />
           <SubTabButton
             active={subTab === 'catalog'}
-            onClick={() => setSubTab('catalog')}
+            onClick={() => goToSubTab('catalog')}
             Icon={Package}
             label="Catalog"
           />
         </nav>
 
-        <AnimatePresence mode="wait" initial={false}>
+        {/* The panel area reserves the outgoing panel's height for the length of
+            the swap, so a short tab following a tall one cannot yank the page up
+            under the pointer mid-animation. */}
+        <AnimatePresence mode="wait" initial={false} custom={subTabDir}>
         {subTab === 'catalog' ? (
           <motion.div
             key="catalog"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            custom={subTabDir}
+            variants={panelVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
           >
             <GiftCatalog viewerEmail={viewerEmail} />
           </motion.div>
         ) : subTab === 'submissions' ? (
           <motion.div
             key="submissions"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            custom={subTabDir}
+            variants={panelVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
           >
             <SubmissionsPanel
               shippingByEmail={shippingByEmail}
@@ -988,10 +1238,11 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         ) : (
         <motion.div
           key="roster"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -6 }}
-          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+          custom={subTabDir}
+          variants={panelVariants}
+          initial="enter"
+          animate="center"
+          exit="exit"
           className="flex flex-col gap-6 lg:gap-8"
         >
         <section
@@ -1071,13 +1322,25 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                   className="border-emerald-100/70 bg-white/90 pl-9 dark:border-emerald-900/50 dark:bg-zinc-900/70"
                 />
               </div>
-              <GiftExportMenu
-                rows={filteredRows}
-                submissions={exportSubmissions}
-                receipts={exportReceipts}
-                totalRoster={rows.length}
-                scopeLabel={scopeLabel}
-              />
+              <div data-readonly-allow className="flex items-center gap-2">
+                <FulfilmentFilter
+                  value={owedFilter}
+                  onChange={setOwedFilter}
+                  counts={{
+                    all: rows.length,
+                    owed: stats.peopleOwed,
+                    unrecorded: stats.peopleUnknown,
+                    received: stats.peopleReceived,
+                  }}
+                />
+                <GiftExportMenu
+                  rows={filteredRows}
+                  submissions={exportSubmissions}
+                  receipts={exportReceipts}
+                  totalRoster={rows.length}
+                  scopeLabel={scopeLabel}
+                />
+              </div>
             </div>
 
             {loading ? (
@@ -1122,7 +1385,9 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                       const noteDirty = draftNotes.has(row.key);
                       return (
                         <RowItem
-                          key={row.key}
+                          // receiptKey (work email) is unique per person; row.key
+                          // is not — two colleagues can share a personal email.
+                          key={row.receiptKey}
                           row={row}
                           isOpen={isOpen}
                           onToggle={() => toggleExpand(row.key)}
@@ -1892,6 +2157,85 @@ function MilestoneReceiptItem({
         </div>
       </div>
     </motion.li>
+  );
+}
+
+/**
+ * The roster's fulfilment filter — and the order-processing entry point.
+ *
+ * "Owed" narrows the table to people with at least one gift that came due and
+ * was recorded as not given. Because the Export menu sits on the SAME
+ * `filteredRows`, choosing Owed and exporting produces the order list in any of
+ * the three formats without a second export path that could drift out of step
+ * with what is on screen.
+ *
+ * "Not recorded" is a SEPARATE option and is never rolled into "Owed". Those are
+ * people nobody has assessed — a different job (find out) from owing someone a
+ * gift (ship it) — and merging them would inflate the order list with people who
+ * may already have their gift.
+ *
+ * Counts are of PEOPLE, matching what the filter actually selects. The "gifts
+ * owed" total lives on its own stat tile, because one person owed three gifts is
+ * not three people.
+ */
+function FulfilmentFilter({
+  value,
+  onChange,
+  counts,
+}: {
+  value: 'all' | 'owed' | 'unrecorded' | 'received';
+  onChange: (v: 'all' | 'owed' | 'unrecorded' | 'received') => void;
+  counts: { all: number; owed: number; unrecorded: number; received: number };
+}) {
+  const OPTIONS = [
+    { key: 'all' as const, label: 'All', count: counts.all, Icon: Users },
+    { key: 'owed' as const, label: 'We owe', count: counts.owed, Icon: PackageX },
+    { key: 'unrecorded' as const, label: 'Not recorded', count: counts.unrecorded, Icon: HelpCircle },
+    { key: 'received' as const, label: 'Received', count: counts.received, Icon: PackageCheck },
+  ];
+  return (
+    <div
+      role="group"
+      aria-label="Filter by gift fulfilment"
+      className="inline-flex flex-wrap items-center gap-1 rounded-lg border border-emerald-100/80 bg-white/80 p-1 dark:border-emerald-950/45 dark:bg-zinc-950/60"
+    >
+      {OPTIONS.map(({ key, label, count, Icon }) => {
+        const active = value === key;
+        return (
+          <button
+            key={key}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(key)}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors',
+              active
+                ? key === 'owed'
+                  ? 'bg-rose-600 text-white shadow-sm'
+                  : 'bg-emerald-600 text-white shadow-sm'
+                : // Ink warms WITH its ground on hover — neutral zinc on an
+                  // emerald fill reads washed out (the same rule the My Hours
+                  // tiles follow).
+                  'text-zinc-600 hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
+            )}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {label}
+            <span
+              className={cn(
+                'rounded px-1 py-0.5 text-[10px] font-bold tabular-nums',
+                // Explicit, never inherited: this pair carries the contrast.
+                active
+                  ? 'bg-white/20 text-white'
+                  : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
+              )}
+            >
+              {count.toLocaleString()}
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

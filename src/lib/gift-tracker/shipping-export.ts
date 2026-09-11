@@ -332,13 +332,21 @@ export function buildGiftRosterExport(input: BuildGiftRosterInput): GiftRosterEx
   const rows: GiftRosterRecord[] = [];
   const submissions: GiftSubmissionRecord[] = [];
   const matchedKeys = new Set<string>();
-  // Collapse duplicate master rows sharing an email — the tracker's identity key.
+  // Dedupe on WORK email, not the submission key.
+  //
+  // `emailKeyOf` is personal-email-first because that is how submissions are
+  // stored, but personal_email is not injective on this roster — two colleagues
+  // share one — so deduping on it silently dropped a real person from the file
+  // (and from the tracker). Identity is the work email; only a genuinely
+  // duplicated master row collapses.
   const seen = new Set<string>();
 
   for (const e of input.employees) {
     const key = emailKeyOf(e);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
+    const identity = clean(e.work_email).toLowerCase() || key;
+    if (!identity || seen.has(identity)) continue;
+    seen.add(identity);
+    if (!key) continue;
     matchedKeys.add(key);
 
     const start = parseStartDate(e.start_date);

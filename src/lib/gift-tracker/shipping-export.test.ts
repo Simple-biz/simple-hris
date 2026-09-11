@@ -77,8 +77,8 @@ function build(
 test('every roster person appears, submitted or not', () => {
   const model = build(
     [
-      emp({ name: 'Submitted', personal_email: 'a@x.com' }),
-      emp({ name: 'Never submitted', personal_email: 'b@x.com' }),
+      emp({ name: 'Submitted', work_email: 'a@simple.biz', personal_email: 'a@x.com' }),
+      emp({ name: 'Never submitted', work_email: 'b@simple.biz', personal_email: 'b@x.com' }),
     ],
     [sub({ personal_email: 'a@x.com' })],
   );
@@ -253,8 +253,8 @@ test('between windows, the newest submission on file still supplies the address'
 
 test('dueNoSubmission counts people with an open milestone and no submission', () => {
   const model = build([
-    emp({ name: 'Due, silent', personal_email: 'a@x.com', start_date: '2024-08-19' }),
-    emp({ name: 'Too new', personal_email: 'b@x.com', start_date: '2026-07-19' }),
+    emp({ name: 'Due, silent', work_email: 'a@simple.biz', personal_email: 'a@x.com', start_date: '2024-08-19' }),
+    emp({ name: 'Too new', work_email: 'b@simple.biz', personal_email: 'b@x.com', start_date: '2026-07-19' }),
   ]);
   assert.equal(model.summary.people, 2);
   assert.equal(model.summary.notSubmitted, 2);
@@ -282,9 +282,9 @@ test('CSV leads with a UTF-8 BOM so Excel renders symbols', () => {
 
 test('CSV emits one row per roster person even when nobody submitted', () => {
   const model = build([
-    emp({ name: 'A', personal_email: 'a@x.com' }),
-    emp({ name: 'B', personal_email: 'b@x.com' }),
-    emp({ name: 'C', personal_email: 'c@x.com' }),
+    emp({ name: 'A', work_email: 'a@simple.biz', personal_email: 'a@x.com' }),
+    emp({ name: 'B', work_email: 'b@simple.biz', personal_email: 'b@x.com' }),
+    emp({ name: 'C', work_email: 'c@simple.biz', personal_email: 'c@x.com' }),
   ]);
   const csv = giftRosterToCsv(model);
   for (const n of ['A', 'B', 'C']) assert.ok(csv.includes(`,${n},`), `${n} missing from CSV`);
@@ -491,4 +491,39 @@ test('an off-roster submitter reports no fulfilment rather than a fabricated zer
   assert.equal(ghost.oldestOwed, '');
   // The flag, not the counts, is the finding.
   assert.equal(ghost.department, 'Off-roster');
+});
+
+test('two colleagues sharing a personal email BOTH appear — neither is deduped away', () => {
+  // johnc@simple.biz and russell@simple.biz really share corpuzmachacon@gmail.com.
+  // Deduping on the submission key silently dropped whichever arrived second,
+  // taking their gift receipts off the file with them.
+  const model = buildGiftRosterExport({
+    employees: [
+      emp({ name: 'Corpuz, John Marc', work_email: 'johnc@simple.biz', personal_email: 'shared@gmail.com' }),
+      emp({ name: 'Bencito, Rhocel', work_email: 'russell@simple.biz', personal_email: 'shared@gmail.com' }),
+    ],
+    submissions: [],
+    receipts: [
+      { work_email: 'johnc@simple.biz', milestone_index: 1, received: true },
+      { work_email: 'russell@simple.biz', milestone_index: 1, received: false },
+    ],
+    totalRoster: 2,
+    today: TODAY,
+  });
+  assert.equal(model.rows.length, 2);
+  const john = model.rows.find((r) => r.name === 'Corpuz, John Marc')!;
+  const rhocel = model.rows.find((r) => r.name === 'Bencito, Rhocel')!;
+  assert.equal(john.giftsReceived, 1);
+  assert.equal(john.giftsOwed, 0);
+  assert.equal(rhocel.giftsReceived, 0);
+  assert.equal(rhocel.giftsOwed, 1);
+});
+
+test('a genuinely duplicated master row still collapses', () => {
+  const model = build([
+    emp({ name: 'First wins', work_email: 'dupe@simple.biz', personal_email: 'a@x.com' }),
+    emp({ name: 'Second dropped', work_email: 'DUPE@simple.biz', personal_email: 'b@x.com' }),
+  ]);
+  assert.equal(model.rows.length, 1);
+  assert.equal(model.rows[0].name, 'First wins');
 });
