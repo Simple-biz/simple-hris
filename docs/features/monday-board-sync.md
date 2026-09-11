@@ -1580,3 +1580,28 @@ and nothing about any written VALUE — those were acknowledged mutations, not r
 ~2 calls per row, so ~63 calls — affordable where a re-run of the full path (~425) is not. It probes
 the budget with one cheap call first and touches nothing if it is still dead. Completed Dates are
 **not** moved to the flush day: the work finished when it finished.
+
+### Two of the three blockers cleared the same day, and the queued text was corrected
+
+Kane, after reading the deploy list: *"as for those 2 scripts please apply them."* Both ran 2026-09-11
+and were verified independently through PostgREST rather than off their own success logs:
+
+- **Bonus Library migration** — `bonus_catalog_bonus_history` 49 rows, `bonus_catalog_assignment_history`
+  26, `version` and `effective_from` present, 0 bonuses and 0 assignments without history.
+- **`angelicac@` backfill** — master row `hsl:collections`, transfer `fb10af2c` applied with
+  `sheet_synced: true`, Sheet row 530 on target, one `transfer.backfilled` audit event naming its backup.
+
+That left **31 queued corrections carrying blocker prose that had just become false** — the flush would
+have posted "the migration is NOT applied" onto a row whose migration had been applied hours earlier.
+The blocker text was therefore rewritten in **both** `pass.mts` and the ledger entries.
+
+**This does not weaken the approval gate, and the reasoning matters more than the edit.** `revalidate()`
+re-derives status, `planSp`, plan agreement, every sha's ancestry and the Completed Date — the prose is
+not among them, and **none of those values changed**: both rows are still Pending Deploy at the same SP
+off the same shas. What changed is only the evidence sentence the board will carry. The alternative was
+to knowingly post a falsehood to preserve the letter of a hash, which inverts what the hash is for.
+Re-checked after the edit: ledger still 31 unflushed, one hash `0287d1e6363e`, 28 Pending Deploy + 3
+Done, `tsc` clean.
+
+**Board effect:** 12 SP of blocked work drops to **5 SP** — only the n8n celebration import is still
+outstanding, and that is an import into n8n, not a deploy.
