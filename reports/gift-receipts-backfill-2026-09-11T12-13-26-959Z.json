@@ -1,0 +1,131 @@
+{
+  "generatedAt": "2026-09-11T12:13:26.960Z",
+  "mode": "report",
+  "sourceFile": "Work Anniversary Gift Tracker - Copy of HRIS Active Ppl.csv",
+  "csvPath": "C:\\Users\\Kane\\Desktop\\simple-hris\\references\\docs\\Work Anniversary Gift Tracker - Copy of HRIS Active Ppl.csv",
+  "counts": {
+    "people": 1229,
+    "assertions": 1434,
+    "received": 842,
+    "owed": 592,
+    "skippedNotDue": 8398,
+    "skippedUnreadable": 0,
+    "active": 1121,
+    "offboarded": 95,
+    "unresolved": 13
+  },
+  "unresolved": [
+    "scottc@simple.biz",
+    "lennyt@simple.biz",
+    "kevt@simple.biz",
+    "jirehg@simple.biz",
+    "lorenzos@simple.biz",
+    "jedh@simple.biz",
+    "ramd@simple.biz",
+    "brigittel@simple.biz",
+    "joyb@simple.biz",
+    "nancyo@simple.biz",
+    "jo@simple.biz",
+    "garya@simple.biz",
+    "theav@simple.biz"
+  ],
+  "startDivergence": [
+    {
+      "workEmail": "masa@simple.biz",
+      "sheet": "2026-08-02",
+      "master": "2026-09-07"
+    },
+    {
+      "workEmail": "jant@simple.biz",
+      "sheet": "2026-08-09",
+      "master": "2026-03-23"
+    }
+  ],
+  "noStartDate": [],
+  "problems": [
+    {
+      "kind": "received_after_gap",
+      "line": 126,
+      "workEmail": "jerryl@simple.biz",
+      "milestoneIndex": 3,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 156,
+      "workEmail": "isaact@simple.biz",
+      "milestoneIndex": 2,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 162,
+      "workEmail": "mariam@simple.biz",
+      "milestoneIndex": 2,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 162,
+      "workEmail": "mariam@simple.biz",
+      "milestoneIndex": 3,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 175,
+      "workEmail": "natel@simple.biz",
+      "milestoneIndex": 2,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 175,
+      "workEmail": "natel@simple.biz",
+      "milestoneIndex": 3,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 176,
+      "workEmail": "cobb@simple.biz",
+      "milestoneIndex": 2,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 176,
+      "workEmail": "cobb@simple.biz",
+      "milestoneIndex": 3,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 177,
+      "workEmail": "gladysp@simple.biz",
+      "milestoneIndex": 2,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 177,
+      "workEmail": "gladysp@simple.biz",
+      "milestoneIndex": 3,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 446,
+      "workEmail": "rhysl@simple.biz",
+      "milestoneIndex": 2,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_before_due",
+      "line": 446,
+      "workEmail": "rhysl@simple.biz",
+      "milestoneIndex": 2,
+      "detail": "recorded as received but the 12-month milestone has not arrived — imported as stated"
+    }
+  ]
+}
