@@ -1468,3 +1468,79 @@ longer fits a UTC day beside its verify and must be its own day's work. The trad
 new rows land with **no epic relation** until that reconcile adopts them by name. Spent today before
 staging: ≈17 (verify pass 23) + 2 (S28 group probe) + ≈17 (review) read calls. Verify after apply with
 `verify-one.mts` per row (33 calls), then a full `verify.mts` accepting the known relation gap.
+
+## Pass 25 — 2026-09-11 · STAGED, NOT APPLIED — supersedes pass 24
+
+Kane: *"All Sprint Tasks that hasnt been closed yet code wise lets close this please check our
+Commits."* Session `3e1173a4`, approval hash **`0287d1e6363e`**. Nothing has been written to the board.
+
+### Why a new hash and not pass 24's
+
+Pass 24 was staged on 2026-09-10 (`56bb8488`, hash `7b4160be5982`) and **never applied**. `apply.mts`
+refuses a proposal minted for a different pass date, so re-minting was mandatory, not a choice. That
+made it the moment to apply the skill's own rule about staged rows: **a STAGED row's status is a
+snapshot of a claim, and nothing re-checks its prose.** Every row was therefore re-derived from git
+rather than carried forward — all **62 shas re-checked** with `git merge-base --is-ancestor <sha>
+origin/main` on 2026-09-11, and every one passes. `HEAD == origin/main == bd7f8402`.
+
+### What "close everything done code-wise" can and cannot mean
+
+Code-wise-done is the definition of **Pending Deploy**: on `origin/main`, nobody has said they opened
+it in prod. It is not Done, because Done is bonus-bearing. So the pass takes every row as far as git
+can prove and stops, and the Done question goes to Kane as an explicit list of 33 rows. Three rows do
+close Done, each on evidence that is a measurement or a use rather than an assumption.
+
+### The board's open set, read before anything was staged
+
+`pull-state.mts` (~15 calls): **254 of our rows, 27 not Done** — 17 already Pending Deploy (the honest
+ceiling), 4 In Progress, 6 Ready to Start — plus **28 rows the plan declared that the board had never
+had**, pass 24's, uncreated. The 4 In Progress rows all advance: their shas were not ancestors when
+pass 23 capped them, and are now.
+
+### The six Ready to Start rows, each measured rather than assumed
+
+| Row | Verdict |
+|---|---|
+| Audit writes fail silently | **→ Pending Deploy.** `ddf4c790` does what the row names. |
+| Lawang rate shadow | **→ Done 2026-08-18.** The `--apply` had already run — see below. |
+| Five employees on a bare-`hsl` override | **Stays open, measured.** Exactly 5 employee-scope rows still carry `department_key 'hsl'` (`glendac@`, `domv@`, `beao@`, `joee@`, `jesr@`), untouched since the *"rate-divergence fix 2026-07-29"* that seeded them. |
+| Deletion cron never re-checks the roster | **Stays open, measured in code.** `process-scheduled-deletions/route.ts` contains no roster re-check; `f0eadd18` is the audit that found it, not a fix. |
+| Legacy rates-sheet → hurupay | **Stays open.** A Spike owing a decision; no guard exists in `sync-rates-from-sheet`. |
+| Google Sheet sync crons | **UNVERIFIED — a question, not a write.** The four routes have existed since 2026-05-07/09, but `vercel.json` schedules only `process-scheduled-deletions` and `apply-scheduled-transfers`. Whether n8n triggers the four sheet syncs externally cannot be settled from this repo, and the skill forbids a silent downgrade in either direction. |
+
+### The third Done row is new, and it corrects a false PENDING
+
+Chasing *"what is actually finished"* through those six rows turned up one whose blocker was folklore.
+Read-only probe 2026-09-11: `payment_catalog_pay_structures/pay_mse34sctiw8xsiio` reads **225 / 337.5
+/ `hogan_smith_law`**, stamped `updated_by: fix-lawang-rate-shadow.mts` at **2026-08-18T20:09:14Z** (it
+was created 2026-08-04 by `jakec@` at 175 / `lead_gen`); `employee_rate_history` holds the matching
+**225 row effective 2026-08-16** with the same `created_by` at the same second; the sheet mirror
+`03b7882a-…` reads 225 / 337.5. All three of the script's declared steps landed. Both `hris-plan.ts`
+and `lawang-rate-shadow-duplicate-identity` had said *"`--apply` BLOCKED — NOT YET RUN"* for three
+weeks, and the board row sat **Ready to Start** on that claim. Same grade of evidence that closed the
+Hubstaff rename chore, and dated the same way — `dateBasis: 'commit'` on `4447e404` (2026-08-18), the
+day the script both landed and ran.
+
+It stays in **Backlog**, which `selfcheck()` exempts from the window check (*"unscheduled, so no date
+can be wrong for it"*), so closing it needs **no sprint move** and the pass stays on the cheap path.
+Re-filing it to Sprint 27 is a grooming call for Kane, not a correctness one. This is the fourth time
+in four weeks that a carried-forward PENDING was wrong when probed — see Open items 6, 10, 22b, 33.
+
+### New rows since pass 24's range closed
+
+Two features landed after `a56ce28c`: the **COE facts** work (`47232941` + `4c15670d`, 5 SP, HRIS-18)
+— which is load-bearing because it did *not* add a second bonus reader, lifting
+`src/lib/payroll/employee-paystubs.ts` (863 lines) out of the paystub route so the COE, the paystub
+modal and Penny all read one `listEmployeePayStubs` — and the **wizard Reports Time Adj. columns**
+(`bd7f8402`, 3 SP, HRIS-02a), whose whole point is that the delta is staged on the payload and never
+recomputed at export. `e257eb41` is the session log: docs, no row, consistent with every prior pass.
+
+### Scope and path
+
+**30 rows created · 254 patched · 36 corrected · 0 sprint moves.** 3 Done (Completed Dates 2026-08-18
+… 2026-09-09), 33 held Pending Deploy. Still `--only-new` — no new epic, no re-scored row, no sprint
+move — at 3 label gates + 36 × (lookup + create-or-set + update) ≈ **110 calls**. A full reconcile
+would now re-patch **284 tasks + 37 epics** first (≈425 calls) and needs its own UTC day. The trade is
+unchanged: the 30 created rows carry **no epic relation** until that reconcile adopts them by name.
+Spent before staging: 1 (S28 probe) + ~15 (pull-state) + ~17 (review). Verify with `verify-one.mts`
+per row, then a full `verify.mts` accepting the known relation gap.

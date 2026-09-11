@@ -732,10 +732,15 @@ export const PLAN_TASKS: PlanTask[] = [
   // branch, so it lands INCONCLUSIVE instead of NOT APPLIED. Consequence: every table-creating
   // migration that never ran was counted APPLIED, and the S27 migrations row was closed Done on it.
   { epic: 'HRIS-15', name: 'audit-pending-migrations reports a MISSING table as APPLIED — head:true returns no error', type: 'Bug', sp: 3, done: true, sprint: 'S27', priority: 'Critical' },
-  // 3 SP: hours ride lawangc@ against a stale 175 employee-scope override while the person's real
-  // identity sits on another row. The fix script exists (committed inside a commit messaged "ss") and
-  // has never been run — it needs Kane's --apply and a SELECT backup first.
-  { epic: 'HRIS-02b', name: 'Lawang rate shadow: hours ride lawangc@ on a stale 175 employee-scope override', type: 'Bug', sp: 3, done: false, sprint: 'BL', priority: 'High' },
+  // 3 SP, done:TRUE 2026-09-11 on a MEASUREMENT that contradicts the note above it and the memory
+  // entry: the --apply DID run. Read-only probe 2026-09-11 —
+  // payment_catalog_pay_structures/pay_mse34sctiw8xsiio now reads 225 / 337.5 / hogan_smith_law with
+  // updated_by 'fix-lawang-rate-shadow.mts' at 2026-08-18T20:09:14Z; employee_rate_history holds the
+  // matching 225 row effective 2026-08-16 created_by the same script at the same second; the sheet
+  // mirror 03b7882a-… reads 225 / 337.5. All three of the script's steps landed. Both the plan
+  // comment and [[lawang-rate-shadow-duplicate-identity]] said "--apply BLOCKED, NOT YET RUN" —
+  // folklore, corrected here. Still open and NOT this row: merging the two master rows.
+  { epic: 'HRIS-02b', name: 'Lawang rate shadow: hours ride lawangc@ on a stale 175 employee-scope override', type: 'Bug', sp: 3, done: true, sprint: 'BL', priority: 'High' },
   // 2 SP: measured today — glendac@, domv@, beao@, joee@ and jesr@ each hold a scope:'employee' row in
   // payment_catalog_pay_structures keyed to department_key 'hsl', seeded by "rate-divergence fix
   // 2026-07-29". No DEPT-scope bare-hsl row exists, so the parent-cutover claim holds; but an
@@ -1652,4 +1657,22 @@ export const PLAN_TASKS: PlanTask[] = [
   // right, 0 px page scroll at 1440×900 / 1366×768 / 1280×720 (mobile still scrolls). Nothing on the
   // page decides anything. ManagerApp.tsx diff 1,553 lines. Doc arrived in ba990833 (Sep 3).
   { epic: 'HRIS-10', name: 'Manager Overview rebuilt — what needs me on the left as one ordered queue, the roster on the right, four stat cells, and no page scroll at lg and up', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+
+  // ── PASS 25 · the two features that landed AFTER pass 24's range closed at a56ce28c ──────────────
+  // 5 SP: 14 files / 1,577 insertions. The certificate stops being a dates-and-salary document — it
+  // states the profile role (OPTIONAL: omitted entirely when unset, never guessed) and the bonuses
+  // earned over the last 4 COMPLETED pay cycles. The load-bearing part is ONE reader:
+  // src/lib/payroll/employee-paystubs.ts (863 lines) lifted out of app/api/employee/paystub/route.ts
+  // (-804), so the COE, the Employee paystub modal and Penny all read bonuses through the same
+  // listEmployeePayStubs — PAB + Tech + Perf, lookback clamped to the person's start date. coe-facts
+  // +241 with 164 lines of new tests; 4c15670d pins that the SIGNED copy carries the same facts as
+  // the draft (one resolver, one renderer, no opt-out) with coe-request-paths.test.ts (82 lines).
+  { epic: 'HRIS-18', name: 'The COE states the profile role and the bonuses earned over the last 4 pay cycles, through the one reader the paystub modal already uses', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  // 3 SP: 12 files / 495 insertions. The Reports XLSX grows Time Adj. Hours / Time Adj. Pay / Time
+  // Adj. Dates. The rule is the whole point and is stated in the row name: the delta is STAGED on the
+  // payload at lock time and read back verbatim — never recomputed at export, so a replayed week
+  // exports what was paid rather than what today's adjustments would say. Zeros are not null:
+  // report-rows +83 with 120 lines of tests, a new replay-finals-overlay.ts (31) with 74. The
+  // paystub still hides the delta — that is Open, not this row.
+  { epic: 'HRIS-02a', name: 'Payroll Wizard Reports XLSX carries Time Adj. Hours, Pay and Dates — the delta is staged on the payload, never recomputed at export', type: 'Feature', sp: 3, done: false, sprint: 'S28', priority: 'Medium' },
 ];

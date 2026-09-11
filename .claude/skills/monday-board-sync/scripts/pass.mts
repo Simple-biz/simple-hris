@@ -702,9 +702,9 @@ import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-09-10';
-export const AUDIT_RANGE = '67858c44..a56ce28c (Sep 3 afternoon – Sep 10)';
-export const AUDIT_COMMITS = 69;
+export const PASS_DATE = '2026-09-11';
+export const AUDIT_RANGE = '67858c44..bd7f8402 (Sep 3 afternoon – Sep 10 evening)';
+export const AUDIT_COMMITS = 74;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -731,6 +731,68 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
+  // ── PASS 25 · 2026-09-11 · re-minted from PASS 24, which was staged and never applied ────────────
+  // Kane: "All Sprint Tasks that hasnt been closed yet code wise lets close this please check our
+  // Commits."
+  //
+  // WHY A NEW PASS AND NOT THE OLD HASH. Pass 24 (`7b4160be5982`, commit 56bb8488) was staged on
+  // 2026-09-10 and never applied — Sep 10 log, Open item 15. `apply.mts` refuses a proposal minted
+  // for a different pass date, so the hash had to be re-minted regardless. Everything below was
+  // therefore RE-DERIVED from git today rather than carried forward: all 62 shas in this file were
+  // re-checked with `git merge-base --is-ancestor <sha> origin/main` on 2026-09-11 and every one
+  // passes. HEAD == origin/main == bd7f8402. The staged prose was not trusted — the skill's own rule
+  // after a staged row shipped underneath its "NOT STARTED" wording.
+  //
+  // WHAT "CLOSE EVERYTHING DONE CODE-WISE" CAN AND CANNOT MEAN. Code-wise-done is exactly the
+  // definition of **Pending Deploy**: on origin/main, nobody has said they opened it in prod. It is
+  // NOT Done. Done is a bonus-bearing claim and needs Kane naming the surface he clicked. So this
+  // pass takes every row as far as git can prove and no further, and the Done question is put to him
+  // with the review as a list, not assumed from the instruction. Three rows close Done because their
+  // evidence is a measurement or a use, not an assumption — see below.
+  //
+  // THE BOARD'S OPEN SET, read today (pull-state, ~15 calls): 254 of our rows on Sprint Tasks, 27 of
+  // them not Done — 17 Pending Deploy (already at the honest ceiling), 4 In Progress, 6 Ready to
+  // Start — plus 28 rows the plan declares that the board has never had (pass 24's, uncreated).
+  //
+  // THE THIRD DONE ROW IS NEW, AND IT CORRECTS A FALSE PENDING. Chasing "what is actually finished"
+  // through the six Ready to Start rows turned up one whose claim was folklore. Read-only probe
+  // 2026-09-11: the Lawang rate-shadow fix script DID run — pay_mse34sctiw8xsiio reads 225 / 337.5 /
+  // hogan_smith_law stamped `updated_by: fix-lawang-rate-shadow.mts` at 2026-08-18T20:09:14Z, the
+  // matching 225 rate-history row effective 2026-08-16 carries the same stamp at the same second, and
+  // the sheet mirror reads 225. All three steps landed. Both the plan comment and
+  // [[lawang-rate-shadow-duplicate-identity]] said "--apply BLOCKED, NOT YET RUN". Same grade of
+  // evidence as the Hubstaff rename chore, and dated the same way: `dateBasis: 'commit'` on
+  // 4447e404 (2026-08-18), the day the script both landed and ran. It stays in **Backlog** — the row
+  // is unscheduled and selfcheck exempts Backlog from the window check, so closing it needs no sprint
+  // move and the pass stays on the cheap path. Re-filing it to S27 is a grooming call for Kane.
+  //
+  // THE OTHER FIVE READY-TO-START ROWS WERE ALSO MEASURED, AND FOUR STAY OPEN — the skill's rule that
+  // a PENDING claim is evidence in BOTH directions:
+  //   • "Five employees … retired bare hsl" — MEASURED OPEN. Exactly 5 employee-scope rows still
+  //     carry department_key 'hsl' (glendac@, domv@, beao@, joee@, jesr@), untouched since the
+  //     "rate-divergence fix 2026-07-29" that seeded them. Unchanged.
+  //   • "Deletion cron never re-checks the live roster" — OPEN in the code:
+  //     app/api/cron/process-scheduled-deletions/route.ts contains no roster re-check. f0eadd18 is
+  //     the AUDIT that found it, not a fix.
+  //   • "Legacy rates-sheet cell can route null-preferred → hurupay" — a Spike owing a decision; no
+  //     guard exists in sync-rates-from-sheet. Unchanged.
+  //   • "Audit writes fail silently" — ADVANCES to Pending Deploy on ddf4c790, which is what the row
+  //     asks for. Below with the other four advances.
+  //   • "Google Sheet sync crons (master / rates / HSL / offboarded)" — **UNVERIFIED, and left
+  //     alone.** The four routes exist and have since 2026-05-07/09, but `vercel.json` schedules only
+  //     process-scheduled-deletions and apply-scheduled-transfers — nothing in the repo schedules the
+  //     four sheet syncs, and whether n8n triggers them externally cannot be settled from here. The
+  //     skill forbids a silent downgrade either way, so it is a question for Kane, not a write.
+  //
+  // NEW SINCE PASS 24's RANGE CLOSED: two features in 47232941 + 4c15670d (COE facts) and bd7f8402
+  // (wizard Reports Time Adj. columns). e257eb41 is the session log — docs, no row, consistent with
+  // every prior pass.
+  //
+  // COST AND PATH. Still `--only-new`: no new epic, no re-scored row, no sprint move. 3 label gates +
+  // 36 × (lookup + create-or-set + update) ≈ 110 calls. A full reconcile would now re-patch 284 tasks
+  // + 37 epics first (~425 calls) and needs its own UTC day. The trade is unchanged and stated: the
+  // 30 created rows carry NO epic relation until a later full reconcile adopts them by name.
+
   // ── PASS 24 · 2026-09-10 · the range 67858c44..a56ce28c (69 commits, Sep 3 afternoon – Sep 10) ────
   // Kane: "Monday skill all withheld SP lets move it to monday board."
   //
@@ -1029,7 +1091,34 @@ export const ROWS: PassRow[] = [
     status: 'Pending Deploy',
     shas: ['ddf4c790'],
     basis:
-      'ADVANCED Ready to Start → Pending Deploy on 2026-09-10 because ddf4c790 does exactly what this row names, without a new row: insertAuditLog and insertAuditLogs now call reportAuditWriteFailure on every failure path — "[audit] write FAILED — event lost" with the actions and resources — so a lost event is no longer indistinguishable from an action that never happened, at every one of the void call sites at once (182 of 228 by the fix\'s own count). Destructive paths go further and READ the returned error, writing the trail first and abandoning the delete if it fails (purgeAuditLogBefore, the orphanage and HSL delete routes). The observability half is structural; the per-call-site awaiting it does not attempt, by design. On origin/main; a failed audit write has not been provoked in prod to see the log line.',
+      'ADVANCED Ready to Start → Pending Deploy on 2026-09-10 because ddf4c790 does exactly what this row names, without a new row: insertAuditLog and insertAuditLogs now call reportAuditWriteFailure on every failure path — "[audit] write FAILED — event lost" with the actions and resources — so a lost event is no longer indistinguishable from an action that never happened, at every one of the void call sites at once (182 of 228 by the fix\'s own count). Destructive paths go further and READ the returned error, writing the trail first and abandoning the delete if it fails (purgeAuditLogBefore, the orphanage and HSL delete routes). The observability half is structural; the per-call-site awaiting it does not attempt, by design. On origin/main; a failed audit write has not been provoked in prod to see the log line. RE-DERIVED 2026-09-11: ddf4c790 is still an ancestor of origin/main and the row is unchanged.',
+  },
+
+  // ── PASS 25 · new rows (2) — the work that landed after a56ce28c ─────────────────────────────────
+  {
+    name: 'The COE states the profile role and the bonuses earned over the last 4 pay cycles, through the one reader the paystub modal already uses',
+    status: 'Pending Deploy',
+    shas: ['47232941', '4c15670d'],
+    basis:
+      'Session 47232941/4c15670d, 2026-09-10. The certificate stops being dates-and-salary: it states the profile role — OPTIONAL, omitted entirely when unset and never guessed — and the bonuses earned over the last 4 COMPLETED pay cycles (PAB + Tech + Perf). The load-bearing change is that this did NOT add a second bonus reader: src/lib/payroll/employee-paystubs.ts (863 lines) is lifted out of app/api/employee/paystub/route.ts (-804) so the COE, the Employee paystub modal and Penny all read through one listEmployeePayStubs, with the lookback clamped to the person\'s start date. coe-facts +241 with 164 lines of new tests; 4c15670d then pins that the SIGNED copy carries the same facts as the draft — one resolver, one renderer, no opt-out — with coe-request-paths.test.ts (82 lines). Both on origin/main (ancestor-checked 2026-09-11). Not Done: nobody has said a generated certificate was read in prod with the role line and the four-cycle bonus block on it.',
+  },
+  {
+    name: 'Payroll Wizard Reports XLSX carries Time Adj. Hours, Pay and Dates — the delta is staged on the payload, never recomputed at export',
+    status: 'Pending Deploy',
+    shas: ['bd7f8402'],
+    basis:
+      'Session bd7f8402, 2026-09-10. The Reports XLSX grows Time Adj. Hours / Time Adj. Pay / Time Adj. Dates, and the rule is the whole feature: the delta is STAGED on the payload at lock time and read back verbatim, never recomputed at export — so a replayed week exports what was actually paid rather than what today\'s adjustments would say, and a zero is written as a zero rather than a null. report-rows +83 with 120 lines of tests, a new replay-finals-overlay.ts (31) with 74 of its own, plus paystub-recovery and four docs. On origin/main (ancestor-checked 2026-09-11). Not Done: the XLSX has not been reported downloaded and read in prod. The paystub still hides the same delta — that is an Open item, not this row.',
+  },
+
+  // ── PASS 25 · the false PENDING (1) ──────────────────────────────────────────────────────────────
+  {
+    name: 'Lawang rate shadow: hours ride lawangc@ on a stale 175 employee-scope override',
+    status: 'Done',
+    completed: '2026-08-18',
+    dateBasis: 'commit',
+    shas: ['4447e404'],
+    basis:
+      'CLOSED 2026-09-11 on a read-only MEASUREMENT that contradicts both the plan comment and [[lawang-rate-shadow-duplicate-identity]], which each said the --apply was BLOCKED and had never run. It ran. payment_catalog_pay_structures/pay_mse34sctiw8xsiio now reads regular 225 / OT 337.5 / department_key hogan_smith_law, stamped updated_by "fix-lawang-rate-shadow.mts" at 2026-08-18T20:09:14Z (it was created 2026-08-04 by jakec@ at 175/lead_gen). employee_rate_history holds the matching 225 / 337.5 row effective 2026-08-16 with created_by the same script at the same second, beside the original 175 row effective 2026-08-04. The sheet mirror 03b7882a-98fd-4c48-ab34-bab59cf2c568 reads 225 / 337.5. That is all three of the script\'s declared steps, each verified by the script\'s own stamp — the same grade of evidence that closed the Hubstaff rename chore. Dated by commit: 4447e404 (the commit messaged "ss" that carried the 145-line script) landed 2026-08-18, the day the script also ran. The row stays in Backlog, which selfcheck exempts from the window check; re-filing it to Sprint 27 is a grooming call, not a correctness one. NOT closed by this row and still open: merging the two Lawang master rows, and the five employees who still hold a bare-hsl override — measured present again 2026-09-11.',
   },
 ];
 
