@@ -806,3 +806,174 @@ export function buildCyclePerformance(
     },
   };
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * The trend chart's window rule.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * What a single column on the trend chart knows about its week.
+ *
+ * FOUR states, and the fourth is why this is not a boolean:
+ *
+ *   `closed`          a close-out exists AND it has a payable denominator, so
+ *                     there is a real rate. This is the only state that draws a
+ *                     column in the rate strip.
+ *   `no_denominator`  HRIS paid people this week, but nothing recorded who was
+ *                     still owed — so `paid` is a real number and `rate` is
+ *                     null. Most of the series.
+ *   `not_run`         `paid == null`: the week exists, and **no dispatch row
+ *                     does**. Live that is 2026-06-14 through 2026-07-11 —
+ *                     four weeks where payroll happened somewhere other than
+ *                     HRIS. Kane, 2026-09-11, remembered this as *"there was
+ *                     one time we paid like 300 only but stopped"*.
+ *
+ * `not_run` is kept apart from `no_denominator` deliberately. Merging them would
+ * make the four-week stop invisible, and it is the single most informative thing
+ * in the series — the chart exists to show exactly that kind of gap closing.
+ *
+ * It must also never be confused with a week that ran and paid NOBODY. That week
+ * would carry `paid: 0`, a measured fact; `not_run` carries `paid: null`, the
+ * absence of one. Three weeks of "we did not use HRIS" rendered as "we paid
+ * nobody" would read as a catastrophe that did not happen.
+ */
+export type CycleTrendState = 'closed' | 'no_denominator' | 'not_run';
+
+/** One column. Already classified — the component decides nothing. */
+export interface CycleTrendPoint {
+  sourceFile: string;
+  label: string;
+  periodStart: string | null;
+  periodEnd: string;
+  state: CycleTrendState;
+  /** 0–1, and non-null ONLY when `state === 'closed'`. */
+  rate: number | null;
+  /** Distinct people paid. Null exactly when `state === 'not_run'`. */
+  paid: number | null;
+  /** Payable-but-unpaid. Only a closed cycle has one. Tooltip only. */
+  unpaid: number | null;
+  payable: number | null;
+}
+
+export interface CycleTrend {
+  /** **Oldest first** — the opposite of the table above it, because this is a
+   *  time axis and time runs left to right. */
+  points: CycleTrendPoint[];
+  /**
+   * The first `periodEnd` HRIS ever paid anyone on — the chart's left edge.
+   *
+   * Defined as the earliest `periodEnd` among cycles with a non-null `paid`,
+   * which is "the first week a dispatch row exists for". Live: **2026-05-24**.
+   *
+   * This is deliberately NOT the `pre_closeout` boundary (the first CLOSED
+   * `periodEnd`, live 2026-08-08). That one answers *"did close-outs exist
+   * yet"*; this one answers *"were we paying through HRIS yet"*. They are
+   * eleven weeks apart and mean different things — Kane, 2026-09-11: *"Only the
+   * cycles where we actually started using HRIS even though we havent closed
+   * it ... the other weeks can be marked as NO HRIS Yet"*.
+   *
+   * Null when HRIS has never paid anyone, in which case `points` is empty.
+   */
+  hrisStart: string | null;
+  /** Weeks before `hrisStart`, collapsed into one labelled block (Kane, Q4). */
+  preHrisCycles: number;
+  /** The last of those weeks, so the block can say what it covers. */
+  preHrisLastPeriodEnd: string | null;
+  /** Largest `paid` in the window — the people-paid strip's axis top. 0 when none. */
+  maxPaid: number;
+}
+
+/**
+ * Build the trend series from the rows the tab already holds.
+ *
+ * Cycles with **no `periodEnd` are dropped entirely**: a time axis cannot place
+ * them, and guessing a position is worse than omitting one. They remain in the
+ * per-cycle table below, which is the surface that lists everything.
+ */
+export function selectTrendCycles(
+  cycles: readonly CyclePerformanceRow[],
+): CycleTrend {
+  const dated = cycles.filter(
+    (c): c is CyclePerformanceRow & { periodEnd: string } => typeof c.periodEnd === 'string' && c.periodEnd !== '',
+  );
+
+  let hrisStart: string | null = null;
+  for (const c of dated) {
+    if (c.paid == null) continue;
+    if (!hrisStart || c.periodEnd < hrisStart) hrisStart = c.periodEnd;
+  }
+
+  // No dispatch row has ever existed → nothing to chart, and every week is
+  // "before HRIS". Not an error, and not an empty chart pretending to be zero.
+  if (!hrisStart) {
+    let last: string | null = null;
+    for (const c of dated) if (!last || c.periodEnd > last) last = c.periodEnd;
+    return {
+      points: [],
+      hrisStart: null,
+      preHrisCycles: dated.length,
+      preHrisLastPeriodEnd: last,
+      maxPaid: 0,
+    };
+  }
+
+  const inEra = dated.filter((c) => c.periodEnd >= hrisStart);
+  const before = dated.filter((c) => c.periodEnd < hrisStart);
+
+  let preHrisLastPeriodEnd: string | null = null;
+  for (const c of before) {
+    if (!preHrisLastPeriodEnd || c.periodEnd > preHrisLastPeriodEnd) {
+      preHrisLastPeriodEnd = c.periodEnd;
+    }
+  }
+
+  const points: CycleTrendPoint[] = inEra.map((c) => {
+    // A CLOSED cycle with nothing payable has no rate either (the record exists
+    // but carries no denominator). It is not `closed` for charting purposes —
+    // `closed` means "draws a column", and there is nothing to draw.
+    const state: CycleTrendState =
+      c.status === 'closed' && c.measurable && c.rate != null
+        ? 'closed'
+        : c.paid == null
+          ? 'not_run'
+          : 'no_denominator';
+    return {
+      sourceFile: c.sourceFile,
+      label: c.label,
+      periodStart: c.periodStart,
+      periodEnd: c.periodEnd,
+      state,
+      // Belt and braces: a rate may only ride on a `closed` point, so no
+      // renderer can draw a column for a week that has no denominator.
+      rate: state === 'closed' ? c.rate : null,
+      paid: c.paid,
+      unpaid: c.unpaid,
+      payable: c.payable,
+    };
+  });
+
+  // Oldest first, total order — tie-broken on the source file so a redraw never
+  // reshuffles two cycles that share a period end.
+  points.sort((a, b) =>
+    a.periodEnd === b.periodEnd
+      ? a.sourceFile < b.sourceFile
+        ? -1
+        : a.sourceFile > b.sourceFile
+          ? 1
+          : 0
+      : a.periodEnd < b.periodEnd
+        ? -1
+        : 1,
+  );
+
+  let maxPaid = 0;
+  for (const p of points) if (p.paid != null && p.paid > maxPaid) maxPaid = p.paid;
+
+  return {
+    points,
+    hrisStart,
+    preHrisCycles: before.length,
+    preHrisLastPeriodEnd,
+    maxPaid,
+  };
+}

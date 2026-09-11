@@ -25,6 +25,7 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import {
   ACCENT,
+  CycleTrendChart,
   KpiCard,
   OpenDetailButton,
   PerfDetailModal,
@@ -37,11 +38,12 @@ import {
   num,
   pct,
 } from '@/components/admin/performance-ui';
-import type {
-  CyclePerformanceRow,
-  CyclePerformanceSummary,
-  MonthPerformanceRow,
-  ProcessorBreakdownRow,
+import {
+  selectTrendCycles,
+  type CyclePerformanceRow,
+  type CyclePerformanceSummary,
+  type MonthPerformanceRow,
+  type ProcessorBreakdownRow,
 } from '@/lib/admin/cycle-performance';
 
 interface ApiResponse {
@@ -113,6 +115,15 @@ export default function PayrollCyclePerformance() {
   }, []);
 
   const totals = data?.totals ?? null;
+  /**
+   * The trend series. Derived from the rows already on screen — no second
+   * fetch — and memoised so the 120s poll does not re-sort 27 cycles into a
+   * new array identity on every tick and restart the columns' animation.
+   */
+  const trend = React.useMemo(
+    () => (data ? selectTrendCycles(data.cycles) : null),
+    [data],
+  );
   const openMonthRow = React.useMemo(
     () => data?.months.find((m) => m.month === openMonth) ?? null,
     [data, openMonth],
@@ -180,6 +191,16 @@ export default function PayrollCyclePerformance() {
               title="Cycles that happened after close-outs existed and were never closed. Their payments are real and shown in the table, but nothing recorded who was still owed, so they carry no rate and are in no percentage above."
             />
           </div>
+
+          {/* ── Trend — the whole HRIS era, oldest to newest. Sits above the
+              month cards so the tab reads: headline → trend → months →
+              per-cycle detail (Kane, 2026-09-11). ── */}
+          {trend && (
+            <section className="flex flex-col gap-2">
+              <SectionLabel>Week by week</SectionLabel>
+              <CycleTrendChart trend={trend} accent={ACCENT_KEY} />
+            </section>
+          )}
 
           {/* ── Month cards ── */}
           {data.months.length > 0 && (

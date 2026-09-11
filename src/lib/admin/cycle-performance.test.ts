@@ -24,6 +24,7 @@ import {
   measureCycle,
   monthKeyOf,
   monthLabel,
+  selectTrendCycles,
   summariseObservedCycle,
   type ObservedCycle,
 } from '@/lib/admin/cycle-performance';
@@ -719,4 +720,155 @@ test('an unresolved label falls back to the raw id, never to blank', () => {
     rec({ file: 'x', paid: 1, byProcessor: { mystery: { count: 1, usd: 1, php: 50 } } }),
   );
   assert.equal(row.processors[0]!.label, 'mystery');
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * selectTrendCycles — the trend chart's window.
+ *
+ * The properties pinned here are the ones that would make the chart LIE:
+ *  - a week with no rate must never become a column of height 0 (reads as 0%)
+ *  - "not run through HRIS" (paid null) must stay distinct from "ran and paid
+ *    nobody" (paid 0)
+ *  - the window opens where HRIS started PAYING, not where close-outs started
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** A bare row, the way the tab receives one. */
+function trendRow(over: {
+  file: string;
+  periodEnd: string | null;
+  paid?: number | null;
+  status?: 'closed' | 'unclosed' | 'pre_closeout';
+  rate?: number | null;
+}) {
+  const status = over.status ?? 'pre_closeout';
+  const measurable = status === 'closed' && over.rate != null;
+  return {
+    sourceFile: over.file,
+    label: over.file,
+    periodStart: null,
+    periodEnd: over.periodEnd,
+    closedAt: status === 'closed' ? '2026-08-14T00:00:00.000Z' : null,
+    month: monthKeyOf(over.periodEnd),
+    status,
+    paid: over.paid === undefined ? 100 : over.paid,
+    unpaid: measurable ? 10 : null,
+    payable: measurable ? 110 : null,
+    rate: measurable ? (over.rate ?? null) : null,
+    measurable,
+    employeesPaid: null,
+    contractorsPaid: null,
+    reconciledPaid: 0,
+    recordsOutstanding: null,
+    paidUSD: 0,
+    paidPHP: 0,
+    lastActivityAt: null,
+    paidPayments: null,
+    processors: [],
+  };
+}
+
+/** The live shape, 2026-09-11: HRIS starts, stops four weeks, restarts at 330. */
+const LIVE_TREND = [
+  trendRow({ file: 'm01', periodEnd: '2026-03-07', paid: null }),
+  trendRow({ file: 'm02', periodEnd: '2026-05-17', paid: null }),
+  trendRow({ file: 'h01', periodEnd: '2026-05-31', paid: 803 }),
+  trendRow({ file: 'h02', periodEnd: '2026-06-07', paid: 811 }),
+  trendRow({ file: 'h03', periodEnd: '2026-06-14', paid: 848 }),
+  trendRow({ file: 'g01', periodEnd: '2026-06-21', paid: null }),
+  trendRow({ file: 'g02', periodEnd: '2026-06-27', paid: null }),
+  trendRow({ file: 'g03', periodEnd: '2026-07-04', paid: null }),
+  trendRow({ file: 'g04', periodEnd: '2026-07-11', paid: null }),
+  trendRow({ file: 'r01', periodEnd: '2026-07-18', paid: 330 }),
+  trendRow({ file: 'c01', periodEnd: '2026-08-08', paid: 1051, status: 'closed', rate: 0.9886 }),
+];
+
+test('the window opens where HRIS started PAYING, not where close-outs started', () => {
+  const t = selectTrendCycles(LIVE_TREND);
+  assert.equal(t.hrisStart, '2026-05-31');
+  assert.equal(t.preHrisCycles, 2);
+  assert.equal(t.preHrisLastPeriodEnd, '2026-05-17');
+  // The close-out boundary is eight rows later and must not be the window.
+  assert.equal(t.points[0]!.periodEnd, '2026-05-31');
+  assert.equal(t.points.length, 9);
+});
+
+test('points come back OLDEST first — the table is newest first, a time axis is not', () => {
+  const ends = selectTrendCycles(LIVE_TREND).points.map((p) => p.periodEnd);
+  assert.deepEqual(ends, [...ends].sort());
+});
+
+test('the four-week stop is `not_run`, never `no_denominator`', () => {
+  const t = selectTrendCycles(LIVE_TREND);
+  const stopped = t.points.filter((p) => p.state === 'not_run').map((p) => p.periodEnd);
+  assert.deepEqual(stopped, ['2026-06-21', '2026-06-27', '2026-07-04', '2026-07-11']);
+});
+
+test('not-run and ran-but-paid-nobody are different states', () => {
+  // paid null = no dispatch row ever existed. paid 0 = rows existed, nobody paid.
+  const t = selectTrendCycles([
+    trendRow({ file: 'a', periodEnd: '2026-05-31', paid: 5 }),
+    trendRow({ file: 'b', periodEnd: '2026-06-07', paid: null }),
+    trendRow({ file: 'c', periodEnd: '2026-06-14', paid: 0 }),
+  ]);
+  assert.equal(t.points.find((p) => p.sourceFile === 'b')!.state, 'not_run');
+  assert.equal(t.points.find((p) => p.sourceFile === 'c')!.state, 'no_denominator');
+  assert.equal(t.points.find((p) => p.sourceFile === 'c')!.paid, 0);
+});
+
+test('a rate rides ONLY on a closed point — nothing else can draw a column', () => {
+  const t = selectTrendCycles(LIVE_TREND);
+  for (const p of t.points) {
+    if (p.state === 'closed') assert.ok(p.rate != null, `${p.sourceFile} closed without a rate`);
+    else assert.equal(p.rate, null, `${p.sourceFile} (${p.state}) carries a rate`);
+  }
+  assert.equal(t.points.filter((p) => p.state === 'closed').length, 1);
+});
+
+test('a CLOSED cycle with nothing payable draws no column', () => {
+  const t = selectTrendCycles([
+    trendRow({ file: 'empty', periodEnd: '2026-08-08', paid: 0, status: 'closed', rate: null }),
+  ]);
+  assert.equal(t.points[0]!.state, 'no_denominator');
+  assert.equal(t.points[0]!.rate, null);
+});
+
+test('maxPaid is the people-paid axis top and ignores the null weeks', () => {
+  assert.equal(selectTrendCycles(LIVE_TREND).maxPaid, 1051);
+});
+
+test('a cycle with no period end is dropped — a time axis cannot place it', () => {
+  const t = selectTrendCycles([
+    trendRow({ file: 'a', periodEnd: '2026-05-31', paid: 5 }),
+    trendRow({ file: 'undated', periodEnd: null, paid: 900 }),
+  ]);
+  assert.equal(t.points.length, 1);
+  assert.equal(t.maxPaid, 5, 'the undated row does not distort the axis either');
+});
+
+test('HRIS never used: no points, every week pre-HRIS, and no crash', () => {
+  const t = selectTrendCycles([
+    trendRow({ file: 'a', periodEnd: '2026-03-07', paid: null }),
+    trendRow({ file: 'b', periodEnd: '2026-03-14', paid: null }),
+  ]);
+  assert.deepEqual(t.points, []);
+  assert.equal(t.hrisStart, null);
+  assert.equal(t.preHrisCycles, 2);
+  assert.equal(t.preHrisLastPeriodEnd, '2026-03-14');
+  assert.equal(t.maxPaid, 0);
+});
+
+test('no cycles at all is an empty trend, not a throw', () => {
+  const t = selectTrendCycles([]);
+  assert.deepEqual(t.points, []);
+  assert.equal(t.hrisStart, null);
+  assert.equal(t.preHrisCycles, 0);
+  assert.equal(t.maxPaid, 0);
+});
+
+test('two cycles sharing a period end keep a total, stable order', () => {
+  const t = selectTrendCycles([
+    trendRow({ file: 'zzz', periodEnd: '2026-06-07', paid: 1 }),
+    trendRow({ file: 'aaa', periodEnd: '2026-06-07', paid: 2 }),
+  ]);
+  assert.deepEqual(t.points.map((p) => p.sourceFile), ['aaa', 'zzz']);
 });

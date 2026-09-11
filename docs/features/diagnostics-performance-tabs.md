@@ -27,7 +27,9 @@ Ship commit: see `git log` for `feat(diagnostics)` on 2026-09-04.
 | Shared chrome (KPI card, rate bar, loading modal, detail modal, share bar) | [`src/components/admin/performance-ui.tsx`](../../src/components/admin/performance-ui.tsx) |
 | Per-processor unpaid aggregation (the PII boundary) | [`src/lib/payroll/cycle-closeout.ts`](../../src/lib/payroll/cycle-closeout.ts) → `aggregateUnpaidByProcessor`, applied in `cycle-closeout-store.ts` → `toCycleCloseoutSummary` |
 | Processor labels (Kolan, x1153) | [`src/lib/payment-catalog/pay-processors-db.ts`](../../src/lib/payment-catalog/pay-processors-db.ts) → `readPayProcessorRegistry`, wrapped in the payroll route |
-| Read-only prod checks | `scripts/probe-closeout-by-processor.mjs` · `scripts/verify-cycle-processor-breakdown.ts` |
+| Trend chart rule (pure) | [`src/lib/admin/cycle-performance.ts`](../../src/lib/admin/cycle-performance.ts) → `selectTrendCycles` |
+| Trend chart UI | [`src/components/admin/performance-ui.tsx`](../../src/components/admin/performance-ui.tsx) → `CycleTrendChart` |
+| Read-only prod checks | `scripts/probe-closeout-by-processor.mjs` · `scripts/verify-cycle-processor-breakdown.ts` · `scripts/verify-cycle-trend.ts` |
 | Listed-per-week reader | [`src/lib/supabase/hr-new-hire-checklist.ts`](../../src/lib/supabase/hr-new-hire-checklist.ts) → `listChecklistWeekCounts` |
 | Cycle inventory (which cycles EXIST) | [`src/lib/payroll/cycle-inventory.ts`](../../src/lib/payroll/cycle-inventory.ts) |
 
@@ -148,6 +150,88 @@ as a week got worse.
 `Σpaid / Σpayable` across the month, on both tabs. A 40-person week and a 1,050-person week
 are not equal votes on how the month went. The month bucket is the calendar month of
 **`period_end`** — the month the work happened, not `closed_at` (Aug 2–8 was closed Aug 14).
+
+## The trend chart starts where HRIS started PAYING, not where close-outs started
+
+Added **2026-09-11** (Kane: *"a histogram ... where we can see weekly each cycle how successful
+it is per pay cycle as we progress"*, then *"Only the cycles where we actually started using
+HRIS even though we havent closed it ... the other weeks can be marked as NO HRIS Yet"*).
+`CycleTrendChart` sits above the month cards: one column per pay cycle, oldest on the left.
+
+It reads nothing new — `selectTrendCycles()` derives the whole series from the `cycles` array
+the tab already polls. No route change, no migration.
+
+### The window is a different boundary from `pre_closeout`, and they must not merge
+
+| Boundary | Question it answers | Live |
+| --- | --- | --- |
+| `hrisStart` (this chart) | *were we paying through HRIS yet?* — earliest `periodEnd` with a non-null `paid` | **2026-05-31** (the week of May 24–31) |
+| `pre_closeout` (the table) | *did close-outs exist yet?* — earliest CLOSED `periodEnd` | 2026-08-08 |
+
+Eleven weeks apart, and conflating them would file a dozen weeks under the wrong story. Weeks
+before `hrisStart` collapse into **one** "No HRIS yet" block — 12 weeks to 2026-05-24, live —
+not twelve empty slots, which would double the chart's width and squeeze the weeks that carry
+data. Those weeks were paid; just not through here, so the wording stays neutral, matching the
+rule that pre-feature weeks are never flagged as failures.
+
+### Four states, because three would hide the most important thing on the chart
+
+`closed` (a rate — the only state that draws a rate column) · `no_denominator` (HRIS paid
+people, nothing recorded who was owed) · `not_run` (`paid == null` — the week exists and no
+dispatch row does) · the collapsed pre-HRIS block.
+
+**`not_run` is not a variant of `no_denominator`.** Live it is 2026-06-21 → 2026-07-11, four
+consecutive weeks where payroll happened somewhere other than HRIS, bracketed by three good
+weeks (~800/wk) and a restart that paid **330 and left 723 pending**. Measured 2026-09-11; it
+is the only collapse-and-recovery in the record and no other screen shows it. Merge the two
+states and it disappears.
+
+It must also never be confused with a week that ran and paid nobody — that week carries
+`paid: 0`, a measured fact, where `not_run` carries `paid: null`, the absence of one.
+
+### A week with no rate draws NO column — never a column of height zero
+
+A zero-height bar reads as 0%. This tab has already been bitten by that exact lie once (the
+first build's `paid: 0` announced ~700 people unpaid in a dozen fully-paid weeks). An
+unmeasured week renders a **45° hatched track**, and `selectTrendCycles` additionally strips
+`rate` off every non-`closed` point so no renderer can draw one by accident. Both are pinned by
+tests.
+
+### Two strips, never two axes
+
+- **Rate, always 0–100%.** Truncating the axis to make 98.18% and 98.83% look different turns a
+  0.6-point spread into a cliff. The consequence is that the rate columns look nearly
+  identical, and that flatness **is** the finding.
+- **People paid**, its own strip with its own axis, because only 3 of 15 weeks have a rate and
+  the progress story lives here: 803 · 811 · 848 · *(stop)* · 330 · 1,007 · 1,019 · 1,051 ·
+  1,014 · 1,023 · 1,051 · 1,056.
+
+Two charts sharing an x, never two scales on one plot. Still-owed rides in the tooltip.
+
+### Columns, not a line
+
+The natural form for a trend is a line, and it is wrong here: a line across an unmeasured week
+either **interpolates a rate nobody declared** or shatters into loose dots. Columns cannot
+interpolate. (`src/components/ceo/financial-chart.tsx` is the app's other chart and *is* a
+line — it plots a series with no gaps. Don't copy its form here; do copy its dependency-free
+approach, since the app ships no charting library.)
+
+### The colour is measured
+
+The validator, run 2026-09-11: the tab's existing bar orange `#f97316` is **2.73:1** on the
+light chart surface, under the 3:1 floor. The chart therefore uses **orange-600 on light,
+orange-500 on dark** — its own step per surface, not one value flipped. The no-data grey is
+deliberately below the chroma floor because it marks an *absence* rather than a series, so its
+real encoding is the hatch; separation from the orange passes regardless (ΔE 16.0 deutan, 19.4
+normal). Required contrast relief is present: selective direct labels plus the per-cycle table
+directly below.
+
+Labels are **selective** — every closed week while there are ≤ 6, then only the best, worst and
+newest. A number over every column is noise. The state legend is **not decorative**: fill vs
+hatch is an identity encoding, and identity is never carried by appearance alone.
+
+Verified against production by `scripts/verify-cycle-trend.ts` (read-only): 15 points,
+`hrisStart` 2026-05-31, 12 collapsed weeks, a rate on the 3 closed points and nowhere else.
 
 ## A month card opens a per-processor breakdown, and its counts are a different unit
 
@@ -394,3 +478,9 @@ The payroll route additionally reads the Pay Processors registry for labels, bes
 **Not clicked through in a browser** — typecheck clean, 86 unit tests green, and the route
 returns its 401 gate under the live dev server. The arithmetic *was* verified against
 production by `scripts/verify-cycle-processor-breakdown.ts`.
+
+**2026-09-11, the trend chart: also no migration.** `selectTrendCycles()` is a pure addition
+to `cycle-performance.ts` and `CycleTrendChart` a pure addition to `performance-ui.tsx`; both
+derive from the `cycles` array the tab already polls. No route change, no new read, no DDL.
+Verified against production by `scripts/verify-cycle-trend.ts`; **not clicked through in a
+browser** — typecheck clean, 97 unit tests green, `/admin` compiles and redirects to login.

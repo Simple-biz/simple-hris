@@ -49,6 +49,10 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import type {
+  CycleTrend,
+  CycleTrendPoint,
+} from '@/lib/admin/cycle-performance';
 import {
   coerceEstimate,
   foldLoadSample,
@@ -853,6 +857,397 @@ export function ShareBar({
           transitionDelay: `${Math.min(index, 8) * 45}ms`,
         }}
       />
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * The per-cycle trend chart.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Why the columns are this colour and not the one beside them.
+ *
+ * Measured with the dataviz palette validator on 2026-09-11, not chosen:
+ * the tab's existing bar orange `#f97316` sits at **2.73:1** against the light
+ * chart surface — under the 3:1 floor. `orange-600` (#ea580c) passes on light;
+ * `orange-500` passes on dark. So the chart steps its own hue per surface
+ * rather than flipping one value, which is the rule for dark mode generally.
+ *
+ * The no-data grey is DELIBERATELY below the chroma floor (it reads as grey,
+ * and the validator flags it) because it marks an ABSENCE, not a series. Its
+ * real encoding is therefore the 45° hatch, not the colour — which is also what
+ * keeps it legible under colour-blindness and in forced-colors. Separation from
+ * the orange still passes anyway: ΔE 16.0 deutan, 19.4 normal.
+ *
+ * Contrast relief, required and present: selective direct labels on the columns
+ * plus the full per-cycle table sitting directly below this chart.
+ */
+const TREND_FILL = 'bg-orange-600 dark:bg-orange-500';
+const TREND_FILL_SOFT = 'bg-orange-600/45 dark:bg-orange-500/45';
+
+/**
+ * A 45° hatch for "there is no number here".
+ *
+ * Inline because it is a texture, not a token: Tailwind has no hatch utility and
+ * a one-off utility class would be a worse home for it than the component that
+ * owns the meaning.
+ */
+const HATCH: React.CSSProperties = {
+  backgroundImage:
+    'repeating-linear-gradient(45deg, currentColor 0 1px, transparent 1px 5px)',
+  opacity: 0.28,
+};
+
+/** "2026-08-08" → "Aug 8". Undated never reaches here (the rule drops those). */
+function shortDate(dateOnly: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateOnly);
+  if (!m) return dateOnly;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (Number.isNaN(d.getTime())) return dateOnly;
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+/**
+ * Weekly success rate and people paid, one column per pay cycle.
+ *
+ * ── Two strips, never two axes ─────────────────────────────────────────────
+ * The rate strip runs **0–100%, always**. Truncating it to make 98.25% and
+ * 98.86% look different would turn a 0.6-point spread into a cliff — the single
+ * most common way a bar chart lies. The consequence is that the rate columns
+ * look nearly identical, and that flatness IS the finding: the weeks we close,
+ * we close at about the same rate.
+ *
+ * Because only the closed weeks have a rate at all (3 of 15 live), the progress
+ * story lives in the second strip — **people paid**, which has a number for
+ * every week HRIS ran and shows the real arc: ~800, a four-week stop, a 330
+ * restart, then ~1,050. Two strips, each with its own single axis, sharing an
+ * x. Never two scales on one plot.
+ *
+ * ── The states, and the one that must never be a zero ──────────────────────
+ * A week with no rate draws **no column at all** — a hatched track instead. A
+ * zero-height bar reads as 0%, and this tab has already been bitten by exactly
+ * that lie once (`paid: 0` announced ~700 people unpaid in a dozen fully-paid
+ * weeks). `not_run` is likewise distinct from a measured zero: "we did not use
+ * HRIS that week" and "we used it and paid nobody" are different facts.
+ *
+ * ── Columns, not a line ────────────────────────────────────────────────────
+ * A line across an unmeasured week either interpolates a rate nobody declared
+ * or shatters into loose dots. Columns cannot interpolate, which is why the
+ * histogram Kane asked for is also the correct form.
+ */
+export function CycleTrendChart({
+  trend,
+  accent,
+}: {
+  trend: CycleTrend;
+  accent: PerfAccent;
+}) {
+  const a = ACCENT[accent];
+  const [mounted, setMounted] = React.useState(false);
+  const [hover, setHover] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    // Next frame: a height set in the same paint as insertion has nothing to
+    // transition from, so the columns would appear instead of growing.
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  const { points, maxPaid, preHrisCycles, preHrisLastPeriodEnd } = trend;
+
+  // Label selectively, never every column. With few closed weeks all of them
+  // are worth a number; once the series grows, only the extremes and the
+  // newest survive — a number over every bar is noise, not information.
+  const closed = points.filter((p) => p.state === 'closed');
+  const labelled = React.useMemo(() => {
+    if (closed.length === 0) return new Set<string>();
+    if (closed.length <= 6) return new Set(closed.map((p) => p.sourceFile));
+    const byRate = [...closed].sort((x, y) => (x.rate ?? 0) - (y.rate ?? 0));
+    return new Set(
+      [byRate[0], byRate[byRate.length - 1], closed[closed.length - 1]]
+        .filter((p): p is CycleTrendPoint => p != null)
+        .map((p) => p.sourceFile),
+    );
+  }, [closed]);
+
+  if (points.length === 0) {
+    return (
+      <div className="rounded-xl border border-zinc-200 bg-white/80 px-3 py-6 text-center dark:border-zinc-800 dark:bg-zinc-950/40">
+        <p className="text-[12px] text-zinc-500 dark:text-zinc-400">
+          No pay cycle has been run through HRIS yet
+          {preHrisCycles > 0 && (
+            <>
+              {' '}
+              — {preHrisCycles} earlier {preHrisCycles === 1 ? 'week was' : 'weeks were'} paid
+              another way
+            </>
+          )}
+          .
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-white/80 p-3 shadow-sm backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/40">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h4 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">
+          Every pay cycle since HRIS
+        </h4>
+        <TrendLegend accent={accent} />
+      </div>
+
+      {/* One scroller for both strips so they can never drift out of step. The
+          PAGE never scrolls sideways; this box does. */}
+      <div className="-mx-1 overflow-x-auto px-1 pb-1">
+        <div className="flex min-w-fit items-stretch gap-2">
+          {preHrisCycles > 0 && (
+            <PreHrisBlock count={preHrisCycles} lastPeriodEnd={preHrisLastPeriodEnd} />
+          )}
+
+          <div className="flex min-w-fit flex-col gap-1">
+            {/* ── Rate strip — ALWAYS 0–100% ── */}
+            <div className="flex items-end gap-[3px]" style={{ height: 96 }}>
+              {points.map((p, i) => (
+                <TrendColumn
+                  key={p.sourceFile}
+                  point={p}
+                  index={i}
+                  mounted={mounted}
+                  hovered={hover === p.sourceFile}
+                  onHover={setHover}
+                  height={p.rate == null ? null : p.rate}
+                  fill={TREND_FILL}
+                  accent={accent}
+                  label={
+                    labelled.has(p.sourceFile) && p.rate != null
+                      ? `${(p.rate * 100).toFixed(1)}%`
+                      : null
+                  }
+                />
+              ))}
+            </div>
+            <div className="h-px w-full bg-zinc-200 dark:bg-zinc-800" />
+
+            {/* ── People paid — its OWN axis, hence its own strip ── */}
+            <div className="flex items-end gap-[3px]" style={{ height: 40 }}>
+              {points.map((p, i) => (
+                <TrendColumn
+                  key={p.sourceFile}
+                  point={p}
+                  index={i}
+                  mounted={mounted}
+                  hovered={hover === p.sourceFile}
+                  onHover={setHover}
+                  height={p.paid == null || maxPaid <= 0 ? null : p.paid / maxPaid}
+                  fill={TREND_FILL_SOFT}
+                  accent={accent}
+                  label={null}
+                />
+              ))}
+            </div>
+
+            {/* Date ticks: first, last, and roughly every fourth between, so a
+                long series stays readable without collision. */}
+            <div className="flex gap-[3px]">
+              {points.map((p, i) => (
+                <div key={p.sourceFile} className="min-w-[18px] flex-1 text-center">
+                  {(i === 0 || i === points.length - 1 || i % 4 === 0) && (
+                    <span className="font-mono text-[8.5px] tabular-nums text-zinc-400 dark:text-zinc-500">
+                      {shortDate(p.periodEnd)}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p className="text-[10.5px] leading-snug text-zinc-500 dark:text-zinc-400">
+        Top: <strong>success rate</strong>, on a full 0–100% scale — only a closed cycle has
+        one. Bottom: <strong>people paid</strong>, which every HRIS week has.{' '}
+        <span className={a.text}>Hover a week for its numbers.</span>
+      </p>
+    </div>
+  );
+}
+
+/**
+ * One week, in whichever strip.
+ *
+ * `height === null` means NO COLUMN — a hatched track. It is never rendered as
+ * a column of height 0, because a zero-height bar reads as "0%" and the whole
+ * point of this tab is that an absent measurement is not a zero.
+ */
+function TrendColumn({
+  point,
+  index,
+  mounted,
+  hovered,
+  onHover,
+  height,
+  fill,
+  accent,
+  label,
+}: {
+  point: CycleTrendPoint;
+  index: number;
+  mounted: boolean;
+  hovered: boolean;
+  onHover: (key: string | null) => void;
+  height: number | null;
+  fill: string;
+  accent: PerfAccent;
+  label: string | null;
+}) {
+  const a = ACCENT[accent];
+  const pctOf = height == null ? 0 : Math.max(0, Math.min(1, height)) * 100;
+  return (
+    <div
+      className="group relative flex h-full min-w-[18px] flex-1 flex-col justify-end"
+      onMouseEnter={() => onHover(point.sourceFile)}
+      onMouseLeave={() => onHover(null)}
+      onFocus={() => onHover(point.sourceFile)}
+      onBlur={() => onHover(null)}
+      tabIndex={0}
+      title={tooltipText(point)}
+    >
+      {label && (
+        <span className="pointer-events-none absolute inset-x-0 -top-0.5 text-center font-mono text-[8.5px] font-semibold tabular-nums text-zinc-500 dark:text-zinc-400">
+          {label}
+        </span>
+      )}
+      {height == null ? (
+        // The absence mark. Full-height hatch so the slot is visibly a slot —
+        // an empty gap would read as "this week does not exist".
+        <div
+          className="h-full w-full rounded-sm text-zinc-400 dark:text-zinc-500"
+          style={HATCH}
+        />
+      ) : (
+        <div
+          className={cn(
+            'w-full rounded-t-[3px] transition-[height] duration-700 ease-out motion-reduce:transition-none',
+            fill,
+            hovered && 'brightness-110',
+          )}
+          style={{
+            height: `${mounted ? pctOf : 0}%`,
+            transitionDelay: `${Math.min(index, 10) * 35}ms`,
+          }}
+        />
+      )}
+      {hovered && (
+        <div
+          className={cn(
+            'pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 w-max max-w-[13rem] -translate-x-1/2',
+            'rounded-lg border border-zinc-200 bg-white px-2 py-1.5 shadow-lg',
+            'dark:border-zinc-700 dark:bg-zinc-900',
+          )}
+        >
+          <p className="text-[10.5px] font-semibold text-zinc-900 dark:text-zinc-100">
+            {point.label}
+          </p>
+          <p className="mt-0.5 text-[10px] leading-relaxed tabular-nums text-zinc-600 dark:text-zinc-300">
+            {point.state === 'not_run' ? (
+              <span className="text-zinc-500 dark:text-zinc-400">Not run through HRIS</span>
+            ) : (
+              <>
+                {num(point.paid)} paid
+                {point.state === 'closed' && point.rate != null ? (
+                  <>
+                    {' · '}
+                    <span className={a.text}>{(point.rate * 100).toFixed(2)}%</span>
+                    {point.unpaid != null && point.unpaid > 0 && (
+                      <>
+                        <br />
+                        {num(point.unpaid)} still owed of {num(point.payable)} payable
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <br />
+                    <span className="text-zinc-500 dark:text-zinc-400">
+                      No close-out, so no rate
+                    </span>
+                  </>
+                )}
+              </>
+            )}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The same sentence the tooltip shows, for the native title and for a11y. */
+function tooltipText(p: CycleTrendPoint): string {
+  if (p.state === 'not_run') return `${p.label} — not run through HRIS`;
+  if (p.state === 'closed' && p.rate != null) {
+    return `${p.label} — ${(p.rate * 100).toFixed(2)}% (${p.paid} of ${p.payable} payable)`;
+  }
+  return `${p.label} — ${p.paid} paid, no close-out so no rate`;
+}
+
+/**
+ * The collapsed era before HRIS (Kane, 2026-09-11 Q4).
+ *
+ * One block, not one slot per week: twelve empty slots would double the chart's
+ * width and squeeze the weeks that actually carry data. Those weeks were paid —
+ * just not through here — so the wording is neutral, matching the existing rule
+ * that pre-feature weeks are never flagged as failures.
+ */
+function PreHrisBlock({
+  count,
+  lastPeriodEnd,
+}: {
+  count: number;
+  lastPeriodEnd: string | null;
+}) {
+  return (
+    <div className="flex shrink-0 flex-col items-center justify-end gap-1 border-r border-dashed border-zinc-200 pr-2 dark:border-zinc-800">
+      <div
+        className="w-12 rounded-sm text-zinc-300 dark:text-zinc-600"
+        style={{ ...HATCH, height: 96 }}
+      />
+      <span className="max-w-[4.5rem] text-center text-[8.5px] leading-tight text-zinc-400 dark:text-zinc-500">
+        No HRIS yet
+        <br />
+        {count} {count === 1 ? 'week' : 'weeks'}
+        {lastPeriodEnd ? ` to ${shortDate(lastPeriodEnd)}` : ''}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The state legend.
+ *
+ * Required, not decorative: fill-vs-hatch is an IDENTITY encoding here (three
+ * states), and identity must never be carried by appearance alone.
+ */
+function TrendLegend({ accent }: { accent: PerfAccent }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[9.5px] text-zinc-500 dark:text-zinc-400">
+      <span className="inline-flex items-center gap-1">
+        <span className={cn('h-2 w-2 rounded-[2px]', TREND_FILL)} />
+        Closed — has a rate
+      </span>
+      <span className="inline-flex items-center gap-1">
+        <span className={cn('h-2 w-2 rounded-[2px]', TREND_FILL_SOFT)} />
+        Paid, not closed
+      </span>
+      <span className="inline-flex items-center gap-1">
+        <span
+          className="h-2 w-2 rounded-[2px] text-zinc-400 dark:text-zinc-500"
+          style={HATCH}
+        />
+        Not run through HRIS
+      </span>
     </div>
   );
 }
