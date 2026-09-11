@@ -1469,10 +1469,10 @@ new rows land with **no epic relation** until that reconcile adopts them by name
 staging: ≈17 (verify pass 23) + 2 (S28 group probe) + ≈17 (review) read calls. Verify after apply with
 `verify-one.mts` per row (33 calls), then a full `verify.mts` accepting the known relation gap.
 
-## Pass 25 — 2026-09-11 · STAGED, NOT APPLIED — supersedes pass 24
+## Pass 25 — 2026-09-11 · PARTIALLY APPLIED — structure landed, 31 corrections owed
 
 Kane: *"All Sprint Tasks that hasnt been closed yet code wise lets close this please check our
-Commits."* Session `3e1173a4`, approval hash **`0287d1e6363e`**. Nothing has been written to the board.
+Commits."* Session `3e1173a4`, approval hash **`0287d1e6363e`**, approved by Kane and applied the same morning. **Phase 1 completed; phase 2 died on the daily budget after 5 of 36 corrections.** The remaining 31 are in `pending-sp.json` under this hash — see § Outcome below.
 
 ### Why a new hash and not pass 24's
 
@@ -1544,3 +1544,39 @@ would now re-patch **284 tasks + 37 epics** first (≈425 calls) and needs its o
 unchanged: the 30 created rows carry **no epic relation** until that reconcile adopts them by name.
 Spent before staging: 1 (S28 probe) + ~15 (pull-state) + ~17 (review). Verify with `verify-one.mts`
 per row, then a full `verify.mts` accepting the known relation gap.
+
+### Outcome — the budget died between corrections, which is what the ledger is for
+
+`apply.mts --apply --approve 0287d1e6363e`, 2026-09-11 10:16 UTC.
+
+**Phase 1 (the real reconciler) completed in full:** 30 tasks created, 37 epics patched, 254 tasks
+patched, rollup written (Total SP 1569 · SP Completed 874). **Phase 2 wrote 5 of 36 corrections** —
+Orientation dates, Current Banks, the ID badge, the cycle celebration and the Webhooks editor, each to
+Pending Deploy — and then took `DAILY_LIMIT_EXCEEDED` on the sixth. `retry_in_seconds: 49406` observed
+at `10:16:33Z` lands on **00:00 UTC**, the clean UTC-day bucket for the fourth measured time.
+
+**31 rows were queued to `pending-sp.json`, all carrying the approval hash `0287d1e6363e`** (28 Pending
+Deploy + 3 Done), so flushing them completes an already-approved write rather than inventing a new one.
+Nothing was lost; the SP is owed.
+
+**The board's state in the meantime is understated, never overstated** — which is the right direction
+for a partial pass to fail in:
+
+- **23 of the 30 created rows read `Ready to Start`.** `sync.ts` writes status from `plan.done`, so a
+  `done:false` row is born Ready to Start and it is the corrector that moves it to Pending Deploy.
+- **2 created rows read `Done` with an Actual SP but no Completed Date** (the security readiness Spike,
+  the Hubstaff rename chore) — Completed Date is corrector-owned. `verify.mts` will flag these until the
+  flush, correctly.
+- **The 5 status advances on existing rows have not moved** (4 In Progress, 1 Ready to Start), and
+  **Lawang is still Ready to Start** — the reconciler never writes Status on an existing row.
+
+**Verification credited, and only that much.** Phase 2's board re-read completed and built its name→id
+map before the loop, and the 6 rows the loop reached resolved **byte-exact**, proving those exist and
+were *adopted* rather than duplicated. It proves nothing about the other 24 created rows' name parity,
+and nothing about any written VALUE — those were acknowledged mutations, not re-reads. A full
+`verify.mts` is owed after the flush.
+
+**Next step:** `flush-pending.mts --apply` once the budget resets at 00:00 UTC (8:00 PM EDT Sep 11).
+~2 calls per row, so ~63 calls — affordable where a re-run of the full path (~425) is not. It probes
+the budget with one cheap call first and touches nothing if it is still dead. Completed Dates are
+**not** moved to the flush day: the work finished when it finished.
