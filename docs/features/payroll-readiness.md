@@ -31,6 +31,7 @@ Every row below has its own section further down — this is the index, so a
 | 2026-08-18 | **Activity feed** at the pane bottom (audited saves only, fixed templates) + **KPI submission attribution** (who submitted, when, via what) — see the section at the end of this doc. |
 | 2026-08-18 | Pane infrastructure, shared with its sibling panes: **cached-then-revalidated** paints, a per-pane **"Last data pull"** stamp, and a Realtime **signal dot** (emerald = live, amber = polling). The read-only **Rates** glance was removed the same day. Owned by [payroll-wizard-notes.md](../features/payroll-wizard-notes.md). |
 | 2026-09-01 | No Pay Rate **"Ignore"** — the rate twin of the Bank Info Temporary Exemption: acknowledge one person's missing rate for the week in view only. |
+| 2026-09-11 | **"Set rate" gains an "Effective from" date** — defaults to today, no `min`, sent verbatim, blank REFUSES. Closes the class where a leaver's final-pay rate could only ever be written effective-today and so never reached the week being paid. |
 
 The **Wizard Setup checklist** (2026-08-03) is a separate, later addition: a
 per-week checklist of wizard-step prerequisites that sits *beside* the four
@@ -658,8 +659,26 @@ celebration.
   reloads on close.
 - **No Pay Rate → "Set rate"** — files an EMPLOYEE-scoped Payment Catalog pay
   structure via `POST /api/payment-catalog/pay-structures` (top of the rate
-  chain, effective immediately; also syncs rate history / the rates sheet and
-  notifies the employee). Department defaults from the row's label; any HSL
+  chain; also syncs rate history / the rates sheet and notifies the employee).
+  **The dialog carries its own "Effective from" date (2026-09-11).** It defaults
+  to **today in Manila** — so a save nobody touches behaves exactly as it always
+  did — and has **no `min`**, because a leaver's final pay is in the past by
+  definition and reaching a closed week is the entire point. The date is sent
+  **verbatim**: it is never snapped to a week boundary here or downstream
+  (`midweek-transfer-proration-ruling` — the snap was the root cause of the
+  2026-08-09 flat-rate incident and its module is deleted). A **blank or
+  unparseable date REFUSES the save** rather than falling back to today; that
+  fallback was the defect, because a today-dated rate cannot reach the week
+  being paid, so the save reported success and changed nothing — Carla hit it on
+  2026-09-01 and again on 2026-09-08, Alivia on 2026-09-11, each time stacking
+  one more useless row. The field shows which Sun–Sat pay week the date prices
+  from (`sundayOf`, the one week-boundary rule) and, when back-dated, says the
+  week must be **re-locked** or its `disbursement_records` row keeps the old
+  money. The chosen date is named in the success toast for the same reason.
+  **Back-dating still supersedes rather than stacks** — the route deletes rows
+  with `effective_from >= today` OR `== the new date` before inserting. Known
+  gap, unchanged by this: back-dating *behind* an existing PAST-dated row leaves
+  that newer row in place while the live rate cache takes the back-dated value. Department defaults from the row's label; any HSL
   sub-department label files under the one Hogan Smith Law dept (the dialog
   says so).
   **The write is keyed to THAT ROW's email, and that is not always the email

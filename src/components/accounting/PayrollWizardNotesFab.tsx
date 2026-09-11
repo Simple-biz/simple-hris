@@ -72,7 +72,13 @@ import {
   type PayStructure,
 } from "@/lib/payment-catalog/pay-structure";
 import SetBankDialog from "@/components/accounting/SetBankDialog";
-import { addWeeks, payrollNotesWeekStart, weekRangeLabel } from "@/lib/payroll/manila-week";
+import {
+  addWeeks,
+  manilaTodayIso,
+  payrollNotesWeekStart,
+  sundayOf,
+  weekRangeLabel,
+} from "@/lib/payroll/manila-week";
 import { parseDateOnlyLocal } from "@/lib/date-only";
 import { periodLabelFromFilename } from "@/lib/hubstaff/period-label";
 import type {
@@ -2362,12 +2368,25 @@ function SetRateDialog({
   const [regular, setRegular] = useState("");
   const [ot, setOt] = useState("");
   const [currency, setCurrency] = useState<PayCurrency>("PHP");
+  // Defaults to TODAY so this dialog's existing behaviour is byte-identical for
+  // anyone who does not touch the field. Deliberately NOT the week being paid:
+  // the effective date is what the proration engine splits a changed week on,
+  // so defaulting it backwards would silently re-price every No Pay Rate save.
+  // A past date is reached only by choosing one — the same shape as the Payment
+  // Catalog editor, which defaults forward to next Monday for the same reason.
+  const [effectiveDate, setEffectiveDate] = useState(() => manilaTodayIso());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const regNum = Number(regular);
   const regOk = regular.trim() !== "" && Number.isFinite(regNum) && regNum > 0;
   const autoOt = regOk ? defaultOtRate(regNum) : null;
+  const todayIso = manilaTodayIso();
+  // `sundayOf` is the ONE week-boundary rule (Sun–Sat), so the hint cannot
+  // disagree with the week the money is actually priced in.
+  const effectiveOk = /^\d{4}-\d{2}-\d{2}$/.test(effectiveDate);
+  const effectiveWeekStart = effectiveOk ? sundayOf(effectiveDate) : null;
+  const isBackdated = effectiveOk && effectiveDate < todayIso;
   // Surfaces the HSL grouping so an "HSL:intake_specialist" label saving under
   // Hogan Smith Law never reads as a bug.
   const isHslSub =
@@ -2392,6 +2411,14 @@ function SetRateDialog({
       setError("OT rate must be a non-negative number.");
       return;
     }
+    // REFUSE a blank or unparseable date — never quietly fall back to today.
+    // Falling back is the whole defect this field exists to close: the save
+    // reports success, the week being paid keeps the old rate, and the clerk
+    // re-clicks. An empty date must stop the save, not guess at one.
+    if (!effectiveOk) {
+      setError("Pick the date this rate takes effect.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -2410,14 +2437,23 @@ function SetRateDialog({
         headers: { "Content-Type": "application/json" },
         // Tag the origin so the rate reads "Set from Payroll Wizard by <actor>"
         // in the Payment Catalog's Rate History + the Audit Log.
-        body: JSON.stringify({ structure, source: READINESS_SOURCE }),
+        //
+        // `effectiveDate` is sent VERBATIM. The route dates the rate-history row
+        // from it and supersedes any row already on that date; it must never be
+        // snapped to a week boundary here or anywhere downstream — the snap was
+        // the root cause of the 2026-08-09 flat-rate incident and its module was
+        // deleted (memory: midweek-transfer-proration-ruling).
+        body: JSON.stringify({ structure, source: READINESS_SOURCE, effectiveDate }),
       });
       const json = (await res.json().catch(() => ({}))) as { error?: string | null };
       if (!res.ok || json.error) throw new Error(json.error || `Save failed (${res.status})`);
+      // The date is in the toast on purpose: the defect this field closes is a
+      // save that LOOKS like it worked while the week being paid keeps the old
+      // rate. Naming the date is what lets the clerk catch a wrong one.
       toast.success(`Rate set for ${person.name}`, {
         description: `${formatRate(regNum, currency)} · ${
           DEPARTMENTS.find((d) => d.key === deptKey)?.name ?? deptKey
-        }`,
+        } · effective ${effectiveDate}`,
       });
       onSaved();
       onClose();
@@ -2439,7 +2475,7 @@ function SetRateDialog({
           <DialogDescription>
             {person.name}
             {person.email ? ` · ${person.email}` : ""} — saves an individual rate to the
-            Payment Catalog, effective immediately.
+            Payment Catalog, from the effective date you choose.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
@@ -2500,6 +2536,29 @@ function SetRateDialog({
                 className="h-8 text-xs"
               />
             </div>
+          </div>
+          <div className="grid gap-1">
+            <label className={EDITOR_LABEL_CLS} htmlFor="readiness-rate-effective">
+              Effective from
+            </label>
+            <Input
+              id="readiness-rate-effective"
+              type="date"
+              // NO `min`. A leaver's final pay is in the past by definition, so
+              // the whole point of this field is reaching a closed week. The
+              // Payment Catalog's own editor has no min either.
+              value={effectiveDate}
+              onChange={(e) => setEffectiveDate(e.target.value)}
+              className="h-8 text-xs"
+            />
+            {effectiveWeekStart && (
+              <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                Prices the pay week {weekRangeLabel(effectiveWeekStart)} onward.
+                {isBackdated
+                  ? " Back-dated — re-lock that week afterwards or the disbursement keeps the old amount."
+                  : " Earlier weeks keep the rate they were paid at."}
+              </p>
+            )}
           </div>
           <div className="grid gap-1">
             <label className={EDITOR_LABEL_CLS} htmlFor="readiness-rate-currency">

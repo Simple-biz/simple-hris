@@ -22,6 +22,18 @@ export function manilaWeekStart(now: Date = new Date()): string {
 }
 
 /** Sunday (ISO date) of the week containing the given ISO date. */
+/**
+ * Today's calendar date in Asia/Manila as `YYYY-MM-DD`.
+ *
+ * Every payroll date the clerk types is a Manila date, so "today" has to be
+ * read there too — a browser in ET is on the previous day for half of Manila's
+ * working hours, and a rate dated one day early lands in the WRONG PAY WEEK
+ * whenever that slip crosses a Saturday/Sunday boundary.
+ */
+export function manilaTodayIso(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila" }).format(now);
+}
+
 export function sundayOf(isoDate: string): string {
   const [y, m, d] = isoDate.split("-").map(Number);
   const dt = new Date(Date.UTC(y!, m! - 1, d!));
@@ -40,9 +52,8 @@ export function sundayOf(isoDate: string): string {
  * paid, Sunday-anchored, not the calendar week the clerk happens to be in.
  */
 export function payrollNotesWeekStart(now: Date = new Date()): string {
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila" }).format(now);
   // Sunday of the current week, then back up 7 days to the week being paid.
-  const [y, m, d] = sundayOf(today).split("-").map(Number);
+  const [y, m, d] = sundayOf(manilaTodayIso(now)).split("-").map(Number);
   const dt = new Date(Date.UTC(y!, m! - 1, d! - 7));
   return dt.toISOString().slice(0, 10);
 }
