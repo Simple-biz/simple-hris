@@ -27,6 +27,7 @@ Ship commit: see `git log` for `feat(diagnostics)` on 2026-09-04.
 | Shared chrome (KPI card, rate bar, loading modal, detail modal, share bar) | [`src/components/admin/performance-ui.tsx`](../../src/components/admin/performance-ui.tsx) |
 | Per-processor unpaid aggregation (the PII boundary) | [`src/lib/payroll/cycle-closeout.ts`](../../src/lib/payroll/cycle-closeout.ts) → `aggregateUnpaidByProcessor`, applied in `cycle-closeout-store.ts` → `toCycleCloseoutSummary` |
 | Processor labels (Kolan, x1153) | [`src/lib/payment-catalog/pay-processors-db.ts`](../../src/lib/payment-catalog/pay-processors-db.ts) → `readPayProcessorRegistry`, wrapped in the payroll route |
+| CSV export (pure) | [`src/lib/admin/cycle-processor-export.ts`](../../src/lib/admin/cycle-processor-export.ts) · `.test.ts` |
 | Modal scope rules (pure) | [`src/lib/admin/cycle-performance.ts`](../../src/lib/admin/cycle-performance.ts) → `resolveMonthScope` (month vs one week, with the fallback) · `summariseProcessorRows` (the shared footer) |
 | Trend chart rules (pure) | [`src/lib/admin/cycle-performance.ts`](../../src/lib/admin/cycle-performance.ts) → `selectTrendCycles` (the window + the four states) · `trendRateBand` (the non-zero axis) |
 | Trend chart UI | [`src/components/admin/performance-ui.tsx`](../../src/components/admin/performance-ui.tsx) → `CycleTrendChart` |
@@ -372,6 +373,44 @@ number is never ambiguous about what it foots.
 The per-week overview list is shown **only while the whole month is in scope**. Once a week is
 selected the table above IS that week, and repeating it underneath invites reading one of the
 two as a different fact. Its rows are buttons — clicking one selects that week.
+
+### The CSV is exactly what the screen shows, caveats included
+
+Added **2026-09-11** (Kane: *"within the modal we can see a download pdf or csv in there"*).
+A **CSV · month** / **CSV · this week** button sits on the filter row. CSV rather than PDF: it
+opens in Sheets where the numbers can be re-sorted and checked, where a PDF is a picture of a
+table nobody can interrogate.
+
+**It follows the filter.** The builder is handed the same `rows` / `paid` / `paidPayments` the
+component just rendered — not the month it could re-derive them from — so the file cannot
+drift from the view even if the scope rules change later. The scope is in the filename
+(`cycle-processors_2026-08_Aug-9-15_…csv` vs `…_all-weeks_…csv`), because once two downloads
+are sitting in someone's folder nothing inside a spreadsheet says which is which.
+
+**The caveats ship IN the file**, as note rows above the table: payments are dispatch rows and
+the reason columns are people, the two are different units so **there is no success rate per
+processor**, threshold is a deliberate hold, and nothing records whose fault a Problem was.
+The screen's legend does not travel with the file, and a bare grid of "Kolan · 990 payments ·
+2 problems" is an invitation to compute the fabricated per-rail percentage every other surface
+here refuses to draw. A test asserts the file contains no `%` at all.
+
+The footer is a **row, not a `SUM()` formula**: a formula recomputes from whatever the reader
+has since edited and stops matching the screen it came from. People and payments are printed
+on separate trailing lines so the two units cannot be read off one row and divided.
+
+Two inherited rules, both in `cycle-processor-export.ts`:
+
+- **Formula injection is neutralised on TEXT cells only.** A processor label is registry free
+  text, and a leading `=` / `+` / `-` / `@` executes in Excel. Numeric cells are
+  builder-controlled and must never pass through the neutraliser — a negative amount
+  legitimately starts with `-`. Same split as `cycle-close-report-export.ts`.
+- **There is no PII to mask**, unlike every other export in this repo: the source is counts,
+  money and processor ids. `cycle-close-report-export.ts` masks accounts because it carries
+  payees; this carries none. Do not "add the names for context".
+
+The file is written with a **UTF-8 BOM as an escape, never a literal** — Excel needs it to read
+the peso signs, and an invisible U+FEFF in a source file is the character a later edit deletes
+by accident.
 
 ### Two rules the modal inherits
 

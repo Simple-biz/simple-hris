@@ -47,6 +47,10 @@ import {
   type MonthPerformanceRow,
   type ProcessorBreakdownRow,
 } from '@/lib/admin/cycle-performance';
+import {
+  buildProcessorCsv,
+  processorExportFilename,
+} from '@/lib/admin/cycle-processor-export';
 
 interface ApiResponse {
   generatedAt: string;
@@ -581,6 +585,36 @@ function MonthProcessorDetail({
    */
   const doublePaid = scope.paidPayments - scope.paid;
   const stillOwed = t.pending + t.problem + t.threshold;
+
+  /**
+   * Download exactly what is on screen.
+   *
+   * The builder is handed the SAME `rows`/`paid`/`paidPayments` this component
+   * just rendered, not the month it could re-derive them from — so the file
+   * cannot drift from the view even if the scope rules change later. A file
+   * that silently disagrees with the screen that produced it is worse than no
+   * file, because the disagreement travels and the screen does not.
+   */
+  const download = React.useCallback(() => {
+    const csv = buildProcessorCsv({
+      month,
+      week: scope.week,
+      rows: scope.rows,
+      paid: scope.paid,
+      paidPayments: scope.paidPayments,
+    });
+    // A UTF-8 BOM, written as an ESCAPE and never as a literal: Excel needs
+    // it to read the peso signs as UTF-8 instead of mojibake, and an invisible
+    // U+FEFF sitting in the source is exactly the character a later edit
+    // deletes by accident with nobody seeing it go.
+    const blob = new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = processorExportFilename(month, scope.week, new Date());
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [month, scope.week, scope.rows, scope.paid, scope.paidPayments]);
   const scopeLabel = scope.week ? scope.week.label : month.label;
 
   return (
@@ -609,6 +643,17 @@ function MonthProcessorDetail({
               )}
             </WeekChip>
           ))}
+          <div className="ml-auto">
+            <DownloadCsvButton onClick={download} scopeIsWeek={scope.week != null} />
+          </div>
+        </div>
+      )}
+
+      {/* A month with ONE closed week has no filter row, so the download needs
+          its own home rather than disappearing with the chips. */}
+      {month.cycleBreakdowns.length <= 1 && (
+        <div className="flex justify-end">
+          <DownloadCsvButton onClick={download} scopeIsWeek={scope.week != null} />
         </div>
       )}
 
@@ -839,6 +884,55 @@ function WeekChip({
       )}
     >
       {children}
+    </button>
+  );
+}
+
+/**
+ * Download the current scope.
+ *
+ * The label names the scope so the button cannot be read as "export
+ * everything" while a week filter is active above it.
+ */
+function DownloadCsvButton({
+  onClick,
+  scopeIsWeek,
+}: {
+  onClick: () => void;
+  scopeIsWeek: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={
+        scopeIsWeek
+          ? 'Download this week’s processor breakdown as CSV'
+          : 'Download the whole month’s processor breakdown as CSV'
+      }
+      className={cn(
+        'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10.5px] font-semibold',
+        'transition-all duration-200 motion-reduce:transition-none',
+        'border-zinc-200 text-zinc-600 hover:-translate-y-px hover:border-zinc-300 hover:bg-zinc-50 hover:shadow-sm active:translate-y-0',
+        'motion-reduce:hover:translate-y-0',
+        'dark:border-zinc-800 dark:text-zinc-300 dark:hover:border-zinc-700 dark:hover:bg-zinc-900/50',
+      )}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="h-2.5 w-2.5"
+        aria-hidden
+      >
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="M7 10l5 5 5-5" />
+        <path d="M12 15V3" />
+      </svg>
+      {scopeIsWeek ? 'CSV · this week' : 'CSV · month'}
     </button>
   );
 }
