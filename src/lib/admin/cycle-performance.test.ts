@@ -24,10 +24,14 @@ import {
   measureCycle,
   monthKeyOf,
   monthLabel,
+  resolveMonthScope,
   selectTrendCycles,
+  summariseProcessorRows,
   trendRateBand,
   summariseObservedCycle,
   type ObservedCycle,
+  type ProcessorBreakdownRow,
+  type ProcessorTotals,
 } from '@/lib/admin/cycle-performance';
 
 function rec(over: {
@@ -919,4 +923,107 @@ test('the band always spans at least 5 points', () => {
     const b = trendRateBand(pts);
     assert.ok(b.max - b.min >= 0.05 - 1e-9, `band too tight at ${rate}: ${JSON.stringify(b)}`);
   }
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * resolveMonthScope + summariseProcessorRows — the month modal's week filter.
+ *
+ * What these pin: the month view and a one-week view must foot with the SAME
+ * function, the selection is a KEY not a held object, and a week that vanishes
+ * under an open modal falls back to the month instead of rendering zeros.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+function procRow(over: Partial<ProcessorBreakdownRow> & { id: string }): ProcessorBreakdownRow {
+  return {
+    label: over.id,
+    paidPayments: 0, paidUSD: 0, paidPHP: 0,
+    pending: 0, problem: 0, threshold: 0,
+    unpaidPeople: 0, owedUSD: 0, owedPHP: 0,
+    ...over,
+  };
+}
+
+/** Two closed weeks in one month, each with its own processor split. */
+const SCOPED = buildCyclePerformance([
+  rec({
+    file: 'w1', label: 'Aug 2 – 8, 2026', periodEnd: '2026-08-08',
+    paid: 10, dispatchCount: 12, unpaid: 3,
+    byProcessor: { wise: { count: 12, usd: 100, php: 5000 } },
+    unpaidByProcessor: { wise: { pending: 1, problem: 2, threshold: 0, owedUSD: 30, owedPHP: 1500 } },
+  }),
+  rec({
+    file: 'w2', label: 'Aug 9 – 15, 2026', periodEnd: '2026-08-15',
+    paid: 20, dispatchCount: 20, unpaid: 1,
+    byProcessor: { wires: { count: 20, usd: 400, php: 20000 } },
+    unpaidByProcessor: { wires: { pending: 0, problem: 0, threshold: 1, owedUSD: 9, owedPHP: 500 } },
+  }),
+]).months.find((m) => m.month === '2026-08')!;
+
+test('no week selected shows the whole month, pooled', () => {
+  const s = resolveMonthScope(SCOPED, null);
+  assert.equal(s.week, null);
+  assert.equal(s.paid, 30);
+  assert.equal(s.paidPayments, 32);
+  const t = summariseProcessorRows(s.rows);
+  assert.equal(t.paidPHP, 25000);
+  assert.equal(t.unpaidPeople, 4);
+  assert.equal(t.problem, 2);
+});
+
+test('selecting a week narrows every total, not just the table', () => {
+  const s = resolveMonthScope(SCOPED, 'w2');
+  assert.equal(s.week?.sourceFile, 'w2');
+  assert.equal(s.paid, 20);
+  assert.equal(s.paidPayments, 20);
+  const t = summariseProcessorRows(s.rows);
+  assert.equal(t.paidPHP, 20000, 'the month total must not leak through');
+  assert.equal(t.problem, 0, 'week 1 had the problems, week 2 had none');
+  assert.equal(t.threshold, 1);
+  assert.equal(t.unpaidPeople, 1);
+});
+
+test('the weeks foot to the month — the filter partitions, it never invents', () => {
+  const month = summariseProcessorRows(resolveMonthScope(SCOPED, null).rows);
+  const weeks = SCOPED.cycleBreakdowns.map((c) =>
+    summariseProcessorRows(resolveMonthScope(SCOPED, c.sourceFile).rows),
+  );
+  const sum = (pick: (t: ProcessorTotals) => number) => weeks.reduce((s, w) => s + pick(w), 0);
+  assert.equal(sum((t) => t.paidPHP), month.paidPHP);
+  assert.equal(sum((t) => t.paidUSD), month.paidUSD);
+  assert.equal(sum((t) => t.paidPayments), month.paidPayments);
+  assert.equal(sum((t) => t.unpaidPeople), month.unpaidPeople);
+  assert.equal(sum((t) => t.problem), month.problem);
+});
+
+test('a week that vanished under an open modal FALLS BACK to the month', () => {
+  // A reopen archives the close-out and frees the key, so a week genuinely can
+  // disappear while the modal is open. Zeros would read as "this week paid
+  // nobody", which is the lie the whole tab exists to prevent.
+  const s = resolveMonthScope(SCOPED, 'reopened-and-gone');
+  assert.equal(s.fellBack, true);
+  assert.equal(s.week, null);
+  assert.equal(s.paid, 30, 'the month total, not zero');
+  assert.equal(summariseProcessorRows(s.rows).paidPHP, 25000);
+});
+
+test('selecting a real week never reports a fallback', () => {
+  assert.equal(resolveMonthScope(SCOPED, 'w1').fellBack, false);
+  assert.equal(resolveMonthScope(SCOPED, null).fellBack, false);
+});
+
+test('summariseProcessorRows on nothing is all zeros, never NaN', () => {
+  const t = summariseProcessorRows([]);
+  for (const [k, v] of Object.entries(t)) {
+    assert.equal(v, 0, `${k} should be 0`);
+    assert.ok(Number.isFinite(v), `${k} is not finite`);
+  }
+});
+
+test('the totals shape carries NO rate, and the two sides stay different units', () => {
+  const t = summariseProcessorRows([
+    procRow({ id: 'a', paidPayments: 100, pending: 1, problem: 1, threshold: 1, unpaidPeople: 3 }),
+  ]);
+  assert.ok(!('rate' in t), 'a rate field here would invite dividing rows by people');
+  assert.equal(t.paidPayments, 100);
+  assert.equal(t.unpaidPeople, 3);
 });

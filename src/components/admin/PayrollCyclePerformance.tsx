@@ -39,7 +39,9 @@ import {
   pct,
 } from '@/components/admin/performance-ui';
 import {
+  resolveMonthScope,
   selectTrendCycles,
+  summariseProcessorRows,
   type CyclePerformanceRow,
   type CyclePerformanceSummary,
   type MonthPerformanceRow,
@@ -79,6 +81,14 @@ export default function PayrollCyclePerformance() {
    * purpose is "are these numbers right" is the wrong failure.
    */
   const [openMonth, setOpenMonth] = React.useState<string | null>(null);
+  /**
+   * Which week inside that month is selected, by `sourceFile` — null means the
+   * whole month. A KEY for the same reason the month is a key: a week can
+   * genuinely vanish under an open modal (reopening a cycle archives its
+   * close-out and frees the live key), and `resolveMonthScope` falls back to
+   * the month rather than rendering a table of zeros.
+   */
+  const [openWeek, setOpenWeek] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     setRefreshing(true);
@@ -128,6 +138,14 @@ export default function PayrollCyclePerformance() {
     () => data?.months.find((m) => m.month === openMonth) ?? null,
     [data, openMonth],
   );
+  /**
+   * The week the modal is scoped to, for its own title — null while the whole
+   * month is shown. Resolved from the KEY on every render, so a week that
+   * vanishes under an open modal takes the title back to the month rather than
+   * leaving a heading for a week that no longer exists.
+   */
+  const openScopeLabel =
+    openMonthRow?.cycleBreakdowns.find((c) => c.sourceFile === openWeek)?.label ?? null;
 
   return (
     <PerfShell
@@ -241,7 +259,13 @@ export default function PayrollCyclePerformance() {
                             ? 'Nothing in this month was closed, so no per-processor split was ever frozen.'
                             : 'This month’s close-out records carry no processor breakdown.'
                         }
-                        onClick={() => setOpenMonth(m.month)}
+                        onClick={() => {
+                          // Every open starts on the whole month. Carrying a
+                          // week selection across months would silently apply
+                          // one month's week key to another's data.
+                          setOpenWeek(null);
+                          setOpenMonth(m.month);
+                        }}
                       />
                     </div>
                     <div className="flex items-baseline gap-2">
@@ -470,14 +494,31 @@ export default function PayrollCyclePerformance() {
           <PerfDetailModal
             open={openMonthRow != null}
             onOpenChange={(next) => {
-              if (!next) setOpenMonth(null);
+              if (!next) {
+                setOpenMonth(null);
+                setOpenWeek(null);
+              }
             }}
             accent={ACCENT_KEY}
             icon={<WalletGlyph />}
-            title={openMonthRow ? `${openMonthRow.label} — by pay processor` : ''}
-            subtitle="Frozen at close time, from the close-out records. Closed cycles only."
+            title={
+              openMonthRow
+                ? `${openScopeLabel ?? openMonthRow.label} — by pay processor`
+                : ''
+            }
+            subtitle={
+              openScopeLabel
+                ? `One week of ${openMonthRow?.label ?? ''}. Frozen at close time, from the close-out record.`
+                : 'Frozen at close time, from the close-out records. Closed cycles only.'
+            }
           >
-            {openMonthRow ? <MonthProcessorDetail month={openMonthRow} /> : null}
+            {openMonthRow ? (
+              <MonthProcessorDetail
+                month={openMonthRow}
+                weekKey={openWeek}
+                onWeekChange={setOpenWeek}
+              />
+            ) : null}
           </PerfDetailModal>
         </>
       ) : null}
@@ -487,65 +528,118 @@ export default function PayrollCyclePerformance() {
 
 /**
  * The body of a month's "Open" — which processor moved what, and where the
- * money that did not move got stuck.
+ * money that did not move got stuck. Scopable to a single week.
  *
  * ── The one thing this view must never do ──────────────────────────────────
- * **It must not print a per-processor success rate.** The paid column counts
- * dispatch ROWS and the three unpaid columns count PEOPLE (see
+ * **It must not print a per-processor success rate**, at any scope. The paid
+ * column counts dispatch ROWS and the three unpaid columns count PEOPLE (see
  * `ProcessorBreakdownRow`), so `paid / (paid + unpaid)` per row would divide two
  * different units. Live August 2026 it would read 97.7% for Kolan — within a
  * point of the truth, which is what makes it dangerous rather than obviously
  * wrong. The month's real rate is on the card this modal opened from, computed
- * from the one denominator that exists.
+ * from the one denominator that exists. Narrowing to a week does not create a
+ * denominator that the month lacked.
  *
  * What IS trustworthy here is the money: the processor amounts sum to the
  * record's frozen `paidUSD` / `paidPHP` to the cent. So money leads, share bars
  * are drawn over money, and counts are supporting detail.
+ *
+ * ── Every total is footed by ONE function ──────────────────────────────────
+ * `summariseProcessorRows` foots both scopes. Computing the tiles from the
+ * month and the table from the week is exactly how a filtered view ends up
+ * showing one week's table under the whole month's headline.
  */
-function MonthProcessorDetail({ month }: { month: MonthPerformanceRow }) {
-  const rows = month.processors;
-  const totalPHP = rows.reduce((s, p) => s + p.paidPHP, 0);
-  const totalUSD = rows.reduce((s, p) => s + p.paidUSD, 0);
-  const totalPayments = rows.reduce((s, p) => s + p.paidPayments, 0);
-  const totalPending = rows.reduce((s, p) => s + p.pending, 0);
-  const totalProblem = rows.reduce((s, p) => s + p.problem, 0);
-  const totalThreshold = rows.reduce((s, p) => s + p.threshold, 0);
-  const totalOwedPHP = rows.reduce((s, p) => s + p.owedPHP, 0);
+function MonthProcessorDetail({
+  month,
+  weekKey,
+  onWeekChange,
+}: {
+  month: MonthPerformanceRow;
+  /** `sourceFile` of the selected week, or null for the whole month. */
+  weekKey: string | null;
+  onWeekChange: (key: string | null) => void;
+}) {
+  const scope = resolveMonthScope(month, weekKey);
+  const rows = scope.rows;
+  const t = summariseProcessorRows(rows);
+
   /**
-   * Payments minus people. Not noise, and not rounded away: each one is a
-   * second paid row for someone who already had one that week — a retry, a
-   * correction, or a genuine double payment. On a screen about how accurate the
-   * system is, that is a finding.
+   * The selected week disappeared while the modal was open — a reopen archives
+   * the close-out and frees the live key. `resolveMonthScope` has already
+   * fallen back to the month; this just clears the now-dangling selection so
+   * the chip row agrees with what is on screen.
    */
-  const doublePaid = month.paidPayments - month.paid;
+  React.useEffect(() => {
+    if (scope.fellBack) onWeekChange(null);
+  }, [scope.fellBack, onWeekChange]);
+
+  /**
+   * Payments minus people, at the CURRENT scope. Not noise, and not rounded
+   * away: each one is a second paid row for someone who already had one that
+   * week — a retry, a correction, or a genuine double payment. On a screen
+   * about how accurate the system is, that is a finding.
+   */
+  const doublePaid = scope.paidPayments - scope.paid;
+  const stillOwed = t.pending + t.problem + t.threshold;
+  const scopeLabel = scope.week ? scope.week.label : month.label;
 
   return (
     <>
+      {/* ── Week filter. Present whenever the month holds more than one closed
+          week; a single-week month has nothing to filter and gets no control
+          rather than a control that does nothing. ── */}
+      {month.cycleBreakdowns.length > 1 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">
+            Week
+          </span>
+          <WeekChip active={weekKey == null} onClick={() => onWeekChange(null)}>
+            All {month.cycleBreakdowns.length} weeks
+          </WeekChip>
+          {month.cycleBreakdowns.map((c) => (
+            <WeekChip
+              key={c.sourceFile}
+              active={weekKey === c.sourceFile}
+              onClick={() => onWeekChange(c.sourceFile)}
+              title={`${num(c.paid)} people · ${num(c.paidPayments)} payments${c.unpaid > 0 ? ` · ${num(c.unpaid)} still owed` : ''}`}
+            >
+              {shortCycleLabel(c.label)}
+              {c.unpaid > 0 && (
+                <span className="ml-1 text-amber-700 dark:text-amber-400">{c.unpaid}</span>
+              )}
+            </WeekChip>
+          ))}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <MiniStat label="Paid out" value={money(totalPHP, 'PHP')} sub={money(totalUSD, 'USD')} />
+        <MiniStat label="Paid out" value={money(t.paidPHP, 'PHP')} sub={money(t.paidUSD, 'USD')} />
         <MiniStat
           label="Payments"
-          value={num(totalPayments)}
-          sub={`to ${num(month.paid)} people`}
+          value={num(t.paidPayments)}
+          sub={`to ${num(scope.paid)} people`}
           title="Dispatch rows, not people. A person paid twice in a week is two payments and one person."
         />
         <MiniStat
           label="Still owed"
-          value={num(totalPending + totalProblem + totalThreshold)}
-          sub={money(totalOwedPHP, 'PHP')}
-          tone={totalPending + totalProblem + totalThreshold > 0 ? 'warn' : 'plain'}
+          value={num(stillOwed)}
+          sub={money(t.owedPHP, 'PHP')}
+          tone={stillOwed > 0 ? 'warn' : 'plain'}
         />
         <MiniStat
           label="Problems"
-          value={num(totalProblem)}
-          sub={totalProblem === 0 ? 'none logged' : 'money stuck'}
-          tone={totalProblem > 0 ? 'warn' : 'plain'}
+          value={num(t.problem)}
+          sub={t.problem === 0 ? 'none logged' : 'money stuck'}
+          tone={t.problem > 0 ? 'warn' : 'plain'}
           title="Rows Payment Dispatch logged as Problem — out of the queue, money stuck. Nothing records WHY, so nothing here claims to know."
         />
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
         <table className="w-full min-w-[40rem] border-collapse text-[12px]">
+          <caption className="sr-only">
+            Payments and unpaid people by pay processor, {scopeLabel}
+          </caption>
           <thead>
             <tr className="border-b border-zinc-100 text-[10px] uppercase tracking-[0.12em] text-zinc-500 dark:border-zinc-800/60 dark:text-zinc-400">
               <th className="px-3 py-2 text-left font-medium" scope="col">
@@ -585,34 +679,53 @@ function MonthProcessorDetail({ month }: { month: MonthPerformanceRow }) {
           </thead>
           <tbody>
             {rows.map((p, i) => (
-              <ProcessorRow key={p.id} row={p} share={totalPHP > 0 ? p.paidPHP / totalPHP : 0} index={i} />
+              <ProcessorRow
+                key={p.id}
+                row={p}
+                share={t.paidPHP > 0 ? p.paidPHP / t.paidPHP : 0}
+                index={i}
+              />
             ))}
+            {rows.length === 0 && (
+              <tr>
+                <td
+                  colSpan={7}
+                  className="px-3 py-6 text-center text-[12px] text-zinc-500 dark:text-zinc-400"
+                >
+                  This week&apos;s close-out records no processor split.
+                </td>
+              </tr>
+            )}
           </tbody>
           <tfoot>
             <tr className="border-t border-zinc-200 bg-zinc-50/60 font-semibold dark:border-zinc-800 dark:bg-zinc-900/40">
               <td className="px-3 py-2 text-left text-[11px] text-zinc-700 dark:text-zinc-300">
-                Total
+                {scope.week ? 'Week total' : 'Month total'}
               </td>
-              <Td strong>{money(totalPHP, 'PHP')}</Td>
-              <Td strong>{money(totalUSD, 'USD')}</Td>
-              <Td strong>{num(totalPayments)}</Td>
-              <Td strong>{num(totalPending)}</Td>
-              <Td strong>{num(totalProblem)}</Td>
-              <Td strong>{num(totalThreshold)}</Td>
+              <Td strong>{money(t.paidPHP, 'PHP')}</Td>
+              <Td strong>{money(t.paidUSD, 'USD')}</Td>
+              <Td strong>{num(t.paidPayments)}</Td>
+              <Td strong>{num(t.pending)}</Td>
+              <Td strong>{num(t.problem)}</Td>
+              <Td strong>{num(t.threshold)}</Td>
             </tr>
           </tfoot>
         </table>
       </div>
 
-      {/* Per-week, because a month's total hides the week a rail fell over. */}
-      {month.cycleBreakdowns.length > 1 && (
+      {/* Per-week overview — only while the whole month is in scope. Once a
+          single week is selected the table above IS the week, and repeating it
+          underneath would invite reading one of the two as a different fact. */}
+      {weekKey == null && month.cycleBreakdowns.length > 1 && (
         <section className="flex flex-col gap-2">
           <SectionLabel>Week by week</SectionLabel>
           <div className="flex flex-col gap-2">
             {month.cycleBreakdowns.map((c) => (
-              <div
+              <button
+                type="button"
                 key={c.sourceFile}
-                className="rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800"
+                onClick={() => onWeekChange(c.sourceFile)}
+                className="rounded-lg border border-zinc-200 px-3 py-2 text-left transition-colors duration-150 hover:border-zinc-300 hover:bg-zinc-50/70 motion-reduce:transition-none dark:border-zinc-800 dark:hover:border-zinc-700 dark:hover:bg-zinc-900/40"
               >
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                   <span className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-300">
@@ -640,14 +753,12 @@ function MonthProcessorDetail({ month }: { month: MonthPerformanceRow }) {
                         {num(p.paidPayments)}
                       </span>
                       {p.problem > 0 && (
-                        <span className="text-amber-700 dark:text-amber-400">
-                          !{p.problem}
-                        </span>
+                        <span className="text-amber-700 dark:text-amber-400">!{p.problem}</span>
                       )}
                     </span>
                   ))}
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </section>
@@ -662,15 +773,17 @@ function MonthProcessorDetail({ month }: { month: MonthPerformanceRow }) {
           the month card counts people.{' '}
           {doublePaid > 0 ? (
             <>
-              This month they differ by <strong>{num(doublePaid)}</strong> — that many payments
-              went to someone who already had one that week (a retry, a correction, or a genuine
-              double payment). The three unpaid columns count <em>people</em>, so no percentage
-              is drawn across this table: the two sides are different units.
+              {scope.week ? 'This week' : 'This month'} they differ by{' '}
+              <strong>{num(doublePaid)}</strong> — that many payments went to someone who
+              already had one that week (a retry, a correction, or a genuine double payment).
+              The three unpaid columns count <em>people</em>, so no percentage is drawn across
+              this table: the two sides are different units.
             </>
           ) : (
             <>
-              They agree this month, so nobody was paid twice. The unpaid columns count
-              <em> people</em> either way, so no percentage is drawn across this table.
+              They agree {scope.week ? 'this week' : 'this month'}, so nobody was paid twice.
+              The unpaid columns count <em>people</em> either way, so no percentage is drawn
+              across this table.
             </>
           )}
         </PerfNote>
@@ -688,11 +801,51 @@ function MonthProcessorDetail({ month }: { month: MonthPerformanceRow }) {
         </PerfNote>
         <PerfNote icon={<DotGlyph />}>
           <strong>The money reconciles; the counts are supporting detail.</strong> These
-          processor amounts add up to the exact total the close-out froze at close time.
+          processor amounts add up to the exact total the close-out froze at close time
+          {scope.week ? ' for this week' : ' for every week in this month'}.
         </PerfNote>
       </div>
     </>
   );
+}
+
+/**
+ * One week chip. A real `<button>`, not a styled div — the filter is operable
+ * from the keyboard and announces its pressed state, which a div cannot.
+ */
+function WeekChip({
+  active,
+  onClick,
+  title,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-pressed={active}
+      className={cn(
+        'rounded-md border px-2 py-1 text-[10.5px] font-medium tabular-nums',
+        'transition-colors duration-150 motion-reduce:transition-none',
+        active
+          ? ACCENT[ACCENT_KEY].chip
+          : 'border-zinc-200 text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:text-zinc-300 dark:hover:border-zinc-700 dark:hover:bg-zinc-900/50',
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** "Aug 2 – 8, 2026" → "Aug 2–8". The year is on the modal title already. */
+function shortCycleLabel(label: string): string {
+  return label.replace(/,\s*\d{4}\s*$/, '').replace(/\s*–\s*/, '–');
 }
 
 function ProcessorRow({

@@ -27,6 +27,7 @@ Ship commit: see `git log` for `feat(diagnostics)` on 2026-09-04.
 | Shared chrome (KPI card, rate bar, loading modal, detail modal, share bar) | [`src/components/admin/performance-ui.tsx`](../../src/components/admin/performance-ui.tsx) |
 | Per-processor unpaid aggregation (the PII boundary) | [`src/lib/payroll/cycle-closeout.ts`](../../src/lib/payroll/cycle-closeout.ts) → `aggregateUnpaidByProcessor`, applied in `cycle-closeout-store.ts` → `toCycleCloseoutSummary` |
 | Processor labels (Kolan, x1153) | [`src/lib/payment-catalog/pay-processors-db.ts`](../../src/lib/payment-catalog/pay-processors-db.ts) → `readPayProcessorRegistry`, wrapped in the payroll route |
+| Modal scope rules (pure) | [`src/lib/admin/cycle-performance.ts`](../../src/lib/admin/cycle-performance.ts) → `resolveMonthScope` (month vs one week, with the fallback) · `summariseProcessorRows` (the shared footer) |
 | Trend chart rules (pure) | [`src/lib/admin/cycle-performance.ts`](../../src/lib/admin/cycle-performance.ts) → `selectTrendCycles` (the window + the four states) · `trendRateBand` (the non-zero axis) |
 | Trend chart UI | [`src/components/admin/performance-ui.tsx`](../../src/components/admin/performance-ui.tsx) → `CycleTrendChart` |
 | Read-only prod checks | `scripts/probe-closeout-by-processor.mjs` · `scripts/verify-cycle-processor-breakdown.ts` · `scripts/verify-cycle-trend.ts` |
@@ -350,12 +351,41 @@ with nothing closed gets a **disabled Open button carrying the reason** (Kane, Q
 hidden one: hiding it makes the absence look like a layout difference rather than a fact about
 the month. Today that is every month except August 2026.
 
+### The week filter narrows EVERY total, and both scopes foot with one function
+
+Added **2026-09-11** (Kane: *"each month when we open the month and see the modal we should be
+able to split them in weeks or have a filter for weekly"*). A month holding more than one
+closed week shows a chip row — **All N weeks** plus one chip per week — and the whole modal
+re-scopes: stat tiles, table, footer, and the payments-vs-people note.
+
+`resolveMonthScope()` picks the rows and `summariseProcessorRows()` foots them, **for both
+scopes**. That is not tidiness: computing the tiles from the month and the table from the week
+is exactly how a filtered view ends up showing one week's table under the whole month's
+headline, and the two would be within a few percent of each other — wrong in the way nobody
+notices.
+
+Narrowing to a week **does not create a denominator the month lacked**. There is still no
+per-processor rate at any scope; the paid column still counts dispatch rows and the unpaid
+columns still count people. The footer relabels itself *Week total* / *Month total* so the
+number is never ambiguous about what it foots.
+
+The per-week overview list is shown **only while the whole month is in scope**. Once a week is
+selected the table above IS that week, and repeating it underneath invites reading one of the
+two as a different fact. Its rows are buttons — clicking one selects that week.
+
 ### Two rules the modal inherits
 
 - **It never fetches.** It opens over data the tab already polled, which is why it can open
   instantly and animate. It holds the month **key**, not the month object, so the 120s poll
   refreshes an open modal in place instead of pinning it to a stale snapshot. A detail view
   that needs its own read needs its own loading treatment — do not add a spinner in here.
+- **The selected week is a `sourceFile` KEY too, for the same reason** — and a key that no
+  longer matches any week **falls back to the whole month**, never to an empty table.
+  Reopening a cycle archives its close-out and frees the live key, so a week genuinely can
+  vanish under an open modal; zeros there would read as *"this week paid nobody"*, which is
+  the lie this whole tab exists to prevent. `resolveMonthScope` reports the fallback and the
+  modal clears the dangling chip. Opening a different month always resets to All weeks —
+  carrying a week key across months would apply one month's key to another's data.
 - **`ShareBar` is deliberately not `RateBar`.** A rate bar means a measured success fraction;
   this one means a share of a total. Reusing it would teach a reader that a full orange bar
   means "everyone got paid" and then show them a full bar that only means "this rail moved all

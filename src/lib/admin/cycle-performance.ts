@@ -1024,3 +1024,92 @@ export function trendRateBand(points: readonly CycleTrendPoint[]): {
   const floored = Math.floor(Math.max(0, worst) * 20) / 20;
   return { min: Math.min(0.95, floored), max: 1 };
 }
+
+/** The totals a per-processor table foots to. Counts and money only. */
+export interface ProcessorTotals {
+  paidPayments: number;
+  paidUSD: number;
+  paidPHP: number;
+  pending: number;
+  problem: number;
+  threshold: number;
+  unpaidPeople: number;
+  owedUSD: number;
+  owedPHP: number;
+}
+
+/**
+ * Foot a set of processor rows.
+ *
+ * Exists so the month view and a single-week view **cannot drift**: the modal
+ * shows the same eight totals whichever scope is selected, and computing them
+ * twice in the component is how one of them silently keeps summing the month
+ * after the filter has moved.
+ *
+ * There is deliberately **no rate here and no place to put one**. `paidPayments`
+ * counts dispatch rows and the three reason fields count people, so the two
+ * sides of this shape cannot be divided by one another — see
+ * {@link ProcessorBreakdownRow}.
+ */
+export function summariseProcessorRows(
+  rows: readonly ProcessorBreakdownRow[],
+): ProcessorTotals {
+  const t: ProcessorTotals = {
+    paidPayments: 0, paidUSD: 0, paidPHP: 0,
+    pending: 0, problem: 0, threshold: 0,
+    unpaidPeople: 0, owedUSD: 0, owedPHP: 0,
+  };
+  for (const r of rows) {
+    t.paidPayments += r.paidPayments;
+    t.paidUSD += r.paidUSD;
+    t.paidPHP += r.paidPHP;
+    t.pending += r.pending;
+    t.problem += r.problem;
+    t.threshold += r.threshold;
+    t.unpaidPeople += r.unpaidPeople;
+    t.owedUSD += r.owedUSD;
+    t.owedPHP += r.owedPHP;
+  }
+  return t;
+}
+
+/**
+ * The scope a month modal is currently showing — the whole month, or one week.
+ *
+ * Resolved from a **`sourceFile` key, never a held object**, mirroring the rule
+ * the modal already follows for the month itself: the tab polls every 120s, and
+ * a view pinned to an object it captured on open would quietly go stale while
+ * claiming to be live.
+ *
+ * A key that no longer matches any week **falls back to the whole month**. That
+ * is not defensive padding: reopening a cycle archives its close-out and frees
+ * the live key, so a week genuinely can vanish from under an open modal, and
+ * the alternative is a table of zeros that reads as "this week paid nobody".
+ */
+export function resolveMonthScope(
+  month: MonthPerformanceRow,
+  weekKey: string | null,
+): {
+  /** Null when the whole month is selected. */
+  week: CycleBreakdown | null;
+  rows: ProcessorBreakdownRow[];
+  /** Distinct people paid in scope. */
+  paid: number;
+  /** Paid dispatch ROWS in scope. Never divided by anything above. */
+  paidPayments: number;
+  /** True when the requested week is gone — the caller clears its selection. */
+  fellBack: boolean;
+} {
+  const week = weekKey == null ? null : month.cycleBreakdowns.find((c) => c.sourceFile === weekKey) ?? null;
+  const fellBack = weekKey != null && week == null;
+  if (week) {
+    return { week, rows: week.processors, paid: week.paid, paidPayments: week.paidPayments, fellBack: false };
+  }
+  return {
+    week: null,
+    rows: month.processors,
+    paid: month.paid,
+    paidPayments: month.paidPayments,
+    fellBack,
+  };
+}
