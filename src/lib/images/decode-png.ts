@@ -12,6 +12,9 @@
 
 import zlib from 'node:zlib';
 
+/** Below this HSL saturation, ink carries no hue worth calling a brand colour. */
+const CHROMA_FLOOR_PCT = 18;
+
 export interface DecodedPng {
   width: number;
   height: number;
@@ -228,4 +231,101 @@ export function isLegibleOnWhite(stats: InkStats): { ok: true } | { ok: false; r
     };
   }
   return { ok: true };
+}
+
+/** The brand colour read off a logo, plus how confident the read is. */
+export interface DominantInk {
+  /** 0-255 per channel, the mean of the winning colour cluster. */
+  r: number;
+  g: number;
+  b: number;
+  /** Share of the measured ink that landed in the winning cluster, 0-100. */
+  sharePct: number;
+  /** HSL saturation of the result, 0-100. */
+  saturationPct: number;
+  /**
+   * Which ink answered. `chroma` is a coloured brand mark (BPI red, UnionBank
+   * orange). `ink` is a lockup with no colour in it at all, answered by the mean
+   * of its own dark ink — GoTyme ships a near-black wordmark, rgb(45,45,58), and
+   * that IS its artwork. Both are measured; neither is recalled.
+   */
+  source: 'chroma' | 'ink';
+}
+
+/**
+ * The dominant colour of a logo's ink, or null when there is no ink to read.
+ *
+ * Bank cards in the People profile are tinted by their bank, and a tint is a claim
+ * about an institution in the same way a logo is. So it is MEASURED off the very
+ * artwork whose provenance `public/banks/SOURCES.json` records, never recalled — the
+ * same discipline `payment-catalog-current-banks.md` §7 applies to the images
+ * themselves ("every source is DECLARED, never searched").
+ *
+ * Two tiers, and the second is the load-bearing one:
+ *
+ * 1. **Chromatic ink.** Opaque pixels are bucketed into a coarse 5-bit-per-channel
+ *    grid and scored by population weighted by saturation. The weighting matters:
+ *    most bank lockups are a coloured mark beside BLACK wordmark text, and the black
+ *    usually wins on raw count — it is the chroma that carries the brand.
+ * 2. **No chroma at all.** A monochrome lockup is answered by the mean of its own
+ *    ink rather than by nothing. Refusing here would have handed GoTyme — the
+ *    third-most-common bank on the roster — a grey card while every neighbour wore
+ *    its own colour, on the grounds that its wordmark is printed in near-black.
+ *    Near-black is a colour. It is the one GoTyme actually prints.
+ *
+ * Null is reserved for artwork with no opaque pixels, which `isLegibleOnWhite`
+ * rejects before it can ever ship.
+ */
+export function dominantInkColor(png: DecodedPng): DominantInk | null {
+  interface Bucket { n: number; r: number; g: number; b: number; satSum: number }
+  const buckets = new Map<number, Bucket>();
+  let chromaticInk = 0;
+  // Tier 2's running mean, over every opaque non-near-white pixel.
+  let inkN = 0, inkR = 0, inkG = 0, inkB = 0;
+
+  for (let i = 0; i < png.rgba.length; i += 4) {
+    if (png.rgba[i + 3] < 32) continue;
+    const r = png.rgba[i], g = png.rgba[i + 1], b = png.rgba[i + 2];
+    // Near-white is the plate showing through a lockup's counters, not its ink.
+    if (0.299 * r + 0.587 * g + 0.114 * b > 235) continue;
+    inkN++; inkR += r; inkG += g; inkB += b;
+
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    const d = max - min;
+    const sat = d === 0 ? 0 : (100 * d) / (255 - Math.abs(2 * l - 255));
+    if (sat < CHROMA_FLOOR_PCT) continue; // grey, black and off-black carry no hue
+    chromaticInk++;
+    const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+    const cur = buckets.get(key) ?? { n: 0, r: 0, g: 0, b: 0, satSum: 0 };
+    cur.n += 1; cur.r += r; cur.g += g; cur.b += b; cur.satSum += sat;
+    buckets.set(key, cur);
+  }
+
+  if (inkN === 0) return null;
+
+  let best: Bucket | null = null;
+  let bestScore = -1;
+  for (const bucket of buckets.values()) {
+    // Population × mean saturation: a big dull region never beats the brand mark,
+    // and a handful of vivid anti-aliasing pixels never beats a real field of colour.
+    const score = bucket.n * (bucket.satSum / bucket.n);
+    if (score > bestScore) { bestScore = score; best = bucket; }
+  }
+
+  // A brand mark worth naming has to be more than a stray rim of anti-aliasing.
+  const chromaIsReal = best !== null && chromaticInk >= inkN * 0.04;
+  const r = chromaIsReal ? Math.round(best!.r / best!.n) : Math.round(inkR / inkN);
+  const g = chromaIsReal ? Math.round(best!.g / best!.n) : Math.round(inkG / inkN);
+  const b = chromaIsReal ? Math.round(best!.b / best!.n) : Math.round(inkB / inkN);
+
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2;
+  const d = max - min;
+  return {
+    r, g, b,
+    sharePct: chromaIsReal ? (100 * best!.n) / chromaticInk : 100,
+    saturationPct: d === 0 ? 0 : (100 * d) / (255 - Math.abs(2 * l - 255)),
+    source: chromaIsReal ? 'chroma' : 'ink',
+  };
 }

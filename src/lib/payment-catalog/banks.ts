@@ -285,6 +285,68 @@ export function unmappedGroupKey(spelling: string): string {
   return `unmapped:${bankSpellingKey(spelling)}`;
 }
 
+// ── One free-text spelling → the brand to show beside it ─────────────────────
+
+/**
+ * What a single raw bank spelling resolves to, for surfaces that show ONE person's
+ * bank rather than the folded leaderboard.
+ *
+ * `key` and `logo` are null whenever nothing DECLARED claims the spelling, and that
+ * is the correct answer, not a gap: §2 of `payment-catalog-current-banks.md` —
+ * "guessing is exactly the invented equivalence §10.1 forbids". A bank that is
+ * claimed but ships no artwork also returns a null `logo` (§7: MariBank, Metrobank
+ * and Security Bank deliberately have none, because "a wrong-bank logo is worse than
+ * none — it is a confident lie on a screen Accounting uses to reason about payouts").
+ */
+export interface BankBrand {
+  /** Official/registry group key, or null when nothing claims this spelling. */
+  key: string | null;
+  /** The official display name. Null when unclaimed — never the raw spelling, which
+   *  the caller already has and is the only thing it may print in that case. */
+  officialName: string | null;
+  /** The artwork to render, or null. Null is a NORMAL outcome. */
+  logo: BankLogo | null;
+}
+
+const UNCLAIMED: BankBrand = { key: null, officialName: null, logo: null };
+
+/**
+ * Resolve ONE free-text spelling to the bank it names and the logo to draw.
+ *
+ * Routes through the very same `groupKeyResolver` the Current Banks fold uses, so a
+ * person's profile and the catalog card can never disagree about which bank a
+ * spelling is — registry aliases outrank the declared table in both, subsidiaries
+ * stay apart in both (BDO Network ≠ BDO Unibank, BanKo ≠ BPI), and a spelling
+ * nobody claims gets nothing in both.
+ *
+ * `registry` is optional because the only caller today (the People profile's Banking
+ * block) has no registry loaded and the `app_settings` row does not exist yet — but
+ * it is a parameter rather than an assumption, so wiring the saved overrides in later
+ * is one argument at one call site, never a second copy of this resolution.
+ */
+export function resolveBankBrand(
+  spelling: string | null | undefined,
+  registry: readonly BankRegistryEntry[] = [],
+): BankBrand {
+  const raw = String(spelling ?? '').trim();
+  if (!raw || !bankSpellingKey(raw)) return UNCLAIMED;
+
+  const { key } = groupKeyResolver(registry)(raw);
+  const entry = registry.find((e) => e.key === key) ?? null;
+  const declared = OFFICIAL_BY_KEY.get(key) ?? null;
+  // Claimed by neither the declared table nor a saved registry row — an unmapped
+  // spelling. It keeps its raw text on screen and gets no brand at all.
+  if (!declared && !entry) return UNCLAIMED;
+
+  return {
+    key,
+    officialName: entry?.name?.trim() || declared?.name || null,
+    // Same precedence as `foldBankSpellings`: a saved logo wins, else the shipped
+    // brand asset, else nothing.
+    logo: entry?.logo ?? declaredBankLogo(key),
+  };
+}
+
 // ── "That's a person, not a bank" ────────────────────────────────────────────
 
 /** Tokens that make a string bank-ish. Presence of ANY means we never call it a name. */

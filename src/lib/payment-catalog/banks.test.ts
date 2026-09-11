@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodePng, isLegibleOnWhite, measureInk } from '@/lib/images/decode-png';
-import { validatePayProcessorLogo } from './pay-processors';
+import { payProcessorLogoSrc, validatePayProcessorLogo } from './pay-processors';
 import {
+  ALLOWED_BANK_PUBLIC_LOGO_SRCS,
   BANK_LOGO_SRC,
   BANK_ALIASES_MAX,
   OFFICIAL_BANKS,
@@ -16,6 +17,7 @@ import {
   looksLikePersonName,
   officialBankFor,
   officialKeyFor,
+  resolveBankBrand,
   sanitizeBankEntry,
   unmappedGroupKey,
   peopleForBank,
@@ -560,4 +562,134 @@ test('the identity-free fold input stays identity-free', () => {
   const groups = foldBankSpellings([{ bankName: 'BPI', altBankName: null, preferredSlot: 'primary' }]);
   const serialized = JSON.stringify(groups).toLowerCase();
   assert.ok(!serialized.includes('@'), 'a group payload must never contain an email');
+});
+
+
+// ── One spelling → the brand beside a single person's bank ───────────────────
+//
+// `resolveBankBrand` is what the People profile's Banking block draws from. Every
+// test below is a failure class it must close, because the screen it feeds is one
+// Accounting uses to reason about where money goes: a logo there is a CLAIM about
+// which institution holds the account on the row beside it.
+
+test('resolveBankBrand: a declared spelling gets its official name and shipped logo', () => {
+  for (const spelling of ['GoTyme', 'GoTyme Bank', 'Go Tyme Bank', 'GoTymePH']) {
+    const b = resolveBankBrand(spelling);
+    assert.equal(b.key, 'gotyme', spelling);
+    assert.equal(b.officialName, 'GoTyme Bank', spelling);
+    assert.deepEqual(b.logo, { kind: 'public', src: '/banks/gotyme.png' }, spelling);
+  }
+  // Seventeen spellings of BPI all land on one brand.
+  for (const spelling of ['BPI', 'Bank of the Philippine Islands', 'Bank of the Philippines Island']) {
+    assert.equal(payProcessorLogoSrc(resolveBankBrand(spelling).logo), '/banks/bpi.png', spelling);
+  }
+});
+
+test('resolveBankBrand: a subsidiary NEVER borrows the parent logo', () => {
+  // Each is a separately licensed institution with its own clearing details. Drawing
+  // the parent's mark on a child's row tells Accounting the money is somewhere else.
+  const pairs: [string, string][] = [
+    ['BDO Network Bank', '/banks/bdo.png'],
+    ['China Bank Savings', '/banks/chinabank.png'],
+    ['EastWest Rural Bank', '/banks/eastwest.png'],
+    ['BPI Direct BanKo', '/banks/bpi.png'],
+    ['UnionDigital Bank', '/banks/unionbank.png'],
+  ];
+  for (const [child, parentLogo] of pairs) {
+    const src = payProcessorLogoSrc(resolveBankBrand(child).logo);
+    assert.notEqual(src, parentLogo, `${child} must not show ${parentLogo}`);
+  }
+});
+
+test('resolveBankBrand: a claimed bank with no shipped artwork returns NO logo', () => {
+  // §7 — MariBank (104 people on the paid slot), Metrobank, Security Bank and SeaBank
+  // deliberately ship none, because a Commons search returns the wrong brand. The
+  // bank is still identified by name; it just gets no mark.
+  for (const spelling of ['Maribank', 'Metrobank', 'Security Bank', 'SeaBank']) {
+    const b = resolveBankBrand(spelling);
+    assert.ok(b.key, `${spelling} should still resolve to a bank`);
+    assert.ok(b.officialName, `${spelling} should still have an official name`);
+    assert.equal(b.logo, null, `${spelling} must show no logo`);
+  }
+});
+
+test('resolveBankBrand: an unclaimed spelling gets NOTHING — never a guess', () => {
+  // "Rizal Bank" could be RCBC or Rizal Microbank. Guessing is the invented
+  // equivalence §10.1 forbids, and it is live data (2 rows).
+  for (const spelling of ['Rizal Bank', 'SSB Bank ("Domestic ACH" or "Direct Deposit")']) {
+    assert.deepEqual(resolveBankBrand(spelling), { key: null, officialName: null, logo: null }, spelling);
+  }
+});
+
+test('resolveBankBrand: a person name typed into the bank field resolves to nothing', () => {
+  // Eight live rows carry the account holder's name where the bank belongs.
+  for (const name of ['Mark Anthony Padilla', 'Mark Andrew Tandoc De la Cruz', 'Clarisse Keol']) {
+    assert.ok(looksLikePersonName(name), `${name} should read as a person`);
+    assert.equal(resolveBankBrand(name).logo, null, `${name} must draw no bank logo`);
+    assert.equal(resolveBankBrand(name).key, null, name);
+  }
+});
+
+test('resolveBankBrand: blank, null and whitespace resolve to nothing', () => {
+  for (const v of [null, undefined, '', '   ', '	']) {
+    assert.deepEqual(resolveBankBrand(v), { key: null, officialName: null, logo: null }, JSON.stringify(v));
+  }
+});
+
+test('resolveBankBrand: a saved registry logo and alias outrank the declared table', () => {
+  // The app_settings row does not exist in production yet, so this is the contract
+  // the resolver keeps for the day Accounting saves one — the same precedence
+  // foldBankSpellings uses, never a second opinion.
+  const custom: BankRegistryEntry[] = [
+    entry({ key: 'maribank', name: 'MariBank PH', logo: { kind: 'public', src: '/banks/gotyme.png' } }),
+    entry({ key: 'rcbc', aliases: ['Rizal Bank'] }),
+  ];
+  const mari = resolveBankBrand('Maribank', custom);
+  assert.equal(mari.officialName, 'MariBank PH');
+  assert.deepEqual(mari.logo, { kind: 'public', src: '/banks/gotyme.png' });
+  // An alias claims a previously unmapped spelling into RCBC, logo included.
+  const rizal = resolveBankBrand('Rizal Bank', custom);
+  assert.equal(rizal.key, 'rcbc');
+  assert.equal(payProcessorLogoSrc(rizal.logo), '/banks/rcbc.png');
+  // …and without that registry it is still unclaimed.
+  assert.equal(resolveBankBrand('Rizal Bank').key, null);
+});
+
+test('resolveBankBrand agrees with foldBankSpellings on which bank a spelling is', () => {
+  // One resolver, two surfaces. A profile that named a different bank than the
+  // catalog card would be two answers to the same question.
+  const spellings = [
+    'GoTyme', 'BPI', 'BDO Unibank, Inc.', 'BDO Network Bank', 'Maribank',
+    'Metrobank', 'Rizal Bank', 'Mark Anthony Padilla', 'UnionBank', 'Wise',
+  ];
+  const registry = [entry({ key: 'rcbc', aliases: ['Rizal Bank'] })];
+  for (const reg of [[] as BankRegistryEntry[], registry]) {
+    for (const spelling of spellings) {
+      const [group] = foldBankSpellings([row(spelling)], reg);
+      const brand = resolveBankBrand(spelling, reg);
+      if (brand.key === null) {
+        assert.equal(group.key, unmappedGroupKey(spelling), `${spelling}: unclaimed both ways`);
+        assert.equal(group.logo, null, `${spelling}: an unclaimed group has no logo either`);
+      } else {
+        assert.equal(brand.key, group.key, `${spelling}: same group`);
+        assert.deepEqual(brand.logo, group.logo, `${spelling}: same logo`);
+      }
+    }
+  }
+});
+
+test('every logo resolveBankBrand can return is a file that exists', () => {
+  // banks.test.ts already pins BANK_LOGO_SRC's files for existence and legibility;
+  // this pins that the resolver cannot hand the UI a path outside that set — an
+  // unresolvable src renders as an empty plate that nothing reports.
+  for (const b of OFFICIAL_BANKS) {
+    const logo = resolveBankBrand(b.name).logo;
+    if (!logo) continue;
+    assert.equal(logo.kind, 'public', `${b.name} must resolve to a shipped file, not an inline data URL`);
+    const src = payProcessorLogoSrc(logo);
+    assert.ok(
+      src !== null && ALLOWED_BANK_PUBLIC_LOGO_SRCS.has(src),
+      `${b.name} resolves to ${src}, which is not a shipped bank asset`,
+    );
+  }
 });

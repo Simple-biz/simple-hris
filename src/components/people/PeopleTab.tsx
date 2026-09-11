@@ -38,6 +38,7 @@ import {
   downloadRosterXlsx,
   downloadRosterPdf,
 } from '@/lib/people/people-roster-export';
+import { BankCard } from './bank-card';
 import { cn } from '@/lib/utils';
 
 type Currency = 'PHP' | 'USD' | 'COP';
@@ -2746,6 +2747,21 @@ function HoursCell({ hours }: { hours: Hours }) {
   );
 }
 
+/** Skeleton geometry for the reveal, mirroring the eight fields the Banking block
+ *  actually renders (three routing fields, then bank/holder/account/SWIFT/routing).
+ *  Varied widths on purpose — a grid of identical bars reads as a placeholder
+ *  graphic rather than as the record that is loading. */
+const REVEAL_SKELETON_WIDTHS: readonly [string, string][] = [
+  ['w-28', 'w-40'],
+  ['w-24', 'w-20'],
+  ['w-20', 'w-16'],
+  ['w-10', 'w-32'],
+  ['w-20', 'w-36'],
+  ['w-16', 'w-28'],
+  ['w-12', 'w-24'],
+  ['w-14', 'w-20'],
+];
+
 /* ── Person detail (banking + payroll history) ──────────────────────────── */
 
 type PersonTab = 'profile' | 'banking' | 'payroll' | 'pab';
@@ -2954,6 +2970,10 @@ function PersonDetailDialog({
   const [revealing, setRevealing] = useState(false);
   // Banking & payout stays hidden until the viewer explicitly reveals it.
   const [showBanking, setShowBanking] = useState(false);
+  // The card answers the question this tab is opened for; the rail details and the
+  // change log are follow-ups, so both start folded (Kane, 2026-09-11).
+  const [showRouting, setShowRouting] = useState(false);
+  const [showBankHist, setShowBankHist] = useState(false);
   const isHsl = isHslFamilyLabel(row.department);
   const [histPage, setHistPage] = useState(1);
   const histDirRef = useRef<1 | -1>(1);
@@ -3584,7 +3604,37 @@ function PersonDetailDialog({
               </div>
             ) : (
               <AnimatePresence mode="wait" initial={false}>
-              {!showBanking ? (
+              {/* Three states, and `revealing` outranks both the others. The reveal is
+                  a round trip to an audited endpoint, and before this branch existed
+                  the only sign it was in flight was a 3.5px spinner in the Reveal
+                  button — the panel where the details were about to land did not move
+                  at all, which reads as a dead click. The skeleton mirrors the field
+                  grid below it so the content lands where the placeholders were. */}
+              {revealing ? (
+                <motion.div
+                  key="revealing"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: reduceMotion ? 0 : 0.14 }}
+                  className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40"
+                  aria-live="polite"
+                  aria-busy
+                >
+                  <p className="mb-3 flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                    <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />
+                    Revealing payout details — this is recorded in the audit log.
+                  </p>
+                  <div className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+                    {REVEAL_SKELETON_WIDTHS.map(([labelW, valueW], i) => (
+                      <div key={i} className="space-y-1.5">
+                        <div className={cn('skeleton-shimmer h-2.5 rounded', labelW)} />
+                        <div className={cn('skeleton-shimmer h-3.5 rounded', valueW)} />
+                      </div>
+                    ))}
+                  </div>
+                </motion.div>
+              ) : !showBanking ? (
                 <motion.button
                   key="hidden"
                   type="button"
@@ -3724,7 +3774,49 @@ function PersonDetailDialog({
                 ) : banking.masked ? (
                   <p className="mb-2 text-[11px] text-zinc-400">Sensitive fields are masked. Reveal is recorded in the audit log.</p>
                 ) : null}
-                <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+                {/* The bank/wires field set is printed as the card it describes, and
+                    the four values on its face are NOT repeated in the grid below —
+                    one home per value, or the two copies drift the first time either
+                    is touched. Routing and Address stay in the grid: they are wire
+                    instructions, not anything a card face carries. */}
+                {(showBank || !banking) && (
+                  <BankCard
+                    spelling={prefBank.name}
+                    holder={prefBank.holder}
+                    account={prefBank.account}
+                    swift={prefBank.swift}
+                    isAlternativeSlot={prefAlt}
+                    reduceMotion={!!reduceMotion}
+                  />
+                )}
+                {/* The wallet identity fields are NOT folded away: for a Kolan,
+                    HiGlobe, WePay or Jeeves payee there is no card, and the wallet
+                    address IS their payout record — collapsing it would leave the
+                    panel showing nothing but a button. */}
+                {(proc === 'hurupay' || proc === 'wepay' || proc === 'higlobe' || proc === 'jeeves') && (
+                  <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
+                    {proc === 'hurupay' && <Field label="Kolan email" value={banking?.hurupay_email ?? null} />}
+                    {proc === 'wepay' && <Field label="WePay email" value={banking?.wepay_email ?? null} />}
+                    {proc === 'higlobe' && (
+                      <>
+                        <Field label="HiGlobe email" value={banking?.higlobe_email ?? null} />
+                        <Field label="HiGlobe account" value={banking?.higlobe_account_name ?? null} />
+                      </>
+                    )}
+                    {proc === 'jeeves' && <Field label="Phone" value={banking?.phone_number ?? null} mono />}
+                  </dl>
+                )}
+                {/* Everything that describes the RAIL rather than the account folds
+                    away (Kane, 2026-09-11). The card answers "where does this money
+                    land"; this answers "how does it get there", which is a second
+                    question and is not asked on most visits. */}
+                <Disclosure
+                  open={showRouting}
+                  onToggle={() => setShowRouting((v) => !v)}
+                  label="Routing & rail details"
+                  reduceMotion={!!reduceMotion}
+                >
+                <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 pt-2 sm:grid-cols-2">
                   {/* The routing picture, mirrored from Payment Dispatch:
                       "Pays via" = the rail PD actually routes on; "Sends from" =
                       the Bank Preferred send-from pick that wins precedence;
@@ -3755,28 +3847,18 @@ function PersonDetailDialog({
                     value={banking ? (banking.preferred_processor || 'Not set') : null}
                     cap
                   />
-                  {/* No banking record → show the canonical bank/wires field set as
-                      placeholders so the CEO sees where details are expected. */}
+                  {/* Bank, account holder, account number and SWIFT live on the card
+                      above. What is left is the wire detail a card face has no room
+                      for, still shown as placeholders when there is no record at all
+                      so the reader sees where details are expected. */}
                   {(showBank || !banking) && (
                     <>
-                      <Field label={`Bank${prefAlt ? ' (alternative)' : ''}`} value={prefBank.name} />
-                      <Field label="Account holder" value={prefBank.holder} />
-                      <Field label="Account no." value={prefBank.account} mono />
-                      <Field label="SWIFT" value={prefBank.swift} mono />
                       <Field label="Routing" value={prefBank.routing} mono />
                       <Field label="Address" value={prefBank.address} wide />
                     </>
                   )}
-                  {proc === 'hurupay' && <Field label="Kolan email" value={banking?.hurupay_email ?? null} />}
-                  {proc === 'wepay' && <Field label="WePay email" value={banking?.wepay_email ?? null} />}
-                  {proc === 'higlobe' && (
-                    <>
-                      <Field label="HiGlobe email" value={banking?.higlobe_email ?? null} />
-                      <Field label="HiGlobe account" value={banking?.higlobe_account_name ?? null} />
-                    </>
-                  )}
-                  {proc === 'jeeves' && <Field label="Phone" value={banking?.phone_number ?? null} mono />}
                 </dl>
+                </Disclosure>
                 </div>
                 )}
                 </motion.div>
@@ -3790,10 +3872,15 @@ function PersonDetailDialog({
               audit_log, which any admin can clear). Shares its detail dialog
               with the People-tab global "Recent bank changes" feed. */}
           <div className="mt-5">
-            <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-              <Landmark className="h-3.5 w-3.5 text-emerald-500" />
-              Bank change history
-            </h3>
+            <Disclosure
+              open={showBankHist}
+              onToggle={() => setShowBankHist((v) => !v)}
+              label="Bank change history"
+              icon={Landmark}
+              count={loading ? null : bankHistory.length}
+              reduceMotion={!!reduceMotion}
+            >
+            <div className="pt-2">
             {loading ? (
               <ul className="space-y-1.5">
                 {Array.from({ length: 2 }).map((_, i) => (
@@ -3882,6 +3969,8 @@ function PersonDetailDialog({
               )}
               </>
             )}
+            </div>
+            </Disclosure>
           </div>
 
           </>
@@ -4084,6 +4173,76 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
       <div className="text-[10.5px] uppercase tracking-wide text-zinc-400">{label}</div>
       <div className="mt-0.5 text-base font-semibold text-zinc-900 dark:text-zinc-100">{value}</div>
       {sub && <div className="text-[11px] text-zinc-400">{sub}</div>}
+    </div>
+  );
+}
+
+/**
+ * A folded section of the Banking panel.
+ *
+ * Both users of this are follow-up material: the rail details answer "how does the
+ * money get there" and the change log answers "has this moved recently", while the
+ * card above answers the question the tab is actually opened for. Folding them is
+ * what lets the card be the whole screen on the common visit.
+ *
+ * The trigger states the section's own count where it has one, so a fold never hides
+ * the fact that there is something inside — a collapsed "Bank change history" with
+ * four entries behind it has to say four, or the panel quietly under-reports.
+ */
+function Disclosure({
+  open,
+  onToggle,
+  label,
+  icon: Icon,
+  count,
+  reduceMotion,
+  children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  label: string;
+  icon?: LucideIcon;
+  /** Null while the count is still loading; a number renders as a chip. */
+  count?: number | null;
+  reduceMotion: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="group flex w-full items-center gap-1.5 rounded-md py-1 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 transition-colors hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+      >
+        {Icon && <Icon className="h-3.5 w-3.5 text-emerald-500" />}
+        <span>{label}</span>
+        {typeof count === 'number' && count > 0 && (
+          <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+            {count}
+          </span>
+        )}
+        <ChevronDown
+          className={cn(
+            'h-3.5 w-3.5 transition-transform duration-200 motion-reduce:transition-none',
+            open && 'rotate-180',
+          )}
+        />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="panel"
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+            animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto' }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+            transition={{ duration: reduceMotion ? 0 : 0.26, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            {children}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
