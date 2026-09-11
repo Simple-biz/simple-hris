@@ -6,6 +6,7 @@ import {
   CYCLE_REOPENED_PREFIX,
   CYCLE_REOPEN_ROLES,
   MAX_STORED_UNPAID,
+  aggregateUnpaidByProcessor,
   buildCycleCloseoutRecord,
   canReopenCycle,
   cycleCloseoutKey,
@@ -332,5 +333,76 @@ describe('buildCycleCloseoutRecord — the server disproves what it can', () => 
     const legacy = JSON.parse(JSON.stringify(rec)) as { unpaid: Record<string, unknown> };
     delete legacy.unpaid.reconciledPaid;
     assert.equal(parseCycleCloseout(JSON.stringify(legacy))?.unpaid.reconciledPaid, 0);
+  });
+});
+
+describe('aggregateUnpaidByProcessor — the PII boundary', () => {
+  const payees = [
+    { name: 'Ana Reyes', email: 'ana@simple.biz', payeeType: 'employee' as const, reason: 'problem' as const, amountUSD: 100, amountPHP: 5800, processor: 'wires' },
+    { name: 'Ben Cruz', email: 'ben@simple.biz', payeeType: 'employee' as const, reason: 'threshold' as const, amountUSD: 3, amountPHP: 170, processor: 'wise' },
+    { name: 'Cy Dela', email: 'cy@simple.biz', payeeType: 'contractor' as const, reason: 'pending' as const, amountUSD: 50, amountPHP: 2900, processor: 'wise' },
+  ];
+
+  test('returns counts and money only — no name, no email, anywhere in the output', () => {
+    const out = aggregateUnpaidByProcessor(payees);
+    const serialized = JSON.stringify(out);
+    for (const p of payees) {
+      assert.ok(!serialized.includes(p.email), `leaked ${p.email}`);
+      assert.ok(!serialized.includes(p.name), `leaked ${p.name}`);
+    }
+    assert.deepEqual(Object.keys(out).sort(), ['wires', 'wise']);
+  });
+
+  test('each payee lands in exactly one reason column', () => {
+    const out = aggregateUnpaidByProcessor(payees);
+    const total = Object.values(out).reduce(
+      (s, v) => s + v.pending + v.problem + v.threshold,
+      0,
+    );
+    assert.equal(total, payees.length);
+    assert.equal(out.wires!.problem, 1);
+    assert.equal(out.wise!.threshold, 1);
+    assert.equal(out.wise!.pending, 1);
+  });
+
+  test('money adds up per processor, and a missing amount counts as 0', () => {
+    const out = aggregateUnpaidByProcessor([
+      ...payees,
+      { name: null, email: 'd@simple.biz', payeeType: 'employee' as const, reason: 'pending' as const, amountUSD: null, amountPHP: null, processor: 'wise' },
+    ]);
+    assert.equal(out.wise!.owedUSD, 53);
+    assert.equal(out.wise!.owedPHP, 3070);
+    assert.equal(out.wise!.pending, 2);
+  });
+
+  test('a payee with no processor buckets as "unknown" — the same key the PAID side uses', () => {
+    // buildCycleCloseoutRecord buckets a paid row with no processor under
+    // 'unknown' too, so the two halves line up on one row instead of inventing
+    // two names for the same absence.
+    const out = aggregateUnpaidByProcessor([
+      { name: 'X', email: 'x@simple.biz', payeeType: 'employee' as const, reason: 'pending' as const, amountUSD: 1, amountPHP: 50, processor: null },
+    ]);
+    assert.equal(out.unknown!.pending, 1);
+    const rec = buildCycleCloseoutRecord({
+      sourceFile: 'f', cycleId: null, label: 'L', periodStart: null, periodEnd: null,
+      closedBy: 'C', closedByEmail: 'c@simple.biz', closedAt: '2026-09-11T00:00:00.000Z',
+      dispatches: [{ status: 'paid', payee_type: 'employee', recipient_email: 'p@simple.biz', amount_usd: 1, amount_php: 50, processor: null }],
+      reportedUnpaid: [], recordsOutstanding: null,
+    });
+    assert.ok(rec.byProcessor.unknown, 'the paid side uses the same key');
+  });
+
+  test('an unrecognised reason falls to pending, so the columns still sum', () => {
+    const out = aggregateUnpaidByProcessor([
+      { name: 'X', email: 'x@simple.biz', payeeType: 'employee' as const, reason: 'exploded' as never, amountUSD: 0, amountPHP: 0, processor: 'wise' },
+    ]);
+    assert.equal(out.wise!.pending, 1);
+    assert.equal(out.wise!.problem, 0);
+  });
+
+  test('no payees, null and undefined all give an empty map, never a throw', () => {
+    assert.deepEqual(aggregateUnpaidByProcessor([]), {});
+    assert.deepEqual(aggregateUnpaidByProcessor(null), {});
+    assert.deepEqual(aggregateUnpaidByProcessor(undefined), {});
   });
 });

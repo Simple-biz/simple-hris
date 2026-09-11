@@ -183,6 +183,64 @@ export interface CycleCloseoutRecord {
   records_outstanding: CycleCloseoutRecordsOutstanding | null;
 }
 
+/**
+ * The unpaid side of one cycle, split by the processor the person would have
+ * been paid on — counts and money ONLY.
+ *
+ * This exists so Admin → Diagnostics can show a per-processor breakdown without
+ * ever receiving a payee. `unpaid.payees` carries names and emails; the
+ * Diagnostics route family is aggregates-only (`system-diagnostics.md`
+ * § Security), so the projection has to happen where the payees still are —
+ * inside `toCycleCloseoutSummary`, which drops them a line later. Shipping the
+ * payees to an aggregator downstream would put names on the wire to do
+ * arithmetic that needs none.
+ *
+ * The three reasons are Payment Dispatch's own terms and are kept apart rather
+ * than summed, because they do not mean the same thing about the system:
+ * `threshold` is a deliberate hold, `pending` was never dispatched, `problem` is
+ * money that got stuck. Summing them would hide the only distinction a reader
+ * of this breakdown is looking for.
+ */
+export interface CycleCloseoutUnpaidByProcessor {
+  pending: number;
+  problem: number;
+  threshold: number;
+  /** What those people were owed. Absent amounts count as 0, never as unknown. */
+  owedUSD: number;
+  owedPHP: number;
+}
+
+/**
+ * Bucket a record's unpaid payees by processor.
+ *
+ * A payee with no processor buckets under `'unknown'` — the same key
+ * `buildCycleCloseoutRecord` uses for a paid row with no processor, so the paid
+ * and unpaid halves of the breakdown line up on one row instead of inventing
+ * two different names for the same absence.
+ *
+ * Returns counts and money only. It takes the payees and gives back no trace of
+ * them; that asymmetry is the point.
+ */
+export function aggregateUnpaidByProcessor(
+  payees: readonly CycleCloseoutUnpaidPayee[] | null | undefined,
+): Record<string, CycleCloseoutUnpaidByProcessor> {
+  const out: Record<string, CycleCloseoutUnpaidByProcessor> = {};
+  for (const p of payees ?? []) {
+    if (!p || typeof p !== 'object') continue;
+    const key = trimOrNull(p.processor, 40) ?? 'unknown';
+    const acc = out[key] ?? { pending: 0, problem: 0, threshold: 0, owedUSD: 0, owedPHP: 0 };
+    // An unrecognised reason falls to `pending`, matching the same fallback
+    // `normalizeReportedUnpaid` applies at the boundary. A row must land in
+    // exactly one column or the columns stop summing to the unpaid count.
+    const reason: CycleCloseoutUnpaidReason = REASONS.includes(p.reason) ? p.reason : 'pending';
+    acc[reason] += 1;
+    acc.owedUSD += p.amountUSD ?? 0;
+    acc.owedPHP += p.amountPHP ?? 0;
+    out[key] = acc;
+  }
+  return out;
+}
+
 function num(v: unknown): number {
   if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
   if (typeof v === 'string') {

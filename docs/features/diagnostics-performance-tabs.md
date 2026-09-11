@@ -24,7 +24,10 @@ Ship commit: see `git log` for `feat(diagnostics)` on 2026-09-04.
 | HR route | [`app/api/admin/diagnostics/hr-pipeline/route.ts`](../../app/api/admin/diagnostics/hr-pipeline/route.ts) |
 | Payroll tab | [`src/components/admin/PayrollCyclePerformance.tsx`](../../src/components/admin/PayrollCyclePerformance.tsx) |
 | HR tab | [`src/components/admin/HrPipelinePerformance.tsx`](../../src/components/admin/HrPipelinePerformance.tsx) |
-| Shared chrome (KPI card, rate bar, skeleton) | [`src/components/admin/performance-ui.tsx`](../../src/components/admin/performance-ui.tsx) |
+| Shared chrome (KPI card, rate bar, loading modal, detail modal, share bar) | [`src/components/admin/performance-ui.tsx`](../../src/components/admin/performance-ui.tsx) |
+| Per-processor unpaid aggregation (the PII boundary) | [`src/lib/payroll/cycle-closeout.ts`](../../src/lib/payroll/cycle-closeout.ts) → `aggregateUnpaidByProcessor`, applied in `cycle-closeout-store.ts` → `toCycleCloseoutSummary` |
+| Processor labels (Kolan, x1153) | [`src/lib/payment-catalog/pay-processors-db.ts`](../../src/lib/payment-catalog/pay-processors-db.ts) → `readPayProcessorRegistry`, wrapped in the payroll route |
+| Read-only prod checks | `scripts/probe-closeout-by-processor.mjs` · `scripts/verify-cycle-processor-breakdown.ts` |
 | Listed-per-week reader | [`src/lib/supabase/hr-new-hire-checklist.ts`](../../src/lib/supabase/hr-new-hire-checklist.ts) → `listChecklistWeekCounts` |
 | Cycle inventory (which cycles EXIST) | [`src/lib/payroll/cycle-inventory.ts`](../../src/lib/payroll/cycle-inventory.ts) |
 
@@ -145,6 +148,95 @@ as a week got worse.
 `Σpaid / Σpayable` across the month, on both tabs. A 40-person week and a 1,050-person week
 are not equal votes on how the month went. The month bucket is the calendar month of
 **`period_end`** — the month the work happened, not `closed_at` (Aug 2–8 was closed Aug 14).
+
+## A month card opens a per-processor breakdown, and its counts are a different unit
+
+Added **2026-09-11** (Kane: *"Monthly Cards should have an Open button ... how much was paid
+for each Pay Processor ... the main point is for us to know how successful Payroll Wizard HRIS
+is"*). Every month card carries an **Open** button raising `PerfDetailModal`: one row per pay
+processor with money paid, payments, and the unpaid people split into Pending / Problem /
+Threshold, plus a week-by-week section and the legend.
+
+It reads **nothing new**. Both halves were already inside the close-out record — the paid split
+is the record's own frozen `byProcessor`, and the unpaid split is aggregated from
+`unpaid.payees` at the store boundary. No migration, no new route, no new table.
+
+### The count column is PAYMENTS; the card's headline is PEOPLE
+
+This is the trap the whole design is shaped around, and it was measured, not guessed.
+`byProcessor` is built by walking the paid dispatch rows and incrementing **per row**
+(`cycle-closeout.ts` § `buildCycleCloseoutRecord`), while the card's `paid` is
+`tallyPaidDispatches`'s **distinct payee** count. Live August 2026:
+
+| | |
+| --- | --- |
+| `Σ byProcessor.count` | **3,112** — equals `paid.dispatchCount` |
+| `paid.payeeCount` (the card) | **3,088** |
+| `Σ byProcessor.usd` / `.php` | **exactly** `paid.paidUSD` / `paid.paidPHP` |
+
+So the field is named `paidPayments`, never `paid`, and **no per-processor rate is drawn
+anywhere**. Dividing paid-*payments* by (paid-payments + unpaid-*people*) would invent a
+denominator out of two units and would have read 97.73% for Kolan — within a point of the
+truth, which is exactly what makes it dangerous instead of obviously wrong. It is the same
+error that makes `payment_dispatches` poison as a rate source, relocated into a modal.
+
+The 24-row gap is **shown, not smoothed**: each one is a second paid row for someone who
+already had one that week. On a screen about how accurate the system is, that is a finding.
+
+**The money is the trustworthy half**, and a unit test pins it. If `Σ processors.usd` ever
+stops matching the frozen `paid.paidUSD`, the record was written by an older builder — surface
+it, do not "correct" either side.
+
+### Nothing records whose fault a Problem was
+
+Kane's question is *"was it the processor or was it us?"*. The record stores a `reason`
+(`pending` / `problem` / `threshold`) and a `processor`, and **no cause, no note, no owner**.
+So the modal shows the evidence — which rail carried which reasons — and prints **no verdict
+column** (Kane, 2026-09-11, Q1(a)). A `problem` is counted as **ours until something says
+otherwise** (Q2: *"we cant detect it so we just leave it as HRIS Problem for now"*).
+
+The three reasons are never summed into one "unpaid", because they do not mean the same thing:
+**threshold** is a deliberate hold under the payout minimum, **pending** was never dispatched,
+**problem** is money that got stuck. Threshold therefore never takes the amber warning colour —
+amber there would read as 34 failures for something Accounting chose on purpose.
+
+Making this attributable for real needs a **cause captured at Problem-time in Payment
+Dispatch**. That is a separate brief; it moves the dispatch screen.
+
+### The department split does not exist here
+
+There is no department on a close-out's unpaid payee — the row carries name, email, payeeType,
+reason, amounts and processor, full stop. An HSL-vs-other split would mean joining those emails
+against the roster, and Kane ruled it out for now (Q2). Do not add it without re-reading
+§ "Aggregates only" first.
+
+### Closed cycles only, and the button says so when it cannot open
+
+An unclosed cycle has no frozen processor split, so `processors` is `[]` and `paidPayments` is
+`null` — **not** an empty table of zeros, for the same reason `payable` is null there. A month
+with nothing closed gets a **disabled Open button carrying the reason** (Kane, Q3(b)), never a
+hidden one: hiding it makes the absence look like a layout difference rather than a fact about
+the month. Today that is every month except August 2026.
+
+### Two rules the modal inherits
+
+- **It never fetches.** It opens over data the tab already polled, which is why it can open
+  instantly and animate. It holds the month **key**, not the month object, so the 120s poll
+  refreshes an open modal in place instead of pinning it to a stale snapshot. A detail view
+  that needs its own read needs its own loading treatment — do not add a spinner in here.
+- **`ShareBar` is deliberately not `RateBar`.** A rate bar means a measured success fraction;
+  this one means a share of a total. Reusing it would teach a reader that a full orange bar
+  means "everyone got paid" and then show them a full bar that only means "this rail moved all
+  the money".
+
+Processor **labels** come from the Pay Processors registry (`hurupay` → Kolan, `wires` →
+x1153); the id is never renamed to match. `readPayProcessorRegistry` **throws** on a failed
+read, so the route wraps it and every label falls back to its raw id — a screen of correct,
+reconciled money must not 500 because nobody could look up the word "Kolan".
+
+Verified against production 2026-09-11 by `scripts/verify-cycle-processor-breakdown.ts`
+(read-only): money reconciles to the cent, payments and unpaid people both sum to the month
+row, and no email appears anywhere in the output.
 
 ## The HR rate is over STAGED, never over LISTED
 
@@ -288,3 +380,17 @@ to run. Every number is derived from tables and `app_settings` keys that already
 One additive data-access export was added to an existing module —
 `listChecklistWeekCounts()` in `src/lib/supabase/hr-new-hire-checklist.ts`. It touches no
 existing function.
+
+**2026-09-11, the per-processor breakdown: also no migration.** Both halves already existed in
+the close-out records — `byProcessor` has been written on every record since the close-out
+shipped, and the unpaid split is derived from `unpaid.payees`, which was already stored. No
+DDL, no new route, no n8n import, no env var.
+
+Two additive changes to existing modules, neither touching an existing function's behaviour:
+`aggregateUnpaidByProcessor()` in `cycle-closeout.ts`, and one new field
+(`unpaid.byProcessor`) on `CycleCloseoutSummary`, populated by `toCycleCloseoutSummary`.
+The payroll route additionally reads the Pay Processors registry for labels, best-effort.
+
+**Not clicked through in a browser** — typecheck clean, 86 unit tests green, and the route
+returns its 401 gate under the live dev server. The arithmetic *was* verified against
+production by `scripts/verify-cycle-processor-breakdown.ts`.

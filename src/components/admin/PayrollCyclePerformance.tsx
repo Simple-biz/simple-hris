@@ -26,16 +26,22 @@ import { cn } from '@/lib/utils';
 import {
   ACCENT,
   KpiCard,
+  OpenDetailButton,
+  PerfDetailModal,
   PerfNote,
   PerfShell,
   RateBar,
+  ShareBar,
   UnmeasurableChip,
+  money,
   num,
   pct,
 } from '@/components/admin/performance-ui';
 import type {
   CyclePerformanceRow,
   CyclePerformanceSummary,
+  MonthPerformanceRow,
+  ProcessorBreakdownRow,
 } from '@/lib/admin/cycle-performance';
 
 interface ApiResponse {
@@ -62,6 +68,15 @@ export default function PayrollCyclePerformance() {
   // had data and are not in an error state" — never from a separate flag that
   // can fall out of sync and repaint a loaded screen.
   const [everLoaded, setEverLoaded] = React.useState(false);
+  /**
+   * Which month's breakdown is open, by month key — NOT the month object.
+   *
+   * Holding the key means the 120s poll refreshes an open modal in place
+   * instead of leaving it pinned to a stale snapshot. Holding the object would
+   * freeze the popup at the moment it was opened, which on a screen whose whole
+   * purpose is "are these numbers right" is the wrong failure.
+   */
+  const [openMonth, setOpenMonth] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     setRefreshing(true);
@@ -98,6 +113,10 @@ export default function PayrollCyclePerformance() {
   }, []);
 
   const totals = data?.totals ?? null;
+  const openMonthRow = React.useMemo(
+    () => data?.months.find((m) => m.month === openMonth) ?? null,
+    [data, openMonth],
+  );
 
   return (
     <PerfShell
@@ -179,6 +198,30 @@ export default function PayrollCyclePerformance() {
                       <span className="font-mono text-[10px] tabular-nums text-zinc-400 dark:text-zinc-500">
                         {m.closedCycles}/{m.cycles} closed
                       </span>
+                    </div>
+                    {/* The Open button sits directly under the month name and
+                        above the rate, so the card reads: which month → look
+                        closer → how it went. A month with nothing closed has no
+                        frozen processor split to show, so the control is
+                        DISABLED WITH A REASON rather than hidden (Kane, Q3) —
+                        hiding it would make the absence look like a layout
+                        difference instead of a fact about the month. */}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                        {m.processors.length > 0
+                          ? `${m.processors.length} pay ${m.processors.length === 1 ? 'processor' : 'processors'}`
+                          : 'no processor split'}
+                      </span>
+                      <OpenDetailButton
+                        accent={ACCENT_KEY}
+                        disabled={m.processors.length === 0}
+                        disabledReason={
+                          m.closedCycles === 0
+                            ? 'Nothing in this month was closed, so no per-processor split was ever frozen.'
+                            : 'This month’s close-out records carry no processor breakdown.'
+                        }
+                        onClick={() => setOpenMonth(m.month)}
+                      />
                     </div>
                     <div className="flex items-baseline gap-2">
                       <span
@@ -399,9 +442,308 @@ export default function PayrollCyclePerformance() {
               </PerfNote>
             )}
           </div>
+
+          {/* Opens over data the tab already holds — no fetch, no loading
+              state. The row is looked up by key on every render, so the 120s
+              poll updates an open modal in place. */}
+          <PerfDetailModal
+            open={openMonthRow != null}
+            onOpenChange={(next) => {
+              if (!next) setOpenMonth(null);
+            }}
+            accent={ACCENT_KEY}
+            icon={<WalletGlyph />}
+            title={openMonthRow ? `${openMonthRow.label} — by pay processor` : ''}
+            subtitle="Frozen at close time, from the close-out records. Closed cycles only."
+          >
+            {openMonthRow ? <MonthProcessorDetail month={openMonthRow} /> : null}
+          </PerfDetailModal>
         </>
       ) : null}
     </PerfShell>
+  );
+}
+
+/**
+ * The body of a month's "Open" — which processor moved what, and where the
+ * money that did not move got stuck.
+ *
+ * ── The one thing this view must never do ──────────────────────────────────
+ * **It must not print a per-processor success rate.** The paid column counts
+ * dispatch ROWS and the three unpaid columns count PEOPLE (see
+ * `ProcessorBreakdownRow`), so `paid / (paid + unpaid)` per row would divide two
+ * different units. Live August 2026 it would read 97.7% for Kolan — within a
+ * point of the truth, which is what makes it dangerous rather than obviously
+ * wrong. The month's real rate is on the card this modal opened from, computed
+ * from the one denominator that exists.
+ *
+ * What IS trustworthy here is the money: the processor amounts sum to the
+ * record's frozen `paidUSD` / `paidPHP` to the cent. So money leads, share bars
+ * are drawn over money, and counts are supporting detail.
+ */
+function MonthProcessorDetail({ month }: { month: MonthPerformanceRow }) {
+  const rows = month.processors;
+  const totalPHP = rows.reduce((s, p) => s + p.paidPHP, 0);
+  const totalUSD = rows.reduce((s, p) => s + p.paidUSD, 0);
+  const totalPayments = rows.reduce((s, p) => s + p.paidPayments, 0);
+  const totalPending = rows.reduce((s, p) => s + p.pending, 0);
+  const totalProblem = rows.reduce((s, p) => s + p.problem, 0);
+  const totalThreshold = rows.reduce((s, p) => s + p.threshold, 0);
+  const totalOwedPHP = rows.reduce((s, p) => s + p.owedPHP, 0);
+  /**
+   * Payments minus people. Not noise, and not rounded away: each one is a
+   * second paid row for someone who already had one that week — a retry, a
+   * correction, or a genuine double payment. On a screen about how accurate the
+   * system is, that is a finding.
+   */
+  const doublePaid = month.paidPayments - month.paid;
+
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <MiniStat label="Paid out" value={money(totalPHP, 'PHP')} sub={money(totalUSD, 'USD')} />
+        <MiniStat
+          label="Payments"
+          value={num(totalPayments)}
+          sub={`to ${num(month.paid)} people`}
+          title="Dispatch rows, not people. A person paid twice in a week is two payments and one person."
+        />
+        <MiniStat
+          label="Still owed"
+          value={num(totalPending + totalProblem + totalThreshold)}
+          sub={money(totalOwedPHP, 'PHP')}
+          tone={totalPending + totalProblem + totalThreshold > 0 ? 'warn' : 'plain'}
+        />
+        <MiniStat
+          label="Problems"
+          value={num(totalProblem)}
+          sub={totalProblem === 0 ? 'none logged' : 'money stuck'}
+          tone={totalProblem > 0 ? 'warn' : 'plain'}
+          title="Rows Payment Dispatch logged as Problem — out of the queue, money stuck. Nothing records WHY, so nothing here claims to know."
+        />
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+        <table className="w-full min-w-[40rem] border-collapse text-[12px]">
+          <thead>
+            <tr className="border-b border-zinc-100 text-[10px] uppercase tracking-[0.12em] text-zinc-500 dark:border-zinc-800/60 dark:text-zinc-400">
+              <th className="px-3 py-2 text-left font-medium" scope="col">
+                Processor
+              </th>
+              <th className="px-3 py-2 text-right font-medium" scope="col">
+                Paid (PHP)
+              </th>
+              <th className="px-3 py-2 text-right font-medium" scope="col">
+                Paid (USD)
+              </th>
+              <th
+                className="px-3 py-2 text-right font-medium"
+                scope="col"
+                title="Paid dispatch ROWS, not people. Someone paid twice is two payments."
+              >
+                Payments
+              </th>
+              <th className="px-3 py-2 text-right font-medium" scope="col" title="Never dispatched.">
+                Pending
+              </th>
+              <th
+                className="px-3 py-2 text-right font-medium"
+                scope="col"
+                title="Logged Problem: out of the queue, money stuck."
+              >
+                Problem
+              </th>
+              <th
+                className="px-3 py-2 text-right font-medium"
+                scope="col"
+                title="Held under the payout minimum on purpose. Not a failure."
+              >
+                Threshold
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((p, i) => (
+              <ProcessorRow key={p.id} row={p} share={totalPHP > 0 ? p.paidPHP / totalPHP : 0} index={i} />
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t border-zinc-200 bg-zinc-50/60 font-semibold dark:border-zinc-800 dark:bg-zinc-900/40">
+              <td className="px-3 py-2 text-left text-[11px] text-zinc-700 dark:text-zinc-300">
+                Total
+              </td>
+              <Td strong>{money(totalPHP, 'PHP')}</Td>
+              <Td strong>{money(totalUSD, 'USD')}</Td>
+              <Td strong>{num(totalPayments)}</Td>
+              <Td strong>{num(totalPending)}</Td>
+              <Td strong>{num(totalProblem)}</Td>
+              <Td strong>{num(totalThreshold)}</Td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      {/* Per-week, because a month's total hides the week a rail fell over. */}
+      {month.cycleBreakdowns.length > 1 && (
+        <section className="flex flex-col gap-2">
+          <SectionLabel>Week by week</SectionLabel>
+          <div className="flex flex-col gap-2">
+            {month.cycleBreakdowns.map((c) => (
+              <div
+                key={c.sourceFile}
+                className="rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800"
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <span className="text-[11px] font-semibold text-zinc-700 dark:text-zinc-300">
+                    {c.label}
+                  </span>
+                  <span className="flex flex-wrap items-center gap-x-3 text-[10.5px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                    <span>{num(c.paid)} people</span>
+                    <span>{num(c.paidPayments)} payments</span>
+                    {c.unpaid > 0 && (
+                      <span className="text-amber-700 dark:text-amber-400">
+                        {num(c.unpaid)} owed
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {c.processors.map((p) => (
+                    <span
+                      key={p.id}
+                      title={`${p.label}: ${money(p.paidPHP, 'PHP')} over ${num(p.paidPayments)} payments`}
+                      className="inline-flex items-center gap-1 rounded border border-zinc-200 px-1.5 py-px font-mono text-[10px] tabular-nums text-zinc-600 dark:border-zinc-800 dark:text-zinc-300"
+                    >
+                      {p.label}
+                      <span className="text-zinc-400 dark:text-zinc-500">
+                        {num(p.paidPayments)}
+                      </span>
+                      {p.problem > 0 && (
+                        <span className="text-amber-700 dark:text-amber-400">
+                          !{p.problem}
+                        </span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ── The legend. Kane's question is "is it us or the processor?", and the
+          honest answer is that nobody wrote it down — so this says what each
+          column MEANS and stops there, rather than printing a verdict. ── */}
+      <div className="flex flex-col gap-1.5 rounded-lg border border-zinc-200/70 bg-zinc-50/60 px-3 py-2.5 dark:border-zinc-800/70 dark:bg-zinc-900/30">
+        <PerfNote icon={<DotGlyph />}>
+          <strong>Payments are rows, not people.</strong> The Paid column counts dispatch rows;
+          the month card counts people.{' '}
+          {doublePaid > 0 ? (
+            <>
+              This month they differ by <strong>{num(doublePaid)}</strong> — that many payments
+              went to someone who already had one that week (a retry, a correction, or a genuine
+              double payment). The three unpaid columns count <em>people</em>, so no percentage
+              is drawn across this table: the two sides are different units.
+            </>
+          ) : (
+            <>
+              They agree this month, so nobody was paid twice. The unpaid columns count
+              <em> people</em> either way, so no percentage is drawn across this table.
+            </>
+          )}
+        </PerfNote>
+        <PerfNote icon={<DotGlyph />}>
+          <strong>Threshold is not a failure.</strong> Those people were held under the payout
+          minimum on purpose. <strong>Pending</strong> means never dispatched at all.{' '}
+          <strong>Problem</strong> means Payment Dispatch took them out of the queue because the
+          money got stuck.
+        </PerfNote>
+        <PerfNote icon={<DotGlyph />}>
+          <strong>Nothing here records whose fault a Problem was.</strong> The close-out stores
+          the reason and the processor, and no cause — so a Problem is counted as ours until
+          something says otherwise, and this table shows the evidence rather than a verdict. A
+          rail carrying problems no other rail has is the signal worth chasing.
+        </PerfNote>
+        <PerfNote icon={<DotGlyph />}>
+          <strong>The money reconciles; the counts are supporting detail.</strong> These
+          processor amounts add up to the exact total the close-out froze at close time.
+        </PerfNote>
+      </div>
+    </>
+  );
+}
+
+function ProcessorRow({
+  row,
+  share,
+  index,
+}: {
+  row: ProcessorBreakdownRow;
+  share: number;
+  index: number;
+}) {
+  return (
+    <tr className="border-b border-zinc-50 transition-colors duration-150 last:border-0 hover:bg-zinc-50/70 motion-reduce:transition-none dark:border-zinc-900 dark:hover:bg-zinc-900/40">
+      <td className="px-3 py-2">
+        <div className="font-medium text-zinc-900 dark:text-zinc-100">{row.label}</div>
+        <div className="mt-1 w-24">
+          <ShareBar share={share} accent={ACCENT_KEY} index={index} />
+        </div>
+      </td>
+      <Td strong>{money(row.paidPHP, 'PHP')}</Td>
+      <Td>{money(row.paidUSD, 'USD')}</Td>
+      <Td>{num(row.paidPayments)}</Td>
+      <Td className={row.pending > 0 ? 'text-amber-700 dark:text-amber-400' : undefined}>
+        {row.pending === 0 ? '—' : num(row.pending)}
+      </Td>
+      <Td className={row.problem > 0 ? 'text-amber-700 dark:text-amber-400' : undefined}>
+        {row.problem === 0 ? '—' : num(row.problem)}
+      </Td>
+      {/* Threshold is a DELIBERATE hold, so it never takes the warning colour —
+          amber here would read as "37 failures" for something Accounting chose. */}
+      <Td muted>{row.threshold === 0 ? '—' : num(row.threshold)}</Td>
+    </tr>
+  );
+}
+
+function MiniStat({
+  label,
+  value,
+  sub,
+  tone = 'plain',
+  title,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: 'plain' | 'warn';
+  title?: string;
+}) {
+  return (
+    <div
+      title={title}
+      className="flex flex-col gap-0.5 rounded-lg border border-zinc-200 px-2.5 py-2 dark:border-zinc-800"
+    >
+      <span className="truncate text-[9.5px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+        {label}
+      </span>
+      <span
+        className={cn(
+          'font-mono text-[15px] font-bold leading-none tabular-nums',
+          tone === 'warn'
+            ? 'text-amber-700 dark:text-amber-400'
+            : 'text-zinc-900 dark:text-zinc-100',
+        )}
+      >
+        {value}
+      </span>
+      {sub ? (
+        <span className="truncate text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400">
+          {sub}
+        </span>
+      ) : null}
+    </div>
   );
 }
 

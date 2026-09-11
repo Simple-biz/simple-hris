@@ -43,6 +43,14 @@ function rec(over: {
   outstanding?: number | null;
   paidUSD?: number;
   paidPHP?: number;
+  dispatchCount?: number;
+  /** Frozen paid split, as the record stores it: counts are dispatch ROWS. */
+  byProcessor?: Record<string, { count: number; usd: number; php: number }>;
+  /** Unpaid split, as `toCycleCloseoutSummary` projects it from the payees. */
+  unpaidByProcessor?: Record<
+    string,
+    { pending: number; problem: number; threshold: number; owedUSD: number; owedPHP: number }
+  >;
 }): CycleCloseoutSummary {
   return {
     version: 1,
@@ -58,11 +66,11 @@ function rec(over: {
       payeeCount: over.paid ?? 0,
       employeeCount: over.employees ?? over.paid ?? 0,
       contractorCount: over.contractors ?? 0,
-      dispatchCount: over.paid ?? 0,
+      dispatchCount: over.dispatchCount ?? over.paid ?? 0,
       paidUSD: over.paidUSD ?? 0,
       paidPHP: over.paidPHP ?? 0,
     },
-    byProcessor: {},
+    byProcessor: over.byProcessor ?? {},
     unpaid: {
       source: 'dispatch_screen',
       count: over.unpaid ?? 0,
@@ -73,6 +81,7 @@ function rec(over: {
       truncated: over.truncated ?? 0,
       dropped: 0,
       reconciledPaid: over.reconciledPaid ?? 0,
+      byProcessor: over.unpaidByProcessor ?? {},
     },
     records_outstanding:
       over.outstanding === null || over.outstanding === undefined
@@ -553,4 +562,161 @@ test('sourceFiles absent falls back to the single sourceFile', () => {
   ]);
   // 'a.csv' is declared, so it is still suppressed
   assert.equal(built.totals.unclosedCycles, 0);
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Per-processor breakdown (the month card's "Open" modal).
+ *
+ * The load-bearing property is a UNIT one: the record's `byProcessor` counts
+ * dispatch ROWS while the card's headline counts PEOPLE. Live August 2026 sums
+ * to 3,112 payments against a 3,088-people headline. Every test below exists so
+ * a future edit cannot quietly divide one by the other.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** The live August 2026 shape, from scripts/probe-closeout-by-processor.mjs. */
+const LIVE_PROC: CycleCloseoutSummary[] = [
+  rec({
+    file: 'a.csv', label: 'Aug 2 – 8, 2026',
+    periodStart: '2026-08-02', periodEnd: '2026-08-08',
+    paid: 1051, dispatchCount: 1056, unpaid: 17,
+    paidUSD: 209212.94, paidPHP: 12743165.52,
+    byProcessor: {
+      wise:    { count: 296, usd: 58640.64, php: 3571804.41 },
+      hurupay: { count: 354, usd: 57053.49, php: 3475128.42 },
+      wires:   { count: 212, usd: 48785.13, php: 2971504.35 },
+      jeeves:  { count: 3,   usd: 709.48,   php: 43214.13 },
+      higlobe: { count: 191, usd: 44024.20, php: 2681514.21 },
+    },
+    unpaidByProcessor: {
+      wires:   { pending: 0, problem: 2, threshold: 0,  owedUSD: 0, owedPHP: 12000 },
+      wise:    { pending: 0, problem: 0, threshold: 8,  owedUSD: 0, owedPHP: 9000 },
+      hurupay: { pending: 0, problem: 0, threshold: 7,  owedUSD: 0, owedPHP: 8000 },
+    },
+  }),
+];
+
+test('processor counts are PAYMENTS and reconcile to dispatchCount, not to payeeCount', () => {
+  const row = measureCycle(LIVE_PROC[0]!);
+  const payments = row.processors.reduce((s, p) => s + p.paidPayments, 0);
+  assert.equal(payments, 1056, 'Σ processors = dispatchCount');
+  assert.equal(row.paidPayments, 1056);
+  assert.equal(row.paid, 1051, 'the headline still counts PEOPLE');
+  assert.notEqual(payments, row.paid, 'the two units must stay distinguishable');
+});
+
+test('processor money reconciles to the frozen paid totals, to the cent', () => {
+  const row = measureCycle(LIVE_PROC[0]!);
+  const usd = row.processors.reduce((s, p) => s + p.paidUSD, 0);
+  const php = row.processors.reduce((s, p) => s + p.paidPHP, 0);
+  assert.ok(Math.abs(usd - 209212.94) < 0.005, `USD drift: ${usd}`);
+  assert.ok(Math.abs(php - 12743165.52) < 0.005, `PHP drift: ${php}`);
+});
+
+test('the unpaid columns sum to the cycle unpaid count', () => {
+  const row = measureCycle(LIVE_PROC[0]!);
+  const people = row.processors.reduce((s, p) => s + p.unpaidPeople, 0);
+  assert.equal(people, 17);
+  assert.equal(people, row.unpaid);
+});
+
+test('the three reasons are kept apart, never summed into one "unpaid"', () => {
+  const row = measureCycle(LIVE_PROC[0]!);
+  const wires = row.processors.find((p) => p.id === 'wires');
+  assert.ok(wires);
+  assert.equal(wires.problem, 2);
+  assert.equal(wires.threshold, 0);
+  assert.equal(wires.pending, 0);
+  // Both problem rows in all of recorded history sit on the wire rail. If this
+  // ever reads 0 for a fixture that has them, the reason bucketing broke.
+  const totalProblems = row.processors.reduce((s, p) => s + p.problem, 0);
+  assert.equal(totalProblems, 2);
+});
+
+test('a processor that paid NOBODY but owes people still gets a row', () => {
+  // An inner join on the paid side would drop it — and a rail that paid nobody
+  // and left people owed is the most interesting row the table can hold.
+  const row = measureCycle(
+    rec({
+      file: 'x', paid: 1, unpaid: 3,
+      byProcessor: { wise: { count: 1, usd: 10, php: 500 } },
+      unpaidByProcessor: {
+        deadrail: { pending: 3, problem: 0, threshold: 0, owedUSD: 90, owedPHP: 5000 },
+      },
+    }),
+  );
+  const dead = row.processors.find((p) => p.id === 'deadrail');
+  assert.ok(dead, 'the unpaid-only processor must survive');
+  assert.equal(dead.paidPayments, 0);
+  assert.equal(dead.unpaidPeople, 3);
+});
+
+test('month processors are POOLED across the month’s closed cycles', () => {
+  const built = buildCyclePerformance([
+    rec({
+      file: 'a', periodEnd: '2026-08-08', paid: 10, dispatchCount: 11, unpaid: 1,
+      byProcessor: { wise: { count: 11, usd: 100, php: 5000 } },
+      unpaidByProcessor: { wise: { pending: 1, problem: 0, threshold: 0, owedUSD: 9, owedPHP: 500 } },
+    }),
+    rec({
+      file: 'b', periodEnd: '2026-08-15', paid: 20, dispatchCount: 20, unpaid: 2,
+      byProcessor: { wise: { count: 20, usd: 200, php: 9000 } },
+      unpaidByProcessor: { wise: { pending: 0, problem: 2, threshold: 0, owedUSD: 18, owedPHP: 900 } },
+    }),
+  ]);
+  const aug = built.months.find((m) => m.month === '2026-08');
+  assert.ok(aug);
+  assert.equal(aug.processors.length, 1);
+  const wise = aug.processors[0]!;
+  assert.equal(wise.paidPayments, 31);
+  assert.equal(wise.paidUSD, 300);
+  assert.equal(wise.pending, 1);
+  assert.equal(wise.problem, 2);
+  assert.equal(wise.unpaidPeople, 3);
+  // Pooled payments (31) must NOT be confused with pooled people (30).
+  assert.equal(aug.paid, 30);
+  assert.equal(aug.paidPayments, 31);
+  assert.equal(aug.cycleBreakdowns.length, 2);
+});
+
+test('an UNCLOSED cycle contributes no processor rows and no payment count', () => {
+  const built = buildCyclePerformance([], [obs({ sourceFile: 'u.csv', periodEnd: '2026-09-05', paid: 40 })]);
+  const row = built.cycles[0]!;
+  assert.equal(row.status, 'unclosed');
+  assert.deepEqual(row.processors, []);
+  assert.equal(row.paidPayments, null, 'null, not 0 — there is no frozen count');
+  const sep = built.months.find((m) => m.month === '2026-09')!;
+  assert.deepEqual(sep.processors, [], 'the Open button is disabled on exactly this case');
+  assert.deepEqual(sep.cycleBreakdowns, []);
+});
+
+test('processor rows sort by money paid, and the order is total', () => {
+  const row = measureCycle(
+    rec({
+      file: 'x', paid: 3,
+      byProcessor: {
+        small: { count: 600, usd: 10, php: 200000 },
+        big:   { count: 10,  usd: 900, php: 10000000 },
+        zzz:   { count: 1,   usd: 0,   php: 0 },
+        aaa:   { count: 1,   usd: 0,   php: 0 },
+      },
+    }),
+  );
+  assert.deepEqual(row.processors.map((p) => p.id), ['big', 'small', 'aaa', 'zzz']);
+});
+
+test('the label resolver renames for display without touching the id', () => {
+  // `hurupay` stays `hurupay` forever; only the label says Kolan.
+  const row = measureCycle(
+    rec({ file: 'x', paid: 1, byProcessor: { hurupay: { count: 1, usd: 1, php: 50 } } }),
+    (id) => (id === 'hurupay' ? 'Kolan' : id),
+  );
+  assert.equal(row.processors[0]!.id, 'hurupay');
+  assert.equal(row.processors[0]!.label, 'Kolan');
+});
+
+test('an unresolved label falls back to the raw id, never to blank', () => {
+  const row = measureCycle(
+    rec({ file: 'x', paid: 1, byProcessor: { mystery: { count: 1, usd: 1, php: 50 } } }),
+  );
+  assert.equal(row.processors[0]!.label, 'mystery');
 });

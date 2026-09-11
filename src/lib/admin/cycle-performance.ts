@@ -195,6 +195,83 @@ export interface CyclePerformanceRow {
   paidPHP: number;
   /** Newest dispatch activity, on unclosed cycles only. Null when closed. */
   lastActivityAt: string | null;
+  /**
+   * Paid dispatch ROWS — the record's frozen `paid.dispatchCount`. Null on an
+   * unclosed cycle, which carries no frozen row count.
+   *
+   * Kept beside `paid` (people) rather than replacing it so the difference is
+   * available to be SHOWN. It is not noise: on live August 2026 it is 24 rows,
+   * meaning 24 payments went to someone who already had one that week. A screen
+   * about how accurate the system is should not round that away.
+   */
+  paidPayments: number | null;
+  /**
+   * Per-processor split, CLOSED cycles only — empty on every other status.
+   * Paid figures are the record's frozen `byProcessor`; unpaid figures come
+   * from the payee aggregation done at the store boundary.
+   */
+  processors: ProcessorBreakdownRow[];
+}
+
+/**
+ * One processor's share of a month (or of a single cycle), for the month card's
+ * "Open" breakdown.
+ *
+ * ── The unit trap this shape exists to make impossible ─────────────────────
+ * `paidPayments` counts **dispatch rows**, not people. The close-out's
+ * `byProcessor` is built by walking the paid rows and incrementing per row
+ * (`cycle-closeout.ts` § buildCycleCloseoutRecord), while the card's headline
+ * `paid` is `tallyPaidDispatches`'s DISTINCT payee count. Measured on live
+ * production 2026-09-11: August 2026 sums to 3,112 payments across the
+ * processors while the month card reads 3,088 people — 24 rows belong to
+ * someone who already had one.
+ *
+ * So the field is named `paidPayments`, never `paid`, and **no rate is ever
+ * computed from it**. Dividing paid-payments by (paid-payments + unpaid-people)
+ * would invent a denominator out of two different units — the same class of
+ * error that makes `payment_dispatches` poison as a rate source, and it would
+ * land within a percentage point of the real figure, which is exactly what
+ * makes it dangerous rather than obviously wrong.
+ *
+ * The MONEY is the half that reconciles exactly: `Σ paidUSD` equals the frozen
+ * `paid.paidUSD` to the cent on every live record, which is why the breakdown
+ * leads with money and treats the counts as supporting detail.
+ */
+export interface ProcessorBreakdownRow {
+  /** The stored processor id — `hurupay`, `wise`, `wires`, … or `unknown`. */
+  id: string;
+  /**
+   * Display name from the Pay Processors registry, resolved at the route.
+   * Falls back to `id` when that read fails — `hurupay` is labelled **Kolan**
+   * and `wires` is **x1153**, and the id is never renamed to match
+   * (`hurupay-kolan-rebrand`).
+   */
+  label: string;
+  /** Paid dispatch ROWS. See the unit trap above. Never a numerator. */
+  paidPayments: number;
+  paidUSD: number;
+  paidPHP: number;
+  /** Payable people not paid, in Payment Dispatch's own three terms. */
+  pending: number;
+  problem: number;
+  threshold: number;
+  /** `pending + problem + threshold`. People, not rows. */
+  unpaidPeople: number;
+  owedUSD: number;
+  owedPHP: number;
+}
+
+/** One closed cycle's breakdown, for the per-week section of the modal. */
+export interface CycleBreakdown {
+  sourceFile: string;
+  label: string;
+  periodEnd: string | null;
+  /** Distinct people paid — the cycle row's own frozen figure. */
+  paid: number;
+  /** Paid dispatch rows. `paidPayments - paid` is the double-payment gap. */
+  paidPayments: number;
+  unpaid: number;
+  processors: ProcessorBreakdownRow[];
 }
 
 /** One calendar month. */
@@ -229,6 +306,17 @@ export interface MonthPerformanceRow {
   /** Worst single cycle rate in the month, for the "weakest week" callout. */
   worstCycleRate: number | null;
   worstCycleLabel: string | null;
+  /**
+   * Per-processor totals pooled across the month's CLOSED cycles, biggest payer
+   * first. Empty when nothing in the month was closed — which is every month
+   * except August 2026 today, and is why the card's Open button is disabled
+   * rather than opening an empty table.
+   */
+  processors: ProcessorBreakdownRow[];
+  /** The month's closed cycles, newest first, for the per-week section. */
+  cycleBreakdowns: CycleBreakdown[];
+  /** Σ `paidPayments` over the closed cycles. Rows, not people. */
+  paidPayments: number;
 }
 
 export interface CyclePerformanceSummary {
@@ -304,7 +392,10 @@ function safeMoney(v: unknown): number {
  * drops rows from the stored LIST, not from the debt. A rate computed over the
  * stored list alone would improve as a week got worse.
  */
-export function measureCycle(rec: CycleCloseoutSummary): CyclePerformanceRow {
+export function measureCycle(
+  rec: CycleCloseoutSummary,
+  labelFor: ProcessorLabelResolver = (id) => id,
+): CyclePerformanceRow {
   const paid = safeInt(rec.paid?.payeeCount);
   const unpaid = safeInt(rec.unpaid?.count) + safeInt(rec.unpaid?.truncated);
   const payable = paid + unpaid;
@@ -333,7 +424,107 @@ export function measureCycle(rec: CycleCloseoutSummary): CyclePerformanceRow {
         : null,
     paidUSD: safeMoney(rec.paid?.paidUSD),
     paidPHP: safeMoney(rec.paid?.paidPHP),
+    paidPayments: safeInt(rec.paid?.dispatchCount),
+    processors: buildProcessorRows(rec, labelFor),
   };
+}
+
+/** `hurupay` → "Kolan". Supplied by the route from the Pay Processors registry. */
+export type ProcessorLabelResolver = (id: string) => string;
+
+/**
+ * Join one close-out's frozen paid split to its aggregated unpaid split.
+ *
+ * The two halves come from different places on purpose — paid is frozen inside
+ * the record, unpaid is projected from the payees at the store boundary — so a
+ * processor can appear in either, both, or (for a rail that paid nobody and owed
+ * nobody) neither. The union of the two key sets is taken so a processor that
+ * only ever appears on the unpaid side still gets a row: a rail that paid NOBODY
+ * and left people owed is the single most interesting row this table can
+ * contain, and an inner join would drop it.
+ *
+ * Sorted by money paid, descending. Money rather than row count because the
+ * counts are rows and the money is exact — and a rail moving ₱10M with 10
+ * payments outranks one moving ₱200k with 600.
+ */
+function buildProcessorRows(
+  rec: CycleCloseoutSummary,
+  labelFor: ProcessorLabelResolver,
+): ProcessorBreakdownRow[] {
+  const paidBy = rec.byProcessor ?? {};
+  const unpaidBy = rec.unpaid?.byProcessor ?? {};
+  const ids = new Set<string>([...Object.keys(paidBy), ...Object.keys(unpaidBy)]);
+
+  const rows: ProcessorBreakdownRow[] = [];
+  for (const id of ids) {
+    const p = paidBy[id];
+    const u = unpaidBy[id];
+    const pending = safeInt(u?.pending);
+    const problem = safeInt(u?.problem);
+    const threshold = safeInt(u?.threshold);
+    rows.push({
+      id,
+      label: labelFor(id),
+      paidPayments: safeInt(p?.count),
+      paidUSD: safeMoney(p?.usd),
+      paidPHP: safeMoney(p?.php),
+      pending,
+      problem,
+      threshold,
+      unpaidPeople: pending + problem + threshold,
+      owedUSD: safeMoney(u?.owedUSD),
+      owedPHP: safeMoney(u?.owedPHP),
+    });
+  }
+  return sortProcessorRows(rows);
+}
+
+/** Biggest payer first, ties broken by id so the order is TOTAL and stable. */
+function sortProcessorRows(rows: ProcessorBreakdownRow[]): ProcessorBreakdownRow[] {
+  return rows.sort((a, b) =>
+    b.paidPHP !== a.paidPHP
+      ? b.paidPHP - a.paidPHP
+      : b.paidUSD !== a.paidUSD
+        ? b.paidUSD - a.paidUSD
+        : a.id < b.id
+          ? -1
+          : a.id > b.id
+            ? 1
+            : 0,
+  );
+}
+
+/**
+ * Pool several cycles' processor rows into one table.
+ *
+ * Straight addition of counts and money. There is deliberately no rate here and
+ * no place to put one: `paidPayments` counts dispatch rows and the three unpaid
+ * columns count people, so the two sides of this table cannot be divided by one
+ * another. See {@link ProcessorBreakdownRow}.
+ */
+export function poolProcessorRows(
+  cycles: readonly ProcessorBreakdownRow[][],
+): ProcessorBreakdownRow[] {
+  const merged = new Map<string, ProcessorBreakdownRow>();
+  for (const rows of cycles) {
+    for (const r of rows) {
+      const acc = merged.get(r.id);
+      if (!acc) {
+        merged.set(r.id, { ...r });
+        continue;
+      }
+      acc.paidPayments += r.paidPayments;
+      acc.paidUSD += r.paidUSD;
+      acc.paidPHP += r.paidPHP;
+      acc.pending += r.pending;
+      acc.problem += r.problem;
+      acc.threshold += r.threshold;
+      acc.unpaidPeople += r.unpaidPeople;
+      acc.owedUSD += r.owedUSD;
+      acc.owedPHP += r.owedPHP;
+    }
+  }
+  return sortProcessorRows([...merged.values()]);
 }
 
 /** "2026-08-02" + "2026-08-08" → "Aug 2 – 8, 2026", matching the record's own label form. */
@@ -405,6 +596,12 @@ export function summariseObservedCycle(
     paidUSD: safeMoney(obs.paidUSD),
     paidPHP: safeMoney(obs.paidPHP),
     lastActivityAt: obs.lastActivityAt ?? null,
+    // No close-out, so no frozen row count and no frozen processor split. Null
+    // and empty rather than 0 and a table of zeros, for the same reason
+    // `payable` is null here: an absent declaration is not a declaration of
+    // nothing. The month card's Open button is disabled on exactly this case.
+    paidPayments: null,
+    processors: [],
   };
 }
 
@@ -427,8 +624,9 @@ export function summariseObservedCycle(
 export function buildCyclePerformance(
   records: readonly CycleCloseoutSummary[],
   observed: readonly ObservedCycle[] = [],
+  labelFor: ProcessorLabelResolver = (id) => id,
 ): CyclePerformanceSummary {
-  const closed = records.map(measureCycle);
+  const closed = records.map((r) => measureCycle(r, labelFor));
 
   // "Since we started" is defined by the CLOSED cycles alone — it is the date
   // the declaration habit began, not the date payroll began.
@@ -497,6 +695,9 @@ export function buildCyclePerformance(
       let preCloseoutCycles = 0;
       let worstCycleRate: number | null = null;
       let worstCycleLabel: string | null = null;
+      let paidPayments = 0;
+      const cycleBreakdowns: CycleBreakdown[] = [];
+      const processorSets: ProcessorBreakdownRow[][] = [];
       for (const r of rows) {
         if (r.status === 'closed') closedCycles += 1;
         else if (r.status === 'unclosed') unclosedCycles += 1;
@@ -507,6 +708,17 @@ export function buildCyclePerformance(
         if (r.status !== 'closed') continue;
         paid += r.paid ?? 0;
         unpaid += r.unpaid ?? 0;
+        paidPayments += r.paidPayments ?? 0;
+        processorSets.push(r.processors);
+        cycleBreakdowns.push({
+          sourceFile: r.sourceFile,
+          label: r.label,
+          periodEnd: r.periodEnd,
+          paid: r.paid ?? 0,
+          paidPayments: r.paidPayments ?? 0,
+          unpaid: r.unpaid ?? 0,
+          processors: r.processors,
+        });
         if (r.rate === null) continue;
         if (worstCycleRate === null || r.rate < worstCycleRate) {
           worstCycleRate = r.rate;
@@ -529,6 +741,11 @@ export function buildCyclePerformance(
         measurable: payable > 0,
         worstCycleRate,
         worstCycleLabel,
+        processors: poolProcessorRows(processorSets),
+        // Newest week first, matching the cycle table above it. `rows` is
+        // already sorted newest-first by the caller, so this preserves it.
+        cycleBreakdowns,
+        paidPayments,
       };
     })
     .sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));

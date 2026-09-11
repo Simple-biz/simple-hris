@@ -48,7 +48,7 @@
 
 import * as React from 'react';
 import { cn } from '@/lib/utils';
-import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import {
   coerceEstimate,
   foldLoadSample,
@@ -654,5 +654,205 @@ function RefreshGlyph({ spinning }: { spinning: boolean }) {
       <path d="M21 12a9 9 0 1 1-2.64-6.36" />
       <path d="M21 3v6h-6" />
     </svg>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * The detail modal — a month card's "Open".
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Money, in the currency's own convention. Always two decimals: these figures
+ * reconcile to the cent against a frozen record, and a rounded ₱12,743,165 that
+ * cannot be tied back to ₱12,743,165.52 invites someone to "fix" a drift that
+ * does not exist.
+ */
+export function money(n: number | null | undefined, currency: 'USD' | 'PHP'): string {
+  if (n == null || !Number.isFinite(n)) return '—';
+  return `${currency === 'USD' ? '$' : '₱'}${n.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+/**
+ * The button on a month card.
+ *
+ * Disabled is a STATE WITH A REASON here, never a dead control: a month with no
+ * closed cycle has no frozen breakdown to show, and today that is every month
+ * except August 2026. Kane chose "shown but disabled with the reason" (Q3) over
+ * hiding it, so the reason has to be reachable — it rides on `title` and on
+ * `aria-describedby`-free plain text, and the cursor changes so the disabled
+ * state is legible before the click.
+ */
+export function OpenDetailButton({
+  accent,
+  onClick,
+  disabled,
+  disabledReason,
+  label = 'Open',
+}: {
+  accent: PerfAccent;
+  onClick: () => void;
+  disabled?: boolean;
+  disabledReason?: string;
+  label?: string;
+}) {
+  const a = ACCENT[accent];
+  return (
+    <button
+      type="button"
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      title={disabled ? disabledReason : 'Open the per-processor breakdown'}
+      className={cn(
+        'group inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10.5px] font-semibold',
+        'transition-all duration-200 motion-reduce:transition-none',
+        disabled
+          ? 'cursor-not-allowed border-zinc-200 bg-transparent text-zinc-300 dark:border-zinc-800 dark:text-zinc-600'
+          : cn(
+              a.chip,
+              'hover:-translate-y-px hover:shadow-sm active:translate-y-0',
+              'motion-reduce:hover:translate-y-0',
+            ),
+      )}
+    >
+      {label}
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={cn(
+          'h-2.5 w-2.5 transition-transform duration-200 motion-reduce:transition-none',
+          !disabled && 'group-hover:translate-x-0.5',
+        )}
+        aria-hidden
+      >
+        <path d="m9 18 6-6-6-6" />
+      </svg>
+    </button>
+  );
+}
+
+/**
+ * The detail popup both tabs can raise over data they ALREADY hold.
+ *
+ * It never fetches. That is the whole reason it can open instantly and animate
+ * — there is no loading state to design, because the numbers came down with the
+ * tab's own poll. If a future detail view needs its own read, it needs its own
+ * loading treatment too; do not quietly add a spinner in here.
+ *
+ * The four dialog fixes are all present and all load-bearing
+ * (`dialog-content-no-height-cap`, `docs/design/responsive-design.md`
+ * § "Dialogs and modals"): the shared primitive is a `grid gap-4` with **no
+ * max-height at all**, so a tall popup clips at the top AND bottom at once and
+ * its footer becomes unreachable.
+ *
+ *   `gap-0`                          or three 16px gutters show as seams
+ *   `max-h-[...]`                    or it clips at both ends on a short window
+ *   `shrink-0` header                or the header compresses instead of the body
+ *   `min-h-0 flex-1 overflow-y-auto` or the body cannot scroll inside the cap
+ */
+export function PerfDetailModal({
+  open,
+  onOpenChange,
+  accent,
+  title,
+  subtitle,
+  icon,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  accent: PerfAccent;
+  title: string;
+  subtitle: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const a = ACCENT[accent];
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[calc(100dvh-1.5rem)] max-w-[calc(100%-2rem)] flex-col gap-0 p-0 sm:max-h-[92dvh] sm:max-w-3xl">
+        <div className="flex shrink-0 items-center gap-2.5 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          {icon ? (
+            <span
+              className={cn(
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1',
+                a.text,
+                a.softBg,
+                a.ring,
+              )}
+            >
+              {icon}
+            </span>
+          ) : null}
+          <div className="min-w-0">
+            <DialogTitle className="truncate text-[13px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+              {title}
+            </DialogTitle>
+            <DialogDescription className="mt-0.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+              {subtitle}
+            </DialogDescription>
+          </div>
+        </div>
+        {/* min-h-0 is what lets this scroll inside the flex cap above. Without
+            it the body refuses to shrink and the cap does nothing. */}
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4">
+          {children}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * A share-of-total bar for one row of a breakdown table.
+ *
+ * Deliberately NOT `RateBar`. That component draws a RATE — a measured
+ * success fraction — and this one draws a SHARE of a total. Reusing it would
+ * put the same visual language on two different meanings, and a reader who
+ * learned that a full orange bar means "everyone got paid" would read a full
+ * bar here as the same claim when it only means "this rail moved all the
+ * money". Hence a thinner, quieter, unmistakably different mark.
+ *
+ * Animates from 0 on the next frame, like every other bar on these tabs: a
+ * width set in the insertion paint has nothing to travel from. `index` staggers
+ * the rows so the table resolves as a sweep instead of a snap — capped, so a
+ * long table never makes the last row wait.
+ */
+export function ShareBar({
+  share,
+  accent,
+  index = 0,
+}: {
+  /** 0–1 of the column total. */
+  share: number;
+  accent: PerfAccent;
+  index?: number;
+}) {
+  const a = ACCENT[accent];
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+  const target = Number.isFinite(share) ? Math.max(0, Math.min(1, share)) : 0;
+  return (
+    <div className={cn('h-1 w-full overflow-hidden rounded-full', a.barTrack)} role="presentation">
+      <div
+        className={cn(
+          'h-full rounded-full opacity-80 transition-[width] duration-700 ease-out motion-reduce:transition-none',
+          a.bar,
+        )}
+        style={{
+          width: `${(mounted ? target : 0) * 100}%`,
+          transitionDelay: `${Math.min(index, 8) * 45}ms`,
+        }}
+      />
+    </div>
   );
 }

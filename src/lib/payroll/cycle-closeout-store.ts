@@ -20,6 +20,7 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import {
+  aggregateUnpaidByProcessor,
   buildCycleCloseoutRecord,
   cycleCloseoutKey,
   cycleReopenedKey,
@@ -27,18 +28,34 @@ import {
   CYCLE_CLOSEOUT_PREFIX,
   type CycleCloseoutRecord,
   type CycleCloseoutRecordsOutstanding,
+  type CycleCloseoutUnpaidByProcessor,
 } from './cycle-closeout';
 import { cycleCompleteNotifiedKey, cycleReportSentKey } from './cycle-complete-trigger';
 
 /** A close-out without its unpaid rows — what the Reports list needs to badge a
  *  card without dragging every payee across the wire. */
 export type CycleCloseoutSummary = Omit<CycleCloseoutRecord, 'unpaid'> & {
-  unpaid: Omit<CycleCloseoutRecord['unpaid'], 'payees'>;
+  unpaid: Omit<CycleCloseoutRecord['unpaid'], 'payees'> & {
+    /**
+     * The unpaid people bucketed by processor and reason — counts and money
+     * only. Computed HERE, in the one place that still holds the payees, and
+     * deliberately not downstream: Admin → Diagnostics needs this split, and
+     * that route family may never receive a name or an email
+     * (`system-diagnostics.md` § Security). Aggregating at the boundary is what
+     * lets the breakdown exist without the PII travelling to meet it.
+     *
+     * The paid counterpart is the record's own frozen `byProcessor`.
+     */
+    byProcessor: Record<string, CycleCloseoutUnpaidByProcessor>;
+  };
 };
 
 export function toCycleCloseoutSummary(rec: CycleCloseoutRecord): CycleCloseoutSummary {
-  const { payees: _payees, ...unpaidRest } = rec.unpaid;
-  return { ...rec, unpaid: unpaidRest };
+  const { payees, ...unpaidRest } = rec.unpaid;
+  return {
+    ...rec,
+    unpaid: { ...unpaidRest, byProcessor: aggregateUnpaidByProcessor(payees) },
+  };
 }
 
 export async function getCycleCloseout(sourceFile: string): Promise<{
