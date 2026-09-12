@@ -127,6 +127,12 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
       'Fired when a manager marks a LEAD GEN hire as having attended orientation (Manager → Newly Hired; bulk fires one event per hire; other departments fire nothing). Payload carries the hire\'s identity — including the split first_name + last_name alongside the combined name — calltools_nickname + calltools_username from their paperwork (e.g. "Mikey J. T.", minted at mark time for pre-feature paperwork), and pay_rate / regular_rate / ot_rate so n8n can provision the CallTools agent. Re-marks (date edits) re-fire with already_marked: true — the flow must not create a second account.',
   },
   {
+    slug: 'gift_address_otp',
+    label: 'Gift Address Confirmation Code (n8n)',
+    description:
+      'Emails the 6-digit code for the PUBLIC /update-gift-address page, where a team member confirms their identity and tells us where to send the tenure gifts they are still owed. A generic send-email flow: POSTs { to, subject, body, html, otp_code, recipient_name } and the body/html are already rendered — just deliver them. MUST NOT be pointed at the bank-update OTP flow: that one renders its own "bank-update code" copy, so sharing it would email a bank notice for a gift. With nothing set here the page cannot send codes at all (503 in production).',
+  },
+  {
     slug: 'bank_info_notify',
     label: 'Missing Bank Info → Notify Employee (n8n)',
     description:

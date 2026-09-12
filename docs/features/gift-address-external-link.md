@@ -149,8 +149,18 @@ zinc on pink or emerald. Same rule the My Hours tiles follow.
 2. The same with `--apply`. **PENDING — Kane runs this.**
 3. **The n8n flow. PENDING — Kane builds and imports this.** A generic
    "send this email" flow accepting `{ to, subject, body, html, otp_code,
-   recipient_name }`. Register it in **Admin → Webhooks** under the slug
-   **`gift_address_otp`**, or set `N8N_GIFT_ADDRESS_OTP_WEBHOOK_URL`.
+   recipient_name }`; the body and html arrive already rendered, so the flow
+   only has to deliver them.
+
+   **Where:** Admin dashboard → **Webhooks** tab. The slug `gift_address_otp` is
+   registered in `KNOWN_SLUGS` (`src/components/admin/AdminWebhooks.tsx`), so the
+   row **appears on its own** with its label and description — paste the n8n
+   Production URL in, tick Active, Save. Any known slug not yet in
+   `webhooks.config` is appended as a blank row by the tab itself.
+
+   Resolution order is config → legacy key → env var, so
+   `N8N_GIFT_ADDRESS_OTP_WEBHOOK_URL` also works and is the fallback if you would
+   rather not store the URL in the database.
    **It must not reuse `bank_update_otp`** — that flow's copy says "bank-update
    code", so borrowing it would email a bank notice for a gift, and any later
    edit to the bank flow would silently change what gift recipients read. With
