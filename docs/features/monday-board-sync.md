@@ -1605,3 +1605,67 @@ Done, `tsc` clean.
 
 **Board effect:** 12 SP of blocked work drops to **5 SP** — only the n8n celebration import is still
 outstanding, and that is an import into n8n, not a deploy.
+
+## Pass 26 — 2026-09-12 · APPLIED and VERIFIED · 104 SP reaches Done, and 12 epics are missing
+
+Kane, verbatim: *"For table 2 these are done lets commit them and update the board we have done this
+already as for table 1 we are done with all of these QC Copy paste compare undo override lead gen.
+#1 if angelicac@ transfer backfill script run it if it hasnt been ran because I think its already
+done. Also Diagnostics is already done COP is done most of these are ddone even HSL stuff lets move
+this to done!"* — then *"push to monday!"*. Hash `4dda094a2ea9`. **36 rows written, 0 created,
+0 sprint moves. 31 Done, 5 held.**
+
+### The confirmation was asked for, and is recorded rather than assumed
+
+The gate lets a row close on Kane's own confirmation, but only if it is *asked for and recorded*. It
+was asked twice — the pass 25 brief's Q2, then a 31-row table — and his answer is quoted verbatim
+above, in `pass.mts`, and on every closed row's board update. Nothing about the code changed between
+Pending Deploy and Done; the confirmation **is** the new evidence, and saying so is the point.
+
+**Dates are git's, not today's.** Every Completed Date is the commit date of that row's last sha,
+re-derived this session and enforced by `selfcheck()`; all 28 were checked against Sprint 28's window
+(Sep 1-12) before anything was written. The work finished when it finished.
+
+### What his confirmation could not reach
+
+**The pay-cycle celebration row stayed Pending Deploy.** Its blocker is open — Kane hit a
+*Conflicting Webhook Path* dialog mid-import on 2026-09-11 and it is unresolved. An assertion cannot
+import an n8n workflow. Two other blockers were cleared by doing the work instead: the Bonus Library
+migration and the `angelicac@` backfill both ran 2026-09-11 and were verified read-only with a
+negative control, so those rows closed honestly.
+
+**#1 answered:** the `angelicac@` backfill had already run. Re-verified before the pass — master row
+`hsl:collections`, transfer `fb10af2c` applied, `sheet_synced` true, Sheet row 530 matching, one
+`transfer.backfilled` audit event. Nothing was re-run.
+
+### THE FINDING: 12 of our epics have been DELETED from the shared Roadmap board
+
+`review.mts` reported **`epics to create: 12`** where pass 25 had reported 0. That is the shape of a
+disaster — the reconciler recreating epics means duplicate rows and a rewritten relation on 284
+tasks — so nothing was applied until it was understood.
+
+Measured directly, paging properly (3 pages, 100/page, so **not** the documented 25-item `items(ids:)`
+cap): the Roadmap & Epics board has gone from **295 items / 37 ours** to **239 / 25 ours**. About 56
+items were removed board-wide, 12 of them ours: HRIS-01, 01a, 02a, 06, 08, 12, 14, 16, 27, 28, 31, 32.
+All twelve confirmed ABSENT by name. This board is **shared**, so the likeliest cause is another
+team's cleanup taking our rows with it. Nobody on our side deleted them.
+
+**Consequence, and why the pass still went ahead safely.** `apply.mts --only-new` returns at line 185,
+*before* phase 1 ever calls `syncHrisBoard` — so it cannot create an epic and cannot write a relation.
+That made it the correct path here, not merely the cheap one: the full path would have minted 12
+duplicate epics and rewritten every task's epic link to point at them. **Never run the full path again
+until the epics are restored deliberately.**
+
+`verify.mts` therefore returns **VERIFY FAIL (17)** — and every one of the 17 is that deletion: 16
+tasks orphaned from epics that no longer exist, plus the missing-epics line. The half that this pass
+owns is clean: **every row holds its intended status and Completed Date, `Done rows with no Completed
+Date: 0`, rollup 1569 / 874 OK, Sprint Tasks relation 284/284 OK.** Report the two halves separately;
+do not read the FAIL as a failed write.
+
+### The ledger was superseded, not flushed
+
+Pass 25 left 31 corrections owed at **Pending Deploy**. Pass 26 wrote those same rows at **Done**, so
+flushing afterwards would have written the older, lower status over the newer one and silently undone
+28 closures. All 31 entries are marked `flushedAt` with a note saying exactly that; `flush-pending.mts`
+now reports *"Nothing pending."* **A queued entry is only safe to flush while nothing else has moved
+the row** — that is new, and it is the first time a pass has had to retire a ledger rather than drain it.

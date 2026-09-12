@@ -809,7 +809,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // when the write had succeeded and my QUERY was broken. Had the write actually failed, there would
   // have been nothing to distinguish the two — which is the whole problem.
   // Rolled S27 → S28 on 2026-09-01: unfinished at sprint close. Status untouched by the move.
-  { epic: 'HRIS-15', name: 'Audit writes fail silently: insertAuditLog’s error is discarded at 197 of 201 call sites', type: 'Bug', sp: 3, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-15', name: 'Audit writes fail silently: insertAuditLog’s error is discarded at 197 of 201 call sites', type: 'Bug', sp: 3, done: true, sprint: 'S28', priority: 'High' },
   // ── Requested by Kane 2026-08-21 ─ not started ──────────────────────────────────────
   // 5 SP, and the FIRST task row under HRIS-17, which has carried 20 SP with zero children since the
   // board shipped in July. A ticket today emails on three things only: created (to the owner),
@@ -1465,7 +1465,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // 2 SP: Stop Processing filed a person the toast had just announced as paid as unpaid, because
   // unpaidPayable read the un-overlaid rows; the close-out record now prunes reconciled-paid
   // employees and counts them. LOCAL ONLY at staging (1f5b3ce4 not on origin/main).
-  { epic: 'HRIS-03a', name: 'Stop Processing can no longer file a just-paid person as unpaid — the close-out prunes reconciled-paid employees', type: 'Bug', sp: 2, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-03a', name: 'Stop Processing can no longer file a just-paid person as unpaid — the close-out prunes reconciled-paid employees', type: 'Bug', sp: 2, done: true, sprint: 'S28', priority: 'High' },
   // 8 SP — the cap, deliberately, and not an epic: one payee class delivered end to end in a day.
   // Eight commits: own tables (orphanage_interns / _hours / _pay, migration + apply script), own
   // Hubstaff report that never touches hubstaff_hours, Profiles + a mini wizard on /orphanage in the
@@ -1488,16 +1488,16 @@ export const PLAN_TASKS: PlanTask[] = [
   // 5 SP: a new Payment Catalog tab and route — the registry of send-from processors, 1:1 rails
   // (Kolan, HiGlobe) modelled as WALLET_RAILS, drift shown as a chip never a refusal; 680-line tab,
   // 429-line lib with 258 lines of tests. LOCAL ONLY at staging (5062ccc1 + 44aa16f7). Session 5a2f134a.
-  { epic: 'HRIS-06', name: 'Payment Catalog Pay Processors tab — the source-of-truth registry of send-from processors and their 1:1 rails', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-06', name: 'Payment Catalog Pay Processors tab — the source-of-truth registry of send-from processors and their 1:1 rails', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
   // 2 SP: a pure resolveDispatchButtonState with tests; the button is DISABLED while the cycle is
   // locked and sent to Payment Dispatch, Unlock → change → lock only re-stages. LOCAL ONLY at staging.
-  { epic: 'HRIS-02a', name: 'Wizard Lock-in button greys out once the cycle is locked and sent to Payment Dispatch', type: 'Bug', sp: 2, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: 'Wizard Lock-in button greys out once the cycle is locked and sent to Payment Dispatch', type: 'Bug', sp: 2, done: true, sprint: 'S28', priority: 'Medium' },
   // 8 SP — the cap: Edit Department on every Payment Catalog card (846-line dialog, 813 lines of
   // wizard steps, a 375-line staged run, registry +427, 8 route handlers) — rename keeps the KEY and
   // adds a previousNames alias resolved by the rate engine, sub-department restructure, people
   // moves, CAS 409; then Edit on the master-list cards for managers only, HSL excluded. LOCAL ONLY
   // at staging (7e15aed8 + 67858c44). Session 1a8c9a77.
-  { epic: 'HRIS-06', name: 'Edit Department on every Payment Catalog card — rename by alias, sub-department restructure, people moves, CAS-guarded; master-list cards for managers only', type: 'Feature', sp: 8, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-06', name: 'Edit Department on every Payment Catalog card — rename by alias, sub-department restructure, people moves, CAS-guarded; master-list cards for managers only', type: 'Feature', sp: 8, done: true, sprint: 'S28', priority: 'High' },
   // ── PASS 24 · 2026-09-10 · the range 67858c44..a56ce28c (69 commits, Sep 3 afternoon – Sep 10) ──
   // Pass 23 was applied the evening of 2026-09-03 (710ee0892af3) and VERIFIED by a board re-read on
   // 2026-09-10 — 254/254, rollup 1569/874, every row holding its intended status — so its rows are
@@ -1543,47 +1543,47 @@ export const PLAN_TASKS: PlanTask[] = [
   // 2 SP: a 339-line script that inserts the transfer HRIS never had and runs the same three Release
   // helpers in the same order (master list → Sheet cell → mark applied), backup first, --apply gated.
   // Dry run passed all five guards; --apply has NEVER run (Open item 9). Session aae1e82e.
-  { epic: 'HRIS-26', name: 'angelicac@ transfer backfill script — the transfer HRIS never filed, replayed through the three Release helpers in order, dry-run by default', type: 'Chore', sp: 2, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-26', name: 'angelicac@ transfer backfill script — the transfer HRIS never filed, replayed through the three Release helpers in order, dry-run by default', type: 'Chore', sp: 2, done: true, sprint: 'S28', priority: 'High' },
   // 5 SP: 482d5af6 "Push". AdminPennyConsole (1,018 lines) replaces BizAiTab; the penny-chat route
   // interleaves NUL-delimited activity frames so the progress readout names the REAL tool (the model
   // cannot emit a NUL, so no reply can forge a frame); console-stream / -phases / -commands libs with
   // 29 tests; claude-opus-5 with a refusal fallback; /clear. Session 989d5a3f.
-  { epic: 'HRIS-28', name: 'Admin Penny becomes an operator console — NUL-delimited activity frames report the real tool, Opus 5 engine with refusal fallback, /clear', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-28', name: 'Admin Penny becomes an operator console — NUL-delimited activity frames report the real tool, Opus 5 engine with refusal fallback, /clear', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
   // 5 SP: four commits (b1b67eba) — two routes, two 400+-line tabs, performance-ui (390→700),
   // cycle-performance + hr-pipeline-performance libs (~1,000 lines) with ~880 lines of tests, a
   // cycle inventory listing EVERY cycle (unclosed ones shown with their data and no denominator),
   // and a modal progress bar that never reaches 100% before the data lands.
-  { epic: 'HRIS-15', name: 'Diagnostics → Payroll Cycle Performance and HR Pipeline tabs — one honest rate each from close-outs, every cycle listed, and a progress bar that cannot finish early', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-15', name: 'Diagnostics → Payroll Cycle Performance and HR Pipeline tabs — one honest rate each from close-outs, every cycle listed, and a progress bar that cannot finish early', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
   // 1 SP: the code fix that fell out of the mixed .next/ incident — BonusCatalog surfaces a failed
   // read instead of rendering an empty catalog. Session c1da4d35.
-  { epic: 'HRIS-06', name: 'A failed Payment Catalog read no longer renders an empty catalog in silence', type: 'Bug', sp: 1, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'A failed Payment Catalog read no longer renders an empty catalog in silence', type: 'Bug', sp: 1, done: true, sprint: 'S28', priority: 'Medium' },
   // 5 SP: a settlement-currency route (262) + lib (185) + SettlementChip, wired into PayrollWizard,
   // DeptBonusCalculator, MarkPaidDialog and ProcessorQueue, ~320 lines of tests and a verify script.
   // Settlement currency is a PERSON fact sourced from onboarding country and never changes what is
   // paid; COP is the headline and the peso the footnote on Lead Gen totals. Session 5357b812.
-  { epic: 'HRIS-02a', name: 'COP people see COP — a per-person settlement currency, display-only, on the Payroll Wizard, both KPI calculators, Mark Paid and the Processor Queue', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: 'COP people see COP — a per-person settlement currency, display-only, on the Payroll Wizard, both KPI calculators, Mark Paid and the Processor Queue', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
   // 2 SP, own row because it is a bug CLASS: a per-effect cancelled flag killed the in-flight
   // request on every dependency change, and the emails were already marked "asked" so no retry came.
   // Only an unmount may drop a response; a failure un-asks. Fixed in both calculator copies.
-  { epic: 'HRIS-06', name: 'Settlement-currency fetch was cancelled by every dependency change and never retried — only an unmount may drop a response', type: 'Bug', sp: 2, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'Settlement-currency fetch was cancelled by every dependency change and never retried — only an unmount may drop a response', type: 'Bug', sp: 2, done: true, sprint: 'S28', priority: 'Medium' },
   // 5 SP: three of the six fixes off Carla's report (a7f934fc) — schema.ts +300 lines with ~290 lines
   // of tests: Managers Weekly reads the DATED 2026-08-30 sheet (specs are versioned, never edited),
   // banded weekly tiers, Sherwin/AR/Jazmine added, Pre/Post-Hearing as a final-week checkbox OUTSIDE
   // the weekly cap, Case Managers SSA.Gov ×₱250. The ₱2,500 is what Carla pinned on 09-08; she said
   // 3,500 on 09-09 — OPEN, never rewrite the amount or its test without a worked example.
-  { epic: 'HRIS-30', name: 'HSL Managers Weekly realigned to the dated 2026-08-30 sheet — banded weekly tiers, three new managers, Pre/Post-Hearing ₱2,500 monthly final-week box outside the cap, Case Managers SSA.Gov ×₱250', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-30', name: 'HSL Managers Weekly realigned to the dated 2026-08-30 sheet — banded weekly tiers, three new managers, Pre/Post-Hearing ₱2,500 monthly final-week box outside the cap, Case Managers SSA.Gov ×₱250', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
   // 2 SP: the systemic one — ~49 people got the weekly ₱475 and not the ₱1,625 monthly share. The
   // monthly auto-dispatch fires when the period is marked Ready (not by the calendar) and the monthly
   // share sums with the weekly bonus; Collections was the second monthly dept that never came through.
-  { epic: 'HRIS-30', name: 'SSD Medical Records and Collections monthly flat bonuses auto-dispatch again — Ready is the trigger, and the monthly share sums with the weekly bonus', type: 'Bug', sp: 2, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-30', name: 'SSD Medical Records and Collections monthly flat bonuses auto-dispatch again — Ready is the trigger, and the monthly share sums with the weekly bonus', type: 'Bug', sp: 2, done: true, sprint: 'S28', priority: 'High' },
   // 2 SP: hsl-kpi-payout.ts (33) + tests; duplicate master rows and external members had dropped
   // scored people out of the payout because the wizard keyed on hogan_smith_law home-dept rows.
-  { epic: 'HRIS-30', name: 'HSL KPI bonus is paid for every scored person, not only hogan_smith_law home-department master rows', type: 'Bug', sp: 2, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-30', name: 'HSL KPI bonus is paid for every scored person, not only hogan_smith_law home-department master rows', type: 'Bug', sp: 2, done: true, sprint: 'S28', priority: 'High' },
   // 5 SP: 1,373 lines — history route, bonus-catalog-db +311, BonusCatalog +329, history lib + tests,
   // a 105-line migration and its apply script. Kane's load-bearing decision: DISPLAY AND AUDIT ONLY,
   // the calculator keeps paying the live definition. Migration NOT APPLIED as of 2026-09-10 (all four
   // objects missing) — the UI degrades (NULL effective_from reads as created_at) rather than breaks.
-  { epic: 'HRIS-06', name: 'Bonus Library carries a version and an effective date per bonus, with version and assignment history in the modal — display and audit only, the calculator pays the live definition', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'Bonus Library carries a version and an effective date per bonus, with version and assignment history in the modal — display and audit only, the calculator pays the live definition', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
   // 3 SP: the NET of a build-and-revert afternoon (88e29eb1). 7b760955 moved the PAB payout week to
   // the week AFTER the period and 364fdfca reverted it the same day — production had already paid
   // August's PAB on the 08-23 file, so the rule is unchanged (pab-payout-week-gate-and-pill
@@ -1591,7 +1591,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // has two master rows — 267 people, 138 straddling hsl:* and non-HSL — and the step flags whose
   // department was guessed), the audit script, and additions-pab-gate (the Additions review re-gates
   // PAB off payout weeks so the screen shows what the run pays). One row describes the current rule.
-  { epic: 'HRIS-02b', name: 'PAB step: HSL wins when a person has two master rows and the step says whose department was guessed; the Additions review re-gates PAB off payout weeks', type: 'Bug', sp: 3, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-02b', name: 'PAB step: HSL wins when a person has two master rows and the step says whose department was guessed; the Additions review re-gates PAB off payout weeks', type: 'Bug', sp: 3, done: true, sprint: 'S28', priority: 'High' },
   // 2 SP, done:TRUE — a Spike whose deliverable is the document. Session 1a6b84b8 ran four minutes
   // and wrote nothing down; 362624c3 gave the findings a home (pre-release-security-readiness.md,
   // 142 lines): the shared-password impersonation backdoor on public /login, six ungated routes, the
@@ -1601,20 +1601,20 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-05', name: 'Pre-release security readiness sweep — the shared-password impersonation backdoor, six ungated API routes, the unpaid-paystub flag and zero security headers, written up from a transcript', type: 'Spike', sp: 2, done: true, sprint: 'S28', priority: 'Critical' },
   // 1 SP: 118 lines in PayrollWizard + the doc; a filter never hides a row — exports and the cycle
   // Total build from the whole snapshot, a labelled Search subtotal row appears instead. Session 11011fc4.
-  { epic: 'HRIS-02a', name: 'Payroll Wizard Reports step gets a search bar — display only, exports and the cycle Total never narrow', type: 'Feature', sp: 1, done: false, sprint: 'S28', priority: 'Low' },
+  { epic: 'HRIS-02a', name: 'Payroll Wizard Reports step gets a search bar — display only, exports and the cycle Total never narrow', type: 'Feature', sp: 1, done: true, sprint: 'S28', priority: 'Low' },
   // 5 SP: 21 files — accounting/tab-cache +359 with 427 lines of tests, hr/tab-cache +92 with 125,
   // three sidebars purge on sign-out. The Accounting/CEO/Payroll-Clerk store had no identity stamp,
   // no schema version, no age ceiling and no purge, so people:list / dispatch:queue survived signOut
   // into the next account. HR gained isHrTabCacheFresh (30 s) beside hasHrTabCache — paint and
   // may-skip are different questions. Session e45b1682.
-  { epic: 'HRIS-05', name: 'Accounting tab cache gets an identity envelope and a sign-out purge so pay data cannot survive into the next account; HR cache gains a 30 s freshness window', type: 'Bug', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-05', name: 'Accounting tab cache gets an identity envelope and a sign-out purge so pay data cannot survive into the next account; HR cache gains a 30 s freshness window', type: 'Bug', sp: 5, done: true, sprint: 'S28', priority: 'High' },
   // 5 SP: 34 files / 2,555 lines — registry.ts (567) + a 288-line source-scan test that FAILS THE
   // BUILD on an unregistered action, the panel's filter and badges GENERATED from it, Penny's
   // search_audit_log described from it, auditFrom(request, authz) so six routes stop taking the actor
   // off the body, destructive paths audit FIRST, clearAuditLog replaced by a dated purge (90-day
   // floor), keyset reads. Also gated employee-gift-shipping GET+PUT and import-daily-report — 2 of
   // the 6 ungated routes. Session 33c5ffd7.
-  { epic: 'HRIS-15', name: 'One audit-action registry behind the panel, Penny and every write path — source-scan test fails the build on an unregistered action, actor from the session never the body, dated purge with a 90-day floor', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-15', name: 'One audit-action registry behind the panel, Penny and every write path — source-scan test fails the build on an unregistered action, actor from the session never the body, dated purge with a 90-day floor', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
   // 3 SP, done:TRUE on a MEASUREMENT: the paid 08-23 week was invisible to four money readers because
   // its filename carried a browser "(1)" suffix. A 361-line script discovers every app_settings key
   // ending in the old name, backs the full restore set up first (two 2.3 MB JSONs on disk), renames
@@ -1625,38 +1625,38 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-14', name: 'Rename the paid 2026-08-23 Hubstaff week off its browser "(1)" suffix across every store and reseed its 1,100 disbursement records', type: 'Chore', sp: 3, done: true, sprint: 'S28', priority: 'High' },
   // 2 SP: the copy was wrong in four places, not three; "Not met" becomes a real drill-in, branched
   // on isHsl. The Sep 9 meeting's correction, built in session c2cf2f89.
-  { epic: 'HRIS-09', name: 'Employee PAB card explains the right rule in all four places, and "Not met" drills into the calendar', type: 'Bug', sp: 2, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-09', name: 'Employee PAB card explains the right rule in all four places, and "Not met" drills into the calendar', type: 'Bug', sp: 2, done: true, sprint: 'S28', priority: 'High' },
   // 3 SP: the meeting's one approved build. Rename is label-only across 7 sites (the `hours` key
   // stays); the nudge is THREE layers (persistent mark on every red day, a 5 s looping bubble in
   // seeded-shuffle order, a permanent count) off one pure isNudgeableMissedDay (126 lines, 111 of
   // tests). Red = under 7 h WITH data — Carla's zero-hours case renders sky/orange and is NOT nudged.
-  { epic: 'HRIS-09', name: 'My Hours becomes Time Adjustments, and red days ask for one — a persistent mark, a 5 s looping bubble and a permanent count, shuffled by seed', type: 'Feature', sp: 3, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-09', name: 'My Hours becomes Time Adjustments, and red days ask for one — a persistent mark, a 5 s looping bubble and a permanent count, shuffled by seed', type: 'Feature', sp: 3, done: true, sprint: 'S28', priority: 'High' },
   // 3 SP, HRIS-16's FIRST child row: the room said "it's randomized already" and it was a
   // deterministic alphabetical round-robin. deal.ts over a seeded shuffle, 9 tests including the
   // not-alphabetical regression, Callback out of QC_DEPT_KEYS (history retained), qc-scoring.md is
   // the surface's first doc, and audit-pending-migrations gains probes for the four QC tables.
-  { epic: 'HRIS-16', name: 'QC weekly deal is genuinely random — seeded per (period_start, department), Callback retired from QC_DEPT_KEYS, and the surface gets its first feature doc', type: 'Bug', sp: 3, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-16', name: 'QC weekly deal is genuinely random — seeded per (period_start, department), Callback retired from QC_DEPT_KEYS, and the surface gets its first feature doc', type: 'Bug', sp: 3, done: true, sprint: 'S28', priority: 'High' },
   // 5 SP: paste.ts (135) + compare.ts (241) with 261 lines of tests and 399 lines in
   // DeptBonusCalculator — TAB-only paste, four buckets carrying scored_by, Override via setVar ONLY
   // (never rows[]), in-memory Undo, one audit event. Var is per member (Appts_Set / reinelr@ Appts),
   // settled by a read-only prod probe. Jackie and nine officers test with real data Mon 2026-09-14.
-  { epic: 'HRIS-16', name: 'QC: paste Jackie’s sheet, Compare it with the first pass in four buckets, Override via setVar only, Undo in memory', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-16', name: 'QC: paste Jackie’s sheet, Compare it with the first pass in four buckets, Override via setVar only, Undo in memory', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
   // 5 SP: 840 lines — both pickers offer ONE week past the live batch (live Sunday + 7, never the
   // clock), a period-status route, kpi-published.ts (169) + tests, notification-views. The
   // kpi.published ALTER is APPLIED and verified on a fresh connection (45 types); the first real
   // insert is still unproven — the next Mark Ready / Lock is the proof. Session c2cf2f89.
-  { epic: 'HRIS-06', name: 'KPI calculators score the upcoming pay week before its Hubstaff file exists, and kpi.published tells Accounting on publish', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-06', name: 'KPI calculators score the upcoming pay week before its Hubstaff file exists, and kpi.published tells Accounting on publish', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
   // 2 SP: four polish commits on DeptBonusCalculator in one afternoon — Compare chip into the Lead
   // Gen card header beside Payout with motion, Offboarded · last pay collapsed behind a header chip,
   // an emerald running rim while Compare is live, the week picker's border back (it is a control).
-  { epic: 'HRIS-06', name: 'Lead Gen card header — Compare chip beside Payout with motion, Offboarded last pay behind a header chip, week picker border restored', type: 'Feature', sp: 2, done: false, sprint: 'S28', priority: 'Low' },
+  { epic: 'HRIS-06', name: 'Lead Gen card header — Compare chip beside Payout with motion, Offboarded last pay behind a header chip, week picker border restored', type: 'Feature', sp: 2, done: true, sprint: 'S28', priority: 'Low' },
   // 5 SP, from the PASS 23 range and undeclared until now: f36a97ce "Push" also carried the Manager
   // Overview rebuild (session 3dab3af5, Kane: "fit in 1 view port") — greeting, a divided band of
   // four stat cells (em-dash while loading, never a zero), approvals + unscored bonus departments as
   // ONE ordered "Needs you" queue (NEEDS_PREVIEW = 8, +N pinned below the scroll), roster on the
   // right, 0 px page scroll at 1440×900 / 1366×768 / 1280×720 (mobile still scrolls). Nothing on the
   // page decides anything. ManagerApp.tsx diff 1,553 lines. Doc arrived in ba990833 (Sep 3).
-  { epic: 'HRIS-10', name: 'Manager Overview rebuilt — what needs me on the left as one ordered queue, the roster on the right, four stat cells, and no page scroll at lg and up', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-10', name: 'Manager Overview rebuilt — what needs me on the left as one ordered queue, the roster on the right, four stat cells, and no page scroll at lg and up', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
 
   // ── PASS 25 · the two features that landed AFTER pass 24's range closed at a56ce28c ──────────────
   // 5 SP: 14 files / 1,577 insertions. The certificate stops being a dates-and-salary document — it
@@ -1667,12 +1667,12 @@ export const PLAN_TASKS: PlanTask[] = [
   // listEmployeePayStubs — PAB + Tech + Perf, lookback clamped to the person's start date. coe-facts
   // +241 with 164 lines of new tests; 4c15670d pins that the SIGNED copy carries the same facts as
   // the draft (one resolver, one renderer, no opt-out) with coe-request-paths.test.ts (82 lines).
-  { epic: 'HRIS-18', name: 'The COE states the profile role and the bonuses earned over the last 4 pay cycles, through the one reader the paystub modal already uses', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-18', name: 'The COE states the profile role and the bonuses earned over the last 4 pay cycles, through the one reader the paystub modal already uses', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
   // 3 SP: 12 files / 495 insertions. The Reports XLSX grows Time Adj. Hours / Time Adj. Pay / Time
   // Adj. Dates. The rule is the whole point and is stated in the row name: the delta is STAGED on the
   // payload at lock time and read back verbatim — never recomputed at export, so a replayed week
   // exports what was paid rather than what today's adjustments would say. Zeros are not null:
   // report-rows +83 with 120 lines of tests, a new replay-finals-overlay.ts (31) with 74. The
   // paystub still hides the delta — that is Open, not this row.
-  { epic: 'HRIS-02a', name: 'Payroll Wizard Reports XLSX carries Time Adj. Hours, Pay and Dates — the delta is staged on the payload, never recomputed at export', type: 'Feature', sp: 3, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: 'Payroll Wizard Reports XLSX carries Time Adj. Hours, Pay and Dates — the delta is staged on the payload, never recomputed at export', type: 'Feature', sp: 3, done: true, sprint: 'S28', priority: 'Medium' },
 ];
