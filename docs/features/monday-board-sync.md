@@ -1722,3 +1722,32 @@ relate) and **2 lines restating those same two facts**. What this pass owns is c
 The relation gap (`284 / 291`) is the documented, accepted cost of `--only-new`, and it cannot be
 closed until the epic deletion is resolved — a full reconcile is the only thing that writes relations,
 and right now that would also mint 12 duplicate epics.
+
+### CORRECTION 2026-09-12 — the rollup is NOT untrustworthy, and Kane's call is recorded
+
+An earlier note in this section said the project rollup "is computed from epic status, so SP Completed
+is no longer trustworthy." **That was wrong**, and Kane said so before I checked. `sync.ts:362-367` is
+explicit:
+
+- `projectTotalSp` = **Σ PLAN_EPICS SP**. It never reads the board, so a deleted epic cannot move it.
+- `projectCompletedSp` = the epic's **live board status**, *"falling back to the plan status for epics
+  created this run"* — and an epic absent from the board takes that same fallback. All 12 deleted epics
+  are `Shipped` in the plan, so they still count.
+
+**Total SP 1569 and SP Completed 874 are both unaffected by the deletion**, which is exactly what
+`verify.mts` reported when it called them OK. The fallback was designed for this.
+
+The one thing worth keeping from the wrong note, stated correctly: because the fallback answers from
+the plan, **the rollup cannot be used to DETECT the deletion** — it reads identical either way. Detection
+comes from `epics to create` in the review and the name-parity check, which is where it did come from.
+
+What is genuinely still broken is narrower and unchanged: **90 task rows in the plan point at an epic
+that no longer exists**, the project Sprint Tasks relation covers 284/291, and neither can be repaired
+without a full reconcile — which is still barred, now for a second reason: the reconciler would create
+the 12 epics into `group_mm4menkt`, **and the Q2 group itself no longer exists** (live groups are Q1, Q3,
+Q4 only).
+
+**KANE'S DECISION, 2026-09-12:** *"Lets leave them deleted for now they wont change the total SP on the
+project Ill ask abby on this."* No restore, no re-pointing of the plan, no full reconcile. The 12 stay
+deleted and the plan keeps declaring them; Abby owns the shared board and the question of whether Q2 was
+archived deliberately goes to her.
