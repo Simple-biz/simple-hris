@@ -20,3 +20,22 @@ export function parseDateOnlyLocal(input: string | null | undefined): Date | nul
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
+
+/**
+ * The ONE renderer for a date-only column (`YYYY-MM-DD`).
+ *
+ * `new Date('2026-09-01')` is UTC midnight, so it renders as Aug 31 for every
+ * viewer west of UTC — including all of Manila-facing payroll. This builds a
+ * LOCAL date instead, so the Profile's Employment row and the ID card agree.
+ *
+ * Unparseable input is returned VERBATIM rather than replaced: the card has
+ * always shown whatever the roster holds, and hiding a malformed date behind a
+ * dash hides a data problem.
+ */
+export function formatDateOnly(value: string | null | undefined): string {
+  const raw = value?.trim();
+  if (!raw) return '—';
+  const parsed = parseDateOnlyLocal(raw);
+  if (!parsed) return raw;
+  return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}

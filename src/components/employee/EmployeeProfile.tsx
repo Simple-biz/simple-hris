@@ -42,6 +42,7 @@ import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
 import { buildIdCard } from '@/lib/employee/id-card';
 import { downloadIdCardPng, IdCardRenderError } from '@/lib/employee/id-card-render';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { formatDateOnly } from '@/lib/date-only';
 import { useEmployeeCachedState } from '@/hooks/useEmployeeCachedState';
 import {
   OFFICIAL_USD_TO_PHP_RATE,
@@ -130,15 +131,15 @@ function parseRate(v: string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function formatStartDate(raw: string | null): string | null {
-  if (!raw?.trim()) return null;
-  const s = raw.trim();
-  const d = new Date(s);
-  if (!Number.isNaN(d.getTime())) {
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  }
-  return s;
-}
+/**
+ * Alias, not a second implementation. This used to build `new Date(raw)`
+ * directly, which parses a bare `YYYY-MM-DD` as UTC midnight — a day early for
+ * every viewer west of UTC (all of Manila-facing payroll). `formatDateOnly`
+ * (`@/lib/date-only`) is the ONE renderer for a date-only column, already used
+ * by the ID card; every call site below (Start Date row, pay-stub dates,
+ * resignation effective dates) now agrees with it byte for byte.
+ */
+const formatStartDate = formatDateOnly;
 
 function matchesEmployeeEmail(emp: EmployeeRow, n: string): boolean {
   const we = normEmail(emp.work_email ?? '');

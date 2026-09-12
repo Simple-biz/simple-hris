@@ -1,5 +1,5 @@
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
-import { parseDateOnlyLocal } from '@/lib/date-only';
+import { formatDateOnly } from '@/lib/date-only';
 
 /**
  * View model for the Employee ID card (Employee portal -> Profile -> ID).
@@ -74,24 +74,23 @@ export function nameFromEmail(email: string | null | undefined): string | null {
  * `start_date` is a **DATE** column — a calendar day with no time and no zone.
  * `new Date('2024-05-06')` parses that as UTC midnight, so `toLocaleDateString`
  * renders **the day before** for any viewer west of UTC. On an identity document
- * that is not a rounding error, so this goes through `parseDateOnlyLocal`, which
- * is the project's standing rule for DATE columns.
+ * that is not a rounding error, so the actual parsing/formatting is delegated to
+ * `formatDateOnly` (`@/lib/date-only`), the project's ONE renderer for DATE
+ * columns — `EmployeeProfile.tsx`'s `formatStartDate` is now an alias of the
+ * same function, so the two surfaces agree byte for byte.
  *
- * `EmployeeProfile.tsx`'s own `formatStartDate` still parses the naive way and is
- * off by one for those viewers — a pre-existing defect that also reaches pay dates
- * and resignation effective dates, so it is flagged rather than changed from here.
- * The presentation shape is deliberately identical, so once that is fixed the two
- * surfaces agree byte for byte.
- *
- * An unparseable value is passed through verbatim rather than blanked — a badly
- * typed sheet date is still evidence, and hiding it hides the ID's own origin.
+ * This wrapper keeps only the ID card's own placeholder contract: a blank
+ * value is `null` (so the row is omitted), where `formatDateOnly` itself
+ * returns an em-dash for blank input — that placeholder is correct for the
+ * Profile's row layout, not for a card that hides absent fields entirely.
+ * An unparseable non-blank value is still passed through verbatim rather than
+ * blanked — a badly typed sheet date is still evidence, and hiding it hides
+ * the ID's own origin.
  */
 export function formatIdCardDate(raw: string | null | undefined): string | null {
   const s = clean(raw);
   if (!s) return null;
-  const d = parseDateOnlyLocal(s);
-  if (!d) return s;
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatDateOnly(s);
 }
 
 /**
