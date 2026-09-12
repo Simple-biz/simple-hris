@@ -38,7 +38,8 @@ import {
   downloadRosterXlsx,
   downloadRosterPdf,
 } from '@/lib/people/people-roster-export';
-import { BankCard } from './bank-card';
+import { BankCard } from '@/components/banking/bank-card';
+import { pickPreferredBank } from '@/lib/banking/preferred-bank';
 import { cn } from '@/lib/utils';
 
 type Currency = 'PHP' | 'USD' | 'COP';
@@ -3192,26 +3193,19 @@ function PersonDetailDialog({
   // Preferred bank slot first, falling back to the OTHER slot per field — the
   // same pickFirst rule Payment Dispatch's queue row uses (buildPayeeDetails in
   // mock-queue.ts), so a person whose details live only in the non-preferred
-  // slot still shows the account PD pays to instead of a blank.
-  const prefAlt = banking?.preferred_bank_slot === 'alternative';
+  // slot still shows the account PD pays to instead of a blank. name/holder/
+  // account/swift come from the ONE shared cross-slot rule (also used by the
+  // employee's own Profile) — see people-bank-card.md §2 on why a second copy
+  // of this rule is exactly the drift that produces a wrong printed account.
+  // `routing` and `address` are wire-instruction fields with no alternative-
+  // slot equivalent question to answer here, so they stay local.
+  const prefBank = pickPreferredBank(banking);
   const firstOf = (...vals: (string | null | undefined)[]) =>
     vals.find((v) => v != null && String(v).trim() !== '') ?? null;
-  const prefBank = {
-    name: prefAlt
-      ? firstOf(banking?.alt_bank_name, banking?.bank_name)
-      : firstOf(banking?.bank_name, banking?.alt_bank_name),
-    holder: prefAlt
-      ? firstOf(banking?.alt_account_holder_name, banking?.account_holder_name)
-      : firstOf(banking?.account_holder_name, banking?.alt_account_holder_name),
-    account: prefAlt
-      ? firstOf(banking?.alt_account_number, banking?.account_number)
-      : firstOf(banking?.account_number, banking?.alt_account_number),
-    routing: prefAlt
-      ? firstOf(banking?.alt_routing_number, banking?.routing_number)
-      : firstOf(banking?.routing_number, banking?.alt_routing_number),
-    swift: banking?.swift_code ?? null,
-    address: banking?.full_address ?? null,
-  };
+  const prefRouting = prefBank.isAlternativeSlot
+    ? firstOf(banking?.alt_routing_number, banking?.routing_number)
+    : firstOf(banking?.routing_number, banking?.alt_routing_number);
+  const prefAddress = banking?.full_address ?? null;
   // Show the details of the rail Payment Dispatch ACTUALLY routes this person
   // on (server-resolved: bank_preferred → Disbursement pick → legacy rates
   // cell) — not the raw Disbursement pick, which can disagree with how the
@@ -3785,7 +3779,7 @@ function PersonDetailDialog({
                     holder={prefBank.holder}
                     account={prefBank.account}
                     swift={prefBank.swift}
-                    isAlternativeSlot={prefAlt}
+                    isAlternativeSlot={prefBank.isAlternativeSlot}
                     reduceMotion={!!reduceMotion}
                   />
                 )}
@@ -3853,8 +3847,8 @@ function PersonDetailDialog({
                       so the reader sees where details are expected. */}
                   {(showBank || !banking) && (
                     <>
-                      <Field label="Routing" value={prefBank.routing} mono />
-                      <Field label="Address" value={prefBank.address} wide />
+                      <Field label="Routing" value={prefRouting} mono />
+                      <Field label="Address" value={prefAddress} wide />
                     </>
                   )}
                 </dl>
