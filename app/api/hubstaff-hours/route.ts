@@ -28,6 +28,7 @@ import {
   getHubstaffOrgId,
   hubstaffApiConfigured,
 } from "@/lib/hubstaff/api-client";
+import { resolveLiveOverlayWindowForToday } from "@/lib/hubstaff/live-window-server";
 import { normEmail } from "@/lib/email/norm-email";
 import { seedMissingDisbursementRecords } from "@/lib/payroll/disbursement-reports";
 import { getSessionActor } from "@/lib/auth/session-actor";
@@ -140,15 +141,25 @@ export async function GET(req: NextRequest) {
       const norm = normEmail(authz.effectiveEmail) ?? authz.effectiveEmail.toLowerCase();
       const aliasSet = await expandEmailAliases(norm);
 
-      // Trailing window: 13 days back through tomorrow. The +1 day absorbs the
-      // org-timezone date running ahead of the server's UTC date; Hubstaff just
-      // returns nothing for a date with no activity yet.
-      const DAY_MS = 86_400_000;
-      const todayUtc = new Date();
-      const iso = (offsetDays: number) =>
-        new Date(todayUtc.getTime() + offsetDays * DAY_MS).toISOString().slice(0, 10);
-      const rangeStart = iso(-13);
-      const rangeStop = iso(1);
+      // Trailing window through TOMORROW. The +1 day absorbs the org-timezone date
+      // running ahead of the server's UTC date; Hubstaff just returns nothing for a
+      // date with no activity yet.
+      //
+      // The START is derived from what the uploaded batches already cover rather than
+      // fixed at 13 days back (see `live-window.ts` for the measurement that forced
+      // this: 23 requests and 6.25 MB per refresh, 97.6% of it days nobody needed
+      // re-read, ~460 req/hr against a 1000/hr cap). It can only ever narrow the
+      // window — never past the current week's Sunday, never further back than the 13
+      // days it replaces — and every day inside it is still re-read on every refresh,
+      // so no figure here is staler than it was before.
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const {
+        rangeStart,
+        rangeStop,
+        days: windowDays,
+        reason: windowReason,
+        coverageKnown,
+      } = await resolveLiveOverlayWindowForToday(todayIso);
 
       const { activities, users } = await fetchDailyActivitiesCached(
         getHubstaffOrgId()!,
@@ -177,6 +188,10 @@ export async function GET(req: NextRequest) {
         totalSeconds,
         rangeStart,
         rangeStop,
+        // Observability only — no client branches on this. It is the difference
+        // between "the window narrowed because a batch covers those days" and "the
+        // coverage read failed and we quietly paid for the full lookback again".
+        window: { days: windowDays, reason: windowReason, coverageKnown },
         asOf: new Date().toISOString(),
         error: null,
       });

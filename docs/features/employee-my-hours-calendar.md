@@ -127,10 +127,75 @@ first day tile below it. That alignment is deliberate; restacking it costs a til
 short viewports, which the card already guards with
 `[@media(max-height:850px)]:max-h-[calc(100dvh-9rem)]`.
 
+## Where the hours actually come from
+
+Undocumented until 2026-09-12. The grid has **two** sources and a third that overrides
+both, merged in `mergedHoursByDateKey` (`EmployeeMyHours.tsx:1066`):
+
+| Source | Endpoint | Covers |
+| --- | --- | --- |
+| The uploaded weekly batch | `/api/hubstaff-hours?merge_all=1&email=` | weeks a CSV has landed for |
+| **The live overlay** | `/api/hubstaff-hours?live=1&email=` | today and every day no batch covers |
+| Approved disputes | — | a hard SET, wins outright |
+
+The batch and the overlay merge with **`Math.max` per day**, never a sum and never
+last-wins: the uploaded batch stays authoritative once it lands (it can carry manual
+corrections), and the overlay only fills days the batch does not reach.
+
+**The overlay is not a nicety — it is routinely the ONLY source for a full pay week.**
+The weekly pull is a **manual** wizard action ([[hubstaff-weekly-auto-sync]] is
+deprecated, and `vercel.json` deliberately schedules no cron for it), so the gap between
+the newest batch and today is regularly seven days or more. On 2026-09-12 the newest
+batch ended `2026-09-05` and the overlay alone was carrying Sep 6–12.
+
+### The window is derived from batch coverage, not fixed (2026-09-12)
+
+`src/lib/hubstaff/live-window.ts` decides what date range the route asks Hubstaff for.
+It walks back from today through days **no uploaded batch covers** and starts there.
+
+It replaced a fixed 13-days-back window, which cost — measured, not estimated, by
+`scripts/audit-hubstaff-live-window-cost.mts` — **23 paginated requests, 6.25 MB and
+11,060 rows per refresh, 97.6% of it days nobody needed re-read**. At the 180s TTL that
+is ~460 requests/hour from **one** warm serverless instance against a **1000/hour**
+account cap, so roughly **two** warm instances exhaust the budget; past that Hubstaff
+answers 429, `fetchHubstaff`'s backoff stretches the pull, and the route's `maxDuration`
+of 60s converts a rate-limit into a blank calendar. Deriving the window measured **11
+requests, 3.02 MB, 5,339 rows — 22% of the cap**.
+
+**Two guards make this a narrowing only. Neither may be relaxed to "save more":**
+
+1. **Never further back than `MAX_LOOKBACK_DAYS` (13)** — the window it replaced. No
+   refresh may ever cost more than it did before.
+2. **Never starting later than the current week's Sunday.** A batch is a snapshot of a
+   week that is still moving, so even one claiming to cover today cannot retire today's
+   own live read.
+
+**Walking, rather than "start after the newest batch", is what makes a HOLE safe.** A
+missed week in the middle of the upload history is a run of uncovered days, so the walk
+passes straight through it and the overlay picks it up; starting after the latest batch
+would skip it in silence. Pinned by `live-window.test.ts` CLASS 3.
+
+**Every failure path widens, never narrows.** An unreadable `hubstaff_uploads`, an empty
+archive, or a filename nothing can parse all yield an empty coverage set, and an empty
+set returns exactly the old 13-day window (`live-window-server.ts`). A broken read costs
+requests; it can never blank a day on someone's calendar.
+
+**Nothing here made any figure staler.** Every day inside the window is still re-read on
+every 180s refresh. That is deliberate and load-bearing: these hours are not decoration,
+they drive the PAB eligibility walk, the red tone, the missed-day nudge, and the
+"Hubstaff shows Xh" line an employee files a time adjustment against. Kane was offered a
+client-side cache of settled days on 2026-09-12 and **declined it**, keeping
+[[employee-dashboard-reload-cache]]'s *"a cached value paints, never decides"* intact.
+
+**Still open, and pre-existing:** if uploads lapse for more than 13 days the overlay
+under-covers the gap. Widening the window would multiply the request count this exists
+to cut, so the fix is to upload, not to reach further back.
+
 ## Known state
 
 - The five commits are UI only — no verdict, threshold or period boundary moved.
 - None of them touched a doc at the time; this file is the retrospective record.
+- The live overlay went undocumented from its build until 2026-09-12.
 
 See also: `payroll-wizard-pab-step.md` · `pab-exclusions.md` ·
 `orphanage-pab-coverage.md` · `employee-dashboard-cache.md`.
