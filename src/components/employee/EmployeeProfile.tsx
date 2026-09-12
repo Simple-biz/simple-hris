@@ -1658,31 +1658,34 @@ export default function EmployeeProfile({
                     </Section>
                   )}
 
+                  {/* The badge is container-query sized — every dimension inside
+                      EmployeeIdCard.tsx is `cqw` against a `@container w-full max-w-[372px]`.
+                      The exported PNG is painted from data at a fixed size, so if this host
+                      narrows below 372px the on-screen badge and its typography shrink while
+                      the download does not, and the two diverge with no error. Keep this block
+                      full-width in the content column; never nest it in a grid track. */}
+                  <div className="flex flex-col items-center gap-5 py-2">
+                    <EmployeeIdCard card={idCard} />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleDownloadId}
+                      disabled={savingId}
+                      className="gap-2"
+                    >
+                      {savingId ? (
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                      ) : (
+                        <Download className="h-4 w-4" aria-hidden />
+                      )}
+                      {savingId ? 'Saving…' : 'Download PNG'}
+                    </Button>
+                    <p className="max-w-xs text-center text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                      Read-only, from the HR master roster. Anything missing or wrong here is
+                      corrected by HR, not on this screen.
+                    </p>
+                  </div>
                 </>
-              )}
-
-              {activeTab === 'id' && (
-                <div className="flex flex-col items-center gap-5 py-2">
-                  <EmployeeIdCard card={idCard} />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleDownloadId}
-                    disabled={savingId}
-                    className="gap-2"
-                  >
-                    {savingId ? (
-                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                    ) : (
-                      <Download className="h-4 w-4" aria-hidden />
-                    )}
-                    {savingId ? 'Saving…' : 'Download PNG'}
-                  </Button>
-                  <p className="max-w-xs text-center text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                    Read-only, from the HR master roster. Anything missing or wrong here is
-                    corrected by HR, not on this screen.
-                  </p>
-                </div>
               )}
 
               {activeTab === 'compensation' && (
