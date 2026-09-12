@@ -20,6 +20,7 @@ import ProcessorQueue from './ProcessorQueue';
 import DispatchLoader from './DispatchLoader';
 import ExcludedQueue from './ExcludedQueue';
 import SentPaymentsHistory from './SentPaymentsHistory';
+import UndoHistoryPanel from './UndoHistoryPanel';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
 import { useManualValidations } from '@/components/payroll/useManualValidations';
 import UrgentPaymentsQueue from './UrgentPaymentsQueue';
@@ -152,6 +153,7 @@ export default function PayrollClerkApp() {
   const liveActivity = useMemo(() => {
     if (activeTab === 'urgent') return 'Urgent payments';
     if (activeTab === 'history') return 'Reviewing paid records';
+    if (activeTab === 'undo_history') return 'Reviewing the undo history';
     if (activeTab === 'excluded') return 'Reviewing excluded';
     return `${pending.length} left to pay`;
   }, [activeTab, pending.length]);
@@ -252,6 +254,15 @@ export default function PayrollClerkApp() {
   const renderContent = () => {
     if (activeTab === 'urgent') {
       return <UrgentPaymentsQueue onCountChange={setUrgentCount} />;
+    }
+    // Above every gate below: the undo trail spans all weeks, so "no cycle
+    // ready" must not hide the record of what was undone in earlier ones.
+    if (activeTab === 'undo_history') {
+      return (
+        <div className="h-full overflow-y-auto bg-[#fafaf8] p-4 dark:bg-[#0d1117]">
+          <UndoHistoryPanel />
+        </div>
+      );
     }
     if (!cycleReady) {
       return (
@@ -379,13 +390,13 @@ export default function PayrollClerkApp() {
           {/* The amounts on screen are not the wizard's for at least one payee.
               Above the contractor banners on purpose: a wrong amount, once sent,
               cannot be taken back. Mirrors PayrollDispatch. */}
-          {valuesWarning && !['urgent', 'history'].includes(activeTab) && (
+          {valuesWarning && !['urgent', 'history', 'undo_history'].includes(activeTab) && (
             <div className="mx-4 mt-3 rounded-lg border border-rose-300/70 bg-rose-50 px-3 py-2 text-[11px] text-rose-900 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
               <strong className="font-semibold">Check these amounts against the Payroll Wizard</strong>{' '}
               {valuesWarning}
             </div>
           )}
-          {contractorError && !['urgent', 'history', 'excluded'].includes(activeTab) && (
+          {contractorError && !['urgent', 'history', 'excluded', 'undo_history'].includes(activeTab) && (
             <div className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-[11px] text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
               <span>
                 <strong className="font-semibold">Contractor invoices could not be loaded</strong> —
@@ -394,7 +405,7 @@ export default function PayrollClerkApp() {
               </span>
             </div>
           )}
-          {contractorAdvisory && !['urgent', 'history'].includes(activeTab) && (
+          {contractorAdvisory && !['urgent', 'history', 'undo_history'].includes(activeTab) && (
             <div className="mx-4 mt-3 rounded-lg border border-fuchsia-300/70 bg-fuchsia-50 px-3 py-2 text-[11px] text-fuchsia-900 dark:border-fuchsia-500/30 dark:bg-fuchsia-500/10 dark:text-fuchsia-200">
               <strong className="font-semibold">Contractor invoices need attention</strong>{' '}
               {contractorAdvisory}

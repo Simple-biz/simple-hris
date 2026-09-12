@@ -671,7 +671,90 @@ Dispatch records:
 }
 ```
 
-Visible at `/admin` → Audit log.
+Visible at `/admin` → Audit log, and — for the undo events specifically — on the
+**Undo history** card described in §4.5.
+
+### 4.5 Undo history — the record of what each Undo removed
+
+*Shipped 2026-09-12.* Kane: *"whenever leny presses the undo button we should know
+what changed … make sure to add time stamp as well."*
+
+**Undo DELETES the `payment_dispatches` row**, so the `payment.undone` audit event
+is the only surviving copy of the payment. The Undo history card is the reader for
+those events — a rail card on Payment Dispatch (Accounting) and a sidebar entry on
+`/payroll-clerk`. It writes nothing and it cannot restore anything; re-paying is
+Mark Paid, as it always was.
+
+| Piece | File |
+| --- | --- |
+| Classifier + shaping (pure, tested) | `src/lib/payroll/undo-history.ts` (+ `.test.ts`) |
+| Read route | `app/api/payment-dispatches/undo-history/route.ts` |
+| Panel | `src/components/payroll-clerk/UndoHistoryPanel.tsx` |
+| Mounts | `PayrollDispatch.tsx` (`undo_history` tab) · `PayrollClerkApp.tsx` + `PayrollClerkSidebar.tsx` |
+
+**One action name, five different things.** `payment.undone` is written by the
+paid-row Undo, by the Problem / Threshold / Not-Paid **Clear** (same route —
+§3.4 and the route itself), by the urgent one-off / MESA / orphanage undo, by the
+no-op trace when the rows were already gone, and by
+`scripts/dedupe-payment-dispatches.mjs`. **The kind is therefore derived from
+`details`, never from the action name.** `classifyUndo()` is the one place that
+decision lives:
+
+| Kind | Signal | What it means |
+| --- | --- | --- |
+| `no_op` | `no_rows_deleted: true` | Undo pressed, rows already gone. Nothing changed. Checked FIRST — it carries no status to classify |
+| `duplicate_cleanup` | `reason: 'duplicate_paid_row'` | The dedupe script removed a duplicate echo row. **Checked before the status** |
+| `marker_clear` | `original_status` ∈ not_paid / threshold / problem | A marker was cleared, not money |
+| `payment` | any other `original_status` | A real payment was undone and the person went back to pending |
+| `unrecorded` | no status at all | The legacy `{count, ids}` shape |
+
+**A `duplicate_cleanup` must never render as a payment returned to pending.** It
+carries `original_status: 'paid'` — the script deletes a *paid* echo row — but the
+**oldest row survives and still marks the payment** (§12.10). Classifying on status
+alone would tell you 82 people were un-paid on 2026-09-03. None were.
+
+**Verified against production 2026-09-12** by running the shipped classifier over
+all 198 live events: `duplicate_cleanup` 82 · `unrecorded` 59 · **`payment` 27** ·
+`marker_clear` 24 · `no_op` 6. Zero NaN amounts, zero `payment` entries without a
+recipient. Note the headline number: of the 109 events carrying
+`original_status: 'paid'`, only **27 are genuine payment undos** — the naive filter
+would have reported 109, a four-fold overstatement of how often money was un-paid.
+
+**A marker clear is excluded from this card** (Kane, 2026-09-12). It is a different
+question: this card answers *"what money was un-paid"*. The count of what was
+withheld is reported in the footer, never silently dropped.
+
+**An `unrecorded` event is shown, never hidden.** 59 of the 198 live events
+(2026-06-08 → 2026-07-29) carry only `{count, ids}` — the snapshot payload did not
+exist yet, so **what changed is genuinely unknowable** and only the dispatch id
+survives. The tempting filter `original_status === 'paid'` would have hidden 30% of
+the real history; `isMoneyUndo()` therefore excludes **only** a positively
+identified marker clear. Anything unclassifiable is displayed and labelled, the
+same rule as [gift receipts](./gift-tracker-receipts.md) (*no row = unknown, never "no"*).
+
+**A script run is not a button press.** 82 events were written by
+`kaner@simple.biz (dedupe-payment-dispatches)`. `actorLabel()` splits the script tag
+off the email so a bulk cleanup never reads as somebody clicking Undo.
+
+**Timestamps are absolute Manila time plus relative**, never relative alone —
+"3d ago" cannot be quoted in a dispute.
+
+**Gate: `requireRateVisibilityOrFeatureEdit('accounting', 'payment_dispatch')`** —
+the same feature the undo WRITE requires, mirroring `/api/payroll-wizard/audit`.
+Deliberately **not** `requireElevatedSession()` like `/api/audit-log`: a clerk who
+can undo a payment must be able to see her own correction (Kane: *"anyone who
+operates the payment dispatch"*). Widening this to admin-only re-creates the gap
+this card was built to close.
+
+**Paging.** Keyset on `created_at` via `fetchAuditLog`, never `.range()`. The cursor
+is the oldest row **scanned**, not the oldest kept — a cursor taken from the last
+*kept* row would re-scan or skip the filtered rows below it forever. Because a page
+can therefore re-deliver a row, the panel de-dupes on the audit event id. The
+footer says **"loaded"**, never "total".
+
+**Retention.** `DELETE /api/audit-log` prunes past `AUDIT_PURGE_MIN_AGE_DAYS` (90),
+so this history is bounded by the audit retention floor. It is not an independent
+store, and nothing here survives a purge.
 
 ---
 
@@ -1151,7 +1234,7 @@ The lock toggle should also be permission-gated server-side (currently any authe
 - **Unlocked-only Mark paid** — currently Mark paid works regardless of the lock. Consider gating it on `lockState.locked === true` so dispatches can only be logged during a "live" run.
 - **Webhook out of `payroll.dispatch.locked`** — for slack-style notifications to managers when payroll starts.
 - **Per-row dispatch retry** — if Mark paid POST fails, the row is restored but the dialog is closed. Could keep the dialog open with the entered values pre-filled.
-- **`payment_dispatches` audit / undo** — there's no UI to delete a misclicked dispatch. Currently you'd have to delete the row via Supabase manually.
+- ~~**`payment_dispatches` audit / undo** — there's no UI to delete a misclicked dispatch.~~ **DONE.** Undo shipped long before this line was corrected (per-row and bulk, on the Paid and marker views — §3.4), and since 2026-09-12 every press is readable on the **Undo history** card (§4.5). Nothing is deleted via Supabase by hand.
 - **Pre-flight summary** — before Lenny clicks Start, show a count of who's about to be billed, total volume, and any people missing bank info.
 - **Auto-seed `disbursement_records` on Hubstaff upload** — **DONE 2026-08-12.** Both ingest paths — `POST /api/hubstaff-hours` (manual CSV upload) and `run-weekly-sync.ts` (the weekly auto-sync cron) — call `seedMissingDisbursementRecords({ sourceFiles: [fileName] })` best-effort after the hours land; it never fails the upload/sync; same-filename re-ingests re-seed (paid state preserved), same-week different-filename files are refused (see §6.5).
 - **Snapshot processor onto disbursement record at paid time** — a `paid_processor TEXT` column filled by the sync trigger when `status='paid'` would freeze historical attribution. Today the byProcessor breakdown re-derives from the employee's current `Bank Preferred` (§6.5.5), so year-over-year attribution can drift if it changes after a row is paid.

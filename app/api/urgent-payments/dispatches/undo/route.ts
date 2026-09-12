@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/lib/supabase/server';
 import { deletePaymentDispatches, type PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
-import { getSessionActor } from '@/lib/auth/session-actor';
+import { auditFrom } from '@/lib/audit/context';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { pulsePaymentsLive } from '@/lib/supabase/app-settings';
@@ -60,13 +60,11 @@ export async function POST(req: NextRequest) {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) return NextResponse.json({ error: 'DB unavailable' }, { status: 500 });
 
-  let actor = { user_name: 'unknown', user_role: 'user' };
-  try {
-    const sessionActor = await getSessionActor();
-    actor = { user_name: sessionActor.user_name, user_role: sessionActor.user_role };
-  } catch {
-    /* audit trail is best-effort */
-  }
+  // Actor + IP from the gate that already ran — see the sibling route: a fresh
+  // getSessionActor() read fails OPEN to `anonymous`, which would file the
+  // deletion of a live payment against nobody. `ip_address` was never recorded
+  // on either undo path before today.
+  const actor = auditFrom(req, authz);
 
   try {
     // ── Real payment_dispatches row? (MESA disbursement or one-off) ──────────
@@ -178,8 +176,7 @@ export async function POST(req: NextRequest) {
 
       // Awaited: this event is the sole surviving record of the deleted row.
       await insertAuditLog({
-        user_name: actor.user_name,
-        user_role: actor.user_role,
+        ...actor,
         action: 'payment.undone',
         resource: 'payment_dispatches',
         resource_id: id,
@@ -244,8 +241,7 @@ export async function POST(req: NextRequest) {
       created_at: string;
     };
     await insertAuditLog({
-      user_name: actor.user_name,
-      user_role: actor.user_role,
+      ...actor,
       action: 'payment.undone',
       resource: 'orphanage_dispatches',
       resource_id: id,

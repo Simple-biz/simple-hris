@@ -56,6 +56,7 @@ import { PayStubModal } from '@/components/paystub/PayStubModal';
 import ContractorInvoiceDialog from './ContractorInvoiceDialog';
 import LockToggleConfirmDialog, { deriveFirstName } from '@/components/payroll/LockToggleConfirmDialog';
 import ProcessorCard from './ProcessorCard';
+import UndoHistoryPanel from './UndoHistoryPanel';
 import AnimatedNumber from './AnimatedNumber';
 import DispatchLoader from './DispatchLoader';
 import { PROCESSORS, DISPATCH_PROCESSORS, parseCyclePeriodFromFile, formatCycleLabelFromFile, type ArrearsInfo, type ExcludedRow, type ProcessorId, type QueueRow } from './mock-queue';
@@ -79,7 +80,7 @@ import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
 import { usePaymentsLivePublisher } from '@/hooks/usePaymentsLive';
 
-type TabId = 'all' | 'cop' | 'urgent' | 'done' | 'excluded' | 'orphanage' | 'notifications' | ProcessorId;
+type TabId = 'all' | 'cop' | 'urgent' | 'done' | 'excluded' | 'orphanage' | 'notifications' | 'undo_history' | ProcessorId;
 
 interface ProcessorVisual {
   Icon: React.ComponentType<{ className?: string }>;
@@ -163,6 +164,13 @@ const EXCLUDED_VISUAL: ProcessorVisual = {
   accent: 'from-zinc-500 to-zinc-700',
   glow: 'from-zinc-100/80 via-zinc-50/60 to-white dark:from-zinc-800/60 dark:via-zinc-900/40 dark:to-zinc-900',
   blurb: 'No bank · pay · hours',
+};
+
+const UNDO_HISTORY_VISUAL: ProcessorVisual = {
+  Icon: RotateCcw,
+  accent: 'from-rose-500 to-red-600',
+  glow: 'from-rose-100/80 via-red-50/60 to-white dark:from-rose-950/40 dark:via-red-950/30 dark:to-zinc-900',
+  blurb: 'What was undone',
 };
 
 const ORPHANAGE_VISUAL: ProcessorVisual = {
@@ -1160,6 +1168,10 @@ export default function PayrollDispatch() {
     // haven't mirrored the first server snapshot into local state yet.
     if (activeTab === 'notifications') return <NotificationsPanel viewerEmail={session?.user?.email} accent="zinc" view="accounting" />;
     if (activeTab === 'orphanage') return <OrphanageQueue />;
+    // Deliberately above the error / loading / cycleReady / wizardReady gates
+    // below: the undo trail covers EVERY week, so a cycle that is not staged
+    // yet must not hide the record of what was undone in earlier ones.
+    if (activeTab === 'undo_history') return <UndoHistoryPanel className="h-full" />;
     if (activeTab === 'urgent') {
       return (
         <UrgentPaymentsQueue
@@ -1916,6 +1928,18 @@ export default function PayrollDispatch() {
             </motion.div>
             <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
               <ProcessorCard
+                label="Undo history"
+                subtitle={UNDO_HISTORY_VISUAL.blurb}
+                Icon={UNDO_HISTORY_VISUAL.Icon}
+                accent={UNDO_HISTORY_VISUAL.accent}
+                glow={UNDO_HISTORY_VISUAL.glow}
+                active={activeTab === 'undo_history'}
+                onClick={() => setActiveTab('undo_history')}
+                iconOnlyFallback
+              />
+            </motion.div>
+            <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
+              <ProcessorCard
                 label="Excluded"
                 subtitle={EXCLUDED_VISUAL.blurb}
                 count={excluded.length}
@@ -1935,7 +1959,7 @@ export default function PayrollDispatch() {
           <AnimatePresence mode="wait">
             <motion.div
               key={
-                activeTab === 'excluded' || activeTab === 'orphanage' || activeTab === 'urgent' || activeTab === 'cop'
+                activeTab === 'excluded' || activeTab === 'orphanage' || activeTab === 'urgent' || activeTab === 'cop' || activeTab === 'undo_history'
                   ? activeTab
                   : activeTab +
                     (loading || !hydrated

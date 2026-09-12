@@ -12,6 +12,7 @@ import {
   Globe2,
   LogOut,
   MoreHorizontal,
+  RotateCcw,
   Moon,
   Send,
   Sun,
@@ -217,6 +218,7 @@ export default function PayrollClerkSidebar({
           <nav className="flex flex-col gap-px">
             {navBtn('history', 'Sent payments', Banknote)}
             {navBtn('excluded', 'Excluded', ShieldOff)}
+            {navBtn('undo_history', 'Undo history', RotateCcw)}
             {navBtn(
               'notifications',
               'Notifications',

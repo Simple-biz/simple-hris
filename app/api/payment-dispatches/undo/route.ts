@@ -5,7 +5,7 @@ import {
   insertAuditLogs,
   type NewAuditLog,
 } from "@/lib/supabase/audit-log";
-import { getSessionActor } from "@/lib/auth/session-actor";
+import { auditFrom } from "@/lib/audit/context";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { pulsePaymentsLive } from "@/lib/supabase/app-settings";
@@ -49,15 +49,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ deleted: 0, error: "No dispatch ids provided" }, { status: 400 });
   }
 
-  let actor: string | null = null;
-  let actorRole = "user";
-  try {
-    const sessionActor = await getSessionActor();
-    actor = sessionActor.user_name !== "anonymous" ? sessionActor.user_name : null;
-    actorRole = sessionActor.user_role;
-  } catch {
-    /* ignore - audit trail is best-effort */
-  }
+  // Actor + IP come from the gate that already ran, never from a fresh session
+  // read: getSessionActor() swallows its own errors and returns `anonymous`, so
+  // the old `actor ?? "unknown"` could file a money deletion against nobody.
+  // AuthzOk.sessionEmail is a non-optional string, so there is no un-actored
+  // branch left to fall through (memory/audit-registry-single-source.md).
+  // `ip_address` was never recorded here — 0 of 198 live payment.undone rows
+  // carry one — and it is the only signal separating a staff-entered undo from
+  // anything else.
+  const who = auditFrom(req, authz);
 
   let deleted = 0;
   let deletedRows: Awaited<ReturnType<typeof deletePaymentDispatches>>["deletedRows"] = [];
@@ -88,8 +88,7 @@ export async function POST(req: NextRequest) {
   // the whole batch.
   if (deletedRows.length > 0) {
     const entries: NewAuditLog[] = deletedRows.map((row) => ({
-      user_name: actor ?? "unknown",
-      user_role: actorRole,
+      ...who,
       action: "payment.undone",
       resource: "payment_dispatches",
       resource_id: row.id,
@@ -160,8 +159,7 @@ export async function POST(req: NextRequest) {
     // replayed request). Still leave a trace of who attempted it and against
     // which ids, so a disputed disappearance shows every actor involved.
     const { error: auditErr } = await insertAuditLog({
-      user_name: actor ?? "unknown",
-      user_role: actorRole,
+      ...who,
       action: "payment.undone",
       resource: "payment_dispatches",
       resource_id: ids.join(","),
