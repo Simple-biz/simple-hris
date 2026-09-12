@@ -891,24 +891,30 @@ export const ROWS: PassRow[] = [
   // ── new rows (28) ─────────────────────────────────────────────────────────────────────────────────
   {
     name: 'Orientation date skips enabled US holidays, iteratively — Labor Day Sep 7 moves the invite to Tue Sep 8',
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-09-04',
+    dateBasis: 'commit',
     shas: ['609b84ad', '19ea1862'],
     basis:
-      'Session 30aeefd5, closing the Sep 3 log\'s deadline item (Lock-in fires the invite Fri ~20:15 UTC). A 200-line orientation-date lib with 139 lines of tests skips enabled US holidays iteratively — Sep 7 Labor Day → Tue Sep 8 — read by the lock webhook (+103 lines of tests) and the lock dialog\'s third bullet, which renders BEFORE the passphrase so Cancel is a free look. Monday stays the default. 19ea1862 is the doc answering "where does HR see this": exactly one surface, HR → New Hire Checklist → the week → Lock in, lock mode only. Both on origin/main. Not Done: the Sep 4 lock fired, but nobody has said the Sep 8 date reached the invite in prod.',
+      'Session 30aeefd5, closing the Sep 3 log\'s deadline item (Lock-in fires the invite Fri ~20:15 UTC). A 200-line orientation-date lib with 139 lines of tests skips enabled US holidays iteratively — Sep 7 Labor Day → Tue Sep 8 — read by the lock webhook (+103 lines of tests) and the lock dialog\'s third bullet, which renders BEFORE the passphrase so Cancel is a free look. Monday stays the default. 19ea1862 is the doc answering "where does HR see this": exactly one surface, HR → New Hire Checklist → the week → Lock in, lock mode only. Both on origin/main. Not Done: the Sep 4 lock fired, but nobody has said the Sep 8 date reached the invite in prod. DONE 2026-09-12 on Kane\'s confirmation, given when the four rows written in pass 25\'s first six corrections were put to him explicitly alongside the held set. Completed Date is the last sha\'s commit date, git-enforced.',
   },
   {
     name: 'Payment Catalog Current Banks tab — 129 spellings folded to 45 official names, real logos measured before they land, and a People tab per bank that marks leavers instead of hiding them',
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-09-04',
+    dateBasis: 'commit',
     shas: ['459671ea', 'b471a7e8', '7db4ad3f', '3c478f1c'],
     basis:
-      'Session 5a2f134a ("add a new tab within where we can see all the Current Banks that the Users added … that way we can add logos to them", then "Lets add a list of people in that bank as well"). banks.ts (581 lines) + 565 lines of tests, a route, a db module, PayProcessorsTab grown ~770 lines across the Banks and People tabs; 129 receiving-bank spellings folded to 45 official names via a DECLARED table; 23 real logos fetched into public/banks by a script that measures each PNG before it lands; wallet cards reuse the emerald the app already means wallet by. People (N) per bank lists name, work email, department, a chip when the bank is on the person\'s OTHER account, loaded only when opened. Leavers appear with a Left chip and count on the card — Kane\'s approved exception to payment-catalog-hides-offboarded, written into the doc it contradicts. All on origin/main; the Banks tab has not been reported opened in prod.',
+      'Session 5a2f134a ("add a new tab within where we can see all the Current Banks that the Users added … that way we can add logos to them", then "Lets add a list of people in that bank as well"). banks.ts (581 lines) + 565 lines of tests, a route, a db module, PayProcessorsTab grown ~770 lines across the Banks and People tabs; 129 receiving-bank spellings folded to 45 official names via a DECLARED table; 23 real logos fetched into public/banks by a script that measures each PNG before it lands; wallet cards reuse the emerald the app already means wallet by. People (N) per bank lists name, work email, department, a chip when the bank is on the person\'s OTHER account, loaded only when opened. Leavers appear with a Left chip and count on the card — Kane\'s approved exception to payment-catalog-hides-offboarded, written into the doc it contradicts. All on origin/main; the Banks tab has not been reported opened in prod. DONE 2026-09-12 on Kane\'s confirmation, given when the four rows written in pass 25\'s first six corrections were put to him explicitly alongside the held set. Completed Date is the last sha\'s commit date, git-enforced.',
   },
   {
     name: 'Employee ID badge as a Profile section — navy flat card that never themes, PNG download, milled-metal sheen, and two painter bugs the tests never saw',
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-09-04',
+    dateBasis: 'commit',
     shas: ['f731fe69', '027fce30', 'c30dbdbc', 'b99867fe', '1aaeb5ef'],
     basis:
-      'Session b6fcc0e5, artifact-first then impeccable then ship. id-card.ts + id-card-render.ts (~580 lines) with ~450 lines of tests; shipped as a Profile SECTION not a tab, navy-dominant with orange never as text, flat, and verified to render unchanged in dark mode. 027fce30 downloads it as a PNG; b99867fe makes it milled metal with a slow sheen. Two of the five commits fix defects 98 passing tests did not catch, found only by driving the real painter headlessly: c30dbdbc (the serial spaced its glyphs by the font WEIGHT) and 1aaeb5ef (a quoted nickname\'s opening quote became the second initial — punctuation-leading name parts are not initials). formatStartDate is still off by one on every badge — OPEN and NOT claimed by this row. All on origin/main, not confirmed live.',
+      'Session b6fcc0e5, artifact-first then impeccable then ship. id-card.ts + id-card-render.ts (~580 lines) with ~450 lines of tests; shipped as a Profile SECTION not a tab, navy-dominant with orange never as text, flat, and verified to render unchanged in dark mode. 027fce30 downloads it as a PNG; b99867fe makes it milled metal with a slow sheen. Two of the five commits fix defects 98 passing tests did not catch, found only by driving the real painter headlessly: c30dbdbc (the serial spaced its glyphs by the font WEIGHT) and 1aaeb5ef (a quoted nickname\'s opening quote became the second initial — punctuation-leading name parts are not initials). formatStartDate is still off by one on every badge — OPEN and NOT claimed by this row. All on origin/main, not confirmed live. DONE 2026-09-12 on Kane\'s confirmation, given when the four rows written in pass 25\'s first six corrections were put to him explicitly alongside the held set. Completed Date is the last sha\'s commit date, git-enforced.',
   },
   {
     name: 'Pay-cycle celebration fires ONE way — from the close-out route itself — with CSV, XLSX and PDF attached; the client-side cycle-complete route is deleted',
@@ -922,10 +928,12 @@ export const ROWS: PassRow[] = [
   },
   {
     name: 'Admin → Webhooks automation editor — recipients by role or fixed list, extra payload keys, and a Test that mails only the tester',
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-09-04',
+    dateBasis: 'commit',
     shas: ['88474107', '2e24032c'],
     basis:
-      'The editor half of the same commit, same session — built for the case Kane named: "if Carla resigns we can change the recipient." WebhookAutomationDialog (516 lines), a 266-line automation route, webhook-config (346) with 210 lines of tests and fixtures; recipients by role with per-person add/remove or a fixed list, extra payload keys, and a Test that sends to the tester\'s email only with a never-real week. 2e24032c is a one-line border fix. On origin/main; nobody has reported editing an automation in prod.',
+      'The editor half of the same commit, same session — built for the case Kane named: "if Carla resigns we can change the recipient." WebhookAutomationDialog (516 lines), a 266-line automation route, webhook-config (346) with 210 lines of tests and fixtures; recipients by role with per-person add/remove or a fixed list, extra payload keys, and a Test that sends to the tester\'s email only with a never-real week. 2e24032c is a one-line border fix. On origin/main; nobody has reported editing an automation in prod. DONE 2026-09-12 on Kane\'s confirmation, given when the four rows written in pass 25\'s first six corrections were put to him explicitly alongside the held set. Completed Date is the last sha\'s commit date, git-enforced.',
   },
   {
     name: 'angelicac@ transfer backfill script — the transfer HRIS never filed, replayed through the three Release helpers in order, dry-run by default',
@@ -1211,6 +1219,70 @@ export const ROWS: PassRow[] = [
     shas: ['4447e404'],
     basis:
       'CLOSED 2026-09-11 on a read-only MEASUREMENT that contradicts both the plan comment and [[lawang-rate-shadow-duplicate-identity]], which each said the --apply was BLOCKED and had never run. It ran. payment_catalog_pay_structures/pay_mse34sctiw8xsiio now reads regular 225 / OT 337.5 / department_key hogan_smith_law, stamped updated_by "fix-lawang-rate-shadow.mts" at 2026-08-18T20:09:14Z (it was created 2026-08-04 by jakec@ at 175/lead_gen). employee_rate_history holds the matching 225 / 337.5 row effective 2026-08-16 with created_by the same script at the same second, beside the original 175 row effective 2026-08-04. The sheet mirror 03b7882a-98fd-4c48-ab34-bab59cf2c568 reads 225 / 337.5. That is all three of the script\'s declared steps, each verified by the script\'s own stamp — the same grade of evidence that closed the Hubstaff rename chore. Dated by commit: 4447e404 (the commit messaged "ss" that carried the 145-line script) landed 2026-08-18, the day the script also ran. The row stays in Backlog, which selfcheck exempts from the window check; re-filing it to Sprint 27 is a grooming call, not a correctness one. NOT closed by this row and still open: merging the two Lawang master rows, and the five employees who still hold a bare-hsl override — measured present again 2026-09-11.',
+  },
+  // ── PASS 26 · new rows from the 2026-09-11 night's work (7) ──────────────────────────────────────
+  {
+    name: 'HRIS becomes the tenure-gift ledger — a receipt row is an assertion, and no row means unknown rather than not received',
+    status: 'Done',
+    completed: '2026-09-11',
+    dateBasis: 'commit',
+    shas: ['bc336bef', 'b12a7462'],
+    basis:
+      'Session bc336bef. employee_gift_receipts becomes the ledger for tenure gifts, keyed on WORK email because personal_email is not injective (russell@ and johnc@ share one; greyg@ has none). THE LOAD-BEARING RULE: a row is an ASSERTION, and the absence of a row means UNKNOWN — never "not received" — so owed and not-recorded are counted separately and never summed. The backfill wrote 1,434 assertions (842 received, 592 owed) and deliberately SKIPPED 8,398 future "No" cells, which are not-yet-due rather than unpaid; its apply-mode report is on disk in reports/ (committed by b12a7462, which carries no code and exists only as that evidence). The employee card\'s green "Received" chip actually meant ADDRESS APPROVED and was relabelled "Address confirmed", with real gift chips added beside it and the employee surface left read-only. Migration verified applied: the table holds 1,434 rows. 43 gift-shipping submissions were dropped, backed up first. Kane confirmed this shipped and in use on 2026-09-12 ("For table 2 these are done lets commit them and update the board we have done this already"), recorded here as the basis rather than assumed. Completed Date is the last sha\'s commit date, git-enforced by selfcheck.',
+  },
+  {
+    name: 'Gift receipts resolve through an exact four-tier ladder — work email, employee id, alternate work email, then name AND start date — after work-email-only matching stranded 15 live people',
+    status: 'Done',
+    completed: '2026-09-11',
+    dateBasis: 'commit',
+    shas: ['1b7585ac'],
+    basis:
+      'Session 1b7585ac. Matching the import on work_email ALONE stranded 15 live people (58 receipt rows) under addresses the roster never looks up, so the tracker showed them "Not recorded" — which means nobody has assessed them, the exact OPPOSITE of the truth. roster-match.ts replaces it with a four-tier ladder, every tier EXACT: work email, then employee_id, then alternate work email, then name AND start date. Three rules make it safe: an ambiguous match falls through to a STRICTER key and never a looser one; a tier-1 hit on a GHOST master row is not an answer (216 such rows exist — teodya@ is live at james@, mat@ at maria@); and normStartDate never touches Date, because a UTC-vs-local parse shifts the day. BLOCKER CLEARED 2026-09-12: repair-gift-receipt-keys.mts --apply was run with Kane\'s approval — 15 keys / 58 rows moved, 0 refused, every match via exact employee_id, a 58-row backup written and verified to reports/ before any write, and the total conserved at 1,434 before and after. Re-running the report now returns "Keys not on any master address: 0". Kane confirmed this shipped and in use on 2026-09-12 ("For table 2 these are done lets commit them and update the board we have done this already"), recorded here as the basis rather than assumed. Completed Date is the last sha\'s commit date, git-enforced by selfcheck.',
+  },
+  {
+    name: 'The People banking reveal prints the payout record as the payee\'s own bank card — brand colours MEASURED off the shipped logo, fed the PAID slot, and nothing new exposed',
+    status: 'Done',
+    completed: '2026-09-11',
+    dateBasis: 'commit',
+    shas: ['e7f41215'],
+    basis:
+      'Session e7f41215. People -> View -> Banking stops being a field list and renders the payout record as the payee\'s own bank card, with the logo, copy buttons, a reveal skeleton and two collapsed disclosures. NOTHING NEW IS EXPOSED — bank_name was never masked and no new endpoint was added; the card is fed prefBank, which is the PAID slot, never bank_name. One resolver is shared with the Current Banks tab. The interesting part is the colour: brand hex is MEASURED off the shipped PNGs and re-derived by the test rather than hand-picked, weighted by saturation (an unweighted average renders every bank black), with a second tier for GoTyme, which has no chroma at all and needs its own near-black ink. Contrast is SEARCHED rather than a constant — a flat 42% mix measured 3.84:1 on AUB, and the fix was the code, not the threshold. No logo means no brand and never a monogram. The account number is never reformatted, and a failed copy raises a toast instead of failing silently. Kane confirmed this shipped and in use on 2026-09-12 ("For table 2 these are done lets commit them and update the board we have done this already"), recorded here as the basis rather than assumed. Completed Date is the last sha\'s commit date, git-enforced by selfcheck.',
+  },
+  {
+    name: 'A Diagnostics month card opens its per-pay-processor breakdown, and because the counts are PAYMENTS not people no per-processor rate is drawn anywhere',
+    status: 'Done',
+    completed: '2026-09-11',
+    dateBasis: 'commit',
+    shas: ['2c806e54'],
+    basis:
+      'Session 2c806e54. A Diagnostics month card gains an Open that splits the month by pay processor, built from data the close-out record ALREADY held. THE LOAD-BEARING REFUSAL: byProcessor counts payment ROWS, not people (3,112 vs 3,088), so no per-processor success RATE is drawn anywhere — a rate needs a denominator of people and this data cannot supply one, and inventing one would have been the easy wrong answer. Money reconciles to the cent against the frozen paid totals. Nothing in the system records WHOSE fault a Problem was, so a problem counts as ours: the modal presents evidence, never a verdict. Open is offered on CLOSED cycles only and the button is disabled elsewhere. Kane confirmed this shipped and in use on 2026-09-12 ("For table 2 these are done lets commit them and update the board we have done this already"), recorded here as the basis rather than assumed. Completed Date is the last sha\'s commit date, git-enforced by selfcheck.',
+  },
+  {
+    name: 'The Diagnostics month breakdown narrows to a single week and downloads exactly what is on screen — one resolver foots the tiles, the table and the CSV, and the no-rate caveats ship inside the file',
+    status: 'Done',
+    completed: '2026-09-11',
+    dateBasis: 'commit',
+    shas: ['4934512d', '3c99190d'],
+    basis:
+      'Sessions 4934512d then 3c99190d. The processor breakdown gains a weekly filter that re-scopes the WHOLE modal through one resolver pair, so the tiles, the table and the footer cannot disagree; a week is a KEY that FALLS BACK to the month rather than rendering an empty table. The CSV then downloads exactly the rows the component rendered — it rides the filter rather than re-querying, names its scope in the filename, and ships the caveats INSIDE the file so a spreadsheet detached from the UI still carries them. No percentage appears anywhere in the export, because the same missing denominator that bars a per-processor rate on screen bars it in a file. The footer is a ROW, not a spreadsheet SUM(), and text is formula-neutralised on the way out. Kane confirmed this shipped and in use on 2026-09-12 ("For table 2 these are done lets commit them and update the board we have done this already"), recorded here as the basis rather than assumed. Completed Date is the last sha\'s commit date, git-enforced by selfcheck.',
+  },
+  {
+    name: 'Diagnostics charts every pay cycle since HRIS started paying — a line that breaks at every unmeasured week, four states where not_run is not no_denominator, and a rate axis that is not zero-based',
+    status: 'Done',
+    completed: '2026-09-11',
+    dateBasis: 'commit',
+    shas: ['11c62562', 'c84da224'],
+    basis:
+      'Sessions 11c62562 then c84da224. Diagnostics gains a cycle-success trend over every pay cycle, and the refactor is the point: it is a line that BREAKS at gaps, drawing no segment into, out of, or across an unmeasured week, because connecting across a gap draws a trend that was never measured. The window opens where HRIS actually started PAYING (2026-05-31), which is not the same date as the first close-out record, and the twelve earlier weeks collapse into one honest "No HRIS yet" block. FOUR states are distinguished, and the load-bearing distinction is that not_run is NOT no_denominator — a week nobody ran and a week with nothing to measure are different facts. Weeks with no rate get NO MARK rather than a zero. The rate axis is deliberately not zero-based, and people-paid rides a second strip rather than a second axis. Kane confirmed this shipped and in use on 2026-09-12 ("For table 2 these are done lets commit them and update the board we have done this already"), recorded here as the basis rather than assumed. Completed Date is the last sha\'s commit date, git-enforced by selfcheck.',
+  },
+  {
+    name: 'Readiness and Offboarded “Set rate” names the date it takes effect — defaults to today in Manila, no minimum so a closed week is reachable, sent verbatim and never snapped, and a blank date refuses the save',
+    status: 'Done',
+    completed: '2026-09-11',
+    dateBasis: 'commit',
+    shas: ['5d439693'],
+    basis:
+      'Session 5d439693. Set rate could only ever mean today, so back-dating had to be done through Pay Structure — this gives the dialog an Effective from date, once, in the one SetRateDialog that Readiness and Notes-Offboarded both render. Four decisions, each deliberate: it defaults to TODAY IN MANILA and not to the paid week, because defaulting backwards would silently re-price every No-Pay-Rate save; there is NO min attribute, so a closed week stays reachable on purpose; the date is sent VERBATIM and never snapped to a week boundary; and a BLANK date REFUSES the save rather than falling back to today, because that silent fallback was the original defect. Rates stay editable for leavers — pay structures carry no off-board guard, unlike the master row. Kane confirmed this shipped and in use on 2026-09-12 ("For table 2 these are done lets commit them and update the board we have done this already"), recorded here as the basis rather than assumed. Completed Date is the last sha\'s commit date, git-enforced by selfcheck.',
   },
 ];
 

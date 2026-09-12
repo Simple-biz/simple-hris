@@ -1669,3 +1669,56 @@ flushing afterwards would have written the older, lower status over the newer on
 28 closures. All 31 entries are marked `flushedAt` with a note saying exactly that; `flush-pending.mts`
 now reports *"Nothing pending."* **A queued entry is only safe to flush while nothing else has moved
 the row** — that is new, and it is the first time a pass has had to retire a ledger rather than drain it.
+
+### Pass 26b — the same day, the night's work joins it · hash `d4fcdd3edeff`
+
+Kane: *"go"*. **7 rows created, 43 corrected, 0 sprint moves. 42 Done, 1 held.** Sprint 28 now holds
+**70 of our rows / 266 SP, 49 of them Done.**
+
+**The adversarial scoping pass earned its cost.** Seven analyse agents drafted the rows, seven
+refuters attacked them, and a completeness critic swept the twelve commits nobody had clustered.
+Three of the seven proposed scores were wrong and were corrected before anything was written: the
+gift-ledger and key-drift rows came in at **8 SP each and were cut to 5** (a third of each diff is
+tests), and the processor-breakdown modal came in at **3 and went up to 5** — the first scoping missed
+that the route gained a genuinely new production read (`loadProcessorLabels` over the pay-processor
+registry). The critic also confirmed `b12a7462` ("s") carries **no code at all**, which is the opposite
+of this repo's usual lesson about that commit message, and that it is nonetheless load-bearing evidence:
+it holds the only apply-mode backfill report on disk.
+
+The refuters also caught a class of error worth naming: several drafted bases quoted `git --stat`
+**churn** totals as insertion counts. Those numbers were dropped rather than corrected — a line count
+that cannot be reproduced from `--numstat` does not belong in an audit trail.
+
+### The ordering hazard, and the repair that closed it
+
+The critic found the one thing that would have made "Table 2 is done" false: **`repair-gift-receipt-keys.mts --apply` had never run.** The script writes a
+`gift-receipt-rekey-backup-*.json` before any write and no such file existed anywhere in the tree, so
+15 live people / 58 receipt rows were still filed under keys the roster never looks up — rendering in
+the tracker as *"Not recorded"*, which means **nobody has assessed them**, the exact opposite of the
+truth.
+
+**It was run 2026-09-12 with Kane's approval, and the order matters and is backwards from intuition:
+the repair must run and the BACKFILL must NOT** — `backfill-gift-receipts.mts` upserts `onConflict` and
+would re-create the bad keys. Result: **15 keys / 58 rows moved, 0 refused**, every match through the
+exact `employee_id` tier (including the two ghost-row cases, `teodya@`→`james@` and `mat@`→`maria@`), a
+58-row backup written *and read back* before any write, and the total conserved at **1,434 rows before
+and after**. Re-running the report now returns **"Keys not on any master address: 0."**
+
+### Verification, both halves stated separately
+
+`verify.mts` returns **FAIL (25)**, and every one of the 25 is one of two known causes: **23 "not linked
+to an epic"** (16 orphaned by the epic deletion, 7 the new rows `--only-new` deliberately does not
+relate) and **2 lines restating those same two facts**. What this pass owns is clean:
+
+| Check | Result |
+|---|---|
+| board ↔ plan name parity | **291 / 291**, 0 missing, 0 orphans |
+| Done rows with no Completed Date | **0** |
+| unshipped rows carrying an Actual SP | **0** |
+| open rows with a blank Estimated SP | **0** |
+| rows over the 8-SP cap | **0** |
+| Total SP / SP Completed | 1569 / 874 OK |
+
+The relation gap (`284 / 291`) is the documented, accepted cost of `--only-new`, and it cannot be
+closed until the epic deletion is resolved — a full reconcile is the only thing that writes relations,
+and right now that would also mint 12 duplicate epics.

@@ -331,8 +331,7 @@ export const PLAN_EPICS: PlanEpic[] = [
   // Sprint 26 reconciliation (2026-08-05 audit of Jul 29 – Aug 5, 171 commits).
   // Pay Cycle Reports rolls up to 13 SP — over the 8-point line, so it is an epic
   // with three sprint tasks rather than one oversized task.
-  { code: 'HRIS-33', title: 'Pay Cycle Reports & Publication', sp: 13, quarter: 'Q3', status: 'Shipped' },
-];
+  { code: 'HRIS-33', title: 'Pay Cycle Reports & Publication', sp: 13, quarter: 'Q3', status: 'Shipped' },];
 
 // ─── Sprint tasks ─────────────────────────────────────────────────────────────
 
@@ -1519,17 +1518,17 @@ export const PLAN_TASKS: PlanTask[] = [
   // 3 SP: a 200-line orientation-date lib with 139 lines of tests, the lock webhook and dialog reading
   // it, and the checklist doc's state table. Sep 7 Labor Day → Tue Sep 8, iteratively over enabled US
   // holidays; Monday stays the default. Deadline-driven (Lock-in fired Fri Sep 4). Session 30aeefd5.
-  { epic: 'HRIS-24', name: 'Orientation date skips enabled US holidays, iteratively — Labor Day Sep 7 moves the invite to Tue Sep 8', type: 'Feature', sp: 3, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-24', name: 'Orientation date skips enabled US holidays, iteratively — Labor Day Sep 7 moves the invite to Tue Sep 8', type: 'Feature', sp: 3, done: true, sprint: 'S28', priority: 'High' },
   // 5 SP: banks.ts (581) + 565 lines of tests, a route, a db module, PayProcessorsTab grown by ~770
   // lines across the Banks tab and the People tab, a logo pipeline (fetch script + PNG decoder,
   // 23 measured logos), and the DECLARED 129→45 spelling table. Leavers wear a Left chip — the one
   // approved exception to payment-catalog-hides-offboarded, written into the doc it contradicts.
-  { epic: 'HRIS-06', name: 'Payment Catalog Current Banks tab — 129 spellings folded to 45 official names, real logos measured before they land, and a People tab per bank that marks leavers instead of hiding them', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'Payment Catalog Current Banks tab — 129 spellings folded to 45 official names, real logos measured before they land, and a People tab per bank that marks leavers instead of hiding them', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
   // 5 SP: five commits in one session (b6fcc0e5) — id-card.ts + id-card-render.ts (~580 lines) with
   // ~450 lines of tests, the Profile SECTION (not a tab), PNG download, milled-metal sheen, and two
   // painter defects 98 passing tests missed (glyphs spaced by font WEIGHT; a quoted nickname's
   // opening quote became an initial). formatStartDate is still off by one — OPEN, not this row.
-  { epic: 'HRIS-09', name: 'Employee ID badge as a Profile section — navy flat card that never themes, PNG download, milled-metal sheen, and two painter bugs the tests never saw', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-09', name: 'Employee ID badge as a Profile section — navy flat card that never themes, PNG download, milled-metal sheen, and two painter bugs the tests never saw', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
   // 5 SP: the celebration half of 88474107 (26 files / 3,424 lines, two features) — attachments
   // builder, report export + PDF (~700 lines with tests), notify + trigger reworked, the client-side
   // cycle-complete route DELETED so only the close-out can fire it. The n8n workflow JSON changed and
@@ -1539,7 +1538,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // 5 SP: the editor half of the same commit — WebhookAutomationDialog (516), a 266-line route,
   // webhook-config (346) with 210 lines of tests, fixtures. Built for "if Carla resigns we can change
   // the recipient". Same session.
-  { epic: 'HRIS-15', name: 'Admin → Webhooks automation editor — recipients by role or fixed list, extra payload keys, and a Test that mails only the tester', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-15', name: 'Admin → Webhooks automation editor — recipients by role or fixed list, extra payload keys, and a Test that mails only the tester', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
   // 2 SP: a 339-line script that inserts the transfer HRIS never had and runs the same three Release
   // helpers in the same order (master list → Sheet cell → mark applied), backup first, --apply gated.
   // Dry run passed all five guards; --apply has NEVER run (Open item 9). Session aae1e82e.
@@ -1675,4 +1674,50 @@ export const PLAN_TASKS: PlanTask[] = [
   // report-rows +83 with 120 lines of tests, a new replay-finals-overlay.ts (31) with 74. The
   // paystub still hides the delta — that is Open, not this row.
   { epic: 'HRIS-02a', name: 'Payroll Wizard Reports XLSX carries Time Adj. Hours, Pay and Dates — the delta is staged on the payload, never recomputed at export', type: 'Feature', sp: 3, done: true, sprint: 'S28', priority: 'Medium' },
+
+  // ── PASS 26 · the 2026-09-11 night's work, confirmed done by Kane 2026-09-12 ──────────────────────
+  // 5 SP (adversarially re-scored down from 8 — the diff is large but a third of it is tests and the
+  // shared isMilestoneDue already existed). HRIS stops guessing who got a tenure gift: employee_gift_receipts
+  // keyed on WORK email, a row = an ASSERTION, NO ROW = UNKNOWN never "not received", so owed (592) and
+  // not-recorded are never summed. 8,398 future "No" cells skipped by design. The key drift this backfill
+  // introduced was repaired 2026-09-12 — see the four-tier ladder row.
+  { epic: 'HRIS-32', name: 'HRIS becomes the tenure-gift ledger — a receipt row is an assertion, and no row means unknown rather than not received', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
+  // 5 SP (adversarially re-scored down from 8). work_email-ALONE matching stranded 15 live people / 58
+  // rows under addresses the roster never looks up, and the tracker rendered that as "Not recorded" — the
+  // opposite of the truth. Ladder is work email -> employee_id -> alt work email -> name AND start date,
+  // every tier EXACT; ambiguity falls through to a STRICTER key only; a tier-1 hit on a GHOST master row is
+  // not an answer (216 such rows). The repair ran 2026-09-12: 58 rows moved, 0 refused, 1,434 conserved.
+  // ORDER MATTERS AND IS BACKWARDS FROM INTUITION: the repair must run and the BACKFILL must NOT — the
+  // backfill upserts onConflict and would re-create the bad keys.
+  { epic: 'HRIS-32', name: 'Gift receipts resolve through an exact four-tier ladder — work email, employee id, alternate work email, then name AND start date — after work-email-only matching stranded 15 live people', type: 'Bug', sp: 5, done: true, sprint: 'S28', priority: 'High' },
+  // 5 SP: the banking reveal becomes a bank-branded card. NOTHING NEW EXPOSED — bank_name was never masked
+  // and there is no new endpoint; fed prefBank = the PAID slot, never bank_name. Colours are MEASURED off the
+  // PNGs and re-derived by the test (saturation-weighted, or every bank reads black; GoTyme has NO chroma so
+  // a second tier gives it its own ink), and contrast is SEARCHED not constant — a flat 42% mix hit 3.84:1 on
+  // AUB and the CODE was fixed, never the threshold. No logo => no brand, never a monogram.
+  { epic: 'HRIS-23', name: 'The People banking reveal prints the payout record as the payee\'s own bank card — brand colours MEASURED off the shipped logo, fed the PAID slot, and nothing new exposed', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
+  // 5 SP (adversarially re-scored UP from 3 — the route gained a real new read, loadProcessorLabels over the
+  // pay-processor registry, which the first scoping missed). Month card -> per-pay-processor split from data
+  // the close-out already held. byProcessor counts ROWS not PEOPLE (3,112 vs 3,088), so there is deliberately
+  // NO per-processor rate — the denominator does not exist. Money reconciles to the cent; nothing records whose
+  // fault a Problem was, so it counts as OURS: evidence, never a verdict. CLOSED cycles only.
+  { epic: 'HRIS-15', name: 'A Diagnostics month card opens its per-pay-processor breakdown, and because the counts are PAYMENTS not people no per-processor rate is drawn anywhere', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
+  // 3 SP: weekly filter + CSV on the processor breakdown. The filter re-scopes the WHOLE modal via one
+  // resolver pair (one footer for both scopes) and a week is a KEY that FALLS BACK to the month, never an
+  // empty table. The CSV rides the filter — same rows the component rendered — with the scope in the filename,
+  // the caveats INSIDE the file, NO % anywhere (same absent denominator), a footer ROW not a SUM(), and
+  // text-only formula neutralising.
+  { epic: 'HRIS-15', name: 'The Diagnostics month breakdown narrows to a single week and downloads exactly what is on screen — one resolver foots the tiles, the table and the CSV, and the no-rate caveats ship inside the file', type: 'Feature', sp: 3, done: true, sprint: 'S28', priority: 'Medium' },
+  // 5 SP: the cycle-success trend, then the refactor that is the actual point — a LINE/AREA that BREAKS at
+  // gaps, with no segment into, out of or across an unmeasured week. Window opens where HRIS started PAYING
+  // (2026-05-31), NOT at the first close-out; 12 earlier weeks collapse to ONE "No HRIS yet" block. FOUR
+  // states, and `not_run` != `no_denominator`. No-rate weeks get NO MARK, never a zero. The rate axis is NOT
+  // zero-based (trendRateBand) and people-paid is a second STRIP, never a second axis.
+  { epic: 'HRIS-15', name: 'Diagnostics charts every pay cycle since HRIS started paying — a line that breaks at every unmeasured week, four states where not_run is not no_denominator, and a rate axis that is not zero-based', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
+  // 2 SP: Set rate finally names its own effective date, in ONE dialog rendered by both Readiness and Notes
+  // Offboarded. Defaults to TODAY IN MANILA, not the paid week (defaulting back would re-price every
+  // No-Pay-Rate save); NO `min`, so a closed week stays reachable deliberately; sent VERBATIM, never snapped;
+  // and a BLANK date REFUSES — the silent fallback to today WAS the defect. Supersedes the old rule in
+  // [[readiness-setrate-cannot-backdate]] that back-dating must go through Pay Structure.
+  { epic: 'HRIS-20', name: 'Readiness and Offboarded “Set rate” names the date it takes effect — defaults to today in Manila, no minimum so a closed week is reachable, sent verbatim and never snapped, and a blank date refuses the save', type: 'Bug', sp: 2, done: true, sprint: 'S28', priority: 'High' },
 ];
