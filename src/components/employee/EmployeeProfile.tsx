@@ -134,10 +134,11 @@ function parseRate(v: string | null | undefined): number | null {
 /**
  * Alias, not a second implementation. This used to build `new Date(raw)`
  * directly, which parses a bare `YYYY-MM-DD` as UTC midnight — a day early for
- * every viewer west of UTC (all of Manila-facing payroll). `formatDateOnly`
- * (`@/lib/date-only`) is the ONE renderer for a date-only column, already used
- * by the ID card; every call site below (Start Date row, pay-stub dates,
- * resignation effective dates) now agrees with it byte for byte.
+ * every viewer west of UTC. Manila (UTC+8) never saw this; it was every
+ * US-side viewer reading the same roster. `formatDateOnly` (`@/lib/date-only`)
+ * is the ONE renderer for a date-only column, already used by the ID card;
+ * every call site below (Start Date row, pay-stub dates, resignation
+ * effective dates) now agrees with it byte for byte.
  */
 const formatStartDate = formatDateOnly;
 

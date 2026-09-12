@@ -56,15 +56,21 @@ because `getTitlesForDepartment` needs the storage key as a lookup.
 
 `start_date` is a calendar day with no time and no zone. `new Date('2024-05-06')` parses it
 as UTC midnight, so `toLocaleDateString` renders **the day before** for every viewer west of
-UTC. `formatIdCardDate` therefore goes through `parseDateOnlyLocal` (`src/lib/date-only.ts`),
-the project's standing rule for DATE columns, and a test pins it against a negative-offset
+UTC — Manila (UTC+8) never saw this; it was every US-side viewer reading the same roster.
+`formatIdCardDate` therefore goes through `parseDateOnlyLocal` (`src/lib/date-only.ts`), the
+project's standing rule for DATE columns, and a test pins it against a negative-offset
 timezone.
 
-**`EmployeeProfile.tsx`'s own `formatStartDate` still parses the naive way and is off by one
-for those viewers.** It was left alone on purpose: it also formats pay dates and resignation
-effective dates, so correcting it is a wider change than this feature. The presentation
-shape here is deliberately identical, so fixing that function makes the two agree byte for
-byte with no further work. Until then the ID card is the correct one.
+**SHIPPED 2026-09-12: `formatDateOnly` (`src/lib/date-only.ts`) is now the ONE renderer for
+this class of bug.** `formatIdCardDate` and `EmployeeProfile.tsx`'s own `formatStartDate` both
+delegate to it — `formatStartDate` is a direct alias, not a second implementation — so the ID
+card and the Profile's Employment row, pay-stub dates and resignation effective dates all
+agree byte for byte. A source-scan guard (`src/lib/employee/profile-date-render.test.ts`)
+fails if a bare `new Date(...)` reappears beside it in `EmployeeProfile.tsx`. The one
+remaining difference is a deliberate placeholder contract, not a parsing difference:
+`formatIdCardDate` returns `null` for a blank value (so the card's row is omitted), where
+`formatDateOnly` itself returns an em-dash — correct for the Profile's row layout, not for a
+card that hides absent fields entirely.
 
 An unparseable value is passed through **verbatim** rather than blanked — a badly typed
 sheet date is still evidence, and hiding it hides the ID's own origin.

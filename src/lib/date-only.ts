@@ -25,8 +25,9 @@ export function parseDateOnlyLocal(input: string | null | undefined): Date | nul
  * The ONE renderer for a date-only column (`YYYY-MM-DD`).
  *
  * `new Date('2026-09-01')` is UTC midnight, so it renders as Aug 31 for every
- * viewer west of UTC — including all of Manila-facing payroll. This builds a
- * LOCAL date instead, so the Profile's Employment row and the ID card agree.
+ * viewer west of UTC. Manila (UTC+8) never saw this — it is every US-side
+ * viewer reading the same roster who saw the wrong day. This builds a LOCAL
+ * date instead, so the Profile's Employment row and the ID card agree.
  *
  * Unparseable input is returned VERBATIM rather than replaced: the card has
  * always shown whatever the roster holds, and hiding a malformed date behind a
