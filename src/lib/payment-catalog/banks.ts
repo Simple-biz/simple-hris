@@ -106,7 +106,15 @@ export const OFFICIAL_BANKS: OfficialBank[] = [
   {
     key: 'gotyme',
     name: 'GoTyme Bank',
-    aliases: ['GoTyme', 'Go Tyme Bank', 'GoTyme Bank Corporation', 'GoTymePH', 'GoTyme Bank Ph', 'GoTyme PH Bank'],
+    aliases: [
+      'GoTyme',
+      'Go Tyme Bank',
+      'GoTyme Bank Corporation',
+      'GoTymePH',
+      'GoTyme Bank Ph',
+      'GoTyme PH Bank',
+      'GoTyme Bank, Inc. (GoTyme Bank Corporation)',
+    ],
   },
   {
     key: 'bpi',
@@ -185,10 +193,17 @@ export const OFFICIAL_BANKS: OfficialBank[] = [
     name: 'Asia United Bank (AUB)',
     aliases: ['AUB', 'Asia United Bank', 'Asian United Bank', 'Asia United Bank - Manila'],
   },
-  { key: 'pnb', name: 'Philippine National Bank (PNB)', aliases: ['PNB', 'Philippine National Bank'] },
+  {
+    key: 'pnb',
+    name: 'Philippine National Bank (PNB)',
+    // 'Philippines National Bank' (plural) is a live misspelling of this SAME bank,
+    // not a second institution — no separate 'Philippine National Bank' without the
+    // "s" exists to distinguish it from.
+    aliases: ['PNB', 'Philippine National Bank', 'Philippines National Bank'],
+  },
   { key: 'eastwest', name: 'EastWest Bank', aliases: ['East West Bank'] },
   { key: 'eastwest_rural', name: 'EastWest Rural Bank', aliases: [] },
-  { key: 'cimb', name: 'CIMB Bank Philippines', aliases: ['CIMB'] },
+  { key: 'cimb', name: 'CIMB Bank Philippines', aliases: ['CIMB', 'CIMB Bank'] },
   { key: 'maya', name: 'Maya Bank, Inc.', kind: 'wallet', aliases: ['Maya', 'Maya Bank'] },
   { key: 'paymaya', name: 'PayMaya', kind: 'wallet', aliases: [] },
   { key: 'chinabank', name: 'China Banking Corporation (Chinabank)', aliases: ['China Bank', 'Chinabank'] },

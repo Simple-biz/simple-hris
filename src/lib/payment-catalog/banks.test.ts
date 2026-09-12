@@ -693,3 +693,12 @@ test('every logo resolveBankBrand can return is a file that exists', () => {
     );
   }
 });
+
+test('three live spellings that used to resolve to nothing now resolve', () => {
+  // Real spellings from employee_ids. An unclaimed spelling correctly gets no
+  // brand, so each of these rendered a slate card with raw text — including the
+  // GoTyme variant, which is the one case the branded card was asked for.
+  assert.equal(resolveBankBrand('GoTyme Bank, Inc. (GoTyme Bank Corporation)').key, 'gotyme');
+  assert.ok(resolveBankBrand('CIMB Bank').key, 'CIMB Bank still unclaimed');
+  assert.ok(resolveBankBrand('Philippines National Bank').key, 'PNB (plural spelling) still unclaimed');
+});
