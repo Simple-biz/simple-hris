@@ -128,6 +128,24 @@ const CFG: Record<DispatchStatus, StatusCfg> = {
 
 /* ---- types ------------------------------------------------------------ */
 
+/** Manila-pinned — the clerk and the employee must read the same instant. */
+function formatSentAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'earlier';
+  try {
+    return d.toLocaleString('en-PH', {
+      timeZone: 'Asia/Manila',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  } catch {
+    return 'earlier';
+  }
+}
+
 export interface MarkPaidPayload {
   rowId: string;
   transactionId: string;
@@ -140,6 +158,13 @@ export interface MarkPaidPayload {
   recipientSwiftCode: string;
   status: DispatchStatus;
   note: string;
+  /**
+   * Reissue consent. Only meaningful when a statement has ALREADY been emailed
+   * for this week; on a first payment it is always true and the route ignores
+   * it. Undefined from a caller that does not ask means NO second copy — the
+   * safe default, since a silent re-send is the behaviour being fixed.
+   */
+  sendPaystub?: boolean;
 }
 
 interface MarkPaidDialogProps {
@@ -366,6 +391,12 @@ export default function MarkPaidDialog({
   const [status,                 setStatus]                 = useState<DispatchStatus>('paid');
   const [note,                   setNote]                   = useState('');
   const [submitting,             setSubmitting]             = useState(false);
+  /**
+   * Reissue consent. Defaults FALSE and is re-defaulted on every row change
+   * below: leaving a previous row's "yes" sticky would silently re-email the
+   * next person, which is the exact failure this prompt exists to stop.
+   */
+  const [reissue,                setReissue]                = useState(false);
   const [copied,                 setCopied]                 = useState(false);
   const [copiedSub,              setCopiedSub]              = useState(false);
   const [copiedAcct,             setCopiedAcct]             = useState(false);
@@ -508,6 +539,7 @@ export default function MarkPaidDialog({
     setRecipientSwiftCode(defaults.swiftCode);
     setStatus('paid');
     setNote('');
+    setReissue(false);
     setSubmitting(false);
     setCopiedAcct(false);
     setOverrideMode(false);
@@ -516,6 +548,14 @@ export default function MarkPaidDialog({
   }, [row?.id, defaults, row]);
 
   const open    = row != null;
+  /**
+   * A pay statement has ALREADY been emailed for this week. Keyed on the
+   * timestamp, not on any counter: a FAILED send leaves a count and no
+   * timestamp, and re-sending after a failure is still the first delivery, so it
+   * must not be gated behind a "you already sent this" prompt.
+   * Mirrors `shouldPromptBeforeSend` server-side.
+   */
+  const alreadySentAt = row?.paystubSentAt ?? null;
   /**
    * Kolan and Higlobe don't hand back a usable confirmation reference, so a
    * transaction ID can't be required for them — the clerk would have to invent one.
@@ -592,6 +632,8 @@ export default function MarkPaidDialog({
         recipientSwiftCode: recipientSwiftCode.trim(),
         status,
         note: note.trim(),
+        // A first send is always on; only a genuine reissue is opt-in.
+        sendPaystub: alreadySentAt ? reissue : true,
       });
       // Confirmed sent — reward the clerk with a crisp confirmation tick.
       // Only for a successful "paid" dispatch, not problem/not-paid/threshold logs.
@@ -1088,6 +1130,43 @@ export default function MarkPaidDialog({
           </Field>
         </motion.div>
         </AnimatePresence>
+
+        {/* ── Reissue prompt ── */}
+        {/* Shown ONLY when a statement demonstrably went out for this week, and
+            opt-IN. Before 2026-09-12 a re-payment silently emailed a second pay
+            document; the employee got the document and, because the in-app
+            notification is de-duped, no notice of it. Defaulting this to checked
+            would ship that same behaviour with a dialog in front of it. */}
+        {open && status === 'paid' && alreadySentAt && (
+          <div className="mx-6 mb-1 rounded-lg border border-amber-200 bg-amber-50/70 px-3.5 py-3 dark:border-amber-500/30 dark:bg-amber-500/10">
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <input
+                type="checkbox"
+                checked={reissue}
+                onChange={(e) => setReissue(e.target.checked)}
+                disabled={submitting}
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer accent-amber-600"
+              />
+              <span className="min-w-0">
+                <span className="block text-[12.5px] font-semibold text-amber-900 dark:text-amber-200">
+                  Send another pay stub to this employee?
+                </span>
+                <span className="mt-0.5 block text-[11.5px] leading-relaxed text-amber-800/90 dark:text-amber-300/80">
+                  One was already emailed{' '}
+                  <strong className="font-semibold">{formatSentAt(alreadySentAt)}</strong>. Leave
+                  this unticked to record the payment without emailing a second copy — the stub
+                  stays available in their dashboard either way.
+                </span>
+                {reissue && (
+                  <span className="mt-1.5 block text-[11.5px] font-medium text-amber-900 dark:text-amber-200">
+                    It will be marked <strong>Reissued</strong> — or <strong>Amended</strong>, if
+                    the figures have changed since the last copy.
+                  </span>
+                )}
+              </span>
+            </label>
+          </div>
+        )}
 
         {/* ── Footer ────────────────────────────────────────────────── */}
         <div className="flex items-center justify-end gap-2.5 border-t border-zinc-100 bg-white px-6 py-4 dark:border-zinc-800 dark:bg-zinc-950">

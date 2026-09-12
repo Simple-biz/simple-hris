@@ -77,6 +77,9 @@ import { normEmail } from "@/lib/email/norm-email";
 export const SHOW_UNPAID_STAGED_PAYSTUBS = true;
 
 /** One employee-facing stub: a rendered statement + its provenance dates. */
+import { resolveIssueForDisplay } from '@/lib/payroll/paystub-issue';
+import { listIssuesForEmployee } from '@/lib/supabase/paystub-issues';
+
 export interface EmployeePayStub {
   sourceFile: string;
   /** Real paid date from a paid dispatch, else null. */
@@ -84,6 +87,16 @@ export interface EmployeePayStub {
   /** Display pay date: real paid date, else the scheduled Tue/Thu for this week. */
   payDate: string | null;
   view: PayStubView;
+  /**
+   * Reissue state for this statement — `chip` is null for the ordinary case
+   * (sent once), which is almost every stub and must carry no badge.
+   *
+   * Resolved by `resolveIssueForDisplay` from recorded issues where they exist,
+   * falling back to `paystub_dispatch_queue.send_count` so the 117 statements
+   * re-sent before that table existed still read "Issue 2" — with no word in
+   * front of it, because whether their figures moved was never recorded.
+   */
+  issue?: { kind: string; issueNo: number; chip: string | null; note: string | null };
 }
 
 /** Lightweight per-week row for the paginated list + stat band. No itemized
@@ -783,6 +796,10 @@ export async function listEmployeePayStubs(
       .filter((p) => !paidAtByFile.has(p.cycle_source_file))
       .map((p) => finalPaySnapshotKey(p.cycle_source_file)),
   );
+  // Recorded issue history, keyed by source file. Empty for everything sent
+  // before 2026-09-12 — `resolveIssueForDisplay` then falls back to send_count.
+  const issuesByFile = await listIssuesForEmployee(email);
+
   const officialStubs: EmployeePayStub[] = stagedAll
     .map((p) => {
       const pAt = paidAtByFile.get(p.cycle_source_file) ?? null;
@@ -792,6 +809,10 @@ export async function listEmployeePayStubs(
         paidAt: pAt,
         payDate: resolvePayDateIso(pAt, view.weekEnd, processor),
         view,
+        issue: resolveIssueForDisplay({
+          issues: issuesByFile.get(p.cycle_source_file) ?? [],
+          sendCount: p.send_count,
+        }),
       };
     })
     // The same cutoff, applied to the staged weeks by the week the statement

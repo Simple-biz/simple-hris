@@ -221,6 +221,96 @@ chosen payload back onto the queue row, and — if a `payload` exists — calls
 stamped on the queue row (`markPaystubSent` / `markPaystubSendError`) and returned as
 `{ paystub: { staged, sent, error } }`; a send failure never fails the payment record.
 
+**Since 2026-09-12 this send is gated when a statement already went out for the week** — see
+§ Reissues below. The response also carries `skipped: true` when the clerk declined to reissue
+(distinct from `sent: false`, which means it failed) and `issue` naming which issue it became.
+
+### Reissues — asking before a second copy, and naming which issue it is
+
+*Shipped 2026-09-12.* Kane: *"we should have a new feature that would ask the User if she
+wants to send a new paystub or not … there should be an attempt in the paystub that would say
+attempt #2 or something better than attempt … Now on the employee dashboard there should be
+that as well."*
+
+**The defect this closed.** Until this change the per-employee send above fired
+**unconditionally** whenever a `paid` row landed with a staged stub. There was no already-sent
+guard, so Undo → Mark Paid again emailed the employee a **second pay document**. The in-app
+"Salary Paid" notification, meanwhile, *is* de-duped on `(recipient, source_file)` — so they
+received the document and **no notice that it had arrived**. Exactly backwards. Measured
+2026-09-12 across 14,033 queue rows: `send_count` 0 → 6,551 · 1 → 7,363 · **2 → 116** · 3 → 1 ·
+7 → 1 · 19 → 1. **117 real employees** had already received a duplicate. (The 7 and the 19 are
+`kaner@` test rows — do not cite them as an incident.)
+
+**The prompt.** A statement that has already been emailed goes out again **only** when the
+clerk ticks the box in Mark Paid; the request carries `send_paystub: true`. A **first** send is
+untouched and never prompted — that is the overwhelmingly common case and nothing is at risk in
+it. The body default is `false`, so a client that has not been updated to ask **cannot silently
+re-email anyone**.
+
+**The test is `sent_at`, never `send_count`.** A FAILED send leaves a count and no timestamp
+(`markPaystubSendError`), and re-sending after a failure is still the *first* delivery — it must
+not be gated behind a "you already sent this" prompt. `shouldPromptBeforeSend()` is the one
+place that decision lives, shared by the route and the dialog.
+
+**Never the word "attempt".** An attempt implies the previous one *failed*; in the ordinary
+undo-then-repay case the first email arrived correctly and was merely superseded, so
+"Attempt 2" tells an employee their payroll is broken when it is not. The vocabulary:
+
+| Figures vs the total on the LAST EMAIL | Word |
+| --- | --- |
+| unchanged | **Reissued · Issue N** |
+| changed | **Amended · Issue N** — the only case the employee must re-read |
+| not comparable | **Issue N**, with no word |
+
+`public.paystub_issues` **CHECK-constrains `kind`**, so `'attempt'` cannot be stored at all.
+
+**Compare against the previous ISSUE, not against the payment.** The route's existing
+stub-vs-payment reconciliation asks *"does this statement describe the money that moved"*;
+this asks *"has what we told this person changed since we last told them"*. Only the second can
+justify "Amended". That is why each issue row snapshots `amount_php` — **the total that was on
+that email** — which is what makes the *next* issue decidable.
+
+**"Not comparable" is a real verdict, and it is stored.** Distinguish two things:
+
+- **no row at all** → that issue was never recorded (everything before 2026-09-12);
+- **`kind = 'unrecorded'`** → the issue *was* recorded, but the previous total was unknown.
+
+Both render as the number alone. Storing `'unrecorded'` rather than defaulting to `'reissued'`
+is the point: `'reissued'` asserts the figures matched, and nobody compared them. The row still
+snapshots what it emailed, which bootstraps history for a statement that had none.
+
+**The 117 are labelled retroactively, from `send_count` alone** (Kane's call). With no issue
+rows behind them they render **"Issue 2"** with no word — inventing a per-issue amount to
+justify "Reissued" or "Amended" would be a guess printed on a pay document. Verified by running
+the shipped resolver over all 14,033 live rows: 13,914 no chip · 119 numbered · **0** badges on
+a never-repeated statement · **0** Reissued/Amended claimed without history.
+
+**Recorded only on a send that actually landed.** A failed send writes no issue row, or the
+next one would look like issue 3. Everything in `src/lib/supabase/paystub-issues.ts` degrades
+to "no history" rather than throwing — the migration is applied by hand, so until it lands the
+table does not exist, and a display feature must never be able to block payroll.
+
+**`POST /api/dispatch-paystubs` does NOT number issues** and has no callers (§ Legacy batch).
+If a "Re-send" button is ever wired to it, it must first do what the per-employee send does:
+`nextIssueNo` → `classifyIssue` → chip into `emailOptions` → `recordPaystubIssue`.
+
+**Key files**
+
+| Piece | File |
+| --- | --- |
+| Vocabulary + verdict (pure, 27 tests) | `src/lib/payroll/paystub-issue.ts` |
+| Table access (degrades to no-history) | `src/lib/supabase/paystub-issues.ts` |
+| The gate + the recording | `app/api/payment-dispatches/route.ts` |
+| Chip on the emailed statement | `src/lib/payroll/paystub-email-html.ts` |
+| The prompt | `src/components/payroll-clerk/MarkPaidDialog.tsx` |
+| Employee banner | `src/components/paystub/PayStubModal.tsx` |
+
+**Deploy notes.** Migration `references/sql/create/2026-09-12_paystub_issues.sql`, applied with
+`node --import tsx scripts/apply-paystub-issues-migration.mts --apply` (dry run is the default
+and is always rolled back; needs the **session-pooler** `DATABASE_URL`). **PENDING — Kane runs
+it.** Safe to deploy the code before or after: with the table absent, statements still send and
+the issue number falls back to `send_count`. No env vars, no n8n change.
+
 ### Paystub freshness — snapshot-over-staged merge
 
 **The problem.** The staged `payload` is captured at lock time, but payments can be
@@ -1016,6 +1106,7 @@ launch disables the whole recovery path, this key included.
 - Business rules: `Documentation/BUSINESS_LOGIC.md`.
 - Routes: `app/api/paystub-dispatch-queue/route.ts` (+ `arrears/`), `app/api/payment-dispatches/route.ts` (per-employee send on Mark Paid), `app/api/dispatch-paystubs/route.ts` (legacy batch, no callers).
 - Shared send helper: `src/lib/payroll/paystub-dispatch.ts` (`forwardPaystubDispatch`).
+- Reissues: `src/lib/payroll/paystub-issue.ts` (+ `.test.ts`), `src/lib/supabase/paystub-issues.ts`, `references/sql/create/2026-09-12_paystub_issues.sql`, `scripts/apply-paystub-issues-migration.mts`.
 - Mid-week transfer disclosure: `src/lib/payroll/department-transfer-legs.ts` (`buildTransferLegsByEmail`, `transferBlockForWeek`, `formatTransferLabel`) + `src/lib/payroll/hsl-transfer-effective.ts` (`fetchDepartmentTransferRows`).
 - Paystub freshness: `src/lib/payroll/paystub-fresh.ts` (`mergeSnapshotIntoStaged`, `getFreshPaystubEntry`, `refreshPaystubQueuePayload`).
 - Queue data access: `src/lib/supabase/paystub-dispatch-queue.ts` (`upsertPaystubDispatchQueue`, `getPaystubDispatchEntry`, `listExcludedArrears`, `markPaystubSent` / `markPaystubSendError`).

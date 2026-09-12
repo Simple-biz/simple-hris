@@ -19,6 +19,7 @@ import type { ManualValidation } from '@/lib/payroll/manual-validation';
 import type { PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
 import { downloadPayStubsPdf } from '@/lib/payroll/paystub-export';
 import { parseDateOnlyLocal } from '@/lib/date-only';
+import { cn } from '@/lib/utils';
 import { PayStubStatement } from './PayStubStatement';
 
 interface PayStubResponse {
@@ -42,6 +43,11 @@ interface PayStubResponse {
    * so the notes panel below simply never renders for employees.
    */
   dispatches?: PayStubDispatchEntry[];
+  /**
+   * Reissue state. `chip` is null for the ordinary statement — sent once — which
+   * is almost every one of them and must carry no badge at all.
+   */
+  issue?: { kind: string; issueNo: number; chip: string | null; note: string | null };
 }
 
 /**
@@ -234,6 +240,28 @@ export function PayStubModal({
               </div>
             ) : data?.paystub && data.available ? (
               <div className="relative w-full">
+                {/* Reissue banner. Above the statement, because an employee who
+                    is holding two different copies of the same week needs to
+                    know WHICH this is before reading any figure on it. Amber
+                    only for 'amended' — that is the one where the numbers moved
+                    and the earlier copy is genuinely superseded. */}
+                {data.issue?.chip && (
+                  <div
+                    className={cn(
+                      'mx-auto mb-2 w-full max-w-[560px] rounded-xl border px-4 py-2.5',
+                      data.issue.kind === 'amended'
+                        ? 'border-amber-300 bg-amber-50 text-amber-900'
+                        : 'border-zinc-200 bg-zinc-50 text-zinc-700',
+                    )}
+                  >
+                    <p className="text-[12px] font-semibold">{data.issue.chip}</p>
+                    {data.issue.note && (
+                      <p className="mt-0.5 text-[11.5px] leading-relaxed opacity-90">
+                        {data.issue.note}
+                      </p>
+                    )}
+                  </div>
+                )}
                 <PayStubStatement
                   view={data.paystub}
                   paidAt={data.payDate ?? data.paidAt}

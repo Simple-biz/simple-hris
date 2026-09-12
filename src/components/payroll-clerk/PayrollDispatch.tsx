@@ -981,6 +981,9 @@ export default function PayrollDispatch() {
             arrival_date: payload.arrivalDate || null,
             status: payload.status,
             note: payload.note || null,
+            // Reissue consent. Only consulted server-side when a statement
+            // ALREADY went out for this week; a first send ignores it.
+            send_paystub: payload.sendPaystub === true,
             // Contractor settlement. Only sent on the leg that matches the cycle
             // being viewed, so no arrears fan-out can claim the same invoice twice.
             payee_type: isContractorRow ? 'contractor' : 'employee',

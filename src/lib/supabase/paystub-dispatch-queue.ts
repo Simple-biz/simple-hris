@@ -250,6 +250,12 @@ export async function listPaystubPayloadsForEmployee(
     payload: Record<string, unknown> | null;
     locked_at: string | null;
     excluded: boolean;
+    /** How many statements for this week have been EMAILED, and when the last
+     *  one went. Feeds the employee dashboard's reissue label — and is the only
+     *  signal behind the 117 statements that were re-sent before
+     *  `paystub_issues` existed. */
+    send_count: number;
+    sent_at: string | null;
   }>;
   error: string | null;
 }> {
@@ -258,7 +264,9 @@ export async function listPaystubPayloadsForEmployee(
 
   const { data, error } = await supabase
     .from("paystub_dispatch_queue")
-    .select("cycle_source_file, recipient_email, pay_period, payload, locked_at, excluded")
+    .select(
+      "cycle_source_file, recipient_email, pay_period, payload, locked_at, excluded, send_count, sent_at",
+    )
     .eq("recipient_email", norm(email))
     .not("payload", "is", null);
 
@@ -271,6 +279,8 @@ export async function listPaystubPayloadsForEmployee(
       payload: Record<string, unknown> | null;
       locked_at: string | null;
       excluded: boolean | null;
+      send_count: number | null;
+      sent_at: string | null;
     };
     return {
       cycle_source_file: row.cycle_source_file,
@@ -279,6 +289,8 @@ export async function listPaystubPayloadsForEmployee(
       payload: row.payload ?? null,
       locked_at: row.locked_at ?? null,
       excluded: row.excluded ?? false,
+      send_count: row.send_count ?? 0,
+      sent_at: row.sent_at ?? null,
     };
   });
   return { rows, error: null };

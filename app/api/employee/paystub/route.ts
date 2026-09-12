@@ -22,6 +22,8 @@ import {
 import { getEmployeeMasterRecord } from "@/lib/supabase/employees";
 import { getAppSettingsWithMeta } from "@/lib/supabase/app-settings";
 import { parseDateRangeFromFilename } from "@/lib/hubstaff/calendar-column-dedupe";
+import { resolveIssueForDisplay } from '@/lib/payroll/paystub-issue';
+import { listIssuesForStatement } from '@/lib/supabase/paystub-issues';
 import {
   SHOW_UNPAID_STAGED_PAYSTUBS,
   callerEmails,
@@ -89,6 +91,14 @@ export async function GET(req: NextRequest) {
           ? mapPayloadToPayStub(staged.payload, staged.pay_period)
           : mapPayloadToPayStub(fresh.payload, fresh.payPeriod),
       );
+      // Which issue of this statement is the employee looking at? Recorded
+      // history wins; `send_count` is the fallback that makes the 117
+      // statements re-sent before 2026-09-12 legible as "Issue 2" — with no
+      // word, since whether their figures moved was never recorded.
+      const issue = resolveIssueForDisplay({
+        issues: await listIssuesForStatement(sourceFile, email),
+        sendCount: staged.send_count,
+      });
       return NextResponse.json({
         paystub,
         available: true,
@@ -96,6 +106,7 @@ export async function GET(req: NextRequest) {
         payDate: resolvePayDateIso(paidAt, paystub.weekEnd, processor),
         status: paid ? "paid" : "issued",
         currentDepartment: master?.department ?? null,
+        issue,
       });
     }
 

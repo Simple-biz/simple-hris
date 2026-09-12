@@ -15,6 +15,22 @@ import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
  * (server-side, via the shared `forwardPaystubDispatch` helper) as Lenny marks
  * each person Paid. This route remains for manual / preview / re-sends.
  *
+ * **This route does NOT number issues.** It bypasses `paystub_dispatch_queue`
+ * entirely — no `send_count` bump, no `paystub_issues` row — so a statement it
+ * emails carries no Reissued/Amended badge and does not advance the employee's
+ * issue count. That is tolerable only because NOTHING IN THE APP CALLS IT today
+ * (verified 2026-09-12: the sole reference is a doc comment). It survives as a
+ * manual/preview escape hatch.
+ *
+ * If you ever wire a "Re-send" button to this route, it must first do what
+ * POST /api/payment-dispatches does around its `forwardPaystubDispatch` call:
+ * resolve the next issue via `nextIssueNo`, classify it against the previous
+ * issue's emailed total with `classifyIssue`, pass the chip through
+ * `emailOptions`, and record the result with `recordPaystubIssue` — otherwise
+ * an employee receives a second pay document with nothing on it saying so,
+ * which is exactly the defect fixed on 2026-09-12
+ * (docs/features/paystub-dispatch.md § Reissues).
+ *
  * Expected body:
  * - pay_period?: { currency: 'PHP'; hubstaff_source_file: string | null; pab_evaluation: {...} }
  * - employees: Array<{ name, email, personal_email, department_*, hours, rates_php, pay_php }>

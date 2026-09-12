@@ -199,6 +199,9 @@ export default function PayrollClerkApp() {
           arrival_date: payload.arrivalDate || null,
           status: payload.status,
           note: payload.note || null,
+          // Reissue consent. Only consulted server-side when a statement
+          // ALREADY went out for this week; a first send ignores it.
+          send_paystub: payload.sendPaystub === true,
           // Contractor settlement. This shell shares useDispatchQueue with
           // PayrollDispatch, so contractor invoice rows appear here too — without
           // these fields the API would treat the payment as an employee one, never

@@ -1010,11 +1010,23 @@ async function loadAll(
     noteDept(email, entry?.departmentName ?? null);
   }
 
+  // Carry the paystub send state onto every pending row, in ONE pass rather than
+  // at each of the several places a row gets built — a construction site that
+  // forgot it would silently hand the Mark Paid dialog "never sent", and the
+  // dialog would then re-email a second copy without asking. Keyed by work email
+  // exactly as the staged map is.
+  const withPaystubState = (r: QueueRow): QueueRow => {
+    const staged = stagedByEmail.get(r.email.trim().toLowerCase());
+    return staged
+      ? { ...r, paystubSentAt: staged.sent_at, paystubSendCount: staged.send_count ?? 0 }
+      : r;
+  };
+
   return {
     // Until the wizard locks this cycle, Payment Dispatch shows NO queue data —
     // just the "not ready" note. (Reports / Urgent / Orphanage are separate and
     // not gated by this in the component.)
-    rows: wizardReady ? routedPending : [],
+    rows: wizardReady ? routedPending.map(withPaystubState) : [],
     excluded: wizardReady ? routedExcluded : [],
     paid: wizardReady ? paid : [],
     // Not gated on `wizardReady`: it labels whatever records ARE on screen, and an

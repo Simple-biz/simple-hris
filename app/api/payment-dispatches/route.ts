@@ -21,6 +21,14 @@ import {
 import { getFreshPaystubEntry } from "@/lib/payroll/paystub-fresh";
 import { forwardPaystubDispatch } from "@/lib/payroll/paystub-dispatch";
 import { mapPayloadToPayStub } from "@/lib/payroll/paystub-view";
+import {
+  classifyIssue,
+  issueChipText,
+  issueNote,
+  nextIssueNo,
+  shouldPromptBeforeSend,
+} from "@/lib/payroll/paystub-issue";
+import { listIssuesForStatement, recordPaystubIssue } from "@/lib/supabase/paystub-issues";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { getSessionActor } from "@/lib/auth/session-actor";
@@ -40,7 +48,18 @@ import {
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-interface PostBody extends Omit<InsertPaymentDispatchInput, "created_by"> {}
+interface PostBody extends Omit<InsertPaymentDispatchInput, "created_by"> {
+  /**
+   * Reissue consent. Only consulted when a statement has ALREADY been emailed
+   * for this (cycle, recipient); a first send ignores it entirely.
+   *
+   * Absent or false ⇒ no second copy goes out. The default is deliberately the
+   * safe one: a client that has not been updated to ask the question cannot
+   * silently re-email an employee, which is exactly what this route did before
+   * 2026-09-12.
+   */
+  send_paystub?: boolean;
+}
 
 export async function GET(req: NextRequest) {
   // Dispatch rows carry snapshotted recipient banking + amounts. Reading them
@@ -393,6 +412,11 @@ export async function POST(req: NextRequest) {
     staged: boolean;
     sent: boolean;
     error: string | null;
+    /** True when a statement had already been emailed and the clerk chose NOT to
+     *  send another. Distinct from `sent: false`, which means it failed. */
+    skipped?: boolean;
+    /** Which issue this send became, so the dispatch UI can say so in its toast. */
+    issue?: { no: number; kind: string; chip: string | null };
     /** Set when the emailed stub's total does not match the recorded payment
      *  amount (and the staged payload didn't match either) — surfaced to the
      *  dispatch UI as a warning and stamped into the audit log. */
@@ -418,6 +442,22 @@ export async function POST(req: NextRequest) {
       const staged = fresh.staged;
       if (staged && fresh.payload) {
         paystub.staged = true;
+
+        // ── Reissue gate ─────────────────────────────────────────────────────
+        // Until 2026-09-12 this route re-emailed the statement unconditionally,
+        // so undo → Mark Paid again sent the employee a SECOND pay document
+        // with no prompt and no record — while the in-app "Salary Paid"
+        // notification below was de-duped, so they got the document and no
+        // notice of it. A statement that has already been emailed now goes out
+        // ONLY when the clerk says so (`send_paystub: true`); a first send is
+        // untouched and is never prompted. `sent_at`, not `send_count`, is the
+        // test: a FAILED send leaves a count and no timestamp, and re-sending
+        // after a failure is still the first delivery.
+        const alreadySent = shouldPromptBeforeSend({
+          sentAt: staged.sent_at,
+          sendCount: staged.send_count,
+        });
+        const shouldSendPaystub = !alreadySent || body.send_paystub === true;
 
         // ── Reconcile the stub against the MONEY this request just recorded ──
         // The paid amount was priced when the dispatcher's queue loaded; the
@@ -516,115 +556,188 @@ export async function POST(req: NextRequest) {
           }
         })();
 
-        // The emailed statement is rendered from THIS view — the reconciled one,
-        // whose total matches the money this row just recorded — so the email,
-        // the Pay Stubs tab, and the payment can't describe the week differently.
-        // `amount_cop` is the figure the dispatcher actually paid a Colombian
-        // payee (null for everyone else), which beats re-deriving the equivalent
-        // from a rate that may have moved since.
-        const emailView =
-          row.amount_cop != null && Number.isFinite(Number(row.amount_cop))
-            ? { ...view, totalPayCop: Number(row.amount_cop) }
-            : view;
-
-        const result = await forwardPaystubDispatch({
-          pay_period: stubPeriod,
-          employees: [stubPayload],
-          views: [emailView],
-          emailOptions: { paidAt: row.sent_date ?? null, status: "paid" },
-          cycle: {
-            source_file: row.cycle_source_file,
-            period_start: row.cycle_period_start ?? null,
-            period_end: row.cycle_period_end ?? null,
-            cycle_id: row.cycle_id ?? null,
-          },
-        });
-        // HTTP 200 alone is NOT delivery: the n8n workflow folds Gmail failures
-        // into its summary response (error branch → Log Failed Sends → loop
-        // continues → Respond 200 with { succeeded, failed, failed_emails }).
-        // For this single-recipient send, a failed > 0 summary means the email
-        // did NOT go out (e.g. Gmail 429 rate-limiting) — record it as a failed
-        // send so the row keeps last_error and can be re-sent. Summaries from
-        // older workflow versions without these fields fall back to HTTP ok.
-        //
-        // A zero `failed` is NOT delivery either. The workflow SKIPS an item it
-        // can't mail (no valid personal_email, no week range, no rendered
-        // statement) down a separate branch, and a run where the only recipient
-        // was skipped used to come back `{succeeded: 0, failed: 0}` — which
-        // scored as delivered and stamped "paystub sent" on a row that was never
-        // emailed. So a summary that reports a count must also report at least
-        // one success. `succeeded` missing entirely (an older workflow) still
-        // falls back to the HTTP-ok behaviour rather than failing every send.
-        const summary =
-          result.parsed && typeof result.parsed === "object"
-            ? (result.parsed as {
-                succeeded?: unknown;
-                failed?: unknown;
-                skipped?: unknown;
-                failed_emails?: unknown;
-              })
-            : null;
-        const summaryFailed = typeof summary?.failed === "number" ? summary.failed : 0;
-        const summarySucceeded =
-          typeof summary?.succeeded === "number" ? summary.succeeded : null;
-        const delivered =
-          result.ok && summaryFailed === 0 && (summarySucceeded === null || summarySucceeded > 0);
-        if (delivered) {
-          paystub.sent = true;
-          await markPaystubSent({
-            sourceFile: row.cycle_source_file,
-            recipientEmail: row.recipient_email,
-            sentBy: createdBy,
-            sendCount: (staged.send_count ?? 0) + 1,
+        if (!shouldSendPaystub) {
+          // Deliberately not sent. Recorded so the decision is auditable — "no
+          // second copy was emailed" is a fact someone will need to prove, and
+          // silence could not distinguish it from a send that failed.
+          paystub.skipped = true;
+          void insertAuditLog({
+            user_name: createdBy ?? "unknown",
+            user_role: createdByRole,
+            action: "paystub.send_skipped",
+            resource: "paystub_dispatch_queue",
+            resource_id: row.id,
+            details: {
+              recipient_email: row.recipient_email,
+              source_file: row.cycle_source_file,
+              previously_sent_at: staged.sent_at,
+              previous_send_count: staged.send_count ?? 0,
+              reason: "clerk declined to reissue",
+            },
           });
         } else {
-          let failDetail = result.detail ?? "Paystub send failed";
-          if (result.ok) {
-            // Pull the Gmail error message out of the summary's failed_emails.
-            // Nothing failed but nothing succeeded either → the workflow skipped
-            // this recipient. Name that, rather than blaming a send that was
-            // never attempted; `failed_emails` overwrites it with the exact
-            // reason when the workflow reports one.
-            failDetail =
-              summaryFailed === 0 && summarySucceeded === 0
-                ? "Recipient was skipped by the paystub workflow — no email was sent"
-                : "Email send failed inside the paystub workflow";
-            try {
-              const raw = summary?.failed_emails;
-              const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
-              const first = Array.isArray(arr) ? (arr[0] as { error?: unknown } | undefined) : undefined;
-              if (first?.error) failDetail = String(first.error);
-            } catch {
-              /* keep the generic detail */
+          // The emailed statement is rendered from THIS view — the reconciled one,
+          // whose total matches the money this row just recorded — so the email,
+          // the Pay Stubs tab, and the payment can't describe the week differently.
+          // `amount_cop` is the figure the dispatcher actually paid a Colombian
+          // payee (null for everyone else), which beats re-deriving the equivalent
+          // from a rate that may have moved since.
+          const emailView =
+            row.amount_cop != null && Number.isFinite(Number(row.amount_cop))
+              ? { ...view, totalPayCop: Number(row.amount_cop) }
+              : view;
+
+          // ── Which issue is this? ───────────────────────────────────────
+          // The verdict compares against the total on the LAST EMAIL, which is
+          // a different question from the stub-vs-payment reconciliation above:
+          // that one asks "does this statement describe the money that moved",
+          // this one asks "has what we told this person changed since we last
+          // told them". Only the second can justify the word "Amended".
+          //
+          // No recorded history (every statement sent before this table
+          // existed) ⇒ `unrecorded`: the number, and no word claiming the
+          // figures did or did not move.
+          const priorIssues = await listIssuesForStatement(
+            row.cycle_source_file,
+            row.recipient_email,
+          );
+          const priorIssue = priorIssues[priorIssues.length - 1] ?? null;
+          const issueNo = nextIssueNo(staged.send_count);
+          const issueKind = classifyIssue({
+            issueNo,
+            previousAmountPhp: priorIssue?.amountPhp ?? null,
+            newAmountPhp: emailView.totalPayPhp,
+          });
+          const issueChip = issueChipText(issueKind, issueNo);
+
+          const result = await forwardPaystubDispatch({
+            pay_period: stubPeriod,
+            employees: [stubPayload],
+            views: [emailView],
+            emailOptions: {
+              paidAt: row.sent_date ?? null,
+              status: "paid",
+              issueChip,
+              issueNote: issueNote({
+                kind: issueKind,
+                issueNo,
+                previousIssuedAt: priorIssue?.issuedAt ?? null,
+              }),
+            },
+            cycle: {
+              source_file: row.cycle_source_file,
+              period_start: row.cycle_period_start ?? null,
+              period_end: row.cycle_period_end ?? null,
+              cycle_id: row.cycle_id ?? null,
+            },
+          });
+          // HTTP 200 alone is NOT delivery: the n8n workflow folds Gmail failures
+          // into its summary response (error branch → Log Failed Sends → loop
+          // continues → Respond 200 with { succeeded, failed, failed_emails }).
+          // For this single-recipient send, a failed > 0 summary means the email
+          // did NOT go out (e.g. Gmail 429 rate-limiting) — record it as a failed
+          // send so the row keeps last_error and can be re-sent. Summaries from
+          // older workflow versions without these fields fall back to HTTP ok.
+          //
+          // A zero `failed` is NOT delivery either. The workflow SKIPS an item it
+          // can't mail (no valid personal_email, no week range, no rendered
+          // statement) down a separate branch, and a run where the only recipient
+          // was skipped used to come back `{succeeded: 0, failed: 0}` — which
+          // scored as delivered and stamped "paystub sent" on a row that was never
+          // emailed. So a summary that reports a count must also report at least
+          // one success. `succeeded` missing entirely (an older workflow) still
+          // falls back to the HTTP-ok behaviour rather than failing every send.
+          const summary =
+            result.parsed && typeof result.parsed === "object"
+              ? (result.parsed as {
+                  succeeded?: unknown;
+                  failed?: unknown;
+                  skipped?: unknown;
+                  failed_emails?: unknown;
+                })
+              : null;
+          const summaryFailed = typeof summary?.failed === "number" ? summary.failed : 0;
+          const summarySucceeded =
+            typeof summary?.succeeded === "number" ? summary.succeeded : null;
+          const delivered =
+            result.ok && summaryFailed === 0 && (summarySucceeded === null || summarySucceeded > 0);
+          if (delivered) {
+            paystub.sent = true;
+            paystub.issue = { no: issueNo, kind: issueKind, chip: issueChip };
+            await markPaystubSent({
+              sourceFile: row.cycle_source_file,
+              recipientEmail: row.recipient_email,
+              sentBy: createdBy,
+              sendCount: issueNo,
+            });
+            // Only ever recorded for a send that actually landed — an issue row
+            // asserts "this reached them", and a failed send must not make the
+            // next one look like issue 3. An 'unrecorded' verdict is stored AS
+            // 'unrecorded': the previous total was unknown, and writing
+            // 'reissued' instead would assert the figures matched when nobody
+            // compared them. The amount snapshot here still bootstraps the
+            // next issue's comparison.
+            await recordPaystubIssue({
+              sourceFile: row.cycle_source_file,
+              recipientEmail: row.recipient_email,
+              issueNo,
+              issuedBy: createdBy,
+              kind: issueKind,
+              amountPhp: emailView.totalPayPhp,
+              amountUsd: emailView.totalPayUsd,
+              previousAmountPhp: priorIssue?.amountPhp ?? null,
+              source: "mark_paid",
+              reason: alreadySent ? "clerk chose to reissue after a re-payment" : null,
+            });
+          } else {
+            let failDetail = result.detail ?? "Paystub send failed";
+            if (result.ok) {
+              // Pull the Gmail error message out of the summary's failed_emails.
+              // Nothing failed but nothing succeeded either → the workflow skipped
+              // this recipient. Name that, rather than blaming a send that was
+              // never attempted; `failed_emails` overwrites it with the exact
+              // reason when the workflow reports one.
+              failDetail =
+                summaryFailed === 0 && summarySucceeded === 0
+                  ? "Recipient was skipped by the paystub workflow — no email was sent"
+                  : "Email send failed inside the paystub workflow";
+              try {
+                const raw = summary?.failed_emails;
+                const arr = typeof raw === "string" ? JSON.parse(raw) : raw;
+                const first = Array.isArray(arr) ? (arr[0] as { error?: unknown } | undefined) : undefined;
+                if (first?.error) failDetail = String(first.error);
+              } catch {
+                /* keep the generic detail */
+              }
             }
+            paystub.error = failDetail;
+            await markPaystubSendError({
+              sourceFile: row.cycle_source_file,
+              recipientEmail: row.recipient_email,
+              error: paystub.error,
+            });
           }
-          paystub.error = failDetail;
-          await markPaystubSendError({
-            sourceFile: row.cycle_source_file,
-            recipientEmail: row.recipient_email,
-            error: paystub.error,
+          void insertAuditLog({
+            user_name: createdBy ?? "unknown",
+            user_role: createdByRole,
+            action: delivered ? "paystub.sent" : "paystub.send_failed",
+            resource: "paystub_dispatch_queue",
+            resource_id: row.id,
+            details: {
+              recipient_email: row.recipient_email,
+              source_file: row.cycle_source_file,
+              http_status: result.status,
+              error: delivered ? undefined : paystub.error,
+              // Reconciliation trail: what the stub said vs what the payment row
+              // recorded, and whether the queue row was refreshed from the
+              // wizard snapshot before sending.
+              stub_total_php: view.totalPayPhp,
+              amount_php_paid: paidAmount ?? undefined,
+              refreshed_from_snapshot: doRefresh || undefined,
+              amount_mismatch: paystub.amount_mismatch ? true : undefined,
+            },
           });
         }
-        void insertAuditLog({
-          user_name: createdBy ?? "unknown",
-          user_role: createdByRole,
-          action: delivered ? "paystub.sent" : "paystub.send_failed",
-          resource: "paystub_dispatch_queue",
-          resource_id: row.id,
-          details: {
-            recipient_email: row.recipient_email,
-            source_file: row.cycle_source_file,
-            http_status: result.status,
-            error: delivered ? undefined : paystub.error,
-            // Reconciliation trail: what the stub said vs what the payment row
-            // recorded, and whether the queue row was refreshed from the
-            // wizard snapshot before sending.
-            stub_total_php: view.totalPayPhp,
-            amount_php_paid: paidAmount ?? undefined,
-            refreshed_from_snapshot: doRefresh || undefined,
-            amount_mismatch: paystub.amount_mismatch ? true : undefined,
-          },
-        });
       } else if (staged) {
         // Staged but no resolvable personal email → nothing to mail.
         paystub.staged = true;

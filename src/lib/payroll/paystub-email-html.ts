@@ -43,6 +43,18 @@ export interface PayStubEmailOptions {
    * preview send shows.
    */
   status?: string | null;
+  /**
+   * Reissue badge, e.g. `Amended · Issue 2` — null/omitted on an original,
+   * which is the overwhelming majority of statements and must not be decorated
+   * with a badge announcing that it is normal.
+   *
+   * Built by `src/lib/payroll/paystub-issue.ts`, never assembled here: the
+   * emailed statement and the employee dashboard must not be able to disagree
+   * about which issue someone is holding.
+   */
+  issueChip?: string | null;
+  /** The sentence under the badge — what changed, and what it replaces. */
+  issueNote?: string | null;
 }
 
 /* ────────────────────────────── html plumbing ────────────────────────────── */
@@ -335,6 +347,23 @@ export function renderPayStubEmailHtml(
     }),
   ];
 
+  // An amended statement carries different figures from the copy the employee
+  // already has, so the badge is loud (amber) and sits beside the paid pill;
+  // a plain reissue is quiet (slate). Inline styles only — email clients strip
+  // <style> blocks, so a class here would render as unstyled text on a pay
+  // document.
+  const isAmended = (opts.issueChip ?? '').toLowerCase().startsWith('amended');
+  const issueBlock = opts.issueChip
+    ? '<div style="display:inline-block;margin-top:8px;margin-left:6px;padding:4px 10px;' +
+      `border:1px solid ${isAmended ? '#fcd34d' : '#cbd5e1'};border-radius:999px;` +
+      `background-color:${isAmended ? '#fffbeb' : '#f8fafc'};font-size:11px;line-height:14px;` +
+      `font-weight:600;color:${isAmended ? '#b45309' : '#475569'};">${esc(opts.issueChip)}</div>` +
+      (opts.issueNote
+        ? '<div style="font-size:11px;line-height:16px;color:#556377;margin-top:5px;">' +
+          `${esc(opts.issueNote)}</div>`
+        : '')
+    : '';
+
   const statusBlock = isPaid
     ? '<div style="display:inline-block;margin-top:8px;padding:4px 10px;border:1px solid #a7f3d0;' +
       'border-radius:999px;background-color:#ecfdf5;font-size:11px;line-height:14px;' +
@@ -419,7 +448,7 @@ body,table,td,div,p,a{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Ro
 <img class="brand-logo" src="https://host.simple.biz/email/simplelogo.png" alt="Simple" width="112" style="display:block;width:112px;height:auto;border:0;margin:0 auto 8px auto;" />
 <div style="font-size:26px;line-height:32px;font-weight:700;color:#102034;margin-top:0;letter-spacing:0;text-align:center;">Pay Statement</div>
 <div style="font-size:13px;line-height:19px;color:#556377;margin-top:3px;text-align:center;">Period ending <span style="font-weight:700;color:#334155;">${esc(weekHuman)}</span></div>
-${statusBlock}
+${statusBlock}${issueBlock}
 </td>
 </tr>
 

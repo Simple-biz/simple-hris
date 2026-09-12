@@ -249,6 +249,17 @@ export function formatCycleLabelFromFile(sourceFile: string): string {
 }
 
 export interface QueueRow {
+  /**
+   * ISO timestamp this person's pay statement for this week was last EMAILED,
+   * from `paystub_dispatch_queue.sent_at`. Null when none has gone out —
+   * including after a FAILED send, which leaves a count but no timestamp.
+   *
+   * Drives the Mark Paid dialog's reissue prompt: a re-payment only asks before
+   * emailing a second copy when a first copy demonstrably arrived.
+   */
+  paystubSentAt?: string | null;
+  /** How many statements for this week have already been emailed. */
+  paystubSendCount?: number | null;
   id: string;
   processor: ProcessorId;
   name: string;
