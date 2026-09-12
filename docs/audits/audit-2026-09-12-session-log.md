@@ -1,0 +1,56 @@
+# Session Log — Sep 12, 2026
+
+Continues [audit-2026-09-10-session-log.md](./audit-2026-09-10-session-log.md). Times are ET.
+
+**Items 1–30 are not repeated here.** They live in the Sep 10 log § Open items and were not
+re-verified today except where a row below says otherwise. Rows **31+** are new.
+
+| # | Session | When (ET) | Shipped |
+|---|---|---|---|
+| 1 | `25360b08` | Sep 12 01:4x → | Employee Profile tab-merge **design spec** committed; **two live defects found** (rows 31, 32); build not yet started |
+
+---
+
+## What this session did
+
+Kane asked for the Employee → Profile chips to be merged (Overview+ID · Compensation+Pay
+Stubs+Payment · Skill Sets+Reports), with "proper caching practices", and later for the People
+bank card to be reused on the merged Compensation tab, brand-resolved ("if we can see gotyme it
+should be gotyme").
+
+Ran the `hardening` doc-check across 63 docs and memory files via two parallel recon workflows
+(18 agents, 2.2M tokens). The check surfaced **four contradictions** between the request and
+documented decisions — including two from the **2026-09-09 Carla/Jackie meeting** — and
+hard-stopped. Kane ruled on all four:
+
+| Q | Ruling |
+|---|---|
+| Payment folds into the merged money tab? | **Yes**, with three hard conditions (no cache key from `/api/employee-ids`; three independent readiness states; paystub fetch gated on the section, not the tab) |
+| Where does Compensation live? | **With Pay Stubs + Payout** (supersedes Carla's Overview+ID+Compensation) |
+| "Proper caching practices"? | **Conform** to `src/lib/employee/tab-cache.ts`. No new keys, no fifth store |
+| What does the employee's bank card show? | **Card is the read view, masked to last-4 with an in-card reveal** |
+
+Those rulings are the approval for the plan's **Wave 4**, which the Sep 10 log row 30 left open.
+Q7 (Award/Certificate picker) and Q8 (Skill Sets cap) stay **explicitly out of scope** — the cap
+of 2 on Current projects is untouched.
+
+Design spec: [`docs/superpowers/specs/2026-09-12-employee-profile-tab-merge-design.md`](../superpowers/specs/2026-09-12-employee-profile-tab-merge-design.md).
+**No implementation code written yet.**
+
+---
+
+## Open items (new this session)
+
+| # | Item | State |
+|---|---|---|
+| **31** | **Rules-of-hooks violation in `EmployeeProfile.tsx` — live on `main`, reachable on any cold load** | **VERIFIED IN THE TREE.** `if (loading) return <ProfileSkeleton />;` at `:1294` sits **above** `useMemo` at `:1315` and `useState` at `:1338`. `loading` initialises to `master === null` (`:666`) and `master` is seeded from the session cache (`useEmployeeCachedState`, `:654`) — so on a **cold** load (first visit, new device, post-sign-out purge, or past the 12h `MAX_AGE_MS`) render 1 returns early with N hooks and render 2 runs N+2. React throws *"Rendered more hooks than during the previous render."* There is **no** `app/error.tsx`, `app/global-error.tsx`, `componentDidCatch` or `ErrorBoundary` anywhere in `app/` or `src/` (verified), so the throw blanks the route. **This is NOT the Chrome-renderer OOM** in [[employee-page-crash-is-browser-not-vercel]] — that investigation stands on its own evidence and still needs Kane's tab-memory capture. Separate, independently reachable. **Fix = hoist both hooks above `:1294`, its own commit, before any merge edit.** |
+| **32** | **Test suite is RED on `main`** | `node --import tsx --test src/lib/departments/dept-label-render.test.ts` fails today, naming **two** offenders: `src/components/employee/EmployeeIdCard.tsx:205  {card.department}` and `src/components/manager/ManagerApp.tsx:1669  {dept \|\| 'No department'}`. `EmployeeIdCard.tsx` is a file the Profile merge touches, so a genuine regression would be indistinguishable from this. `EmployeeIdCard.tsx:205` is a **false positive** — the value is already through `formatDeptLabel` inside `buildIdCard` — resolved by widening `ALLOWED_SNIPPETS` **with a stated reason**, as its own step. **Never by deleting the assertion.** `ManagerApp.tsx:1669` is unexamined. Note the project runner is `node --import tsx --test`, **not vitest** (`npx vitest` resolves a different version and fails on `@/` aliases — a misleading red). |
+| **33** | **Alt-slot SWIFT prints the WRONG WIRE CODE on the People bank card** | `PeopleTab.tsx:3212` is `swift: banking?.swift_code ?? null` — the **primary** column regardless of `prefAlt`, while every other card field goes through the cross-slot `pickFirst` (`:3192-3214`). There is no `alt_swift_code` column; the employee form writes alt-slot SWIFT into `alt_routing_number` (`EmployeeProfile.tsx:1208`). So an **alternative-slot payee's card prints the primary slot's SWIFT and the copy button hands over a wrong wire code.** Live on the shipped Accounting surface today. Reusing the card on the employee surface spreads it to the one person who would notice. **Fix the mapping — not closed by dropping the SWIFT field, and the `pickFirst` is not loosened.** Decision owed: fix now or defer. |
+| **34** | **The Employee Profile shell has NO feature doc and NO `INDEX.md` row** | A `hardening` lookup for "Employee Profile" resolves to **nothing** — the nearest rows are `INDEX.md:47` (dashboard cache) and `:54` (ID card). Neither Compensation, Payment, the Pay Stubs tab contract, Skill Sets, Reports, Resign, profile completion, nor profile-photo upload has a governing doc. Seven surfaces, zero docs. `docs/reference/components.md:692` still describes the Profile as having **"three tabs"**. The merge commit must ship a **new** `docs/features/employee-profile.md` + INDEX row. |
+| **35** | **Doc-vs-doc contradiction on the `formatStartDate` off-by-one** | `pre-release-security-readiness.md:104` and `audit-2026-09-09:295-296` say the off-by-one puts the wrong date on every **ID card**; `employee-id-card.md:67` says *"Until then the ID card is the correct one."* **The code confirms the feature doc** — the card uses `parseDateOnlyLocal`, Overview uses `new Date(s)` (`EmployeeProfile.tsx:133`). The readiness doc and the 09-09 audit are the ones needing correction. Not acted on; recorded. Fixing `formatStartDate` also shifts two Pay Stubs pay dates and three resignation effective dates (`:1789`, `:1809`, `:2330`, `:2384`, `:2511`). **Decision owed (plan Q5).** |
+| **36** | **Stale citations: `SHOW_UNPAID_STAGED_PAYSTUBS` moved** | `audit-2026-09-10:309` and `pre-release-security-readiness.md:92` both locate it at `paystub/route.ts:68`. It is now at **`src/lib/payroll/employee-paystubs.ts:77`** (verified). Sep 10 log row 3 carries the same stale path. Correct in passing. |
+| **37** | **Deep-link target union is copied FIVE times** | `TabId` (`EmployeeProfile.tsx:151`) is not exported, so the narrower focus union is hand-maintained at `EmployeeApp.tsx:59`, `EmployeeDashboard.tsx:291`, and `ProfileCompletionCard.tsx:14` + `:33`. The render chain (`:1581-2308`) is nine bare `activeTab === '…' &&` guards with **no default branch**, so a retired id yields a **silently empty pane with no TypeScript error** — the narrow union still satisfies the wide one. Separately, `focusTab` is a **value-keyed** effect and no visited tab ever unmounts (`EmployeeApp.tsx:613`), so firing the same nudge twice does nothing. Both closed by the merge spec (§4). |
+| **38** | **Bank registry `app_settings` row still does not exist in prod** | Re-confirmed from docs + memory. `resolveBankBrand`'s `registry` argument stays **unpassed** on every call site. Wiring it on one surface alone would make the People card and the employee card name different banks. **Both call sites together, or neither.** |
+| **39** | **Three bank spellings unclaimed, incl. one GoTyme variant** | `GoTyme Bank, Inc. (GoTyme Bank Corporation)` (1 person), `CIMB Bank` (1), `Philippines National Bank` (1). The GoTyme variant is the one case where Kane's stated goal — "if we can see gotyme it should be gotyme" — is **missed**: that employee sees slate. Claiming them is a **declared** edit to `OFFICIAL_BANKS` requiring `scripts/audit-bank-spellings.mts` to be re-run. **Guessing is forbidden** (`payment-catalog-current-banks.md` §2). Decision owed. |
+| **40** | **162 people will see a deliberately neutral bank card** | MariBank (104), Metrobank (31), Security Bank (16) are **claimed but ship no artwork**, because *"a wrong-bank logo is worse than none — it is a confident lie"* (`banks.ts:297-300`). On the employee surface a blank-branded card becomes the **majority** outcome for those staff and **will be reported as a bug. It is not one.** Pinned by `bank-card-palette.test.ts`. The new feature doc must say so explicitly. |
+| **41** | **Offboarded employees + the bank card — UNRULED** | Nothing in `bank-card.tsx`, `resolveBankBrand` or any doc rules on whether an offboarded person's Payout section renders the card. `/api/employee-ids?email=` is gated by session, not active status. Adjacent precedent cuts both ways ([[payment-catalog-hides-offboarded]] keeps four guards; [[readiness-setrate-cannot-backdate]] keeps rates editable for leavers). **Needs Kane, not an inference.** |
