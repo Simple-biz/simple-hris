@@ -60,15 +60,28 @@ interface SkillSetEntry {
   current_projects?: string[];
 }
 
+/**
+ * What a peer is allowed to know about a teammate.
+ *
+ * The legal name and the personal email are absent on purpose — `/api/team-roster`
+ * redacts them server-side (Carla's 2026-09-09 safety ruling; see
+ * `src/lib/name/team-display-name.ts`). Do NOT re-add them here to make a render
+ * or a search easier: a field that is not on the wire cannot be read out of
+ * devtools, and a client-side trim would leave both reachable.
+ */
 interface Teammate {
   id: string;
-  name: string;
+  /** Quoted go-by, else first name; collisions already disambiguated. */
+  displayName: string;
   workEmail: string | null;
-  personalEmail: string | null;
   department: string | null;
   suspended: boolean;
   /** True when this person manages the selected department (department_managers). */
   isManager: boolean;
+  /** Presence resolved server-side over both of their addresses. */
+  lastSeenAt: string | null;
+  /** True when this card is the viewer's own — decided server-side. */
+  isSelf: boolean;
 }
 
 type SubTab = 'directory' | 'rankings' | 'policies';
@@ -558,11 +571,12 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
         (j: {
           profiles?: {
             id: string;
-            name: string;
+            displayName: string;
             workEmail: string | null;
-            personalEmail: string | null;
             department: string | null;
             isManager: boolean;
+            lastSeenAt: string | null;
+            isSelf: boolean;
           }[];
           skillSets?: Record<string, SkillSetEntry>;
           lastSeen?: Record<string, string>;
@@ -573,12 +587,13 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
           setTeammates(
             (j.profiles ?? []).map((p) => ({
               id: p.id,
-              name: p.name,
+              displayName: p.displayName,
               workEmail: p.workEmail,
-              personalEmail: p.personalEmail,
               department: p.department,
               suspended: false,
               isManager: p.isManager,
+              lastSeenAt: p.lastSeenAt,
+              isSelf: p.isSelf,
             })),
           );
           setSkillSets(j.skillSets ?? {});
@@ -627,7 +642,7 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
   const rosterEmailsKey = useMemo(
     () =>
       teammates
-        .flatMap((t) => [normEmail(t.workEmail ?? '') ?? '', normEmail(t.personalEmail ?? '') ?? ''])
+        .map((t) => normEmail(t.workEmail ?? '') ?? '')
         .filter(Boolean)
         .join(','),
     [teammates],
@@ -653,33 +668,36 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
     };
   }, [rosterEmailsKey]);
 
+  // Work email only — the personal address is no longer on the wire. A teammate
+  // whose ONLY address is personal (7 people, all in USEE) therefore reads as
+  // offline here; their server-resolved `lastSeenAt` still shows below, so they
+  // are never presented as someone who has never signed in.
   const isOnline = (t: Teammate): boolean => {
     const w = normEmail(t.workEmail ?? '');
-    const p = normEmail(t.personalEmail ?? '');
-    return (!!w && onlineEmails.has(w)) || (!!p && onlineEmails.has(p));
+    return !!w && onlineEmails.has(w);
   };
   const skillSetFor = (t: Teammate): SkillSetEntry | undefined => {
     const w = normEmail(t.workEmail ?? '');
     return w ? skillSets[w] : undefined;
   };
+  // The 60s poll refreshes what it can (work emails); the server-resolved stamp
+  // is the floor, so nobody's last-seen disappears on the first refresh.
   const lastSeenFor = (t: Teammate): string | null => {
     const w = normEmail(t.workEmail ?? '');
-    const p = normEmail(t.personalEmail ?? '');
-    return (w && lastSeen[w]) || (p && lastSeen[p]) || null;
+    return (w && lastSeen[w]) || t.lastSeenAt || null;
   };
-  const isSelf = (t: Teammate): boolean => {
-    if (!selfNorm) return false;
-    return normEmail(t.workEmail ?? '') === selfNorm || normEmail(t.personalEmail ?? '') === selfNorm;
-  };
+  const isSelf = (t: Teammate): boolean => t.isSelf;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
+    // Searches ONLY what the card shows. Matching a hidden field would let a peer
+    // confirm a guessed legal name or personal address by typing it, which makes
+    // the redaction cosmetic — and neither field is on the wire any more anyway.
     const matches = q
       ? teammates.filter(
           (t) =>
-            t.name.toLowerCase().includes(q) ||
-            (t.workEmail?.toLowerCase().includes(q) ?? false) ||
-            (t.personalEmail?.toLowerCase().includes(q) ?? false),
+            t.displayName.toLowerCase().includes(q) ||
+            (t.workEmail?.toLowerCase().includes(q) ?? false),
         )
       : teammates;
     // Managers first, then online, then alphabetical.
@@ -690,7 +708,9 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
       const ao = isOnline(a) ? 0 : 1;
       const bo = isOnline(b) ? 0 : 1;
       if (ao !== bo) return ao - bo;
-      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      // Sorted by the DISPLAYED name — sorting on the legal name would order the
+      // directory by a surname the viewer cannot see.
+      return a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teammates, query, onlineEmails]);
@@ -889,7 +909,9 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
                       {pageItems.map((t) => {
                         const online = isOnline(t);
                         const self = isSelf(t);
-                        const email = t.workEmail ?? t.personalEmail;
+                        // WORK email only. The `?? personalEmail` this replaces showed a
+                        // teammate with no work email their PERSONAL address, to the whole team.
+                        const email = t.workEmail;
                         const seenIso = online ? null : lastSeenFor(t);
                         const ss = skillSetFor(t);
                         const roleLine = ss?.role_title?.trim() || null;
@@ -913,7 +935,7 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
                           >
                             <div className="flex items-center gap-3">
                               <div className="relative shrink-0">
-                                <TeamAvatar name={t.name} email={email} />
+                                <TeamAvatar name={t.displayName} email={email} />
                                 <span
                                   className={cn(
                                     'absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-2 ring-white dark:ring-[#0d1117]',
@@ -932,7 +954,7 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-1.5">
                                   <h4 className="truncate text-[0.95rem] font-semibold leading-snug text-zinc-900 dark:text-white">
-                                    {t.name}
+                                    {t.displayName}
                                   </h4>
                                   {t.isManager && (
                                     <Shield
@@ -1079,7 +1101,7 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
             (() => {
               const t = stickyTeammate;
               const ss = skillSetFor(t);
-              const email = t.workEmail ?? t.personalEmail;
+              const email = t.workEmail; // work only — see the card above
               const online = isOnline(t);
               const seenRel = online ? null : formatLastSeen(lastSeenFor(t));
               return (
@@ -1087,7 +1109,7 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
                   <div className="grid sm:grid-cols-[280px_1fr]">
                     <div className="flex flex-col gap-3 bg-gradient-to-br from-orange-50 via-white to-blue-50/60 p-6 sm:border-r sm:border-orange-100/60 dark:from-blue-950/40 dark:via-[#0d1117] dark:to-blue-950/30 dark:sm:border-blue-950/40">
                       <div className="relative self-start">
-                        <TeamAvatar name={t.name} email={email} size="xl" />
+                        <TeamAvatar name={t.displayName} email={email} size="xl" />
                         <span
                           className={cn(
                             'absolute bottom-1 right-1 h-4 w-4 rounded-full ring-2 ring-white dark:ring-[#0d1117]',
@@ -1098,7 +1120,7 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
                       </div>
                       <div className="space-y-1">
                         <DialogTitle className="text-xl font-bold leading-tight text-zinc-900 dark:text-white">
-                          {t.name}
+                          {t.displayName}
                         </DialogTitle>
                         {ss?.role_title?.trim() && (
                           <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
@@ -1145,7 +1167,7 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
 
                     <div className="max-h-[75vh] overflow-y-auto p-6">
                       <DialogDescription className="sr-only">
-                        Full profile and skill set for {t.name}.
+                        Profile and skill set for {t.displayName}.
                       </DialogDescription>
                       {ss ? (
                         <div className="space-y-4">

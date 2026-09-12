@@ -208,8 +208,26 @@ Two decisions this needs: **the fallback token**, because the go-by is *derived*
 token that is not a bare initial" (`src/lib/name/display-name.ts:36`) — rendering the quoted token
 alone would introduce *Jane Marie Santos* to her whole team as **"Marie"**; and **client vs server
 redaction**, because Carla's safety framing argues the legal name should never reach the peer's
-browser, but `/api/team-roster` also feeds the manager roster where **Jackie asked for Full Name +
-Work Email** in June. The fix must be scoped to the employee peer view, not applied globally.
+browser.
+
+> **RESOLVED AND SHIPPED 2026-09-12.** Kane: *"let us only use the first name for our team members
+> please as to cover them because there are some creepy people around so just use the one inside the
+> quotation marks, if there is none inside there please make sure to just use the first name."*
+>
+> - **Fallback token:** the literal quoted go-by, else the **FIRST name** — never the derived go-by
+>   and never every-given-token. `shortDisplayName` in `src/lib/name/team-display-name.ts`.
+> - **Client vs server:** **server**. `TeamRosterProfile` no longer has a `name` or a
+>   `personalEmail` field at all, so search, sorting and the `??` fallback were all closed by the
+>   same change.
+> - **Collisions** (Kane delegated the rule): surname initial → work-email local part → index.
+>
+> **The blocker in the paragraph above was FALSE and is retracted.** `/api/team-roster` does **not**
+> feed the manager roster — `getTeamRoster` has exactly one caller
+> (`app/api/team-roster/route.ts`), and that route has exactly one client caller
+> (`EmployeeTeam.tsx`). ManagerApp's roster is a different source, and Jackie's June "Full Name +
+> Work Email" request is untouched. No per-caller branch was needed; the redaction is blanket.
+>
+> Full spec: `docs/features/employee-team-directory.md` § "Identity redaction".
 
 ### 2.7 Leave request filing — STAYS ENABLED (ruling)
 

@@ -9,13 +9,16 @@ Shipped 2026-08-14. Before this, the tab was a single roster grid labelled
 Key files:
 
 - `src/components/employee/EmployeeTeam.tsx` — the whole tab (three sub-tab panes).
+- `src/lib/name/team-display-name.ts` — the peer-safe short name + collision ladder.
+- `src/lib/supabase/team-roster.ts` — the roster read, and where redaction happens.
 - `src/components/employee/EmployeeSidebar.tsx` — the nav label.
 - `src/lib/policies/team-policies.ts` — per-department policy copy (display-only).
 - `src/lib/supabase/team-rankings.ts` — ranking assembly (`buildRankingWeeks` is pure).
 - `src/lib/rbac/rankings-viewers.ts` — who may see Rankings at all (allow-list).
 - `app/api/team-rankings/route.ts` — the gated, scoped read.
 - Tests: `src/lib/supabase/team-rankings.test.ts` · `src/lib/rbac/rankings-viewers.test.ts`
-  · `src/lib/policies/team-policies.test.ts`.
+  · `src/lib/policies/team-policies.test.ts` · `src/lib/name/team-display-name.test.ts`
+  · `src/lib/supabase/team-roster.test.ts`.
 
 ## The tab is named after the department
 
@@ -55,7 +58,8 @@ name a section the viewer cannot open.
 ### Directory
 
 Same roster source as before (`/api/team-roster`, one roundtrip for profiles +
-skill sets + last-seen). What changed:
+skill sets + last-seen), **redacted since 2026-09-12** — see
+[Identity redaction](#identity-redaction). What changed in the 2026-08-14 redesign:
 
 - The one-option department **dropdown is gone** — the heading names the department.
 - **Every card opens the profile modal**, not just people who filled in a skill set;
@@ -65,10 +69,99 @@ skill sets + last-seen). What changed:
   should not imply half its rows are still loading.
 - Denser grid (`sm:2 / lg:3 / xl:4`), page size 10 → 12.
 
+#### Identity redaction
+
+> **A peer sees a short name and a work email. Nothing else identifies anyone.**
+>
+> Ruling (Carla, 2026-09-09, on safety grounds — meeting doc §2.6): *"we got some
+> really creepy people here sometimes and they shouldn't be able to see full names
+> on their team. They should only see like their nickname, the whatever is in
+> quotation marks, and their email."* Kane pinned the undecided half on
+> 2026-09-12: **the quoted go-by, else the FIRST name.**
+
+`shortDisplayName` (`src/lib/name/team-display-name.ts`) is the single resolver.
+It exists because **neither** name helper already in `src/lib/name/` is safe here:
+
+| Helper | `Jane Marie Santos` | Why it is wrong here |
+|---|---|---|
+| `parseNameParts(...).nickname` | **"Marie"** | *derives* a go-by ("last given token that is not a bare initial") — her middle name |
+| `resolveFirstName(...)` | **"Jane Marie"** | returns every given token before the surname — her middle name again |
+| **`shortDisplayName`** | **"Jane"** | the literal quoted go-by (`quotedGoByOf`), else `parseNameParts(...).first` |
+
+Four rules that are not obvious and are all pinned by tests:
+
+- **The quoted go-by must be *literally* quoted.** `quotedGoByOf` never derives
+  one — that distinction is the entire difference between "Jane" and "Marie".
+- **A go-by that IS the surname is refused** and the first name used instead.
+  `Lagunero, Joshua "Lagunero"` is a real roster row; the ruling is about the
+  surname, not about which field it arrived in. A *middle* name used as a go-by
+  (`Avellaneda, Sonia Cardenas "Cardenas"`) is the person's own choice and stands.
+- **The go-by is re-cased on its own.** `toTitleCaseName` returns a mixed-case
+  string verbatim, so `Santos, Carla "CARLA"` used to keep its SHOUTED go-by —
+  harmless inside a longer name, not harmless when it *is* the name. All-caps is
+  only flattened at 4+ letters, because short all-caps go-bys are initials
+  (JJ, KC, CJ) and "Jj" would be worse.
+- **An `@`-address parked in the name column is never rendered** — it may well be
+  the personal address. The work email supplies the label instead, and a person
+  with neither is shown as **"Teammate"** rather than given an invented identity.
+
+##### Collisions
+
+Kane, 2026-09-12: *"if there are conflicts use the recommendation."*
+`teamDisplayNames` resolves the WHOLE roster at once, server-side, so a label is
+stable no matter which page it lands on or what is typed into search. Only people
+who actually collide are suffixed — a unique "Carla" stays "Carla". Cheapest
+disclosure first:
+
+| Rung | Renders | When |
+|---|---|---|
+| 1 | `Kane R.` | two people share a short name — one letter is the most of a surname that may ever be shown |
+| 2 | `Kane R. (kaner)` | the surname initial collides too; the work email is already on the card, so this discloses nothing new |
+| 3 | `Kane R. 1` | …and neither has a work email |
+
+Measured over the live roster on 2026-09-12: **195 of 1,343** active people need a
+suffix, **0** degrade to "Teammate", and **0** labels contain a surname.
+
+##### It happens on the server, and that is the point
+
+`/api/team-roster` is reachable directly and `route-access.ts` gates **pages, not
+APIs** — so a client-side trim would leave the legal name and the personal address
+one `fetch` away. `TeamRosterProfile` therefore has **no `name` and no
+`personalEmail` field at all**; `team-roster.test.ts` scans the interface and
+fails if either comes back.
+
+Three things fall out of that, and all three were part of the same ruling:
+
+- **Search can only match what the card shows** (short name + work email).
+  Matching a hidden field let a peer confirm a guessed legal name or personal
+  address by typing it, which made the redaction cosmetic.
+- **The directory sorts by the displayed name**, not by the legal surname it used
+  to order on — a surname the viewer cannot see.
+- **The `workEmail ?? personalEmail` fallback is gone.** A teammate with no work
+  email had their *personal* address shown to the whole team.
+
+Two things the client no longer has the addresses to compute, so the server sends
+them as plain values: **`lastSeenAt`** (resolved over both addresses, so nobody
+reads as never-seen) and **`isSelf`** (the "You" badge).
+
+> **Known cost, accepted.** The live online dot and the avatar photo both key on
+> an email, and 7 active people (all in `USEE`) have only a personal one. They
+> show a grey dot and styled initials on this surface. They are also precisely
+> the people whose personal address was being broadcast, so protecting them is
+> the point rather than a side effect.
+
 ### Rankings
 
 Weekly standings for the department, newest week first, with prev/next week
 navigation. Each row shows **position, name, SP, project SP, and the tier badge**.
+
+`bonus_catalog_applied.employee_name` is the master-list legal name, so
+`buildRankingWeeks` runs it through the same `teamDisplayNames` resolver — over
+**every** week at once, keyed by email, so one person carries one label through
+the whole week scroller instead of gaining a disambiguating suffix only in the
+weeks a namesake happened to be scored. Rankings are allow-listed to one reader
+today, so this changes almost nothing visible — which is exactly why it is here:
+a future widening of `canViewTeamRankings()` must not silently reopen the leak.
 
 > **No peso amounts, anywhere.** [manager-my-team.md](./manager-my-team.md) (§"Managers
 > do not see rates or pay") strips comp from every My Team surface, and this is the

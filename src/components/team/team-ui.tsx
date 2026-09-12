@@ -22,7 +22,18 @@ export function gradientFor(seed: string): string {
 }
 
 export function initialsOf(name: string, email: string | null): string {
-  const fromName = name.trim().split(/\s+/).slice(0, 2).map((w) => w[0] ?? '').join('');
+  // Only word-initial LETTERS count. The employee directory's short name can
+  // carry a disambiguating suffix ("Kane R.", "Kane (kaner)"), and a master-list
+  // name can carry the First/Middle boundary marker ("Reroma (Miguel), ...") —
+  // taking the first two tokens blindly renders "K(" for one and "R(" for the
+  // other. A token that does not start with a letter is not an initial.
+  const fromName = name
+    .trim()
+    .split(/\s+/)
+    .filter((w) => /^\p{L}/u.test(w))
+    .slice(0, 2)
+    .map((w) => w[0] ?? '')
+    .join('');
   if (fromName) return fromName.toUpperCase();
   const local = (email ?? '').split('@')[0] ?? '';
   return (local.slice(0, 2) || '?').toUpperCase();

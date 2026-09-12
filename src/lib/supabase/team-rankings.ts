@@ -33,6 +33,7 @@
  * week is a manager mid-scoring and must never be visible to the team.
  */
 import { createSupabaseServiceRoleClient } from './server';
+import { teamDisplayNames } from '@/lib/name/team-display-name';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 
 const APPLIED = 'bonus_catalog_applied';
@@ -146,7 +147,33 @@ export function buildRankingWeeks(
   }
 
   const weeks = Array.from(byWeek.values()).sort((a, b) => (a.periodStart < b.periodStart ? 1 : -1));
+
+  // Redact to the short display name — the quoted go-by, else the first name.
+  // `bonus_catalog_applied.employee_name` is the master-list legal name, and
+  // this is the fifth place it used to render on the team tab (meeting doc
+  // 2026-09-09 §2.6). Rankings are allow-listed to one reader today, so this
+  // changes almost nothing visible — which is exactly why it belongs here: a
+  // future widening of `canViewTeamRankings()` must not silently reopen the leak.
+  //
+  // Resolved over EVERY week at once, keyed by email, so one person carries one
+  // label through the whole week scroller instead of gaining a disambiguating
+  // suffix only in the weeks a namesake happened to be scored.
+  const nameByEmail = new Map<string, string>();
   for (const week of weeks) {
+    for (const row of week.rows) {
+      if (!nameByEmail.has(row.email)) nameByEmail.set(row.email, row.name);
+    }
+  }
+  const emails = [...nameByEmail.keys()];
+  const shortNames = teamDisplayNames(
+    emails.map((email) => ({ name: nameByEmail.get(email)!, workEmail: email })),
+  );
+  const shortByEmail = new Map(emails.map((email, i) => [email, shortNames[i]!]));
+
+  for (const week of weeks) {
+    for (const row of week.rows) {
+      row.name = shortByEmail.get(row.email) ?? row.name;
+    }
     // Rank by SP, then Project SP, then name — a stable order so two people on
     // the same SP don't swap places between renders.
     week.rows.sort(

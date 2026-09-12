@@ -21,6 +21,12 @@ export const runtime = 'nodejs';
  * department. Everyone else is limited to their own home department plus any
  * department they manage — so an arbitrary `?department=` can't dump another
  * team's roster, and an empty value can't dump the entire company.
+ *
+ * REDACTED BY DESIGN: the response carries a short display name (quoted go-by,
+ * else first name) and the WORK email — never the legal name, never the
+ * personal address. Carla's 2026-09-09 safety ruling, enforced in
+ * `getTeamRoster` rather than in the component, because this route is reachable
+ * directly and `route-access.ts` gates pages, not APIs.
  */
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -57,6 +63,8 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const result = await getTeamRoster(department || null);
+  // The viewer's email resolves "this card is you" server-side — the client no
+  // longer receives the personal address it used to match on.
+  const result = await getTeamRoster(department || null, sessionEmail);
   return NextResponse.json(result);
 }

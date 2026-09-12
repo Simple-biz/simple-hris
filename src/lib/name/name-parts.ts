@@ -279,3 +279,28 @@ export function composeMasterListName(p: NameParts): string {
   if (!given) return `${last}${suffix}${nickPart}`;
   return `${last}${suffix}, ${given}${nickPart}`;
 }
+
+/**
+ * The go-by EXACTLY as written: the quoted (or parenthesized) token the stored
+ * name actually carries, or `''` when it carries none.
+ *
+ * This is deliberately NOT {@link parseNameParts}'s `nickname`, which *derives*
+ * a go-by when none is quoted ("the last given token that is not a bare
+ * initial"). That derivation is right for the People profile editor — an
+ * untouched round-trip has to reproduce the canonical string — and WRONG for
+ * anything that renders the go-by as a person's only identity, because it
+ * introduces *Jane Marie Santos* to her whole team as **"Marie"** (her middle
+ * name). Callers that must distinguish "she has a go-by" from "we guessed one"
+ * use this; see team-display-name.ts.
+ *
+ * Only the right-of-comma section is searched on a surname-first name, so the
+ * First/Middle boundary marker (`Reroma (Miguel), ...`) can never be mistaken
+ * for a go-by — the same rule {@link parseNameParts} follows.
+ */
+export function quotedGoByOf(input: string | null | undefined): string {
+  const norm = toTitleCaseName(input);
+  if (!norm || norm.includes('@')) return '';
+  const commaAt = norm.indexOf(',');
+  const section = commaAt >= 0 ? norm.slice(commaAt + 1).trim() : norm;
+  return extractNickname(section).nickname;
+}
