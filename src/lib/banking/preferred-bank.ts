@@ -7,6 +7,7 @@ export type PreferredBankRow = {
   account_number?: string | null;
   alt_account_number?: string | null;
   swift_code?: string | null;
+  routing_number?: string | null;
   alt_routing_number?: string | null;
 };
 
@@ -22,17 +23,20 @@ export type PreferredBank = {
  * The ONE cross-slot preferred-bank rule, shared by Accounting's People card and
  * the employee's own Profile. Preferred slot first, falling back to the OTHER
  * slot per field — the same pickFirst Payment Dispatch's queue row uses
- * (buildPayeeDetails in mock-queue.ts) — so a person whose details live only in
- * the non-preferred slot still shows the account PD actually pays to.
+ * (buildPayeeDetails in mock-queue.ts, and identically buildPayoutDetails in
+ * src/lib/payroll/urgent-payout-details.ts) — so a person whose details live
+ * only in the non-preferred slot still shows the account PD actually pays to.
  *
- * There is no `alt_swift_code` column: the employee form stores the alternative
- * slot's wire code in `alt_routing_number` (EmployeeProfile.tsx savePaymentDetails,
- * `alt_routing_number: payout.altSwiftCode`), and `payoutDraftFromIdsRow`
- * (src/lib/employee/payout-completeness.ts) reads it back the same way
- * (`altSwiftCode: pick(row, 'alt_routing_number')`). So `alt_routing_number` is
- * the alternative slot's SWIFT-equivalent field, not a routing number, and the
- * cross-slot fallback for `swift` treats it exactly that way — the same shape
- * as every other field's primary<->alternative fallback.
+ * `swift` is the one field with a THIRD rung, matching PD's chain exactly:
+ * there is no `alt_swift_code` column, so the alternative slot's wire code
+ * lives in `alt_routing_number` (the employee form writes
+ * `alt_routing_number: payout.altSwiftCode` in EmployeeProfile.tsx
+ * savePaymentDetails, and `payoutDraftFromIdsRow` in
+ * src/lib/employee/payout-completeness.ts reads it back the same way:
+ * `altSwiftCode: pick(row, 'alt_routing_number')`). PD additionally falls back
+ * to `routing_number` as a last resort on BOTH slots (legacy rows entered
+ * before `swift_code` existed as its own column) — `pickPreferredBank` mirrors
+ * that third rung so the card can never disagree with what PD actually pays on.
  *
  * A second copy of this rule is the drift people-bank-card.md §2 exists to
  * prevent: the card would brand an account the money is not going to.
@@ -50,12 +54,14 @@ export function pickPreferredBank(row: PreferredBankRow | null | undefined): Pre
     account: alt
       ? firstOf(row?.alt_account_number, row?.account_number)
       : firstOf(row?.account_number, row?.alt_account_number),
-    // There is no `alt_swift_code` column: the employee form stores alt-slot
-    // SWIFT in `alt_routing_number` (EmployeeProfile.tsx savePaymentDetails).
-    // Before this fix PeopleTab.tsx read `swift_code` flat regardless of slot,
-    // so an alternative-slot payee's card printed the PRIMARY slot's wire code
-    // — and the copy button handed it over.
-    swift: alt ? firstOf(row?.alt_routing_number, row?.swift_code) : firstOf(row?.swift_code, row?.alt_routing_number),
+    // Three rungs, matching PD's chain exactly (mock-queue.ts buildPayeeDetails
+    // / urgent-payout-details.ts buildPayoutDetails). Before this fix
+    // PeopleTab.tsx read `swift_code` flat regardless of slot, so an
+    // alternative-slot payee's card printed the PRIMARY slot's wire code — and
+    // the copy button handed it over.
+    swift: alt
+      ? firstOf(row?.alt_routing_number, row?.swift_code, row?.routing_number)
+      : firstOf(row?.swift_code, row?.routing_number, row?.alt_routing_number),
     isAlternativeSlot: alt,
   };
 }

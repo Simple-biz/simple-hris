@@ -3721,7 +3721,13 @@ function PersonDetailDialog({
                         <EditField label="Bank (alternative)" value={bankForm.alt_bank_name} onChange={(v) => updBank('alt_bank_name', v)} accent={accent} />
                         <EditField label="Account holder" value={bankForm.alt_account_holder_name} onChange={(v) => updBank('alt_account_holder_name', v)} accent={accent} />
                         <EditField label="Account no." value={bankForm.alt_account_number} onChange={(v) => updBank('alt_account_number', v)} accent={accent} />
-                        <EditField label="Routing" value={bankForm.alt_routing_number} onChange={(v) => updBank('alt_routing_number', v)} accent={accent} />
+                        {/* This column holds the alternative slot's SWIFT/BIC code, not a
+                            routing number — there is no separate alt_swift_code column, and
+                            every writer of alt_routing_number (employee-payout-fields.tsx,
+                            the contractor form, update-bank-info) labels it "SWIFT / BIC
+                            Code". A "Routing" label here printed a genuine SWIFT code as a
+                            routing number to anyone reading or editing it. */}
+                        <EditField label="SWIFT" value={bankForm.alt_routing_number} onChange={(v) => updBank('alt_routing_number', v)} accent={accent} />
                       </>
                     ) : (
                       <>
@@ -3844,10 +3850,21 @@ function PersonDetailDialog({
                   {/* Bank, account holder, account number and SWIFT live on the card
                       above. What is left is the wire detail a card face has no room
                       for, still shown as placeholders when there is no record at all
-                      so the reader sees where details are expected. */}
+                      so the reader sees where details are expected.
+
+                      One home per value (people-bank-card.md §8): for an alternative-
+                      slot person, `alt_routing_number` is BOTH this row's source and
+                      the card's SWIFT source (there is no separate alt-slot routing
+                      column), so the two can print the identical string. When they do,
+                      this row is dropped rather than repeating what the card already
+                      shows — equality-based, so a genuinely different routing number
+                      still prints here, and nothing disappears when there's no
+                      duplicate to begin with. */}
                   {(showBank || !banking) && (
                     <>
-                      <Field label="Routing" value={prefRouting} mono />
+                      {(!prefRouting || prefRouting !== prefBank.swift) && (
+                        <Field label="Routing" value={prefRouting} mono />
+                      )}
                       <Field label="Address" value={prefAddress} wide />
                     </>
                   )}

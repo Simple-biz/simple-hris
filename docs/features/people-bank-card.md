@@ -14,7 +14,8 @@ Shipped 2026-09-11.
 
 | Piece | File |
 | --- | --- |
-| The card, its copy controls and the EMV chip | `src/components/people/bank-card.tsx` |
+| The card, its copy controls and the EMV chip | `src/components/banking/bank-card.tsx` |
+| The cross-slot preferred-bank rule (name/holder/account/swift), shared with the employee's own Profile | `src/lib/banking/preferred-bank.ts` (+ `.test.ts`) |
 | Spelling → bank + logo (one resolver, shared with Current Banks) | `src/lib/payment-catalog/banks.ts` → `resolveBankBrand` |
 | Card colour, contrast maths (client-safe, pure) | `src/lib/payment-catalog/bank-card-palette.ts` (+ `.test.ts`) |
 | Brand-colour measurement off the artwork | `src/lib/images/decode-png.ts` → `dominantInkColor` |
