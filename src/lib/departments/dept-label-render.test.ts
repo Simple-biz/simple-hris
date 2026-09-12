@@ -95,6 +95,13 @@ const ALLOWED_SNIPPETS: ReadonlyArray<{ snippet: string; why: string }> = [
     snippet: "{query && !dept ? 'Clear search' : 'Clear filters'}",
     why: 'Prose, not a value.',
   },
+  {
+    snippet: '{card.department}',
+    why:
+      "`card.department` is already through formatDeptLabel inside buildIdCard " +
+      '(src/lib/employee/id-card.ts) — the badge renders a view model, not a raw ' +
+      'roster cell. Scanning the JSX cannot see that, so it is allowed by name.',
+  },
 ];
 
 function walk(dir: string, out: string[] = []): string[] {
