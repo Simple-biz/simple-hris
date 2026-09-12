@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import ProfileCompletionCard from './ProfileCompletionCard';
+import type { ProfileIntent } from '@/lib/employee/profile-tabs';
 import { PayStubModal } from '@/components/paystub/PayStubModal';
 import { ConnectionStatusBanner } from '@/components/ConnectionStatusBanner';
 import { cleanErrorMessage, looksLikeHtmlError } from '@/lib/clean-error-message';
@@ -288,7 +289,7 @@ interface EmployeeDashboardProps {
   /** True when the employee has not added Skill Sets content yet. */
   needsSkillSet?: boolean;
   /** Jump to the Profile tab so the employee can fill in what's missing. */
-  onNavigateToProfile?: (target?: 'overview' | 'payment' | 'skillsets') => void;
+  onNavigateToProfile?: (intent?: ProfileIntent) => void;
   /** Jump to the Notifications tab. */
   onNavigateToNotifications?: () => void;
   /** Unread notification count — drives the bell badge in the dashboard header. */

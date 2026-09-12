@@ -36,6 +36,7 @@ import ConstructionBanner from '@/components/common/ConstructionBanner';
 
 import { normEmail } from '@/lib/email/norm-email';
 import { bindEmployeeCacheIdentity } from '@/lib/employee/tab-cache';
+import { nextProfileTarget, type ProfileIntent, type ProfileTarget } from '@/lib/employee/profile-tabs';
 import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
 import { humanizeTabId } from '@/lib/presence/page-label';
 import { useTabDocumentTitle } from '@/hooks/useTabDocumentTitle';
@@ -56,7 +57,6 @@ import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates
 import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 
 const SESSION_KEY = 'employee_session_email';
-type EmployeeProfileFocusTab = 'overview' | 'payment' | 'skillsets';
 
 /**
  * The five chips this page load offers, chosen once at mount.
@@ -113,7 +113,10 @@ export default function EmployeeApp() {
   // Penny's greeting chips for this page load — stable for the mount, different
   // from the previous load's five.
   const pennyGreetingChips = usePennyGreetingChips();
-  const [profileFocusTab, setProfileFocusTab] = useState<EmployeeProfileFocusTab>('overview');
+  // The Profile deep link currently pending, or null when the employee opened
+  // Profile themselves. A nudge names an INTENT; profile-tabs.ts decides which
+  // tab and section that intent lands on, so the shell never spells a tab id.
+  const [profileTarget, setProfileTarget] = useState<ProfileTarget | null>(null);
   // Disputes prefill — kept for future use if the flow is re-enabled
   // const [disputesPrefill, setDisputesPrefill] = useState<{ date: string; seconds?: number } | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -417,14 +420,17 @@ export default function EmployeeApp() {
     if (activeTab === 'mesa') markMesaSeen();
   }, [activeTab, markMesaSeen]);
 
-  const navigate = (tab: string, profileTarget?: EmployeeProfileFocusTab) => {
-    if (tab === 'profile' && profileTarget) setProfileFocusTab(profileTarget);
+  const navigate = (tab: string) => {
     setActiveTab(tab);
     setMobileNavOpen(false);
   };
 
-  const navigateToProfileSetup = (target?: EmployeeProfileFocusTab) => {
-    navigate('profile', target ?? (needsPhoto ? 'overview' : needsBank ? 'payment' : 'skillsets'));
+  const navigateToProfileSetup = (intent?: ProfileIntent) => {
+    const resolved: ProfileIntent = intent ?? (needsPhoto ? 'photo' : needsBank ? 'bank' : 'skillSet');
+    // A NEW target every time, nonce and all — the Profile's effect is keyed on
+    // the nonce, so pressing the same nudge twice still moves the pane.
+    setProfileTarget((prev) => nextProfileTarget(prev, resolved));
+    navigate('profile');
   };
 
   useEffect(() => {
@@ -480,7 +486,7 @@ export default function EmployeeApp() {
             employeeEmail={employeeEmail}
             profilePhotoUrl={profilePhotoUrl}
             googlePhotoUrl={googlePhotoUrl}
-            focusTab={profileFocusTab}
+            focusTarget={profileTarget ?? undefined}
             onProfilePhotoUpdated={(url) => setProfilePhotoUrl(url)}
             onPayoutCompletionChange={(complete) => setPayoutComplete(complete)}
             onSkillSetCompletionChange={(complete) => setSkillSetComplete(complete)}

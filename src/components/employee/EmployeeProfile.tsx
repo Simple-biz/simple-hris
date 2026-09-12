@@ -38,6 +38,7 @@ import EmployeeAvatar from './EmployeeAvatar';
 import EmployeeIdCard from './EmployeeIdCard';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
+import type { ProfileTarget, SectionId, TabId } from '@/lib/employee/profile-tabs';
 import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
 import { buildIdCard } from '@/lib/employee/id-card';
 import { downloadIdCardPng, IdCardRenderError } from '@/lib/employee/id-card-render';
@@ -104,7 +105,14 @@ interface EmployeeProfileProps {
   profilePhotoUrl: string | null;
   /** Google SSO profile picture (`session.user.image`) — fallback when no Supabase upload. */
   googlePhotoUrl?: string | null;
-  focusTab?: TabId;
+  /**
+   * A resolved deep link from a nudge (dashboard completion card, shell
+   * profile-setup navigation). ONE prop, not three: it carries the tab, the
+   * optional section within it, and a nonce that changes on every fire, so the
+   * same nudge pressed twice still moves the pane even though no visited tab
+   * ever unmounts.
+   */
+  focusTarget?: ProfileTarget;
   onProfilePhotoUpdated: (url: string | null) => void;
   /** Notifies the shell whether payout/bank details are now complete (clears the nudge). */
   onPayoutCompletionChange?: (complete: boolean) => void;
@@ -149,8 +157,6 @@ function matchesEmployeeEmail(emp: EmployeeRow, n: string): boolean {
 }
 
 /* ───────── Visual primitives ───────── */
-
-type TabId = 'overview' | 'id' | 'compensation' | 'payStubs' | 'payment' | 'skillsets' | 'reports' | 'requestDocuments' | 'resign';
 
 interface SkillSetFields {
   role_title: string;
@@ -634,7 +640,7 @@ export default function EmployeeProfile({
   employeeEmail,
   profilePhotoUrl,
   googlePhotoUrl = null,
-  focusTab = 'overview',
+  focusTarget,
   onProfilePhotoUpdated,
   onPayoutCompletionChange,
   onSkillSetCompletionChange,
@@ -689,10 +695,23 @@ export default function EmployeeProfile({
   const [payoutEditing, setPayoutEditing] = useState(false);
 
   const [activeTab, setActiveTab] = useState<TabId>('overview');
+  // The section a deep link asked for, consumed by the Compensation and Skill
+  // Sets panes. Declared HERE, with the rest of the state and ABOVE the
+  // whole-page ProfileSkeleton bail-out further down: a hook below that early
+  // return is skipped on the cold loading render and called on the loaded one,
+  // which throws and blanks the route. profile-hook-order.test.ts guards it —
+  // and scans SOURCE, so do not spell that early return out literally nearby.
+  const [pendingSection, setPendingSection] = useState<SectionId | null>(null);
 
+  // Keyed on the NONCE, not the value. No visited tab ever unmounts, so firing
+  // the same nudge twice would otherwise set state to the value it already
+  // holds, React would bail out of the re-render, and the employee would not move.
   useEffect(() => {
-    setActiveTab(focusTab);
-  }, [focusTab]);
+    if (!focusTarget) return;
+    setActiveTab(focusTarget.tab);
+    if (focusTarget.section) setPendingSection(focusTarget.section);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusTarget?.nonce]);
 
   // ── Resignation (Profile → Resign) ──
   // The employee's own current/last resignation request. A `pending` one shows a

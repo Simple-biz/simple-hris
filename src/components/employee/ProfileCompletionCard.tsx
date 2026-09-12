@@ -2,6 +2,7 @@
 
 import { motion } from 'motion/react';
 import { Camera, CreditCard, ArrowRight, BadgeCheck, Sparkles } from 'lucide-react';
+import type { ProfileIntent } from '@/lib/employee/profile-tabs';
 
 interface ProfileCompletionCardProps {
   /** No uploaded photo and no Google SSO photo on file. */
@@ -10,8 +11,12 @@ interface ProfileCompletionCardProps {
   needsBank: boolean;
   /** Skill Sets are still empty. */
   needsSkillSet?: boolean;
-  /** Jump to the Profile tab, optionally targeting a section. */
-  onGoToProfile: (target?: 'overview' | 'payment' | 'skillsets') => void;
+  /**
+   * Jump to the Profile tab. The card names what the employee still needs —
+   * an INTENT — and never a tab id: profile-tabs.ts owns where each one lands,
+   * so a tab merge cannot leave this card pointing at an empty pane.
+   */
+  onGoToProfile: (intent?: ProfileIntent) => void;
 }
 
 /**
@@ -30,12 +35,12 @@ export default function ProfileCompletionCard({
   const items: {
     icon: typeof Camera;
     label: string;
-    target: 'overview' | 'payment' | 'skillsets';
+    target: ProfileIntent;
     pulse: boolean;
   }[] = [];
-  if (needsPhoto) items.push({ icon: Camera, label: 'Upload a profile photo', target: 'overview', pulse: true });
-  if (needsBank) items.push({ icon: CreditCard, label: 'Add your bank / payout details', target: 'payment', pulse: false });
-  if (needsSkillSet) items.push({ icon: Sparkles, label: 'Fill in your Skill Sets', target: 'skillsets', pulse: true });
+  if (needsPhoto) items.push({ icon: Camera, label: 'Upload a profile photo', target: 'photo', pulse: true });
+  if (needsBank) items.push({ icon: CreditCard, label: 'Add your bank / payout details', target: 'bank', pulse: false });
+  if (needsSkillSet) items.push({ icon: Sparkles, label: 'Fill in your Skill Sets', target: 'skillSet', pulse: true });
 
   return (
     <motion.div
