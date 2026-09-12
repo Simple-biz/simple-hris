@@ -1291,27 +1291,18 @@ export default function EmployeeProfile({
     }
   };
 
-  if (loading) return <ProfileSkeleton />;
-
   const workEmail =
     master?.work_email?.trim() || rate?.work_email?.trim() || bankInfo?.work_email?.trim() || null;
-  const personalEmail =
-    bankInfo?.personal_email?.trim() ||
-    master?.personal_email?.trim() ||
-    rate?.personal_email?.trim() ||
-    null;
-
-  const fullAddressDisplay =
-    master?.full_address ||
-    [master?.street, master?.city, master?.province, master?.postal_code]
-      .filter(Boolean)
-      .join(', ') ||
-    null;
 
   // The ID card reads the ROSTER address (`global_master_list.full_address`), the
   // same column Overview shows — never `employee_ids.full_address`, which the
   // Payment tab lets the employee edit for payout purposes. The two can disagree,
   // and an identity document follows the roster.
+  //
+  // This memo and the `savingId` guard below it live ABOVE `if (loading)`: a hook
+  // below an early return is skipped on the loading render and called on the
+  // loaded one, which is the "Rendered more hooks than during the previous
+  // render" crash. Guarded by src/lib/employee/profile-hook-order.test.ts.
   const idCard = useMemo(
     () =>
       buildIdCard({
@@ -1354,6 +1345,21 @@ export default function EmployeeProfile({
       setSavingId(false);
     }
   };
+
+  if (loading) return <ProfileSkeleton />;
+
+  const personalEmail =
+    bankInfo?.personal_email?.trim() ||
+    master?.personal_email?.trim() ||
+    rate?.personal_email?.trim() ||
+    null;
+
+  const fullAddressDisplay =
+    master?.full_address ||
+    [master?.street, master?.city, master?.province, master?.postal_code]
+      .filter(Boolean)
+      .join(', ') ||
+    null;
 
   const needsProfilePhoto = !displayProfilePhotoUrl && !googlePhotoUrl;
   const needsPayoutSetup = !isPayoutComplete((bankInfo as unknown as Record<string, unknown>) ?? null);
