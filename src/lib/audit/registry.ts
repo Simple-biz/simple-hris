@@ -319,6 +319,12 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     note: 'submitted/updated by the employee themself (channel employee_self) or edited/approved/deleted by staff (channel staff)',
   },
   {
+    match: 'gift_address.',
+    surfaces: ['hr', 'orphanage', 'employee'],
+    label: 'Gift address (public link)',
+    note: "otp_requested, otp_throttled, otp_verified, otp_verify_failed, saved — the PUBLIC /update-gift-address link (user_name 'external', channel external_link). The 6-digit CODE and the delivery ADDRESS are deliberately NOT in details: the trail is read by more people than the shipping list is, and auditing a live code hands a reader a credential. Never means a gift was GIVEN — that is gift_receipt.*",
+  },
+  {
     match: 'gift_receipt.',
     surfaces: ['hr', 'orphanage'],
     label: 'Gift fulfilment',

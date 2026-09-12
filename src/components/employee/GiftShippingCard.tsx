@@ -27,6 +27,15 @@ import {
 } from '@/lib/gift-milestones';
 import type { EmployeeGiftShippingRow } from '@/lib/supabase/employee-gift-shipping';
 import type { EmployeeGiftReceiptRow } from '@/lib/supabase/employee-gift-receipts';
+// Moved to a shared module 2026-09-12 so the public /update-gift-address page
+// reads the SAME copy and ornaments — a second set of thank-you messages would
+// drift the first time one of them is improved.
+import {
+  APPAREL_SIZES,
+  HEARTS_FLOAT,
+  giftMilestoneMessage as getMilestoneMessage,
+  tenureLabel,
+} from '@/lib/gift-tracker/milestone-copy';
 import { receiptStateFor, type GiftReceiptState } from '@/lib/gift-tracker/receipts';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
@@ -65,49 +74,6 @@ interface Props {
   /** When true, render only the dialog — useful when the bell is the only
    *  entry point and the inline card is intentionally hidden. */
   hideInlineCard?: boolean;
-}
-
-/** Apparel sizes offered on the form — covers shirts, hoodies, jackets, polos.
- *  Non-apparel milestone gifts (tumbler, mug, speaker, …) just leave it blank. */
-const APPAREL_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL'] as const;
-
-/** Positions for the floating hearts behind the card content. */
-const HEARTS_FLOAT = [
-  { left: '6%',  delay: '0s',    dur: '5.2s', size: 14, rotate: -8 },
-  { left: '15%', delay: '1.6s',  dur: '4.4s', size: 11, rotate: 6 },
-  { left: '26%', delay: '3.1s',  dur: '5.8s', size: 18, rotate: -12 },
-  { left: '38%', delay: '0.9s',  dur: '4.1s', size: 12, rotate: 10 },
-  { left: '52%', delay: '2.4s',  dur: '5.0s', size: 15, rotate: -4 },
-  { left: '64%', delay: '0.3s',  dur: '5.6s', size: 13, rotate: 8 },
-  { left: '76%', delay: '3.4s',  dur: '4.3s', size: 17, rotate: -10 },
-  { left: '88%', delay: '1.9s',  dur: '5.1s', size: 12, rotate: 4 },
-] as const;
-
-const MILESTONE_MESSAGES: Record<number, string> = {
-  1: 'Six months in, and you have already made Simple.biz a better place. Thank you for your energy, your hard work, and for choosing to grow with us.',
-  2: 'One full year together — and what a year it has been. Your dedication and heart inspire everyone around you. We are so proud to have you on this team.',
-  3: 'A year and a half of showing up and making a real difference. The team truly would not be the same without you. Thank you for everything.',
-  4: 'Two years! You have become a cornerstone of what Simple.biz is all about. Your loyalty and commitment mean more to us than words can say.',
-  5: 'Two and a half years of dedication, growth, and passion. You have helped shape who we are as a company, and we are deeply grateful for every single day you give us.',
-  6: 'Three years — a true milestone. You have grown with Simple.biz, and Simple.biz has grown because of you. Thank you for your unwavering commitment and spirit.',
-  7: 'Three and a half years of excellence, resilience, and care. You are one of the people who make Simple.biz worth showing up for every day.',
-  8: 'Four years! Your journey with us is a testament to your character and your drive. We celebrate you today and every day.',
-};
-
-function getMilestoneMessage(index: number): string {
-  return (
-    MILESTONE_MESSAGES[index] ??
-    'Your continued dedication is one of our greatest blessings. Thank you for every day you bring to Simple.biz and to the people around you.'
-  );
-}
-
-
-function tenureLabel(months: number): string {
-  if (months % 12 === 0) {
-    const yrs = months / 12;
-    return yrs === 1 ? '1 Year' : `${yrs} Years`;
-  }
-  return `${months} Months`;
 }
 
 type MsStatus = 'approved' | 'pending' | 'rejected' | 'unsubmitted' | 'missed' | 'upcoming';

@@ -45,6 +45,14 @@ const BANK_UPDATE_LIMITS: Record<string, { max: number; windowMs: number }> = {
   POST: { max: 10, windowMs: 60_000 },
 };
 
+// Public gift-address flow (request-otp -> verify-otp -> owed -> save). Same
+// shape as the bank flow and the same caps; a SEPARATE bucket so a burst on one
+// public page cannot lock people out of the other.
+const GIFT_ADDRESS_LIMITS: Record<string, { max: number; windowMs: number }> = {
+  GET:  { max: 30, windowMs: 60_000 },
+  POST: { max: 10, windowMs: 60_000 },
+};
+
 function rateLimited(
   req: NextRequest,
   limits: Record<string, { max: number; windowMs: number }>,
@@ -78,6 +86,10 @@ function onboardingRateLimited(req: NextRequest): boolean {
 
 function bankUpdateRateLimited(req: NextRequest): boolean {
   return rateLimited(req, BANK_UPDATE_LIMITS, 'bank');
+}
+
+function giftAddressRateLimited(req: NextRequest): boolean {
+  return rateLimited(req, GIFT_ADDRESS_LIMITS, 'gift');
 }
 
 // ---------------------------------------------------------------------------
@@ -151,6 +163,7 @@ const SESSION_COOKIE_NAMES = [
 const PUBLIC_PATHS = new Set<string>([
   '/login',
   '/update-bank-info', // public OTP-gated bank/payout self-update page
+  '/update-gift-address', // public OTP-gated tenure-gift delivery address page
 ]);
 
 const PUBLIC_PREFIXES = [
@@ -192,6 +205,31 @@ export async function proxy(req: NextRequest) {
     // /api/bank-update/* — fall through to the existing rate-limit handling below.
   }
 
+  // -------------------------------------------------------------------------
+  // Public gift-address host isolation. Same contract as the bank block above
+  // and for the same reason: on the dedicated hostname (GIFT_ADDRESS_PUBLIC_HOST,
+  // e.g. "gifts.simple.biz") ONLY the gift page and its /api/gift-address/*
+  // endpoints exist. Everything else is turned away so the HRIS — /login
+  // included — never surfaces on a domain handed out to the whole company.
+  //
+  // Inert until the env var is set, and only when the host matches, so the
+  // normal HRIS domain is untouched. Static assets bypass via the matcher.
+  // -------------------------------------------------------------------------
+  const giftHost = process.env.GIFT_ADDRESS_PUBLIC_HOST?.trim().toLowerCase();
+  if (giftHost && req.headers.get('host')?.toLowerCase() === giftHost) {
+    if (pathname === '/update-gift-address') return NextResponse.next();
+    if (!pathname.startsWith('/api/gift-address/')) {
+      if (pathname.startsWith('/api/')) {
+        return new NextResponse(null, { status: 404 });
+      }
+      const url = req.nextUrl.clone();
+      url.pathname = '/update-gift-address';
+      url.search = '';
+      return NextResponse.redirect(url);
+    }
+    // /api/gift-address/* — fall through to the rate-limit handling below.
+  }
+
   if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
 
   // Vercel-scheduled (or external) cron callers carry no NextAuth cookie. Let
@@ -220,6 +258,20 @@ export async function proxy(req: NextRequest) {
   // PUBLIC_PATHS above; here we rate-limit its endpoints and skip the JWT gate.
   if (pathname.startsWith('/api/bank-update/')) {
     if (bankUpdateRateLimited(req)) {
+      return NextResponse.json(
+        { error: 'Too many requests. Please wait a moment and try again.' },
+        { status: 429 },
+      );
+    }
+    return NextResponse.next();
+  }
+
+  // Public gift-address API (OTP request/verify, owed list, save). The page is
+  // in PUBLIC_PATHS above; here we rate-limit its endpoints and skip the JWT
+  // gate. Each route re-derives identity from the session token — never from the
+  // request body — so skipping the gate here grants nothing on its own.
+  if (pathname.startsWith('/api/gift-address/')) {
+    if (giftAddressRateLimited(req)) {
       return NextResponse.json(
         { error: 'Too many requests. Please wait a moment and try again.' },
         { status: 429 },
