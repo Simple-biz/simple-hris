@@ -1,0 +1,285 @@
+{
+  "generatedAt": "2026-09-11T20:04:02.436Z",
+  "mode": "report",
+  "sourceFile": "Work Anniversary Gift Tracker - Copy of HRIS Active Ppl.csv",
+  "csvPath": "C:\\Users\\Kane\\Desktop\\simple-hris\\references\\docs\\Work Anniversary Gift Tracker - Copy of HRIS Active Ppl.csv",
+  "counts": {
+    "people": 1229,
+    "assertions": 1434,
+    "received": 842,
+    "owed": 592,
+    "skippedNotDue": 8398,
+    "skippedUnreadable": 0,
+    "rescued": 28,
+    "ambiguous": 0,
+    "active": 1132,
+    "offboarded": 97,
+    "unresolved": 0
+  },
+  "unresolved": [],
+  "rescued": [
+    {
+      "sheetEmail": "scottc@simple.biz",
+      "resolvedTo": "scott@simple.biz",
+      "via": "employee_id",
+      "name": "Cameron, Scott Ewen \"Scott\""
+    },
+    {
+      "sheetEmail": "lennyt@simple.biz",
+      "resolvedTo": "lenny@simple.biz",
+      "via": "employee_id",
+      "name": "Tesalona, Maria Linda \"Lenny\""
+    },
+    {
+      "sheetEmail": "kevt@simple.biz",
+      "resolvedTo": "kevin@simple.biz",
+      "via": "employee_id",
+      "name": "Tanjusay, Kevin John \"Kev\""
+    },
+    {
+      "sheetEmail": "jirehg@simple.biz",
+      "resolvedTo": "jerry@simple.biz",
+      "via": "employee_id",
+      "name": "Garcia, Jireh Hope \"Jerry\""
+    },
+    {
+      "sheetEmail": "teodya@simple.biz",
+      "resolvedTo": "james@simple.biz",
+      "via": "employee_id (over the STALE row teodya@simple.biz)",
+      "name": "Amaro, Teody \"Teody\""
+    },
+    {
+      "sheetEmail": "lorenzos@simple.biz",
+      "resolvedTo": "lawrence@simple.biz",
+      "via": "employee_id",
+      "name": "Santos, Lawrence \"Lorenzo\""
+    },
+    {
+      "sheetEmail": "jedh@simple.biz",
+      "resolvedTo": "jed@simple.biz",
+      "via": "employee_id",
+      "name": "Hufano, Jedrick Earl \"Jed\""
+    },
+    {
+      "sheetEmail": "ramd@simple.biz",
+      "resolvedTo": "reid@simple.biz",
+      "via": "employee_id",
+      "name": "Dacara, Ramil Ordeneza \"Ram\""
+    },
+    {
+      "sheetEmail": "brigittel@simple.biz",
+      "resolvedTo": "brigitte@simple.biz",
+      "via": "employee_id",
+      "name": "Lopez, Brigitte Lethia G. \"Brigitte\""
+    },
+    {
+      "sheetEmail": "joyb@simple.biz",
+      "resolvedTo": "joy@hogansmith.com",
+      "via": "employee_id",
+      "name": "Baldonebro, Joycel \"Joy\""
+    },
+    {
+      "sheetEmail": "nancyo@simple.biz",
+      "resolvedTo": "nancy@simple.biz",
+      "via": "employee_id",
+      "name": "Orcajada, Nancy \"Nancy\""
+    },
+    {
+      "sheetEmail": "jo@simple.biz",
+      "resolvedTo": "joe@simple.biz",
+      "via": "employee_id",
+      "name": "Vergara, Jo Benson \"Jo\""
+    },
+    {
+      "sheetEmail": "garya@simple.biz",
+      "resolvedTo": "gary@simple.biz",
+      "via": "employee_id",
+      "name": "Allego, Gary \"Gary\""
+    },
+    {
+      "sheetEmail": "theav@simple.biz",
+      "resolvedTo": "thea@simple.biz",
+      "via": "employee_id",
+      "name": "Viajante, Sympathea Gabrielle  \"Thea\""
+    },
+    {
+      "sheetEmail": "mat@simple.biz",
+      "resolvedTo": "maria@simple.biz",
+      "via": "employee_id (over the STALE row mat@simple.biz)",
+      "name": "Tanjusay, Maria Fe \"MaFe\""
+    },
+    {
+      "sheetEmail": "kylam@simple.biz",
+      "resolvedTo": "kylam@simple.biz",
+      "via": "employee_id",
+      "name": "Montano, Eunice Marie Kyla \"Kyla\""
+    },
+    {
+      "sheetEmail": "christianf@simple.biz",
+      "resolvedTo": "christianf@simple.biz",
+      "via": "employee_id",
+      "name": "Fullente, Christian Jay \"Christian\""
+    },
+    {
+      "sheetEmail": "melchizedekc@simple.biz",
+      "resolvedTo": "melchizedekc@simple.biz",
+      "via": "employee_id",
+      "name": "Cagabhion, Melchizedek Salada \"Mel\""
+    },
+    {
+      "sheetEmail": "michaelm@simple.biz",
+      "resolvedTo": "michaelm@simple.biz",
+      "via": "employee_id",
+      "name": "Manila, Michael \"Mike\""
+    },
+    {
+      "sheetEmail": "joshuag@simple.biz",
+      "resolvedTo": "joshuag@simple.biz",
+      "via": "employee_id",
+      "name": "Guevarra, Joshua T. \"Josh\""
+    },
+    {
+      "sheetEmail": "jyrraho@simple.biz",
+      "resolvedTo": "jyrraho@simple.biz",
+      "via": "employee_id",
+      "name": "Opine, Jyrrah Kelsey \"Kelsey\""
+    },
+    {
+      "sheetEmail": "jamesc@simple.biz",
+      "resolvedTo": "jamesc@simple.biz",
+      "via": "employee_id",
+      "name": "Ceballos, James Ryan \"James\""
+    },
+    {
+      "sheetEmail": "kimb@simple.biz",
+      "resolvedTo": "kimb@simple.biz",
+      "via": "employee_id",
+      "name": "Bangas, Novy Kim \"Kim\""
+    },
+    {
+      "sheetEmail": "niczm@simple.biz",
+      "resolvedTo": "niczm@simple.biz",
+      "via": "employee_id",
+      "name": "Maaño, Nicole Dominique  \"Nicz\""
+    },
+    {
+      "sheetEmail": "dandoyr@simple.biz",
+      "resolvedTo": "dandoyr@simple.biz",
+      "via": "employee_id",
+      "name": "Dandoy, Rodulfo Jr \"Rod\""
+    },
+    {
+      "sheetEmail": "markg@simple.biz",
+      "resolvedTo": "markg@simple.biz",
+      "via": "employee_id",
+      "name": "Gan, Mark Anthony Koki \"Mark\""
+    },
+    {
+      "sheetEmail": "jant@simple.biz",
+      "resolvedTo": "jant@simple.biz",
+      "via": "employee_id",
+      "name": "Tenorio, Jan Mairuh \"Mairuh\""
+    },
+    {
+      "sheetEmail": "rodneys@simple.biz",
+      "resolvedTo": "rodneys@simple.biz",
+      "via": "employee_id",
+      "name": "Sarmiento, Rodney Clark \"Clark\""
+    }
+  ],
+  "ambiguous": [],
+  "startDivergence": [
+    {
+      "workEmail": "masa@simple.biz",
+      "sheet": "2026-08-02",
+      "master": "2026-09-07"
+    }
+  ],
+  "noStartDate": [],
+  "problems": [
+    {
+      "kind": "received_after_gap",
+      "line": 126,
+      "workEmail": "jerryl@simple.biz",
+      "milestoneIndex": 3,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 156,
+      "workEmail": "isaact@simple.biz",
+      "milestoneIndex": 2,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 162,
+      "workEmail": "mariam@simple.biz",
+      "milestoneIndex": 2,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 162,
+      "workEmail": "mariam@simple.biz",
+      "milestoneIndex": 3,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 175,
+      "workEmail": "natel@simple.biz",
+      "milestoneIndex": 2,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 175,
+      "workEmail": "natel@simple.biz",
+      "milestoneIndex": 3,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 176,
+      "workEmail": "cobb@simple.biz",
+      "milestoneIndex": 2,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 176,
+      "workEmail": "cobb@simple.biz",
+      "milestoneIndex": 3,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 177,
+      "workEmail": "gladysp@simple.biz",
+      "milestoneIndex": 2,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 177,
+      "workEmail": "gladysp@simple.biz",
+      "milestoneIndex": 3,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_after_gap",
+      "line": 446,
+      "workEmail": "rhysl@simple.biz",
+      "milestoneIndex": 2,
+      "detail": "marked received after an earlier milestone was not — imported as stated"
+    },
+    {
+      "kind": "received_before_due",
+      "line": 446,
+      "workEmail": "rhysl@simple.biz",
+      "milestoneIndex": 2,
+      "detail": "recorded as received but the 12-month milestone has not arrived — imported as stated"
+    }
+  ]
+}

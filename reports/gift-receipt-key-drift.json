@@ -1,0 +1,273 @@
+{
+  "generatedAt": null,
+  "counts": {
+    "orphanedKeys": 13,
+    "strandedGifts": 52,
+    "rescuable": 13,
+    "misattributed": 1,
+    "dateDrift": 0
+  },
+  "orphaned": [
+    {
+      "workEmail": "brigittel@simple.biz",
+      "sheetName": "Lopez, Brigitte Lethia G. \"Brigitte\"",
+      "receiptCount": 3,
+      "received": 0,
+      "owed": 3,
+      "milestones": "1:N 2:N 3:N",
+      "candidates": [
+        {
+          "name": "Lopez, Brigitte Lethia G. \"Brigitte\"",
+          "workEmail": "brigitte@simple.biz",
+          "personalEmail": "minamino16@gmail.com",
+          "masterStart": "2024-10-22",
+          "sheetStart": "2024-10-22",
+          "startMatches": true,
+          "onActiveRoster": true
+        }
+      ]
+    },
+    {
+      "workEmail": "garya@simple.biz",
+      "sheetName": "Allego, Gary \"Gary\"",
+      "receiptCount": 3,
+      "received": 2,
+      "owed": 1,
+      "milestones": "1:Y 2:Y 3:N",
+      "candidates": [
+        {
+          "name": "Allego, Gary \"Gary\"",
+          "workEmail": "gary@simple.biz",
+          "personalEmail": "allegogary87@gmail.com",
+          "masterStart": "2025-02-17",
+          "sheetStart": "2025-02-17",
+          "startMatches": true,
+          "onActiveRoster": true
+        }
+      ]
+    },
+    {
+      "workEmail": "jedh@simple.biz",
+      "sheetName": "Hufano, Jedrick Earl \"Jed\"",
+      "receiptCount": 4,
+      "received": 3,
+      "owed": 1,
+      "milestones": "1:Y 2:Y 3:Y 4:N",
+      "candidates": [
+        {
+          "name": "Hufano, Jedrick Earl \"Jed\"",
+          "workEmail": "jed@simple.biz",
+          "personalEmail": "jedrickhufano@gmail.com",
+          "masterStart": "2024-07-29",
+          "sheetStart": "2024-07-29",
+          "startMatches": true,
+          "onActiveRoster": true
+        }
+      ]
+    },
+    {
+      "workEmail": "jirehg@simple.biz",
+      "sheetName": "Garcia, Jireh Hope \"Jerry\"",
+      "receiptCount": 5,
+      "received": 4,
+      "owed": 1,
+      "milestones": "1:Y 2:Y 3:Y 4:Y 5:N",
+      "candidates": [
+        {
+          "name": "Garcia, Jireh Hope \"Jerry\"",
+          "workEmail": "jerry@simple.biz",
+          "personalEmail": "jirehgarcia011196@gmail.com",
+          "masterStart": "2024-01-08",
+          "sheetStart": "2024-01-08",
+          "startMatches": true,
+          "onActiveRoster": true
+        }
+      ]
+    },
+    {
+      "workEmail": "jo@simple.biz",
+      "sheetName": "Vergara, Jo Benson \"Jo\"",
+      "receiptCount": 3,
+      "received": 2,
+      "owed": 1,
+      "milestones": "1:Y 2:Y 3:N",
+      "candidates": [
+        {
+          "name": "Vergara, Jo Benson \"Jo\"",
+          "workEmail": "joe@simple.biz",
+          "personalEmail": "jb.vergara05@gmail.com",
+          "masterStart": "2024-12-16",
+          "sheetStart": "2024-12-16",
+          "startMatches": true,
+          "onActiveRoster": true
+        }
+      ]
+    },
+    {
+      "workEmail": "joyb@simple.biz",
+      "sheetName": "Baldonebro, Joycel \"Joy\"",
+      "receiptCount": 3,
+      "received": 2,
+      "owed": 1,
+      "milestones": "1:Y 2:Y 3:N",
+      "candidates": [
+        {
+          "name": "Baldonebro, Joycel \"Joy\"",
+          "workEmail": "joy@hogansmith.com",
+          "personalEmail": "baldonebrojj@gmail.com",
+          "masterStart": "2024-10-28",
+          "sheetStart": "2024-10-28",
+          "startMatches": true,
+          "onActiveRoster": true
+        }
+      ]
+    },
+    {
+      "workEmail": "kevt@simple.biz",
+      "sheetName": "Tanjusay, Kevin John \"Kev\"",
+      "receiptCount": 6,
+      "received": 4,
+      "owed": 2,
+      "milestones": "1:Y 2:Y 3:Y 4:Y 5:N 6:N",
+      "candidates": [
+        {
+          "name": "Tanjusay, Kevin John \"Kev\"",
+          "workEmail": "kevin@simple.biz",
+          "personalEmail": "tanjusay.kevinjohn@gmail.com",
+          "masterStart": "2023-08-29",
+          "sheetStart": "2023-08-29",
+          "startMatches": true,
+          "onActiveRoster": true
+        }
+      ]
+    },
+    {
+      "workEmail": "lennyt@simple.biz",
+      "sheetName": "Tesalona, Maria Linda \"Lenny\"",
+      "receiptCount": 6,
+      "received": 5,
+      "owed": 1,
+      "milestones": "1:Y 2:Y 3:Y 4:Y 5:Y 6:N",
+      "candidates": [
+        {
+          "name": "Tesalona, Maria Linda \"Lenny\"",
+          "workEmail": "lenny@simple.biz",
+          "personalEmail": "marialinda.csc@gmail.com",
+          "masterStart": "2023-04-10",
+          "sheetStart": "2023-04-10",
+          "startMatches": true,
+          "onActiveRoster": true
+        }
+      ]
+    },
+    {
+      "workEmail": "lorenzos@simple.biz",
+      "sheetName": "Santos, Lawrence \"Lorenzo\"",
+      "receiptCount": 4,
+      "received": 3,
+      "owed": 1,
+      "milestones": "1:Y 2:Y 3:Y 4:N",
+      "candidates": [
+        {
+          "name": "Santos, Lawrence \"Lorenzo\"",
+          "workEmail": "lawrence@simple.biz",
+          "personalEmail": "lorenz011478@gmail.com",
+          "masterStart": "2024-07-22",
+          "sheetStart": "2024-07-22",
+          "startMatches": true,
+          "onActiveRoster": true
+        }
+      ]
+    },
+    {
+      "workEmail": "nancyo@simple.biz",
+      "sheetName": "Orcajada, Nancy \"Nancy\"",
+      "receiptCount": 3,
+      "received": 2,
+      "owed": 1,
+      "milestones": "1:Y 2:Y 3:N",
+      "candidates": [
+        {
+          "name": "Orcajada, Nancy \"Nancy\"",
+          "workEmail": "nancy@simple.biz",
+          "personalEmail": "nancyorcajadaj3@gmail.com",
+          "masterStart": "2024-11-04",
+          "sheetStart": "2024-11-04",
+          "startMatches": true,
+          "onActiveRoster": true
+        }
+      ]
+    },
+    {
+      "workEmail": "ramd@simple.biz",
+      "sheetName": "Dacara, Ramil Ordeneza \"Ram\"",
+      "receiptCount": 4,
+      "received": 3,
+      "owed": 1,
+      "milestones": "1:Y 2:Y 3:Y 4:N",
+      "candidates": [
+        {
+          "name": "Dacara, Ramil Ordeneza \"Ram\" ",
+          "workEmail": "reid@simple.biz",
+          "personalEmail": "dacararam@gmail.com",
+          "masterStart": "2024-07-29",
+          "sheetStart": "2024-07-29",
+          "startMatches": true,
+          "onActiveRoster": true
+        }
+      ]
+    },
+    {
+      "workEmail": "scottc@simple.biz",
+      "sheetName": "Cameron, Scott Ewen \"Scott\"",
+      "receiptCount": 6,
+      "received": 5,
+      "owed": 1,
+      "milestones": "1:Y 2:Y 3:Y 4:Y 5:Y 6:N",
+      "candidates": [
+        {
+          "name": "Cameron, Scott Ewen \"Scott\"",
+          "workEmail": "scott@simple.biz",
+          "personalEmail": "scottcam000@gmail.com",
+          "masterStart": "2023-03-20",
+          "sheetStart": "2023-03-20",
+          "startMatches": true,
+          "onActiveRoster": true
+        }
+      ]
+    },
+    {
+      "workEmail": "theav@simple.biz",
+      "sheetName": "Viajante, Sympathea Gabrielle  \"Thea\"",
+      "receiptCount": 2,
+      "received": 0,
+      "owed": 2,
+      "milestones": "1:N 2:N",
+      "candidates": [
+        {
+          "name": "Viajante, Sympathea Gabrielle  \"Thea\"",
+          "workEmail": "thea@simple.biz",
+          "personalEmail": "sympatheaviajante@gmail.com",
+          "masterStart": "2025-04-07",
+          "sheetStart": "2025-04-07",
+          "startMatches": true,
+          "onActiveRoster": true
+        }
+      ]
+    }
+  ],
+  "misattributed": [
+    {
+      "workEmail": "aremb@simple.biz",
+      "sheetName": "Badajos, Arem \"Arem\"",
+      "receiptCount": 3,
+      "received": 2,
+      "owed": 1,
+      "milestones": "1:Y 2:Y 3:N",
+      "masterName": "Badajos, Arem Jay \"Arem\"",
+      "masterStart": "2024-10-21",
+      "sheetStart": "2024-10-21"
+    }
+  ],
+  "dateDrift": []
+}

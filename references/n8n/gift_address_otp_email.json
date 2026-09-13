@@ -1,0 +1,61 @@
+{
+  "name": "Gift Address OTP Email",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gift-address-otp",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "33333333-3333-4333-8333-333333333333",
+      "name": "Webhook (gift-address-otp)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ],
+      "webhookId": "gift-address-otp"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.body?.to ?? $json.to }}",
+        "subject": "={{ $json.body?.subject ?? $json.subject ?? 'Your Simple.biz tenure gift — confirmation code' }}",
+        "emailType": "html",
+        "message": "={{ $json.body?.html ?? $json.html ?? ('Your code: ' + ($json.body?.otp_code ?? $json.otp_code)) }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "44444444-4444-4444-8444-444444444444",
+      "name": "Send Code (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        560,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook (gift-address-otp)": {
+      "main": [
+        [
+          {
+            "node": "Send Code (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
