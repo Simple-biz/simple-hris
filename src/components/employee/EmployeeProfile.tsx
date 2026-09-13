@@ -500,7 +500,6 @@ function ProjectsField({
 function TabBar({
   active,
   onChange,
-  hasAddress,
   needsPhoto,
   needsBank,
   needsSkillSet,
@@ -509,7 +508,6 @@ function TabBar({
 }: {
   active: TabId;
   onChange: (id: TabId) => void;
-  hasAddress: boolean;
   needsPhoto: boolean;
   needsBank: boolean;
   needsSkillSet: boolean;
@@ -518,12 +516,6 @@ function TabBar({
   /** A resignation request is awaiting the manager — show a rose dot on Resign. */
   resignPending?: boolean;
 }) {
-  // Pay Stubs is no longer a top-level tab — it lives on as a Compensation
-  // section: COMPENSATION_SECTIONS (src/lib/employee/compensation-sections.ts)
-  // still carries `{ id: 'payStubs', label: 'Pay Stubs' }`. Penny's build guard
-  // (src/lib/penny/employee-guides.test.ts:167) does a literal substring scan
-  // of THIS file for `label: 'Pay Stubs'` — keep this comment intact so the
-  // guard keeps finding it here even though the array below no longer does.
   const tabs: { id: TabId; label: string; sub: string }[] = [
     { id: 'overview', label: 'Overview', sub: 'Identity, employment & ID' },
     { id: 'compensation', label: 'Compensation', sub: 'Rates, stubs & payout' },
@@ -1632,7 +1624,6 @@ export default function EmployeeProfile({
           <TabBar
             active={activeTab}
             onChange={setActiveTab}
-            hasAddress={hasAnyAddress}
             needsPhoto={needsProfilePhoto}
             needsBank={needsPayoutSetup}
             needsSkillSet={needsSkillSetSetup}

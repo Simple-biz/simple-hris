@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { COMPENSATION_SECTIONS, resolveCompensationSection, sectionSlideDirection } from './compensation-sections';
+import { PROFILE_SECTIONS } from './profile-tabs';
 
 test('the Pay Stubs label literal survives, because a build test scans for it', () => {
   // src/lib/penny/employee-guides.test.ts:167 does a plain substring scan of
@@ -28,4 +29,11 @@ test('resolveCompensationSection falls back to rates when nothing is available',
 
 test('sectionSlideDirection treats equal from/to as forward, matching the >= tie-break', () => {
   assert.equal(sectionSlideDirection('payStubs', 'payStubs'), 1);
+});
+
+test('COMPENSATION_SECTIONS agrees with PROFILE_SECTIONS.compensation — one canonical list, not two', () => {
+  // COMPENSATION_SECTIONS is typed on the flat SectionId union, so a Skills
+  // section (e.g. 'commendations') would type-check here without this. This
+  // is the only thing tying the two lists together.
+  assert.deepEqual(COMPENSATION_SECTIONS.map((s) => s.id), [...PROFILE_SECTIONS.compensation]);
 });

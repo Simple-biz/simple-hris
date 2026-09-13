@@ -12,6 +12,7 @@ import {
   policiesForDeptKey,
   departmentsWithPublishedPolicies,
 } from "@/lib/policies/team-policies";
+import { COMPENSATION_SECTIONS } from "@/lib/employee/compensation-sections";
 
 /**
  * Two jobs here.
@@ -164,9 +165,9 @@ test("the leave guide's labels exist in EmployeeLeaves.tsx", () => {
 
 test("the document guides' labels exist in the profile + documents source", () => {
   const profile = read("src/components/employee/EmployeeProfile.tsx");
-  for (const tab of ["Pay Stubs", "Request Documents"]) {
-    assert.ok(profile.includes(`label: '${tab}'`), `Profile tab "${tab}" no longer exists`);
-  }
+  assert.ok(profile.includes(`label: 'Request Documents'`), 'Profile tab "Request Documents" no longer exists');
+  // Pay Stubs is a Compensation SECTION now, not a tab — follow the label to where it lives.
+  assert.ok(COMPENSATION_SECTIONS.some((s) => s.label === 'Pay Stubs'), 'the Pay Stubs section label is gone');
 
   const types = read("src/lib/documents/types.ts");
   const coe = guideFor(buildEmployeeGuides(WITH_PAGE), "coe");

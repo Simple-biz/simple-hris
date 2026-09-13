@@ -15,7 +15,12 @@ import type { SectionId } from '@/lib/employee/profile-tabs';
  * Catalog's own pill row, so they are quieter by design: a bordered segmented
  * control, not a second row of pills") — it is a bordered segmented control, not
  * a second underline. Two underlines would read as competing rows rather than a
- * hierarchy.
+ * hierarchy. `PayProcessorsTab` is an accounting surface though, so its container
+ * chrome (`border-zinc-200`, `dark:bg-zinc-950`) is off-tone here — the container
+ * border/background instead follow the employee portal's own segmented control at
+ * `EmployeeLeaves.tsx:300`. The active pill's `bg-orange-100 dark:bg-blue-950/60`
+ * is already house-correct for this portal (same pairing at
+ * `EmployeeTeam.tsx:357,966,1141`) and is kept as-is.
  *
  * Its own `LayoutGroup` id and its own `layoutId` are load-bearing: reusing
  * either of the outer strip's would let Framer animate the outer underline down
@@ -44,7 +49,7 @@ export function CompensationSections({
       <div
         role="tablist"
         aria-label="Compensation sections"
-        className="mb-5 inline-flex rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-950"
+        className="mb-5 inline-flex items-center gap-1 rounded-lg border border-orange-100/80 bg-white/70 p-1 shadow-sm backdrop-blur dark:border-blue-950/60 dark:bg-zinc-900/60"
       >
         {COMPENSATION_SECTIONS.map((s) => {
           const isActive = active === s.id;
