@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cleanErrorMessage } from '@/lib/clean-error-message';
 import {
   Loader2,
@@ -38,8 +38,13 @@ import EmployeeAvatar from './EmployeeAvatar';
 import EmployeeIdCard from './EmployeeIdCard';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
-import type { ProfileTarget, SectionId, TabId } from '@/lib/employee/profile-tabs';
-import { PROFILE_SECTIONS, profileSectionDomId } from '@/lib/employee/profile-tabs';
+import {
+  PROFILE_SECTIONS,
+  profileSectionDomId,
+  type ProfileTarget,
+  type SectionId,
+  type TabId,
+} from '@/lib/employee/profile-tabs';
 import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
 import { buildIdCard } from '@/lib/employee/id-card';
 import { downloadIdCardPng, IdCardRenderError } from '@/lib/employee/id-card-render';
@@ -714,31 +719,44 @@ export default function EmployeeProfile({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusTarget?.nonce]);
 
-  // Scrolls the pending section into view once its pane can render the
-  // anchor. Declared here (not "near the pane") for the same reason as
-  // pendingSection itself — see the comment above it.
+  // Scrolls the pending section into view — as a REF, not an effect, and
+  // declared here (not "near the pane") for the same reason as pendingSection
+  // itself, see the comment above it.
   //
-  // Keyed on the nonce AND on pendingSection, not on pendingSection alone:
-  // the focus effect above sets activeTab/pendingSection inside the SAME
-  // effect flush this effect fires in, so on the render where the nonce
-  // first changes, this effect still observes the PRE-update pendingSection
-  // (React doesn't apply that sibling effect's setState until the next
-  // render) and would exit on the `!pendingSection` guard with nothing left
-  // to ever re-trigger it if nonce were the only key. Keeping pendingSection
-  // in the deps lets the effect fire again once that later render lands.
-  // Every pane that owns a slice of PROFILE_SECTIONS repeats this same
-  // effect, each guarded to its own sections, so a section meant for another
-  // pane (e.g. Compensation's 'payout') is left untouched for that pane to
-  // consume and clear instead.
-  useEffect(() => {
-    if (!pendingSection) return;
+  // A nonce/pendingSection-keyed effect provably cannot do this safely: the
+  // tab content is `<AnimatePresence mode="wait"><motion.div key={activeTab}>`,
+  // and with mode="wait" ONLY the exiting pane renders until its ~220ms exit
+  // finishes — the incoming pane's anchors do not exist in the DOM yet. The
+  // same gap opens on a cold mount, where `ProfileSkeleton` stands in for
+  // every pane until `loading` flips false. An effect fires on that gap,
+  // finds no element, and — if it clears pendingSection unconditionally, as
+  // an earlier draft of this did — throws the target away with no anchor to
+  // retry against once the real pane mounts 220ms later. The first nudge
+  // from any other tab would never scroll.
+  //
+  // A callback ref sidesteps the gap entirely: React only invokes it with a
+  // real node once that node actually mounts, so it cannot fire into empty
+  // air. Attached to BOTH anchors below, it also re-fires when pendingSection
+  // changes while an anchor is already mounted (a changed useCallback identity
+  // makes React detach and reattach the ref), which is what makes the same
+  // nudge fired twice from an already-open pane move it again. It clears
+  // pendingSection ONLY on an actual match — never speculatively — so a
+  // section meant for another pane (e.g. Compensation's 'payout') is left
+  // untouched for that pane's own copy of this ref to consume.
+  //
+  // `prefers-reduced-motion` follows the house pattern at
+  // EmployeeDashboard.tsx's `revealPabCalendar`.
+  const scrollToSectionAnchor = useCallback((node: HTMLDivElement | null) => {
+    if (!node || !pendingSection) return;
     if (!PROFILE_SECTIONS.skills.includes(pendingSection)) return;
-    document
-      .getElementById(profileSectionDomId(pendingSection))
-      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (node.id !== profileSectionDomId(pendingSection)) return;
+    const reduceMotion =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    node.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
     setPendingSection(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusTarget?.nonce, pendingSection]);
+  }, [pendingSection]);
 
   // ── Resignation (Profile → Resign) ──
   // The employee's own current/last resignation request. A `pending` one shows a
@@ -2176,7 +2194,11 @@ export default function EmployeeProfile({
 
               {activeTab === 'skills' && (
                 <>
-                  <div id={profileSectionDomId('skillSets')} className="scroll-mt-24">
+                  <div
+                    id={profileSectionDomId('skillSets')}
+                    ref={scrollToSectionAnchor}
+                    className="scroll-mt-24"
+                  >
                     <Section
                       title="Skill Sets"
                       description="Visible to your teammates as read-only on the My Team page"
@@ -2310,8 +2332,12 @@ export default function EmployeeProfile({
                     </Section>
                   </div>
 
-                  <div id={profileSectionDomId('commendations')} className="scroll-mt-24">
-                    <div className="mb-3 px-1">
+                  <div
+                    id={profileSectionDomId('commendations')}
+                    ref={scrollToSectionAnchor}
+                    className="scroll-mt-24"
+                  >
+                    <div className="mb-3 px-5 sm:px-6">
                       <h3 className="text-[14px] font-semibold tracking-[-0.01em] text-zinc-900 dark:text-zinc-100">
                         Commendations
                       </h3>
