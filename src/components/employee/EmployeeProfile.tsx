@@ -39,6 +39,7 @@ import EmployeeIdCard from './EmployeeIdCard';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import type { ProfileTarget, SectionId, TabId } from '@/lib/employee/profile-tabs';
+import { PROFILE_SECTIONS, profileSectionDomId } from '@/lib/employee/profile-tabs';
 import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
 import { buildIdCard } from '@/lib/employee/id-card';
 import { downloadIdCardPng, IdCardRenderError } from '@/lib/employee/id-card-render';
@@ -712,6 +713,32 @@ export default function EmployeeProfile({
     if (focusTarget.section) setPendingSection(focusTarget.section);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusTarget?.nonce]);
+
+  // Scrolls the pending section into view once its pane can render the
+  // anchor. Declared here (not "near the pane") for the same reason as
+  // pendingSection itself — see the comment above it.
+  //
+  // Keyed on the nonce AND on pendingSection, not on pendingSection alone:
+  // the focus effect above sets activeTab/pendingSection inside the SAME
+  // effect flush this effect fires in, so on the render where the nonce
+  // first changes, this effect still observes the PRE-update pendingSection
+  // (React doesn't apply that sibling effect's setState until the next
+  // render) and would exit on the `!pendingSection` guard with nothing left
+  // to ever re-trigger it if nonce were the only key. Keeping pendingSection
+  // in the deps lets the effect fire again once that later render lands.
+  // Every pane that owns a slice of PROFILE_SECTIONS repeats this same
+  // effect, each guarded to its own sections, so a section meant for another
+  // pane (e.g. Compensation's 'payout') is left untouched for that pane to
+  // consume and clear instead.
+  useEffect(() => {
+    if (!pendingSection) return;
+    if (!PROFILE_SECTIONS.skills.includes(pendingSection)) return;
+    document
+      .getElementById(profileSectionDomId(pendingSection))
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setPendingSection(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusTarget?.nonce, pendingSection]);
 
   // ── Resignation (Profile → Resign) ──
   // The employee's own current/last resignation request. A `pending` one shows a
@@ -2147,183 +2174,191 @@ export default function EmployeeProfile({
                 </>
               )}
 
-              {activeTab === 'skillsets' && (
+              {activeTab === 'skills' && (
                 <>
-                  <Section
-                    title="Skill Sets"
-                    description="Visible to your teammates as read-only on the My Team page"
-                    action={
-                      <div className="flex flex-wrap items-center justify-end gap-1.5">
-                        {skillSetSavedAt && !skillSetDirty && (
-                          <span className="hidden items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 sm:flex">
-                            <CheckCircle className="h-3 w-3" />
-                            Saved {skillSetSavedAt}
-                          </span>
-                        )}
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={skillSetSaving || skillSetLoading || !skillSetDirty}
-                          onClick={saveSkillSet}
-                          className="h-8 gap-1.5 rounded-lg bg-orange-500 text-[12px] text-white hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400"
-                        >
-                          {skillSetSaving ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Save className="h-3 w-3" />
+                  <div id={profileSectionDomId('skillSets')} className="scroll-mt-24">
+                    <Section
+                      title="Skill Sets"
+                      description="Visible to your teammates as read-only on the My Team page"
+                      action={
+                        <div className="flex flex-wrap items-center justify-end gap-1.5">
+                          {skillSetSavedAt && !skillSetDirty && (
+                            <span className="hidden items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 sm:flex">
+                              <CheckCircle className="h-3 w-3" />
+                              Saved {skillSetSavedAt}
+                            </span>
                           )}
-                          Save
-                        </Button>
-                      </div>
-                    }
-                  >
-                    {skillSetLoading ? (
-                      <div className="flex items-center justify-center py-10">
-                        <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
-                      </div>
-                    ) : (
-                      <div className="space-y-5 py-4">
-                        {needsSkillSetSetup && (
-                          <SetupNudge
-                            title="Skill Sets needed"
-                            description="Add your role, current focus, skills, or strengths so teammates can understand how to collaborate with you."
-                          />
-                        )}
-                        <div className="block">
-                          <div className="flex items-baseline justify-between gap-2">
-                            <span className="text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
-                              Role / Title
-                            </span>
-                            <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                              {employmentDepartment
-                                ? `${employmentDepartment} roles · shown on your My Team card`
-                                : 'Shown on your My Team card'}
-                            </span>
-                          </div>
-                          <SmoothSelect
-                            aria-label="Role / Title"
-                            value={showCustomRoleInput ? '__custom__' : skillSet.role_title}
-                            onChange={(v) => {
-                              if (v === '__custom__') {
-                                setRoleTitleCustom(true);
-                                return;
-                              }
-                              setRoleTitleCustom(false);
-                              setSkillSet((s) => ({ ...s, role_title: v }));
-                            }}
-                            triggerClassName="mt-1.5 w-full"
-                            options={[
-                              { value: '', label: 'Select a title...' },
-                              ...roleTitleOptions.map((title) => ({ value: title, label: title })),
-                              { value: '__custom__', label: '✏️  Custom title…' },
-                            ]}
-                          />
-                          {showCustomRoleInput && (
-                            <input
-                              type="text"
-                              value={skillSet.role_title}
-                              onChange={(e) =>
-                                setSkillSet((s) => ({ ...s, role_title: e.target.value }))
-                              }
-                              placeholder="Type your own title…"
-                              maxLength={80}
-                              className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[13.5px] text-zinc-900 placeholder:text-zinc-400 transition-colors focus:border-orange-300 focus:outline-none focus:ring-1 focus:ring-orange-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-100 dark:focus:border-orange-500/40 dark:focus:ring-orange-500/20"
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={skillSetSaving || skillSetLoading || !skillSetDirty}
+                            onClick={saveSkillSet}
+                            className="h-8 gap-1.5 rounded-lg bg-orange-500 text-[12px] text-white hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400"
+                          >
+                            {skillSetSaving ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Save className="h-3 w-3" />
+                            )}
+                            Save
+                          </Button>
+                        </div>
+                      }
+                    >
+                      {skillSetLoading ? (
+                        <div className="flex items-center justify-center py-10">
+                          <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
+                        </div>
+                      ) : (
+                        <div className="space-y-5 py-4">
+                          {needsSkillSetSetup && (
+                            <SetupNudge
+                              title="Skill Sets needed"
+                              description="Add your role, current focus, skills, or strengths so teammates can understand how to collaborate with you."
                             />
                           )}
-                        </div>
-                        <ProjectsField
-                          projects={skillSet.projects}
-                          current={skillSet.current_projects}
-                          onChange={(projects, current_projects) =>
-                            setSkillSet((s) => ({ ...s, projects, current_projects }))
-                          }
-                        />
-                        <SkillSetField
-                          label="Skills"
-                          hint="Languages, tools, frameworks, methodologies"
-                          value={skillSet.skills}
-                          onChange={(v) => setSkillSet((s) => ({ ...s, skills: v }))}
-                          placeholder="e.g. TypeScript, React, Postgres, Figma, copywriting"
-                          rows={4}
-                        />
-                        <SkillSetField
-                          label="Strengths"
-                          hint="What you bring to the team"
-                          value={skillSet.strengths}
-                          onChange={(v) => setSkillSet((s) => ({ ...s, strengths: v }))}
-                          placeholder="e.g. Calm under pressure, fast feedback loops, customer empathy"
-                          rows={3}
-                        />
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[13px] font-medium text-zinc-700 dark:text-zinc-300">
-                              Member Notes
-                            </span>
-                            <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                              <Lock className="h-2.5 w-2.5" aria-hidden />
-                              Manager only
-                            </span>
+                          <div className="block">
+                            <div className="flex items-baseline justify-between gap-2">
+                              <span className="text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
+                                Role / Title
+                              </span>
+                              <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                                {employmentDepartment
+                                  ? `${employmentDepartment} roles · shown on your My Team card`
+                                  : 'Shown on your My Team card'}
+                              </span>
+                            </div>
+                            <SmoothSelect
+                              aria-label="Role / Title"
+                              value={showCustomRoleInput ? '__custom__' : skillSet.role_title}
+                              onChange={(v) => {
+                                if (v === '__custom__') {
+                                  setRoleTitleCustom(true);
+                                  return;
+                                }
+                                setRoleTitleCustom(false);
+                                setSkillSet((s) => ({ ...s, role_title: v }));
+                              }}
+                              triggerClassName="mt-1.5 w-full"
+                              options={[
+                                { value: '', label: 'Select a title...' },
+                                ...roleTitleOptions.map((title) => ({ value: title, label: title })),
+                                { value: '__custom__', label: '✏️  Custom title…' },
+                              ]}
+                            />
+                            {showCustomRoleInput && (
+                              <input
+                                type="text"
+                                value={skillSet.role_title}
+                                onChange={(e) =>
+                                  setSkillSet((s) => ({ ...s, role_title: e.target.value }))
+                                }
+                                placeholder="Type your own title…"
+                                maxLength={80}
+                                className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[13.5px] text-zinc-900 placeholder:text-zinc-400 transition-colors focus:border-orange-300 focus:outline-none focus:ring-1 focus:ring-orange-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-100 dark:focus:border-orange-500/40 dark:focus:ring-orange-500/20"
+                              />
+                            )}
                           </div>
-                          <p className="text-[11.5px] text-zinc-500 dark:text-zinc-500">
-                            Added by your manager — visible to you and your team.
-                          </p>
-                          {skillSet.member_notes?.trim() ? (
-                            <p className="whitespace-pre-wrap break-words rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-[13px] leading-relaxed text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-200">
-                              {skillSet.member_notes}
+                          <ProjectsField
+                            projects={skillSet.projects}
+                            current={skillSet.current_projects}
+                            onChange={(projects, current_projects) =>
+                              setSkillSet((s) => ({ ...s, projects, current_projects }))
+                            }
+                          />
+                          <SkillSetField
+                            label="Skills"
+                            hint="Languages, tools, frameworks, methodologies"
+                            value={skillSet.skills}
+                            onChange={(v) => setSkillSet((s) => ({ ...s, skills: v }))}
+                            placeholder="e.g. TypeScript, React, Postgres, Figma, copywriting"
+                            rows={4}
+                          />
+                          <SkillSetField
+                            label="Strengths"
+                            hint="What you bring to the team"
+                            value={skillSet.strengths}
+                            onChange={(v) => setSkillSet((s) => ({ ...s, strengths: v }))}
+                            placeholder="e.g. Calm under pressure, fast feedback loops, customer empathy"
+                            rows={3}
+                          />
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[13px] font-medium text-zinc-700 dark:text-zinc-300">
+                                Member Notes
+                              </span>
+                              <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                                <Lock className="h-2.5 w-2.5" aria-hidden />
+                                Manager only
+                              </span>
+                            </div>
+                            <p className="text-[11.5px] text-zinc-500 dark:text-zinc-500">
+                              Added by your manager — visible to you and your team.
                             </p>
-                          ) : (
-                            <p className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2.5 text-[12.5px] italic text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-600">
-                              No notes from your manager yet.
-                            </p>
-                          )}
+                            {skillSet.member_notes?.trim() ? (
+                              <p className="whitespace-pre-wrap break-words rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-[13px] leading-relaxed text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-200">
+                                {skillSet.member_notes}
+                              </p>
+                            ) : (
+                              <p className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2.5 text-[12.5px] italic text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-600">
+                                No notes from your manager yet.
+                              </p>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    )}
-                  </Section>
-                </>
-              )}
+                      )}
+                    </Section>
+                  </div>
 
-              {activeTab === 'reports' && (
-                <>
-                  {commendationsLoading ? (
-                    <div className="flex items-center justify-center py-20">
-                      <div className="h-5 w-5 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" />
-                    </div>
-                  ) : commendations.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-zinc-200/80 bg-white py-20 text-center dark:border-zinc-800/80 dark:bg-zinc-950/40">
-                      <span className="text-3xl" style={{ filter: 'hue-rotate(120deg)' }} aria-hidden>🚩</span>
-                      <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">No commendations yet</p>
-                      <p className="max-w-xs text-xs text-zinc-400 dark:text-zinc-600">
-                        When your manager shares a commendation with you it will appear here.
+                  <div id={profileSectionDomId('commendations')} className="scroll-mt-24">
+                    <div className="mb-3 px-1">
+                      <h3 className="text-[14px] font-semibold tracking-[-0.01em] text-zinc-900 dark:text-zinc-100">
+                        Commendations
+                      </h3>
+                      <p className="mt-0.5 text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                        Shared by your manager
                       </p>
                     </div>
-                  ) : (
-                    <div className="flex flex-col gap-3 pt-2">
-                      {commendations.map((c) => (
-                        <div key={c.id} className="flex items-start gap-3 rounded-2xl border border-zinc-200/80 bg-white px-5 py-4 dark:border-zinc-800/80 dark:bg-zinc-950/40">
-                          <span
-                            className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-base ring-1 ring-emerald-200/60 dark:bg-emerald-900/20 dark:ring-emerald-700/30"
-                            style={{ filter: 'hue-rotate(120deg)' }}
-                            aria-hidden
-                          >
-                            🚩
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            {c.note ? (
-                              <p className="text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">&ldquo;{c.note}&rdquo;</p>
-                            ) : (
-                              <p className="text-sm italic text-zinc-400 dark:text-zinc-600">No note left.</p>
-                            )}
-                            <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-600">
-                              From <span className="font-medium text-zinc-500 dark:text-zinc-400">{c.awarded_by}</span>
-                              {' · '}
-                              {new Date(c.awarded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                            </p>
+                    {commendationsLoading ? (
+                      <div className="flex items-center justify-center py-20">
+                        <div className="h-5 w-5 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" />
+                      </div>
+                    ) : commendations.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-zinc-200/80 bg-white py-20 text-center dark:border-zinc-800/80 dark:bg-zinc-950/40">
+                        <span className="text-3xl" style={{ filter: 'hue-rotate(120deg)' }} aria-hidden>🚩</span>
+                        <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">No commendations yet</p>
+                        <p className="max-w-xs text-xs text-zinc-400 dark:text-zinc-600">
+                          When your manager shares a commendation with you it will appear here.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-3 pt-2">
+                        {commendations.map((c) => (
+                          <div key={c.id} className="flex items-start gap-3 rounded-2xl border border-zinc-200/80 bg-white px-5 py-4 dark:border-zinc-800/80 dark:bg-zinc-950/40">
+                            <span
+                              className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-base ring-1 ring-emerald-200/60 dark:bg-emerald-900/20 dark:ring-emerald-700/30"
+                              style={{ filter: 'hue-rotate(120deg)' }}
+                              aria-hidden
+                            >
+                              🚩
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              {c.note ? (
+                                <p className="text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">&ldquo;{c.note}&rdquo;</p>
+                              ) : (
+                                <p className="text-sm italic text-zinc-400 dark:text-zinc-600">No note left.</p>
+                              )}
+                              <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-600">
+                                From <span className="font-medium text-zinc-500 dark:text-zinc-400">{c.awarded_by}</span>
+                                {' · '}
+                                {new Date(c.awarded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                              </p>
+                            </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
 
