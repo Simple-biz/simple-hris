@@ -171,8 +171,28 @@ function expiryLabel(seconds: number | null): string | null {
  */
 function ImageViewer({ state, onClose }: { state: NonNullable<OpenState>; onClose: () => void }) {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  /**
+   * True only while the acquire sequence is playing. It gates the two emissive
+   * layers so they UNMOUNT when they are done rather than sitting over the
+   * picture for the rest of the session.
+   */
+  const [acquiring, setAcquiring] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
+
+  // The reveal is driven by DECODE, not by mount. Playing it on mount meant the
+  // raster opened on an empty plate and the picture simply appeared afterwards —
+  // the signature gesture firing over nothing.
+  const onDecoded = useCallback(() => {
+    setStatus('ready');
+    setAcquiring(true);
+  }, []);
+
+  useEffect(() => {
+    if (!acquiring) return;
+    const id = window.setTimeout(() => setAcquiring(false), 480);
+    return () => window.clearTimeout(id);
+  }, [acquiring]);
 
   const ref = parseAttachmentRef(state.ref);
   const source = ref ? ATTACHMENT_SOURCES[ref.source] : null;
@@ -223,19 +243,62 @@ function ImageViewer({ state, onClose }: { state: NonNullable<OpenState>; onClos
     // `penny-console` carries the scoped selection colour and scrollbar into
     // the portal, which sits outside the console's own subtree.
     <div className="penny-console fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-6">
+      {/* ── The entrance ───────────────────────────────────────────────────
+          A third CRT gesture, deliberately distinct from the console's other
+          two: the power-on opens from the centre over 700ms, the `/clear` erase
+          sweeps top-to-bottom in 300ms, and this one ACQUIRES — the frame
+          arrives, a raster line strikes across it, and the picture opens out of
+          that line. Reusing the power-on here would read as the same event
+          happening twice.
+
+          Transforms, opacity and clip-path only, so the whole sequence stays on
+          the compositor. The emissive layers unmount when they finish, the way
+          `CrtPowerOn` does, so nothing costs anything once the picture is up. */}
       <style>{`
         @keyframes pennyViewerIn {
-          from { opacity: 0; transform: translateY(6px) scale(0.985); }
+          from { opacity: 0; transform: translateY(8px) scale(0.965); }
           to   { opacity: 1; transform: none; }
         }
+        /* The picture opens out of the raster line, with a touch of horizontal
+           overscan settling inward — what a tube does when the deflection
+           coils catch up. */
         @keyframes pennyPlateIn {
-          from { clip-path: inset(46% 0 46% 0); opacity: 0.55; }
-          to   { clip-path: inset(0 0 0 0); opacity: 1; }
+          0%   { clip-path: inset(50% 0 50% 0); transform: scaleX(1.03); }
+          55%  { clip-path: inset(0 0 0 0);     transform: scaleX(1.008); }
+          100% { clip-path: inset(0 0 0 0);     transform: scaleX(1); }
         }
-        .penny-viewer { animation: pennyViewerIn 260ms cubic-bezier(0.16,1,0.3,1) both; }
-        .penny-plate  { animation: pennyPlateIn 320ms cubic-bezier(0.16,1,0.3,1) both; }
+        /* Before vertical deflection there is one bright streak across the
+           middle. It is the signature of the gesture, so it leads. */
+        @keyframes pennyRaster {
+          0%   { opacity: 0;   transform: scaleX(0.18); }
+          16%  { opacity: 1;   transform: scaleX(1.02); }
+          52%  { opacity: 0.5; transform: scaleX(1); }
+          100% { opacity: 0;   transform: scaleX(1); }
+        }
+        /* Phosphor bloom as the high voltage overshoots. It rises and falls
+           ONCE and peaks well below a white-out — a repeating flash at panel
+           size would be a photosensitivity hazard. */
+        @keyframes pennyBloom {
+          0%   { opacity: 0; }
+          24%  { opacity: 0.30; }
+          100% { opacity: 0; }
+        }
+        @keyframes pennyTick {
+          from { opacity: 0; transform: scale(0.5); }
+          to   { opacity: 1; transform: none; }
+        }
+        .penny-viewer { animation: pennyViewerIn 220ms cubic-bezier(0.16,1,0.3,1) both; }
+        .penny-plate  { animation: pennyPlateIn 440ms cubic-bezier(0.16,1,0.3,1) both; }
+        .penny-raster { animation: pennyRaster 360ms ease-out both; }
+        .penny-bloom  { animation: pennyBloom 440ms ease-out both; }
+        .penny-tick   { animation: pennyTick 260ms cubic-bezier(0.16,1,0.3,1) both; }
         @media (prefers-reduced-motion: reduce) {
-          .penny-viewer, .penny-plate { animation: none; }
+          .penny-viewer, .penny-plate, .penny-tick { animation: none; }
+          /* The emissive layers are REMOVED, not stilled. \`animation: none\`
+             would leave the bloom and the streak parked at full opacity — a
+             white wash over the picture that never clears, which is worse than
+             the motion it was meant to spare. */
+          .penny-acquire { display: none; }
         }
       `}</style>
 
@@ -338,16 +401,37 @@ function ImageViewer({ state, onClose }: { state: NonNullable<OpenState>; onClos
             <img
               src={state.url}
               alt={state.label}
-              onLoad={() => setStatus('ready')}
+              onLoad={onDecoded}
               onError={() => setStatus('error')}
-              className={`penny-plate max-h-[calc(100vh-16rem)] min-w-0 max-w-full object-contain ${
-                status === 'ready' ? 'opacity-100' : 'opacity-0'
+              className={`max-h-[calc(100vh-16rem)] min-w-0 max-w-full object-contain ${
+                status === 'ready' ? 'penny-plate opacity-100' : 'opacity-0'
               }`}
             />
           )}
 
+          {/* The light half of the gesture. A dark panel cannot fake light, so
+              the streak and the bloom are their own layers — and they unmount
+              the moment the sequence ends. */}
+          {acquiring && (
+            <span
+              aria-hidden
+              className="penny-acquire pointer-events-none absolute inset-0 overflow-hidden"
+            >
+              <span className="penny-bloom absolute inset-0 bg-[#ffd9b8]" />
+              <span
+                className="penny-raster absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-white"
+                style={{
+                  boxShadow:
+                    '0 0 8px 2px rgba(255,255,255,0.8), 0 0 28px 8px rgba(255,122,26,0.55)',
+                }}
+              />
+            </span>
+          )}
+
           {/* Framing reticle — four corner ticks, the one authored decoration.
-              Hidden while the plate is empty so it never frames nothing. */}
+              Hidden while the plate is empty so it never frames nothing, and
+              snapping in LAST so the sequence finishes on the frame closing
+              around the picture. */}
           {status === 'ready' && <Reticle />}
         </div>
 
@@ -388,13 +472,21 @@ function ImageViewer({ state, onClose }: { state: NonNullable<OpenState>; onClos
 
 /** Four corner ticks framing the plate. Drawn, not a border. */
 function Reticle() {
-  const common = 'pointer-events-none absolute h-4 w-4 border-[#ff7a1a]/55';
+  const common = 'penny-tick pointer-events-none absolute h-4 w-4 border-[#ff7a1a]/55';
+  // Corners land clockwise from the top-left, after the picture has opened. The
+  // stagger is short and capped — four ticks reading as one frame closing, not
+  // as a list animating in.
+  const corners = [
+    { at: 'left-2.5 top-2.5 border-l border-t sm:left-3 sm:top-3', delay: 300 },
+    { at: 'right-2.5 top-2.5 border-r border-t sm:right-3 sm:top-3', delay: 340 },
+    { at: 'bottom-2.5 right-2.5 border-b border-r sm:bottom-3 sm:right-3', delay: 380 },
+    { at: 'bottom-2.5 left-2.5 border-b border-l sm:bottom-3 sm:left-3', delay: 420 },
+  ];
   return (
     <span aria-hidden>
-      <span className={`${common} left-2.5 top-2.5 border-l border-t sm:left-3 sm:top-3`} />
-      <span className={`${common} right-2.5 top-2.5 border-r border-t sm:right-3 sm:top-3`} />
-      <span className={`${common} bottom-2.5 left-2.5 border-b border-l sm:bottom-3 sm:left-3`} />
-      <span className={`${common} bottom-2.5 right-2.5 border-b border-r sm:bottom-3 sm:right-3`} />
+      {corners.map((c) => (
+        <span key={c.at} className={`${common} ${c.at}`} style={{ animationDelay: `${c.delay}ms` }} />
+      ))}
     </span>
   );
 }

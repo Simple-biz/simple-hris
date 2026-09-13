@@ -370,6 +370,42 @@ on the black mat around the plate.
   16px bracket at a 10/12px inset). An image that reached under the brackets
   turned them into four stray ticks instead of a frame — visible in the first
   inspection pass, fixed by giving them their own gutter.
+
+#### The acquire (the entrance)
+
+A **third** CRT gesture, deliberately distinct from the other two: the power-on
+opens from the centre over 700ms, the `/clear` erase sweeps top-to-bottom in
+300ms, and this one *acquires*. Reusing the power-on here would read as the same
+event happening twice.
+
+1. **The frame arrives** — 220ms, `scale(0.965)` + 8px rise, exponential
+   ease-out. Fast, because a window appears rather than floats in.
+2. **A raster line strikes across the plate** — the bright streak a tube shows
+   before vertical deflection catches up. It leads, because it is the signature
+   of the gesture.
+3. **The picture opens out of that line** — `clip-path: inset(50% 0 50% 0)` to
+   `inset(0)` over 440ms, with a `scaleX(1.03)` overscan settling inward.
+4. **The reticle snaps to the corners last**, clockwise from top-left on a
+   40ms stagger, so the sequence finishes on the frame closing around the
+   picture.
+
+Three rules it is built to:
+
+- **It is driven by DECODE, not by mount.** Playing it on mount meant the raster
+  opened on an empty plate and the picture simply appeared afterwards — the
+  signature gesture firing over nothing. `onLoad` sets `ready`, and the reveal
+  class is applied only then.
+- **The emissive layers unmount when they finish** (`acquiring`, cleared on a
+  480ms timer), the way `CrtPowerOn` does — a dark panel cannot fake light, so
+  the streak and the bloom must be their own layers, and neither should outlive
+  the moment it exists for.
+- **Under reduced motion the emissive layers are REMOVED, not stilled.**
+  `animation: none` would leave the bloom and the streak parked at full opacity
+  — a permanent white wash over the picture, which is worse than the motion it
+  was meant to spare. `.penny-acquire { display: none }` handles it in CSS, so
+  there is no JS path that can get it wrong. The bloom also rises and falls once
+  and peaks well below a white-out, for the same photosensitivity reason the
+  power-on's does.
 - **It never narrates work that isn't happening** — the console's founding rule
   applies here too. The status word is the real state of the `<img>` (`loading`
   → `open` / `failed`); there is no "decrypting" and no fake progress bar.
