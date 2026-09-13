@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { payoutRailView } from './payout-rail-view';
+import { payoutRailView, payoutRailFromStored } from './payout-rail-view';
 import { PROCESSOR_OPTIONS } from '@/lib/employee-payment-processors';
 
 test('wires: a card, and no wallet fields', () => {
@@ -60,6 +60,59 @@ test('the Kolan rail is keyed on its stored id, not its label', () => {
 test('no rail: never invents wallet fields, and only cards a real bank name', () => {
   assert.deepEqual(payoutRailView(null, true), { showBankCard: true, showWalletFields: false });
   assert.deepEqual(payoutRailView(null, false), { showBankCard: false, showWalletFields: false });
+});
+
+/**
+ * THE `'ach'` TRAP.
+ *
+ * `employee_ids.preferred_processor` also carries `'ach'`, the contractor-invoice
+ * US rail, which is NOT a `ProcessorId`. People's read view feeds this gate a raw
+ * string, and the tempting narrowing — "not a ProcessorId, therefore null" —
+ * routes `'ach'` straight into the unassigned branch, where the bank-name
+ * fallback hands the contractor a bank card for an account their money does not
+ * travel to. Unassigned and unrecognised are different states and must stay so.
+ */
+test("a stored rail that is not ours is unrecognised, never unassigned", () => {
+  assert.equal(payoutRailFromStored('ach'), 'unrecognised');
+  assert.deepEqual(
+    payoutRailView(payoutRailFromStored('ach'), true),
+    { showBankCard: false, showWalletFields: false },
+    'an ach payee with a bank name on file must still get no card',
+  );
+  // Contrast: genuinely nothing stored DOES reach the fallback.
+  assert.equal(payoutRailFromStored(''), null);
+  assert.equal(payoutRailFromStored(null), null);
+  assert.equal(payoutRailFromStored(undefined), null);
+  assert.deepEqual(payoutRailView(payoutRailFromStored(''), true), {
+    showBankCard: true,
+    showWalletFields: false,
+  });
+});
+
+test('a stored rail is trimmed and case-folded before it is recognised', () => {
+  assert.equal(payoutRailFromStored('  Wires  '), 'wires');
+  assert.equal(payoutRailFromStored('HURUPAY'), 'hurupay');
+  assert.equal(payoutRailFromStored('   '), null, 'whitespace only is nothing stored');
+});
+
+/**
+ * The exact table People's read view used to spell out inline, re-derived through
+ * the shared gate. These are the four comparisons that were untyped string
+ * equality at `PeopleTab.tsx` with no test behind them.
+ */
+test('every stored spelling People could hold lands where it did before', () => {
+  const showBank = (raw: string, hasBank: boolean) =>
+    payoutRailView(payoutRailFromStored(raw), hasBank).showBankCard;
+
+  assert.equal(showBank('wires', false), true);
+  assert.equal(showBank('jeeves', false), true);
+  assert.equal(showBank('wise', false), true);
+  assert.equal(showBank('hurupay', true), false);
+  assert.equal(showBank('wepay', true), false);
+  assert.equal(showBank('higlobe', true), false);
+  assert.equal(showBank('ach', true), false);
+  assert.equal(showBank('', true), true);
+  assert.equal(showBank('', false), false);
 });
 
 /**

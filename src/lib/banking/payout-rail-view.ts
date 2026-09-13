@@ -1,4 +1,4 @@
-import type { ProcessorId } from '@/lib/employee-payment-processors';
+import { isProcessorId, type ProcessorId } from '@/lib/employee-payment-processors';
 
 /**
  * What a payout READ view shows for a given rail.
@@ -12,6 +12,38 @@ export type PayoutRailView = {
   /** Print the wallet identity fields (Kolan/WePay/HiGlobe email, Jeeves phone). */
   showWalletFields: boolean;
 };
+
+/**
+ * What `payoutRailView` is told about the rail. THREE states, not two, and the
+ * difference between the last two is what stops a contractor being handed a
+ * bank card:
+ *
+ * - a `ProcessorId` — the rail resolved, and the table below decides;
+ * - `null` — **nothing is stored on any tier.** Genuinely unassigned, so the
+ *   bank-name fallback applies: if there is an account on the paid slot, print
+ *   it;
+ * - `'unrecognised'` — **something IS stored and it is not one of ours.** The
+ *   fallback must NOT apply. `employee_ids.preferred_processor` also carries
+ *   `'ach'`, the contractor-invoice US rail (see `ContractorProfile.tsx`), and
+ *   an `'ach'` payee is not paid into the employee bank slot. Collapsing this
+ *   into `null` would card them.
+ */
+export type PayoutRailInput = ProcessorId | 'unrecognised' | null;
+
+/**
+ * Narrow a RAW stored rail string to what `payoutRailView` accepts, preserving
+ * the distinction a plain `isProcessorId` check destroys: empty means
+ * unassigned, a non-empty value we do not know means unrecognised.
+ *
+ * For callers that already hold a typed `ProcessorId | null` (the employee
+ * profile holds the server-resolved `walletRailEffective`) this is unnecessary —
+ * that type is already assignable to `PayoutRailInput`.
+ */
+export function payoutRailFromStored(raw: string | null | undefined): PayoutRailInput {
+  const stored = (raw ?? '').trim().toLowerCase();
+  if (!stored) return null;
+  return isProcessorId(stored) ? stored : 'unrecognised';
+}
 
 /**
  * Which payee gets a card, and who keeps their wallet fields.
@@ -50,11 +82,20 @@ export type PayoutRailView = {
  * wallet-shaped is ever invented, and a card appears only when there is an
  * actual bank name on the PAID slot to print. 1,124 people have no bank there:
  * they correctly get neither.
+ *
+ * **An unrecognised rail fails closed harder** — see `PayoutRailInput`. It is
+ * not "unassigned", so it does not reach the bank-name fallback.
  */
 export function payoutRailView(
-  rail: ProcessorId | null,
+  rail: PayoutRailInput,
   hasPaidSlotBankName: boolean,
 ): PayoutRailView {
+  // Written as its own branch rather than left to fall through the equality
+  // chain below, which would also return all-false today. The fallback is one
+  // careless edit away from `(rail !== 'wires' && hasPaidSlotBankName)`, and the
+  // day it is, an 'ach' contractor silently gets a bank card. Pinned by test.
+  if (rail === 'unrecognised') return { showBankCard: false, showWalletFields: false };
+
   return {
     showBankCard:
       rail === 'wires' ||

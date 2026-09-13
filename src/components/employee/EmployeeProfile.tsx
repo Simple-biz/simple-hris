@@ -414,8 +414,16 @@ function PayoutReadView({
       )}
       {showBankCard && (
         <div>
-          {!!routing && routing !== bank.swift && (
-            <Row label="Routing number" value={routing} mono />
+          {/* Prints whenever it is not simply repeating the card's SWIFT —
+              INCLUDING when it is absent. `!routing ||` is the half that matters:
+              the card face omits its SWIFT slot entirely when there is no wire
+              code (`{swift && …}`, shared with Accounting and left alone), so
+              without this a wire-rail payee with neither value gets blank space
+              where a wire code belongs, and `isPayoutComplete` does not require
+              SWIFT either — `needsPayoutSetup` would not fire to tell them.
+              Matches People's own condition verbatim. */}
+          {(!routing || routing !== bank.swift) && (
+            <Row label="Routing number" value={routing} mono showEmpty />
           )}
           <Row label="Address" value={row?.full_address} showEmpty />
         </div>

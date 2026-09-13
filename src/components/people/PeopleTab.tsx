@@ -40,6 +40,7 @@ import {
 } from '@/lib/people/people-roster-export';
 import { BankCard } from '@/components/banking/bank-card';
 import { pickPreferredBank } from '@/lib/banking/preferred-bank';
+import { payoutRailView, payoutRailFromStored } from '@/lib/banking/payout-rail-view';
 import { cn } from '@/lib/utils';
 
 type Currency = 'PHP' | 'USD' | 'COP';
@@ -3216,7 +3217,21 @@ function PersonDetailDialog({
   // wires, jeeves AND wise all carry full bank/wire details (jeeves also shows
   // phone). Wise payees are paid into their bank account, not a Wise handle —
   // same field set as wires (mirrors the Readiness Set-bank editor).
-  const showBank = proc === 'wires' || proc === 'jeeves' || proc === 'wise' || (!proc && !!prefBank.name);
+  //
+  // The four comparisons that used to be spelled out here now come from the ONE
+  // shared gate, which the employee's own Payout section reads too — see
+  // src/lib/banking/payout-rail-view.ts. They agreed while both were hand-written
+  // (the same `resolveEffectivePayoutProcessor` feeds both), but only one of them
+  // had a test, so the drift would have been invisible: a seventh processor would
+  // turn that test red, someone would patch the helper, and THIS pane would go on
+  // showing that payee an empty panel.
+  //
+  // `proc` is a RAW string and can legitimately hold 'ach', the contractor-invoice
+  // rail, which is not a ProcessorId. `payoutRailFromStored` is what keeps that
+  // distinct from "nothing stored": casting it, or narrowing it to null, would
+  // drop 'ach' into the bank-name fallback and print a contractor a bank card.
+  const railView = payoutRailView(payoutRailFromStored(proc), !!prefBank.name);
+  const showBank = railView.showBankCard;
 
   // The editor's field visibility follows the same processor rules as the
   // read view, but driven by the FORM's processor so switching the payment
@@ -3793,7 +3808,7 @@ function PersonDetailDialog({
                     HiGlobe, WePay or Jeeves payee there is no card, and the wallet
                     address IS their payout record — collapsing it would leave the
                     panel showing nothing but a button. */}
-                {(proc === 'hurupay' || proc === 'wepay' || proc === 'higlobe' || proc === 'jeeves') && (
+                {railView.showWalletFields && (
                   <dl className="grid grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
                     {proc === 'hurupay' && <Field label="Kolan email" value={banking?.hurupay_email ?? null} />}
                     {proc === 'wepay' && <Field label="WePay email" value={banking?.wepay_email ?? null} />}
