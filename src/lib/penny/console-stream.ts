@@ -44,15 +44,39 @@ export interface PennyToolFrame {
   name: string;
 }
 
-export type PennyFrame = PennyToolFrame;
+/**
+ * One file the answer refers to, so the console can offer to open it.
+ *
+ * Keys are one letter because the whole frame must clear `MAX_FRAME_CHARS` even
+ * when it straddles a chunk boundary (a held frame past that is DISCARDED, not
+ * flushed). `r` is an opaque record ref — never a URL and never a storage path;
+ * see `attachment-refs.ts` for why the credential is minted at open time.
+ */
+export interface PennyAttachmentFrame {
+  t: 'att';
+  /** `<source>~<record id>[~<slot>]`. */
+  r: string;
+  /** One-line operator label. */
+  l: string;
+  /** How the console should present it. */
+  k: 'image' | 'pdf' | 'file';
+}
+
+export type PennyFrame = PennyToolFrame | PennyAttachmentFrame;
 
 export function encodeFrame(frame: PennyFrame): string {
   return `${FRAME_DELIM}${JSON.stringify(frame)}${FRAME_DELIM}`;
 }
 
+const ATTACHMENT_KINDS = new Set(['image', 'pdf', 'file']);
+
 /**
  * Unknown frame types resolve to null and are dropped, so a newer route can add
  * a frame kind without breaking an older client.
+ *
+ * Every field is checked on the way in. A half-valid frame is discarded whole
+ * rather than admitted with a hole in it, because the consumers read these
+ * fields without re-checking them.
  */
 function decodeFrame(raw: string): PennyFrame | null {
   let parsed: unknown;
@@ -63,9 +87,20 @@ function decodeFrame(raw: string): PennyFrame | null {
   }
   if (!parsed || typeof parsed !== 'object') return null;
   const obj = parsed as Record<string, unknown>;
-  if (obj.t !== 'tool') return null;
-  if (typeof obj.name !== 'string' || !obj.name) return null;
-  return { t: 'tool', name: obj.name };
+
+  if (obj.t === 'tool') {
+    if (typeof obj.name !== 'string' || !obj.name) return null;
+    return { t: 'tool', name: obj.name };
+  }
+
+  if (obj.t === 'att') {
+    if (typeof obj.r !== 'string' || !obj.r) return null;
+    if (typeof obj.l !== 'string' || !obj.l) return null;
+    if (typeof obj.k !== 'string' || !ATTACHMENT_KINDS.has(obj.k)) return null;
+    return { t: 'att', r: obj.r, l: obj.l, k: obj.k as PennyAttachmentFrame['k'] };
+  }
+
+  return null;
 }
 
 export interface SplitResult {

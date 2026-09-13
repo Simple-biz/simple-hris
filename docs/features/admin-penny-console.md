@@ -20,9 +20,12 @@ the employee bubble are unchanged — `ceo-assistant.md` and
 | Orange Penny mark in the nav | `src/components/admin/AdminSidebar.tsx` |
 | Engine: `claude-opus-5` + refusal fallback | `app/api/admin/penny-chat/route.ts` |
 | `/clear` command matcher | `src/lib/penny/console-commands.ts` |
+| Openable attachments (2026-09-12) | `src/lib/penny/attachment-refs.ts`, `app/api/admin/penny-chat/attachment/route.ts`, `src/components/ceo/penny-attachments.tsx` |
+| Table parsing + column analysis (2026-09-12) | `src/lib/penny/chat-tables.ts` |
 
-Tests: `src/lib/penny/console-stream.test.ts` (12), `console-phases.test.ts` (10),
-`console-commands.test.ts` (7).
+Tests: `src/lib/penny/console-stream.test.ts` (16), `console-phases.test.ts` (10),
+`console-commands.test.ts` (7), `attachment-refs.test.ts` (11),
+`chat-tables.test.ts` (14).
 
 ## The console never claims work that isn't happening
 
@@ -65,7 +68,7 @@ source-scans `CEO_TOOLS` and `ADMIN_TOOLS` (both files are `server-only`, so
 they cannot be imported in a node test — the employee tool guards solved this
 the same way) and asserts:
 
-- every one of the 21 tools has a phrase — an unmapped tool would print a raw
+- every one of the 22 tools has a phrase — an unmapped tool would print a raw
   `get_bank_change_history` to an admin mid-answer;
 - no phrase is the fallback, compared against the exact fallback **output**, not
   its prefix ("Running the diagnostic probes" is correct copy for
@@ -266,6 +269,120 @@ being visible, not by being memorised.
 - The **Keys** block lists bindings the surface actually implements. "What can I
   press here" is the same question as "what can I type", so they live together.
 
+## Opening the files on record (2026-09-12)
+
+Kane: *"Should be able to open images like ID and Bank cards."* Penny can now
+list every file this HRIS holds about one person and hand the admin an openable
+thumbnail for each.
+
+**The first thing this feature had to say is what is NOT there.** The HRIS stores
+**no photograph of a government ID and no photograph of a bank card**. The two
+things called "ID card" and "Bank card" here are *renderings*: the employee ID
+badge is generated from roster data (`employee-id-card.md`) and the People bank
+card draws the payout record (`people-bank-card.md`). Both the tool description
+and the system prompt say so in as many words, because the failure mode is Penny
+offering the nearest lookalike as if it were the thing asked for.
+
+| Piece | File |
+|---|---|
+| Source registry, ref encode/parse, per-source TTL — pure | `src/lib/penny/attachment-refs.ts` (+ `.test.ts`, 11) |
+| The tool — `list_employee_attachments` | `src/lib/anthropic/admin-tools.ts` |
+| `att` frame kind | `src/lib/penny/console-stream.ts` |
+| Frame emission | `app/api/admin/penny-chat/route.ts` → `attachmentFrames()` |
+| Open + audit | `app/api/admin/penny-chat/attachment/route.ts` |
+| Chips + lightbox | `src/components/ceo/penny-attachments.tsx` |
+
+### What it covers
+
+Six sources, every one of them a file keyed to an individual: time-adjustment
+evidence screenshots, MESA receipts, requested documents **and their signed
+copies separately**, the W-8BEN and the IP assignment from onboarding, and the
+profile photo. Deliberately **not** `onboarding_pay_plans`, whose PDFs are keyed
+by (department, country) — a pay plan is a departmental document a person merely
+received, and filing it under their name would assert a personal record that
+does not exist.
+
+### Nothing new is exposed
+
+The gate is `requireAdminSession()`, and **every one of these files was already
+openable by the same caller**: `requireFeatureAccess` admin-bypasses
+(`authorize-feature.ts:56`) and `authorizeEmailAccess` elevated-bypasses. What
+*is* new is the trail — the surfaces this borrows from write **no audit row at
+all** on a download, so opening through Penny is the better-recorded path, not a
+quieter one. `admin_assistant.attachment_opened` names the actor (via
+`auditFrom`, never a body), the record, and whose it is.
+
+### A ref names a record, never a path
+
+A frame carries `<source>~<record id>[~<slot>]`. The open endpoint looks the row
+up by id and reads the storage path **off the row**; the bucket comes from a
+fixed table keyed by the source. There is no string from a request that reaches
+`storage.from(...)`, so traversal is unrepresentable rather than filtered.
+`parseAttachmentRef` refuses everything unexpected — an unknown source, a
+malformed id, a slot on an unslotted source, a slot out of range — because a ref
+is machine-written and a human never types one.
+
+Two things this shape is protecting:
+
+- **`MAX_FRAME_CHARS` (512) is not raised.** A Supabase signed URL is ~300
+  characters; putting one in a frame would have pushed it over, and a too-long
+  frame that straddles a network chunk is *discarded*, so the thumbnail would
+  vanish with no error. A test builds the worst-case frame and asserts it fits.
+- **The credential is minted at OPEN time, not at list time.** Listing twelve
+  files would otherwise mint twelve live bearer links for files nobody asked to
+  see, and start every clock at once. Clicking is also what gets audited, so the
+  log and what the admin actually looked at are the same set.
+
+**Per-source TTLs stay different and must not be standardised.** W-8BEN 300s
+("short TTL since this is a sensitive tax document"), IP assignment 600s,
+receipts / evidence / documents 3600s. The number lives in `ATTACHMENT_SOURCES`
+precisely so the route cannot pick one; a test pins that the tax document never
+outlives an ordinary document link, and that a source with a bucket but no
+lifetime (or the reverse) is a misconfiguration rather than a default.
+
+### Why the images never touch the Markdown parser
+
+`chat-markdown.ts` bans links and images, and that ban is **intact**: the files
+ride the same NUL frame channel as the progress lines, which `useCeoChat` strips
+upstream of the transcript — so the biz-report fence, the pipe tables and the
+Markdown pass never see one. Adding a second frame kind also closed a latent
+bug: the hook read `f.name` off *every* frame, which would have stamped
+`{ name: undefined }` into the step log the moment a second kind existed.
+Frames are now narrowed by `t` before anything reads their fields, and a
+half-valid `att` frame is dropped whole rather than admitted with a hole in it.
+
+The strip renders **outside** the `m.content` guard, because the frames arrive
+before the sentence describing them and a reply that found something must never
+render as nothing.
+
+## Table structuring (2026-09-12)
+
+Kane: *"Improve table structuring as well please."* The parser moved out of
+`ceo-chat-message.tsx` into **`src/lib/penny/chat-tables.ts`** (+ `.test.ts`,
+14) for the same reason `chat-markdown.ts` is split: the test runner only walks
+`src/**/*.test.ts` and can never reach a `.tsx`.
+
+Three fixes, one of them a real bug:
+
+- **No cell is dropped any more.** The renderer iterated the *header* array, so
+  a row with more cells than the header — an unescaped `|` inside a note — lost
+  its tail silently, out of an audit table. `buildTable` sizes the grid to the
+  longest row and pads the header, so an unexpected cell shows up as an extra
+  column instead of disappearing.
+- **A column of figures is right-aligned even when the model forgot `|---:|`**,
+  which it does constantly. A *declared* alignment always wins — inference never
+  overrides an instruction. A date is not a quantity (`2026-09-12` stays left),
+  and one `-` (Penny's own empty marker) does not flip a column of pesos back.
+- **Only long text columns may wrap.** Every cell used to be `whitespace-nowrap`,
+  so one long note turned the whole table into a horizontal scroll. A numeric
+  column *never* wraps however long — breaking a figure across two lines is
+  worse than the scroll it saves. `tabular-nums` is now applied per column
+  rather than blanket, since tabular figures widen prose without helping it.
+
+`parseInline` still runs on headers and cells **only** (the count is pinned by
+`chat-markdown.test.ts`), and the no-raw-HTML guard now scans `chat-tables.ts`
+and `penny-attachments.tsx` too.
+
 ## Gotchas
 
 - `BizAiTab` is still the CEO's tab. Do not "unify" it with the console; the
@@ -278,3 +395,9 @@ being visible, not by being memorised.
 - Adding a console command means adding its `CONSOLE_COMMAND_HINTS` row: a
   command with no hint row is invisible, and a hint row for a command that does
   not resolve fails the test.
+- Adding an attachment source means a row in `ATTACHMENT_SOURCES` **and** a
+  `case` in the open endpoint's `resolve()`. A bucket without a TTL (or the
+  reverse) fails `attachment-refs.test.ts` rather than falling back to a default.
+- Never put a signed URL in a frame, and never raise `MAX_FRAME_CHARS` to make
+  one fit. The ref exists so the frame stays small and the credential stays
+  short-lived.

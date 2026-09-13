@@ -20,7 +20,10 @@
  * escape hatch by name, which is why neither mentions it even in a comment.
  * Links, images, nested lists and block quotes are out of scope: a chat bubble
  * 380px wide does not need them, and every construct added here is one more
- * thing that can mis-fire on a half-streamed token.
+ * thing that can mis-fire on a half-streamed token. That ban is INTACT after
+ * the Admin console gained openable attachments (2026-09-12): those arrive on
+ * the NUL frame channel, which `useCeoChat` strips upstream of the transcript,
+ * so no image ever reaches this parser. A picture in a reply is still text.
  *
  * Pipe tables and the ```biz-report fence are NOT handled here. They are parsed
  * upstream in `ceo-chat-message.tsx` and must stay that way — this module only

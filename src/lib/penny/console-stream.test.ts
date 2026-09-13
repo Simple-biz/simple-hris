@@ -64,7 +64,12 @@ test("several frames in one chunk keep arrival order", () => {
     "Her rate went to ₱180 on 08-11.";
   const out = splitFrames(stream);
   assert.equal(out.text, "Her rate went to ₱180 on 08-11.");
-  assert.deepEqual(out.frames.map((f) => f.name), ["find_employee", "get_rate_history"]);
+  // Narrowed by `t` before reading `name` — the union has a second member now,
+  // and this is exactly the read that would have silently yielded `undefined`.
+  assert.deepEqual(
+    out.frames.filter((f) => f.t === "tool").map((f) => f.name),
+    ["find_employee", "get_rate_history"],
+  );
 });
 
 /**
@@ -145,4 +150,61 @@ test("encodeFrame wraps compact JSON in the delimiter", () => {
     // unforgeable by a reply. Spelled without a literal control character.
     assert.equal(FRAME_DELIM, String.fromCharCode(0));
     assert.equal(FRAME_DELIM.length, 1);
+});
+
+/* ── Attachment frames ───────────────────────────────────────────────────── */
+
+/**
+ * A second frame kind is the thing the "unknown types are ignored" rule was
+ * written for. These pin that adding one did not change what a TEXT stream
+ * looks like, and that a half-valid frame is dropped whole rather than admitted
+ * with a hole in it — the consumers read `r`/`l`/`k` without re-checking them.
+ */
+test("an attachment frame survives every chunk boundary, text untouched", () => {
+  const frame = encodeFrame({ t: "att", r: "receipt~0f9c2a44-1f6e-4d5b-9a1f-2c3d4e5f6a7b", l: "MESA receipt", k: "image" });
+  const stream = `Found one file.${frame} It is a receipt.`;
+  for (let cut = 0; cut <= stream.length; cut++) {
+    const out = drain([stream.slice(0, cut), stream.slice(cut)]);
+    assert.equal(out.text, "Found one file. It is a receipt.", `split at ${cut}`);
+    assert.equal(out.frames.length, 1, `split at ${cut}`);
+    assert.deepEqual(out.frames[0], {
+      t: "att",
+      r: "receipt~0f9c2a44-1f6e-4d5b-9a1f-2c3d4e5f6a7b",
+      l: "MESA receipt",
+      k: "image",
+    });
+  }
+});
+
+test("tool and attachment frames interleave in arrival order", () => {
+  const out = drain([
+    encodeFrame({ t: "tool", name: "list_employee_attachments" }),
+    "Two files.",
+    encodeFrame({ t: "att", r: "photo~jane@simple.biz", l: "Profile photo", k: "image" }),
+    encodeFrame({ t: "att", r: "w8ben~0f9c2a44-1f6e-4d5b-9a1f-2c3d4e5f6a7b", l: "W-8BEN", k: "pdf" }),
+  ]);
+  assert.equal(out.text, "Two files.");
+  assert.deepEqual(out.frames.map((f) => f.t), ["tool", "att", "att"]);
+});
+
+test("a malformed attachment frame is dropped whole, never half-built", () => {
+  const bad = [
+    '{"t":"att","r":"photo~jane@simple.biz","l":"Photo"}',      // no kind
+    '{"t":"att","r":"photo~jane@simple.biz","k":"image"}',      // no label
+    '{"t":"att","l":"Photo","k":"image"}',                      // no ref
+    '{"t":"att","r":"photo~jane@simple.biz","l":"","k":"image"}', // empty label
+    '{"t":"att","r":"photo~jane@simple.biz","l":"Photo","k":"video"}', // unknown kind
+    '{"t":"att","r":12,"l":"Photo","k":"image"}',               // wrong type
+  ];
+  for (const raw of bad) {
+    const out = drain([`before${FRAME_DELIM}${raw}${FRAME_DELIM}after`]);
+    assert.equal(out.frames.length, 0, `accepted a malformed frame: ${raw}`);
+    assert.equal(out.text, "beforeafter", "and it must not leak into the transcript");
+  }
+});
+
+test("an unknown frame type is still ignored, and takes no text with it", () => {
+  const out = drain([`a${FRAME_DELIM}{"t":"future","x":1}${FRAME_DELIM}b`]);
+  assert.equal(out.frames.length, 0);
+  assert.equal(out.text, "ab");
 });

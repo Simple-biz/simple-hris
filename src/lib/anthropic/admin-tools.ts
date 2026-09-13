@@ -11,6 +11,16 @@ import { getAppSetting } from '@/lib/supabase/app-settings';
 import { listHubstaffUploads } from '@/lib/supabase/hubstaff-hours-db';
 import { buildPaymentsLive } from '@/lib/ceo/payments-live';
 import { getPeopleBankHistory, type BankChangeEntry } from '@/lib/supabase/bank-update-history';
+import { getProfilePhotoUrlForEmail } from '@/lib/supabase/employee-profile-photo';
+import {
+  ATTACHMENT_SOURCE_IDS,
+  ATTACHMENT_SOURCES,
+  attachmentKind,
+  encodeAttachmentRef,
+  frameSafeLabel,
+  isAttachmentSourceId,
+  type AttachmentSourceId,
+} from '@/lib/penny/attachment-refs';
 import {
   AUDIT_SURFACES,
   describeAuditFamilies,
@@ -186,6 +196,31 @@ export const ADMIN_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'list_employee_attachments',
+    description:
+      "Every FILE this HRIS holds about one person — the images and documents themselves, not a description of them. Use for \"show me X's ID\", \"open her bank card\", \"what did he attach\", \"pull up the receipt/screenshot/W-8BEN/signed contract\", or any question whose real answer is a picture. Covers: time-adjustment evidence screenshots, MESA receipts, requested documents and their signed copies, the W-8BEN and IP-assignment from onboarding, and their profile photo. Returns one entry per file with what it is, which record it came from and when it was added. The console shows these to the admin as openable thumbnails automatically — so DESCRIBE what you found in words (how many, what kinds, from when) and do NOT print the `ref` values, which are internal. This HRIS stores no government-ID photograph and no photograph of a bank card: if that is what was asked for, say so plainly and name what IS on file instead of offering the nearest lookalike.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        work_email: {
+          type: 'string',
+          description: "The person's work email, exactly as returned by find_employee.",
+        },
+        source: {
+          type: 'string',
+          enum: ['all', ...ATTACHMENT_SOURCE_IDS],
+          description:
+            'Narrow to one kind of file. Defaults to "all". evidence = time-adjustment screenshots, receipt = MESA receipts, document / document_signed = Accounting document requests, w8ben / ip_assignment = onboarding paperwork, photo = profile photo.',
+        },
+        limit: {
+          type: 'integer',
+          description: 'Maximum files to return, newest first. 1–40, default 20.',
+        },
+      },
+      required: ['work_email'],
+    },
+  },
+  {
     name: 'get_change_timeline',
     description:
       'ONE person\'s COMPLETE change history, merged across every source into a single chronological timeline. This is the right tool for open-ended "what changed for X", "what happened to X", "everything on X", "walk me through X\'s record", or when you need to correlate changes of different kinds (e.g. a bank edit followed by a payment). Merges: audit-log events from EVERY action family that names them (bank, rate, name/email/profile, transfers, roles + feature permissions, onboarding/offboarding, payroll notes, wizard bonus/addition edits, payments, paystubs, MESA, disputes, tickets, leave), the dedicated bank_update_history trail, employee_rate_history, and Payroll Notes rows about them. Unlike the per-topic tools this searches the person\'s WHOLE history, not just a recent window. Use kind to narrow to one category and since/until for a date range. Requires an email (work or personal; get it from find_employee).',
@@ -279,6 +314,8 @@ export async function runAdminTool(
         return await getChangeTimeline(input);
       case 'get_payroll_notes_history':
         return await getPayrollNotesHistory(input);
+      case 'list_employee_attachments':
+        return await listEmployeeAttachments(input);
       case 'list_audit_actions':
         return await listAuditActions(str(input.contains));
       default:
@@ -1421,6 +1458,335 @@ async function listAuditActions(containsRaw: string): Promise<ToolResult> {
     actions,
     field_notes:
       'The live catalogue, read from the table itself — trust it over any action name mentioned in a tool description. Pass any of these (or a dot-prefix of one) to search_audit_log as action_prefix. first_seen marks when that event type started being recorded: an action absent before its first_seen was simply not audited yet, which is NOT evidence the underlying thing never happened.',
+  };
+}
+
+// ── attachments ──────────────────────────────────────────────────────────────
+
+/**
+ * Rows scanned per source before the coverage note starts warning. Each query
+ * is already narrowed to one person's aliases, so this is a depth bound, not a
+ * page size — and when a source comes back full, `attachment_coverage` says so
+ * rather than letting a truncated list read as a complete one (the recurring
+ * bug this tool family exists to avoid — see penny-audit-log-visibility).
+ */
+const ATTACHMENT_SCAN_LIMIT = 60;
+
+type AttachmentEntry = {
+  /** Opaque record reference the console trades for a URL at open time. */
+  ref: string;
+  source: AttachmentSourceId;
+  /** What the file IS, in an operator's words. Doubles as the strip label. */
+  what: string;
+  file_name: string | null;
+  kind: ReturnType<typeof attachmentKind>;
+  /** When it was attached, ISO. Null when the source records no timestamp. */
+  at: string | null;
+  /** The address the record is keyed on — not always the work email. */
+  subject_email: string;
+  /** Where an admin would otherwise open it from. */
+  open_from: string;
+};
+
+/** `col.ilike.a,col.ilike.b` — aliases are shape-guarded inside `aliasesFor`. */
+function orIlike(column: string, aliases: string[]): string {
+  return aliases.map((a) => `${column}.ilike.${escapeLike(a)}`).join(',');
+}
+
+/**
+ * Every file this HRIS holds about one person, across the five buckets that key
+ * something to an individual.
+ *
+ * Deliberately NOT included: `onboarding_pay_plans`, whose PDFs are keyed by
+ * (department, country). A pay plan is a departmental document that a person
+ * merely received — listing it under their name would assert a personal record
+ * that does not exist.
+ */
+async function listEmployeeAttachments(input: Record<string, unknown>): Promise<ToolResult> {
+  const workEmail = normEmail(str(input.work_email));
+  if (!workEmail || !isSafeEmail(workEmail)) {
+    return { error: 'A valid work_email is required (get it from find_employee).' };
+  }
+
+  const wantRaw = str(input.source) || 'all';
+  if (wantRaw !== 'all' && !isAttachmentSourceId(wantRaw)) {
+    return { error: `Unknown source "${wantRaw}". Use one of: all, ${ATTACHMENT_SOURCE_IDS.join(', ')}.` };
+  }
+  const wants = (s: AttachmentSourceId) => wantRaw === 'all' || wantRaw === s;
+  const limit = clampInt(input.limit, 1, 40, 20);
+
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase service-role client is not configured.' };
+
+  const aliases = [...(await aliasesFor(workEmail))];
+  const entries: AttachmentEntry[] = [];
+  const scanned: string[] = [];
+  const failed: string[] = [];
+
+  // 1. Time-adjustment evidence — one record can carry several screenshots.
+  if (wants('evidence')) {
+    try {
+      const { data, error } = await supabase
+        .from('time_adjustment_requests')
+        .select('id, work_email, adjust_date, reason, image_paths, created_at')
+        .or(orIlike('work_email', aliases))
+        .order('created_at', { ascending: false })
+        .limit(ATTACHMENT_SCAN_LIMIT);
+      if (error) throw new Error(error.message);
+      const rows = (data ?? []) as Array<{
+        id: string;
+        work_email: string;
+        adjust_date: string | null;
+        reason: string | null;
+        image_paths: string[] | null;
+        created_at: string;
+      }>;
+      if (rows.length >= ATTACHMENT_SCAN_LIMIT) scanned.push('evidence');
+      for (const r of rows) {
+        const paths = (r.image_paths ?? []).filter(Boolean);
+        paths.forEach((p, slot) => {
+          entries.push({
+            ref: encodeAttachmentRef({ source: 'evidence', id: r.id, slot }),
+            source: 'evidence',
+            what: frameSafeLabel(
+              `Evidence for ${r.adjust_date ?? 'a time adjustment'}${paths.length > 1 ? ` (${slot + 1} of ${paths.length})` : ''}`,
+              'Time-adjustment evidence',
+            ),
+            file_name: p.split('/').pop() ?? null,
+            kind: attachmentKind(null, p),
+            at: r.created_at ?? null,
+            subject_email: r.work_email,
+            open_from: `${ATTACHMENT_SOURCES.evidence.origin}${r.reason ? ` — ${r.reason}` : ''}`,
+          });
+        });
+      }
+    } catch (e) {
+      failed.push(`evidence (${e instanceof Error ? e.message : String(e)})`);
+    }
+  }
+
+  // 2. MESA receipts.
+  if (wants('receipt')) {
+    try {
+      const { data, error } = await supabase
+        .from('mesa_request_receipts')
+        .select('id, work_email, file_name, mime_type, uploaded_at, slot')
+        .or(orIlike('work_email', aliases))
+        .order('uploaded_at', { ascending: false })
+        .limit(ATTACHMENT_SCAN_LIMIT);
+      if (error) throw new Error(error.message);
+      const rows = (data ?? []) as Array<{
+        id: string;
+        work_email: string;
+        file_name: string | null;
+        mime_type: string | null;
+        uploaded_at: string | null;
+        slot: number | null;
+      }>;
+      if (rows.length >= ATTACHMENT_SCAN_LIMIT) scanned.push('receipt');
+      for (const r of rows) {
+        entries.push({
+          ref: encodeAttachmentRef({ source: 'receipt', id: r.id, slot: 0 }),
+          source: 'receipt',
+          what: frameSafeLabel(`MESA receipt${r.slot ? ` ${r.slot}` : ''}`, 'MESA receipt'),
+          file_name: r.file_name,
+          kind: attachmentKind(r.mime_type, r.file_name),
+          at: r.uploaded_at,
+          subject_email: r.work_email,
+          open_from: ATTACHMENT_SOURCES.receipt.origin,
+        });
+      }
+    } catch (e) {
+      failed.push(`receipt (${e instanceof Error ? e.message : String(e)})`);
+    }
+  }
+
+  // 3. Document requests — the uploaded original and the stamped copy are two
+  //    separate files, and an admin asking "the signed one" means the second.
+  if (wants('document') || wants('document_signed')) {
+    try {
+      const { data, error } = await supabase
+        .from('document_requests')
+        .select(
+          'id, employee_email, document_type, period_label, file_path, file_name, signed_file_path, signed_at, requested_at',
+        )
+        .or(orIlike('employee_email', aliases))
+        .order('requested_at', { ascending: false })
+        .limit(ATTACHMENT_SCAN_LIMIT);
+      if (error) throw new Error(error.message);
+      const rows = (data ?? []) as Array<{
+        id: string;
+        employee_email: string;
+        document_type: string | null;
+        period_label: string | null;
+        file_path: string | null;
+        file_name: string | null;
+        signed_file_path: string | null;
+        signed_at: string | null;
+        requested_at: string;
+      }>;
+      if (rows.length >= ATTACHMENT_SCAN_LIMIT) scanned.push('document');
+      for (const r of rows) {
+        const title = [r.document_type ?? 'document', r.period_label].filter(Boolean).join(' · ');
+        if (wants('document') && r.file_path) {
+          entries.push({
+            ref: encodeAttachmentRef({ source: 'document', id: r.id, slot: 0 }),
+            source: 'document',
+            what: frameSafeLabel(title, 'Requested document'),
+            file_name: r.file_name,
+            kind: attachmentKind(null, r.file_name ?? r.file_path),
+            at: r.requested_at,
+            subject_email: r.employee_email,
+            open_from: ATTACHMENT_SOURCES.document.origin,
+          });
+        }
+        if (wants('document_signed') && r.signed_file_path) {
+          entries.push({
+            ref: encodeAttachmentRef({ source: 'document_signed', id: r.id, slot: 0 }),
+            source: 'document_signed',
+            what: frameSafeLabel(`${title} (signed)`, 'Signed document'),
+            file_name: r.file_name,
+            kind: attachmentKind(null, r.signed_file_path),
+            at: r.signed_at ?? r.requested_at,
+            subject_email: r.employee_email,
+            open_from: ATTACHMENT_SOURCES.document_signed.origin,
+          });
+        }
+      }
+    } catch (e) {
+      failed.push(`document (${e instanceof Error ? e.message : String(e)})`);
+    }
+  }
+
+  // 4. Onboarding paperwork. The submission predates the work email, so it is
+  //    matched on all three address columns it can be keyed on.
+  if (wants('w8ben') || wants('ip_assignment')) {
+    try {
+      const emailFilter = [
+        orIlike('work_email', aliases),
+        orIlike('invite_personal_email', aliases),
+        orIlike('email', aliases),
+      ].join(',');
+      const { data, error } = await supabase
+        .from('hr_onboarding_submissions')
+        .select(
+          'id, work_email, invite_personal_email, email, w8ben_file_path, w8ben_file_name, ip_assignment_file_path, ip_assignment_file_name, submitted_at, created_at',
+        )
+        .or(emailFilter)
+        .order('created_at', { ascending: false })
+        .limit(ATTACHMENT_SCAN_LIMIT);
+      if (error) throw new Error(error.message);
+      const rows = (data ?? []) as Array<{
+        id: string;
+        work_email: string | null;
+        invite_personal_email: string | null;
+        email: string | null;
+        w8ben_file_path: string | null;
+        w8ben_file_name: string | null;
+        ip_assignment_file_path: string | null;
+        ip_assignment_file_name: string | null;
+        submitted_at: string | null;
+        created_at: string;
+      }>;
+      for (const r of rows) {
+        const keyed = r.work_email ?? r.invite_personal_email ?? r.email ?? workEmail;
+        const when = r.submitted_at ?? r.created_at;
+        if (wants('w8ben') && r.w8ben_file_path) {
+          entries.push({
+            ref: encodeAttachmentRef({ source: 'w8ben', id: r.id, slot: 0 }),
+            source: 'w8ben',
+            what: 'W-8BEN tax form',
+            file_name: r.w8ben_file_name,
+            kind: attachmentKind(null, r.w8ben_file_name ?? r.w8ben_file_path),
+            at: when,
+            subject_email: keyed,
+            open_from: ATTACHMENT_SOURCES.w8ben.origin,
+          });
+        }
+        if (wants('ip_assignment') && r.ip_assignment_file_path) {
+          entries.push({
+            ref: encodeAttachmentRef({ source: 'ip_assignment', id: r.id, slot: 0 }),
+            source: 'ip_assignment',
+            what: 'IP assignment agreement',
+            file_name: r.ip_assignment_file_name,
+            kind: attachmentKind(null, r.ip_assignment_file_name ?? r.ip_assignment_file_path),
+            at: when,
+            subject_email: keyed,
+            open_from: ATTACHMENT_SOURCES.ip_assignment.origin,
+          });
+        }
+      }
+    } catch (e) {
+      failed.push(`onboarding (${e instanceof Error ? e.message : String(e)})`);
+    }
+  }
+
+  // 5. Profile photo. Already public, so nothing is signed for it.
+  let photoMissingBecauseOffboarded = false;
+  if (wants('photo')) {
+    try {
+      const url = await getProfilePhotoUrlForEmail(workEmail);
+      if (url) {
+        entries.push({
+          ref: encodeAttachmentRef({ source: 'photo', id: workEmail, slot: 0 }),
+          source: 'photo',
+          what: 'Profile photo',
+          file_name: null,
+          kind: 'image',
+          at: null,
+          subject_email: workEmail,
+          open_from: ATTACHMENT_SOURCES.photo.origin,
+        });
+      } else {
+        photoMissingBecauseOffboarded = true;
+      }
+    } catch (e) {
+      failed.push(`photo (${e instanceof Error ? e.message : String(e)})`);
+    }
+  }
+
+  // Newest first; an entry with no timestamp sorts last rather than winning by
+  // comparing as an empty string.
+  entries.sort((a, b) => (b.at ?? '').localeCompare(a.at ?? ''));
+  const shown = entries.slice(0, limit);
+
+  const coverage: string[] = [];
+  if (entries.length > shown.length) {
+    coverage.push(
+      `Showing the ${shown.length} most recent of ${entries.length} files found; ask for a specific source or a higher limit for the rest.`,
+    );
+  }
+  for (const s of scanned) {
+    coverage.push(
+      `The ${s} scan filled its ${ATTACHMENT_SCAN_LIMIT}-record window, so older ${s} files may exist beyond it — absence here is not proof of absence.`,
+    );
+  }
+  for (const f of failed) {
+    coverage.push(`Could not read ${f} — that source is unknown, not empty.`);
+  }
+  if (photoMissingBecauseOffboarded) {
+    coverage.push(
+      'No profile photo resolved. The photo lookup only reads ACTIVE master rows, so an off-boarded person returns none even if one was set.',
+    );
+  }
+
+  return {
+    work_email: workEmail,
+    aliases_searched: aliases,
+    source_filter: wantRaw,
+    count: shown.length,
+    total_found: entries.length,
+    attachments: shown,
+    attachment_coverage: coverage.length > 0 ? coverage : ['Complete for every source scanned.'],
+    field_notes: {
+      ref: 'Internal handle for the console, which renders these as openable thumbnails. Never print it in your answer.',
+      access:
+        'Nothing new is exposed: every one of these files is already openable by an admin from the surface named in open_from. The link itself is minted only when the admin clicks, and that open is audited.',
+      subject_email:
+        'The address the RECORD is keyed on. Onboarding paperwork predates the work email, so it is often a personal address — that is expected, not a mismatch.',
+      not_stored:
+        'This HRIS holds no photograph of a government ID and no photograph of a bank card. If asked for one, say it is not on file rather than offering a lookalike. The bank CARD on the People tab is a rendering of the payout record, not an image, and the employee ID card is a badge the HRIS generates from roster data.',
+    },
   };
 }
 

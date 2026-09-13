@@ -5,7 +5,8 @@ import { resolveAnthropicApiKey } from '@/lib/anthropic/api-key';
 import { CEO_TOOLS, runCeoTool } from '@/lib/anthropic/ceo-tools';
 import { ADMIN_TOOLS, isAdminTool, runAdminTool } from '@/lib/anthropic/admin-tools';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
-import { encodeFrame } from '@/lib/penny/console-stream';
+import { encodeFrame, type PennyAttachmentFrame } from '@/lib/penny/console-stream';
+import { frameSafeLabel, parseAttachmentRef } from '@/lib/penny/attachment-refs';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -124,6 +125,15 @@ const SYSTEM_PROMPT = [
   '  adjustment" → get_payroll_notes_history (it resolves each edit to the',
   '  worker, week and amount). For the current open checklist instead use',
   '  get_payroll_wizard_notes.',
+  '- "Show me X\'s ID / bank card / receipt / screenshot / signed contract", or',
+  '  any question whose real answer is a picture → list_employee_attachments.',
+  '  The console turns what it returns into openable thumbnails by itself, so',
+  '  SUMMARISE what you found (how many, what kinds, from when) and never print',
+  '  the ref values. Two traps worth knowing: this HRIS stores NO photograph of',
+  '  a government ID and NO photograph of a bank card — the "bank card" on the',
+  '  People tab is a rendering of the payout record and the employee ID card is',
+  '  a badge generated from roster data, neither is a file. Say that plainly',
+  '  instead of offering the nearest lookalike as if it were what was asked for.',
   '- Unsure what an action is called, or a search came back empty → ',
   '  list_audit_actions. It reads the live table, so prefer it over any action',
   '  name you remember.',
@@ -197,6 +207,36 @@ function buildSystemPrompt(now: Date): string {
 }
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
+
+/**
+ * Lift the openable files out of a tool result into attachment frames.
+ *
+ * Every field is re-validated here rather than trusted from the tool, and a
+ * malformed entry is SKIPPED rather than sent half-built: the client reads these
+ * fields without re-checking them, and a frame is cheap to drop but expensive to
+ * misread. Labels are already bounded by `frameSafeLabel`, which is what keeps
+ * the encoded frame inside `MAX_FRAME_CHARS` — proven in `attachment-refs.test.ts`,
+ * so nobody is ever tempted to raise that ceiling instead.
+ */
+function attachmentFrames(result: unknown): PennyAttachmentFrame[] {
+  if (!result || typeof result !== 'object') return [];
+  const list = (result as Record<string, unknown>).attachments;
+  if (!Array.isArray(list)) return [];
+
+  const frames: PennyAttachmentFrame[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const a = item as Record<string, unknown>;
+    // A ref that will not parse on the way back in is a dead thumbnail; refuse
+    // it here rather than letting the open endpoint 400 on a click.
+    if (typeof a.ref !== 'string' || !parseAttachmentRef(a.ref)) continue;
+    const what = typeof a.what === 'string' ? a.what : '';
+    const label = frameSafeLabel(what, 'Attachment');
+    const kind = a.kind === 'image' || a.kind === 'pdf' || a.kind === 'file' ? a.kind : 'file';
+    frames.push({ t: 'att', r: a.ref, l: label, k: kind });
+  }
+  return frames;
+}
 
 export async function POST(request: Request) {
   // 1. Authorize — admins only (stricter than the CEO route).
@@ -344,6 +384,15 @@ export async function POST(request: Request) {
               const result = isAdminTool(block.name)
                 ? await runAdminTool(block.name, input)
                 : await runCeoTool(block.name, input);
+              // Files the tool found travel on the SAME side channel as the
+              // progress lines, so the transcript never carries them and no
+              // downstream parser (the biz-report fence, the pipe tables, the
+              // Markdown pass) ever sees one. Each frame names a RECORD, never a
+              // URL — the credential is minted at open time by
+              // /api/admin/penny-chat/attachment, which audits the open.
+              for (const frame of attachmentFrames(result)) {
+                controller.enqueue(encoder.encode(encodeFrame(frame)));
+              }
               toolResults.push({
                 type: 'tool_result',
                 tool_use_id: block.id,

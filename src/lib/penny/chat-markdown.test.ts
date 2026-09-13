@@ -230,7 +230,11 @@ test("CLASS 6: neither the parser nor the renderer can emit HTML", () => {
   // becomes executable — and replies quote employee-supplied text back.
   for (const rel of [
     "src/lib/penny/chat-markdown.ts",
+    "src/lib/penny/chat-tables.ts",
     "src/components/ceo/ceo-chat-message.tsx",
+    // Attachment labels are server-sanitised single lines, and they are
+    // rendered as text for the same reason everything else here is.
+    "src/components/ceo/penny-attachments.tsx",
   ]) {
     const src = readFileSync(join(process.cwd(), rel), "utf8");
     assert.equal(

@@ -1,7 +1,11 @@
 'use client';
 
 import { useRef, useState, type RefObject } from 'react';
-import { splitFrames } from '@/lib/penny/console-stream';
+import {
+  splitFrames,
+  type PennyAttachmentFrame,
+  type PennyToolFrame,
+} from '@/lib/penny/console-stream';
 
 /**
  * Shared conversation state + streaming logic for every Penny surface. The CEO
@@ -24,6 +28,21 @@ export type CeoMsg = {
   key?: string;
   /** The viewer's rating of this reply, if any. */
   rating?: 'up' | 'down' | null;
+  /**
+   * Files the server named while answering THIS reply. Only the admin route
+   * emits attachment frames, so every other surface leaves this undefined.
+   */
+  attachments?: PennyAttachment[];
+};
+
+/**
+ * One file the answer refers to. `ref` is an opaque record reference, not a
+ * URL — the credential is minted only when the viewer actually opens it.
+ */
+export type PennyAttachment = {
+  ref: string;
+  label: string;
+  kind: 'image' | 'pdf' | 'file';
 };
 
 /**
@@ -133,10 +152,35 @@ export function useCeoChat(opts?: {
         const { text, frames, rest } = splitFrames(frameBuf + chunk);
         frameBuf = rest;
 
-        if (frames.length > 0) {
+        // Frames are narrowed by `t` before anything reads their fields. A
+        // blind `f.name` here would have started stamping `{ name: undefined }`
+        // into the step log the moment a second frame kind existed.
+        const toolFrames = frames.filter((f): f is PennyToolFrame => f.t === 'tool');
+        if (toolFrames.length > 0) {
           const at = Date.now();
-          setActivity((a) => [...a, ...frames.map((f) => ({ name: f.name, at }))]);
+          setActivity((a) => [...a, ...toolFrames.map((f) => ({ name: f.name, at }))]);
         }
+
+        const attFrames = frames.filter((f): f is PennyAttachmentFrame => f.t === 'att');
+        if (attFrames.length > 0) {
+          const added: PennyAttachment[] = attFrames.map((f) => ({
+            ref: f.r,
+            label: f.l,
+            kind: f.k,
+          }));
+          setMessages((m) =>
+            m.map((msg) => {
+              if (msg.id !== replyId) return msg;
+              const have = msg.attachments ?? [];
+              // The model can list the same file twice across turns; the strip
+              // is a set of files, not a log of mentions.
+              const seen = new Set(have.map((a) => a.ref));
+              const next = added.filter((a) => !seen.has(a.ref));
+              return next.length > 0 ? { ...msg, attachments: [...have, ...next] } : msg;
+            }),
+          );
+        }
+
         if (!text) continue;
 
         setMessages((m) =>

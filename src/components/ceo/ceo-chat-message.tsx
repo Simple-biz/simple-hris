@@ -10,6 +10,7 @@ import {
   type BlockNode,
   type InlineNode,
 } from '@/lib/penny/chat-markdown';
+import { buildTable, isSeparator, type Align, type ParsedTable } from '@/lib/penny/chat-tables';
 
 /**
  * Shared rendering for every Penny chat surface — the floating bubble
@@ -32,10 +33,9 @@ import {
  * JSON inside a report block is never reformatted.
  */
 
-type Align = 'left' | 'right' | 'center';
 type Segment =
   | { type: 'text'; text: string }
-  | { type: 'table'; headers: string[]; aligns: Align[]; rows: string[][] }
+  | { type: 'table'; table: ParsedTable }
   | { type: 'report'; report: BizReport | null; pending: boolean };
 
 const FENCE_OPEN = /^```\s*([\w-]*)\s*$/;
@@ -75,20 +75,9 @@ function parseReportBlock(jsonText: string): BizReport | null {
   return parseBizReport(jsonText) ?? parseBizReport(repairJson(jsonText));
 }
 
-/** Split a markdown table row into trimmed cells (tolerates missing outer pipes). */
-function splitRow(line: string): string[] {
-  let s = line.trim();
-  if (s.startsWith('|')) s = s.slice(1);
-  if (s.endsWith('|')) s = s.slice(0, -1);
-  return s.split('|').map((c) => c.trim());
-}
-
-const SEP_CELL = /^:?-{1,}:?$/;
-function isSeparator(line: string): boolean {
-  if (!line.includes('|') && !line.includes('-')) return false;
-  const cells = splitRow(line);
-  return cells.length > 0 && cells.every((c) => SEP_CELL.test(c.replace(/\s/g, '')));
-}
+// `splitRow`, `isSeparator` and the column analysis live in `chat-tables.ts`:
+// pure and React-free, so the test runner can reach them (it only walks
+// `src/**/*.test.ts`, never a .tsx).
 
 /**
  * Parse assistant text into plain-text and GitHub-style-table segments. Runs on
@@ -145,20 +134,13 @@ function parseSegments(input: string, streaming: boolean): Segment[] {
     const next = lines[i + 1];
     if (line.includes('|') && next != null && isSeparator(next)) {
       flush();
-      const headers = splitRow(line);
-      const aligns: Align[] = splitRow(next).map((c) => {
-        const t = c.trim();
-        const l = t.startsWith(':');
-        const r = t.endsWith(':');
-        return l && r ? 'center' : r ? 'right' : 'left';
-      });
-      const rows: string[][] = [];
+      const bodyLines: string[] = [];
       let j = i + 2;
       for (; j < lines.length; j++) {
         if (!lines[j].includes('|') || isSeparator(lines[j])) break;
-        rows.push(splitRow(lines[j]));
+        bodyLines.push(lines[j]);
       }
-      segs.push({ type: 'table', headers, aligns, rows });
+      segs.push({ type: 'table', table: buildTable(line, next, bodyLines) });
       i = j - 1;
     } else {
       buf.push(line);
@@ -305,7 +287,7 @@ const TONES: Record<ChatTone, {
       'border-fuchsia-200/80 bg-fuchsia-50/60 text-fuchsia-700 dark:border-fuchsia-900/40 dark:bg-fuchsia-950/20 dark:text-fuchsia-300',
     cutOff: 'text-zinc-400',
     th: 'border-b border-fuchsia-200/80 px-2.5 py-1.5 font-semibold text-zinc-600 dark:border-fuchsia-900/50 dark:text-zinc-300',
-    td: 'border-b border-zinc-100 px-2.5 py-1.5 text-zinc-700 dark:border-zinc-800 dark:text-zinc-200',
+    td: 'border-b border-zinc-100 px-2.5 py-1.5 align-top text-zinc-700 dark:border-zinc-800 dark:text-zinc-200',
     trOdd: 'odd:bg-fuchsia-50/40 dark:odd:bg-white/[0.03]',
     rateOn: 'bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/40 dark:text-fuchsia-300',
     rateOff: 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800',
@@ -317,9 +299,10 @@ const TONES: Record<ChatTone, {
     pending: 'border-[#ff7a1a]/30 bg-[#ff7a1a]/10 font-mono text-[#ffa24d]',
     cutOff: 'text-[#8a7f73]',
     // Offboarded's table language: mono, uppercase, letter-spaced headers over
-    // an orange rule; figures tabular so columns of pesos line up.
+    // an orange rule. `tabular-nums` is applied PER COLUMN by the renderer now,
+    // not blanket here — tabular figures widen prose without helping it.
     th: 'border-b border-[#ff7a1a]/30 px-2.5 py-2 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-[#ffa24d]',
-    td: 'border-b border-white/[0.06] px-2.5 py-1.5 font-mono text-[12px] tabular-nums text-[#e8ded2]',
+    td: 'border-b border-white/[0.06] px-2.5 py-1.5 align-top font-mono text-[12px] text-[#e8ded2]',
     trOdd: 'odd:bg-[#ff7a1a]/[0.04]',
     rateOn: 'bg-[#ff7a1a]/15 text-[#ffa24d]',
     rateOff: 'text-[#8a7f73] hover:bg-white/5 hover:text-[#ffa24d]',
@@ -372,33 +355,50 @@ export function AssistantContent({
           )
         ) : (
           <div key={idx} className="-mx-1 overflow-x-auto">
+            {/* `auto` rather than `fixed`: the columns are sized by their
+                content, so a two-column summary is not stretched into the same
+                grid as a six-column audit listing. */}
             <table className="w-full border-collapse text-[12.5px] leading-snug">
               <thead>
                 <tr>
-                  {seg.headers.map((h, k) => (
-                    <th
-                      key={k}
-                      className={`whitespace-nowrap ${t.th} ${ALIGN_CLASS[seg.aligns[k] ?? 'left']}`}
-                    >
-                      {/* Cells get the INLINE pass only — a cell is never a
-                          block, and running the block parser here would let a
-                          `-` cell parse as a bullet. */}
-                      {renderInline(parseInline(h), `${idx}.h${k}.`)}
-                    </th>
-                  ))}
+                  {seg.table.headers.map((h, k) => {
+                    const col = seg.table.columns[k];
+                    return (
+                      <th
+                        key={k}
+                        scope="col"
+                        className={`${col?.wrap ? 'break-words' : 'whitespace-nowrap'} ${t.th} ${
+                          ALIGN_CLASS[col?.align ?? 'left']
+                        }`}
+                      >
+                        {/* Cells get the INLINE pass only — a cell is never a
+                            block, and running the block parser here would let a
+                            `-` cell parse as a bullet. */}
+                        {renderInline(parseInline(h), `${idx}.h${k}.`)}
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
-                {seg.rows.map((row, ri) => (
+                {/* Iterating the ROW, not the header. The old code walked the
+                    header array, so a row with an extra cell — an unescaped `|`
+                    inside a note — lost its tail with nothing to show for it. */}
+                {seg.table.rows.map((row, ri) => (
                   <tr key={ri} className={t.trOdd}>
-                    {seg.headers.map((_, ci) => (
-                      <td
-                        key={ci}
-                        className={`whitespace-nowrap ${t.td} ${ALIGN_CLASS[seg.aligns[ci] ?? 'left']}`}
-                      >
-                        {renderInline(parseInline(row[ci] ?? ''), `${idx}.${ri}.${ci}.`)}
-                      </td>
-                    ))}
+                    {row.map((cell, ci) => {
+                      const col = seg.table.columns[ci];
+                      return (
+                        <td
+                          key={ci}
+                          className={`${col?.wrap ? 'break-words' : 'whitespace-nowrap'} ${
+                            col?.numeric ? 'tabular-nums' : ''
+                          } ${t.td} ${ALIGN_CLASS[col?.align ?? 'left']}`}
+                        >
+                          {renderInline(parseInline(cell), `${idx}.${ri}.${ci}.`)}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>

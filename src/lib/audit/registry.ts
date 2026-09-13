@@ -419,7 +419,7 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     match: 'admin_assistant.',
     surfaces: ['admin'],
     label: 'Admin Penny',
-    note: 'query — one event per tool-using turn, naming which tools ran, never the figures they returned',
+    note: 'query — one event per tool-using turn, naming which tools ran, never the figures they returned; attachment_opened — one event each time an admin opens a file Penny surfaced, naming the record and whose it is',
   },
   {
     match: 'ceo_assistant.',

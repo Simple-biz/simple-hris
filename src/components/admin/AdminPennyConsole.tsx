@@ -36,6 +36,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { ArrowUp, Check, ChevronRight, Loader2, Square, Terminal } from 'lucide-react';
 import { AssistantContent, MessageFeedback } from '@/components/ceo/ceo-chat-message';
+import PennyAttachments from '@/components/ceo/penny-attachments';
 import { useCeoChat } from '@/components/ceo/use-ceo-chat';
 import { resolveConsoleCommand, CONSOLE_COMMAND_HINTS } from '@/lib/penny/console-commands';
 import {
@@ -897,6 +898,15 @@ export default function AdminPennyConsole({
                         {isStreaming && <Caret className="ml-0.5" />}
                       </div>
                     ) : null}
+                    {/* Outside the `m.content` guard on purpose: the files
+                        arrive on the frame channel BEFORE the sentence
+                        describing them, and a reply that found something must
+                        never render as nothing. */}
+                    {m.attachments && m.attachments.length > 0 && (
+                      <div className="max-w-[72ch]">
+                        <PennyAttachments attachments={m.attachments} tone="console" />
+                      </div>
+                    )}
                     {showRating && (
                       <div className="mt-1.5">
                         <MessageFeedback
