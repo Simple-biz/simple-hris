@@ -17,13 +17,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const { decodePng, dominantInkColor } = await import('../src/lib/images/decode-png');
-const { BANK_LOGO_SRC, OFFICIAL_BANKS } = await import('../src/lib/payment-catalog/banks');
+const { BANK_BRAND_SWATCH_SRC, OFFICIAL_BANKS, bankBrandArtworkSrc, bankKeysWithBrandArtwork } =
+  await import('../src/lib/payment-catalog/banks');
 
 const nameByKey = new Map(OFFICIAL_BANKS.map((b) => [b.key, b.name]));
 const hex = (n: number) => n.toString(16).padStart(2, '0');
 const rows: string[] = [];
 
-for (const [key, src] of Object.entries(BANK_LOGO_SRC).sort()) {
+// Measured off the bank's SWATCH where it has one, else its logo — `bankBrandArtworkSrc`
+// is the single resolver the re-derivation test uses too, so the two cannot disagree
+// about which file answered for a bank.
+for (const key of bankKeysWithBrandArtwork()) {
+  const src = bankBrandArtworkSrc(key)!;
   const file = path.join(process.cwd(), 'public', src.replace(/^\//, ''));
   if (!fs.existsSync(file)) { console.log(`MISSING  ${key}  ${src}`); continue; }
   const ink = dominantInkColor(decodePng(fs.readFileSync(file), key));
@@ -35,7 +40,8 @@ for (const [key, src] of Object.entries(BANK_LOGO_SRC).sort()) {
   const value = `#${hex(ink.r)}${hex(ink.g)}${hex(ink.b)}`;
   console.log(
     `${value}  ${key.padEnd(18)} sat ${ink.saturationPct.toFixed(0).padStart(3)}%  ` +
-    `share ${ink.sharePct.toFixed(0).padStart(3)}%  ${label}`,
+    `share ${ink.sharePct.toFixed(0).padStart(3)}%  ` +
+    `${(BANK_BRAND_SWATCH_SRC[key] ? 'swatch' : 'logo  ').padEnd(7)}${label}`,
   );
   rows.push(`  ${key}: '${value}',`);
 }

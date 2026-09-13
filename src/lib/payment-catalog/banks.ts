@@ -260,7 +260,53 @@ export const BANK_LOGO_SRC: Record<string, string> = {
   fairwinds: '/banks/fairwinds.png',
 };
 
-/** The `public/` paths a BANK row may reference — its own shipped assets only. */
+/**
+ * Artwork a bank's CARD COLOUR is measured off, when its logo is the wrong file to
+ * measure. Never rendered — an image tag only ever points at `BANK_LOGO_SRC`.
+ *
+ * The two are separate because a logo and a brand colour are separate claims, and the
+ * file that carries one does not always carry the other:
+ *
+ * - **GoTyme** ships a MONOCHROME lockup. Its cyan is the GROUND its mark is printed
+ *   ON, which a transparent wordmark throws away — so measuring the logo returned the
+ *   near-black wordmark (`#2d2d3a`) and GoTyme printed a slate card for two days. The
+ *   lockup is still the right thing to DRAW on a white plate; it is simply not the
+ *   thing to measure.
+ * - **MariBank** ships no logo at all (§7 — a Commons search returns its parent Sea
+ *   Group's mark, and a wrong-bank logo is worse than none). It still has a brand
+ *   colour, and 104 people are paid there.
+ *
+ * So a bank is BRANDED when it has measured artwork of EITHER kind, and it draws a
+ * logo only when it has one. A bank here with no logo gets a coloured card and the
+ * same generic `Landmark` glyph every artwork-less bank gets — never a monogram.
+ *
+ * Same discipline as the logos and no weaker: every file is DECLARED (supplied or
+ * hand-checked, never searched), its provenance is recorded in
+ * `public/banks/SOURCES.json`, and `bank-card-palette.test.ts` re-derives the colour
+ * from it on every run.
+ */
+export const BANK_BRAND_SWATCH_SRC: Record<string, string> = {
+  gotyme: '/banks/gotyme-brand.png',
+  maribank: '/banks/maribank-brand.png',
+};
+
+/**
+ * The artwork a bank's colour is measured off: its swatch when it has one, else its
+ * logo. ONE resolver, so `derive-bank-brand-colors.mts` and the test that re-derives
+ * the table can never disagree about which file answered for a bank.
+ */
+export function bankBrandArtworkSrc(key: string): string | undefined {
+  return BANK_BRAND_SWATCH_SRC[key] ?? BANK_LOGO_SRC[key];
+}
+
+/** Every bank key that has artwork of either kind, and so carries a measured colour. */
+export function bankKeysWithBrandArtwork(): string[] {
+  return [...new Set([...Object.keys(BANK_LOGO_SRC), ...Object.keys(BANK_BRAND_SWATCH_SRC)])].sort();
+}
+
+/** The `public/` paths a BANK row may reference — its own shipped LOGOS only.
+ *  Swatches are deliberately absent: they are colour sources, not artwork to draw,
+ *  and a registry row pointing at one would render a brand tile nobody designed. */
 export const ALLOWED_BANK_PUBLIC_LOGO_SRCS: ReadonlySet<string> = new Set(Object.values(BANK_LOGO_SRC));
 
 /** The shipped logo for an official bank key, or null. */

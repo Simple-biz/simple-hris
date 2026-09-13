@@ -605,11 +605,31 @@ test('resolveBankBrand: a claimed bank with no shipped artwork returns NO logo',
   // §7 — MariBank (104 people on the paid slot), Metrobank, Security Bank and SeaBank
   // deliberately ship none, because a Commons search returns the wrong brand. The
   // bank is still identified by name; it just gets no mark.
+  //
+  // MariBank gained a brand SWATCH on 2026-09-13, so its card is orange — but a swatch
+  // is a colour source, not artwork to draw, and it still shows no logo. That split is
+  // the point of BANK_BRAND_SWATCH_SRC and is pinned just below.
   for (const spelling of ['Maribank', 'Metrobank', 'Security Bank', 'SeaBank']) {
     const b = resolveBankBrand(spelling);
     assert.ok(b.key, `${spelling} should still resolve to a bank`);
     assert.ok(b.officialName, `${spelling} should still have an official name`);
     assert.equal(b.logo, null, `${spelling} must show no logo`);
+  }
+});
+
+test('resolveBankBrand: a brand SWATCH never leaks into the logo a surface draws', () => {
+  // MariBank and GoTyme both carry swatches. A swatch exists so the CARD can be tinted;
+  // it is a solid brand tile, and drawing it on the catalog's white plate would put a
+  // coloured sticker beside 23 clean lockups. So resolveBankBrand must keep returning
+  // MariBank's logo as null, and GoTyme's as its ORIGINAL monochrome lockup.
+  for (const spelling of ['MariBank', 'Maribank', 'MARI BANK', 'MariBank Philippines, Inc.']) {
+    const b = resolveBankBrand(spelling);
+    assert.equal(b.key, 'maribank', spelling);
+    assert.equal(b.logo, null, `${spelling}: a swatch must not become a logo`);
+  }
+  for (const spelling of ['GoTyme', 'GoTyme Bank']) {
+    const b = resolveBankBrand(spelling);
+    assert.deepEqual(b.logo, { kind: 'public', src: '/banks/gotyme.png' }, spelling);
   }
 });
 

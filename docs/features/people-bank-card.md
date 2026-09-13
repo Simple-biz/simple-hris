@@ -21,12 +21,13 @@ and [employee-profile.md](./employee-profile.md).
 | Spelling → bank + logo (one resolver, shared with Current Banks) | `src/lib/payment-catalog/banks.ts` → `resolveBankBrand` |
 | Card colour, contrast maths (client-safe, pure) | `src/lib/payment-catalog/bank-card-palette.ts` (+ `.test.ts`) |
 | Brand-colour measurement off the artwork | `src/lib/images/decode-png.ts` → `dominantInkColor` |
+| Which file a bank's colour is measured off (swatch, else logo) | `src/lib/payment-catalog/banks.ts` → `BANK_BRAND_SWATCH_SRC` · `bankBrandArtworkSrc` (§4.2) |
 | Regenerates the colour table (READ-ONLY, no `--apply` needed) | `scripts/derive-bank-brand-colors.mts` |
 | Which rail gets a card, which gets wallet fields (shared) | `src/lib/banking/payout-rail-view.ts` (+ `.test.ts`) |
 | The last-4 mask rule (shared with the payout form) | `src/lib/banking/account-mask.ts` (+ `.test.ts`) |
 | Host 1 — Accounting: reveal, loading state, disclosures | `src/components/people/PeopleTab.tsx` |
 | Host 2 — the employee's own Payout section (masked) | `src/components/employee/EmployeeProfile.tsx` → `PayoutReadView` |
-| Shipped brand logos + provenance | `public/banks/*.png` · `public/banks/SOURCES.json` |
+| Shipped brand logos, brand swatches + provenance | `public/banks/*.png` · `public/banks/*-brand.png` · `public/banks/SOURCES.json` |
 
 ## 1. Nothing new is exposed, and the reveal is still the audited path
 
@@ -68,9 +69,16 @@ three are correct:
 | Case | Live count (paid slot, 2026-09-11) | What renders |
 | --- | --- | --- |
 | Declared bank with a shipped logo | 765 | Its logo, its colours |
-| Declared bank that ships no artwork | 162 (MariBank 104, Metrobank 31, Security Bank 16) | Neutral card, generic mark |
+| Declared bank with a **swatch but no logo** | **104 (MariBank), since 2026-09-13** | Its colours, generic mark |
+| Declared bank that ships no artwork | 162 → **58 since 2026-09-13** (Metrobank 31, Security Bank 16) | Neutral card, generic mark |
 | Spelling nobody has claimed | 14 at the 2026-09-11 measurement, **11 since 2026-09-12** (8 are a person's name) | Neutral card, generic mark |
 | No bank on the paid slot | 1,124 (wallet-routed, or nothing on file) | No card |
+
+The second row is the one added 2026-09-13, and it is the reason the rule is stated as
+**no artwork ⇒ no brand** rather than *no logo ⇒ no brand*. A logo and a brand colour
+are separate claims: MariBank has a measured colour and still, deliberately, no mark to
+draw (§4.2). Its card is orange with the same generic glyph every artwork-less bank
+gets — never a monogram, which is the thing §7 actually forbids.
 
 The mark on a neutral card is a plain `Landmark` glyph, **identical for every bank
 without artwork**, so it can never be read as one particular bank's. A monogram tile
@@ -94,10 +102,9 @@ Two tiers, and the second is load-bearing:
    **weighted by saturation** — most lockups are a coloured mark beside black wordmark
    text, and the black wins on raw count, so unweighted counting returns "black" for
    nearly every bank.
-2. **No chroma at all.** A monochrome lockup is answered by the mean of its own ink.
-   GoTyme — the bank Kane named — ships a near-black wordmark, `rgb(45,45,58)`. An
-   earlier pass refused it and handed GoTyme a grey card while every neighbour wore its
-   own colour. Near-black is a colour; it is the one GoTyme actually prints.
+2. **No chroma at all.** A monochrome lockup is answered by the mean of its own ink, so
+   a bank whose artwork genuinely carries no colour still gets a card rather than being
+   refused. Nothing reaches this tier today.
 
 ### 4.1 Contrast is guaranteed, not eyeballed
 
@@ -117,6 +124,43 @@ text at their own lightness (`#ffcf01` gives white 1.2:1), so they darken into a
 gold and a deep green rather than flipping to dark ink — one card in the set using the
 opposite text colour would read as a different component. A test pins five brands inside
 their own hue bands, and another pins that **no two banks print the same face**.
+
+### 4.2 Some banks' colour is their GROUND, and a logo throws it away
+
+Corrected 2026-09-13, after two days shipping the wrong answer for the bank Kane
+originally named.
+
+`dominantInkColor` measures **ink**, which is right for the 22 lockups that are a
+coloured mark beside black wordmark text. GoTyme inverts that: its wordmark is
+near-black and **the brand cyan is the ground the mark is printed on**. The shipped
+logo is a transparent-background render, so the cyan was never in the file — the
+measurement returned `#2d2d3a` honestly, and GoTyme printed a slate card while every
+neighbour wore its own colour. The earlier text here explained that as *"GoTyme has no
+chroma at all"*. **That was wrong.** The file had no chroma; the bank has plenty.
+
+So a bank may declare a **brand swatch** — `BANK_BRAND_SWATCH_SRC` in `banks.ts` — and
+its colour is measured off that instead of its logo:
+
+| | measured off | measured value |
+| --- | --- | --- |
+| GoTyme | `/banks/gotyme-brand.png` (brand tile) | `#00f0fb` |
+| MariBank | `/banks/maribank-brand.png` (brand banner) | `#eb650b` |
+
+Three things keep this from becoming a back door for a recalled colour:
+
+- **A swatch is never drawn.** Only `BANK_LOGO_SRC` is rendered, and a test asserts no
+  swatch path is reachable through `ALLOWED_BANK_PUBLIC_LOGO_SRCS` — otherwise a
+  registry row could point a bank's logo at a solid brand tile, which on the catalog's
+  white plate reads as a coloured sticker beside 23 clean lockups. **GoTyme's logo is
+  unchanged**; only the file its colour comes from is new.
+- **Same measurement, same test.** `bankBrandArtworkSrc()` resolves swatch-else-logo and
+  is the ONE resolver both `derive-bank-brand-colors.mts` and the re-derivation test
+  use. Deleting a swatch entry does not quietly revert a colour: the re-derived value
+  stops matching `BANK_BRAND_HEX` and the test fails.
+- **Same provenance discipline.** Both were supplied directly by Kane and recorded under
+  `swatches` in `public/banks/SOURCES.json` with their archived originals. §7 bans a
+  **searched** source, not a declared one — the failure it guards against is a Commons
+  search for "Maribank" returning its parent Sea Group's mark.
 
 ## 5. The account number is never reformatted
 
@@ -210,6 +254,23 @@ To add or change a bank's card colour: ship its logo (`scripts/fetch-bank-logos.
 per `payment-catalog-current-banks.md` §7), add the path to `BANK_LOGO_SRC`, run
 `node --import tsx scripts/derive-bank-brand-colors.mts`, and paste the printed line
 into `BANK_BRAND_HEX`. The test will tell you if you skipped the last step.
+
+**When the logo is the wrong file to measure** — its colour is the ground rather than
+the ink, or the bank ships no logo at all — put a declared brand tile at
+`public/banks/<key>-brand.png`, add it to `BANK_BRAND_SWATCH_SRC`, record it under
+`swatches` in `SOURCES.json` with its archived original, then run the same script (it
+prints `swatch` beside the banks that used one) and paste the same way. **Do not add a
+swatch to `BANK_LOGO_SRC`** — swatches are colour sources, never artwork to draw, and a
+test enforces that split.
+
+**2026-09-13 — GoTyme's colour was wrong for two days.** It printed a slate card, and
+the doc explained that as the bank having "no chroma at all". It does not: the shipped
+Commons lockup is monochrome-on-transparent and GoTyme's cyan is the ground the mark
+prints on, so the file never carried it. Kane supplied the brand tile and the cyan was
+measured off that. **MariBank** (104 people, the single biggest group on a neutral card)
+gained a swatch the same day and now prints its orange with the same generic glyph — it
+still ships no logo, which §7 still wants. Both are `source: chroma`, both measured, no
+hex hand-typed, no threshold moved and no logo changed.
 
 **CLOSED 2026-09-12 (`f2560d0`):** the three live spellings the declared table plausibly
 covered but did not claim — `CIMB Bank` (1), `Philippines National Bank` (1, the plural

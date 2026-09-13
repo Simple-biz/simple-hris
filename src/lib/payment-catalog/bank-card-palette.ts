@@ -13,10 +13,15 @@
 // than shipping one bank's card in another bank's colour. To add a bank: ship its
 // logo, run the script, paste the line.
 //
-// A bank with no shipped logo (MariBank, Metrobank, Security Bank and SeaBank
-// deliberately have none) and a spelling nobody has claimed both get the NEUTRAL
-// card. Guessing a colour for them is the same invented equivalence §10.1 forbids,
-// just quieter.
+// "Shipped logo" is not quite the test — the artwork measured is a bank's SWATCH where
+// it declares one, else its logo (`bankBrandArtworkSrc`), because a brand colour and a
+// mark to draw are separate claims. MariBank carries a swatch and deliberately still
+// ships NO logo; GoTyme carries one because its cyan is the ground its near-black mark
+// prints on, which its transparent lockup never held.
+//
+// A bank with no artwork of either kind (Metrobank, Security Bank, SeaBank) and a
+// spelling nobody has claimed both get the NEUTRAL card. Guessing a colour for them is
+// the same invented equivalence §10.1 forbids, just quieter.
 //
 // CLIENT-SAFE: pure colour maths, no imports.
 
@@ -37,8 +42,9 @@ export const BANK_BRAND_HEX: Readonly<Record<string, string>> = {
   eastwest: '#b5006c',
   fairwinds: '#002f6f',
   gcash: '#002cb8',
-  gotyme: '#2d2d3a',
+  gotyme: '#00f0fb',
   landbank: '#74bc44',
+  maribank: '#eb650b',
   maya: '#75eea5',
   maybank: '#ffcf01',
   pnb: '#10357f',
@@ -61,9 +67,11 @@ const NEUTRAL_BRAND = '#3f4654';
  */
 export const CARD_TEXT_CONTRAST_FLOOR = 8.5;
 
-/** Saturation band for the card face. The floor keeps a near-grey brand (GoTyme's
- *  near-black wordmark) from printing as flat charcoal; the ceiling keeps a vivid
- *  one (UnionBank orange, Maya mint) from printing as a toy. */
+/** Saturation band for the card face. The floor keeps a near-grey brand from printing
+ *  as flat charcoal; the ceiling keeps a vivid one (UnionBank orange, Maya mint, GoTyme
+ *  cyan) from printing as a toy. The floor's original example was GoTyme itself, back
+ *  when its colour was measured off a monochrome lockup — no bank sits near it today,
+ *  which is not a reason to drop it: the next lockup someone ships may. */
 const SAT_MIN = 14;
 const SAT_MAX = 68;
 

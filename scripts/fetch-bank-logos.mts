@@ -56,7 +56,10 @@ interface Source {
  *
  * NOT LISTED, on purpose — each keeps its monogram tile until someone uploads a file
  * in the Current Banks dialog:
- *   maribank (100 people)  Wikipedia has only its PARENT Sea Group's logo.
+ *   maribank (104 people)  Wikipedia has only its PARENT Sea Group's logo. It does
+ *                          carry a brand SWATCH since 2026-09-13 (BANK_BRAND_SWATCH_SRC)
+ *                          so its CARD is orange — a swatch is a colour source, never
+ *                          artwork to draw, so this list is still correct.
  *   metrobank (30)         Only a .gif on Commons; the PH page carries no logo file.
  *   securitybank (15)      Only a .jpg; this pipeline verifies PNG renders.
  *   seabank (5)            No article.

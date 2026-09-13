@@ -176,9 +176,36 @@ Two rules govern that script, and both exist because the failure they prevent is
 1. **Every source is DECLARED, never searched.** A Commons search for "Security Bank
    logo" returns Bank of America's; a search for "Maribank" returns its parent Sea
    Group's. A wrong-bank logo is worse than none — it is a confident lie on a screen
-   Accounting uses to reason about payouts. **MariBank (100 people, the third-biggest
+   Accounting uses to reason about payouts. **MariBank (104 people, the third-biggest
    bank) deliberately has no logo** for exactly this reason, as do Metrobank, Security
    Bank, SeaBank and the small US rails.
+
+   The ban is on a **searched** source, not on a source that is not Wikimedia. Artwork
+   handed over directly by someone who knows which bank it belongs to is declared in the
+   strongest sense — it is the hand-check this rule is asking for, without the search
+   that can return the wrong institution. What it still needs is the other half of the
+   rule: provenance recorded in `SOURCES.json` (who supplied it, when, and the archived
+   original under `references/bank-logos/`) so it can be re-checked later.
+
+### 7.1 Brand swatches — a colour source that is not a logo
+
+Added 2026-09-13. A bank's card colour is measured off its logo, which fails for artwork
+whose brand colour is its **ground** rather than its ink: GoTyme's Commons lockup is
+monochrome-on-transparent, so the cyan was never in the file and its card printed
+near-black for two days. Such a bank declares a **swatch** in `BANK_BRAND_SWATCH_SRC`
+(`public/banks/<key>-brand.png`), and `bankBrandArtworkSrc()` measures that instead.
+
+This does not loosen §7 — it keeps a logo decision and a colour decision from being
+forced through one file:
+
+- A swatch is **never rendered**. `ALLOWED_BANK_PUBLIC_LOGO_SRCS` is still built from
+  `BANK_LOGO_SRC` alone, so no bank row can point its logo at a swatch, and a test
+  asserts no swatch path is reachable through it. **GoTyme's logo did not change.**
+- A bank may hold a swatch and **still ship no logo** — MariBank does, and still shows
+  the generic `Landmark` glyph rather than a mark this pipeline could get wrong.
+- Same measurement, same re-derivation test, same provenance requirement (recorded under
+  `swatches` in `SOURCES.json`). Removing a swatch entry fails the test rather than
+  silently reverting a colour.
 2. **Every download is measured before it is written.** `ProcessorLogo` falls back to a
    monogram on a LOAD error but not on an INVISIBLE one, and the plate is `bg-white` in
    both themes, so white-inked artwork renders as an empty box nothing reports.

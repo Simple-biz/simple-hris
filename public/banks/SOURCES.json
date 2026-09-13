@@ -1,7 +1,7 @@
 {
   "fetchedAt": "2026-09-04T18:06:36.622Z",
   "renderWidth": 480,
-  "note": "Bank brand logos used to identify each bank in the internal Payment Catalog. Fetched by scripts/fetch-bank-logos.mts.",
+  "note": "Bank brand logos used to identify each bank in the internal Payment Catalog. Fetched by scripts/fetch-bank-logos.mts. Entries under swatches are NOT logos and are never drawn: they are the artwork a bank CARD COLOUR is measured off (BANK_BRAND_SWATCH_SRC), for banks whose logo is the wrong file to measure.",
   "files": [
     {
       "file": "banks/gotyme.png",
@@ -189,6 +189,28 @@
       "url": "https://en.wikipedia.org/wiki/Special:FilePath/Logo%20of%20Fairwinds%20CU.svg?width=480",
       "dimensions": "500x86",
       "bytes": 14173
+    }
+  ],
+  "swatches": [
+    {
+      "file": "banks/gotyme-brand.png",
+      "suppliedBy": "Kane (kaner@simple.biz)",
+      "suppliedAt": "2026-09-13",
+      "archivedOriginal": "references/bank-logos/gotyme-brand-tile-source.jpg",
+      "renderedWidth": 480,
+      "dimensions": "480x480",
+      "bytes": 91369,
+      "note": "GoTyme brand tile. The shipped logo (GoTyme Bank logo.svg, Commons) is the MONOCHROME lockup: GoTyme brand cyan is the GROUND its mark prints on, which a transparent wordmark throws away, so measuring the logo returned the near-black wordmark #2d2d3a and GoTyme printed a slate card. The LOGO is unchanged and still what the catalog draws; only the colour is measured here."
+    },
+    {
+      "file": "banks/maribank-brand.png",
+      "suppliedBy": "Kane (kaner@simple.biz)",
+      "suppliedAt": "2026-09-13",
+      "archivedOriginal": "references/bank-logos/maribank-share-source.png",
+      "renderedWidth": 480,
+      "dimensions": "480x251",
+      "bytes": 62851,
+      "note": "MariBank brand banner. MariBank ships NO logo and still does (payment-catalog-current-banks.md 7 - a Commons search returns its parent Sea Group mark). White wordmark on an orange ground; the measured colour is that ground. Supplied directly, which 7 permits: it bans a SEARCHED source, not a declared one."
     }
   ]
 }
