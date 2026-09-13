@@ -1751,3 +1751,75 @@ Q4 only).
 project Ill ask abby on this."* No restore, no re-pointing of the plan, no full reconcile. The 12 stay
 deleted and the plan keeps declaring them; Abby owns the shared board and the question of whether Q2 was
 archived deliberately goes to her.
+
+---
+
+## Pass 27 — 2026-09-13 · APPLIED and VERIFIED · 13 new rows, 50 SP to Done, 3 held
+
+Kane: *"All new features added lets commit them to monday board"*, then mid-pass
+*"those pending deploys are alreadyy done lets push them thanks"*.
+
+Range `bae33a15..9803bba6` — **38 commits**, clustered by **file overlap, never by commit
+message**, into **13 rows worth 65 SP**. All 13 were new; none had a `PLAN_TASKS` entry before
+this pass. Approval hash `c781eea2c26e`, applied with `--only-new`, ~80 API calls end to end.
+
+### `--only-new` was the only safe path, not a shortcut
+
+`review.mts` reported **`epics to create: 12`**. Those twelve are the Q2 epics deleted off the
+shared Roadmap board on 2026-09-12 together with **the Q2 group itself** — Kane's ruling then was
+*leave them, ask Abby*. Running the full reconcile would have created twelve duplicate epics
+pointing at a group id that no longer exists. `--only-new` returns before phase 1 and therefore
+cannot. Re-confirmed live this pass: Roadmap & Epics now holds **Q4, Q3 and Q1 only**.
+
+**The debt this leaves, stated plainly:** `--only-new` writes no epic relation, so all thirteen
+rows are correctly grouped, typed, scored and statused but **not linked to their epics**. That is
+paid by a full reconcile, which cannot responsibly run until the Q2 drift is settled with Abby.
+
+### Sprint 29 mirrored — and it was load-bearing
+
+The board already carried **`Sprint 29 · Sep 14-Sep 25`** (`group_mm739kne`, label index **105**,
+read off `settings_str` and never guessed). It was mirrored into `TASK_GROUPS`,
+`TASK_SPRINT_INDEX`, `TASK_SPRINT_LABELS` and `TASK_SPRINT_WINDOWS`.
+
+This was not bookkeeping. `taskSprintAttribution()` ends a sprint the day before the next one
+*starts*, and S28 was the last row in the table — so its window ended **Sep 12**, and the two
+commits that landed on Sunday **Sep 13** belonged to no sprint at all. Adding S29 re-bounds S28 to
+**Sep 1–13** and gives them a home, exactly as adding S27 once re-bounded S26.
+
+### What the confirmation closed, and what it could not
+
+Ten rows went to **Done** for **50 SP**, every Completed Date being the commit date of that row's
+last sha (`2026-09-12` for all ten; author and commit dates were checked to agree, so the
+author-date-is-not-landing-date trap does not apply here). Three rows were deliberately **not**
+closed by a blanket confirmation:
+
+| Row | Held at | Why the confirmation cannot reach it |
+|---|---|---|
+| Paystub Reissued / Amended | Pending Deploy | `public.paystub_issues` **measured absent** from production. An assertion cannot create a table. |
+| Bank-card deck (`9803bba6`) | In Progress | Not an ancestor of `origin/main`. Vercel deploys `origin/main`, so it has never been served. |
+| Bank brand swatches (`34482dbf`) | In Progress | Same. Not deployed, so not clickable-through. |
+
+Nothing in this skill pushes; those two rows move when Kane pushes.
+
+### Two migration claims measured — and they disagreed
+
+Both probed read-only with **`.limit(1)`, not `head:true`** — the shape that returns *no error at
+all* for a missing table — against the negative control `definitely_not_a_table_xyz`, which
+correctly reported NOT APPLIED on the same run:
+
+- **`gift_address_otps` — APPLIED.** `gift-address-external-link.md` claimed *"TWO PENDING STEPS,
+  both Kane's"*; both had already happened. The newest row was **`consumed_at`
+  2026-09-13T00:30:48Z with `attempts: 0`**. Only a `code_hash` is stored, so the six-digit code
+  cannot have been read from the database — it was emailed and entered correctly on the first
+  try, which is end-to-end proof the **n8n `gift_address_otp` flow is imported and working**.
+- **`paystub_issues` — genuinely absent.** That PENDING claim was true.
+
+Same run, same instrument, opposite answers. **Measure; assume staleness in neither direction.**
+
+### Verified by re-reading, not off the write log
+
+All thirteen rows were re-read individually with `verify-one.mts` (1 call each) rather than
+`verify.mts`, which pages all 3,133 board items and is what exhausted an entire UTC-day budget on
+2026-08-20. Confirmed on the board: the ten Done rows carry an Actual SP **and** a Completed Date;
+the three held rows carry **neither**; all thirteen sit in the Sprint 28 group under the Sprint 28
+label.

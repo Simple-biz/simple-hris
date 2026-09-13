@@ -57,6 +57,10 @@ export const TASK_GROUPS = {
   // Added by hand on the board and mirrored 2026-09-01 from the live group list
   // ("Sprint 28 · Sep 1-Sep 12 · Backlog Pull").
   S28: 'group_mm6nv017',
+  // Added by hand on the board and mirrored 2026-09-13 from the live group list
+  // ("Sprint 29 · Sep 14-Sep 25 · Backlog Pull"). Mirroring it is what re-bounds S28's ATTRIBUTION
+  // to Sep 1-13, so the two commits that landed on Sun Sep 13 have a sprint to belong to at all.
+  S29: 'group_mm739kne',
   BL: 'group_mm4m1eqp', // Backlog
 } as const;
 export const TASK_COLS = {
@@ -128,7 +132,9 @@ export const TASK_SPRINT_INDEX: Record<TaskSprint, number> = {
   // Indices are the board's own and are NOT sequential — S22 is 3 and S23 is 4, while S19-S21 run
   // 10-12. Read off the board settings_str 2026-08-19; never guess one.
   // S28 = 104, read off settings_str 2026-09-01 — the indices keep not being sequential.
-  S17: 8, S18: 9, S19: 10, S20: 11, S21: 12, S22: 3, S23: 4, S24: 0, S25: 1, S26: 13, S27: 103, S28: 104, BL: 2,
+  // S29 = 105, read off settings_str 2026-09-13. Read, never guessed — 103/104/105 running
+  // consecutively is a coincidence of these three, not a rule (S22 is 3 and S26 is 13).
+  S17: 8, S18: 9, S19: 10, S20: 11, S21: 12, S22: 3, S23: 4, S24: 0, S25: 1, S26: 13, S27: 103, S28: 104, S29: 105, BL: 2,
 };
 /**
  * The live label TEXT for each sprint key. The board is structure-locked — the API cannot create a
@@ -148,6 +154,7 @@ export const TASK_SPRINT_LABELS: Record<TaskSprint, string> = {
   S26: 'Sprint 26',
   S27: 'Sprint 27',
   S28: 'Sprint 28',
+  S29: 'Sprint 29',
   BL: 'Backlog',
 };
 /**
@@ -183,6 +190,9 @@ export const TASK_SPRINT_WINDOWS: Record<Exclude<TaskSprint, 'BL'>, { start: str
   // Added 2026-09-01 from the live group title "Sprint 28 · Sep 1-Sep 12". Adding it re-bounds S27's
   // attribution to Aug 18-31, giving the gap days Aug 30-31 a sprint to belong to.
   S28: { start: '2026-09-01', end: '2026-09-12' },
+  // Added 2026-09-13 from the live group title "Sprint 29 · Sep 14-Sep 25". Adding it re-bounds S28's
+  // attribution to Sep 1-13, giving the gap day Sun Sep 13 a sprint to belong to.
+  S29: { start: '2026-09-14', end: '2026-09-25' },
 };
 
 /**
@@ -1720,4 +1730,70 @@ export const PLAN_TASKS: PlanTask[] = [
   // and a BLANK date REFUSES — the silent fallback to today WAS the defect. Supersedes the old rule in
   // [[readiness-setrate-cannot-backdate]] that back-dating must go through Pay Structure.
   { epic: 'HRIS-20', name: 'Readiness and Offboarded “Set rate” names the date it takes effect — defaults to today in Manila, no minimum so a closed week is reachable, sent verbatim and never snapped, and a blank date refuses the save', type: 'Bug', sp: 2, done: true, sprint: 'S28', priority: 'High' },
+  // ── PASS 27 · 2026-09-13 · the Sep 12 night's work, plus two rows that are not in production ─
+  // 8 SP: a PUBLIC no-login surface, which is why one page scores this high. Identity is the SESSION
+  // TOKEN and never the request body; enumeration-safe (one fixed answer, 400 on every verify failure);
+  // the throttle FAILS CLOSED; the milestone list is recomputed SERVER-side on save; and submitting an
+  // address is NOT receiving a gift — it never writes employee_gift_receipts. ~11 people are refused on
+  // purpose, because submissions key on personal_email, which is not injective. Copy is SHARED with the
+  // dashboard card through milestone-copy.ts. See [[gift-address-external-link]].
+  { epic: 'HRIS-32', name: 'A public no-login link asks for one shipping address and covers every tenure gift a person is owed — identity is the session token and never the request body, and every verification failure answers the same way', type: 'Feature', sp: 8, done: true, sprint: 'S28', priority: 'High' },
+  // 5 SP: the payment.undone event was ALREADY complete — what was missing was a SURFACE, plus two
+  // recording defects. The actor failed OPEN to "unknown" and now comes from auditFrom; ip_address was
+  // 0 of 198. The kind is read from `details`, NEVER the action name, and original_status === 'paid' is
+  // a DOUBLE trap: it invents 82 un-payments and hides 59 legacy events. See [[dispatch-undo-history]].
+  { epic: 'HRIS-15', name: 'Every payment Undo now has a readable record — the actor comes from auditFrom instead of failing open to unknown, and the paid-status trap that would have invented 82 un-payments is closed', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
+  // 5 SP: peers see a literally-quoted go-by, else the FIRST name, plus the WORK email — never
+  // parseNameParts().nickname and never resolveFirstName. A go-by that IS the surname is REFUSED.
+  // Redacting SERVER-side (TeamRosterProfile carries no name/personalEmail) closed search, sort and the
+  // ?? personalEmail fallback at once. Collisions resolve over the WHOLE roster. [[team-directory-shows-legal-name]]
+  { epic: 'HRIS-09', name: 'A teammate in the Employee directory is a short name and a work email and nothing else — redacting server-side closed search, sort and the personal-email fallback at once', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
+  // 8 SP, the top legal task score — Kane chose task over epic 2026-09-13. Kane OVERRULED the 09-09
+  // decision: Payment folds IN as Payout. profile-tabs.ts is ONE vocabulary, deep links resolve by
+  // INTENT + nonce, and scroll is a CALLBACK REF, never an effect. Three conditions hold: no cache key on
+  // /api/employee-ids, Payout alone waits on bankInfoLoaded, and the paystub gates on the SECTION. Still
+  // NO error boundary. See [[employee-profile-tab-merge]].
+  { epic: 'HRIS-09', name: 'The Employee Profile merges nine chips into five, with one tab vocabulary and deep links that name an intent instead of a tab index', type: 'Feature', sp: 8, done: true, sprint: 'S28', priority: 'High' },
+  // 3 SP: a crash on EVERY cold load that nothing caught, found by reading for the merge spec rather than
+  // by a report. The guard written to pin it was itself blind to 39% of the hooks it guards.
+  { epic: 'HRIS-09', name: 'The Employee Profile crashed on every cold load and nothing caught it — the hook-order guard that pins it now could not see 39% of the hooks it guards', type: 'Bug', sp: 3, done: true, sprint: 'S28', priority: 'Critical' },
+  // 2 SP: a date-only value parsed as UTC then rendered locally is a day early for every timezone west of
+  // UTC — which is everyone in the US. Fixed in date-only.ts, with regression guards on both the ID card
+  // and the Profile. See [[employee-id-card]].
+  { epic: 'HRIS-09', name: 'A start date read a day early for everyone west of UTC — the ID card and the Profile render date-only values without crossing a timezone', type: 'Bug', sp: 2, done: true, sprint: 'S28', priority: 'High' },
+  // 8 SP. The PREMISE WAS WRONG: the send fired UNCONDITIONALLY, so undo then re-pay silently emailed a
+  // SECOND pay document (117 real duplicates) while the in-app notification WAS de-duped — document
+  // delivered, no notice. Now gated on send_paystub, default FALSE. The test is `sent_at`, NEVER
+  // send_count (a failed send increments the count but leaves no timestamp, so it is still the FIRST).
+  // NEVER "attempt" — the CHECK refuses it. done:false: the migration has not run. [[paystub-reissue-issues]]
+  { epic: 'HRIS-33', name: 'Sending a second copy of a pay document asks first, and the copy is labelled Reissued or Amended rather than counted as an attempt', type: 'Feature', sp: 8, done: false, sprint: 'S28', priority: 'High' },
+  // 8 SP: Penny OPENS the files on record. No ID or bank-card IMAGE exists — both are renderings — so a
+  // ref names a RECORD, never a path; the URL is minted at CLICK and audited; the W-8BEN TTL stays 300s;
+  // and MAX_FRAME_CHARS is NEVER raised. The viewer is a REAL modal whose entrance fires on DECODE. Also
+  // closed: chat tables were dropping cells. See [[admin-penny-attachments]].
+  { epic: 'HRIS-28', name: 'Admin Penny opens the files on record in the console’s own viewer, and its chat tables stopped dropping cells', type: 'Feature', sp: 8, done: true, sprint: 'S28', priority: 'Medium' },
+  // 5 SP: BankCard becomes the employee payout READ view. Reveal is client-side with NO audit row, copy is
+  // disabled while masked, ONE resolver, and the registry is UNPASSED. Fed the PAID slot, never bank_name
+  // and never the payout draft. Gated on walletRailEffective — 'ach' fails CLOSED. A separator could pad a
+  // short account past the mask floor; that is closed too. [[employee-profile-bank-card-reuse]]
+  { epic: 'HRIS-09', name: 'The employee payout record reads as the bank card it pays into — masked to the last four with a reveal, fed the paid slot, and account numbers never reach storage', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
+  // 5 SP. done:false — 9803bba6 is NOT an ancestor of origin/main, so this is not in production and
+  // cannot have been clicked through. 151 payees already hold a real second account and all of it was
+  // invisible. The backup is readBankSlot (ONE slot, no fallback) or two cards claim one bank; the deck is
+  // EARNED on three test-pinned conditions; facing NEVER implies routing; the tucked card is `inert`.
+  // See [[employee-payout-card-deck]].
+  { epic: 'HRIS-09', name: 'A second bank account sits tucked behind the first as a deck that spins the stack, and the card facing forward never implies where the money goes', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  // 2 SP. done:false — 34482dbf is NOT an ancestor of origin/main. dominantInkColor reads the INK, but
+  // GoTyme's and MariBank's colour is their GROUND, so BANK_BRAND_SWATCH_SRC carries it and is NEVER
+  // drawn; the logos are unchanged. See [[people-bank-card]] and [[bank-card-faces-near-identical]].
+  { epic: 'HRIS-23', name: 'GoTyme and MariBank are the colour their mark prints on, not the colour of the ink — a swatch source the card reads and never draws', type: 'Bug', sp: 2, done: false, sprint: 'S28', priority: 'Medium' },
+  // 3 SP: a real wrong-wire-code defect. The card now matches Payment Dispatch's three-rung SWIFT fallback
+  // exactly, and three bank spellings that resolved to NOTHING — including a GoTyme variant — now resolve.
+  // Five review findings closed with it. See [[people-bank-card]].
+  { epic: 'HRIS-23', name: 'An alternative-slot payee’s card handed over the wrong wire code — the card now matches Payment Dispatch’s three-rung SWIFT fallback, and three real bank spellings that resolved to nothing now resolve', type: 'Bug', sp: 3, done: true, sprint: 'S28', priority: 'High' },
+  // 3 SP: the window is now DERIVED from batch coverage instead of fixed at 13 days — 23 requests fall to
+  // 11, and 46% of the 1000/hr cap falls to 22%. Guards: never more than 13 days back, never later than
+  // this week's Sunday, and every failure path WIDENS. Kane chose NO browser cache, so paints-never-decides
+  // stands. See [[employee-live-hours-window]].
+  { epic: 'HRIS-09', name: 'The live Hubstaff window is derived from the weekly batch’s own coverage instead of a fixed 13 days, taking the request cost from 46% of the hourly cap to 22%', type: 'Feature', sp: 3, done: true, sprint: 'S28', priority: 'Medium' },
 ];
