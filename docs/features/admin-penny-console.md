@@ -355,6 +355,46 @@ The strip renders **outside** the `m.content` guard, because the frames arrive
 before the sentence describing them and a reply that found something must never
 render as nothing.
 
+### The image viewer
+
+Kane, 2026-09-12: *"when I click the photo it will open the image in a modal
+where we can close it as well … kind of like CIA terminals."*
+
+It is the console's own window, reopened over itself — the same accent hairline,
+title bar, status dot, mono register and palette — so opening a file reads as the
+terminal bringing something up rather than a photo viewer arriving from another
+app. The one authored decoration is a **framing reticle**: four corner brackets
+on the black mat around the plate.
+
+- **The plate's padding is sized around the reticle** (`p-7 sm:p-8` against a
+  16px bracket at a 10/12px inset). An image that reached under the brackets
+  turned them into four stray ticks instead of a frame — visible in the first
+  inspection pass, fixed by giving them their own gutter.
+- **It never narrates work that isn't happening** — the console's founding rule
+  applies here too. The status word is the real state of the `<img>` (`loading`
+  → `open` / `failed`); there is no "decrypting" and no fake progress bar.
+- **It is a real modal.** Focus moves to Close on open, **Tab is trapped**,
+  Escape and the backdrop both close it, the page behind cannot scroll, and
+  focus returns to the chip that opened it. `aria-modal` without a working trap
+  is the version that tests clean and strands a keyboard user.
+- **Rendered through a portal** to `document.body`, because the console panel
+  animates on a transform and a `position: fixed` descendant of a transformed
+  ancestor positions against that ancestor rather than the viewport. The portal
+  root carries `penny-console` so the scoped selection colour and scrollbar
+  follow it.
+- **`min-w-0` on the panel, the plate and the image is load-bearing**, not
+  tidiness: a flex item's default `min-width: auto` is its content's minimum, so
+  a 1100px screenshot would push the window past the right edge of a phone.
+- The backdrop is a flat scrim with a faint scanline field rather than a blur —
+  the console is a tube, and blur here would read as consumer glass.
+- The footer carries **provenance** the ref already encodes: source, where an
+  admin would otherwise open it, and how long this link lasts. Separators are
+  glued to the segment that follows them so a wrap never strands a lone `·`, and
+  the origin is the first thing dropped below `sm`.
+- Secondary text uses `#8a7f73` (4.95:1), **not** the `#6e655d` the surrounding
+  chrome uses for status words — that value is 3.40:1 and is not one of the four
+  documented palette entries. The footer carries real content, so it clears AA.
+
 ## Table structuring (2026-09-12)
 
 Kane: *"Improve table structuring as well please."* The parser moved out of

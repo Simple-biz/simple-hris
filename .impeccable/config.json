@@ -65,6 +65,15 @@
         ],
         "createdAt": "2026-09-04T18:09:55.226Z",
         "reason": "Claude: a node:test file with no markup — both hits are the literal text <img> inside prose comments describing ProcessorLogo's plated vs un-plated surfaces"
+      },
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "src/components/ceo/penny-attachments.tsx"
+        ],
+        "createdAt": "2026-09-13T01:06:05.193Z",
+        "reason": "Claude: the only <img> here takes a runtime signed storage URL from component state (state.url, a required field); the detector cannot resolve a dynamic src and reads it as empty"
       }
     ]
   }
