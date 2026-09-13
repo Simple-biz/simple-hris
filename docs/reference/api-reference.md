@@ -29,6 +29,7 @@ Complete documentation for all REST API endpoints. Base URL: `http://localhost:3
 13. [Planned Endpoints (Payroll Automation)](#13-planned-endpoints-payroll-automation)
 15. [New endpoints (2026-07-08..10)](#15-new-endpoints-2026-07-0810)
 16. [Audit log + routes gated 2026-09-09](#16-audit-log--routes-gated-2026-09-09)
+17. [Penny AI (assistants)](#17-penny-ai-assistants-added-2026-09-12)
 
 ---
 
@@ -2434,3 +2435,113 @@ gone — it was the one action that could not record itself.
 `hr/fpu-enrollments`, `hsl-bonus/period-summary`, `presence/last-seen`. Helpers exist (`authorizeEmailAccess` /
 `requireFeatureAccess` / `requireAdminSession`); this is wiring. See
 [pre-release-security-readiness.md](../features/pre-release-security-readiness.md) §2.
+
+---
+
+## 17. Penny AI (assistants) *(added 2026-09-12)*
+
+Governing docs: [admin-penny-console.md](../features/admin-penny-console.md) (the console surface),
+[admin-penny-tools.md](../features/admin-penny-tools.md) (what it can be asked, and what it refuses),
+[ceo-assistant.md](../features/ceo-assistant.md) (the shared widget), [employee-penny-ai.md](../features/employee-penny-ai.md).
+
+Three chat routes, one per audience, sharing the widget but **not** the gate, the model or the tool set. All three stream
+**`text/plain; charset=utf-8`** token deltas — not SSE, not JSON — with `Cache-Control: no-store`. Every tool is read-only;
+none of them writes to the database.
+
+| Route | Gate | Model | Tools |
+|---|---|---|---|
+| `POST /api/ceo/chat` | signed in **and** `ceo` or `admin` | `claude-sonnet-4-6` | `CEO_TOOLS` (11) |
+| `POST /api/admin/penny-chat` | `requireAdminSession()` — elevated **and** `admin` | `claude-opus-5` | `CEO_TOOLS` + `ADMIN_TOOLS` (22) |
+| `POST /api/employee/penny-chat` | `authorizeEmailAccess(email)` | `claude-haiku-4-5` | employee set, **no identity argument** |
+
+### `POST /api/ceo/chat`
+
+**Body**: `{ messages: [{ role: 'user' | 'assistant', content: string }] }`. History is sanitized server-side: empties
+dropped, content sliced to 8000 chars, last 20 turns kept, leading assistant turns dropped after the slice (an alternating
+transcript sliced to an even count starts on an assistant turn, which the API rejects with a 400), trailing turn must be `user`.
+
+**Errors**: `401` not signed in · `403` not ceo/admin · `503` no Anthropic key configured (points at Admin → API tokens) ·
+`400` invalid body or no trailing user message. Once streaming starts the status is already `200`, so mid-stream failures
+arrive inline as `[Assistant error: …]`.
+
+**Audit**: `ceo_assistant.query` in the stream's `finally`, **only when a tool ran** — it records *which* tools, never the
+figures they returned. Pure-chat turns are deliberately unaudited.
+
+### `POST /api/ceo/chat/feedback`
+
+Thumbs up/down on one reply. **Auth**: `ceo` or `admin` (admins are admitted, so the Admin console uses this route too).
+**Body**: `{ message_key, rating: 'up'|'down', assistant_message, user_message, comment?, context[] }`.
+`400` on a bad rating or body, `500` on a write failure. **Audit**: `ceo_assistant.feedback`.
+
+### `POST /api/admin/penny-chat`
+
+Same body and sanitizing as the CEO route. `maxDuration = 300`, `MAX_TOKENS = 32000` (thinking shares the budget on Opus 5),
+`MAX_TURNS = 8`, aborts on `request.signal`.
+
+Uniquely, this route **interleaves NUL-delimited activity frames** with the text so the console can narrate real work:
+
+```
+<NUL>{"t":"tool","name":"search_audit_log"}<NUL>      one tool starting, enqueued BEFORE it runs
+<NUL>{"t":"att","r":"<ref>","l":"<label>","k":"image"}<NUL>   one openable file the answer found
+```
+
+NUL because the model cannot emit one, so a reply can neither forge a frame nor be mistaken for one. The client strips them
+in `useCeoChat`, upstream of every parser. **Routes that emit no frames get their text back byte-for-byte**, which is what
+keeps the CEO and employee surfaces identical.
+
+**Errors**: `401` / `403` from `requireAdminSession` · `503` no key · `400` bad body. A model refusal
+(`stop_reason: 'refusal'`) is handled explicitly and reported as a decline, not an outage — the request has already been
+re-run on `claude-opus-4-8` by then, via beta `server-side-fallback-2026-06-01`.
+
+**Audit**: `admin_assistant.query`, same tools-only rule as the CEO route.
+
+### `GET /api/admin/penny-chat/attachment` *(added 2026-09-12)*
+
+Opens **one** file that Penny surfaced. The client names a **record**, never a path.
+
+**Auth**: `requireAdminSession()`. Every file reachable here is already openable by the same caller through its own surface
+(`requireFeatureAccess` admin-bypasses, `authorizeEmailAccess` elevated-bypasses), so this exposes nothing new — but those
+surfaces write **no audit row at all** on a download, which makes this the better-recorded path.
+
+| Param | Meaning |
+|---|---|
+| `ref` | `<source>~<record uuid>[~<slot>]`. Sources: `evidence` · `receipt` · `document` · `document_signed` · `w8ben` · `ip_assignment` · `photo` (whose id is an email, not a uuid) |
+
+**Response** `200`:
+```json
+{ "url": "https://…signed…", "expires_in": 3600 }
+```
+
+The route resolves the ref to a row, reads the storage path **off that row**, and signs it against a bucket fixed by the
+source — so no string from the request ever reaches `storage.from(...)` and traversal is unrepresentable rather than
+filtered. `parseAttachmentRef` refuses an unknown source, a malformed id, a slot on an unslotted source, or a slot out of
+range; there is no lenient path, because a ref is machine-written.
+
+**Signed-URL lifetimes are per source and deliberately unequal** — W-8BEN **300s** ("sensitive tax document"),
+IP assignment **600s**, evidence / receipts / documents **3600s**. The value lives in `ATTACHMENT_SOURCES` so the route
+cannot pick one.
+
+**Errors**: `400` malformed ref · `404` record not found, or the file is no longer on the row, or storage refused ·
+`500` misconfigured source (a bucket with no lifetime, or the reverse) · `503` storage not configured.
+
+**Tables**: reads `time_adjustment_requests`, `mesa_request_receipts`, `document_requests`, `hr_onboarding_submissions`,
+or the master row (profile photo). **Service role**: required.
+**Audit**: `admin_assistant.attachment_opened` — actor via `auditFrom(request, authz)`, `resource_id` = whose file it is,
+`details` carrying the source, record id, slot and TTL. Best-effort: the read already happened, so failing the response
+would only hide it.
+
+### `POST /api/employee/penny-chat` · `GET /api/employee/penny-chat/quota`
+
+**Auth**: `authorizeEmailAccess(email)` — the route resolves **one** email and every tool closes over it, so a
+prompt-injected "show me Jane's pay" has no parameter to travel through. `maxDuration = 120`, `MAX_TOKENS = 4000`.
+
+**Metered**: 10 questions per Asia/Manila day, counted as rows in `penny_employee_usage` (never a counter column — a lost
+update would be a free prompt; never `audit_log` — an admin can truncate it). Reserve before the model call, refund when a
+turn produced no text. Every read **fails closed**. Both routes report the count in an **`X-Penny-Quota`** header, including
+on the `429` that says the allowance is spent — which is exactly when the indicator most needs to be right.
+
+**Errors**: `401` / `403` from `authorizeEmailAccess` · `429` allowance spent · `503` no key or quota unavailable ·
+`400` bad body. **Audit**: `employee_assistant.query`.
+
+**Do not copy the Admin route's generation config here.** Haiku 4.5 is an older generation: `output_config.effort` errors
+and adaptive `thinking` is the wrong shape.

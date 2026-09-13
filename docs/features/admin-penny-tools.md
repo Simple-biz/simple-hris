@@ -160,6 +160,12 @@ a gap waiting to be filled.
 - **Tables** are real tables. Columns of figures are right-aligned even when the
   model omits the alignment marker, long text columns wrap while numbers never
   do, and no cell is dropped even when a value contains a stray `|`.
+- **Files open in the console, not over it.** An image opens in a viewer wearing
+  the same window chrome — title bar, status dot, a framing reticle — and it is
+  a real modal: Escape, the ✕ and the backdrop all close it, Tab stays inside,
+  and focus returns to the chip you clicked. PDFs and anything else open in a
+  new tab, because a PDF viewer belongs to the browser. The link is minted when
+  you click, and that click is what gets audited.
 - **The transcript is ephemeral** — held in the component only, gone on reload.
   There is no server-side conversation store.
 
