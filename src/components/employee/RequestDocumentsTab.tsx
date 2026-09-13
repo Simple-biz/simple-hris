@@ -96,10 +96,11 @@ function Section({
 
 /**
  * Profile → Request Documents. The employee attaches a PDF — their Pay Stubs
- * export (auto-generated here from the same statements as the Pay Stubs tab),
- * a COE, or an award — and submits it to Accounting for signing. The request
- * shows in Accounting → Documents; once approved, the signed copy (signature +
- * requested/signed dates stamped in) is downloadable right here.
+ * export (auto-generated here from the same statements as the Pay Stubs
+ * section of Profile → Compensation), a COE, or an award — and submits it to
+ * Accounting for signing. The request shows in Accounting → Documents; once
+ * approved, the signed copy (signature + requested/signed dates stamped in) is
+ * downloadable right here.
  */
 export default function RequestDocumentsTab({
   employeeEmail,
@@ -195,7 +196,7 @@ export default function RequestDocumentsTab({
     if (isSystemGeneratedType(next)) void loadCoePreview();
   };
 
-  /** Build the same all-weeks Pay Stubs PDF the Pay Stubs tab exports, scoped
+  /** Build the same all-weeks Pay Stubs PDF the Pay Stubs section exports, scoped
    *  to the chosen period, and attach it to this request. */
   const generatePaystubPdf = async () => {
     setGenerating(true);
@@ -381,8 +382,8 @@ export default function RequestDocumentsTab({
                         Auto-generate from your pay stubs
                       </p>
                       <p className="mt-0.5 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                        Builds the same statement PDF as your Pay Stubs tab, covering the period you
-                        pick, and attaches it to this request.
+                        Builds the same statement PDF as Profile → Compensation → Pay Stubs,
+                        covering the period you pick, and attaches it to this request.
                       </p>
                       <div className="mt-2.5 flex flex-col gap-2 sm:flex-row sm:items-center">
                         <SmoothSelect

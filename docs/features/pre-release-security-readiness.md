@@ -86,7 +86,11 @@ tombstoned at 410.
 
 ## 3. The launch flag the code itself asks you to flip
 
-[app/api/employee/paystub/route.ts:68](../../app/api/employee/paystub/route.ts#L68)
+[src/lib/payroll/employee-paystubs.ts:77](../../src/lib/payroll/employee-paystubs.ts#L77)
+
+*(Corrected 2026-09-12. The constant moved out of the route when the paystub reader was
+extracted; this doc and `audit-2026-09-10-session-log.md:309` both still located it at
+`app/api/employee/paystub/route.ts:68`, where it no longer exists.)*
 
 ```ts
 const SHOW_UNPAID_STAGED_PAYSTUBS = true;   // Flip to `false` at HRIS launch.
@@ -101,7 +105,16 @@ On day one of a company-wide release that intersects four known, still-open pay 
 - [[never-paid-and-misdelivered-paystubs]] — `canasm@`, `laurenc@` were **never paid**; they would
   see stubs for money they did not receive.
 - [[orphanage-pay-ot-differential-underpay]] — `erict@` ₱5,373 restore still pending.
-- [[employee-id-card]] — `formatStartDate` off-by-one puts the **wrong start date on every ID card**.
+- ~~[[employee-id-card]] — `formatStartDate` off-by-one puts the **wrong start date on every ID
+  card**.~~ **This was never true of the ID card, and is now fixed everywhere on the Profile.**
+  The card has always used `parseDateOnlyLocal` (`src/lib/employee/id-card.ts`); it was
+  `EmployeeProfile.tsx`'s own `formatStartDate` that did a bare `new Date(s)`, so the *Profile*
+  read a day early for viewers west of UTC while the card beside it was right. Since 2026-09-12
+  (`e02d575`) `formatStartDate` is a direct alias of `formatDateOnly` and a source-scan guard
+  fails if a bare `new Date(` reappears there. **Two other copies of the bug class survive off
+  this surface** — `src/components/Overview.tsx:216-224` (admin roster, naive parse) and
+  `src/components/accounting/PayrollWizardNotesFab.tsx:1892-1899` (parses correctly but hides
+  unparseable dates behind an em-dash). Neither is an ID card, and neither blocks this flag.
 - [[maria-argote-split-identity]] — `mariaa@` vs `mariaar@`, never paid.
 
 **This is a decision, not a defect.** Flip it to `false`, or reconcile those four names first. What

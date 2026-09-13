@@ -40,7 +40,7 @@ export const EMPLOYEE_TOOLS: Anthropic.Tool[] = [
   {
     name: 'get_my_pay',
     description:
-      "The signed-in employee's own recent weekly pay: hours, regular/overtime split, the computed amount, what was actually disbursed, and the status per pay week (most recent first) plus a summed total. Use for \"what was my last pay\", \"how much did I make over the last month\", \"how many hours did I log last week\". Never quote a figure for a week this does not return — tell them to open their Pay Stubs tab instead.",
+      "The signed-in employee's own recent weekly pay: hours, regular/overtime split, the computed amount, what was actually disbursed, and the status per pay week (most recent first) plus a summed total. Use for \"what was my last pay\", \"how much did I make over the last month\", \"how many hours did I log last week\". Never quote a figure for a week this does not return — tell them to open Profile → Compensation → Pay Stubs instead.",
     input_schema: {
       type: 'object',
       properties: {

@@ -111,19 +111,41 @@ Eight — four on the Overview, four on the Profile — all plain-JSON or raw-pa
 | `paidPaystubWeeks` | `GET /api/employee/paystub` (weeks mode) | Overview · week LIST, not the derived `Set` |
 | `specialTransfers` | `GET /api/people/special-transfers?email=` | Overview · the one-off transfers strip |
 | `profileMaster` | `GET /api/employees?email=` + `/api/employee-master-record` | Profile · the FULL master row (address fields merged in) — a different shape from `masterRow`, hence its own key |
-| `profileRate` | `GET /api/employee-hourly-rates?email=` | Profile · the resolved rate row (Compensation pane) |
+| `profileRate` | `GET /api/employee-hourly-rates?email=` | Profile → Compensation → **Rates** · the resolved rate row |
 | `profileSkillSet` | `GET /api/employee-skill-sets?email=` | Profile · the normalised skill-set fields |
-| `paystubSummary` | `GET /api/employee/paystub?summary=1` | Profile → Pay Stubs · RAW summary rows; the list paints from them while the live fetch runs |
+| `paystubSummary` | `GET /api/employee/paystub?summary=1` | Profile → Compensation → **Pay Stubs** · RAW summary rows; the list paints from them while the live fetch runs. **Fetched on the SECTION, not the tab** (see below) |
 
-### What the Profile deliberately does NOT cache (2026-09-03)
+### What the Profile deliberately does NOT cache (2026-09-03, restated 2026-09-12)
 
 The **bank / payout row** (`GET /api/employee-ids?email=`) carries account numbers and
 is never written to storage. Consequence: when the rest of the Profile paints from
-cache, the Payment pane alone waits for the live row behind its own `bankInfoLoaded`
+cache, the payout view alone waits for the live row behind its own `bankInfoLoaded`
 flag and shows a skeleton — never the empty "add your payout details" form flashing over
 saved details. The whole-page `ProfileSkeleton` now shows only when nothing is cached
 (`loading` seeds from `master === null`); with a cached identity the page paints at once
 and refreshes in place.
+
+**Since the 2026-09-12 tab merge that uncached row lives INSIDE a merged tab.** Payment is
+no longer its own chip — it is the **Payout** section of Compensation, sitting beside Rates
+and Pay Stubs, which both paint from this store instantly
+([employee-profile.md](./employee-profile.md) §3). Three consequences are load-bearing, and
+each is pinned by `src/lib/employee/profile-cache-conformance.test.ts`:
+
+- **Five states, not one, must stay off this store**: `bankInfo`, `payout`,
+  `walletRailEffective`, `bankPreferred` and `pendingBankPreferred`. The test fails if any of
+  them is ever bound to `useEmployeeCachedState`. "Cache the Profile" is now an instruction
+  that reaches five plain `useState` calls sitting in the same state block as four cached
+  ones.
+- **The readiness states stay separate.** `bankInfoLoaded` is NOT folded into the tab's
+  visibility or into the page-level `loading`. Folding it in would make Rates and Pay Stubs —
+  both instant from cache — wait on the one uncacheable call in the wave.
+- **The pay-stub fetch gates on the SECTION, never the tab.** Gated on the tab, every
+  employee who opened Compensation to check a bank detail would fire
+  `/api/employee/paystub?summary=1`, and under `SHOW_UNPAID_STAGED_PAYSTUBS` that route runs
+  per-week recovery — so the wasted call is expensive, not merely wasted.
+
+The merge added no key and changed nothing this store persists, so **`SCHEMA_VERSION` was
+correctly not bumped**.
 
 The Profile's identity fetch is also **one wave** now: `/api/employee-master-record` and
 `/api/bank-preferred-requests` used to wait for the first four calls and then for each

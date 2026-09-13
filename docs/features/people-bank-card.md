@@ -1,4 +1,4 @@
-# Accounting → People → View → Banking — the payee's bank card
+# The payee's bank card — Accounting's People pane, and the employee's own Profile
 
 The revealed payout record, printed as the object it describes: a landscape card in
 the payee's own bank's colours, with the bank's logo where an issuer's mark sits and
@@ -8,7 +8,9 @@ check the Payment Catalog, the logos exist there, this way we can identify the b
 that they are on"*, then *"make the whole container of it look like the card for the
 actual bank so if it's GoTyme it will look like a GoTyme card with the info on it"*.
 
-Shipped 2026-09-11.
+Shipped 2026-09-11 on Accounting's People → View → Banking pane. **A second host landed
+2026-09-12**: the employee's own Profile → Compensation → Payout, masked to last-4 — see §9
+and [employee-profile.md](./employee-profile.md).
 
 ## Key files
 
@@ -20,7 +22,10 @@ Shipped 2026-09-11.
 | Card colour, contrast maths (client-safe, pure) | `src/lib/payment-catalog/bank-card-palette.ts` (+ `.test.ts`) |
 | Brand-colour measurement off the artwork | `src/lib/images/decode-png.ts` → `dominantInkColor` |
 | Regenerates the colour table (READ-ONLY, no `--apply` needed) | `scripts/derive-bank-brand-colors.mts` |
-| Host — reveal, loading state, disclosures | `src/components/people/PeopleTab.tsx` |
+| Which rail gets a card, which gets wallet fields (shared) | `src/lib/banking/payout-rail-view.ts` (+ `.test.ts`) |
+| The last-4 mask rule (shared with the payout form) | `src/lib/banking/account-mask.ts` (+ `.test.ts`) |
+| Host 1 — Accounting: reveal, loading state, disclosures | `src/components/people/PeopleTab.tsx` |
+| Host 2 — the employee's own Payout section (masked) | `src/components/employee/EmployeeProfile.tsx` → `PayoutReadView` |
 | Shipped brand logos + provenance | `public/banks/*.png` · `public/banks/SOURCES.json` |
 
 ## 1. Nothing new is exposed, and the reveal is still the audited path
@@ -64,7 +69,7 @@ three are correct:
 | --- | --- | --- |
 | Declared bank with a shipped logo | 765 | Its logo, its colours |
 | Declared bank that ships no artwork | 162 (MariBank 104, Metrobank 31, Security Bank 16) | Neutral card, generic mark |
-| Spelling nobody has claimed | 14 (8 are a person's name) | Neutral card, generic mark |
+| Spelling nobody has claimed | 14 at the 2026-09-11 measurement, **11 since 2026-09-12** (8 are a person's name) | Neutral card, generic mark |
 | No bank on the paid slot | 1,124 (wallet-routed, or nothing on file) | No card |
 
 The mark on a neutral card is a plain `Landmark` glyph, **identical for every bank
@@ -161,6 +166,41 @@ the field grid**. Two renderings of the same account number drift the first time
 is touched. Routing and Address stayed in the grid: they are wire instructions, not
 anything a card face carries.
 
+**The Routing row drops itself when it would repeat the card's SWIFT.** There is no
+`alt_swift_code` column, so for an alternative-slot payee `alt_routing_number` is BOTH the
+card's SWIFT source and this row's source — the same string printed twice under two names,
+on a wire instruction. The drop is **equality-based only**, so a genuinely different routing
+number still prints. It does not drop when the value is absent: the card face omits its SWIFT
+slot entirely when there is no wire code, and `isPayoutComplete` does not require SWIFT, so a
+wire-rail payee with neither value would otherwise get silence where a wire code belongs.
+
+## 9. Two hosts, one card
+
+Since 2026-09-12 the same component also renders on the **employee's own** Profile →
+Compensation → Payout, as the read state of a pane that was already read-with-an-Edit-button.
+It is the same file, the same resolver, the same palette and the same contrast proof; the host
+difference is carried by two props that **both default to the shipped behaviour**, so
+Accounting's call site passes neither and is byte-identical.
+
+| Prop | Default | The employee's host |
+| --- | --- | --- |
+| `masked` | `false` | `true` — account number and wire code print as last-4 through the shared `maskAccount`, with an in-card reveal, and **the copy button is disabled while masked** (bullets on the clipboard, silently, on a money field is worse than no button) |
+| `animateIn` | `true` | `false` — that host animates the card's arrival itself (the section pane is a keyed `motion.div` under `AnimatePresence`), and the motion wrapper is then not rendered at all rather than merely stilled |
+
+**The employee's reveal is client-side only — no route, no audit row.** The full value is
+already in that browser's hands (their own `employee_ids` row). `/api/people/[email]/reveal-banking`
+writes an audit row because it records someone reading **another** person's record; a payee
+reading their own is not that event. Do not "fix" the asymmetry by auditing the employee's
+reveal — it would log an event that did not happen.
+
+**Which payee gets a card is one shared rule**, `payoutRailView` — extracted from this pane's
+own `showBank` const and now read by both hosts, so a Wise payee cannot have a card on one
+surface and none on the other. It takes **three** input states, not two: a `ProcessorId`, `null`
+(nothing stored on any tier — the bank-name fallback applies), and `'unrecognised'` (something
+IS stored and it is not ours — `preferred_processor` also carries `'ach'`, the contractor US
+rail, and an `'ach'` payee must never be handed a bank card). Collapsing the last two into one
+is the bug the third state exists to prevent.
+
 ## Deploy notes
 
 No migration, no env vars, no new endpoint, no new dependency. The brand logos and the
@@ -171,7 +211,11 @@ per `payment-catalog-current-banks.md` §7), add the path to `BANK_LOGO_SRC`, ru
 `node --import tsx scripts/derive-bank-brand-colors.mts`, and paste the printed line
 into `BANK_BRAND_HEX`. The test will tell you if you skipped the last step.
 
-**Open:** three live spellings the declared table plausibly covers but does not claim —
-`CIMB Bank` (1), `Philippines National Bank` (1), `GoTyme Bank, Inc. (GoTyme Bank
-Corporation)` (1). Each would be a declared claim and needs
-`scripts/audit-bank-spellings.mts` re-run; none was added here.
+**CLOSED 2026-09-12 (`f2560d0`):** the three live spellings the declared table plausibly
+covered but did not claim — `CIMB Bank` (1), `Philippines National Bank` (1, the plural
+misspelling) and `GoTyme Bank, Inc. (GoTyme Bank Corporation)` (1) — are now **aliases of
+existing entries** (`cimb`, `pnb`, `gotyme`). Adding them as new entries would have split one
+institution into two. `cimb` and `pnb` already ship artwork and already have measured colours,
+so all three gained a fully branded card, not a corrected name. `scripts/audit-bank-spellings.mts`
+was re-run and confirms none of the three appears in the unmatched list. **No hex was hand-typed
+and no matcher was widened** — which is the only way this is ever done.

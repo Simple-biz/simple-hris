@@ -55,6 +55,13 @@ backdoor from an internal-tool risk into a company-wide one.
 
 ### 2.1 Profile — Overview + ID + Compensation into one pane
 
+> **Kane's 2026-09-12 ruling supersedes this section on two points, and the merge is now built.**
+> The record below stands as what the room decided on 2026-09-09 — it is not edited away — but
+> what shipped is **nine chips → five**: Payment **was** folded in, and Compensation moved to the
+> money tab with Pay Stubs and Payout rather than joining Overview + ID. Carla's ask is otherwise
+> satisfied: Overview and ID are one pane. See
+> [`docs/features/employee-profile.md`](../features/employee-profile.md).
+
 **Ask (Carla):** *"the profile under employee — overview, ID and compensation all need to be one tab."*
 
 Overview, ID and Compensation are **already inside the single Profile page** — they are three of nine
@@ -71,9 +78,11 @@ reshuffle inside one file; no data loading, caching, auth or routing moves. Two 
   (`src/lib/employee/id-card.ts:89-95`) uses `parseDateOnlyLocal` — so for any viewer west of UTC
   the merged pane will **contradict itself by one day**. The off-by-one is still open, flagged
   2026-09-04 rather than fixed. Merging makes it visible side-by-side.
-- **Payment must NOT be folded in.** It is the editable payout form, deliberately uncached because it
-  carries account numbers (`employee-dashboard-cache.md:121-126`), and it is the bank-preferred
-  dropdown's documented home (`bank-preferred-routing.md` §1).
+- ~~**Payment must NOT be folded in.**~~ **OVERRULED by Kane, 2026-09-12** — the meeting's concern
+  was answered rather than overridden: the payout row is still **never cached** (pinned by
+  `profile-cache-conformance.test.ts`), the Payout section carries its **own** `bankInfoLoaded`
+  readiness so no cached section waits on it, and the bank-preferred dropdown travelled with the
+  form it belongs to. It ships as the **Payout** section of the merged Compensation tab.
 
 Do not move the `label: 'Pay Stubs'` or `label: 'Request Documents'` strings: a Penny guides test
 source-scans this file for both (`src/lib/penny/employee-guides.test.ts:166-169`) and fails the build

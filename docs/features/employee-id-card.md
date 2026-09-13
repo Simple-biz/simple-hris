@@ -1,7 +1,8 @@
 # Employee ID card — the company badge, inside Profile
 
-A read-only company ID badge in the Employee portal at **Profile → ID**, second in the
-section row after Overview. It renders Full name, Work email, Latest department, Address
+A read-only company ID badge in the Employee portal. Since the 2026-09-12 tab merge it is a
+**section of Profile → Overview**, below Personal / Employment / Address, rather than a chip
+of its own ([employee-profile.md](./employee-profile.md)); it was **Profile → ID** before that. It renders Full name, Work email, Latest department, Address
 and Start date over the `employee_id` serial, using values the Profile screen has already
 fetched. Built for Kane, 2026-09-04: *"an Image of an ID … like we would on school or
 company ID"*, portrait, front only, milled metal in the Simple wordmark's own navy.
@@ -220,11 +221,26 @@ The filename is `simple-id-<employee_id>.png`, falling back to a slug of the nam
 to `simple-id-card.png`. Everything outside `[a-z0-9-]` is collapsed and the stem is capped,
 so a name with a quote, a slash or no Latin characters cannot produce an unsaveable file.
 
-**An elevated `?email=` viewer may download the badge they are previewing.** The doc was
-silent, and this is the decision: a download grants no access the viewer does not already
-have — the same five fields are on screen, and the card carries no bank data — so a gate
-would be theatre that also stops HR helping someone. If that ever needs to change, gate it
-where identity is resolved (`EmployeeApp.tsx`), not on the button.
+**An elevated `?email=` viewer may download the badge they are previewing.** Decided
+2026-09-04, **re-taken 2026-09-12 and upheld** — with one leg of the original reasoning
+retired.
+
+That justification had two legs: *a download grants no access the viewer does not already
+have* (the same five fields are on screen), and *the card carries no bank data*. The second
+leg **no longer holds as a statement about the screen**: the Profile now also hosts the payout
+bank card on Compensation → Payout, so an elevated `?email=` preview does put someone else's
+masked account details on the same page. It still holds as a statement about **this file**:
+the PNG is painted by `id-card-render.ts` from an `IdCard` view-model built by `buildIdCard`,
+which carries name, work email, department, address, start date and `employee_id` and **no
+payout field at all** — there is no path by which a bank detail can reach the canvas.
+
+So the decision stands on the first leg alone, which is the stronger one: the download is a
+copy of what the viewer is already looking at, and a gate on the button would be theatre that
+also stops HR helping someone. The question the merge actually raises is **who may hold an
+elevated `?email=` preview at all**, and that is settled where identity is resolved
+(`EmployeeApp.tsx`) — never on this button. If the badge is ever given a payout field, re-take
+this decision, because the first leg would then be carrying a file that had become a money
+document.
 
 ## Deploy notes
 

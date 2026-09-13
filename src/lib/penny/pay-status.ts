@@ -132,7 +132,7 @@ export function employeePaymentStatus(input: PayStatusInput): PayStatusResult {
  * step. Exported so the tool's field_notes and the tests reference one string.
  */
 export const NO_RECORD_NOTE =
-  'There is no confirmed payment record for this week in the HRIS. That does NOT mean you were not paid — the paid mark was not reliably recorded for some earlier weeks. Check your Pay Stubs tab, and raise it with Accounting if you believe a week is genuinely unpaid.';
+  'There is no confirmed payment record for this week in the HRIS. That does NOT mean you were not paid — the paid mark was not reliably recorded for some earlier weeks. Check Profile → Compensation → Pay Stubs, and raise it with Accounting if you believe a week is genuinely unpaid.';
 
 /** True when a status must never be summarised as "you have not been paid". */
 export function isUnconfirmedNotUnpaid(status: EmployeePaymentStatus): boolean {

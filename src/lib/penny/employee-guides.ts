@@ -78,17 +78,17 @@ function payslipsGuide(): EmployeeGuide {
   return {
     key: 'payslips',
     title: 'Get your pay stubs / payslips',
-    where: 'Employee → Profile → Pay Stubs (your own copy) · Profile → Request Documents (a signed copy)',
+    where: 'Employee → Profile → Compensation → Pay Stubs (your own copy) · Profile → Request Documents (a signed copy)',
     steps: [
-      'For your own records: open Profile → the "Pay Stubs" tab. Every pay week is listed; "View" opens that week\'s statement.',
-      'The same tab exports every week at once as a PDF or a spreadsheet, straight to your device.',
+      'For your own records: open Profile → Compensation → the "Pay Stubs" section. Every pay week is listed; "View" opens that week\'s statement.',
+      'That same section exports every week at once as a PDF or a spreadsheet, straight to your device.',
       'Quickest route for the latest week: on your Overview, use the "Open Paystubs" button beside the pay-week selector. The "Salary Paid" notification also carries an "Open Pay Stub" button.',
       'For an OFFICIAL signed copy — a bank, a loan, a visa, tax filing: Profile → "Request Documents" → type "Pay Summary / Pay Slips".',
       'Pick the period you need: last 3, 6 or 12 months, or everything. The HRIS builds the PDF and attaches it for you.',
       'Press "Submit request", then download the "Signed document" from that tab once Accounting has signed it.',
     ],
     notes: [
-      'The Pay Stubs tab is instant and needs nobody\'s approval — use it unless somebody specifically needs a signed document.',
+      'The Pay Stubs section is instant and needs nobody\'s approval — use it unless somebody specifically needs a signed document.',
       'A week marked as an estimate was reconstructed from your logged hours rather than from a finalised payroll run. Performance bonuses and manual adjustments are not included on those weeks, so the total can differ from what was actually paid.',
       'Only your own statements are ever visible here.',
     ],

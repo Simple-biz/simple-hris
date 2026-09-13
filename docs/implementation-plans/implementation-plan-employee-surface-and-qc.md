@@ -32,7 +32,7 @@
 | 4 | QC corrections — ~~Callback out of scope~~ + ~~real randomization~~ **BUILT 2026-09-10**; Alivia's role = Kane's admin click | `hardening` | **Mon 2026-09-14** |
 | 5 | ~~Rename the tab to "Time Adjustments" + the auto-playing per-day nudge~~ **BUILT 2026-09-10** | `hardening` | done — show Carla |
 | 6 | ~~PAB explainer copy (4 sites) · Details → FAQs · the drill-in~~ **BUILT 2026-09-10** | `hardening` | done |
-| 7 | Profile: Overview + ID + Compensation → one pane | `hardening` | — |
+| 7 | Profile: Overview + ID + Compensation → one pane **(SUPERSEDED 2026-09-12 — shipped as 9 chips → 5, Payment folded in; see `docs/features/employee-profile.md`)** | `hardening` | — |
 | 8 | Reports → "Badges and Certificates" (label only) | `hardening` | — |
 | 9 | Team directory: peers stop seeing legal names | `hardening` | — |
 | 13 | QC paste → Compare → Override + officer histogram | **`blueprint`** | after Wave 1 |
@@ -468,6 +468,15 @@ this day broke it"*, never a per-day award.
 
 ## 7. Wave 4 — Profile: three chips into one pane (R11)
 
+> **SUPERSEDED 2026-09-12, and BUILT.** Kane ruled the merge wider than this section scopes it:
+> **nine chips → five**, not nine → seven. Payment **folds IN** and Compensation moves to the
+> money tab beside Pay Stubs and Payout — so §7.4's first invariant (*“Payment stays its own
+> chip”*) and this section's Overview+ID+Compensation grouping are both overruled. The fold
+> carries three hard conditions, all shipped and test-pinned; see
+> [`docs/features/employee-profile.md`](../features/employee-profile.md) for what actually
+> exists. The record below is kept as the scoping that preceded the ruling, not as a plan to
+> execute.
+
 **Current state.** Overview, ID and Compensation are **already inside the single Profile page** —
 three of nine in-page chips (`EmployeeProfile.tsx:151` union, strip at `:507-517`), not tabs and not
 routes. The sidebar has one Profile item (`EmployeeSidebar.tsx:78`); the Pages registry one `profile`
@@ -563,12 +572,19 @@ Pay Stubs pay dates and three resignation effective dates by a day for those vie
 
 ### 7.4 Invariants
 
-- **Payment stays its own chip.** It is the editable payout form, deliberately uncached because it
-  carries account numbers (`employee-dashboard-cache.md:121-126`), and it is the bank-preferred
-  dropdown's documented home (`bank-preferred-routing.md` §1).
+- ~~**Payment stays its own chip.**~~ **OVERRULED by Kane, 2026-09-12.** Payment folded into the
+  merged Compensation tab as its **Payout** section. The reasoning below was not wrong, it was
+  answered: the payout row stays **uncached** (`profile-cache-conformance.test.ts` fails if any of
+  the five payout states is ever bound to the cache), the Payout section keeps its **own**
+  `bankInfoLoaded` readiness so the cached sections never wait on it, and the bank-preferred
+  dropdown moved with the form rather than being separated from it. See
+  [`docs/features/employee-profile.md`](../features/employee-profile.md) §3.
 - **Do not move the strings `label: 'Pay Stubs'` or `label: 'Request Documents'`** — a Penny guides
   test source-scans this file for both (`src/lib/penny/employee-guides.test.ts:166-169`) and **fails
-  the build** if either moves.
+  the build** if either moves. *(2026-09-12: `Request Documents` is still a tab label;
+  `Pay Stubs` became a **section** label in `src/lib/employee/compensation-sections.ts` and the test
+  was TIGHTENED to follow it there — it now also asserts the pane renders `title="Pay Stubs"`,
+  because a live strip chip leading to an empty pane passed every earlier assertion.)*
 - Keep the ID card in a block that can still reach 372px. Every dimension inside
   `EmployeeIdCard.tsx` is `cqw`, so the frame decides the badge's legible size.
 - Feature permissions gate at **tab** granularity (`rbac-feature-permissions.md`), so collapsing

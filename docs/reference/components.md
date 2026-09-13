@@ -689,9 +689,15 @@ The primary employee-facing view. Shows weekly hours, pay calculations, and PAB 
 - **PAB Calendar**: Built via `buildPabCalendarWeeks()` — generates expected weekdays in the PAB range, maps actual hours, renders a grid with date/hours/status per cell.
 - **Skeleton loading**: Full-page skeleton (header, bonus cards, stats grid, chart/calendar/summary) shown during initial data load. PAB calendar has its own skeleton with staggered pulse.
 
-### `EmployeeProfile.tsx` — Profile *(redesigned 2026-05-02)*
+### `EmployeeProfile.tsx` — Profile *(redesigned 2026-05-02; chips merged 9 → 5 on 2026-09-12)*
 
-Employee profile screen — modern minimal layout (Linear/Vercel-style) with three tabs.
+Employee profile screen — modern minimal layout (Linear/Vercel-style). **Five in-page chips**
+since 2026-09-12: **Overview** (identity, employment, address, ID card) · **Compensation** (an
+inner segmented strip: Rates · Pay Stubs · Payout) · **Skill Sets** (skills + commendations,
+stacked) · **Request Documents** · **Resign**. The tab, section and deep-link vocabulary lives
+in `src/lib/employee/profile-tabs.ts` — the union is **not** re-declared anywhere else, and
+callers deep-link by **intent** (`photo` / `bank` / `skillSet`) rather than by tab id.
+Governing doc: [employee-profile.md](../features/employee-profile.md).
 
 **Hero**: 64-80px circular avatar with hover camera overlay → photo upload, name (24-28px semibold, tight tracking), department · ID inline, **Active** pill (with ping animation on the dot), and a **Payroll locked** pill when relevant.
 
@@ -704,7 +710,11 @@ Employee profile screen — modern minimal layout (Linear/Vercel-style) with thr
 2. **Compensation** — read-only pay info as `CompactStat` blocks (uppercase label, 22px mono number, hint).
    - **Hourly Rates**: Regular and Overtime in a 2-column grid.
    - **Currency**: USD → PHP reference rate, with a "Live · payroll" pip.
-3. **Payment** — editable disbursement details. Wraps `PreferredPaymentMethodRadios` + `PayoutDetailsFields` with an editorial card frame; toolbar shows current channel as a stamp, plus Edit / Cancel / Save (orange CTA). Read-only when payroll is locked.
+   - **Pay Stubs** *(section, 2026-09-12)* — the paid-week list, the per-week modal and the all-weeks PDF/XLSX export. Its fetch is gated on **the section**, not the tab.
+   - **Payout** *(section, 2026-09-12; formerly the `Payment` chip)* — editable disbursement details. Wraps `PreferredPaymentMethodRadios` + `PayoutDetailsFields` with an editorial card frame; toolbar shows current channel as a stamp, plus Edit / Cancel / Save (orange CTA). Read-only when payroll is locked. Its **read** state is the shared `BankCard` (`src/components/banking/bank-card.tsx`), masked to last-4 with an in-card reveal. This section alone waits behind `bankInfoLoaded`; `/api/employee-ids` is never cached.
+3. **Skill Sets** — the skill-set editor and the commendations list, stacked on one page (the former `Reports` chip).
+4. **Request Documents** — COE, pay-stub and certificate requests.
+5. **Resign** — file or withdraw a resignation.
 
 **Avatar fallback chain**: Google SSO photo → uploaded Supabase photo → Gravatar → initials. The Google URL is provided by `EmployeeApp` from the NextAuth session, gated by an email-match check so impersonation paths (`?email=other@simple.biz`) don't show the wrong person's photo.
 

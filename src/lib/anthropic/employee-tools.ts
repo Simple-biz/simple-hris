@@ -66,10 +66,10 @@ import { employeePaymentStatus } from '@/lib/penny/pay-status';
  * `runCeoTool('get_employee_pay')` (which overlays live `payment_dispatches`
  * over the lagging `disbursement_records`, per the 2026-07-29 freshness fix) and
  * `resolveCoeFacts` (the Payment Catalog resolver behind the COE the employee
- * can download). A Penny that quotes a number the Pay Stubs tab disagrees with
- * is worse than a Penny that says "open your Pay Stubs tab", so where a figure
- * would have to be recomputed, these tools hand back the rule and point at the
- * screen instead.
+ * can download). A Penny that quotes a number the Pay Stubs section disagrees
+ * with is worse than a Penny that says "open Profile → Compensation → Pay
+ * Stubs", so where a figure would have to be recomputed, these tools hand back
+ * the rule and point at the screen instead.
  */
 
 type ToolResult = Record<string, unknown>;
@@ -298,7 +298,7 @@ async function getMyPay(ctx: EmployeeToolContext, weeksRaw: unknown): Promise<To
       (result.field_notes as string | undefined) ?? '',
       'IGNORE any mention of a `status` field above — this employee-facing result replaces it with `payment_status`, one of: paid (a payment is recorded) · scheduled (the pay date has not arrived; nothing is late) · processing (the pay date just passed; a run may still be landing) · not_recorded (NO confirmed payment record) · on_hold (Accounting flagged it).',
       '**`not_recorded` does NOT mean they were not paid.** The paid mark was not reliably recorded for some earlier weeks, so absence of a record proves nothing either way. Say what `payment_status_note` says, do not translate it into "unpaid", "owed", "outstanding" or "still waiting", and never tell someone they are owed money on the strength of a missing flag. If they think a week is genuinely unpaid, that goes to Accounting.',
-      'This is the signed-in employee\'s own pay history. If a week they ask about is not listed at all, say it is not in the payment records and point them at the Pay Stubs tab — never estimate a week\'s pay yourself.',
+      'This is the signed-in employee\'s own pay history. If a week they ask about is not listed at all, say it is not in the payment records and point them at Profile → Compensation → Pay Stubs — never estimate a week\'s pay yourself.',
     ]
       .filter(Boolean)
       .join(' '),
