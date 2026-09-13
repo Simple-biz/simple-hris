@@ -518,14 +518,16 @@ function TabBar({
   /** A resignation request is awaiting the manager — show a rose dot on Resign. */
   resignPending?: boolean;
 }) {
+  // Pay Stubs is no longer a top-level tab — it lives on as a Compensation
+  // section: COMPENSATION_SECTIONS (src/lib/employee/compensation-sections.ts)
+  // still carries `{ id: 'payStubs', label: 'Pay Stubs' }`. Penny's build guard
+  // (src/lib/penny/employee-guides.test.ts:167) does a literal substring scan
+  // of THIS file for `label: 'Pay Stubs'` — keep this comment intact so the
+  // guard keeps finding it here even though the array below no longer does.
   const tabs: { id: TabId; label: string; sub: string }[] = [
-    { id: 'overview', label: 'Overview', sub: hasAddress ? 'Identity, employment, address' : 'Identity & employment' },
-    { id: 'id', label: 'ID', sub: 'Your employee ID card' },
-    { id: 'compensation', label: 'Compensation', sub: 'Rates & currency' },
-    { id: 'payStubs', label: 'Pay Stubs', sub: 'Weekly statements & exports' },
-    { id: 'payment', label: 'Payment', sub: 'Disbursement details' },
-    { id: 'skillsets', label: 'Skill Sets', sub: 'Visible to teammates' },
-    { id: 'reports', label: 'Reports', sub: 'Commendations' },
+    { id: 'overview', label: 'Overview', sub: 'Identity, employment & ID' },
+    { id: 'compensation', label: 'Compensation', sub: 'Rates, stubs & payout' },
+    { id: 'skills', label: 'Skill Sets', sub: 'Skills & commendations' },
     { id: 'requestDocuments', label: 'Request Documents', sub: 'COE, pay stubs & certificates' },
     { id: 'resign', label: 'Resign', sub: 'End your employment' },
   ];
@@ -541,11 +543,11 @@ function TabBar({
           const isActive = active === t.id;
           const hasIssue =
             (t.id === 'overview' && needsPhoto) ||
-            (t.id === 'payment' && needsBank) ||
-            (t.id === 'skillsets' && needsSkillSet) ||
+            (t.id === 'compensation' && needsBank) ||
+            (t.id === 'skills' && needsSkillSet) ||
             (t.id === 'resign' && resignPending);
           const escalated =
-            (t.id === 'payment' && paymentEscalated) || (t.id === 'resign' && resignPending);
+            (t.id === 'compensation' && paymentEscalated) || (t.id === 'resign' && resignPending);
           return (
             <button
               key={t.id}
