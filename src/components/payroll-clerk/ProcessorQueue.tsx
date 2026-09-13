@@ -198,6 +198,27 @@ interface ProcessorQueueProps {
  *  collide with it — departments never start with "__"). */
 const NO_DEPT = '__none__';
 
+/**
+ * The backup account block in the expanded row.
+ *
+ * Kane, 2026-09-13: *"the Payment Dispatch should see the alternative bank but
+ * not the cards"* — so these are plain labelled fields with copy buttons, the
+ * same shape as the contact block above, and never the bank card the employee's
+ * own Profile prints.
+ *
+ * Deliberately NOT folded into `PROCESSORS[].detailFields`. That list is what a
+ * rail needs **to pay someone**, it is rendered as one undifferentiated grid, and
+ * `dispatch-client-csv.ts` treats every key in it as a payout destination. Four
+ * more bank fields sitting unlabelled among the contact fields is how an account
+ * number that must NOT be used gets copied at speed.
+ */
+const BACKUP_FIELDS: { key: string; label: string; mono?: boolean }[] = [
+  { key: 'backup_bank_name', label: 'Bank' },
+  { key: 'backup_account_holder_name', label: 'Account holder' },
+  { key: 'backup_account_number', label: 'Account number', mono: true },
+  { key: 'backup_swift_code', label: 'SWIFT', mono: true },
+];
+
 const FIELD_LABELS: Record<string, string> = {
   email: 'Work email',
   hurupay_email: 'Kolan email',
@@ -1294,6 +1315,62 @@ const QueueRowItem = React.memo(function QueueRowItem({
                   );
                 })}
               </div>
+              {/* The other slot, when the record holds a second and genuinely
+                  different account. `buildPayeeDetails` decides that — through the
+                  same `readBankSlot` / `sameBankAccount` rule the employee's own
+                  Payout deck uses — so the two surfaces can never disagree about
+                  whether a backup exists. Empty here means there isn't one, not
+                  that this view didn't look.
+
+                  The heading states the NEGATIVE because four bank fields under a
+                  payment row otherwise read as a destination. Nothing here
+                  pre-fills anything: the Mark Paid override still writes only what
+                  a human types into it. */}
+              {(row.details.backup_account_number || row.details.backup_bank_name) && (
+                <div className="mt-3 rounded-lg border border-dashed border-zinc-300 bg-white/70 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-950/50">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-300">
+                      Backup account on file
+                    </span>
+                    <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                      {row.details.backup_slot} slot — this payment is <strong className="font-semibold">not</strong> going here
+                    </span>
+                  </div>
+                  <div className="mt-2 grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
+                    {BACKUP_FIELDS.map(({ key, label, mono }) => {
+                      const value =
+                        (row.details as Record<string, string | undefined>)[key] ?? '';
+                      return (
+                        <div key={key} className="flex items-start gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+                              {label}
+                            </div>
+                            <div
+                              className={cn(
+                                'mt-0.5 truncate text-xs text-zinc-900 dark:text-zinc-100',
+                                mono && 'font-mono tabular-nums',
+                              )}
+                            >
+                              {value || '—'}
+                            </div>
+                          </div>
+                          {value && (
+                            <button
+                              type="button"
+                              onClick={() => copy(String(value))}
+                              className="shrink-0 rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                              aria-label={`Copy backup ${label.toLowerCase()}`}
+                            >
+                              <Copy className="h-3 w-3" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {row.bankPreferredRaw && /^x?\d{3,5}$/i.test(row.bankPreferredRaw.trim()) && (
                 <div className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-400">
                   Account suffix in source:&nbsp;

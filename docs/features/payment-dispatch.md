@@ -205,6 +205,59 @@ map built once per load for the *whole cycle*, including everyone already paid
 
 Click the row to expand the processor-specific contact details (Kolan email, Higlobe email + account name, phone, full address, city, province/state) with copy buttons on each.
 
+##### 3.4.4 The backup account on the expanded row (2026-09-13)
+
+Kane: *"the Payment Dispatch should see the alternative bank but not the cards."*
+
+`employee_ids` has always held **two** bank slots and this worksheet showed one.
+A read-only probe over **2,065 rows on 2026-09-13** found **151 payees with a
+genuinely different second account**, 159 carrying any `alt_*` value, and **17 who
+are PAID out of the alternative slot**. When a payment bounces, the account that
+would fix it was on the record and nowhere on this screen.
+
+The expanded row now reveals it as **plain labelled fields with copy buttons** —
+the same shape as the contact block above it, in a dashed-bordered block of its
+own. **Not the bank card** the employee's own Profile prints
+([employee-profile.md § 6.2](./employee-profile.md#62-the-deck--a-second-account-sits-behind-the-first)):
+a card asserts a brand and a destination, and this is neither.
+
+**It is called the BACKUP slot, never `alt`.** For those 17 people the paid slot
+*is* the alternative, so their backup is the **primary** columns — a field named
+`alt_account_number` holding the primary account is the label that gets money sent
+to the wrong place. `backup_slot` prints which columns it came from
+(`Primary` / `Alternative`), and the block's heading states the negative
+(*"this payment is **not** going here"*) because four bank fields under a payment
+row otherwise read as a destination.
+
+**A backup is EARNED, by the same rule the employee surface uses.**
+`buildPayeeDetails` populates the block only when `readBankSlot` +
+`sameBankAccount` (`src/lib/banking/preferred-bank.ts`) say the other slot is a
+different account. This matters because the paid fields resolve with a
+**cross-slot fallback**: a record half-filled in one slot resolves to the same
+account from either side, so a naive read would offer a clerk *the account that
+just failed* as its own backup. One rule, two surfaces — the worksheet and the
+employee's Profile can never disagree about whether a backup exists. Pinned by
+`src/lib/payroll/dispatch-backup-account.test.ts`.
+
+**Deliberately NOT in `PROCESSORS[].detailFields`.** That list is what a rail
+needs *to pay someone*; it renders as one undifferentiated grid and
+`dispatch-client-csv.ts` treats every key in it as a payout destination. Four more
+bank fields sitting unlabelled among the contact fields is how an account number
+that must **not** be used gets copied at speed.
+
+**Gated on the DATA, not the rail.** A Kolan or Higlobe payee is paid to an email
+and has no bank card anywhere — but a failed wallet payment is exactly when a
+clerk wants to know a bank account exists. The fields are plain text and claim no
+rail, so there is nothing for a rail gate to protect.
+
+**Nothing here pre-fills anything.** The Mark Paid dialog, its pencil override and
+`POST /api/payment-dispatch/bank-override` (§12.4,
+[bank-preferred-routing.md § 5](./bank-preferred-routing.md#5-mark-paid-bank-details-override))
+are untouched: the override still writes only what a human types into it, and
+still never touches routing. **The log views are untouched too** — their
+*To Recipient Bank* is the frozen `recipient_*` snapshot (§3.4.2) and must stay
+never-re-resolved, so the backup block appears on the **pending** worksheet only.
+
 #### Search
 
 `SearchBar` with **debounced** input (`useDebouncedValue` hook, 250 ms). Searches name, email, row id, and bank-preferred raw value. Right side shows three bouncing motion-driven dots while typing, then settles to a result count when the debounce completes. Clear button (X) appears when there's a query.
@@ -567,6 +620,25 @@ pay that*. Fixed in the same pass:
 
 A recorded `system_bonus_php` of ₱0 is a real claim and prints; only a
 pre-migration row with no snapshot at all prints blank.
+
+**d. The backup account is exported too — and the headers say it is not the
+destination (2026-09-13).** §3.4.4 reveals the payee's other bank slot on the
+expanded row, so property (b) binds: five columns — `Backup Slot (not paid)`,
+`Backup Bank (not paid)`, `Backup Account Holder (not paid)`,
+`Backup Account Number (not paid)`, `Backup SWIFT Code (not paid)`.
+
+**(c)'s reasoning does NOT extend to them, and that is the point.** (c) covers
+`PROCESSORS[].detailFields` because *"that is where the money goes"*; a backup
+account is explicitly where the money is **not** going, so it is left out of
+`detailFields` and its coverage is asserted separately in
+`dispatch-backup-account.test.ts` rather than left unguarded. Property (b) is
+stated unconditionally and still binds: a field a clerk can read on the worksheet
+and cannot find in the file sends them back into the app at the worst moment — a
+payment that has already failed. Blank means **no backup on file**, not "not
+exported"; 151 of 2,065 payees have one. The `(not paid)` suffix is load-bearing
+and is pinned by a test: a column called `Bank` beside `Account Number / Wallet`
+would read, in the validation artifact, as a second place the money might have
+gone.
 
 **c. The pending worksheet must carry every field the expanded row reveals
 (2026-08-26).** The 08-25 pass closed property (b) on the *money* half and left it

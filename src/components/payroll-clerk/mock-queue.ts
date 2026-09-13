@@ -4,6 +4,15 @@ import type { CurrentPayEntry } from '@/lib/payroll/current-pay';
 import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+// The backup account a clerk sees when a payment bounces. Read through the SAME
+// rule the employee's own Payout deck uses, so the two surfaces cannot disagree
+// about whether someone has a second account on file.
+import {
+  readBankSlot,
+  bankSlotHasAccount,
+  sameBankAccount,
+  type PreferredBank,
+} from '@/lib/banking/preferred-bank';
 
 /** Resolve a rates-row Department string to a { key, name } payroll department. */
 function resolveDept(raw: string | null | undefined): { key: string | null; name: string | null } {
@@ -423,6 +432,25 @@ export interface QueueRow {
     account_holder_name?: string;
     account_number?: string;
     swift_code?: string;
+    /**
+     * The OTHER slot — the one this payment is NOT going to.
+     *
+     * Deliberately NOT named `alt_*`. For the **17 people whose paid slot IS the
+     * alternative**, the backup is the PRIMARY columns, and a field called
+     * `alt_account_number` holding the primary account is the kind of label that
+     * gets money sent to the wrong place at 6pm on a Friday. `backup_slot` says
+     * which columns it actually came from.
+     *
+     * Populated ONLY when the other slot is a genuinely different destination —
+     * `employee_ids` half-filled in one slot resolves, through the cross-slot
+     * fallback above, to the SAME account, and a clerk offered a "backup" that is
+     * the account that just bounced has been told something false.
+     */
+    backup_slot?: string;
+    backup_bank_name?: string;
+    backup_account_holder_name?: string;
+    backup_account_number?: string;
+    backup_swift_code?: string;
   };
 }
 
@@ -480,12 +508,53 @@ type RatesDetailSource = Pick<
  * falling back to the other slot so a person with details in only one slot still
  * shows an account.
  */
-function buildPayeeDetails(
+/**
+ * Exported for `dispatch-backup-account.test.ts`. The backup-slot rule below is
+ * a money rule and is not reachable through `buildQueueRows` without standing up
+ * a whole cycle, so it is asserted against the real function rather than a
+ * restatement of it.
+ */
+export function buildPayeeDetails(
   email: string,
   idsRow: EmployeeIdRow | undefined,
   r?: RatesDetailSource | null,
 ): QueueRow['details'] {
   const bankSlot = preferredBankSlot(idsRow);
+
+  // The paid slot, computed here rather than borrowed from `pickPreferredBank`.
+  // The two agreeing is what `preferred-bank-pd-parity.test.ts` PROVES; calling
+  // that function here would turn the proof into a tautology.
+  const bank_name =
+    bankSlot === 'alternative'
+      ? pickFirst(idsRow?.alt_bank_name, idsRow?.bank_name)
+      : pickFirst(idsRow?.bank_name, idsRow?.alt_bank_name);
+  const account_holder_name =
+    bankSlot === 'alternative'
+      ? pickFirst(idsRow?.alt_account_holder_name, idsRow?.account_holder_name)
+      : pickFirst(idsRow?.account_holder_name, idsRow?.alt_account_holder_name);
+  const account_number =
+    bankSlot === 'alternative'
+      ? pickFirst(idsRow?.alt_account_number, idsRow?.account_number)
+      : pickFirst(idsRow?.account_number, idsRow?.alt_account_number);
+  const swift_code =
+    bankSlot === 'alternative'
+      ? pickFirst(idsRow?.alt_routing_number, idsRow?.swift_code, idsRow?.routing_number)
+      : pickFirst(idsRow?.swift_code, idsRow?.routing_number, idsRow?.alt_routing_number);
+
+  // …and the slot it is NOT going to, read RAW. `readBankSlot` reads one slot and
+  // stops; the cross-slot fallback above exists so a half-filled record still
+  // names the paid account, and reusing it here would make the backup echo the
+  // account that just failed.
+  const paidBank: PreferredBank = {
+    name: bank_name ?? null,
+    holder: account_holder_name ?? null,
+    account: account_number ?? null,
+    swift: swift_code ?? null,
+    isAlternativeSlot: bankSlot === 'alternative',
+  };
+  const backup = readBankSlot(idsRow ?? null, bankSlot === 'alternative' ? 'primary' : 'alternative');
+  const hasBackup = bankSlotHasAccount(backup) && !sameBankAccount(backup, paidBank);
+
   return {
     email,
     hurupay_email: pickFirst(idsRow?.hurupay_email, r?.hurupay_email),
@@ -499,22 +568,15 @@ function buildPayeeDetails(
     city: pickFirst(r?.city),
     province_state: pickFirst(r?.province_state),
     // Wire-only fields live solely on employee_ids (employee-provided).
-    bank_name:
-      bankSlot === 'alternative'
-        ? pickFirst(idsRow?.alt_bank_name, idsRow?.bank_name)
-        : pickFirst(idsRow?.bank_name, idsRow?.alt_bank_name),
-    account_holder_name:
-      bankSlot === 'alternative'
-        ? pickFirst(idsRow?.alt_account_holder_name, idsRow?.account_holder_name)
-        : pickFirst(idsRow?.account_holder_name, idsRow?.alt_account_holder_name),
-    account_number:
-      bankSlot === 'alternative'
-        ? pickFirst(idsRow?.alt_account_number, idsRow?.account_number)
-        : pickFirst(idsRow?.account_number, idsRow?.alt_account_number),
-    swift_code:
-      bankSlot === 'alternative'
-        ? pickFirst(idsRow?.alt_routing_number, idsRow?.swift_code, idsRow?.routing_number)
-        : pickFirst(idsRow?.swift_code, idsRow?.routing_number, idsRow?.alt_routing_number),
+    bank_name,
+    account_holder_name,
+    account_number,
+    swift_code,
+    backup_slot: hasBackup ? (backup.isAlternativeSlot ? 'Alternative' : 'Primary') : undefined,
+    backup_bank_name: hasBackup ? (backup.name ?? undefined) : undefined,
+    backup_account_holder_name: hasBackup ? (backup.holder ?? undefined) : undefined,
+    backup_account_number: hasBackup ? (backup.account ?? undefined) : undefined,
+    backup_swift_code: hasBackup ? (backup.swift ?? undefined) : undefined,
   };
 }
 

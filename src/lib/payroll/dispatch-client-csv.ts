@@ -100,6 +100,20 @@ export const PENDING_COLUMNS: { key: string; header: string }[] = [
   { key: 'account_holder',  header: 'Account Holder' },
   { key: 'account_number',  header: 'Account Number / Wallet' },
   { key: 'swift_code',      header: 'SWIFT Code' },
+  // The OTHER slot, when the record holds a second and genuinely different
+  // account — the block the expanded row now reveals (payment-dispatch.md
+  // §3.4.4). Property (b) is stated unconditionally: a clerk who can read a
+  // field on the worksheet and cannot find it in the file has to go back to the
+  // app to re-read it, and this is the field they need exactly when a payment
+  // has already failed. §4.2.3(c)'s "that is where the money goes" reasoning
+  // does NOT hold here, which is why the headers say so: these four never
+  // describe this row's destination, and blank means no backup on file, not
+  // "not exported". 151 of 2,065 payees have one (2026-09-13).
+  { key: 'backup_slot',           header: 'Backup Slot (not paid)' },
+  { key: 'backup_bank',           header: 'Backup Bank (not paid)' },
+  { key: 'backup_account_holder', header: 'Backup Account Holder (not paid)' },
+  { key: 'backup_account_number', header: 'Backup Account Number (not paid)' },
+  { key: 'backup_swift_code',     header: 'Backup SWIFT Code (not paid)' },
   { key: 'phone_number',    header: 'Phone Number' },
   { key: 'full_address',    header: 'Full Address' },
   // Wires shows these two beside the address when the clerk expands the row; on
@@ -237,6 +251,11 @@ export function buildPendingRows(
     account_holder: r.details.account_holder_name ?? '',
     account_number: r.details.account_number ?? '',
     swift_code: r.details.swift_code ?? '',
+    backup_slot: r.details.backup_slot ?? '',
+    backup_bank: r.details.backup_bank_name ?? '',
+    backup_account_holder: r.details.backup_account_holder_name ?? '',
+    backup_account_number: r.details.backup_account_number ?? '',
+    backup_swift_code: r.details.backup_swift_code ?? '',
     phone_number: r.details.phone_number ?? '',
     full_address: r.details.full_address ?? '',
     city: r.details.city ?? '',
