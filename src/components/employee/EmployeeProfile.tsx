@@ -423,7 +423,7 @@ function PayoutReadView({
               SWIFT either — `needsPayoutSetup` would not fire to tell them.
               Matches People's own condition verbatim. */}
           {(!routing || routing !== bank.swift) && (
-            <Row label="Routing number" value={routing} mono showEmpty />
+            <Row label="Routing number" value={routing} mono showEmpty={!bank.swift} />
           )}
           <Row label="Address" value={row?.full_address} showEmpty />
         </div>
