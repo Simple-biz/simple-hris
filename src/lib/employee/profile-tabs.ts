@@ -72,3 +72,15 @@ export function nextProfileTarget(prev: ProfileTarget | null, intent: ProfileInt
 export function profileSectionDomId(section: SectionId): string {
   return `profile-section-${section}`;
 }
+
+/**
+ * The id of the TAB BUTTON that controls `profileSectionDomId(section)`.
+ *
+ * Derived here rather than spelled out at either end because the two ends live
+ * in different files — the button in `CompensationSections.tsx`, the panel in
+ * `EmployeeProfile.tsx` — and an `aria-controls` that points at nothing is
+ * invisible to everyone except the screen-reader user it strands.
+ */
+export function profileSectionTabDomId(section: SectionId): string {
+  return `profile-section-tab-${section}`;
+}

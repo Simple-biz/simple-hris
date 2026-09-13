@@ -3,7 +3,11 @@
 import { LayoutGroup, motion, useReducedMotion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { COMPENSATION_SECTIONS } from '@/lib/employee/compensation-sections';
-import type { SectionId } from '@/lib/employee/profile-tabs';
+import {
+  profileSectionDomId,
+  profileSectionTabDomId,
+  type SectionId,
+} from '@/lib/employee/profile-tabs';
 
 /**
  * The Compensation tab's inner strip: Rates | Pay Stubs | Payout.
@@ -58,9 +62,20 @@ export function CompensationSections({
           return (
             <button
               key={s.id}
+              id={profileSectionTabDomId(s.id)}
               type="button"
               role="tab"
               aria-selected={isActive}
+              // The panel this tab actually controls — rendered by
+              // EmployeeProfile under the SAME derived id it scrolls to, so the
+              // anchor and the accessibility wiring can never drift apart. Until
+              // this landed the strip announced three tabs that controlled
+              // nothing. Only the active section's panel is mounted (the panes
+              // swap under `AnimatePresence mode="wait"`), so an inactive tab's
+              // aria-controls points at an id that is absent for now — which is
+              // the documented trade-off for animated tab panels, and strictly
+              // better than the silence it replaces.
+              aria-controls={profileSectionDomId(s.id)}
               onClick={() => onChange(s.id)}
               className={cn(
                 'relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#0a0a0a]',

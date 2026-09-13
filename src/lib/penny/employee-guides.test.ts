@@ -168,6 +168,11 @@ test("the document guides' labels exist in the profile + documents source", () =
   assert.ok(profile.includes(`label: 'Request Documents'`), 'Profile tab "Request Documents" no longer exists');
   // Pay Stubs is a Compensation SECTION now, not a tab — follow the label to where it lives.
   assert.ok(COMPENSATION_SECTIONS.some((s) => s.label === 'Pay Stubs'), 'the Pay Stubs section label is gone');
+  // …and the section must still RENDER something. The line above only proves the
+  // strip offers the label; between the tab's retirement and the section's
+  // arrival there was a window where a live strip tab led to an empty pane and
+  // every assertion here stayed green. This pins the pane itself.
+  assert.ok(profile.includes('title="Pay Stubs"'), 'the Pay Stubs pane no longer renders');
 
   const types = read("src/lib/documents/types.ts");
   const coe = guideFor(buildEmployeeGuides(WITH_PAGE), "coe");

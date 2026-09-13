@@ -29,7 +29,7 @@ import {
   ChevronRight,
   Download,
 } from 'lucide-react';
-import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
+import { motion, AnimatePresence, LayoutGroup, useReducedMotion } from 'motion/react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { SmoothSelect } from '@/components/ui/smooth-select';
@@ -41,10 +41,16 @@ import { normEmail } from '@/lib/email/norm-email';
 import {
   PROFILE_SECTIONS,
   profileSectionDomId,
+  profileSectionTabDomId,
   type ProfileTarget,
   type SectionId,
   type TabId,
 } from '@/lib/employee/profile-tabs';
+import {
+  resolveCompensationSection,
+  sectionSlideDirection,
+} from '@/lib/employee/compensation-sections';
+import { CompensationSections } from './CompensationSections';
 import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
 import { buildIdCard } from '@/lib/employee/id-card';
 import { downloadIdCardPng, IdCardRenderError } from '@/lib/employee/id-card-render';
@@ -84,6 +90,20 @@ interface PayStubSummaryRow {
 
 /** How many weeks per page in the Pay Stubs list. */
 const PAY_STUBS_PAGE_SIZE = 10;
+
+/**
+ * The Compensation tab's section swap (Rates | Pay Stubs | Payout).
+ *
+ * `custom` carries the slide direction from `sectionSlideDirection()` — or `0`
+ * when the viewer asked for reduced motion, which collapses the slide to a plain
+ * cross-fade without needing a second set of variants to fall out of sync with
+ * this one. Declared at module scope so it is not rebuilt per render.
+ */
+const COMPENSATION_PANE_VARIANTS = {
+  enter: (direction: number) => ({ opacity: 0, x: direction * 14 }),
+  center: { opacity: 1, x: 0 },
+  exit: (direction: number) => ({ opacity: 0, x: direction * -14 }),
+};
 import RequestDocumentsTab from '@/components/employee/RequestDocumentsTab';
 import {
   PROCESSOR_OPTIONS,
@@ -703,6 +723,57 @@ export default function EmployeeProfile({
   // and scans SOURCE, so do not spell that early return out literally nearby.
   const [pendingSection, setPendingSection] = useState<SectionId | null>(null);
 
+  // ── The Compensation tab's inner section: Rates | Pay Stubs | Payout ──
+  //
+  // Declared HERE — in the state block, above the ProfileSkeleton bail-out and
+  // OUTSIDE the `activeTab === 'compensation'` render branch — for two
+  // independent reasons, either one of which is fatal on its own:
+  //
+  //  1. The lazy pay-stub fetch below reads `activeCompensationSection` to
+  //     decide whether to fire. A const declared inside a render branch is not
+  //     in scope there, and the only way to "fix" that from inside the branch is
+  //     to re-gate the fetch on the TAB — which is the bug this task exists to
+  //     close (see the effect's own comment).
+  //  2. A hook declared in a render branch, or anywhere below the bail-out, is
+  //     skipped on the cold loading render and called on the loaded one. React
+  //     throws, and with no error boundary anywhere the whole /employee route
+  //     blanks. Same reason as `pendingSection` above; same guard covers it.
+  const [storedSection, setStoredSection] = useState<SectionId | null>(null);
+  // A deep link aimed at ANOTHER tab's section (skillSets, commendations) is not
+  // this pane's business. Filtered out here rather than handed to
+  // `resolveCompensationSection`, which would see an unavailable section and
+  // fall back to 'rates' — throwing away the employee's own Pay Stubs selection
+  // for as long as the foreign target stayed pending.
+  const pendingCompensationSection =
+    pendingSection && PROFILE_SECTIONS.compensation.includes(pendingSection)
+      ? pendingSection
+      : null;
+  // DERIVED on every render, never stored as the truth: a stored section can
+  // outlive the condition that offered it, so `resolveCompensationSection`
+  // re-checks it against what this tab actually has.
+  const activeCompensationSection = resolveCompensationSection(
+    pendingCompensationSection ?? storedSection,
+    PROFILE_SECTIONS.compensation,
+  );
+  // Slide direction for the section swap, computed from the CANONICAL order.
+  // A ref, not state: the direction is a presentation detail of a transition
+  // that has already been decided, so recording it must not schedule another
+  // render. The write is idempotent — a re-render with the same active section
+  // leaves both refs untouched — so a StrictMode double-invoke cannot flip it.
+  const previousCompensationSection = useRef<SectionId>(activeCompensationSection);
+  const compensationSlideRef = useRef<1 | -1>(1);
+  if (previousCompensationSection.current !== activeCompensationSection) {
+    compensationSlideRef.current = sectionSlideDirection(
+      previousCompensationSection.current,
+      activeCompensationSection,
+    );
+    previousCompensationSection.current = activeCompensationSection;
+  }
+  // Named to avoid shadowing the invocation-time `reduceMotion` the two
+  // callback refs below read straight off matchMedia (they run outside render).
+  const prefersReducedMotion = useReducedMotion();
+  const compensationSlide = prefersReducedMotion ? 0 : compensationSlideRef.current;
+
   // Keyed on the NONCE, not the value. No visited tab ever unmounts, so firing
   // the same nudge twice would otherwise set state to the value it already
   // holds, React would bail out of the re-render, and the employee would not move.
@@ -751,6 +822,29 @@ export default function EmployeeProfile({
     node.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
     setPendingSection(null);
   }, [pendingSection]);
+
+  // The Compensation pane's own copy of the ref above — same mechanism, same
+  // reasons (the anchor does not exist during the outgoing pane's 0.22s exit,
+  // so an effect would fire into empty air and destroy the pending target),
+  // scoped to ITS OWN sections so the two panes cannot consume each other's.
+  //
+  // One thing this copy must do that the Skills one does not: HAND THE SECTION
+  // OVER before clearing. `activeCompensationSection` is derived from
+  // `pendingCompensationSection ?? storedSection`, so clearing `pendingSection`
+  // on its own would snap a bank nudge's Payout pane straight back to Rates the
+  // instant it finished scrolling. Writing `storedSection` first makes the two
+  // derivations agree across the clear, so nothing moves.
+  const scrollToCompensationAnchor = useCallback((node: HTMLDivElement | null) => {
+    if (!node || !pendingCompensationSection) return;
+    if (node.id !== profileSectionDomId(pendingCompensationSection)) return;
+    const reduceMotion =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    node.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+    setStoredSection(pendingCompensationSection);
+    setPendingSection(null);
+  }, [pendingCompensationSection]);
 
   // ── Resignation (Profile → Resign) ──
   // The employee's own current/last resignation request. A `pending` one shows a
@@ -885,7 +979,20 @@ export default function EmployeeProfile({
   const exportDepartmentRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (activeTab !== 'payStubs' || payStubsRequestedRef.current) return;
+    // Gated on the SECTION, not the tab. Pay Stubs is one of three sections
+    // inside Compensation now, so gating on the tab would fire this for every
+    // employee who opens Compensation to read a rate or check a bank detail —
+    // and under SHOW_UNPAID_STAGED_PAYSTUBS that route runs per-week recovery,
+    // so the wasted call is expensive, not merely wasted.
+    //
+    // The `activeTab` half is a second lock, not the gate: `storedSection` is
+    // remembered across tab switches, so a viewer who opened Pay Stubs and then
+    // left for another tab still has `activeCompensationSection === 'payStubs'`.
+    // The request ref already covers that case; this keeps the invariant true by
+    // construction ("only ever fetched while the pane is on screen") instead of
+    // by relying on a ref that a later edit could reset.
+    if (activeTab !== 'compensation') return;
+    if (activeCompensationSection !== 'payStubs' || payStubsRequestedRef.current) return;
     payStubsRequestedRef.current = true;
     setPayStubsLoading(true);
     setPayStubsError(null);
@@ -902,7 +1009,21 @@ export default function EmployeeProfile({
       })
       .catch(() => setPayStubsError('Could not load your pay stubs.'))
       .finally(() => setPayStubsLoading(false));
-  }, [activeTab]);
+  }, [activeTab, activeCompensationSection]);
+
+  // Reset the pager when the LIST ITSELF changes — the cached rows being
+  // replaced by live ones, a refetch that adds this week's statement, a shorter
+  // list after a correction. The render below only CLAMPS the page into range,
+  // which is not the same thing: a viewer left on page 4 of a list that just
+  // became two pages long lands on page 2 looking at weeks they never asked for,
+  // and the clamp cannot tell that from a deliberate page choice.
+  //
+  // Keyed on the identity of the list (its ordered source files), not its
+  // length: replacing ten weeks with ten different weeks is a new list too.
+  const payStubListIdentity = JSON.stringify(payStubs.map((w) => w.sourceFile));
+  useEffect(() => {
+    setPayStubPage(0);
+  }, [payStubListIdentity]);
 
   /** Fetch (once) + cache the full statements for the all-weeks PDF/XLSX export. */
   const ensurePayStubsFull = async (): Promise<PayStubWeek[]> => {
@@ -1317,6 +1438,20 @@ export default function EmployeeProfile({
     payStubPageSafe * PAY_STUBS_PAGE_SIZE + PAY_STUBS_PAGE_SIZE,
   );
 
+  /**
+   * Paging rewrites ten rows that may sit entirely above the fold — the pager
+   * itself does not move, so on a long page the viewer presses Next and nothing
+   * visibly changes. Bring the section's own top back into view, honouring
+   * `prefers-reduced-motion` the same way the deep-link anchor does.
+   */
+  const goToPayStubPage = (next: number) => {
+    setPayStubPage(next);
+    if (typeof document === 'undefined') return;
+    document
+      .getElementById(profileSectionDomId('payStubs'))
+      ?.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'start' });
+  };
+
   const handleExportPayStubsPdf = async () => {
     if (!payStubs.length) return;
     setExportingPdf(true);
@@ -1728,233 +1863,282 @@ export default function EmployeeProfile({
 
               {activeTab === 'compensation' && (
                 <>
-                  <Section
-                    title="Hourly Rates"
-                    description="From employee_hourly_rates · per current period"
-                  >
-                    <div className="grid gap-6 py-5 sm:grid-cols-2">
-                      <CompactStat
-                        label="Regular"
-                        value={reg != null ? formatPHP(reg) : '—'}
-                        hint="per hour"
-                      />
-                      <CompactStat
-                        label="Overtime"
-                        value={ot != null ? formatPHP(ot) : '—'}
-                        hint="per hour"
-                      />
-                    </div>
-                    {!reg && !ot && (
-                      <p className="border-t border-zinc-100 py-3 text-[12.5px] italic text-zinc-500 dark:border-zinc-800/40 dark:text-zinc-400">
-                        No hourly rates on file. Reach out to HR.
-                      </p>
-                    )}
-                  </Section>
+                  <CompensationSections
+                    active={activeCompensationSection}
+                    onChange={setStoredSection}
+                    needsPayout={needsPayoutSetup}
+                    payoutEscalated={escalatePayment && needsPayoutSetup}
+                  />
 
-                  <Section
-                    title="Currency"
-                    description="USD-denominated bonuses are converted using this rate"
-                  >
-                    <div className="flex items-end justify-between gap-4 py-3">
-                      <CompactStat
-                        label="USD → PHP"
-                        value={`₱${usdToPhpRate.toLocaleString('en-PH', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 5,
-                        })}`}
-                        hint="= USD 1.00"
-                      />
-                      <span className="text-[11px] uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-                        Live · payroll
-                      </span>
-                    </div>
-                  </Section>
+                  {/* ONE panel node per section, keyed on the active section so
+                      AnimatePresence can slide the swap. It carries that section's
+                      DERIVED dom id, which makes the deep-link scroll anchor and the
+                      strip's aria-controls target the same element — neither can drift
+                      away from the other, or from the section's name. */}
+                  <AnimatePresence mode="wait" initial={false} custom={compensationSlide}>
+                    <motion.div
+                      key={activeCompensationSection}
+                      custom={compensationSlide}
+                      variants={COMPENSATION_PANE_VARIANTS}
+                      initial="enter"
+                      animate="center"
+                      exit="exit"
+                      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                      id={profileSectionDomId(activeCompensationSection)}
+                      ref={scrollToCompensationAnchor}
+                      role="tabpanel"
+                      aria-labelledby={profileSectionTabDomId(activeCompensationSection)}
+                      className="space-y-4"
+                    >
+                      {activeCompensationSection === 'rates' && (
+                        <>
+                          <Section
+                            title="Hourly Rates"
+                            description="From employee_hourly_rates · per current period"
+                          >
+                            <div className="grid gap-6 py-5 sm:grid-cols-2">
+                              <CompactStat
+                                label="Regular"
+                                value={reg != null ? formatPHP(reg) : '—'}
+                                hint="per hour"
+                              />
+                              <CompactStat
+                                label="Overtime"
+                                value={ot != null ? formatPHP(ot) : '—'}
+                                hint="per hour"
+                              />
+                            </div>
+                            {!reg && !ot && (
+                              <p className="border-t border-zinc-100 py-3 text-[12.5px] italic text-zinc-500 dark:border-zinc-800/40 dark:text-zinc-400">
+                                No hourly rates on file. Reach out to HR.
+                              </p>
+                            )}
+                          </Section>
 
-                  <p className="px-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                    Bonuses (Perfect Attendance, Technology) are not shown here — they're applied
-                    during payroll processing and surface on your dashboard.
-                  </p>
-                </>
-              )}
+                          <Section
+                            title="Currency"
+                            description="USD-denominated bonuses are converted using this rate"
+                          >
+                            <div className="flex items-end justify-between gap-4 py-3">
+                              <CompactStat
+                                label="USD → PHP"
+                                value={`₱${usdToPhpRate.toLocaleString('en-PH', {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 5,
+                                })}`}
+                                hint="= USD 1.00"
+                              />
+                              <span className="text-[11px] uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                                Live · payroll
+                              </span>
+                            </div>
+                          </Section>
 
-              {activeTab === 'payStubs' && (
-                <>
-                  <Section
-                    title="Pay Stubs"
-                    description="Every week you've been paid. Open a week for the full statement, or export them all."
-                    action={
-                      <div className="flex flex-wrap items-center justify-end gap-1.5">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={payStubsLoading || exportingPdf || payStubs.length === 0}
-                          onClick={handleExportPayStubsPdf}
-                          className="h-8 gap-1.5 rounded-lg text-[12px]"
-                          title="Download all weeks as a PDF"
-                        >
-                          {exportingPdf ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <FileText className="h-3 w-3" />
-                          )}
-                          PDF
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={payStubsLoading || exportingXlsx || payStubs.length === 0}
-                          onClick={handleExportPayStubsXlsx}
-                          className="h-8 gap-1.5 rounded-lg text-[12px]"
-                          title="Download all weeks as an Excel spreadsheet"
-                        >
-                          {exportingXlsx ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <FileSpreadsheet className="h-3 w-3" />
-                          )}
-                          XLSX
-                        </Button>
-                      </div>
-                    }
-                  >
-                    {payStubsLoading && payStubs.length === 0 ? (
-                      <div className="flex items-center justify-center py-14">
-                        <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
-                      </div>
-                    ) : payStubsError ? (
-                      <div className="my-4 flex items-start gap-2.5 rounded-xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-[13px] dark:border-amber-900/40 dark:bg-amber-950/30">
-                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                        <p className="leading-relaxed text-amber-900 dark:text-amber-200">{payStubsError}</p>
-                      </div>
-                    ) : payStubs.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-                        <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400 dark:bg-zinc-900 dark:text-zinc-600">
-                          <Receipt className="h-5 w-5" aria-hidden />
-                        </span>
-                        <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">No pay stubs yet</p>
-                        <p className="max-w-xs text-xs text-zinc-400 dark:text-zinc-600">
-                          Your weekly pay statements appear here once your pay for a week has been sent.
-                        </p>
-                      </div>
-                    ) : (
-                      <>
-                        {/* At-a-glance band */}
-                        <div className="grid gap-6 border-b border-zinc-100 py-5 dark:border-zinc-800/40 sm:grid-cols-3">
-                          <CompactStat
-                            label="Weeks on record"
-                            value={String(payStubs.length)}
-                          />
-                          <CompactStat
-                            label="Total net pay"
-                            value={formatPHP(payStubTotalPhp)}
-                            hint={`≈ $${payStubTotalUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`}
-                          />
-                          <CompactStat
-                            label="Latest week"
-                            value={payStubs[0]?.weekHuman || '—'}
-                            hint={payStubs[0]?.payDate ? `Paid ${formatStartDate(payStubs[0].payDate)}` : undefined}
-                          />
-                        </div>
+                          {/* Re-scoped, not deleted. "Bonuses are not shown here" was
+                              true of a standalone Rates TAB; one section away there is
+                              now a statement list that itemises Perfect Attendance and
+                              Technology by week, so the old sentence read as a flat
+                              contradiction of the pane next door. The claim it was
+                              actually making — these two figures are RATES, and no
+                              bonus is folded into them — is the one worth keeping. */}
+                          <p className="px-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                            These are your hourly rates only — no bonus is folded into them.
+                            Bonuses (Perfect Attendance, Technology) are applied during payroll
+                            processing, and appear itemised on each week's statement under Pay
+                            Stubs as well as on your dashboard.
+                          </p>
+                        </>
+                      )}
 
-                        {/* Weekly statements (paginated) */}
-                        <ul className="divide-y divide-zinc-100 dark:divide-zinc-800/40">
-                          {payStubPageRows.map((w) => (
-                            <li
-                              key={w.sourceFile}
-                              className="flex items-center justify-between gap-3 py-3.5"
-                            >
-                              <div className="flex min-w-0 items-center gap-3">
-                                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 ring-1 ring-inset ring-emerald-200/60 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20">
-                                  <Receipt className="h-4 w-4" aria-hidden />
-                                </span>
-                                <div className="min-w-0">
-                                  <p className="truncate text-[13.5px] font-medium text-zinc-900 dark:text-zinc-100">
-                                    Period ending {w.weekHuman || '—'}
-                                  </p>
-                                  <p className="mt-0.5 text-[11.5px] text-zinc-500 dark:text-zinc-400">
-                                    {w.payDate ? `Paid ${formatStartDate(w.payDate)}` : 'Statement ready'}
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="flex shrink-0 items-center gap-3">
-                                <div className="text-right">
-                                  <p className="text-[13.5px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                                    {formatPHP(w.totalPayPhp)}
-                                  </p>
-                                  <p className="text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500">
-                                    ${w.totalPayUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-                                  </p>
-                                </div>
+                      {activeCompensationSection === 'payStubs' && (
+                        <>
+                          <Section
+                            title="Pay Stubs"
+                            description="Every week you've been paid. Open a week for the full statement, or export them all."
+                            action={
+                              <div className="flex flex-wrap items-center justify-end gap-1.5">
                                 <Button
                                   type="button"
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => setPayStubModalFile(w.sourceFile)}
+                                  disabled={payStubsLoading || exportingPdf || payStubs.length === 0}
+                                  onClick={handleExportPayStubsPdf}
                                   className="h-8 gap-1.5 rounded-lg text-[12px]"
+                                  title="Download all weeks as a PDF"
                                 >
-                                  <ArrowUpRight className="h-3 w-3" />
-                                  View
+                                  {exportingPdf ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <FileText className="h-3 w-3" />
+                                  )}
+                                  PDF
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={payStubsLoading || exportingXlsx || payStubs.length === 0}
+                                  onClick={handleExportPayStubsXlsx}
+                                  className="h-8 gap-1.5 rounded-lg text-[12px]"
+                                  title="Download all weeks as an Excel spreadsheet"
+                                >
+                                  {exportingXlsx ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <FileSpreadsheet className="h-3 w-3" />
+                                  )}
+                                  XLSX
                                 </Button>
                               </div>
-                            </li>
-                          ))}
-                        </ul>
+                            }
+                          >
+                            {payStubsLoading && payStubs.length === 0 ? (
+                              <div className="flex items-center justify-center py-14">
+                                <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
+                              </div>
+                            ) : payStubsError ? (
+                              <div className="my-4 flex items-start gap-2.5 rounded-xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-[13px] dark:border-amber-900/40 dark:bg-amber-950/30">
+                                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                                <p className="leading-relaxed text-amber-900 dark:text-amber-200">{payStubsError}</p>
+                              </div>
+                            ) : payStubs.length === 0 ? (
+                              <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                                <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400 dark:bg-zinc-900 dark:text-zinc-600">
+                                  <Receipt className="h-5 w-5" aria-hidden />
+                                </span>
+                                <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">No pay stubs yet</p>
+                                <p className="max-w-xs text-xs text-zinc-400 dark:text-zinc-600">
+                                  Your weekly pay statements appear here once your pay for a week has been sent.
+                                </p>
+                              </div>
+                            ) : (
+                              <>
+                                {/* At-a-glance band */}
+                                <div className="grid gap-6 border-b border-zinc-100 py-5 dark:border-zinc-800/40 sm:grid-cols-3">
+                                  <CompactStat
+                                    label="Weeks on record"
+                                    value={String(payStubs.length)}
+                                  />
+                                  <CompactStat
+                                    label="Total net pay"
+                                    value={formatPHP(payStubTotalPhp)}
+                                    hint={`≈ $${payStubTotalUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`}
+                                  />
+                                  <CompactStat
+                                    label="Latest week"
+                                    value={payStubs[0]?.weekHuman || '—'}
+                                    hint={payStubs[0]?.payDate ? `Paid ${formatStartDate(payStubs[0].payDate)}` : undefined}
+                                  />
+                                </div>
 
-                        {/* Pagination — 10 per page */}
-                        {payStubPageCount > 1 && (
-                          <div className="flex items-center justify-between gap-3 border-t border-zinc-100 pt-3.5 dark:border-zinc-800/40">
-                            <span className="text-[11.5px] text-zinc-500 dark:text-zinc-400">
-                              Showing{' '}
-                              <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                                {payStubPageSafe * PAY_STUBS_PAGE_SIZE + 1}–
-                                {Math.min((payStubPageSafe + 1) * PAY_STUBS_PAGE_SIZE, payStubs.length)}
-                              </span>{' '}
-                              of {payStubs.length}
-                            </span>
-                            <div className="flex items-center gap-1.5">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={payStubPageSafe <= 0}
-                                onClick={() => setPayStubPage((p) => Math.max(0, p - 1))}
-                                className="h-8 gap-1 rounded-lg text-[12px]"
-                              >
-                                <ChevronLeft className="h-3.5 w-3.5" />
-                                Prev
-                              </Button>
-                              <span className="px-1 text-[11.5px] tabular-nums text-zinc-500 dark:text-zinc-400">
-                                {payStubPageSafe + 1} / {payStubPageCount}
-                              </span>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={payStubPageSafe >= payStubPageCount - 1}
-                                onClick={() =>
-                                  setPayStubPage((p) => Math.min(payStubPageCount - 1, p + 1))
-                                }
-                                className="h-8 gap-1 rounded-lg text-[12px]"
-                              >
-                                Next
-                                <ChevronRight className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </Section>
+                                {/* Weekly statements (paginated) */}
+                                <ul className="divide-y divide-zinc-100 dark:divide-zinc-800/40">
+                                  {payStubPageRows.map((w) => (
+                                    <li
+                                      key={w.sourceFile}
+                                      className="flex items-center justify-between gap-3 py-3.5"
+                                    >
+                                      <div className="flex min-w-0 items-center gap-3">
+                                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 ring-1 ring-inset ring-emerald-200/60 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20">
+                                          <Receipt className="h-4 w-4" aria-hidden />
+                                        </span>
+                                        <div className="min-w-0">
+                                          <p className="truncate text-[13.5px] font-medium text-zinc-900 dark:text-zinc-100">
+                                            Period ending {w.weekHuman || '—'}
+                                          </p>
+                                          <p className="mt-0.5 text-[11.5px] text-zinc-500 dark:text-zinc-400">
+                                            {w.payDate ? `Paid ${formatStartDate(w.payDate)}` : 'Statement ready'}
+                                          </p>
+                                        </div>
+                                      </div>
+                                      <div className="flex shrink-0 items-center gap-3">
+                                        <div className="text-right">
+                                          <p className="text-[13.5px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                                            {formatPHP(w.totalPayPhp)}
+                                          </p>
+                                          <p className="text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500">
+                                            ${w.totalPayUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                                          </p>
+                                        </div>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => setPayStubModalFile(w.sourceFile)}
+                                          className="h-8 gap-1.5 rounded-lg text-[12px]"
+                                        >
+                                          <ArrowUpRight className="h-3 w-3" />
+                                          View
+                                        </Button>
+                                      </div>
+                                    </li>
+                                  ))}
+                                </ul>
 
-                  {payStubs.length > 0 && (
-                    <p className="px-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                      The PDF and XLSX exports cover all {payStubs.length}{' '}
-                      {payStubs.length === 1 ? 'week' : 'weeks'} with the full earnings breakdown.
-                      {' '}These reflect the pay dispatched for each week.
-                    </p>
-                  )}
+                                {/* Pagination — 10 per page */}
+                                {payStubPageCount > 1 && (
+                                  <div className="flex items-center justify-between gap-3 border-t border-zinc-100 pt-3.5 dark:border-zinc-800/40">
+                                    <span className="text-[11.5px] text-zinc-500 dark:text-zinc-400">
+                                      Showing{' '}
+                                      <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                                        {payStubPageSafe * PAY_STUBS_PAGE_SIZE + 1}–
+                                        {Math.min((payStubPageSafe + 1) * PAY_STUBS_PAGE_SIZE, payStubs.length)}
+                                      </span>{' '}
+                                      of {payStubs.length}
+                                    </span>
+                                    <div className="flex items-center gap-1.5">
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={payStubPageSafe <= 0}
+                                        onClick={() => goToPayStubPage(Math.max(0, payStubPageSafe - 1))}
+                                        className="h-8 gap-1 rounded-lg text-[12px]"
+                                      >
+                                        <ChevronLeft className="h-3.5 w-3.5" />
+                                        Prev
+                                      </Button>
+                                      <span className="px-1 text-[11.5px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                                        {payStubPageSafe + 1} / {payStubPageCount}
+                                      </span>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={payStubPageSafe >= payStubPageCount - 1}
+                                        onClick={() =>
+                                          goToPayStubPage(Math.min(payStubPageCount - 1, payStubPageSafe + 1))
+                                        }
+                                        className="h-8 gap-1 rounded-lg text-[12px]"
+                                      >
+                                        Next
+                                        <ChevronRight className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </Section>
+
+                          {payStubs.length > 0 && (
+                            <p className="px-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                              The PDF and XLSX exports cover all {payStubs.length}{' '}
+                              {payStubs.length === 1 ? 'week' : 'weeks'} with the full earnings breakdown.
+                              {' '}These reflect the pay dispatched for each week.
+                            </p>
+                          )}
+                        </>
+                      )}
+
+                      {/* The Payout section's content is TASK 11's: it moves the
+                          Disbursement blocks that still render below under
+                          `activeTab === 'payment'` into an
+                          `activeCompensationSection === 'payout'` branch HERE. Until
+                          it lands, Payout still selects a real, announced,
+                          scroll-anchored panel — it is just deliberately empty. */}
+                    </motion.div>
+                  </AnimatePresence>
                 </>
               )}
 
