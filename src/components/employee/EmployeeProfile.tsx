@@ -774,6 +774,15 @@ export default function EmployeeProfile({
   const prefersReducedMotion = useReducedMotion();
   const compensationSlide = prefersReducedMotion ? 0 : compensationSlideRef.current;
 
+  // ONE derived visibility, read by BOTH the payout skeleton and the payout
+  // form, so the matched pair cannot drift: re-pointing one and not the other
+  // stacks two Disbursement cards or renders none. It deliberately does NOT
+  // gate on `bankInfoLoaded` — that is the payout section's OWN readiness, and
+  // folding it in here would make Rates and Pay Stubs, which paint from the
+  // session cache instantly, wait on the one uncacheable call in the wave.
+  const payoutPaneVisible =
+    activeTab === 'compensation' && activeCompensationSection === 'payout';
+
   // Keyed on the NONCE, not the value. No visited tab ever unmounts, so firing
   // the same nudge twice would otherwise set state to the value it already
   // holds, React would bail out of the re-render, and the employee would not move.
@@ -2131,241 +2140,238 @@ export default function EmployeeProfile({
                         </>
                       )}
 
-                      {/* The Payout section's content is TASK 11's: it moves the
-                          Disbursement blocks that still render below under
-                          `activeTab === 'payment'` into an
-                          `activeCompensationSection === 'payout'` branch HERE. Until
-                          it lands, Payout still selects a real, announced,
-                          scroll-anchored panel — it is just deliberately empty. */}
+                      {/* Three readiness states share this pane, and they stay
+                          independent. Rates and Pay Stubs paint from the session
+                          cache immediately; the bank/payout row is deliberately
+                          never cached (account numbers stay out of storage), so
+                          PAYOUT ALONE waits for the live row — its own skeleton,
+                          never the empty "add your details" form flashing over
+                          real saved details. `loading` is not widened to cover
+                          this, and no combined effect awaits `bankInfoLoaded`. */}
+                      {payoutPaneVisible && !bankInfoLoaded && (
+                        <Section title="Disbursement" description="How and where you get paid">
+                          <div className="space-y-3 py-4" aria-busy="true" aria-label="Loading payout details">
+                            {[0, 1, 2, 3].map((i) => (
+                              <div
+                                key={i}
+                                className="h-10 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-900"
+                              />
+                            ))}
+                          </div>
+                        </Section>
+                      )}
+                      {payoutPaneVisible && bankInfoLoaded && (
+                        <>
+                          <Section
+                            title="Disbursement"
+                            description="How and where you get paid"
+                            action={
+                              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                                {payoutSavedAt && (
+                                  <span className="hidden items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 sm:flex">
+                                    <CheckCircle className="h-3 w-3" />
+                                    Saved {payoutSavedAt}
+                                  </span>
+                                )}
+                                {!payrollLocked && bankInfo && !payoutEditing && (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 gap-1.5 rounded-lg text-[12px]"
+                                    onClick={() => setPayoutEditing(true)}
+                                  >
+                                    <Pencil className="h-3 w-3" />
+                                    Edit
+                                  </Button>
+                                )}
+                                {!payrollLocked && payoutEditing && (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 gap-1.5 rounded-lg text-[12px]"
+                                    disabled={payoutSaving}
+                                    onClick={resetPayoutDraft}
+                                  >
+                                    <X className="h-3 w-3" />
+                                    Cancel
+                                  </Button>
+                                )}
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  disabled={payoutSaving || payrollLocked || !payoutEditing}
+                                  onClick={savePaymentDetails}
+                                  className="h-8 gap-1.5 rounded-lg bg-orange-500 text-[12px] text-white hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400"
+                                >
+                                  {payoutSaving ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Save className="h-3 w-3" />
+                                  )}
+                                  Save
+                                </Button>
+                              </div>
+                            }
+                          >
+                            <div className="space-y-5 py-4">
+                              {payrollLocked && (
+                                <div className="flex items-start gap-2.5 rounded-xl border border-rose-200/80 bg-rose-50/70 px-4 py-3 text-[12.5px] dark:border-rose-900/40 dark:bg-rose-950/30">
+                                  <Lock className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                                  <p className="leading-relaxed text-rose-900 dark:text-rose-200">
+                                    Payroll processing is in progress. Disbursement details are read-only
+                                    until accounting finishes the run.
+                                  </p>
+                                </div>
+                              )}
+                              {escalatePayment && needsPayoutSetup && !payrollLocked && (
+                                <div className="flex items-start gap-2.5 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 dark:border-rose-500/40 dark:bg-rose-950/30">
+                                  <span className="relative mt-0.5 flex h-4 w-4 shrink-0">
+                                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500/50" />
+                                    <Bell className="relative h-4 w-4 text-rose-600 dark:text-rose-400" />
+                                  </span>
+                                  <div className="min-w-0">
+                                    <p className="text-[13px] font-semibold text-rose-800 dark:text-rose-200">Payroll needs your bank details</p>
+                                    <p className="mt-0.5 text-[12px] leading-relaxed text-rose-700 dark:text-rose-300">
+                                      Accounting asked you to add your payout details so they can send your pay. Please complete the fields below.
+                                    </p>
+                                  </div>
+                                </div>
+                              )}
+                              {needsPayoutSetup && !payrollLocked && (
+                                <SetupNudge
+                                  title="Payment details needed"
+                                  description="Add your preferred disbursement channel and required account details so payroll can route your pay."
+                                  action={
+                                    !payoutEditing ? (
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        className="h-8 rounded-lg bg-amber-600 text-xs text-white hover:bg-amber-700 dark:bg-amber-500 dark:text-amber-950 dark:hover:bg-amber-400"
+                                        onClick={() => setPayoutEditing(true)}
+                                      >
+                                        Add details
+                                      </Button>
+                                    ) : undefined
+                                  }
+                                />
+                              )}
+                              {!bankInfo && !payrollLocked && (
+                                <p className="text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                                  Choose a payment channel and complete the corresponding fields. Your first
+                                  submission creates a payroll routing record linked to your work email.
+                                </p>
+                              )}
+                              <PreferredPaymentMethodRadios
+                                value={preferredProcessor}
+                                onChange={(id) => {
+                                  setPreferredProcessor(id);
+                                  // THE 1:1 MIRROR (Kane, 2026-08-31 PM): picking Kolan
+                                  // or HiGlobe as the receiving bank pins the sending
+                                  // rail to the same wallet. In-form only — the save
+                                  // FILES the Bank Preferred change through the
+                                  // Accounting approval gate; the server applies the
+                                  // same mirror regardless, so this is display, not
+                                  // enforcement. Bank rails impose nothing.
+                                  const wallet = mirroredBankPreferredFor(id);
+                                  if (wallet) setBankPreferred(wallet);
+                                }}
+                                disabled={payoutReadOnly}
+                              />
+                              {preferredProcessor ? (
+                                <PayoutDetailsFields
+                                  processor={preferredProcessor}
+                                  payout={payout}
+                                  setPayout={setPayout}
+                                  disabled={payoutReadOnly}
+                                />
+                              ) : null}
+                            </div>
+                          </Section>
+
+                          <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/60">
+                            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="text-[13px] font-medium text-zinc-900 dark:text-white">
+                                    Bank Preferred
+                                  </p>
+                                  {pendingBankPreferred && (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                                      <Clock className="h-3 w-3" />
+                                      Pending approval: {bankPreferredLabelForProcessor(pendingBankPreferred)}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                                  {pendingBankPreferred
+                                    ? 'Your change is awaiting Accounting approval. Until then, your current setting below stays active.'
+                                    : walletFromReceiving(preferredProcessor)
+                                      ? `Your receiving bank is ${PROCESSOR_OPTIONS.find((p) => p.id === walletFromReceiving(preferredProcessor))?.label} — your salary is sent from that same wallet, 1:1. Changes need Accounting approval.`
+                                      : 'The bank Payment Dispatch routes your salary through. Kolan/HiGlobe follow your receiving bank automatically; Wise can only be set by Accounting. Changes need Accounting approval.'}
+                                </p>
+                              </div>
+                              <SmoothSelect
+                                aria-label="Bank Preferred"
+                                value={
+                                  // "Defaulted to what they are": the stored tier-1 pick
+                                  // wins; else a wallet receiving bank pins the display
+                                  // (1:1); else the server-resolved EFFECTIVE rail, so a
+                                  // tier-2/tier-3-routed person sees their real rail
+                                  // instead of an empty "Select…". Display only — no
+                                  // write happens until the user changes something.
+                                  bankPreferredLabelForProcessor(bankPreferred) ||
+                                  bankPreferredLabelForProcessor(
+                                    walletFromReceiving(preferredProcessor) ?? walletRailEffective ?? '',
+                                  )
+                                }
+                                onChange={(label) => {
+                                  setBankPreferred(processorForBankPreferredLabel(label) ?? '');
+                                }}
+                                disabled={payoutReadOnly}
+                                triggerClassName="w-full sm:w-48"
+                                options={[
+                                  ...(bankPreferredLabelForProcessor(bankPreferred) ||
+                                  bankPreferredLabelForProcessor(
+                                    walletFromReceiving(preferredProcessor) ?? walletRailEffective ?? '',
+                                  )
+                                    ? []
+                                    : [{ value: '', label: 'Select…' }]),
+                                  // THE 1:1 RULE, option-list edition: keyed on the LIVE
+                                  // receiving pick above. A wallet receiver sees exactly
+                                  // their wallet (the send-from is pinned); a bank-rail
+                                  // receiver sees the bank options; someone with no
+                                  // receiving channel sees everything, and a wallet pick
+                                  // here mirrors the receiving channel server-side. Wise
+                                  // is absent for employees — Accounting sets Wise as a
+                                  // sending bank in People → Banking.
+                                  ...selectableBankPreferredOptions(preferredProcessor, 'employee').map(
+                                    (o) => ({
+                                      value: o.label,
+                                      label: o.label,
+                                    }),
+                                  ),
+                                ]}
+                              />
+                            </div>
+                          </div>
+
+                          {preferredProcessor && (
+                            <div className="flex items-center gap-2 px-1 text-[12px] text-zinc-500 dark:text-zinc-400">
+                              <span>
+                                Selected channel:{' '}
+                                <span className="text-zinc-700 dark:text-zinc-200">
+                                  {PROCESSOR_OPTIONS.find((p) => p.id === preferredProcessor)?.label}
+                                </span>
+                              </span>
+                              <ArrowUpRight className="h-3 w-3 text-zinc-400" />
+                            </div>
+                          )}
+                        </>
+                      )}
                     </motion.div>
                   </AnimatePresence>
-                </>
-              )}
-
-              {/* The bank/payout row is never cached (account numbers stay out of
-                  storage), so when the rest of the profile painted from cache this
-                  pane alone waits for the live row — a skeleton, never the empty
-                  "add your details" form flashing over real saved details. */}
-              {activeTab === 'payment' && !bankInfoLoaded && (
-                <Section title="Disbursement" description="How and where you get paid">
-                  <div className="space-y-3 py-4" aria-busy="true" aria-label="Loading payout details">
-                    {[0, 1, 2, 3].map((i) => (
-                      <div
-                        key={i}
-                        className="h-10 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-900"
-                      />
-                    ))}
-                  </div>
-                </Section>
-              )}
-              {activeTab === 'payment' && bankInfoLoaded && (
-                <>
-                  <Section
-                    title="Disbursement"
-                    description="How and where you get paid"
-                    action={
-                      <div className="flex flex-wrap items-center justify-end gap-1.5">
-                        {payoutSavedAt && (
-                          <span className="hidden items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 sm:flex">
-                            <CheckCircle className="h-3 w-3" />
-                            Saved {payoutSavedAt}
-                          </span>
-                        )}
-                        {!payrollLocked && bankInfo && !payoutEditing && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-8 gap-1.5 rounded-lg text-[12px]"
-                            onClick={() => setPayoutEditing(true)}
-                          >
-                            <Pencil className="h-3 w-3" />
-                            Edit
-                          </Button>
-                        )}
-                        {!payrollLocked && payoutEditing && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-8 gap-1.5 rounded-lg text-[12px]"
-                            disabled={payoutSaving}
-                            onClick={resetPayoutDraft}
-                          >
-                            <X className="h-3 w-3" />
-                            Cancel
-                          </Button>
-                        )}
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={payoutSaving || payrollLocked || !payoutEditing}
-                          onClick={savePaymentDetails}
-                          className="h-8 gap-1.5 rounded-lg bg-orange-500 text-[12px] text-white hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400"
-                        >
-                          {payoutSaving ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Save className="h-3 w-3" />
-                          )}
-                          Save
-                        </Button>
-                      </div>
-                    }
-                  >
-                    <div className="space-y-5 py-4">
-                      {payrollLocked && (
-                        <div className="flex items-start gap-2.5 rounded-xl border border-rose-200/80 bg-rose-50/70 px-4 py-3 text-[12.5px] dark:border-rose-900/40 dark:bg-rose-950/30">
-                          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
-                          <p className="leading-relaxed text-rose-900 dark:text-rose-200">
-                            Payroll processing is in progress. Disbursement details are read-only
-                            until accounting finishes the run.
-                          </p>
-                        </div>
-                      )}
-                      {escalatePayment && needsPayoutSetup && !payrollLocked && (
-                        <div className="flex items-start gap-2.5 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 dark:border-rose-500/40 dark:bg-rose-950/30">
-                          <span className="relative mt-0.5 flex h-4 w-4 shrink-0">
-                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500/50" />
-                            <Bell className="relative h-4 w-4 text-rose-600 dark:text-rose-400" />
-                          </span>
-                          <div className="min-w-0">
-                            <p className="text-[13px] font-semibold text-rose-800 dark:text-rose-200">Payroll needs your bank details</p>
-                            <p className="mt-0.5 text-[12px] leading-relaxed text-rose-700 dark:text-rose-300">
-                              Accounting asked you to add your payout details so they can send your pay. Please complete the fields below.
-                            </p>
-                          </div>
-                        </div>
-                      )}
-                      {needsPayoutSetup && !payrollLocked && (
-                        <SetupNudge
-                          title="Payment details needed"
-                          description="Add your preferred disbursement channel and required account details so payroll can route your pay."
-                          action={
-                            !payoutEditing ? (
-                              <Button
-                                type="button"
-                                size="sm"
-                                className="h-8 rounded-lg bg-amber-600 text-xs text-white hover:bg-amber-700 dark:bg-amber-500 dark:text-amber-950 dark:hover:bg-amber-400"
-                                onClick={() => setPayoutEditing(true)}
-                              >
-                                Add details
-                              </Button>
-                            ) : undefined
-                          }
-                        />
-                      )}
-                      {!bankInfo && !payrollLocked && (
-                        <p className="text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                          Choose a payment channel and complete the corresponding fields. Your first
-                          submission creates a payroll routing record linked to your work email.
-                        </p>
-                      )}
-                      <PreferredPaymentMethodRadios
-                        value={preferredProcessor}
-                        onChange={(id) => {
-                          setPreferredProcessor(id);
-                          // THE 1:1 MIRROR (Kane, 2026-08-31 PM): picking Kolan
-                          // or HiGlobe as the receiving bank pins the sending
-                          // rail to the same wallet. In-form only — the save
-                          // FILES the Bank Preferred change through the
-                          // Accounting approval gate; the server applies the
-                          // same mirror regardless, so this is display, not
-                          // enforcement. Bank rails impose nothing.
-                          const wallet = mirroredBankPreferredFor(id);
-                          if (wallet) setBankPreferred(wallet);
-                        }}
-                        disabled={payoutReadOnly}
-                      />
-                      {preferredProcessor ? (
-                        <PayoutDetailsFields
-                          processor={preferredProcessor}
-                          payout={payout}
-                          setPayout={setPayout}
-                          disabled={payoutReadOnly}
-                        />
-                      ) : null}
-                    </div>
-                  </Section>
-
-                  <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/60">
-                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-[13px] font-medium text-zinc-900 dark:text-white">
-                            Bank Preferred
-                          </p>
-                          {pendingBankPreferred && (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-                              <Clock className="h-3 w-3" />
-                              Pending approval: {bankPreferredLabelForProcessor(pendingBankPreferred)}
-                            </span>
-                          )}
-                        </div>
-                        <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                          {pendingBankPreferred
-                            ? 'Your change is awaiting Accounting approval. Until then, your current setting below stays active.'
-                            : walletFromReceiving(preferredProcessor)
-                              ? `Your receiving bank is ${PROCESSOR_OPTIONS.find((p) => p.id === walletFromReceiving(preferredProcessor))?.label} — your salary is sent from that same wallet, 1:1. Changes need Accounting approval.`
-                              : 'The bank Payment Dispatch routes your salary through. Kolan/HiGlobe follow your receiving bank automatically; Wise can only be set by Accounting. Changes need Accounting approval.'}
-                        </p>
-                      </div>
-                      <SmoothSelect
-                        aria-label="Bank Preferred"
-                        value={
-                          // "Defaulted to what they are": the stored tier-1 pick
-                          // wins; else a wallet receiving bank pins the display
-                          // (1:1); else the server-resolved EFFECTIVE rail, so a
-                          // tier-2/tier-3-routed person sees their real rail
-                          // instead of an empty "Select…". Display only — no
-                          // write happens until the user changes something.
-                          bankPreferredLabelForProcessor(bankPreferred) ||
-                          bankPreferredLabelForProcessor(
-                            walletFromReceiving(preferredProcessor) ?? walletRailEffective ?? '',
-                          )
-                        }
-                        onChange={(label) => {
-                          setBankPreferred(processorForBankPreferredLabel(label) ?? '');
-                        }}
-                        disabled={payoutReadOnly}
-                        triggerClassName="w-full sm:w-48"
-                        options={[
-                          ...(bankPreferredLabelForProcessor(bankPreferred) ||
-                          bankPreferredLabelForProcessor(
-                            walletFromReceiving(preferredProcessor) ?? walletRailEffective ?? '',
-                          )
-                            ? []
-                            : [{ value: '', label: 'Select…' }]),
-                          // THE 1:1 RULE, option-list edition: keyed on the LIVE
-                          // receiving pick above. A wallet receiver sees exactly
-                          // their wallet (the send-from is pinned); a bank-rail
-                          // receiver sees the bank options; someone with no
-                          // receiving channel sees everything, and a wallet pick
-                          // here mirrors the receiving channel server-side. Wise
-                          // is absent for employees — Accounting sets Wise as a
-                          // sending bank in People → Banking.
-                          ...selectableBankPreferredOptions(preferredProcessor, 'employee').map(
-                            (o) => ({
-                              value: o.label,
-                              label: o.label,
-                            }),
-                          ),
-                        ]}
-                      />
-                    </div>
-                  </div>
-
-                  {preferredProcessor && (
-                    <div className="flex items-center gap-2 px-1 text-[12px] text-zinc-500 dark:text-zinc-400">
-                      <span>
-                        Selected channel:{' '}
-                        <span className="text-zinc-700 dark:text-zinc-200">
-                          {PROCESSOR_OPTIONS.find((p) => p.id === preferredProcessor)?.label}
-                        </span>
-                      </span>
-                      <ArrowUpRight className="h-3 w-3 text-zinc-400" />
-                    </div>
-                  )}
                 </>
               )}
 
