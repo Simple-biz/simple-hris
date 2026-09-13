@@ -23,8 +23,10 @@ zero governing documents. That is what this file exists to end.
 | That strip, rendered | `src/components/employee/CompensationSections.tsx` |
 | The ID card (a section of Overview, not a chip) | `src/components/employee/EmployeeIdCard.tsx` · `src/lib/employee/id-card.ts` |
 | The payout read view's card | `src/components/banking/bank-card.tsx` |
+| That card's deck, when a second account exists (§6.2) | `src/components/banking/bank-card-deck.tsx` |
 | Which rail gets a card, which gets wallet fields | `src/lib/banking/payout-rail-view.ts` (+ `.test.ts`) |
 | The cross-slot preferred-bank rule (shared with Accounting) | `src/lib/banking/preferred-bank.ts` (+ `.test.ts`) |
+| The RAW per-slot read the backup card is built from | `readBankSlot` in the same file (+ `bank-slot-deck.test.ts`) |
 | "Can this person actually be paid?" | `src/lib/employee/payout-completeness.ts` |
 | The reload cache this surface conforms to | `src/lib/employee/tab-cache.ts` — see [employee-dashboard-cache.md](./employee-dashboard-cache.md) |
 | Guards | `profile-hook-order.test.ts` · `profile-cache-conformance.test.ts` · `profile-date-render.test.ts` |
@@ -247,6 +249,93 @@ string the card face is already showing (for an alternative-slot payee `alt_rout
 both the card's SWIFT source and this row's source; there is no separate alt-slot routing
 column).
 
+### 6.2 The deck — a second account sits BEHIND the first
+
+**Shipped 2026-09-13** (Kane: *"if they have an alternate bank account it should be behind the
+main card ... a button where we can switch banks from Main to Alternative like spin them ...
+this way Accounting will have a secondary account if they have a problem in Payment
+Dispatch"*). `src/components/banking/bank-card-deck.tsx`.
+
+`employee_ids` has held two bank slots all along — `bank_name…swift_code` and
+`alt_bank_name…alt_routing_number` — and the profile printed exactly one of them. **151 payees
+already have a genuinely different second account on file** (measured 2026-09-13 over 2,065
+`employee_ids` rows; 159 carry any `alt_*` value, 17 are paid *out of* the alternative slot).
+Every one of those second accounts was invisible to the person who entered it.
+
+**The front of the deck is never a new answer.** It is `pickPreferredBank(row)` — the same
+card §6 has always printed, the account Payment Dispatch pays. The backup is read through
+**`readBankSlot`**, which reads one slot and stops. That distinction is the whole safety
+property: `pickPreferredBank` falls back field-by-field into the *other* slot so a half-filled
+record still names the account PD pays, and reusing it for the backup card would let it borrow
+the paid slot's bank name — two cards claiming one bank, which is the invented equivalence
+[people-bank-card.md](./people-bank-card.md) §2 forbids, with the extra twist that Accounting
+would then believe a fallback destination exists.
+
+**A deck is earned, not assumed.** Three conditions, all pinned by `bank-slot-deck.test.ts`:
+the rail already shows a card; the other slot names a bank or an account; and the two slots
+are not the same account. A record whose details live only in one slot resolves — *through*
+that cross-slot fallback — to the same account on both, so it correctly gets the single card
+it always had. Two accounts at the **same bank** (UnionBank/UnionBank, GCash/GCash, BPI/BPI —
+all real rows) are still two accounts and do get a deck.
+
+**Which card is facing never implies where the money goes.** Flipping is a viewer, not a
+routing change. The status line under the deck states the role of the card currently facing
+and is the only place that claim is made: the paid card reads *"Payroll sends your salary
+here"*, the backup reads *"Payroll does not send here — Accounting can switch to it if a
+payment to your primary account fails."* **The payout destination is still changed only in the
+edit form**, by the Primary/Alternative picker, through the save that has always filed it —
+never by a spin.
+
+**The facing state is lifted out of the deck** into `PayoutReadView`, because the rows under
+it name a slot too. A "Routing number" with no slot in its label, printed off the paid account
+while the backup card is the one on screen, is the same drift in a different costume. With a
+deck the routing row is read **raw per slot**; without one it keeps the cross-slot fallback,
+byte for byte as before.
+
+**The tucked card is `inert`.** It is a few px of visible edge, but its copy buttons and its
+reveal toggle are real controls behind the front card — without that attribute a keyboard user
+tabs into "copy account number" for an account they cannot see.
+
+**The spin is on the STACK, never on a card.** A card rotated past 90° shows its own back, and
+there is no back face to show — these are two different accounts, not two faces of one.
+Tipping the whole stack `rotateY: [0, -13, 0]` reads as the deck being turned over in the
+hand, and no glyph is ever mirrored. The two cards share one CSS grid cell (`col-start-1
+row-start-1`) so the stack is as tall as a card with nothing measured: `position: absolute`
+would collapse the container, because the card has no fixed height below `sm`.
+
+### 6.3 Editing ELONGATES the pane; it does not snap
+
+The read ⇄ edit swap used to be a hard cut — the card vanished, a taller form appeared, and
+everything below jumped. Now the body wrapper animates to its **measured natural height**
+(ref callback + `ResizeObserver`, the same mechanism as the onboarding dialog's mode toggle in
+`HrOnboardingForm.tsx`) while the two views cross-fade inside it under `AnimatePresence
+mode="popLayout"`. `popLayout` is load-bearing: it lifts the leaving view out of flow the
+instant the swap commits, which is what lets the measured height read the *incoming* view
+immediately instead of waiting out an exit and collapsing to zero in between.
+
+**The wrapper clips ONLY while it is travelling.** The bank picker inside the edit form is an
+in-flow `absolute` popover, **not a portal** (`employee-payout-fields.tsx` — unlike the
+onboarding dialog this borrows from), so a permanent `overflow-hidden` would cut its bank list
+off at the panel edge: a functional regression dressed as polish. Nothing is open while the
+box travels, so clipping is free exactly then and never after. A watchdog clears the clip
+after 900ms because a height animation that resolves to the number it started from never fires
+`onAnimationComplete`, and a stuck clip **is** that regression.
+
+**The blur is on the way OUT only.** Motion leaves `transform: none` when every transform is
+at its default, but it leaves a literal `filter: blur(0px)` behind — and a live `filter`
+creates a stacking context the bank popover could not escape. Exiting nodes unmount, so the
+softened cut costs nothing.
+
+Direction carries meaning and is passed through `AnimatePresence`'s `custom`, which hands the
+*current* value to the child that is leaving: entering edit, the form rises from below and the
+card leaves upward; cancelling reverses both. Without `custom` the outgoing view would exit
+the way it came in and the pair would read as two unrelated fades.
+
+Edit and Cancel are **one slot**, not two conditions — `popLayout` again, so Save glides across
+the width difference instead of being shoved sideways. `prefers-reduced-motion` keeps every
+state change and every cross-fade and drops only the spatial travel: no height animation, no
+`y`, no deck spin.
+
 ## 7. A neutral card is a CORRECT outcome — do not report it as a bug
 
 This is the most likely false bug report on this surface, and it has two independent causes.
@@ -332,7 +421,17 @@ call site passes nothing and is byte-identical.
 - **Visual verification is owed.** No browser pass was possible during the build; port 3000 was
   held by another session throughout. Unobserved: the 0.18s section slide and its direction,
   the layout at phone width, the throttled-network proof that the payout skeleton wins over the
-  empty-state copy, and the DevTools proof that Rates fires no paystub request.
+  empty-state copy, and the DevTools proof that Rates fires no paystub request. **Still owed
+  after 2026-09-13** — the deck (§6.2) and the read ⇄ edit elongation (§6.3) shipped without a
+  browser pass either: employee sign-in could not be driven from this session and Playwright is
+  not installed. Unobserved there: the deck's resting offset at phone width (the cards are
+  `max-w-[440px]`, so at 400px they fill the column and the tucked card's 7 % inset is ~14px a
+  side), the spin's read at 60fps, and the proof that the bank picker's popover is NOT clipped
+  by the height wrapper once it settles.
+- **Accounting's own card is still single.** §6.2 gives the EMPLOYEE the deck. People → Banking
+  ([people-bank-card.md](./people-bank-card.md)) — the surface a clerk is actually on "if they
+  have a problem in Payment Dispatch" — still prints only the paid slot. `BankCardDeck` is
+  shared and its call site there is two lines. Kane's call, not an inference.
 - The inner strip has a complete `role=tablist` / `tab` / `tabpanel` contract but **no roving
   tabindex** — arrow-key navigation between the three sections is absent. The outer TabBar has
   the same gap, so it is not a regression.

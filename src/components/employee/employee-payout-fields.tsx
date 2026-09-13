@@ -233,7 +233,10 @@ export function PreferredPaymentMethodRadios({
         aria-label="Preferred payment method"
         aria-disabled={disabled}
         className={cn(
-          'grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3',
+          // The opacity is a STATE, so it transitions: this group goes live the
+          // moment the employee presses Edit, and a hard jump to full contrast
+          // reads as a repaint rather than as the picker waking up.
+          'grid grid-cols-1 gap-2 transition-opacity duration-300 sm:grid-cols-2 lg:grid-cols-3',
           disabled && 'pointer-events-none opacity-60',
         )}
       >

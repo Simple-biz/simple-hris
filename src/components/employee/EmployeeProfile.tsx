@@ -29,7 +29,7 @@ import {
   ChevronRight,
   Download,
 } from 'lucide-react';
-import { motion, AnimatePresence, LayoutGroup, useReducedMotion } from 'motion/react';
+import { motion, AnimatePresence, LayoutGroup, useReducedMotion, type Variants } from 'motion/react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { SmoothSelect } from '@/components/ui/smooth-select';
@@ -121,7 +121,15 @@ import { getTitlesForDepartment, hasAnySkillSetContent } from '@/lib/skill-set-t
 // one resolver, one palette, one contrast proof; it simply gains a `masked` mode
 // for the payee looking at their own record.
 import { BankCard } from '@/components/banking/bank-card';
-import { pickPreferredBank, type PreferredBank } from '@/lib/banking/preferred-bank';
+// …and the deck the card sits in when there is a second account on the record.
+import { BankCardDeck } from '@/components/banking/bank-card-deck';
+import {
+  pickPreferredBank,
+  readBankSlot,
+  bankSlotHasAccount,
+  sameBankAccount,
+  type PreferredBank,
+} from '@/lib/banking/preferred-bank';
 import { payoutRailView } from '@/lib/banking/payout-rail-view';
 import {
   PreferredPaymentMethodRadios,
@@ -213,6 +221,28 @@ const EMPTY_SKILL_SET: SkillSetFields = {
 };
 
 const MAX_CURRENT_PROJECTS = 2;
+
+/**
+ * The Disbursement pane's read ⇄ edit swap.
+ *
+ * `custom` carries the direction AND the motion preference because
+ * `AnimatePresence` hands the CURRENT custom value to the child that is leaving:
+ * without it the outgoing view would exit the way it came in, and the pair would
+ * read as two unrelated fades instead of one panel opening and closing.
+ *
+ * The blur is on the way OUT only. It softens the cut where it matters, and the
+ * node is unmounting — so no `filter` is left alive on the settled view, where
+ * it would create a stacking context the edit form's bank popover could not
+ * escape.
+ */
+type PayoutSwapCustom = { toEdit: boolean; reduce: boolean };
+const PAYOUT_SWAP: Variants = {
+  enter: ({ toEdit, reduce }: PayoutSwapCustom) =>
+    reduce ? { opacity: 0 } : { opacity: 0, y: toEdit ? 10 : -8 },
+  settled: { opacity: 1, y: 0 },
+  leave: ({ toEdit, reduce }: PayoutSwapCustom) =>
+    reduce ? { opacity: 0 } : { opacity: 0, y: toEdit ? -8 : 10, filter: 'blur(4px)' },
+};
 
 function Section({
   title,
@@ -358,16 +388,48 @@ function PayoutReadView({
   row: EmployeeIdRow | null;
   reduceMotion: boolean;
 }) {
+  /**
+   * Which card of the deck is facing. Lifted OUT of `BankCardDeck` because the
+   * rows UNDER it name a slot too: a "Routing number" with no slot in its label,
+   * printed off the paid account while the backup card is the one on screen, is
+   * the same drift in a different costume. The whole read block describes one
+   * card at a time.
+   *
+   * Declared above the early return — the rules of hooks, and
+   * `profile-hook-order.test.ts` scans this file for exactly that mistake.
+   */
+  const [facingBackup, setFacingBackup] = useState(false);
+
   const { showBankCard, showWalletFields } = payoutRailView(rail, !!bank.name);
   if (!showBankCard && !showWalletFields) return null;
 
-  // The paid slot's wire code, by the same cross-slot fallback the card's SWIFT
-  // uses — so "Routing" and the card can never describe two different slots.
   const firstOf = (...vals: (string | null | undefined)[]) =>
     vals.find((v) => v != null && String(v).trim() !== '') ?? null;
-  const routing = bank.isAlternativeSlot
-    ? firstOf(row?.alt_routing_number, row?.routing_number)
-    : firstOf(row?.routing_number, row?.alt_routing_number);
+
+  /**
+   * The OTHER slot, read RAW. A deck earns its second card only when that slot
+   * is a genuinely different destination: a record whose details live in one
+   * slot resolves — through `pickPreferredBank`'s cross-slot fallback — to the
+   * same account on both, and printing it twice would invent a redundancy
+   * Accounting could act on. Everyone else gets exactly the single card this
+   * pane has always shown.
+   */
+  const backup = readBankSlot(row, bank.isAlternativeSlot ? 'primary' : 'alternative');
+  const hasDeck = showBankCard && bankSlotHasAccount(backup) && !sameBankAccount(backup, bank);
+  const facing = hasDeck && facingBackup ? backup : bank;
+
+  // The facing slot's wire code. Without a deck this is the paid slot by the
+  // same cross-slot fallback the card's SWIFT uses, byte for byte as before —
+  // so "Routing" and the card can never describe two different slots. WITH a
+  // deck the fallback is dropped: both slots are on screen, so borrowing the
+  // other one's wire code is no longer a rescue, it is a mislabel.
+  const routing = hasDeck
+    ? facing.isAlternativeSlot
+      ? firstOf(row?.alt_routing_number)
+      : firstOf(row?.routing_number)
+    : bank.isAlternativeSlot
+      ? firstOf(row?.alt_routing_number, row?.routing_number)
+      : firstOf(row?.routing_number, row?.alt_routing_number);
   const railLabel = rail ? (PROCESSOR_OPTIONS.find((p) => p.id === rail)?.label ?? null) : null;
 
   return (
@@ -379,7 +441,17 @@ function PayoutReadView({
           Paid via {railLabel}
         </p>
       )}
-      {showBankCard && (
+      {showBankCard && hasDeck && (
+        <BankCardDeck
+          front={bank}
+          back={backup}
+          facingBack={facingBackup}
+          onSwap={() => setFacingBackup((v) => !v)}
+          masked
+          reduceMotion={reduceMotion}
+        />
+      )}
+      {showBankCard && !hasDeck && (
         <BankCard
           spelling={bank.name}
           holder={bank.holder}
@@ -422,8 +494,8 @@ function PayoutReadView({
               where a wire code belongs, and `isPayoutComplete` does not require
               SWIFT either — `needsPayoutSetup` would not fire to tell them.
               Matches People's own condition verbatim. */}
-          {(!routing || routing !== bank.swift) && (
-            <Row label="Routing number" value={routing} mono showEmpty={!bank.swift} />
+          {(!routing || routing !== facing.swift) && (
+            <Row label="Routing number" value={routing} mono showEmpty={!facing.swift} />
           )}
           <Row label="Address" value={row?.full_address} showEmpty />
         </div>
@@ -842,6 +914,53 @@ export default function EmployeeProfile({
   const [payoutSaving, setPayoutSaving] = useState(false);
   const [payoutSavedAt, setPayoutSavedAt] = useState<string | null>(null);
   const [payoutEditing, setPayoutEditing] = useState(false);
+
+  /**
+   * The Disbursement pane ELONGATES between reading and editing instead of
+   * snapping: the wrapper animates to the body's measured natural height while
+   * the two views cross-fade inside it. Same mechanism as the onboarding
+   * dialog's mode toggle (`HrOnboardingForm.tsx`) — a ref callback plus a
+   * ResizeObserver, so the target stays live through everything ELSE that moves
+   * this body (the setup nudge losing its button, a rail swap changing the field
+   * set, the payout card's own reveal) and the box is never animating toward a
+   * height the content no longer has.
+   */
+  const [payoutBodyHeight, setPayoutBodyHeight] = useState<number | null>(null);
+  const payoutBodyObs = useRef<ResizeObserver | null>(null);
+  const measurePayoutBody = useCallback((el: HTMLDivElement | null) => {
+    payoutBodyObs.current?.disconnect();
+    payoutBodyObs.current = null;
+    // Deliberately NOT resetting the height on detach. The pane unmounts when
+    // the section strip moves away and mounts again with the same content; a
+    // null here would drop the box to `auto` for a frame on the way back.
+    if (!el) return;
+    setPayoutBodyHeight(el.offsetHeight);
+    const ro = new ResizeObserver(() => setPayoutBodyHeight(el.offsetHeight));
+    ro.observe(el);
+    payoutBodyObs.current = ro;
+  }, []);
+  useEffect(() => () => payoutBodyObs.current?.disconnect(), []);
+
+  /**
+   * Clip ONLY while the box is travelling.
+   *
+   * The bank picker inside the edit form is an in-flow `absolute` popover, not a
+   * portal (`employee-payout-fields.tsx` — unlike the onboarding dialog this
+   * borrows from), so a permanent `overflow-hidden` on the animated wrapper
+   * would cut its bank list off at the panel edge: a functional regression
+   * dressed as polish. Nothing is open while the box travels, so clipping is
+   * free exactly then and never after.
+   *
+   * The watchdog is the other half of that: a height animation that resolves to
+   * the number it started from never fires `onAnimationComplete`, and a clip
+   * that sticks IS the regression above.
+   */
+  const [payoutClipping, setPayoutClipping] = useState(false);
+  useEffect(() => {
+    if (!payoutClipping) return;
+    const t = setTimeout(() => setPayoutClipping(false), 900);
+    return () => clearTimeout(t);
+  }, [payoutClipping]);
 
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   // The section a deep link asked for, consumed by the Compensation and Skill
@@ -1428,6 +1547,18 @@ export default function EmployeeProfile({
   const displayProfilePhotoUrl =
     profilePhotoUrl?.trim() || master?.profile_photo_url?.trim() || null;
   const payoutReadOnly = payrollLocked || !payoutEditing;
+
+  /**
+   * Edit ⇄ Cancel, shared by both buttons so the pair reads as one control
+   * changing rather than two appearing. Exits downward and enters from above:
+   * the same "the panel opened" direction the body swap below uses.
+   */
+  const payoutControlSwap = {
+    initial: prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: -3 },
+    animate: { opacity: 1, scale: 1, y: 0 },
+    exit: prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: 3 },
+    transition: { duration: prefersReducedMotion ? 0 : 0.2, ease: [0.16, 1, 0.3, 1] as const },
+  };
 
   const hasAnyAddress = !!(
     master?.full_address ||
@@ -2308,55 +2439,99 @@ export default function EmployeeProfile({
                             description="How and where you get paid"
                             action={
                               <div className="flex flex-wrap items-center justify-end gap-1.5">
-                                {payoutSavedAt && (
-                                  <span className="hidden items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 sm:flex">
-                                    <CheckCircle className="h-3 w-3" />
-                                    Saved {payoutSavedAt}
-                                  </span>
-                                )}
-                                {!payrollLocked && bankInfo && !payoutEditing && (
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 gap-1.5 rounded-lg text-[12px]"
-                                    onClick={() => setPayoutEditing(true)}
-                                  >
-                                    <Pencil className="h-3 w-3" />
-                                    Edit
-                                  </Button>
-                                )}
-                                {!payrollLocked && payoutEditing && (
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8 gap-1.5 rounded-lg text-[12px]"
-                                    disabled={payoutSaving}
-                                    onClick={resetPayoutDraft}
-                                  >
-                                    <X className="h-3 w-3" />
-                                    Cancel
-                                  </Button>
-                                )}
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  disabled={payoutSaving || payrollLocked || !payoutEditing}
-                                  onClick={savePaymentDetails}
-                                  className="h-8 gap-1.5 rounded-lg bg-orange-500 text-[12px] text-white hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400"
-                                >
-                                  {payoutSaving ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                  ) : (
-                                    <Save className="h-3 w-3" />
+                                <AnimatePresence initial={false}>
+                                  {payoutSavedAt && (
+                                    <motion.span
+                                      key="payout-saved"
+                                      initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
+                                      animate={{ opacity: 1, y: 0 }}
+                                      exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
+                                      transition={{ duration: prefersReducedMotion ? 0 : 0.24, ease: [0.16, 1, 0.3, 1] }}
+                                      className="hidden items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 sm:flex"
+                                    >
+                                      <CheckCircle className="h-3 w-3" />
+                                      Saved {payoutSavedAt}
+                                    </motion.span>
                                   )}
-                                  Save
-                                </Button>
+                                </AnimatePresence>
+                                {/* Edit and Cancel are ONE slot, not two separate
+                                    conditions: `popLayout` lifts the leaving button
+                                    out of flow, so Save glides across the width
+                                    difference between them instead of being shoved
+                                    sideways the instant the swap commits. */}
+                                {!payrollLocked && (
+                                  <AnimatePresence mode="popLayout" initial={false}>
+                                    {payoutEditing ? (
+                                      <motion.div key="payout-cancel" {...payoutControlSwap}>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          className="h-8 gap-1.5 rounded-lg text-[12px]"
+                                          disabled={payoutSaving}
+                                          onClick={resetPayoutDraft}
+                                        >
+                                          <X className="h-3 w-3" />
+                                          Cancel
+                                        </Button>
+                                      </motion.div>
+                                    ) : bankInfo ? (
+                                      <motion.div key="payout-edit" {...payoutControlSwap}>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          className="h-8 gap-1.5 rounded-lg text-[12px]"
+                                          onClick={() => setPayoutEditing(true)}
+                                        >
+                                          <Pencil className="h-3 w-3" />
+                                          Edit
+                                        </Button>
+                                      </motion.div>
+                                    ) : null}
+                                  </AnimatePresence>
+                                )}
+                                <motion.div
+                                  layout={!prefersReducedMotion}
+                                  transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
+                                >
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    disabled={payoutSaving || payrollLocked || !payoutEditing}
+                                    onClick={savePaymentDetails}
+                                    className="h-8 gap-1.5 rounded-lg bg-orange-500 text-[12px] text-white hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400"
+                                  >
+                                    {payoutSaving ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <Save className="h-3 w-3" />
+                                    )}
+                                    Save
+                                  </Button>
+                                </motion.div>
                               </div>
                             }
                           >
-                            <div className="space-y-5 py-4">
+                            <motion.div
+                              initial={false}
+                              animate={{
+                                height: prefersReducedMotion ? 'auto' : (payoutBodyHeight ?? 'auto'),
+                              }}
+                              transition={{
+                                duration: prefersReducedMotion ? 0 : 0.38,
+                                ease: [0.22, 1, 0.36, 1],
+                              }}
+                              onAnimationStart={() => {
+                                if (!prefersReducedMotion) setPayoutClipping(true);
+                              }}
+                              onAnimationComplete={() => setPayoutClipping(false)}
+                              // The negative margin buys back the room the clip
+                              // would otherwise take out of a focus ring on the
+                              // controls at the body's edge.
+                              className={cn('-mx-1 px-1', payoutClipping && 'overflow-hidden')}
+                            >
+                            <div ref={measurePayoutBody} className="space-y-5 py-4">
                               {payrollLocked && (
                                 <div className="flex items-start gap-2.5 rounded-xl border border-rose-200/80 bg-rose-50/70 px-4 py-3 text-[12.5px] dark:border-rose-900/40 dark:bg-rose-950/30">
                                   <Lock className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
@@ -2435,24 +2610,54 @@ export default function EmployeeProfile({
                                   The edit view stays keyed on
                                   `preferredProcessor`, because that IS the
                                   channel the employee is choosing between. */}
-                              {payoutEditing ? (
-                                preferredProcessor ? (
-                                  <PayoutDetailsFields
-                                    processor={preferredProcessor}
-                                    payout={payout}
-                                    setPayout={setPayout}
-                                    disabled={payoutReadOnly}
-                                  />
-                                ) : null
-                              ) : (
-                                <PayoutReadView
-                                  rail={walletRailEffective}
-                                  bank={paidSlotBank}
-                                  row={bankInfo}
-                                  reduceMotion={!!prefersReducedMotion}
-                                />
-                              )}
+                              {/* The two views cross-fade in place while the box
+                                  above travels between their heights, so the
+                                  record does not blink out and a form appear in
+                                  its stead. `popLayout` lifts the leaving view
+                                  out of flow the instant the swap commits —
+                                  which is what lets the measured height read the
+                                  INCOMING view immediately rather than waiting
+                                  out an exit. */}
+                              <div className="relative">
+                                <AnimatePresence
+                                  mode="popLayout"
+                                  initial={false}
+                                  custom={{ toEdit: payoutEditing, reduce: !!prefersReducedMotion }}
+                                >
+                                  <motion.div
+                                    key={payoutEditing ? 'edit' : 'read'}
+                                    custom={{ toEdit: payoutEditing, reduce: !!prefersReducedMotion }}
+                                    variants={PAYOUT_SWAP}
+                                    initial="enter"
+                                    animate="settled"
+                                    exit="leave"
+                                    transition={{
+                                      duration: prefersReducedMotion ? 0.12 : 0.28,
+                                      ease: [0.16, 1, 0.3, 1],
+                                    }}
+                                  >
+                                    {payoutEditing ? (
+                                      preferredProcessor ? (
+                                        <PayoutDetailsFields
+                                          processor={preferredProcessor}
+                                          payout={payout}
+                                          setPayout={setPayout}
+                                          disabled={payoutReadOnly}
+                                        />
+                                      ) : null
+                                    ) : (
+                                      <PayoutReadView
+                                        rail={walletRailEffective}
+                                        bank={paidSlotBank}
+                                        row={bankInfo}
+                                        reduceMotion={!!prefersReducedMotion}
+                                      />
+                                    )}
+                                  </motion.div>
+                                </AnimatePresence>
+                              </div>
                             </div>
+                            </motion.div>
                           </Section>
 
                           <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/60">
