@@ -2,9 +2,10 @@
 
 import { useId, useState, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { Check, Copy, Landmark } from 'lucide-react';
+import { Check, Copy, Eye, EyeOff, Landmark } from 'lucide-react';
 import { toast } from 'sonner';
 import ProcessorLogo from '@/components/payroll-clerk/ProcessorLogo';
+import { maskAccount } from '@/lib/banking/account-mask';
 import { resolveBankBrand } from '@/lib/payment-catalog/banks';
 import { bankCardInk, bankCardPalette, type BankCardPalette } from '@/lib/payment-catalog/bank-card-palette';
 import { payProcessorLogoSrc } from '@/lib/payment-catalog/pay-processors';
@@ -34,7 +35,15 @@ import { payProcessorLogoSrc } from '@/lib/payment-catalog/pay-processors';
    It does not theme. A card is a physical object; the same one lies on the page in
    light and dark, exactly as `EmployeeIdCard` reasons about its metal. Contrast is
    therefore fixed and provable — `bank-card-palette.test.ts` pins white on every
-   face at ≥8.5:1 and both tinted inks at AA. */
+   face at ≥8.5:1 and both tinted inks at AA.
+
+   **Two hosts, one card.** Accounting's People → Banking pane reveals a record it
+   has already audited, so it passes nothing new and gets exactly the card it has
+   always had. The employee's own Payout section passes `masked`, which prints the
+   account number and the wire code as last-4 until they ask for them — the same
+   exposure the payout form has always shown in its read state — and passes
+   `animateIn={false}`, because that host animates the card's arrival itself. Both
+   new props default to the shipped behaviour. */
 export function BankCard({
   spelling,
   holder,
@@ -42,6 +51,8 @@ export function BankCard({
   swift,
   isAlternativeSlot,
   reduceMotion,
+  masked = false,
+  animateIn = true,
 }: {
   spelling: string | null;
   holder: string | null;
@@ -49,11 +60,39 @@ export function BankCard({
   swift: string | null;
   isAlternativeSlot: boolean;
   reduceMotion: boolean;
+  /**
+   * Print the account number and the SWIFT code as last-4, with an in-card
+   * reveal, and refuse to copy either until it is revealed.
+   *
+   * DEFAULT `false` — Accounting's shipped call site passes nothing and is
+   * unchanged: no mask, no reveal control, copy enabled, same DOM.
+   *
+   * The reveal is client-side ONLY. The full value is already in the caller's
+   * hands (the employee's own `employee_ids` row), so there is no route to call
+   * and nothing to record: `/api/people/[email]/reveal-banking` writes an audit
+   * row because it records someone reading ANOTHER person's record, and a payee
+   * reading their own is not that event.
+   */
+  masked?: boolean;
+  /**
+   * Play the one-shot tilt-in on mount. DEFAULT `true` — Accounting's call site
+   * is unchanged.
+   *
+   * A host whose own container animates the card into view passes `false`: the
+   * motion wrapper is then not rendered at all, so there is no second entrance
+   * competing with the first and no transform layer left alive off-screen.
+   */
+  animateIn?: boolean;
 }) {
   const brand = useMemo(() => resolveBankBrand(spelling), [spelling]);
   const palette = useMemo(() => bankCardPalette(brand.key), [brand.key]);
   const ink = useMemo(() => bankCardInk(palette), [palette]);
   const logoSrc = payProcessorLogoSrc(brand.logo);
+  // The card owns its own reveal. Nothing outside it needs to know — the values
+  // it hides are the values it prints, and lifting the flag would let a second
+  // copy of it disagree with this one.
+  const [revealed, setRevealed] = useState(false);
+  const hidden = masked && !revealed;
 
   // The record's own words come first; the official name is a second line only when
   // it says something the stored spelling does not ("BDO" → "BDO Unibank, Inc.").
@@ -63,16 +102,7 @@ export function BankCard({
       ? brand.officialName
       : null;
 
-  return (
-    <motion.div
-      initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 14, rotateX: 7, scale: 0.975 }}
-      animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, rotateX: 0, scale: 1 }}
-      // One authored moment: the card settles onto the page out of a slight tilt on
-      // an exponential ease-out. Everything else in this block only fades.
-      transition={{ duration: reduceMotion ? 0 : 0.55, ease: [0.16, 1, 0.3, 1] }}
-      style={{ perspective: 900 }}
-      className="mb-3"
-    >
+  const face = (
       <div
         style={{
           background: `linear-gradient(157deg, ${palette.surface} 0%, ${palette.surfaceDeep} 100%)`,
@@ -124,14 +154,48 @@ export function BankCard({
                 <Landmark className="h-4 w-4" style={{ color: ink.secondary }} />
               </span>
             )}
-            {isAlternativeSlot && (
-              // The exceptional slot is marked; the ordinary one needs no chip.
-              <span
-                className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
-                style={{ background: 'rgb(255 255 255 / 0.14)', color: ink.primary }}
-              >
-                Alternative account
-              </span>
+            {/* Rendered at all only when there is something to put in it, so a
+                host that passes neither (Accounting's) emits the same DOM it
+                always did. */}
+            {(isAlternativeSlot || masked) && (
+            <div className="flex shrink-0 items-center gap-2">
+              {isAlternativeSlot && (
+                // The exceptional slot is marked; the ordinary one needs no chip.
+                <span
+                  className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
+                  style={{ background: 'rgb(255 255 255 / 0.14)', color: ink.primary }}
+                >
+                  Alternative account
+                </span>
+              )}
+              {masked && (
+                // ONE control for the whole face, because one act of masking
+                // covers both hidden values. Two toggles would let the account
+                // number and the wire code beside it disagree about what is
+                // currently on screen. Drawn in the card's own fixed ink, like
+                // every other control on it — this face does not theme.
+                <button
+                  type="button"
+                  onClick={() => setRevealed((v) => !v)}
+                  aria-pressed={revealed}
+                  aria-label={revealed ? 'Hide your account number' : 'Show your account number'}
+                  title={revealed ? 'Hide your account number' : 'Show your account number'}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2"
+                  style={{
+                    background: 'rgb(255 255 255 / 0.14)',
+                    color: ink.primary,
+                    ['--tw-ring-color' as string]: 'rgb(255 255 255 / 0.55)',
+                  }}
+                >
+                  {revealed ? (
+                    <EyeOff className="h-[11px] w-[11px]" />
+                  ) : (
+                    <Eye className="h-[11px] w-[11px]" />
+                  )}
+                  {revealed ? 'Hide' : 'Show'}
+                </button>
+              )}
+            </div>
             )}
           </div>
 
@@ -152,7 +216,10 @@ export function BankCard({
 
           <EmvChip />
 
-          {/* Account number — the hero datum, and the reason anyone opens this. */}
+          {/* Account number — the hero datum, and the reason anyone opens this.
+              It and the wire code beside it are the two values `masked` hides;
+              the bank's name and the account holder's are not secrets and are
+              never masked on either host. */}
           <div className="mt-auto">
             <CardValue
               label="Account number"
@@ -160,14 +227,44 @@ export function BankCard({
               palette={palette}
               mono
               size="hero"
+              masked={hidden}
             />
             <div className="mt-2 flex items-start justify-between gap-4">
               <CardValue label="Account holder" value={holder} palette={palette} upper />
-              {swift && <CardValue label="SWIFT" value={swift} palette={palette} mono align="right" />}
+              {swift && (
+                <CardValue
+                  label="SWIFT"
+                  value={swift}
+                  palette={palette}
+                  mono
+                  align="right"
+                  masked={hidden}
+                />
+              )}
             </div>
           </div>
         </div>
       </div>
+  );
+
+  // A host that animates the card's arrival itself passes `animateIn={false}`,
+  // and then there is no motion wrapper at all — not a zeroed transition. The
+  // tilt fires on MOUNT, so under a shell where a pane can mount while it is not
+  // on screen it would play where nobody is looking and settle before the
+  // employee ever arrives. Removing the element removes the question.
+  if (!animateIn) return <div className="mb-3">{face}</div>;
+
+  return (
+    <motion.div
+      initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 14, rotateX: 7, scale: 0.975 }}
+      animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, rotateX: 0, scale: 1 }}
+      // One authored moment: the card settles onto the page out of a slight tilt on
+      // an exponential ease-out. Everything else in this block only fades.
+      transition={{ duration: reduceMotion ? 0 : 0.55, ease: [0.16, 1, 0.3, 1] }}
+      style={{ perspective: 900 }}
+      className="mb-3"
+    >
+      {face}
     </motion.div>
   );
 }
@@ -185,6 +282,12 @@ export function BankCard({
  * the rejection, and one of them flashes the confirmation tick even when the
  * clipboard API is absent — on a money field, a tick that means "possibly nothing
  * happened" is worse than no button.
+ *
+ * `masked` prints the value through the shared `maskAccount` rule and DISABLES the
+ * copy button for exactly as long as it does. The button is still rendered, so the
+ * reader can see that copying is a thing this value does once it is revealed — it
+ * just cannot silently put bullets on the clipboard. The value itself is never
+ * substituted: `text` stays the stored string, and only `display` changes.
  */
 function CardValue({
   label,
@@ -194,6 +297,7 @@ function CardValue({
   upper,
   size = 'normal',
   align = 'left',
+  masked = false,
 }: {
   label: string;
   value: string | null;
@@ -202,13 +306,22 @@ function CardValue({
   upper?: boolean;
   size?: 'normal' | 'hero';
   align?: 'left' | 'right';
+  masked?: boolean;
 }) {
   const ink = bankCardInk(palette);
   const [copied, setCopied] = useState(false);
   const text = value?.trim() ?? '';
+  // The SAME rule the payout form masks with — see src/lib/banking/account-mask.ts.
+  // `text` is the stored string and stays the stored string: only what is PRINTED
+  // changes, so revealing is a re-render and never a re-read.
+  const display = masked ? (maskAccount(text) ?? '') : text;
 
   const copy = async () => {
-    if (!text) return;
+    // Disabled while masked. Handing `••••••7890` to the clipboard, silently, on
+    // a money field is worse than offering no button at all — the paste lands in
+    // a wire form and looks like an account number. Guarded here as well as on
+    // the button, so a programmatic click cannot route around it.
+    if (!text || masked) return;
     try {
       if (!navigator.clipboard?.writeText) throw new Error('unavailable');
       await navigator.clipboard.writeText(text);
@@ -229,9 +342,22 @@ function CardValue({
           <button
             type="button"
             onClick={copy}
-            aria-label={copied ? `${label} copied` : `Copy ${label.toLowerCase()}`}
-            title={copied ? 'Copied' : `Copy ${label.toLowerCase()}`}
-            className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] transition-colors hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2"
+            disabled={masked}
+            aria-label={
+              masked
+                ? `Show the ${label.toLowerCase()} before copying it`
+                : copied
+                  ? `${label} copied`
+                  : `Copy ${label.toLowerCase()}`
+            }
+            title={
+              masked
+                ? `Show the ${label.toLowerCase()} before copying it`
+                : copied
+                  ? 'Copied'
+                  : `Copy ${label.toLowerCase()}`
+            }
+            className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[5px] transition-colors hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-45"
             style={{
               color: copied ? ink.primary : ink.secondary,
               backgroundColor: copied ? 'rgb(255 255 255 / 0.22)' : 'rgb(255 255 255 / 0.08)',
@@ -252,12 +378,14 @@ function CardValue({
           size === 'hero' ? 'text-[15px] font-medium' : 'text-[12.5px] font-medium',
         ].join(' ')}
         style={{
-          color: text ? ink.primary : ink.label,
+          color: display ? ink.primary : ink.label,
           ...(size === 'hero' ? { letterSpacing: '0.04em' } : null),
         }}
-        title={text || undefined}
+        // The tooltip prints what the eye prints. Leaving `text` here would hand
+        // the full account number back on hover and undo the mask in one gesture.
+        title={display || undefined}
       >
-        {text || '—'}
+        {display || '—'}
       </p>
     </div>
   );

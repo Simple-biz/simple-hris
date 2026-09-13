@@ -11,6 +11,11 @@ import {
   type ProcessorId,
 } from '@/lib/employee-payment-processors';
 import { cn } from '@/lib/utils';
+// ONE masking rule, two call sites. The payout section's READ view is now the
+// bank card (src/components/banking/bank-card.tsx) and this form is its EDIT
+// view, so both render the same account number on the same pane — a private
+// copy of "what masked means" in either one is how they come to disagree.
+import { maskAccount } from '@/lib/banking/account-mask';
 // Pure payout model + completeness check now live in a server-safe module so the
 // People roster and this client form share ONE definition of "payable". Re-export
 // them here so existing importers of these symbols from this file keep working.
@@ -656,13 +661,6 @@ interface FormFieldProps {
   masked?: boolean;
 }
 
-function maskSensitive(v: string): string {
-  if (!v) return '';
-  const clean = v.replace(/[-\s]/g, '');
-  if (clean.length <= 4) return '•'.repeat(clean.length);
-  return '•'.repeat(clean.length - 4) + clean.slice(-4);
-}
-
 function FormField({
   label,
   value,
@@ -676,7 +674,9 @@ function FormField({
   disabled = false,
   masked = false,
 }: FormFieldProps) {
-  const displayValue = masked && disabled ? maskSensitive(value) : value;
+  // `?? ''` only ever fires for a null the prop type does not allow — the field
+  // is a controlled input and must never flip to uncontrolled.
+  const displayValue = masked && disabled ? (maskAccount(value) ?? '') : value;
   return (
     <div className={cn(fullWidth && 'sm:col-span-2')}>
       <label className="mb-1.5 flex items-center gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">

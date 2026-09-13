@@ -117,6 +117,12 @@ import {
   walletRailEffectiveFromPayload,
 } from '@/lib/employee-payment-processors';
 import { getTitlesForDepartment, hasAnySkillSetContent } from '@/lib/skill-set-titles';
+// The payout READ view. The card is Accounting's shipped component, unforked —
+// one resolver, one palette, one contrast proof; it simply gains a `masked` mode
+// for the payee looking at their own record.
+import { BankCard } from '@/components/banking/bank-card';
+import { pickPreferredBank, type PreferredBank } from '@/lib/banking/preferred-bank';
+import { payoutRailView } from '@/lib/banking/payout-rail-view';
 import {
   PreferredPaymentMethodRadios,
   PayoutDetailsFields,
@@ -244,14 +250,24 @@ function Row({
   value,
   mono = false,
   status,
+  showEmpty = false,
 }: {
   label: string;
   value: string | null | undefined;
   mono?: boolean;
   status?: 'active' | 'paused';
+  /**
+   * Print the row with an em dash when there is no value, instead of dropping
+   * it. Default `false`, so every pre-existing caller is unchanged.
+   *
+   * The payout read view opts in: a missing payout field is the one thing on
+   * that pane the employee most needs to see, and a row that silently vanishes
+   * says "nothing is expected here" when the truth is "this is what is missing".
+   */
+  showEmpty?: boolean;
 }) {
   const text = value?.trim();
-  if (!text) return null;
+  if (!text && !showEmpty) return null;
   return (
     <div className="grid grid-cols-1 items-center gap-1 border-b border-zinc-100 py-3.5 last:border-b-0 dark:border-zinc-800/40 sm:grid-cols-[10rem_1fr] sm:gap-6">
       <div className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">{label}</div>
@@ -269,7 +285,13 @@ function Row({
             </span>
           </span>
         )}
-        <span className="break-words">{text}</span>
+        <span
+          className={
+            text ? 'break-words' : 'break-words text-zinc-400 dark:text-zinc-600'
+          }
+        >
+          {text || '—'}
+        </span>
       </div>
     </div>
   );
@@ -299,6 +321,105 @@ function SetupNudge({
         </div>
       </div>
       {action && <div className="shrink-0 sm:pl-3">{action}</div>}
+    </div>
+  );
+}
+
+/**
+ * The payout section's READ view — the card, and whatever a card face has no
+ * room for.
+ *
+ * The pane was already read-with-an-Edit-button; this only changes what the read
+ * state looks like. `PayoutDetailsFields` is still the edit view and still owns
+ * every input, so nothing here can write.
+ *
+ * **One home per value.** Bank, account holder, account number and SWIFT live on
+ * the card and appear nowhere else below it. Routing number and full address are
+ * NOT card-face values — they are wire instructions — so they stay in the grid.
+ * The routing row additionally drops itself when it would print the string the
+ * card is already showing: for an alternative-slot payee `alt_routing_number` is
+ * BOTH this row's source and the card's SWIFT source (there is no separate
+ * alt-slot routing column), so the two can be the identical value. The drop is
+ * equality-based, so a genuinely different routing number still prints.
+ *
+ * **Fed from `bankInfo`, never from the `payout` draft.** That draft collapses
+ * `swift_code ?? routing_number` into one field, so feeding it here would print
+ * a routing number in the SWIFT position — with a working copy button.
+ */
+function PayoutReadView({
+  rail,
+  bank,
+  row,
+  reduceMotion,
+}: {
+  /** The EFFECTIVE, server-resolved rail. Never the raw Disbursement pick. */
+  rail: ProcessorId | null;
+  bank: PreferredBank;
+  row: EmployeeIdRow | null;
+  reduceMotion: boolean;
+}) {
+  const { showBankCard, showWalletFields } = payoutRailView(rail, !!bank.name);
+  if (!showBankCard && !showWalletFields) return null;
+
+  // The paid slot's wire code, by the same cross-slot fallback the card's SWIFT
+  // uses — so "Routing" and the card can never describe two different slots.
+  const firstOf = (...vals: (string | null | undefined)[]) =>
+    vals.find((v) => v != null && String(v).trim() !== '') ?? null;
+  const routing = bank.isAlternativeSlot
+    ? firstOf(row?.alt_routing_number, row?.routing_number)
+    : firstOf(row?.routing_number, row?.alt_routing_number);
+  const railLabel = rail ? (PROCESSOR_OPTIONS.find((p) => p.id === rail)?.label ?? null) : null;
+
+  return (
+    <div className="rounded-lg border border-zinc-100 bg-zinc-50/60 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
+      {railLabel && (
+        // The rail that governs this card — the one Payment Dispatch actually
+        // routes on, which can differ from the Disbursement pick shown below.
+        <p className="mb-2.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Paid via {railLabel}
+        </p>
+      )}
+      {showBankCard && (
+        <BankCard
+          spelling={bank.name}
+          holder={bank.holder}
+          account={bank.account}
+          swift={bank.swift}
+          isAlternativeSlot={bank.isAlternativeSlot}
+          reduceMotion={reduceMotion}
+          // Last-4 by default with an in-card reveal — exactly the exposure the
+          // payout form has always shown in its read state. Client-side only:
+          // the full value is already in `bankInfo`.
+          masked
+          // This host animates the card's arrival itself — the whole section
+          // pane is a keyed motion.div under AnimatePresence. See the report.
+          animateIn={false}
+        />
+      )}
+      {showWalletFields && (
+        // NEVER folded away: for a Kolan, WePay, HiGlobe or Jeeves payee the
+        // wallet identity IS the payout record, and collapsing it would leave
+        // this panel showing nothing but a button.
+        <div>
+          {rail === 'hurupay' && <Row label="Kolan email" value={row?.hurupay_email} showEmpty />}
+          {rail === 'wepay' && <Row label="Wepay email" value={row?.wepay_email} showEmpty />}
+          {rail === 'higlobe' && (
+            <>
+              <Row label="Higlobe email" value={row?.higlobe_email} showEmpty />
+              <Row label="Higlobe account" value={row?.higlobe_account_name} showEmpty />
+            </>
+          )}
+          {rail === 'jeeves' && <Row label="Phone" value={row?.phone_number} mono showEmpty />}
+        </div>
+      )}
+      {showBankCard && (
+        <div>
+          {!!routing && routing !== bank.swift && (
+            <Row label="Routing number" value={routing} mono />
+          )}
+          <Row label="Address" value={row?.full_address} showEmpty />
+        </div>
+      )}
     </div>
   );
 }
@@ -1567,6 +1688,18 @@ export default function EmployeeProfile({
 
   const needsProfilePhoto = !displayProfilePhotoUrl && !googlePhotoUrl;
   const needsPayoutSetup = !isPayoutComplete((bankInfo as unknown as Record<string, unknown>) ?? null);
+
+  // The account the money actually lands in — the preferred slot with a
+  // per-field fallback to the other one, the ONE cross-slot rule Accounting's
+  // People card and Payment Dispatch's queue row both read. Fed from `bankInfo`
+  // (the live row), never from the `payout` draft: that draft collapses
+  // `swift_code ?? routing_number` into a single field, so it would print a
+  // routing number in the SWIFT position with a working copy button. The
+  // post-save re-read repaints it, because it is derived from `bankInfo`.
+  //
+  // A plain const, not a hook: it is a pure function of state already in scope,
+  // and it is below the ProfileSkeleton bail-out where a hook would be fatal.
+  const paidSlotBank: PreferredBank = pickPreferredBank(bankInfo);
   const needsSkillSetSetup = skillSetLoaded && !hasAnySkillSetContent(skillSet);
 
   // Show the free-text title input when the employee opted into "Custom title…"
@@ -2279,14 +2412,38 @@ export default function EmployeeProfile({
                                 }}
                                 disabled={payoutReadOnly}
                               />
-                              {preferredProcessor ? (
-                                <PayoutDetailsFields
-                                  processor={preferredProcessor}
-                                  payout={payout}
-                                  setPayout={setPayout}
-                                  disabled={payoutReadOnly}
+                              {/* Card when reading, form when editing. The pane
+                                  was ALREADY read-with-an-Edit-button, so this
+                                  changes what the read state looks like and
+                                  nothing about how it is reached.
+
+                                  The read view is gated on `walletRailEffective`
+                                  — the SERVER-resolved rail, across all three
+                                  routing tiers — and never on `preferredProcessor`
+                                  or `bankPreferred`: those three are distinct
+                                  stored values and changing one never changes
+                                  the others, so the raw Disbursement pick can
+                                  disagree with how the person is really paid.
+                                  The edit view stays keyed on
+                                  `preferredProcessor`, because that IS the
+                                  channel the employee is choosing between. */}
+                              {payoutEditing ? (
+                                preferredProcessor ? (
+                                  <PayoutDetailsFields
+                                    processor={preferredProcessor}
+                                    payout={payout}
+                                    setPayout={setPayout}
+                                    disabled={payoutReadOnly}
+                                  />
+                                ) : null
+                              ) : (
+                                <PayoutReadView
+                                  rail={walletRailEffective}
+                                  bank={paidSlotBank}
+                                  row={bankInfo}
+                                  reduceMotion={!!prefersReducedMotion}
                                 />
-                              ) : null}
+                              )}
                             </div>
                           </Section>
 
