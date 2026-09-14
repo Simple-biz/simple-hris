@@ -17,6 +17,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { scopeRowsToDept } from '@/lib/manager/team-dept-rail';
+import { buildOrientationWeeks } from '@/lib/manager/orientation-weekly';
+import type { DeptRailGroup } from '@/lib/payment-catalog/dept-rail';
 import { useOrientationHistory } from '@/hooks/useOrientationHistory';
 import { downloadOrientationPdf } from '@/lib/manager/orientation-pdf';
 import {
@@ -53,6 +56,13 @@ import {
  */
 
 interface OrientationAttendancePanelProps {
+  /** The My Team department rail — the tally scopes to the same entry the roster
+   *  and the New Hire Check List do. */
+  rail: readonly DeptRailGroup[];
+  /** The selected rail key. A parent carries its whole family. */
+  activeDept: string;
+  /** That entry's already-formatted label — also what the PDF's scope line says. */
+  deptLabel: string | null;
   teamGate:
     | { kind: 'loading' }
     | { kind: 'elevated' }
@@ -151,21 +161,56 @@ function HireLine({ h }: { h: OrientationHire }) {
   );
 }
 
-export default function OrientationAttendancePanel({ teamGate }: OrientationAttendancePanelProps) {
-  const { summary, loading, refreshing, error, refresh } = useOrientationHistory();
+export default function OrientationAttendancePanel({
+  teamGate,
+  rail,
+  activeDept,
+  deptLabel,
+}: OrientationAttendancePanelProps) {
+  const {
+    hires,
+    checklistWeeks,
+    summary: unscopedSummary,
+    loading,
+    refreshing,
+    error,
+    refresh,
+  } = useOrientationHistory();
   const reduceMotion = useReducedMotion() ?? false;
   const [pdfBusy, setPdfBusy] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   /** Show every hire in an expanded week, or only the ones who missed. */
   const [showAll, setShowAll] = useState(false);
 
+  // Scope to the selected department by filtering the INPUT rows and re-running
+  // the same model. `buildOrientationWeeks`, `hasAttended` and `attendanceRate`
+  // are untouched on purpose — the HR twin imports this rate, so changing the
+  // model would move both surfaces at once (manager-orientation-attendance.md).
+  const { scoped: scopedHires, outside, outsideDepartments } = useMemo(
+    () => scopeRowsToDept(hires, rail, activeDept),
+    [hires, rail, activeDept],
+  );
+  const summary = useMemo(
+    () =>
+      rail.length === 0
+        ? unscopedSummary
+        : buildOrientationWeeks({ hires: scopedHires, checklistWeeksByEmail: checklistWeeks }),
+    [rail.length, unscopedSummary, scopedHires, checklistWeeks],
+  );
+
   const allWeeks = useMemo(
     () => [...summary.weeks, ...summary.offChecklist],
     [summary],
   );
 
+  // Kane 2026-09-14 chose (b): the PDF follows the selected department rather
+  // than staying whole-scope, so the report matches what is on screen. The doc's
+  // old rationale ("it sits on the tab that has no search box") stopped being
+  // true the moment the rail gave this tab a narrowing control.
   const scopeLabel =
-    teamGate.kind === 'elevated'
+    rail.length > 0 && deptLabel
+      ? deptLabel
+      : teamGate.kind === 'elevated'
       ? 'All departments'
       : teamGate.kind === 'department' && teamGate.departments.length > 0
         ? teamGate.departments.map((d) => formatDeptLabel(d)).join(', ')
@@ -253,6 +298,19 @@ export default function OrientationAttendancePanel({ teamGate }: OrientationAtte
 
   return (
     <motion.div className="flex flex-col gap-3" {...rise}>
+      {outsideDepartments.length > 0 && (
+        <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 translate-y-0.5 text-amber-600 dark:text-amber-400" />
+          <span>
+            <strong>{outside.length}</strong>{' '}
+            {outside.length === 1 ? 'hire is' : 'hires are'} in{' '}
+            {outsideDepartments.length === 1 ? 'a department' : 'departments'} with nobody on the
+            active roster, so {outsideDepartments.length === 1 ? 'it has' : 'they have'} no tab:{' '}
+            <strong>{outsideDepartments.join(', ')}</strong>. They are counted here so the number
+            stays honest.
+          </span>
+        </div>
+      )}
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
         How many hires turned up for orientation each week, and who didn&apos;t. Weeks are{' '}
         <strong>HR&apos;s New Hire Checklist weeks</strong>. <strong>Did not attend</strong> means

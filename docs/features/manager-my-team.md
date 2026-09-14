@@ -95,6 +95,17 @@ weekend day at `hours >= 7` and get the overnight rule (`hslOvernightQualifies`,
 
 ## The department rail (there is no "All")
 
+**The rail is the OUTER axis for all three inner tabs** (Kane, 2026-09-14: *"Put the New
+Hire Checklist and Orientation and roster tabs within the departments"*). Roster, New Hire
+Check List and Orientation all scope to the same selected entry through the one splitter
+`scopeRowsToDept`, so the three cannot disagree about who is in a department — the same
+reasoning that makes the Orientation cards and its tally read one week key. Scoping filters
+each panel's INPUT rows; no model, rate or bucketing is department-aware. Hires whose
+department has nobody on the active roster are named in an amber banner on every tab rather
+than dropped — see
+[manager-orientation-attendance.md](./manager-orientation-attendance.md) § *Department
+scoping*.
+
 Shipped 2026-09-14, replacing the **Department dropdown filter**. Kane: *"instead
 of a filter we would have tabs arranged vertically on the left side where we can
 select Department rather than showing everything in one page and filtering them

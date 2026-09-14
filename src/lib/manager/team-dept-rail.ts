@@ -191,3 +191,57 @@ export function membersForRailKey<T>(
 export function flattenRail(rail: readonly DeptRailGroup[]): DeptRailEntry[] {
   return rail.flatMap((g) => [g.parent, ...g.children]);
 }
+
+/** One panel's rows, split by the selected rail entry. */
+export interface DeptScopedRows<T> {
+  /** Rows belonging to the selected entry — a parent carries its whole family. */
+  scoped: T[];
+  /**
+   * Rows whose department matches **no** rail entry at all.
+   *
+   * These are never silently dropped. The rail is built from the ACTIVE roster,
+   * and the hire tables are not the roster: measured 2026-09-14, two
+   * `hr_new_hire_checklist` rows sit in departments with no active member
+   * (`AI/Automation`, `Development`). `manager-orientation-attendance.md`'s rule
+   * for a hire that cannot be placed in a week applies just as well to one that
+   * cannot be placed in a department — *"a person who cannot be placed must still
+   * be counted, and visibly labelled"* — so the caller names them rather than
+   * letting a department tab quietly shrink the headcount.
+   */
+  outside: T[];
+  /** The distinct department labels behind {@link outside}, already formatted. */
+  outsideDepartments: string[];
+}
+
+/**
+ * Scope a panel's rows to the selected department.
+ *
+ * Shared by the roster, the New Hire Check List and the Orientation tally so the
+ * three cannot disagree about who is in a department — the same reasoning that
+ * makes the Orientation cards and its tally read one week key
+ * (`manager-orientation-attendance.md`).
+ */
+export function scopeRowsToDept<T extends RailAssignable>(
+  rows: readonly T[],
+  rail: readonly DeptRailGroup[],
+  key: string,
+): DeptScopedRows<T> {
+  // No rail means no scoping — a single-department manager, or a roster that has
+  // not loaded. Every row is in scope. Without this the empty rail matches
+  // nothing and the panel renders as though the department were empty, which is
+  // the silent-drop failure wearing a different hat.
+  if (rail.length === 0) return { scoped: [...rows], outside: [], outsideDepartments: [] };
+  const byKey = assignRosterToRail(rows, rail);
+  const known = new Set(flattenRail(rail).map((e) => e.key));
+  // The sentinel only counts as "outside" when the rail is not itself showing it;
+  // if "No department" is a visible entry, selecting it is how you reach them.
+  const outside = known.has(RAIL_NO_DEPARTMENT_KEY)
+    ? []
+    : (byKey.get(RAIL_NO_DEPARTMENT_KEY) ?? []);
+  const outsideDepartments = [
+    ...new Set(
+      outside.map((r) => formatDeptLabel(r.department) || (r.department ?? '').trim()).filter(Boolean),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
+  return { scoped: membersForRailKey(key, rail, byKey), outside, outsideDepartments };
+}

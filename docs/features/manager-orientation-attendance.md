@@ -153,11 +153,45 @@ list would lose the no-show cards.
 
 | Export | Lives on | Scope |
 | --- | --- | --- |
-| CSV / Excel | New Hire Check List | the **current view** — respects search + batch |
-| **PDF** | Orientation | the **whole history** for the manager's scope |
+| CSV / Excel | New Hire Check List | the **current view** — respects search + batch + **department** |
+| **PDF** | Orientation | the **selected department**, whole history within it |
 
-The PDF is a report, and a report narrowed by whatever is in the search box is not one —
-which is also why it sits on the tab that has no search box.
+> **Changed 2026-09-14 — the PDF now follows the department rail.** It used to be the
+> whole history for the manager's scope, justified as *"a report narrowed by whatever is
+> in the search box is not one — which is also why it sits on the tab that has no search
+> box."* That premise stopped being true when My Team's department rail became the outer
+> axis for all three inner tabs: this tab now **has** a narrowing control. Kane was given
+> the choice explicitly and picked **the report follows the tab**, so the PDF matches what
+> is on screen. A manager who wants every department exports once per department.
+> The rationale above is retired; do not restore it without re-asking.
+
+The PDF is still a report of the **whole history** within whatever it covers — it is never
+narrowed by a search box, because this tab still has none.
+
+## Department scoping (the rail is the outer axis)
+
+Since 2026-09-14 the tab renders one department at a time, chosen on My Team's department
+rail — see [manager-my-team.md](./manager-my-team.md) § *The department rail*. Kane:
+*"Put the New Hire Checklist and Orientation and roster tabs within the departments."*
+
+**The model is untouched.** Scoping filters the **input hires** and re-runs the same
+`buildOrientationWeeks`; `hasAttended`, `attendanceRate` and the bucketing are not
+department-aware and must not become so — the HR-side twin imports this rate, so a change
+there moves both surfaces at once.
+
+`scopeRowsToDept` ([team-dept-rail.ts](src/lib/manager/team-dept-rail.ts)) is the one
+splitter, shared with the Roster and the New Hire Check List, so **the three tabs cannot
+disagree about who is in a department** — the same reasoning that makes the cards and the
+tally read one week key.
+
+> **A hire in a department with nobody on the active roster is NAMED, never dropped.** The
+> rail is built from the active roster and the hire tables are not the roster: measured
+> 2026-09-14, two `hr_new_hire_checklist` rows sit in `AI/Automation` and `Development`,
+> which have no active member and therefore no tab. Both panels render an amber banner
+> naming the count and the departments, on **every** department tab — this is the same rule
+> as *"a person who cannot be placed must still be counted, and visibly labelled"*, applied
+> to departments instead of weeks. An empty rail (a single-department manager) scopes
+> nothing away.
 Page 1 is the weekly table with a totals row; page 2+ lists the people per week, **did-not-
 attend first**. It mirrors the Payment Catalog export
 ([catalog-export.ts](src/lib/payment-catalog/catalog-export.ts)) so the two read as one

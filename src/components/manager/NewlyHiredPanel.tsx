@@ -11,6 +11,8 @@ import { formatWeekLabel } from '@/lib/hr/hiring-week';
 import { isLeadGenDepartment } from '@/lib/hr/calltools-username';
 import type { HrPendingStatus } from '@/lib/supabase/hr-pending-employees';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { scopeRowsToDept } from '@/lib/manager/team-dept-rail';
+import type { DeptRailGroup } from '@/lib/payment-catalog/dept-rail';
 import { pickChecklistWeek, weekKeyFromIso } from '@/lib/manager/orientation-weekly';
 import { useOrientationHistory } from '@/hooks/useOrientationHistory';
 
@@ -54,6 +56,13 @@ function isManualOnboard(r: PendingHireRow): boolean {
 
 interface NewlyHiredPanelProps {
   viewerEmail: string | null;
+  /** The My Team department rail, so hires scope to the SAME entry the roster and
+   *  the orientation tally do — one department, three tabs. */
+  rail: readonly DeptRailGroup[];
+  /** The selected rail key. A parent carries its whole family. */
+  activeDept: string;
+  /** That entry's already-formatted label, for headings and empty states. */
+  deptLabel: string | null;
   teamGate:
     | { kind: 'loading' }
     | { kind: 'elevated' }
@@ -259,7 +268,13 @@ function downloadBlob(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPanelProps) {
+export default function NewlyHiredPanel({
+  viewerEmail,
+  teamGate,
+  rail,
+  activeDept,
+  deptLabel,
+}: NewlyHiredPanelProps) {
   const [rows, setRows] = useState<PendingHireRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -435,6 +450,20 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
     [history],
   );
 
+  // One department at a time — the SAME rail entry the roster and the orientation
+  // tally use, so the three tabs cannot disagree about who is in a department.
+  // `outside` is the handful of hires whose department has no active roster member
+  // (measured 2026-09-14: 2 checklist rows). They are named, never dropped.
+  const {
+    scoped: scopedRows,
+    outside: outsideRows,
+    outsideDepartments,
+  } = useMemo(() => scopeRowsToDept(rows, rail, activeDept), [rows, rail, activeDept]);
+  const scopedNoShowRows = useMemo(
+    () => scopeRowsToDept(noShowRows, rail, activeDept).scoped,
+    [noShowRows, rail, activeDept],
+  );
+
   if (teamGate.kind === 'loading' || loading) {
     return (
       <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15">
@@ -474,12 +503,12 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
     );
   }
 
-  const activeRows = rows.filter((r) => r.status !== 'no_show');
+  const activeRows = scopedRows.filter((r) => r.status !== 'no_show');
 
   // Batches (hiring weeks) present across every hire — powers the batch picker.
   // Counted over the actionable rows AND the no-shows so a week that exists only
   // as no-shows is still reachable from the dropdown.
-  const pickerRows = [...rows, ...noShowRows];
+  const pickerRows = [...scopedRows, ...scopedNoShowRows];
   const batchCounts = new Map<string, number>();
   for (const r of pickerRows) {
     const k = batchKeyOf(r, checklistWeeks);
@@ -497,7 +526,7 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
     );
   };
   const visibleActive = activeRows.filter(matches);
-  const visibleNoShow = noShowRows.filter(matches);
+  const visibleNoShow = scopedNoShowRows.filter(matches);
   const filtering = q !== '' || batchFilter !== 'all';
 
   // Visible active hires grouped into their batches, newest batch first.
@@ -961,6 +990,19 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
 
   return (
     <div className="flex flex-col gap-3">
+      {outsideDepartments.length > 0 && (
+        <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 translate-y-0.5 text-amber-600 dark:text-amber-400" />
+          <span>
+            <strong>{outsideRows.length}</strong>{' '}
+            {outsideRows.length === 1 ? 'hire is' : 'hires are'} in{' '}
+            {outsideDepartments.length === 1 ? 'a department' : 'departments'} with nobody on the
+            active roster, so {outsideDepartments.length === 1 ? 'it has' : 'they have'} no tab:{' '}
+            <strong>{outsideDepartments.join(', ')}</strong>. They are counted here so the number
+            stays honest.
+          </span>
+        </div>
+      )}
       <p className="text-xs text-zinc-500 dark:text-zinc-400">
         Hires from HR&apos;s New Hire Checklist, grouped by <strong>batch</strong> (the hiring week
         they belong to). Tap <strong>Mark orientation attended</strong> once the employee has shown up

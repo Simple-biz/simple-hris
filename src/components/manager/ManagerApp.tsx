@@ -2941,13 +2941,12 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
         </div>
       </header>
 
-      {innerTab === 'newly-hired' && (
-        <NewlyHiredPanel viewerEmail={viewerEmail} teamGate={teamGate} />
-      )}
-
-      {innerTab === 'orientation' && <OrientationAttendancePanel teamGate={teamGate} />}
-
-      {innerTab === 'roster' && (
+      {/* The department rail is the OUTER axis for all three inner tabs (Kane,
+          2026-09-14: "put the New Hire Checklist and Orientation and roster tabs
+          within the departments"). Roster, hires and the orientation tally all
+          scope to the same selected entry through `scopeRowsToDept`, so the three
+          cannot disagree about who is in a department — the same reasoning that
+          makes the Orientation cards and its tally read one week key. */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-6">
         {showRail && (
           <aside
@@ -3082,6 +3081,27 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
           </div>
         )}
 
+        {innerTab === 'newly-hired' && (
+          <NewlyHiredPanel
+            viewerEmail={viewerEmail}
+            teamGate={teamGate}
+            rail={rail}
+            activeDept={activeDept}
+            deptLabel={activeEntry?.name ?? null}
+          />
+        )}
+
+        {innerTab === 'orientation' && (
+          <OrientationAttendancePanel
+            teamGate={teamGate}
+            rail={rail}
+            activeDept={activeDept}
+            deptLabel={activeEntry?.name ?? null}
+          />
+        )}
+
+        {innerTab === 'roster' && (
+        <>
         {!unassigned && (
         <div className="flex flex-wrap items-center gap-2">
           {activeEntry && (
@@ -3892,9 +3912,10 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
           )}
         </CardContent>
       </Card>
+        </>
+        )}
         </div>
       </div>
-      )}
 
       <ManagerMemberDialog
         member={selectedMember}

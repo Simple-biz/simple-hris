@@ -6,6 +6,7 @@ import {
   railKeyForDeptCell,
   flattenRail,
   slugifyRailKey,
+  scopeRowsToDept,
 } from './team-dept-rail';
 import { RAIL_NO_DEPARTMENT_KEY, HSL_PARENT_KEY } from '@/lib/payment-catalog/dept-rail';
 
@@ -154,6 +155,77 @@ test('an empty roster produces an empty rail rather than throwing', () => {
   assert.deepEqual(rail, []);
   assert.equal(defaultKey, '');
   assert.equal(membersForRailKey('anything', rail, byKey).length, 0);
+});
+
+test('scopeRowsToDept scopes hire rows the same way it scopes the roster', () => {
+  const { rail } = buildTeamDeptRail(LIVE_MIX);
+  const hires = [
+    p('h1@x.com', 'Lead Gen'),
+    p('h2@x.com', 'hsl:intake_specialist'),
+    p('h3@x.com', 'Client VA'),
+  ];
+  assert.equal(scopeRowsToDept(hires, rail, 'lead_gen').scoped.length, 1);
+  // A parent carries its family here too, so the three tabs cannot disagree.
+  assert.equal(scopeRowsToDept(hires, rail, HSL_PARENT_KEY).scoped.length, 1);
+  assert.equal(scopeRowsToDept(hires, rail, 'hsl:intake_specialist').scoped.length, 1);
+});
+
+test('a hire in a department the rail does not have is named, never dropped', () => {
+  // Measured 2026-09-14: two hr_new_hire_checklist rows sit in departments with
+  // no active roster member, so the rail (built from the roster) cannot hold them.
+  const { rail } = buildTeamDeptRail(LIVE_MIX);
+  const hires = [
+    p('h1@x.com', 'Lead Gen'),
+    p('orphan1@x.com', 'AI/Automation'),
+    p('orphan2@x.com', 'Development'),
+  ];
+  const scoped = scopeRowsToDept(hires, rail, 'lead_gen');
+  assert.equal(scoped.scoped.length, 1);
+  assert.equal(scoped.outside.length, 2, 'the unplaceable must still be counted');
+  assert.deepEqual(scoped.outsideDepartments, ['AI/Automation', 'Development']);
+});
+
+test('outside is reported on EVERY department, not just the first', () => {
+  // The banner has to follow the manager around, or the two rows are visible on
+  // one tab and invisible on the next — which is the silent drop, delayed.
+  const { rail } = buildTeamDeptRail(LIVE_MIX);
+  const hires = [p('orphan@x.com', 'AI/Automation')];
+  for (const entry of flattenRail(rail)) {
+    assert.equal(scopeRowsToDept(hires, rail, entry.key).outside.length, 1, entry.key);
+  }
+});
+
+test('when No department is a visible rail entry, nobody is reported as outside', () => {
+  // Selecting the sentinel is then how you reach them, so a banner would double-count.
+  const roster = [...LIVE_MIX, p('blank@x.com', '')];
+  const { rail } = buildTeamDeptRail(roster);
+  const scoped = scopeRowsToDept([p('blank2@x.com', '')], rail, 'lead_gen');
+  assert.equal(scoped.outside.length, 0);
+  assert.equal(scopeRowsToDept([p('blank2@x.com', '')], rail, RAIL_NO_DEPARTMENT_KEY).scoped.length, 1);
+});
+
+test('scopeRowsToDept never loses a row: scoped + outside covers every selection', () => {
+  const { rail } = buildTeamDeptRail(LIVE_MIX);
+  const hires = [
+    p('h1@x.com', 'Lead Gen'),
+    p('h2@x.com', 'hsl:filing_specialist'),
+    p('orphan@x.com', 'AI/Automation'),
+  ];
+  const seen = new Set<string>();
+  for (const entry of flattenRail(rail)) {
+    for (const r of scopeRowsToDept(hires, rail, entry.key).scoped) seen.add(r.email);
+  }
+  for (const r of scopeRowsToDept(hires, rail, 'lead_gen').outside) seen.add(r.email);
+  assert.equal(seen.size, hires.length, 'every hire is reachable from some entry or the banner');
+});
+
+test('an empty rail scopes nothing away — every row stays in scope', () => {
+  // A single-department manager has no rail. Matching against [] would hand the
+  // panel an empty list and read as "this department is empty".
+  const hires = [p('h1@x.com', 'Lead Gen'), p('h2@x.com', 'Client VA')];
+  const scoped = scopeRowsToDept(hires, [], 'anything');
+  assert.equal(scoped.scoped.length, 2);
+  assert.equal(scoped.outside.length, 0);
 });
 
 test('flattenRail lists parents before their own children, in display order', () => {
