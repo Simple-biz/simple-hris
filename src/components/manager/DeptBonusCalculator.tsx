@@ -3696,7 +3696,7 @@ export default function DeptBonusCalculator({
             <motion.div
               key="compare-panel"
               id={`compare-panel-${key}`}
-              className="flex-none overflow-hidden border-b border-zinc-100 dark:border-zinc-800/70"
+              className="min-h-0 shrink overflow-hidden border-b border-zinc-100 dark:border-zinc-800/70"
               initial={reduceMotion ? false : { height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
               exit={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
@@ -3719,8 +3719,15 @@ export default function DeptBonusCalculator({
                   it an auto row sizes to max-content, the columns stretch to the
                   ROW rather than to the capped container, and the overflow is
                   clipped instead of scrolled. Below `lg` the columns stack and the
-                  single inner scroller still owns the whole panel. */}
-              <div className="grid max-h-[min(70vh,34rem)] grid-rows-[minmax(0,1fr)] overflow-hidden px-4 py-3 sm:px-5">
+                  single inner scroller still owns the whole panel.
+
+                  The panel also YIELDS to the table beneath it: `motion.div` is
+                  `min-h-0 shrink` rather than `flex-none`, and this body is
+                  additionally capped at `100%` of it, so when the card cannot
+                  hold both, the table keeps its floor and the panel shrinks
+                  into its own scrollers. `flex-none` here squeezed the table to
+                  a single row the first evening the shared sheet auto-ran. */}
+              <div className="grid max-h-[min(70vh,34rem,100%)] grid-rows-[minmax(0,1fr)] overflow-hidden px-4 py-3 sm:px-5">
                 <div className="grid min-h-0 gap-3 overflow-y-auto lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] lg:grid-rows-[minmax(0,1fr)] lg:overflow-y-hidden">
                   {/* Left: the paste */}
                   <div className="flex min-h-0 flex-col gap-2 lg:overflow-y-auto lg:pr-1">
@@ -3994,7 +4001,16 @@ export default function DeptBonusCalculator({
 
         {/* Body: optional QC officer rail (left) + the per-person table. The rail
             lets a manager filter the table to one QC officer's scored people. */}
-        <div className="flex min-h-0 flex-1">
+        {/* The table has a FLOOR — max(12rem, 32% of the card) — and the Compare
+            panel above yields to it. With the panel `flex-none`, a full panel
+            (auto-run Compare + 18 differences + a long skipped list) left the
+            table about one row tall: its 70%-opaque sticky header sat on top
+            of body cells and the pager overlapped the rows. The panel is now a
+            shrinkable flex item (`min-h-0 shrink`, its body `max-h … 100%`), so
+            the card fits the table first and hands the panel whatever is left;
+            each panel column scrolls inside that. Percent resolves because the
+            card root is `h-full` inside a fixed, viewport-sized panel. */}
+        <div className="flex min-h-[max(12rem,32%)] flex-1">
           {!isQc && isQcDeptKey(key) && (
             <QcOfficerLog
               deptKey={key}

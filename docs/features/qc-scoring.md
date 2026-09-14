@@ -490,6 +490,16 @@ what lets `sticky top-0` actually stick), and the **skipped-lines and QC-only li
 and capped** so a long table can never push the explanation below the fold. Paste box is
 `rows={14}`.
 
+**The panel YIELDS to the table.** Later the same evening, with the shared sheet auto-running
+Compare on open (row 96), a full panel left the department table **about one row tall**: its
+70%-opaque sticky header sat on top of body cells and the pager overlapped the rows. The panel's
+`motion.div` was `flex-none`, so it never gave up height. It is now a shrinkable flex item
+(`min-h-0 shrink`) whose body is also capped at `100%` of it, and the table body carries a floor of
+`min-h-[max(12rem,32%)]` — percent resolves because the card root is `h-full` inside a fixed,
+viewport-sized panel. The card fits the table first and hands the panel whatever is left; each
+panel column scrolls inside that. **Do not put `flex-none` back on the panel, and do not remove the
+table's floor** — either one recreates the one-row table.
+
 ### A person QC scored who is not on this week's table is refused as `off_table`
 
 The fifth refusal kind, added 2026-09-14. Before it, a pasted person the manager's table did not
