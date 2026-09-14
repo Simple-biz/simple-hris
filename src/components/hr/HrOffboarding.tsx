@@ -328,7 +328,7 @@ export default function HrOffboarding() {
       if (historyOrigin !== 'all' && r.origin !== historyOrigin) return false;
       if (historyDept && (r.Department ?? '').trim() !== historyDept) return false;
       if (!q) return true;
-      return [r.Name, r['Work Email'], r.Department, r.off_boarded_reason, r.off_boarded_by]
+      return [r.Name, r['Work Email'], r['Personal Email'], r.Department, r.off_boarded_reason, r.off_boarded_by]
         .filter(Boolean)
         .some((s) => s!.toLowerCase().includes(q));
     });
@@ -623,7 +623,7 @@ export default function HrOffboarding() {
                   <>
                     <div className="relative w-full sm:w-56">
                       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-                      <Input value={historySearch} onChange={(e) => setHistorySearch(e.target.value)} placeholder="Search name, reason…" className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900" />
+                      <Input value={historySearch} onChange={(e) => setHistorySearch(e.target.value)} placeholder="Search name, email, reason…" className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900" />
                     </div>
                     <DeptFilter rows={history} getDept={(r) => r.Department} value={historyDept} onChange={setHistoryDept} />
                     {/* Refreshes BOTH sources: the list is the ledger, but the
@@ -863,11 +863,12 @@ export default function HrOffboarding() {
               </div>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-emerald-100/90 ring-1 ring-emerald-500/10 dark:border-emerald-900/60 dark:ring-emerald-400/10">
-                <table className="w-full text-left text-sm sm:min-w-[800px]">
+                <table className="w-full text-left text-sm sm:min-w-[940px]">
                   <thead className="sticky top-0 z-[1] bg-gradient-to-r from-zinc-50 via-white to-zinc-50/80 text-xs text-zinc-600 dark:from-zinc-900/70 dark:via-zinc-950 dark:to-zinc-900/50 dark:text-zinc-400">
                     <tr>
                       <th className="px-4 py-3 font-semibold">Name</th>
                       <th className="px-4 py-3 font-semibold">Work email</th>
+                      <th className="px-4 py-3 font-semibold">Personal email</th>
                       <th className="px-4 py-3 font-semibold">Department</th>
                       <th className="px-4 py-3 font-semibold">Reason</th>
                       <th className="px-4 py-3 font-semibold">Origin</th>
@@ -893,6 +894,14 @@ export default function HrOffboarding() {
                         <tr key={r.id} className="align-middle hover:bg-zinc-50/60 dark:hover:bg-zinc-900/30">
                           <td data-label="Name" className="px-4 py-2.5 font-medium text-zinc-900 dark:text-zinc-100">{r.Name ?? '—'}</td>
                           <td data-label="Work email" className="break-all px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">{email || '—'}</td>
+                          {/* The personal address is the inbox that still works after the
+                              Workspace account is torn down, which is the whole reason HR
+                              needs it on a list of people who have left. It is DISPLAY only:
+                              it is shared across duplicate master identities (it is what
+                              `uniquePeople` dedupes on), so nothing keys off it — an absent
+                              one prints a blank rather than falling back to the work
+                              address, which would assert an inbox we do not have. */}
+                          <td data-label="Personal email" className="break-all px-4 py-2.5 font-mono text-xs text-zinc-500 dark:text-zinc-500">{r['Personal Email'] || '—'}</td>
                           <td data-label="Department" className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">{r.Department ?? '—'}</td>
                           <td data-label="Reason" className="px-4 py-2.5">
                             {r.off_boarded_reason ? (

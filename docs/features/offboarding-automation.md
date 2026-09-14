@@ -361,6 +361,23 @@ An origin the column cannot answer renders as an amber **Unknown** chip and is c
 never folded into either side, because a confident wrong answer to "which system recorded this
 departure" is worse than an honest blank.
 
+### Columns (and why the personal email is one of them)
+
+Name · **Work email** · **Personal email** · Department · Reason · Origin · Off-boarded · By ·
+Action. The personal address was added 2026-09-14: it is the only inbox that still works once the
+Workspace account is torn down, which is precisely the state every row on this list is in. It cost
+nothing on the wire — `/api/hr/offboard-history` has always mapped `"Personal Email"` off
+`offboarded_sheet.personal_email` and `HistoryRow` has always declared it; the column was simply
+never rendered. The route is `requireElevatedSession`, and the sibling Queue tab already printed
+the same field, so this is not a new disclosure.
+
+**It is DISPLAY and SEARCH only — nothing may ever key off it.** A personal email searches; a work
+email identifies. One inbox backs several master identities here (it is exactly what the tab's
+`uniquePeople` counter dedupes on, and two live people have shared one — see the shared-personal-
+email KPI incident), so **Restore**, **Remove from Sheet** and **Delete request** all stay keyed on
+the work email. An absent personal email renders `—`; it never falls back to the work address,
+which would assert an inbox we do not have.
+
 ### What the queue still owns
 
 Deleting a completed manager *request* was only ever reachable from the "Offboarded by HRIS" tab (the
