@@ -474,9 +474,21 @@ What that hid was not only the differences table. The **skipped-lines list sits 
 underneath it**, already open by default, already naming every refused line and why. She could
 not reach the one thing on screen that explained what was happening.
 
-The body is now capped (`max-h-[min(70vh,34rem)] overflow-y-auto`) with a sticky table header.
+The body is now capped at `max-h-[min(70vh,34rem)]` with a sticky table header.
 **Never remove the cap without giving the content its own scroll** — the failure is silent, and
 it presents as "the system is hiding people from me".
+
+**The cap alone was not enough** (Kane, later the same day: *"does not scroll down properly on
+the right side"*). One scroller wrapped both columns, so reaching row 18 dragged the paste box
+and the Override button off the top, and the result side — the only column that grows — could
+not be scrolled on its own. The body is a capped `grid` with `grid-rows-[minmax(0,1fr)]` at both
+levels and **each column scrolls independently at `lg`**; below `lg` they stack under one inner
+scroller. The `minmax(0,1fr)` row is load-bearing: an `auto` row sizes to max-content, the columns
+stretch to the row rather than the capped container, and overflow is clipped, not scrolled. Inside
+the right column the differences table takes the slack (`lg:flex-1 lg:overflow-y-auto`, which is
+what lets `sticky top-0` actually stick), and the **skipped-lines and QC-only lists are `shrink-0`
+and capped** so a long table can never push the explanation below the fold. Paste box is
+`rows={14}`.
 
 ### A person QC scored who is not on this week's table is refused as `off_table`
 

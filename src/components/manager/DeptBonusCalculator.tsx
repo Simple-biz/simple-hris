@@ -3452,11 +3452,22 @@ export default function DeptBonusCalculator({
                   Carla pasted 18 overrides, saw 4, and could not reach the rest
                   — including the skipped-lines list, which was sitting right
                   underneath explaining exactly which people were unreachable.
-                  Capping the body is what makes that list readable at all. */}
-              <div className="max-h-[min(70vh,34rem)] overflow-y-auto px-4 py-3 sm:px-5">
-                <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
+                  Capping the body is what makes that list readable at all.
+
+                  The cap alone was not enough. One scroller wrapped BOTH columns,
+                  so reaching row 18 of the differences dragged the paste box and
+                  the Override button off the top — and the result side, which is
+                  the only part that grows, could not be scrolled on its own. Each
+                  column now carries its own overflow at `lg`, and the row is
+                  pinned with `grid-rows-[minmax(0,1fr)]` at both levels: without
+                  it an auto row sizes to max-content, the columns stretch to the
+                  ROW rather than to the capped container, and the overflow is
+                  clipped instead of scrolled. Below `lg` the columns stack and the
+                  single inner scroller still owns the whole panel. */}
+              <div className="grid max-h-[min(70vh,34rem)] grid-rows-[minmax(0,1fr)] overflow-hidden px-4 py-3 sm:px-5">
+                <div className="grid min-h-0 gap-3 overflow-y-auto lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] lg:grid-rows-[minmax(0,1fr)] lg:overflow-y-hidden">
                   {/* Left: the paste */}
-                  <div className="space-y-2">
+                  <div className="flex min-h-0 flex-col gap-2 lg:overflow-y-auto lg:pr-1">
                     <textarea
                       value={comparePaste[key] ?? ''}
                       onChange={(e) => {
@@ -3465,9 +3476,12 @@ export default function DeptBonusCalculator({
                         setCompareRuns((p) => ({ ...p, [key]: null }));
                       }}
                       placeholder={'marcc@simple.biz\tCahig, Marc Joseph\t32\njaysonm@simple.biz\tMahinay, Jayson\t25'}
-                      rows={8}
+                      rows={14}
                       spellCheck={false}
-                      className="w-full resize-y rounded-md border border-zinc-200 bg-white px-2.5 py-2 font-mono text-[11px] leading-relaxed text-zinc-800 outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
+                      /* `shrink-0`: the column is a flex column that may scroll,
+                         and a shrinkable textarea would give up its height to the
+                         column instead — silently undoing the extra rows. */
+                      className="w-full shrink-0 resize-y rounded-md border border-zinc-200 bg-white px-2.5 py-2 font-mono text-[11px] leading-relaxed text-zinc-800 outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
                       aria-label="Paste your appointment sheet"
                     />
                     <p className="text-[10.5px] leading-snug text-zinc-500 dark:text-zinc-400">
@@ -3518,8 +3532,16 @@ export default function DeptBonusCalculator({
                     )}
                   </div>
 
-                  {/* Right: the result */}
-                  <div className="min-w-0 space-y-2">
+                  {/* Right: the result. The differences table takes the slack and
+                      scrolls inside its own border, which is what finally makes
+                      the sticky header stick — before this the table's
+                      `overflow-x-auto` wrapper was a scroll container of content
+                      height, so `sticky top-0` had nothing to stick to and the
+                      column headings rode away with row 5. The lists underneath
+                      are `shrink-0` and capped: the skipped-lines list is the one
+                      thing that explains a refusal, so it stays on screen rather
+                      than being pushed below the fold by a long table. */}
+                  <div className="flex min-h-0 min-w-0 flex-col gap-2 lg:overflow-y-auto">
                     {!cmpRun ? (
                       <p className="pt-1 text-[11px] text-zinc-400">Differences appear here after you Compare.</p>
                     ) : cmpActionable.length === 0 ? (
@@ -3528,9 +3550,12 @@ export default function DeptBonusCalculator({
                         {cmpRun.pastedCount ? ` (${cmpRun.pastedCount} rows)` : ''}.
                       </p>
                     ) : (
-                      <div className="overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+                      <div className="overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800 lg:min-h-[7rem] lg:flex-1 lg:overflow-y-auto">
                         <table className="w-full text-[11px]">
-                          <thead className="sticky top-0 z-[1] bg-zinc-50 text-left text-[10px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
+                          {/* Opaque, not `/60`: rows now scroll UNDER this header
+                              rather than past it, and a translucent ground let
+                              them read straight through the column names. */}
+                          <thead className="sticky top-0 z-[1] bg-zinc-50 text-left text-[10px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
                             <tr>
                               <th className="px-2.5 py-1.5 font-medium">Person</th>
                               <th className="px-2.5 py-1.5 text-right font-medium">Your sheet</th>
@@ -3567,11 +3592,11 @@ export default function DeptBonusCalculator({
                     )}
 
                     {cmpRun && cmpQcOnly.length > 0 && (
-                      <details className="text-[11px]">
+                      <details className="shrink-0 text-[11px]">
                         <summary className="cursor-pointer text-zinc-500 hover:text-zinc-700 dark:text-zinc-400">
                           {cmpQcOnly.length} scored by QC but not in your paste — left as they are
                         </summary>
-                        <ul className="mt-1 space-y-0.5 pl-3 text-zinc-500 dark:text-zinc-400">
+                        <ul className="mt-1 max-h-24 space-y-0.5 overflow-y-auto pl-3 text-zinc-500 dark:text-zinc-400">
                           {cmpQcOnly.map((e) => (
                             <li key={`${e.canonical}|${e.bonusId}`} className="truncate">
                               {e.name || e.canonical} · QC {e.qc} · {e.scoredBy ?? 'unknown'}
@@ -3582,11 +3607,11 @@ export default function DeptBonusCalculator({
                     )}
 
                     {cmpRun && cmpRefusals > 0 && (
-                      <details className="text-[11px]" open>
+                      <details className="shrink-0 text-[11px]" open>
                         <summary className="cursor-pointer text-amber-700 hover:text-amber-800 dark:text-amber-400">
                           {cmpRefusals} line{cmpRefusals === 1 ? '' : 's'} skipped — not compared, not overridden
                         </summary>
-                        <ul className="mt-1 space-y-0.5 pl-3 text-zinc-600 dark:text-zinc-300">
+                        <ul className="mt-1 max-h-32 space-y-0.5 overflow-y-auto pl-3 text-zinc-600 dark:text-zinc-300">
                           {cmpRun.parseRefusals.map((r) => (
                             <li key={`p${r.line}`}>
                               <span className="font-mono text-zinc-400">L{r.line}</span> {r.reason}
@@ -3603,7 +3628,7 @@ export default function DeptBonusCalculator({
                     )}
 
                     {cmpRun?.headerSkipped && (
-                      <p className="text-[10.5px] text-zinc-400">Header row skipped.</p>
+                      <p className="shrink-0 text-[10.5px] text-zinc-400">Header row skipped.</p>
                     )}
                   </div>
                 </div>
