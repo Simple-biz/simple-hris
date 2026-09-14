@@ -206,6 +206,12 @@ places for a peso column to appear.
 - `selfNorm` is null here: a manager is looking at their team, not finding themselves
   in it.
 
+**The People view opens as the LIST** (Kane, 2026-09-14), switchable to cards. The
+list is the denser of the two — it pages at 20 against the cards' 8 — so a department
+opens showing more of itself, and the multi-select that queues offboarding is on
+screen without a switch. Both views carry the identical action set; see *Suspend /
+Reactivation* for why they stay in lockstep.
+
 **The search box, the count and Export CSV belong to the People view only.** They
 describe the roster list; on Scheduling or Rankings they would act on nothing, and a
 search box that silently does nothing is worse than no search box.

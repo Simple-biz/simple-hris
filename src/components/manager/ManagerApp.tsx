@@ -2355,11 +2355,14 @@ function TeamPanelInner({
   const [medalOpen, setMedalOpen] = useState(false);
 
   // ── Offboarding multi-select (list view) ──
-  // Roster can be shown as cards (default) or a compact list. In list mode the
-  // manager can tick people and send them to HR's offboarding queue. Selection
-  // is keyed by a stable per-person key so it SURVIVES search/filter/paging —
-  // ticked people stay ticked even when filtered out of view.
-  const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards');
+  // Roster opens as the compact LIST (Kane, 2026-09-14) and can be switched to
+  // cards. In list mode the manager can tick people and send them to HR's
+  // offboarding queue. Selection is keyed by a stable per-person key so it SURVIVES
+  // search/filter/paging — ticked people stay ticked even when filtered out of view.
+  //
+  // The list is also the denser default: it pages at TEAM_LIST_PAGE_SIZE (20) against
+  // the cards' 8, so a department opens showing more of itself.
+  const [viewMode, setViewMode] = useState<'cards' | 'list'>('list');
   // Inline CallTools-username edits, keyed by memberKey, so a just-saved value
   // shows immediately without refetching the whole roster. `null` = cleared.
   const [callToolsOverrides, setCallToolsOverrides] = useState<Record<string, string | null>>({});
