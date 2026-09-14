@@ -165,6 +165,51 @@ phone. A manager with a single department gets **no rail at all** (the old
 dropdown was hidden in the same case). Pure logic is unit-tested in
 `src/lib/manager/team-dept-rail.test.ts`.
 
+## Per-department views (the department's own tabs)
+
+Beside the department search sit the views that only *some* departments have. Two
+exist:
+
+| View | Appears when | Source |
+| --- | --- | --- |
+| **Scheduling** | the selected entry is in the HSL family | `departmentHasScheduling` |
+| **Rankings** | the department has SP-scored weeks **and** the viewer may read them | the data, via `/api/team-rankings` |
+
+> **Scheduling is gated by a PREDICATE; Rankings is gated by the DATA.** That
+> difference is deliberate. Scheduling is a decision Kane made about HSL, so it is
+> declared. Rankings must stay data-driven because `hasSpRankings` is what lets a
+> second team adopting the AI Team Bonus shape light up **with no code change** —
+> hardcoding `devs` would break that promise
+> (`employee-team-directory.md`). Never turn the Rankings check into a department list.
+
+### Rankings — SP and tier, never pesos, and not for everyone
+
+Added 2026-09-14 (Kane: *"as for the AI/API Team the rankings should be shown here for
+the KPI Results"*). It renders **the same `RankingsPane`** the employee team tab uses,
+extracted to `src/components/team/RankingsPane.tsx` rather than copied — the
+no-pesos rule has to hold identically on both surfaces, and two copies would be two
+places for a peso column to appear.
+
+- **`amount` is absent from the projection**, not selected-then-dropped, and a test
+  pins the projection *string*. This surface reuses `/api/team-rankings` unchanged
+  precisely so that control keeps covering it. **Do not write a manager-specific
+  read.**
+- **`vars.Ranking` is a TIER FLAG** (1 / 25 / 50 / 0). The `#1..#n` shown is derived
+  by sorting SP descending and is never stored.
+- **Who may see it is `canViewTeamRankings`** — a one-name allow-list above the
+  elevated-role bypass (Kane 2026-08-29). Asked on 2026-09-14 whether managers of a
+  department should gain access, **Kane said no**: the ruling stands. Measured that
+  day, 8 people hold a live AI/API Team manager grant; seven of them see no Rankings
+  toggle at all, because a denied viewer reads the same empty week list as an
+  unscored team. **This surface therefore has no gate of its own and must not grow
+  one.**
+- `selfNorm` is null here: a manager is looking at their team, not finding themselves
+  in it.
+
+**The search box, the count and Export CSV belong to the People view only.** They
+describe the roster list; on Scheduling or Rankings they would act on nothing, and a
+search box that silently does nothing is worse than no search box.
+
 ## Motion — one idea, four selectors
 
 Added 2026-09-14 (Kane: *"animate it properly please smoothen the tab switching within

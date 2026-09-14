@@ -18,6 +18,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CalendarCog,
+  Trophy,
   CirclePause,
   CirclePlay,
   ClipboardCheck,
@@ -50,6 +51,8 @@ import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import { cn } from '@/lib/utils';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { departmentHasScheduling } from '@/lib/manager/scheduling-rows';
+import { RankingsPane } from '@/components/team/RankingsPane';
+import type { TeamRankingWeek } from '@/lib/supabase/team-rankings';
 import ManagerSidebar, { type ManagerTab } from './ManagerSidebar';
 import SchedulingPanel from './SchedulingPanel';
 import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
@@ -2317,7 +2320,32 @@ function TeamPanelInner({
   // Roster vs Scheduling WITHIN the selected department. Only HSL carries the
   // second view today; the toggle is absent everywhere else, so this stays
   // 'roster' for every other department by construction.
-  const [deptView, setDeptView] = useState<'roster' | 'scheduling'>('roster');
+  const [deptView, setDeptView] = useState<'roster' | 'scheduling' | 'rankings'>('roster');
+  /**
+   * Weekly SP rankings for the selected department.
+   *
+   * **Which departments have rankings is decided by the DATA, never by a list
+   * here.** `hasSpRankings` inside `getTeamRankings` returns an empty week list for
+   * a team that was never scored on an SP bonus, so the toggle below appears only
+   * where there is something to show — and a second team adopting the AI Team Bonus
+   * shape lights up with no code change. Hardcoding `devs` would break that.
+   *
+   * **Who may see it is decided upstream**, by `canViewTeamRankings` inside
+   * `/api/team-rankings` — a one-name allow-list sitting ABOVE the elevated-role
+   * bypass (Kane, 2026-08-29, reaffirmed 2026-09-14 when asked whether managers of a
+   * department should gain access: they should not). A denied viewer reads the same
+   * empty list as an unscored team, so this surface needs no gate of its own and
+   * cannot accidentally become one.
+   *
+   * Reusing that route rather than writing a manager-specific read is deliberate:
+   * its projection deliberately omits `amount`, and the test pinning that projection
+   * string is what keeps pay off this surface too.
+   */
+  const [rankingWeeks, setRankingWeeks] = useState<TeamRankingWeek[]>([]);
+  const [rankingsLoading, setRankingsLoading] = useState(false);
+  const [rankingsError, setRankingsError] = useState<string | null>(null);
+  const [rankingWeekIndex, setRankingWeekIndex] = useState(0);
+  const [rankingDir, setRankingDir] = useState(1);
   // One read, passed to every SlidingTab and pane below. Reduced motion here means
   // the indicator stops TRAVELLING and panes stop rising — it never means the
   // selected state becomes invisible.
@@ -2736,10 +2764,54 @@ function TeamPanelInner({
   // team — the rail is the scoping control. `canSchedule` is the unchanged
   // `scheduling` feature key, so this relocation grants nobody new access.
   const schedulingAvailable = canSchedule && departmentHasScheduling(activeDept);
-  // Leaving HSL must not strand the manager on a view that department does not
-  // have. Derived, never stored, so it cannot go stale.
-  const activeDeptView: 'roster' | 'scheduling' =
-    schedulingAvailable && deptView === 'scheduling' ? 'scheduling' : 'roster';
+
+  // The RAW department label, not the rail key — `/api/team-rankings` scopes a
+  // non-elevated caller by comparing against their `department_managers` labels,
+  // which are raw cells ("AI/API Team"), and normalises to the payroll key itself.
+  // For every non-HSL department `formatDeptLabel` is a no-op, so the entry name IS
+  // the raw cell.
+  const activeDeptLabel = activeEntry?.name ?? '';
+  useEffect(() => {
+    if (!activeDeptLabel) {
+      setRankingWeeks([]);
+      return;
+    }
+    let cancelled = false;
+    setRankingsLoading(true);
+    setRankingsError(null);
+    fetch(`/api/team-rankings?department=${encodeURIComponent(activeDeptLabel)}`, {
+      cache: 'no-store',
+    })
+      .then((r) => r.json())
+      .then((j: { weeks?: TeamRankingWeek[]; error?: string | null }) => {
+        if (cancelled) return;
+        setRankingWeeks(j.weeks ?? []);
+        setRankingsError(j.error ?? null);
+        setRankingWeekIndex(0);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setRankingsError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setRankingsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDeptLabel]);
+
+  const rankingsAvailable = rankingWeeks.length > 0;
+
+  // Leaving a department must not strand the manager on a view that department does
+  // not have. Derived, never stored, so it cannot go stale — and a denied viewer
+  // gets an empty week list, which lands here as "no Rankings view", identically to
+  // a team that was never scored.
+  const activeDeptView: 'roster' | 'scheduling' | 'rankings' =
+    schedulingAvailable && deptView === 'scheduling'
+      ? 'scheduling'
+      : rankingsAvailable && deptView === 'rankings'
+        ? 'rankings'
+        : 'roster';
 
   // The rail's own filter — for a manager (or admin) whose rail runs to 20-plus
   // entries. A query force-opens every group so a matching sub-team is never
@@ -3237,6 +3309,11 @@ function TeamPanelInner({
               {activeEntry.name}
             </h3>
           )}
+          {/* Search, the count and the export describe the PEOPLE list. On
+              Scheduling or Rankings they would act on nothing, and a search box
+              that silently does nothing is worse than no search box. */}
+          {activeDeptView === 'roster' && (
+          <>
           <label
             htmlFor="team-search"
             className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
@@ -3263,9 +3340,11 @@ function TeamPanelInner({
               Clear
             </button>
           )}
-          {/* HSL's own view, beside the search bar. Absent for every other
+          </>
+          )}
+          {/* The department's own views, beside the search bar. Absent for every other
               department — this is the first per-department surface. */}
-          {schedulingAvailable && (
+          {(schedulingAvailable || rankingsAvailable) && (
             <div
               role="tablist"
               aria-label={`${activeEntry?.name ?? 'Department'} views`}
@@ -3281,18 +3360,33 @@ function TeamPanelInner({
               >
                 People
               </SlidingTab>
-              <SlidingTab
-                group="myTeamDeptView"
-                selected={activeDeptView === 'scheduling'}
-                onSelect={() => setDeptView('scheduling')}
-                className="px-2.5 py-1 text-[11px] font-semibold"
-                idleClassName="text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100"
-                reduceMotion={reduceMotion}
-              >
-                <CalendarCog className="h-3.5 w-3.5" /> Scheduling
-              </SlidingTab>
+              {schedulingAvailable && (
+                <SlidingTab
+                  group="myTeamDeptView"
+                  selected={activeDeptView === 'scheduling'}
+                  onSelect={() => setDeptView('scheduling')}
+                  className="px-2.5 py-1 text-[11px] font-semibold"
+                  idleClassName="text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100"
+                  reduceMotion={reduceMotion}
+                >
+                  <CalendarCog className="h-3.5 w-3.5" /> Scheduling
+                </SlidingTab>
+              )}
+              {rankingsAvailable && (
+                <SlidingTab
+                  group="myTeamDeptView"
+                  selected={activeDeptView === 'rankings'}
+                  onSelect={() => setDeptView('rankings')}
+                  className="px-2.5 py-1 text-[11px] font-semibold"
+                  idleClassName="text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100"
+                  reduceMotion={reduceMotion}
+                >
+                  <Trophy className="h-3.5 w-3.5" /> Rankings
+                </SlidingTab>
+              )}
             </div>
           )}
+          {activeDeptView === 'roster' && (
           <div className="ml-auto flex items-center gap-3">
             <span className="font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
               {searchQuery.trim() === ''
@@ -3309,6 +3403,7 @@ function TeamPanelInner({
               <Download className="h-3.5 w-3.5" /> Export CSV
             </button>
           </div>
+          )}
         </div>
         )}
 
@@ -3334,6 +3429,33 @@ function TeamPanelInner({
             ))}
           </div>
         )}
+
+      {activeDeptView === 'rankings' && (
+        <motion.div
+          key={`rankings:${activeDept}`}
+          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: reduceMotion ? 0.12 : 0.22, ease: TEAM_EASE }}
+        >
+          {/* The SAME component the employee team tab renders — extracted rather
+              than copied, because "SP and tier, never pesos" has to hold on both
+              surfaces and two copies would be two places for a peso column to
+              appear. `selfNorm` is null: a manager is looking at their team, not
+              finding themselves in it. */}
+          <RankingsPane
+            weeks={rankingWeeks}
+            loading={rankingsLoading}
+            error={rankingsError}
+            selfNorm={null}
+            index={Math.min(rankingWeekIndex, Math.max(0, rankingWeeks.length - 1))}
+            dir={rankingDir}
+            onNavigate={(next, dir) => {
+              setRankingDir(dir);
+              setRankingWeekIndex(next);
+            }}
+          />
+        </motion.div>
+      )}
 
       {activeDeptView === 'scheduling' && (
         <motion.div
