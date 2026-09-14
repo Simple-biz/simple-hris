@@ -20,7 +20,10 @@ export type QcDeptKey = (typeof QC_DEPT_KEYS)[number];
 
 const QC_DEPT_SET = new Set<string>(QC_DEPT_KEYS);
 
-/** True if a normalized department key is one QC scores. */
-export function isQcDeptKey(key: string | null | undefined): boolean {
+/** True if a normalized department key is one QC scores.
+ *
+ *  A type predicate: callers that check narrow to `string`, so a scored key
+ *  never needs a `!` to be used. */
+export function isQcDeptKey(key: string | null | undefined): key is string {
   return !!key && QC_DEPT_SET.has(key);
 }

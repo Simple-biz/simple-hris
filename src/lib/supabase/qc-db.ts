@@ -4,7 +4,7 @@ import { createSupabaseServiceRoleClient } from './server';
 import { getEmployeesForAuthorizedServerRoute, type EmployeeRow } from './employees';
 import { listDepartmentsForManager } from './department-managers';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
-import { QC_DEPT_KEYS, type QcDeptKey } from '@/lib/qc/constants';
+import { QC_DEPT_KEYS, isQcDeptKey, type QcDeptKey } from '@/lib/qc/constants';
 import {
   officersFromRoster,
   freezeOfficers,
@@ -12,7 +12,14 @@ import {
   classifySlot,
 } from '@/lib/qc/officers';
 import { dealDeptSlots, leastLoadedOfficer } from '@/lib/qc/deal';
+import { qcSlotsAsOfWeek, type AsOfWeekCandidate, type AsOfWeekTransfer } from '@/lib/qc/roster-as-of-week';
+import { sanitizeOffboardDay } from '@/lib/roster/offboard-date-sanity';
+import { fetchDepartmentTransferRows } from '@/lib/payroll/hsl-transfer-effective';
 import type { AppliedBonusRow } from './bonus-catalog-applied-db';
+
+/** A candidate plus the start date the caller gates on (the pure module
+ *  deliberately does not know about employment start). */
+type QcWeekCandidate = AsOfWeekCandidate & { startDate: string | null };
 
 export { QC_DEPT_KEYS };
 export type { QcDeptKey };
@@ -61,11 +68,73 @@ function parseStartDate(s: string | null | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-/** The Sunday (period_start Monday + 6 days) of a `YYYY-MM-DD` pay-week start. */
+/** The last day (Saturday) of the Sunday-anchored pay week starting `periodStart`. */
 function weekEndDate(periodStart: string): Date | null {
   const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(periodStart);
   if (!m) return null;
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 6);
+}
+
+/** The week's last day as `YYYY-MM-DD` (Saturday), or null. */
+function weekEndDay(periodStart: string): string | null {
+  const d = weekEndDate(periodStart);
+  if (!d) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * People who left on or after `weekStart` — invisible to the active roster, and
+ * exactly the ones Carla has been adding by hand ("same as if they were
+ * offboarded, we just have to add them externally", 2026-09-14).
+ *
+ * Bounded at the query: only stamps from the scored week onward are read, so
+ * the long-departed are never a candidate in the first place. The stamp is then
+ * put through `sanitizeOffboardDay`, because `off >= weekStart` is precisely the
+ * comparison a future-dated typo defeats — franm@'s `2027-04-20` rode every
+ * window in the pipeline for months on exactly this shape of test.
+ *
+ * Returns `null` on a read failure, never `[]`: an empty list is indistinguishable
+ * from "nobody left", and silently dealing without the leavers is the bug this
+ * exists to fix.
+ */
+async function listOffboardedSince(weekStart: string): Promise<QcWeekCandidate[] | null> {
+  const sb = createSupabaseServiceRoleClient();
+  if (!sb) return null;
+  const rows: Array<Record<string, unknown>> = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb
+      .from('global_master_list')
+      .select('"Name","Work Email","Personal Email","Department","Start Date","Alternate Work Email","Alternate Work Email 2",off_boarded_at')
+      .not('off_boarded_at', 'is', null)
+      .gte('off_boarded_at', weekStart)
+      .range(from, from + 999);
+    if (error) return null;
+    const page = (data ?? []) as Array<Record<string, unknown>>;
+    rows.push(...page);
+    if (page.length < 1000) break;
+  }
+  const out: QcWeekCandidate[] = [];
+  for (const r of rows) {
+    const str = (k: string) => {
+      const v = r[k];
+      return typeof v === 'string' ? v : null;
+    };
+    const off = sanitizeOffboardDay(str('off_boarded_at'));
+    if (!off) continue; // no usable stamp — no evidence they were here that week
+    const personal = norm(str('Personal Email'));
+    const work = norm(str('Work Email'));
+    const email = personal || work;
+    if (!email) continue;
+    out.push({
+      email,
+      identityEmails: [personal, work, norm(str('Alternate Work Email')), norm(str('Alternate Work Email 2'))].filter(Boolean),
+      name: str('Name'),
+      departmentKey: normalizeDeptToKey(str('Department')),
+      offBoardedAt: off,
+      startDate: str('Start Date'),
+    });
+  }
+  return out;
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -268,29 +337,67 @@ export async function ensureQcAssignmentsForPeriod(periodStart: string): Promise
   // ever been written as `transferred`.
   const { employees: allEmployees } = await getEmployeesForAuthorizedServerRoute();
   const currentDepts = currentDeptByEmail(allEmployees);
-  const roster = allEmployees.filter((e) => {
-    const k = normalizeDeptToKey(e.department);
-    return !!k && QC_DEPT_SET.has(k);
-  });
+
+  // The slots are the department's roster AS OF THE SCORED WEEK, not as of
+  // today. Drawing from the live roster was right only while the week being
+  // scored was the week you were standing in; with 50–75 people offboarded a
+  // week, anyone who left or moved between the week ending and an officer
+  // opening the dashboard simply vanished. Carla, 2026-09-14: *"Every time
+  // someone gets transferred, we have to just add it externally. Same as if
+  // they were offboarded."* Rules and their proofs: src/lib/qc/roster-as-of-week.ts.
+  const [offboardedDuringWeek, transferRows] = await Promise.all([
+    listOffboardedSince(periodStart),
+    fetchDepartmentTransferRows().catch(() => null),
+  ]);
+
+  const rosterCandidates: QcWeekCandidate[] = allEmployees.map((e) => ({
+    email: memberEmail(e),
+    identityEmails: [norm(e.personal_email), norm(e.work_email)].filter(Boolean),
+    name: e.name ?? null,
+    departmentKey: normalizeDeptToKey(e.department),
+    offBoardedAt: null,
+    startDate: e.start_date ?? null,
+  }));
+
+  // A read failure is NOT an empty list. Falling back to the live roster keeps
+  // the deal working exactly as it did before this change — never better, never
+  // silently worse — rather than dealing a week that is missing its leavers.
+  const transfers: AsOfWeekTransfer[] = (transferRows ?? []).map((t) => ({
+    identityEmails: [norm(t.employee_email), norm(t.employee_work_email)].filter(Boolean),
+    fromKey: normalizeDeptToKey(t.from_department),
+    toKey: normalizeDeptToKey(t.to_department),
+    effectiveDate: t.effective_date ?? null,
+  }));
+
   const periodEnd = weekEndDate(periodStart);
-  const eligibleRoster = periodEnd
-    ? roster.filter((r) => {
-        const sd = parseStartDate(r.start_date);
-        return !sd || sd.getTime() <= periodEnd.getTime();
-      })
-    : roster;
+  const weekEnd = weekEndDay(periodStart);
+  /** Employment start gates separately: someone who had not joined yet cannot be
+   *  scored, and an unknown/unparseable start date is KEPT ("we can't prove they
+   *  hadn't started") — the house fail-toward-keeping rule, unchanged. */
+  const hadStarted = (c: QcWeekCandidate) => {
+    if (!periodEnd) return true;
+    const sd = parseStartDate(c.startDate);
+    return !sd || sd.getTime() <= periodEnd.getTime();
+  };
+
+  const asOfWeek = qcSlotsAsOfWeek({
+    roster: rosterCandidates.filter(hadStarted),
+    offboarded: (offboardedDuringWeek ?? []).filter(hadStarted),
+    transfers,
+    weekStart: periodStart,
+    weekEnd: weekEnd ?? '',
+    isScoredDept: isQcDeptKey,
+  });
+
   const liveSlots: Array<{ email: string; dept: string; name: string | null }> = [];
   const liveSlotSet = new Set<string>();
   const nameBySlot = new Map<string, string | null>();
-  for (const r of eligibleRoster) {
-    const email = memberEmail(r);
-    const dept = normalizeDeptToKey(r.department);
-    if (!email || !dept || !QC_DEPT_SET.has(dept)) continue;
-    const key = slotKey(email, dept);
+  for (const s of asOfWeek) {
+    const key = slotKey(s.email, s.dept);
     if (liveSlotSet.has(key)) continue;
     liveSlotSet.add(key);
-    liveSlots.push({ email, dept, name: r.name ?? null });
-    nameBySlot.set(key, r.name ?? null);
+    liveSlots.push({ email: s.email, dept: s.dept, name: s.name });
+    nameBySlot.set(key, s.name);
   }
 
   // A DEALT WEEK IS FROZEN to the officers already on its slots.

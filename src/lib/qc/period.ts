@@ -24,16 +24,38 @@
  * assert with it, and `node:test` can exercise every branch.
  */
 
-/** `YYYY-MM-DD`, strictly — and a real calendar day, so `2026-02-31` fails. */
-function parseDay(v: string): { y: number; m: number; d: number } | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v.trim());
+/**
+ * The `YYYY-MM-DD` calendar day at the start of `v`, or null when it is not a
+ * REAL day. `2026-02-31` and `2026-13-40` are rejected, not normalised.
+ *
+ * Shape-checking alone is not enough anywhere a day string is then compared
+ * with `<` / `>`: an impossible date still sorts, and sorts high. That is how
+ * franm@'s year-typo'd `2027-04-20` stamp rode every recency window in the
+ * pipeline for months (`src/lib/roster/offboard-date-sanity.ts`), and a
+ * `2026-13-40` transfer date would likewise read as "after every week".
+ *
+ * Accepts a longer string (a timestamp) and uses its day prefix, because the
+ * date columns this is pointed at are not uniformly `date`-typed.
+ */
+export function calendarDay(v: string | null | undefined): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec((v ?? '').trim());
   if (!m) return null;
   const y = Number(m[1]);
   const mo = Number(m[2]);
   const d = Number(m[3]);
   const dt = new Date(Date.UTC(y, mo - 1, d));
   if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
-  return { y, m: mo, d };
+  return `${m[1]}-${m[2]}-${m[3]}`;
+}
+
+/** `YYYY-MM-DD` and nothing else — a period key is exactly a day, never a
+ *  timestamp that happens to start with one. */
+function parseDay(v: string): { y: number; m: number; d: number } | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v.trim())) return null;
+  const day = calendarDay(v);
+  if (!day) return null;
+  const [y, mo, d] = day.split('-').map(Number);
+  return { y: y!, m: mo!, d: d! };
 }
 
 /**

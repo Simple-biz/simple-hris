@@ -241,6 +241,70 @@ half that was wrong — the list was always right. Same failure mode this doc al
 about for week keys: give the cards one key and the summary another and both become
 untrustworthy.
 
+## The slots are the roster AS OF THE SCORED WEEK
+
+Shipped 2026-09-14. The deal drew its slots from the **live** active roster, whatever week it
+was dealing. That is right only while the week being scored is the week you are standing in.
+With 50–75 people offboarded a week, anybody who left or moved between a week ending and an
+officer opening the dashboard simply vanished from the only roster the deal could see.
+
+Carla, 2026-09-14: *"there's going to be people that were offboarded that are on the usual list
+that Jackie sends us, but they're not going to be assigned … and they'd have to be added
+externally into the lead gen. And same if they got transferred to HSL."* Asked whether the code
+already covered it: *"That's not happening. Every time someone gets transferred, we have to just
+add it externally. Same as if they were offboarded."* And the rule itself: *"If they were in
+Legion during the time that we're scoring, then they need to be in there so that they don't have
+to use the add external member button."*
+
+The rules live in `src/lib/qc/roster-as-of-week.ts` — pure, and unit-tested case by case.
+
+| | |
+|---|---|
+| **KEEP** | everyone the live roster puts in the department (the old behaviour) |
+| **ADD** | offboarded, or moved out on a transfer effective after the week ended |
+| **DROP** | a filed transfer INTO the department dated after the week ended — they were not there |
+
+**A midweek move is "there".** Kane: *"within the week if they are still legion at that time
+they can still be scored."* Only a move effective strictly after the week's last day counts
+either way; a transfer dated inside the week never moves anyone.
+
+### Every rule fires on a POSITIVE record, never on an absence
+
+Transfer data here is known to be incomplete — a move can go unfiled entirely
+([[markm-hsl-transfer-never-filed]]) and a sheet sync can clobber a department
+([[hris-is-dept-source-of-truth]]). **Nobody is dropped because a record is missing.** They are
+dropped only when a filed, applied/approved transfer says they arrived after the week was over.
+An absent or unparseable date always means *keep* — pinned by test, because the alternative is
+failing to pay somebody for work they did.
+
+### The window is bounded at BOTH ends
+
+A departure counts for a week only while `weekStart <= when <= weekEnd + 14 days`.
+
+The **lower** bound is Carla's rule — *"then after that I am gone"* — someone stamped before the
+week began was already gone and was paid out in an earlier run. The **upper** bound exists so a
+closed week is not rewritten: the window covers the *churn gap* (week ends → officer opens the
+dashboard), not the whole question of who was in the department. Someone who moved out two
+months later was obviously there that week — and was also on the live roster when that week was
+dealt, so the roster path already had them.
+
+**Measured** (`scripts/verify-qc-roster-as-of-week.mts` — read-only, runs the real function,
+never deals):
+
+| Week | Before | After | Added | Dropped |
+|---|---|---|---|---|
+| `2026-09-06` (live) | 382 | **491** | **+121** — 90 offboarded, 31 transferred out | −12 |
+| `2026-06-21` (closed) | 382 | 445 | +64 | −1 |
+
+Those **121** are precisely the people Carla and Jackie were adding by hand, one at a time.
+Unbounded, the same rule would have dealt **240** new slots into the closed June week.
+
+The verifier **exits 1 if anyone is dropped without a dated transfer-in record** backing it.
+
+> A read failure is not an empty list. If the offboard or transfer read fails, the deal falls
+> back to the live roster — exactly the pre-2026-09-14 behaviour, never a week silently missing
+> its leavers.
+
 ## Eligibility — start date only
 
 The only filter is employment start date: a member whose `start_date` is after the scoring
