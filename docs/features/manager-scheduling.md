@@ -1,10 +1,21 @@
 # Manager → Scheduling — what each person is expected to work, effective-dated
 
 The Scheduling tab is where a manager records the days and hours a teammate is
-*expected* to work, as a dated period rather than a flag. It lives at
-Manager → Scheduling, between My Team and Transfers, and today it is **UI only** —
-there is no route, no table and no migration behind it. It exists so the shape can be
-agreed before any schema is committed. Shipped 2026-08-26.
+*expected* to work, as a dated period rather than a flag. Shipped 2026-08-26 as a
+UI-only preview; **wired to a real table and moved inside the HSL department on
+2026-09-14**.
+
+**Where it lives: Manager → My Team → (HSL selected) → Scheduling**, a toggle beside
+the department search bar. Kane: *"Scheduling will be inside HSL Department only so
+when we click HSL Department we should have a tab inside it."* It is no longer a
+top-level sidebar entry.
+
+> **It is still gated on the `scheduling` feature key**, not on `team`. Rendering it
+> inside My Team would otherwise have swapped its permission silently — it would have
+> stopped being its own hidden-by-default top-level key and inherited `team`, so
+> everyone with My Team would have gained it and anyone holding `scheduling` without
+> `team` would have lost it. A relocation must not change who may see something, so
+> the key stays registered in `view-tabs.ts` and still does the gating.
 
 ## Key files
 
@@ -12,16 +23,40 @@ agreed before any schema is committed. Shipped 2026-08-26.
 | --- | --- |
 | Shift-window normalizer + tests | `src/lib/manager/shift-window.ts` · `shift-window.test.ts` |
 | Schedule-period model + tests | `src/lib/manager/scheduling.ts` · `scheduling.test.ts` |
-| Preview fixture (delete when wired) | `src/lib/manager/scheduling-preview.ts` |
+| Row ↔ model mapping + the capability predicate | `src/lib/manager/scheduling-rows.ts` · `.test.ts` |
+| The table | `references/sql/create/2026-09-14_employee_schedule_periods.sql` |
+| Migration runner (`--apply`) | `scripts/apply-employee-schedules-migration.mts` |
+| The route | `app/api/manager/scheduling/route.ts` |
 | The panel | `src/components/manager/SchedulingPanel.tsx` |
-| Tab registration | `src/lib/rbac/view-tabs.ts` · `ManagerSidebar.tsx` · `ManagerApp.tsx` |
+| Tab registration (key only — no sidebar entry) | `src/lib/rbac/view-tabs.ts` · `ManagerApp.tsx` |
+
+## Which departments carry Scheduling — HSL, and only HSL
+
+`departmentHasScheduling` (`scheduling-rows.ts`) is the whole rule: the HSL family
+qualifies, nothing else does. The **whole** family — the parent and every `hsl:*`
+sub-team — because **the rail is the scoping control**: selecting the HSL parent sets
+all 591, selecting a sub-team sets that team.
+
+This is the first per-department surface. When a second department earns one, that
+predicate becomes a lookup; one department does not justify a registry, and a
+premature one reads worse than the rule it replaces.
+
+> **The family-collapse ruling is SETTLED, by precedent, not by a new decision.**
+> This doc previously left open *"whether a manager granted the bare HSL family label
+> vs a specific `hsl:<sub_team>` … family-collapse scoping would let a sub-team
+> manager see all 591. Settle that before the route ships."* Measured 2026-09-14:
+> `departmentMatchesManagedAssignments` already normalises every `hsl:*` onto one
+> family key, so such a manager **already sees the whole HSL family on their My Team
+> roster**. The route is gated by that same function, so it inherits the behaviour
+> rather than inventing it. Nothing new was decided; the open question was already
+> answered by the code it was asking about.
 
 ## The unit is a PERIOD, never a field on a person
 
 A schedule is not a property of a person; it is a property of a person *during a
 stretch of time*. `SchedulePeriod` therefore carries `effectiveFrom` / `effectiveTo`
 (inclusive both ends, `null` end = still current), mirroring the proposed
-`employee_rest_day_patterns` and `employee_shift_windows` tables field for field.
+`employee_schedule_periods` table field for field (see *ONE table* in Deploy notes).
 
 Storing it flat would mean changing someone's rest days in October silently rewrites
 what September's coverage looked like — every historical number moves under you. To
@@ -127,20 +162,49 @@ actually bring here.
 
 ## Deploy notes
 
-**No migration.** No route, no table, no env var, no n8n import. The tab renders
-`scheduling-preview.ts`, and every edit lives in React state — a refresh discards it.
-The panel carries a permanent banner saying so.
+**MIGRATION PENDING — Kane runs it.**
 
-When the backend is approved, the two tables are specified in the plan
-(`employee_rest_day_patterns`, `employee_shift_windows`; both effective-dated). Wiring
-them is: add the DDL under `references/sql/create/` with an `--apply` Node script,
-add `GET /api/manager/scheduling` gated exactly like
-`app/api/manager/department-members/route.ts` (`listDepartmentsForManager` +
-`departmentMatchesManagedAssignments`, paged with `selectAllPaged`), then **delete
-`scheduling-preview.ts`** and feed the panel from the route. `SchedulingPanel` is
-already written against `SchedulePeriod`, so it should not need to change.
+```
+node --import tsx scripts/apply-employee-schedules-migration.mts          # rehearse (rolls back)
+node --import tsx scripts/apply-employee-schedules-migration.mts --apply  # COMMIT
+```
 
-Scope note for whoever wires it: a manager granted the bare `HSL` family label vs a
-specific `hsl:<sub_team>` is an **open ruling** — `normalizeDeptToKey` collapses every
-`hsl:*` into one family key, so family-collapse scoping would let a sub-team manager
-see all 591. Settle that before the route ships.
+The DDL is `references/sql/create/2026-09-14_employee_schedule_periods.sql`. The
+script is **dry-run by default** — it applies inside a transaction it always rolls
+back, then verifies 26 objects and runs 14 controls (3 positive, 2 trigger, 9
+negative) proving each constraint actually rejects what it exists to reject. The
+rehearsal was run against production on 2026-09-14 and every check passed; nothing was
+committed. Needs `DATABASE_URL` (the **session pooler**, `@` in the password
+percent-encoded as `%40`).
+
+**Run order does not matter.** The route answers `migrated: false` when the table is
+absent rather than 500ing, and the panel shows a banner naming the script. A surface
+that quietly accepted edits it could not store would be the worse failure.
+
+No env var, no n8n import, no cron, no new feature key.
+
+### ONE table, not the two this doc used to name
+
+Earlier revisions referred to *"the proposed `employee_rest_day_patterns` and
+`employee_shift_windows` tables"*. **No DDL for them was ever written**, and the
+shipped model contradicts the split: `SchedulePeriod` carries one id, one
+`effectiveFrom`/`effectiveTo`, and rest days and shift window **together**. Two
+independently effective-dated tables would allow a rest-day period of Jan–Mar to
+overlap a shift-window period of Feb–Apr, and `SchedulePeriod` has no answer for what
+February then is. This doc's own unique index — `(lower(work_email), effective_from)`
+— is singular, describing one table. The two-table naming was vestigial.
+
+### What the table enforces, so the UI cannot drift from it
+
+- **both shift minutes or neither** — "hours not set" is a state, and a half-filled
+  form is refused (`..._window_both_or_neither`).
+- **no zero-length window**, and both minutes inside the day.
+- `effective_to >= effective_from`.
+- **rest days constrained to 0–6**, sorted and de-duplicated by trigger, so two
+  equivalent sets compare equal and a diff-only write does not churn on ordering.
+- the work email is lower-cased by trigger, and uniqueness is on `lower(work_email)`.
+- **RLS enabled with no policies** — service-role only, reached through the gated
+  route, never from the browser.
+
+The reader mirrors each of these rather than trusting them: a row that somehow got
+past the CHECK degrades to "hours not set", never to a window starting at midnight.

@@ -8,7 +8,7 @@
  * October silently rewrites what September's coverage looked like, and every
  * historical number moves under you. So the unit here is a PERIOD with
  * `effectiveFrom` / `effectiveTo`, exactly mirroring the proposed
- * `employee_rest_day_patterns` + `employee_shift_windows` tables — the UI is built
+ * `employee_schedule_periods` table — the UI is built
  * against the shape the tables will have, so wiring the backend later is a swap of
  * the data source, not a rewrite of the surface.
  *

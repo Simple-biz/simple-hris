@@ -189,7 +189,13 @@ export default function ManagerSidebar({
               countBadge(pendingLeaves, activeTab === 'leaves'),
             )}
             {can('team') && navBtn('team', 'My team', Users)}
-            {can('scheduling') && navBtn('scheduling', 'Scheduling', CalendarCog)}
+            {/* Scheduling left the sidebar 2026-09-14 — Kane: "Scheduling will be
+                inside HSL Department only so when we click HSL Department we should
+                have a tab inside it". It now renders inside My Team, beside the
+                department search, when an HSL rail entry is selected. The
+                `scheduling` feature key still gates it there, so this is a move,
+                not a permission change; the key stays registered in view-tabs.ts
+                because it is still what grants access. */}
             {can('transfers') && navBtn('transfers', 'Transfers', ArrowRightLeft)}
             {can('announcements') && navBtn('announcements', 'Announcements', Megaphone)}
             {can('s-wall') && <button

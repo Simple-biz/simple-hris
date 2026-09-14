@@ -3,15 +3,18 @@
 /**
  * Manager → Scheduling.
  *
- * UI-FIRST BY DECISION (Kane, 2026-08-26): "lets not hook the backend yet". There is
- * no route, no table and no migration behind this screen — it renders
- * `scheduling-preview.ts` and holds every edit in component state. Refreshing the
- * page discards changes, and the banner at the top says so where nobody can miss it.
+ * Lives inside **My Team → (HSL selected) → Scheduling**, a toggle beside the
+ * department search bar (Kane, 2026-09-14: "Scheduling will be inside HSL Department
+ * only so when we click HSL Department we should have a tab inside it"). It was
+ * top-level and UI-only from 2026-08-26 until then.
  *
- * What is real here is the SHAPE. The panel is written against `SchedulePeriod`,
- * which mirrors the proposed `employee_rest_day_patterns` + `employee_shift_windows`
- * tables field for field, so wiring the backend later swaps the data source and
- * leaves this file alone.
+ * A banner appears only when saving genuinely cannot work — the table is created by
+ * a script an administrator runs, so the code can be live before the table is.
+ *
+ * The panel is written against `SchedulePeriod`, which mirrors the
+ * `employee_schedule_periods` table field for field. It reads and writes
+ * `/api/manager/scheduling` as of 2026-09-14; before that it rendered a fixture and
+ * discarded every edit.
  *
  * Two rules this screen must keep:
  *
@@ -25,7 +28,8 @@
  *     "day off" — the failure this whole workstream exists to end.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { motion, useReducedMotion } from 'motion/react';
 import {
   AlertTriangle,
@@ -71,12 +75,6 @@ import {
   type TeamDefault,
   type Weekday,
 } from '@/lib/manager/scheduling';
-import {
-  PREVIEW_PERIODS,
-  PREVIEW_ROSTER_SIZE,
-  PREVIEW_TEAM_DEFAULTS,
-  PREVIEW_TEAM_SIZES,
-} from '@/lib/manager/scheduling-preview';
 
 /* ── small pieces ─────────────────────────────────────────────────────────── */
 
@@ -448,11 +446,75 @@ function EditPeriodDialog({
 
 /* ── panel ────────────────────────────────────────────────────────────────── */
 
-export default function SchedulingPanel({ myDepartments }: { myDepartments?: string[] }) {
-  const [periods, setPeriods] = useState<SchedulePeriod[]>(PREVIEW_PERIODS);
-  const [defaults, setDefaults] = useState<TeamDefault[]>(PREVIEW_TEAM_DEFAULTS);
+export default function SchedulingPanel({
+  myDepartments,
+  department,
+  departmentLabel,
+  teamSizes,
+}: {
+  myDepartments?: string[];
+  /** The selected rail key. Scopes every read and write to one department. */
+  department?: string;
+  /** Its already-formatted label, for headings. */
+  departmentLabel?: string | null;
+  /** Live headcount per department key — the denominator of "not yet scheduled".
+   *  Real counts, so the backlog reads as the backlog. */
+  teamSizes?: Record<string, number>;
+}) {
+  const [periods, setPeriods] = useState<SchedulePeriod[]>([]);
+  const [defaults, setDefaults] = useState<TeamDefault[]>([]);
   const [editing, setEditing] = useState<SchedulePeriod | null>(null);
   const [deptFilter, setDeptFilter] = useState<string>('all');
+  /** null = still loading. false = the table is not there yet; the migration is
+   *  Kane's to run, and until it does nothing can be saved — which the banner
+   *  says rather than the surface pretending an edit stuck. */
+  const [migrated, setMigrated] = useState<boolean | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setMigrated(null);
+    setLoadError(null);
+    fetch('/api/manager/scheduling', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { migrated?: boolean; periods?: SchedulePeriod[]; error?: string }) => {
+        if (cancelled) return;
+        if (j.error) {
+          setLoadError(j.error);
+          setMigrated(false);
+          return;
+        }
+        setMigrated(j.migrated !== false);
+        setPeriods(j.periods ?? []);
+      })
+      .catch((e: Error) => {
+        if (cancelled) return;
+        setLoadError(e.message);
+        setMigrated(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [department]);
+
+  /** Team defaults are a SEEDING aid, not stored state — they generate periods,
+   *  and the periods are what persist. Derived from the sub-teams actually
+   *  present so the list is the real teams rather than a fixture's five. */
+  useEffect(() => {
+    const present = [...new Set(Object.keys(teamSizes ?? {}))].sort();
+    setDefaults((prev) =>
+      present.map(
+        (dept) =>
+          prev.find((d) => d.department === dept) ?? {
+            department: dept,
+            restDays: [],
+            shiftWindow: null,
+            timezone: 'America/New_York',
+          },
+      ),
+    );
+  }, [teamSizes]);
 
   const departments = useMemo(
     () => [...new Set(defaults.map((d) => d.department))],
@@ -467,8 +529,8 @@ export default function SchedulingPanel({ myDepartments }: { myDepartments?: str
   const rosterSize = useMemo(
     () =>
       deptFilter === 'all'
-        ? PREVIEW_ROSTER_SIZE
-        : (PREVIEW_TEAM_SIZES[deptFilter] ?? 0),
+        ? Object.values(teamSizes ?? {}).reduce((a, b) => a + b, 0)
+        : (teamSizes?.[deptFilter] ?? 0),
     [deptFilter],
   );
 
@@ -481,39 +543,113 @@ export default function SchedulingPanel({ myDepartments }: { myDepartments?: str
       ? `${departments.length} teams`
       : formatDeptLabel(deptFilter);
 
-  const savePatch = (id: string, patch: Partial<SchedulePeriod>) =>
-    setPeriods((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+  /**
+   * Persist one person's periods.
+   *
+   * The whole person is sent, not the one edited period: the unit is a PERIOD and
+   * changing a schedule means closing one and opening another, which is only
+   * expressible as a list. The route refuses overlaps outright (409) rather than
+   * warning, because an overlapping date has two answers.
+   *
+   * Optimistic, then reconciled: the edit paints immediately and a failure puts
+   * the previous state back and says so, rather than leaving the screen showing a
+   * change the database never took.
+   */
+  const persistPerson = async (workEmail: string, next: SchedulePeriod[], revert: SchedulePeriod[]) => {
+    if (migrated === false) return; // the banner already says why
+    setSaving(true);
+    try {
+      const res = await fetch('/api/manager/scheduling', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ workEmail, periods: next.filter((p) => p.workEmail === workEmail) }),
+      });
+      const j = (await res.json()) as { error?: string; migrated?: boolean };
+      if (!res.ok) {
+        setPeriods(revert);
+        if (j.migrated === false) setMigrated(false);
+        toast.error(j.error ?? 'Could not save the schedule');
+        return;
+      }
+      toast.success('Schedule saved');
+    } catch (e) {
+      setPeriods(revert);
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const savePatch = (id: string, patch: Partial<SchedulePeriod>) => {
+    const before = periods;
+    const next = periods.map((p) => (p.id === id ? { ...p, ...patch } : p));
+    setPeriods(next);
+    const owner = next.find((p) => p.id === id)?.workEmail;
+    if (owner) void persistPerson(owner, next, before);
+  };
 
   const applyDefaultToTeam = (dept: string) => {
     const def = defaults.find((d) => d.department === dept);
     if (!def) return;
-    setPeriods((prev) =>
-      prev.map((p) =>
-        p.department === dept && p.effectiveTo === null
-          ? { ...p, restDays: [...def.restDays], shiftWindow: def.shiftWindow }
-          : p,
-      ),
+    const before = periods;
+    const next = periods.map((p) =>
+      p.department === dept && p.effectiveTo === null
+        ? { ...p, restDays: [...def.restDays], shiftWindow: def.shiftWindow }
+        : p,
     );
+    setPeriods(next);
+    // One request per person: the route's unit is a person's period list, and a
+    // team default touches many people. Sequential on purpose — a burst of
+    // parallel writes against the same table is how a partial apply becomes
+    // impossible to reason about afterwards.
+    void (async () => {
+      const touched = [...new Set(next.filter((p) => p.department === dept).map((p) => p.workEmail))];
+      for (const email of touched) await persistPerson(email, next, before);
+    })();
   };
 
   return (
     <div className="flex flex-col gap-5">
-      {/* The banner is the guard: nothing on this screen is real, and it must never
-          be possible to read a number here as a live figure. */}
-      <div className="flex items-start gap-3 rounded-lg border border-amber-300/80 bg-amber-50 px-4 py-3 dark:border-amber-800/70 dark:bg-amber-950/30">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-        <div className="min-w-0 text-[12.5px] leading-relaxed text-amber-900 dark:text-amber-100">
-          <strong className="font-semibold">Preview — no data behind this screen yet.</strong>{' '}
-          Every person and schedule below is invented, edits live only in this browser tab, and
-          nothing is saved. The team sizes are the one real thing: they are the live active HSL
-          headcounts, so the &ldquo;not yet scheduled&rdquo; backlog is the real backlog.
+      {/* The banner is the guard. It used to say "nothing here is real"; now it
+          only appears when saving genuinely cannot work — the table is created by
+          a script Kane runs, so the code can be live before the table is. A
+          surface that quietly accepted edits it could not store would be the
+          worse failure. */}
+      {migrated === false && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-300/80 bg-amber-50 px-4 py-3 dark:border-amber-800/70 dark:bg-amber-950/30">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <div className="min-w-0 text-[12.5px] leading-relaxed text-amber-900 dark:text-amber-100">
+            <strong className="font-semibold">Schedules cannot be saved yet.</strong>{' '}
+            {loadError
+              ? `The schedule store could not be read: ${loadError}`
+              : 'The schedule table has not been created in this database yet. An administrator runs ' +
+                'scripts/apply-employee-schedules-migration.mts --apply once, and this notice disappears.'}{' '}
+            You can still work out the shape below — nothing entered here is stored until then.
+          </div>
         </div>
-      </div>
+      )}
+      {migrated === null && (
+        <div className="flex items-center gap-2 rounded-lg border border-blue-100/70 bg-blue-50/40 px-4 py-3 text-[12.5px] text-zinc-600 dark:border-blue-950/50 dark:bg-blue-950/20 dark:text-zinc-300">
+          <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
+          Loading schedules…
+        </div>
+      )}
 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-[19px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+          <h2 className="flex items-center gap-2 text-[19px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
             Scheduling
+            {departmentLabel && (
+              <span className="text-[13px] font-medium text-zinc-500 dark:text-zinc-400">
+                · {departmentLabel}
+              </span>
+            )}
+            {saving && (
+              <span className="inline-flex items-center gap-1 text-[12px] font-medium text-blue-600 dark:text-blue-400">
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
+                Saving…
+              </span>
+            )}
           </h2>
           <p className="mt-0.5 text-[13px] text-zinc-500 dark:text-zinc-400">
             What each person is expected to work, and from when. Of{' '}
@@ -710,7 +846,7 @@ export default function SchedulingPanel({ myDepartments }: { myDepartments?: str
               // department label, and `dept-label-render.test.ts` rightly flags a
               // bare `d.department` sitting in a render position. Naming the count
               // keeps the guard honest instead of widening its allowlist.
-              const teamSize = PREVIEW_TEAM_SIZES[d.department] ?? 0;
+              const teamSize = teamSizes?.[d.department] ?? 0;
               return (
               <div
                 key={d.department}

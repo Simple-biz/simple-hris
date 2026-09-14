@@ -17,6 +17,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CalendarCog,
   CirclePause,
   CirclePlay,
   ClipboardCheck,
@@ -48,6 +49,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import { cn } from '@/lib/utils';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { departmentHasScheduling } from '@/lib/manager/scheduling-rows';
 import ManagerSidebar, { type ManagerTab } from './ManagerSidebar';
 import SchedulingPanel from './SchedulingPanel';
 import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
@@ -722,15 +724,15 @@ export default function ManagerApp() {
                   viewerEmail={viewerEmail}
                   focusEmail={teamFocusEmail}
                   onFocusConsumed={clearTeamFocus}
+                  canSchedule={allowedManagerTabs.includes('scheduling')}
                 />
               )}
-              {activeTab === 'scheduling' && (
-                <SchedulingPanel
-                  myDepartments={
-                    teamGate.kind === 'department' ? teamGate.departments : undefined
-                  }
-                />
-              )}
+              {/* Scheduling is no longer a top-level tab — Kane, 2026-09-14:
+                  "Scheduling will be inside HSL Department only so when we click
+                  HSL Department we should have a tab inside it". It now renders
+                  inside My Team, beside the department search, when the selected
+                  rail entry is in the HSL family. The `scheduling` feature key
+                  still gates it, so nobody's access changed. */}
               {activeTab === 'transfers' && (
                 <ManagerTransfers
                   canInitiate
@@ -1958,6 +1960,16 @@ interface TeamPanelProps {
   members: EmployeeRow[];
   teamGate: ManagerTeamGate;
   viewerEmail: string | null;
+  /**
+   * May this viewer see Scheduling?
+   *
+   * Still the `scheduling` feature key, deliberately. Moving the panel inside My
+   * Team would otherwise swap its permission silently — it would stop being its
+   * own hidden-by-default top-level key and inherit `team`, so everyone with My
+   * Team would gain it and anyone holding `scheduling` without `team` would lose
+   * it. Rendering something in a new place must not change who may see it.
+   */
+  canSchedule: boolean;
   /** When set, open this employee's profile dialog on mount (deep-link from
    *  the Overview spotlight). Cleared via `onFocusConsumed` once opened. */
   focusEmail?: string | null;
@@ -2151,7 +2163,14 @@ function CallToolsUsernameCell({
   );
 }
 
-function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusConsumed }: TeamPanelProps) {
+function TeamPanelInner({
+  members,
+  teamGate,
+  viewerEmail,
+  focusEmail,
+  onFocusConsumed,
+  canSchedule,
+}: TeamPanelProps) {
   const { medals, draggedMedal, dragOverEmail, setDragOverEmail, openAwardForDrop } = useMedalCtx();
 
   // Inner tab toggle: Roster (existing) | New Hire Check List (HR pending hires
@@ -2201,6 +2220,10 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
     '',
   );
   const [openRailGroups, setOpenRailGroups] = useState<Map<string, boolean>>(new Map());
+  // Roster vs Scheduling WITHIN the selected department. Only HSL carries the
+  // second view today; the toggle is absent everywhere else, so this stays
+  // 'roster' for every other department by construction.
+  const [deptView, setDeptView] = useState<'roster' | 'scheduling'>('roster');
   const [deptSearch, setDeptSearch] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [medalOpen, setMedalOpen] = useState(false);
@@ -2609,6 +2632,16 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
   // A manager with exactly one department gets no rail — a one-tab navigation is
   // dead weight, and the old dropdown was hidden in the same case.
   const showRail = !unassigned && members.length > 0 && railEntries.length >= 2;
+
+  // Scheduling is HSL's, and only HSL's (Kane, 2026-09-14). The predicate keys on
+  // the SELECTED rail entry, so the parent sets all 591 and a sub-team sets that
+  // team — the rail is the scoping control. `canSchedule` is the unchanged
+  // `scheduling` feature key, so this relocation grants nobody new access.
+  const schedulingAvailable = canSchedule && departmentHasScheduling(activeDept);
+  // Leaving HSL must not strand the manager on a view that department does not
+  // have. Derived, never stored, so it cannot go stale.
+  const activeDeptView: 'roster' | 'scheduling' =
+    schedulingAvailable && deptView === 'scheduling' ? 'scheduling' : 'roster';
 
   // The rail's own filter — for a manager (or admin) whose rail runs to 20-plus
   // entries. A query force-opens every group so a matching sub-team is never
@@ -3135,6 +3168,44 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
               Clear
             </button>
           )}
+          {/* HSL's own view, beside the search bar. Absent for every other
+              department — this is the first per-department surface. */}
+          {schedulingAvailable && (
+            <div
+              role="tablist"
+              aria-label={`${activeEntry?.name ?? 'Department'} views`}
+              className="flex items-center gap-0.5 rounded-lg border border-blue-100/80 bg-blue-50/50 p-0.5 dark:border-blue-950/50 dark:bg-blue-950/20"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeDeptView === 'roster'}
+                onClick={() => setDeptView('roster')}
+                className={cn(
+                  'rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors',
+                  activeDeptView === 'roster'
+                    ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
+                    : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100',
+                )}
+              >
+                People
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeDeptView === 'scheduling'}
+                onClick={() => setDeptView('scheduling')}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors',
+                  activeDeptView === 'scheduling'
+                    ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
+                    : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100',
+                )}
+              >
+                <CalendarCog className="h-3.5 w-3.5" /> Scheduling
+              </button>
+            </div>
+          )}
           <div className="ml-auto flex items-center gap-3">
             <span className="font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
               {searchQuery.trim() === ''
@@ -3177,8 +3248,26 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
           </div>
         )}
 
+      {activeDeptView === 'scheduling' && (
+        <SchedulingPanel
+          myDepartments={teamGate.kind === 'department' ? teamGate.departments : undefined}
+          department={activeDept}
+          departmentLabel={activeEntry?.name ?? null}
+          // Real per-sub-team headcounts from the rail, so "not yet scheduled"
+          // counts against the actual backlog rather than a fixture's numbers.
+          teamSizes={Object.fromEntries(
+            (rail.find((g) => g.parent.key === activeDept)?.children ?? []).length > 0
+              ? (rail.find((g) => g.parent.key === activeDept)?.children ?? []).map((c) => [
+                  c.key,
+                  deptCounts.get(c.key) ?? 0,
+                ])
+              : [[activeDept, deptCounts.get(activeDept) ?? 0]],
+          )}
+        />
+      )}
+
       <AnimatePresence initial={false}>
-        {medalOpen && !unassigned && members.length > 0 && (
+        {activeDeptView === 'roster' && medalOpen && !unassigned && members.length > 0 && (
           <motion.div
             key="medal-palette"
             initial={{ opacity: 0, height: 0, marginBottom: 0 }}
@@ -3192,6 +3281,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
         )}
       </AnimatePresence>
 
+      {activeDeptView === 'roster' && (
       <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15 dark:ring-blue-400/10">
         <CardContent className="p-0 sm:p-0">
           {unassigned ? (
@@ -3912,6 +4002,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
           )}
         </CardContent>
       </Card>
+      )}
         </>
         )}
         </div>
