@@ -568,6 +568,16 @@ function QcOfficerLog({
   const channelUid = useId().replace(/[^a-z0-9]/gi, '');
 
   const load = useCallback(async () => {
+    // '' until the parent has resolved a real payroll Sunday. This fetch is NOT
+    // a read: GET /api/qc/assignments deals and upserts the week. Firing it on
+    // the Monday local-clock seed manufactured phantom periods from the manager
+    // side exactly as the QC shell did (both measured 2026-09-14). The route now
+    // refuses a non-Sunday key as well — this guard keeps us from asking.
+    if (!periodStart) {
+      setData(null);
+      setLoading(false);
+      return;
+    }
     try {
       const res = await fetch(`/api/qc/assignments?period_start=${periodStart}`, { cache: 'no-store' });
       const json = (await res.json()) as {
@@ -3480,7 +3490,7 @@ export default function DeptBonusCalculator({
           {!isQc && isQcDeptKey(key) && (
             <QcOfficerLog
               deptKey={key}
-              periodStart={weekStart}
+              periodStart={weekResolved ? weekStart : ''}
               selectedOfficer={qcOfficerFilter?.dept === key ? qcOfficerFilter.officer : null}
               onSelectOfficer={(sel) => {
                 setQcOfficerFilter(sel ? { dept: key, officer: sel.officer, emails: sel.emails } : null);

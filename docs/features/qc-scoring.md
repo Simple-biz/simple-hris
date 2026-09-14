@@ -100,6 +100,48 @@ Kane chose this for the Jerome case: he finishes the week he is in and is not de
 one. A new officer likewise joins on the next week's deal, and a slot appearing mid-week is
 still balance-filled among the frozen set.
 
+## The period key is a SUNDAY, and the boundary enforces it
+
+Fixed 2026-09-14. `qc_score_assignments.period_start` is a pay-week Sunday. Nothing checked
+that, and **`GET /api/qc/assignments` writes** — `ensureQcAssignmentsForPeriod` deals and
+upserts a whole week of slots for whatever key it is handed. So a client passing a Monday did
+not read the wrong week. **It manufactured one.**
+
+Two clients did. Both seeded a period from the local clock with a Monday-anchored helper and
+fetched before the real week resolved: `QCApp.tsx`'s `useState(() => isoWeekStart(new Date()))`,
+and the manager calculator's `QcOfficerLog`, which received a raw `weekStart` while every other
+write site on that screen was already gated on `weekResolved`. The hazard was written down a
+module away the whole time — `use-pay-weeks.ts:48`: *"a KPI row written under a Monday key is
+invisible to every reader forever … Sunday in, Sunday out."*
+
+**Measured before the fix** (`scripts/audit-qc-period-key-drift.mts`, read-only):
+
+| | |
+|---|---|
+| Periods in `qc_score_assignments` | 29 |
+| **Non-Sunday (phantom) periods** | **10** — ~3,250 slot rows |
+| Phantoms shadowing a real Sunday week | 9 — e.g. `2026-09-07` Mon (404 members) beside `2026-09-06` Sun (397), **385 in both** |
+| Phantoms holding scores | **0** |
+
+Three locks now, because one was demonstrably not enough:
+
+1. **`src/lib/qc/period.ts`** — `isQcPeriodStart` (a type predicate, so callers narrow by
+   checking rather than asserting) and `qcPeriodStartError`, which names the weekday it
+   actually is. Pure, client-safe, unit-tested.
+2. **The route refuses a non-Sunday key with 400, *before* the deal call.** Order is
+   load-bearing and pinned by a source-scan control: that call writes, so a late check would
+   reject the response after the phantom week had already been dealt.
+3. **Neither client seeds a period from the clock.** `QCApp` holds `''` until `usePayWeeks`
+   resolves a real batch Sunday; `QcOfficerLog` is passed `weekResolved ? weekStart : ''`.
+
+> The ten phantom periods are **left in place** (Kane, 2026-09-14: fix and report, delete
+> never). They hold no scores, so they are dead slot rows; the audit script re-reads them and
+> **exits 1 if a phantom ever holds a score**, which is the only state needing a decision
+> rather than an observation.
+
+`2026-09-14` is an **orphan** phantom: its real Sunday (`2026-09-13`) was never dealt at all.
+The week to score on that date is `2026-09-06`, which exists and is frozen.
+
 ## The weekly deal — the rule most likely to be violated
 
 **Slots are dealt to officers in a SEEDED-RANDOM order, evenly, and re-dealt each week.**

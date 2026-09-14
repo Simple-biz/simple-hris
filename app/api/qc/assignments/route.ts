@@ -12,6 +12,7 @@ import {
   listManagedQcDepts,
 } from '@/lib/supabase/qc-db';
 import { isQcDeptKey } from '@/lib/qc/constants';
+import { isQcPeriodStart, qcPeriodStartError } from '@/lib/qc/period';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 
 export const dynamic = 'force-dynamic';
@@ -45,7 +46,13 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const periodStart = searchParams.get('period_start');
-  if (!periodStart) return NextResponse.json({ error: 'period_start required' }, { status: 400 });
+  // BEFORE the deal, never after: ensureQcAssignmentsForPeriod WRITES — it upserts
+  // a full week of slots for whatever key it is given. An unvalidated Monday key
+  // therefore manufactured a phantom week rather than reading a wrong one (ten of
+  // them, measured 2026-09-14). See src/lib/qc/period.ts.
+  if (!isQcPeriodStart(periodStart)) {
+    return NextResponse.json({ error: qcPeriodStartError(periodStart) }, { status: 400 });
+  }
 
   const { officers, rows: allRows, error } = await ensureQcAssignmentsForPeriod(periodStart);
   if (error) return NextResponse.json({ error }, { status: 500 });

@@ -58,17 +58,7 @@ function norm(s: string | null | undefined): string {
   return (s ?? '').trim().toLowerCase();
 }
 
-/** Monday-anchored ISO week start — mirrors the calculator so the first fetch
- *  lines up with the pay-week the calculator resolves to. */
-function isoWeekStart(d: Date): string {
-  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const dow = day.getDay();
-  const back = dow === 0 ? 6 : dow - 1;
-  day.setDate(day.getDate() - back);
-  return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
-}
-
-/** "Jun 9 – Jun 15" from a Monday-anchored ISO start. */
+/** "Jun 9 – Jun 15" from a pay-week Sunday. */
 function weekRange(startIso: string): string {
   const [y, m, d] = startIso.split('-').map(Number);
   if (!y || !m || !d) return '';
@@ -172,8 +162,15 @@ export default function QCApp() {
   // The QC Overview's period selector AND the calculator's own WeekPicker both
   // drive this single value. The calculator follows it via `controlledWeek` and
   // reports its own picks back via `onWeekChange`.
-  const { weekOptions, currentWeekStart, upcomingWeek } = usePayWeeks();
-  const [weekStart, setWeekStart] = useState<string>(() => isoWeekStart(new Date()));
+  const { weekOptions, currentWeekStart, upcomingWeek, loaded: weeksLoaded } = usePayWeeks();
+  // EMPTY until usePayWeeks resolves a real batch Sunday — never seeded from the
+  // clock. The old seed was `isoWeekStart(new Date())`, Monday-anchored, and the
+  // fetch below fired on it immediately; because GET /api/qc/assignments WRITES,
+  // that did not read the wrong week, it DEALT one. Ten phantom Monday periods
+  // (~3,000 slots) were measured on 2026-09-14, eight of them shadowing a real
+  // Sunday week. `use-pay-weeks.ts:48` had already written the rule down:
+  // "Sunday in, Sunday out." Both fetches no-op on '' (see their `!week` guards).
+  const [weekStart, setWeekStart] = useState<string>('');
 
   // A deliberate period pick — from the Overview selector OR the calculator's own
   // WeekPicker (which reports up via onWeekChange; in controlled mode that fires
@@ -230,10 +227,20 @@ export default function QCApp() {
     }
   }, []);
 
+  // No pay week resolved, and the upload list has finished trying. That is
+  // TERMINAL, not pending ([[kpi-calculator-week-unresolved-hang]]) — the
+  // skeletons must stop pulsing at a number that is never going to arrive, and
+  // the empty state must say THIS rather than "nobody is assigned to you".
+  const weekUnresolved = weeksLoaded && !weekStart;
+
   useEffect(() => {
+    if (!weekStart) {
+      if (weeksLoaded) setQcLoaded(true);
+      return;
+    }
     setQcLoaded(false);
     void fetchAssignments(weekStart);
-  }, [weekStart, fetchAssignments]);
+  }, [weekStart, weeksLoaded, fetchAssignments]);
 
   // ── Scoring progress (how many of my assigned members I've staged) ──────────
   const me = norm(viewerEmail);
@@ -425,13 +432,28 @@ export default function QCApp() {
                   {qcLoaded && assignedCount === 0 && (
                     <div className="mx-auto max-w-md px-6 py-16 text-center">
                       <Users className="mx-auto h-10 w-10 text-zinc-300 dark:text-zinc-700" />
-                      <p className="mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                        No members assigned to you for this week yet.
-                      </p>
-                      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">
-                        Members are split evenly across QC officers. Check back once the
-                        week&rsquo;s roster is in, or ask an admin if you expect an assignment.
-                      </p>
+                      {weekUnresolved ? (
+                        <>
+                          <p className="mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                            Couldn&rsquo;t confirm the payroll week.
+                          </p>
+                          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">
+                            QC scores a pay week, and none could be resolved from the Hubstaff
+                            uploads — so there is nothing to assign yet. This is not an empty
+                            roster. Once this week&rsquo;s file is uploaded, reload.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                            No members assigned to you for this week yet.
+                          </p>
+                          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">
+                            Members are split evenly across QC officers. Check back once the
+                            week&rsquo;s roster is in, or ask an admin if you expect an assignment.
+                          </p>
+                        </>
+                      )}
                     </div>
                   )}
                 </ReadOnlyTab>
