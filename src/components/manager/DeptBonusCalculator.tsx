@@ -48,6 +48,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  Trash2,
   Unlock,
   User,
   UserPlus,
@@ -1561,8 +1562,10 @@ export default function DeptBonusCalculator({
   const [sharedPasteStatus, setSharedPasteStatus] = useState<Record<string, 'idle' | 'loading' | 'loaded' | 'error'>>({});
   const [sharedPasteError, setSharedPasteError] = useState<Record<string, string | null>>({});
   const [sharedPasteClearing, setSharedPasteClearing] = useState<Record<string, boolean>>({});
-  /** The inline two-step confirm for "Clear shared sheet" — never `window.confirm`. */
+  /** The inline two-step confirm for "Delete all" — never `window.confirm`. */
   const [sharedPasteConfirmClear, setSharedPasteConfirmClear] = useState<Record<string, boolean>>({});
+  /** Per-card Refresh in flight (see `refreshDept`). */
+  const [deptRefreshing, setDeptRefreshing] = useState<Record<string, boolean>>({});
   const [overrideUndo, setOverrideUndo] = useState<Record<string, OverrideSnapshot | null>>({});
   // Recently offboarded people (final bonuses may still be owed) — fetched once
   // and shared by the per-dept Offboarded strips and the add-member modal.
@@ -2458,12 +2461,19 @@ export default function DeptBonusCalculator({
     [weekStart],
   );
 
-  /** Remove the shared sheet for everyone. The route audits the full text
-   *  BEFORE deleting and refuses when that write fails. On success this box and
-   *  its stale result go too — a fresh start, as the orphanage step's Remove all —
-   *  so what is on screen is what is shared. */
+  /** "Delete all": remove the shared sheet for everyone AND empty this box. The
+   *  route audits the full text BEFORE deleting and refuses when that write
+   *  fails. The box and its stale result go too — a fresh start, as the
+   *  orphanage step's Remove all — so what is on screen is what is shared. With
+   *  nothing shared yet there is no server call: only the box is emptied. */
   const clearSharedPaste = useCallback(
     async (deptKey: string) => {
+      if (!sharedPaste[deptKey]) {
+        setComparePaste((p) => ({ ...p, [deptKey]: '' }));
+        setCompareRuns((p) => ({ ...p, [deptKey]: null }));
+        setSharedPasteConfirmClear((p) => ({ ...p, [deptKey]: false }));
+        return;
+      }
       setSharedPasteClearing((p) => ({ ...p, [deptKey]: true }));
       setSharedPasteError((p) => ({ ...p, [deptKey]: null }));
       try {
@@ -2485,7 +2495,7 @@ export default function DeptBonusCalculator({
         setSharedPasteClearing((p) => ({ ...p, [deptKey]: false }));
       }
     },
-    [weekStart],
+    [weekStart, sharedPaste],
   );
 
   /** Parse the paste, fetch the officers' current rows for this week, and diff.
@@ -2808,6 +2818,54 @@ export default function DeptBonusCalculator({
    * `stateRef` rather than the render closure because a debounced call must send
    * what is on screen when it fires, not what was there when the timer was set.
    */
+  /**
+   * Per-card Refresh (Kane, 2026-09-14: *"each KPI table should be refreshable
+   * for the modal"*). Reloads ONE department's rows and status from the server —
+   * the same `loadDept` the mount and the toolbar Refresh use, so it writes the
+   * tab cache and runs the same `applyDeptPayload`.
+   *
+   * The toolbar Refresh silently SKIPS a department with unsaved local work so
+   * another scorer's save cannot clobber an edit in progress. An explicit click
+   * on the card must not do nothing, so a pending edit is written FIRST — this
+   * key's debounce is cancelled and the write goes through the same `saveDept`
+   * autosave uses — and the reload is refused if that write fails. A `seeded`
+   * department (pre-applied, untouched) is not local work and simply reloads.
+   * QC officer mode keeps its manual Save, so there the click refuses instead.
+   */
+  async function refreshDept(key: string): Promise<void> {
+    if (!weekResolved) return;
+    setDeptRefreshing((p) => ({ ...p, [key]: true }));
+    try {
+      const d = stateRef.current[key];
+      if (d?.saving) {
+        toast.info('Saving your edits — try Refresh again in a moment.');
+        return;
+      }
+      if (d && isUnsavedLocalWork(d)) {
+        if (isQc) {
+          toast.info('Save your scores first, then Refresh.');
+          return;
+        }
+        const t = autosaveTimers.current[key];
+        if (t) {
+          clearTimeout(t);
+          delete autosaveTimers.current[key];
+          delete autosaveArmedRef.current[key];
+        }
+        const ok = await saveDept(key, { silent: true });
+        if (!ok) {
+          toast.error('Not refreshed', {
+            description: 'Your pending edits could not be saved, so the table was left exactly as it is.',
+          });
+          return;
+        }
+      }
+      await loadDept(key);
+    } finally {
+      setDeptRefreshing((p) => ({ ...p, [key]: false }));
+    }
+  }
+
   async function saveDept(key: string, opts?: { silent?: boolean }): Promise<boolean> {
     const d = stateRef.current[key];
     if (!d) return false;
@@ -3421,6 +3479,33 @@ export default function DeptBonusCalculator({
                 </span>
                 </>
               )}
+              {/* Per-card Refresh (Kane, 2026-09-14): reload THIS department's table
+                  from the server — the modal Accounting opens from Payroll Readiness
+                  has no other way to pick up a manager's edits without closing.
+                  Pending edits are saved first (see refreshDept). Disabled, not
+                  hidden, until the week resolves and the table has loaded. */}
+              <button
+                type="button"
+                onClick={() => void refreshDept(key)}
+                disabled={!!deptRefreshing[key] || !weekResolved || !d?.loaded}
+                title={
+                  !weekResolved
+                    ? 'Waiting for the payroll week to resolve'
+                    : !d?.loaded
+                      ? 'Loading the table…'
+                      : isQc
+                        ? 'Reload this department from the server (save your scores first)'
+                        : "Reload this department's scores from the server — your pending edits are saved first"
+                }
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-zinc-600 transition-colors duration-200',
+                  'hover:border-sky-300 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-50',
+                  'dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-sky-700 dark:hover:text-sky-300',
+                )}
+              >
+                <RefreshCw className={cn('h-2.5 w-2.5', deptRefreshing[key] && 'animate-spin')} aria-hidden />
+                {deptRefreshing[key] ? 'Refreshing…' : 'Refresh'}
+              </button>
               {cmpToggleShown && (
                 <span className="relative inline-flex">
                   {/* The running emerald rim — Kane: "an outline border color running color green". */}
@@ -3704,36 +3789,6 @@ export default function DeptBonusCalculator({
                               </button>
                             </>
                           )}
-                          {!sharedPasteConfirmClear[key] ? (
-                            <button
-                              type="button"
-                              className="underline decoration-dotted hover:text-red-700 disabled:opacity-50 dark:hover:text-red-400"
-                              disabled={!!sharedPasteClearing[key]}
-                              onClick={() => setSharedPasteConfirmClear((p) => ({ ...p, [key]: true }))}
-                            >
-                              Clear shared sheet
-                            </button>
-                          ) : (
-                            <span className="inline-flex flex-wrap items-center gap-1.5 text-red-700 dark:text-red-400">
-                              Clear it for everyone and empty this box?
-                              <button
-                                type="button"
-                                className="inline-flex items-center rounded border border-red-300 px-1.5 py-0.5 font-medium hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:hover:bg-red-950/40"
-                                disabled={!!sharedPasteClearing[key]}
-                                onClick={() => void clearSharedPaste(key)}
-                              >
-                                {sharedPasteClearing[key] ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : 'Clear'}
-                              </button>
-                              <button
-                                type="button"
-                                className="underline decoration-dotted disabled:opacity-50"
-                                disabled={!!sharedPasteClearing[key]}
-                                onClick={() => setSharedPasteConfirmClear((p) => ({ ...p, [key]: false }))}
-                              >
-                                Keep
-                              </button>
-                            </span>
-                          )}
                         </>
                       )}
                       {!cmpShared && cmpSharedStatus === 'loaded' && (
@@ -3774,6 +3829,51 @@ export default function DeptBonusCalculator({
                         >
                           <CornerUpLeft className="h-3.5 w-3.5" /> Undo override
                         </Button>
+                      )}
+                      {/* Delete all (Kane, 2026-09-14): the shared sheet goes for
+                          everyone and this box empties — the orphanage step's
+                          Remove all, confirmed inline, never window.confirm. The
+                          route audits the full text FIRST. Disabled, not hidden,
+                          when there is nothing to delete. */}
+                      {!sharedPasteConfirmClear[key] ? (
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          className="h-8 gap-1.5 text-xs"
+                          disabled={!!sharedPasteClearing[key] || (!cmpShared && !(comparePaste[key] ?? '').trim())}
+                          title={
+                            cmpShared
+                              ? 'Delete the shared sheet for everyone and empty this box'
+                              : (comparePaste[key] ?? '').trim()
+                                ? 'Empty this box (nothing is shared yet)'
+                                : 'Nothing to delete — no shared sheet and an empty box'
+                          }
+                          onClick={() => setSharedPasteConfirmClear((p) => ({ ...p, [key]: true }))}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Delete all
+                        </Button>
+                      ) : (
+                        <span className="inline-flex flex-wrap items-center gap-1.5 text-[11px] text-red-700 dark:text-red-400">
+                          {cmpShared ? 'Delete the shared sheet for everyone and empty this box?' : 'Empty this box?'}
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            className="h-7 text-xs"
+                            disabled={!!sharedPasteClearing[key]}
+                            onClick={() => void clearSharedPaste(key)}
+                          >
+                            {sharedPasteClearing[key] ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Delete'}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-xs"
+                            disabled={!!sharedPasteClearing[key]}
+                            onClick={() => setSharedPasteConfirmClear((p) => ({ ...p, [key]: false }))}
+                          >
+                            Keep
+                          </Button>
+                        </span>
                       )}
                       {compareError[key] && (
                         <span className="text-[11px] text-red-600 dark:text-red-400">{compareError[key]}</span>

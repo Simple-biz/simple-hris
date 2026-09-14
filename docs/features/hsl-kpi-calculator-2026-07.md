@@ -1159,8 +1159,21 @@ open by default**:
   rendered while disabled, because a running light on a dead control is a lie.
   **Since 2026-09-14 the pasted sheet is SHARED per dept-week** (`qc-scoring.md`
   §*The pasted sheet is SHARED*): Compare saves it to `/api/qc/compare-paste`,
-  opening the panel prefills an empty box and auto-runs Compare, and an
-  attribution line names who pasted it, when, and offers **Clear shared sheet**.
+  opening the panel prefills an empty box and auto-runs Compare, an attribution
+  line names who pasted it and when, and a **Delete all** button (inline confirm,
+  audited with the full text first) removes it for everyone.
+- **Refresh** (per card, 2026-09-14 — Kane: *"each KPI table should be refreshable
+  for the modal"*): reloads THIS department's rows and status through the same
+  `loadDept` the mount uses, so the modal Accounting opens from Payroll Readiness
+  can pick up a manager's edits without closing. **It differs from the toolbar
+  Refresh on purpose**: the toolbar silently *skips* a department with unsaved
+  local work (so a live re-pull cannot clobber an edit in progress), but an
+  explicit click on the card must not do nothing — so `refreshDept` cancels that
+  key's autosave debounce, writes the pending edit through the same `saveDept`
+  autosave uses, and **refuses the reload if that write fails**. A `seeded`
+  department (pre-applied, untouched) is not local work and simply reloads; QC
+  officer mode keeps its manual Save, so there the click asks you to save first.
+  Disabled, never hidden, until the week resolves and the table has loaded.
 - **Offboarded · last pay · N** — the `OffboardedStrip` (leavers whose final pay
   cycle is the week in view, one click to add). It used to sit open above the table;
   Kane, 2026-09-10: *"hide this first into a drop down as well"*. The chip shows

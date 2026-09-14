@@ -632,7 +632,7 @@ many rows. No migration: the carrier is the same `app_settings` table the orphan
 |---|---|
 | Key, shape, codec, body validation (pure, client-safe) | `src/lib/qc/compare-paste.ts` · `compare-paste.test.ts` (17, incl. 3 source-scan controls) |
 | `GET` / `PUT` / `DELETE /api/qc/compare-paste` | `app/api/qc/compare-paste/route.ts` |
-| Load on open · save on Compare · Clear · reset on week change | `DeptBonusCalculator.tsx` — `loadSharedPaste`, `saveSharedPaste`, `clearSharedPaste`, the two effects after `runCompare` |
+| Load on open · save on Compare · Delete all · reset on week change | `DeptBonusCalculator.tsx` — `loadSharedPaste`, `saveSharedPaste`, `clearSharedPaste`, the two effects after `runCompare` |
 
 What holds, and why:
 
@@ -655,13 +655,16 @@ What holds, and why:
   second manager to see. Blank, oversize (>200,000 chars) and control-character text are refused
   the same way; the text that IS stored is verbatim, tabs and refused lines included, so the next
   viewer sees the same refusals.
-- **Clear is for everyone, confirmed inline, audited FIRST.** `Clear shared sheet` → *"Clear it for
-  everyone and empty this box?"* (never `window.confirm`). The route writes
-  `qc.compare_paste_cleared` carrying the **full text** before deleting and **refuses the delete
-  when that write fails** — another manager typed that sheet, and after it is gone `audit_log` is
-  the only place it survives. A successful clear also empties the local box and its result, the
-  orphanage step's "fresh start". Saves write `qc.compare_paste_saved` with metadata only
-  (row count, chars, whom it replaced) — the text is on the row.
+- **Delete all is for everyone, confirmed inline, audited FIRST.** A `destructive` **Delete all**
+  button sits in the Compare row (Kane, 2026-09-14, later: *"add a delete all button"*) →
+  *"Delete the shared sheet for everyone and empty this box?"* (never `window.confirm`; a control
+  test pins it). The route writes `qc.compare_paste_cleared` carrying the **full text** before
+  deleting and **refuses the delete when that write fails** — another manager typed that sheet, and
+  after it is gone `audit_log` is the only place it survives. A successful delete also empties the
+  local box and its result, the orphanage step's "fresh start"; with nothing shared yet there is no
+  server call and only the box empties. **Disabled, never hidden**, when there is nothing to delete.
+  Saves write `qc.compare_paste_saved` with metadata only (row count, chars, whom it replaced) — the
+  text is on the row.
 - **The panel is per dept AND per week now.** Switching weeks resets the box, the result, the
   shared copy **and the Override Undo snapshot** — Undo writes `state[deptKey]`, which after a week
   switch holds the other week's members. The disclosure (`compareOpen`) is kept; the load effect
