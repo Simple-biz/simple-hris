@@ -90,6 +90,7 @@ import {
 import { QC_DEPT_KEYS, isQcDeptKey } from '@/lib/qc/constants';
 import { upcomingWeekFor } from '@/lib/hubstaff/use-pay-weeks';
 import { parseAppointmentPaste, type PasteRefusal } from '@/lib/qc/paste';
+import type { SharedComparePaste } from '@/lib/qc/compare-paste';
 import {
   compareAppointments,
   overrideTargets,
@@ -149,6 +150,14 @@ const EASE = [0.22, 1, 0.36, 1] as const;
  *  Offboarded). Paired with `initial={reduceMotion ? false : { height: 0, opacity: 0 }}`. */
 const UNFOLD = { height: { duration: 0.3, ease: EASE }, opacity: { duration: 0.22, ease: EASE } } as const;
 const PESO = '₱';
+
+/** "Sun 14 Sep, 22:08" — when the shared Compare sheet was pasted. Local clock,
+ *  like the footer's `Saved HH:MM`; the raw ISO string if it will not parse. */
+function formatSharedAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
 
 /** Departments whose calculator table is paginated, and how many rows per page. */
 const PAGED_DEPTS: Record<string, number> = { lead_gen: 8 };
@@ -1544,6 +1553,16 @@ export default function DeptBonusCalculator({
   const [compareRuns, setCompareRuns] = useState<Record<string, CompareRun | null>>({});
   const [compareBusy, setCompareBusy] = useState<Record<string, boolean>>({});
   const [compareError, setCompareError] = useState<Record<string, string | null>>({});
+  // The sheet SHARED for this dept-week — what the server holds, as last loaded
+  // or saved (Kane, 2026-09-14: "whatever was pasted in there should be visible
+  // to all", modelled on the orphanage step). Compare is the click that shares;
+  // opening the panel loads it. Per dept, reset on week change.
+  const [sharedPaste, setSharedPaste] = useState<Record<string, SharedComparePaste | null>>({});
+  const [sharedPasteStatus, setSharedPasteStatus] = useState<Record<string, 'idle' | 'loading' | 'loaded' | 'error'>>({});
+  const [sharedPasteError, setSharedPasteError] = useState<Record<string, string | null>>({});
+  const [sharedPasteClearing, setSharedPasteClearing] = useState<Record<string, boolean>>({});
+  /** The inline two-step confirm for "Clear shared sheet" — never `window.confirm`. */
+  const [sharedPasteConfirmClear, setSharedPasteConfirmClear] = useState<Record<string, boolean>>({});
   const [overrideUndo, setOverrideUndo] = useState<Record<string, OverrideSnapshot | null>>({});
   // Recently offboarded people (final bonuses may still be owed) — fetched once
   // and shared by the per-dept Offboarded strips and the add-member modal.
@@ -2385,14 +2404,111 @@ export default function DeptBonusCalculator({
     [state, applicableBonuses, emailsByIdentity, workEmailByIdentity],
   );
 
+  /** Load the sheet shared for this dept-week. `ok` with the sheet (or null when
+   *  none is shared) so the caller can prefill; a failure is shown on the
+   *  attribution line and comes back `ok: false` — never as "nothing is shared". */
+  const loadSharedPaste = useCallback(
+    async (deptKey: string, week: string): Promise<{ ok: true; paste: SharedComparePaste | null } | { ok: false }> => {
+      setSharedPasteStatus((p) => ({ ...p, [deptKey]: 'loading' }));
+      setSharedPasteError((p) => ({ ...p, [deptKey]: null }));
+      try {
+        const res = await fetch(
+          `/api/qc/compare-paste?dept=${encodeURIComponent(deptKey)}&period_start=${encodeURIComponent(week)}`,
+          { cache: 'no-store' },
+        );
+        const json = (await res.json().catch(() => ({}))) as { paste?: SharedComparePaste | null; error?: string | null };
+        if (!res.ok) throw new Error(json.error || `Could not load the shared sheet (${res.status})`);
+        const paste = json.paste ?? null;
+        setSharedPaste((p) => ({ ...p, [deptKey]: paste }));
+        setSharedPasteStatus((p) => ({ ...p, [deptKey]: 'loaded' }));
+        return { ok: true, paste };
+      } catch (e) {
+        setSharedPasteStatus((p) => ({ ...p, [deptKey]: 'error' }));
+        setSharedPasteError((p) => ({ ...p, [deptKey]: e instanceof Error ? e.message : 'Could not load the shared sheet' }));
+        return { ok: false };
+      }
+    },
+    [],
+  );
+
+  /** Share the text that was just compared. The server stamps who and when from
+   *  the session and re-counts the rows itself; the response is what everyone
+   *  else will now load. Never awaited by Compare — a failed share is reported,
+   *  the differences still render. */
+  const saveSharedPaste = useCallback(
+    async (deptKey: string, text: string) => {
+      setSharedPasteError((p) => ({ ...p, [deptKey]: null }));
+      try {
+        const res = await fetch('/api/qc/compare-paste', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dept: deptKey, period_start: weekStart, text }),
+        });
+        const json = (await res.json().catch(() => ({}))) as { paste?: SharedComparePaste | null; error?: string | null };
+        if (!res.ok || !json.paste) throw new Error(json.error || `Could not share the sheet (${res.status})`);
+        setSharedPaste((p) => ({ ...p, [deptKey]: json.paste ?? null }));
+        setSharedPasteStatus((p) => ({ ...p, [deptKey]: 'loaded' }));
+      } catch (e) {
+        setSharedPasteError((p) => ({
+          ...p,
+          [deptKey]: `Compared, but not shared: ${e instanceof Error ? e.message : 'unknown error'}`,
+        }));
+      }
+    },
+    [weekStart],
+  );
+
+  /** Remove the shared sheet for everyone. The route audits the full text
+   *  BEFORE deleting and refuses when that write fails. On success this box and
+   *  its stale result go too — a fresh start, as the orphanage step's Remove all —
+   *  so what is on screen is what is shared. */
+  const clearSharedPaste = useCallback(
+    async (deptKey: string) => {
+      setSharedPasteClearing((p) => ({ ...p, [deptKey]: true }));
+      setSharedPasteError((p) => ({ ...p, [deptKey]: null }));
+      try {
+        const res = await fetch(
+          `/api/qc/compare-paste?dept=${encodeURIComponent(deptKey)}&period_start=${encodeURIComponent(weekStart)}`,
+          { method: 'DELETE' },
+        );
+        const json = (await res.json().catch(() => ({}))) as { cleared?: boolean; error?: string | null };
+        if (!res.ok) throw new Error(json.error || `Could not clear the shared sheet (${res.status})`);
+        setSharedPaste((p) => ({ ...p, [deptKey]: null }));
+        setSharedPasteStatus((p) => ({ ...p, [deptKey]: 'loaded' }));
+        setSharedPasteConfirmClear((p) => ({ ...p, [deptKey]: false }));
+        setComparePaste((p) => ({ ...p, [deptKey]: '' }));
+        setCompareRuns((p) => ({ ...p, [deptKey]: null }));
+        toast.success('Shared sheet cleared for everyone.', { description: 'Paste the fresh sheet and Compare to share it again.' });
+      } catch (e) {
+        setSharedPasteError((p) => ({ ...p, [deptKey]: e instanceof Error ? e.message : 'Could not clear the shared sheet' }));
+      } finally {
+        setSharedPasteClearing((p) => ({ ...p, [deptKey]: false }));
+      }
+    },
+    [weekStart],
+  );
+
   /** Parse the paste, fetch the officers' current rows for this week, and diff.
    *  Always re-fetches: the QC seed only fires on a never-saved week, and after the
-   *  manager's first save the officers' rows are never read again by the loader. */
+   *  manager's first save the officers' rows are never read again by the loader.
+   *
+   *  `text` overrides the box (the prefill path hands in what it just loaded —
+   *  state is a render behind). `share: false` is for text that IS the shared
+   *  sheet already; otherwise Compare is the click that shares. */
   const runCompare = useCallback(
-    async (deptKey: string) => {
-      const parsed = parseAppointmentPaste(comparePaste[deptKey] ?? '');
+    async (deptKey: string, opts?: { text?: string; share?: boolean }) => {
+      const text = opts?.text ?? comparePaste[deptKey] ?? '';
+      const parsed = parseAppointmentPaste(text);
       setCompareBusy((p) => ({ ...p, [deptKey]: true }));
       setCompareError((p) => ({ ...p, [deptKey]: null }));
+      // Compare is the deliberate click that SHARES the sheet — the orphanage
+      // step's "Lock in" moment. Fired alongside the diff, never awaited by it.
+      // Skipped when the text is already what is shared (no churn, no audit
+      // row) and when nothing parsed — there is nothing for a second manager to
+      // see, and the route refuses it anyway; the refusals still render here.
+      if (opts?.share !== false && parsed.rows.length > 0 && text !== sharedPaste[deptKey]?.text) {
+        void saveSharedPaste(deptKey, text);
+      }
       try {
         const res = await fetch(
           `/api/qc/submissions?dept=${encodeURIComponent(deptKey)}&period_start=${encodeURIComponent(weekStart)}`,
@@ -2418,8 +2534,58 @@ export default function DeptBonusCalculator({
         setCompareBusy((p) => ({ ...p, [deptKey]: false }));
       }
     },
-    [comparePaste, weekStart, compareMembersFor],
+    [comparePaste, weekStart, compareMembersFor, sharedPaste, saveSharedPaste],
   );
+
+  /** Which week each dept's shared sheet has been fetched for. A ref, so the
+   *  effect below can decide without re-running on its own writes. */
+  const sharedPasteLoadedForRef = useRef<Record<string, string>>({});
+  const comparePasteRef = useRef(comparePaste);
+  comparePasteRef.current = comparePaste;
+
+  // Opening the panel loads the shared sheet for this dept-week, once per week.
+  // Prefill ONLY an empty box — never over text someone is mid-way through —
+  // and then Compare it, so the differences are shared too, not just the text
+  // (`share: false`: it IS the shared text). Gated on the resolved week: an
+  // unresolved key would fetch, and later share, under the wrong Sunday.
+  useEffect(() => {
+    if (!weekResolved) return;
+    for (const [deptKey, open] of Object.entries(compareOpen)) {
+      if (!open) continue;
+      if (sharedPasteLoadedForRef.current[deptKey] === weekStart) continue;
+      sharedPasteLoadedForRef.current[deptKey] = weekStart;
+      void (async () => {
+        const loaded = await loadSharedPaste(deptKey, weekStart);
+        if (!loaded.ok) {
+          // Let the next open retry rather than remembering a failure as done.
+          if (sharedPasteLoadedForRef.current[deptKey] === weekStart) delete sharedPasteLoadedForRef.current[deptKey];
+          return;
+        }
+        const paste = loaded.paste;
+        if (paste && !(comparePasteRef.current[deptKey] ?? '').trim()) {
+          setComparePaste((p) => ({ ...p, [deptKey]: paste.text }));
+          void runCompare(deptKey, { text: paste.text, share: false });
+        }
+      })();
+    }
+  }, [compareOpen, weekStart, weekResolved, loadSharedPaste, runCompare]);
+
+  // The panel is per dept AND per week: switching weeks with it open must not
+  // show week A's paste, its differences, or its Undo snapshot under week B —
+  // Undo writes `state[deptKey]`, which by then holds week B's members. The
+  // sheet itself is on the server now, so dropping the box loses nothing; the
+  // effect above fetches the new week's sheet for any panel still open.
+  // `compareOpen` is kept — that is the manager's disclosure choice, not data.
+  useEffect(() => {
+    setComparePaste({});
+    setCompareRuns({});
+    setCompareError({});
+    setSharedPaste({});
+    setSharedPasteStatus({});
+    setSharedPasteError({});
+    setSharedPasteConfirmClear({});
+    setOverrideUndo({});
+  }, [weekStart]);
 
   /**
    * Jackie's numbers win (Kane, 2026-09-10). Applies to MISMATCH and PASTE_ONLY rows
@@ -3137,6 +3303,11 @@ export default function DeptBonusCalculator({
     const cmpQcOnly = cmpRun ? cmpRun.result.entries.filter((e) => e.bucket === 'qc_only') : [];
     const cmpRefusals = cmpRun ? cmpRun.parseRefusals.length + cmpRun.result.refusals.length : 0;
     const cmpUndo = overrideUndo[key] ?? null;
+    // The shared sheet for this dept-week, and whether the box has drifted from it
+    // (derived, never tracked: the box and the server copy are both state).
+    const cmpShared = sharedPaste[key] ?? null;
+    const cmpSharedStatus = sharedPasteStatus[key] ?? 'idle';
+    const cmpLocalDiffers = !!cmpShared && (comparePaste[key] ?? '') !== cmpShared.text;
     // "Add External Member": manager mode, an allowed dept, week still editable.
     const canAddExternal = !isQc && EXTERNAL_MEMBER_DEPTS.has(key) && !readOnly && !!d?.loaded;
     // Recently offboarded members of THIS department — surfaced so their final
@@ -3488,6 +3659,90 @@ export default function DeptBonusCalculator({
                       Paste straight from the sheet: work email, name, appointments — tab-separated, no header
                       needed. Names may contain commas; that is fine.
                     </p>
+                    {/* The SHARED sheet — what the server holds for this dept-week.
+                        Compare is the click that shares (the orphanage step's
+                        "Lock in"); anyone opening this panel gets it prefilled and
+                        compared. The attribution names who and when, because the
+                        text is one scalar replaced whole and the last writer wins. */}
+                    <div
+                      className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10.5px] leading-snug text-zinc-500 dark:text-zinc-400"
+                      aria-live="polite"
+                    >
+                      {cmpSharedStatus === 'loading' && (
+                        <span className="inline-flex items-center gap-1">
+                          <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> Loading the shared sheet…
+                        </span>
+                      )}
+                      {cmpShared && (
+                        <>
+                          <span className="inline-flex flex-wrap items-center gap-1 text-zinc-600 dark:text-zinc-300">
+                            <Users className="h-3 w-3 shrink-0" aria-hidden />
+                            <span>
+                              Shared with every manager of this department · pasted by{' '}
+                              <span className="font-medium">
+                                {cmpShared.pastedBy === normEmail(viewerEmail ?? '') ? 'you' : cmpShared.pastedBy}
+                              </span>
+                              {' · '}
+                              {formatSharedAt(cmpShared.pastedAt)} · {cmpShared.rowCount} row{cmpShared.rowCount === 1 ? '' : 's'}
+                            </span>
+                          </span>
+                          {cmpLocalDiffers && (
+                            <>
+                              <span className="text-amber-700 dark:text-amber-400">
+                                This box differs from the shared sheet — Compare replaces it for everyone.
+                              </span>
+                              <button
+                                type="button"
+                                className="underline decoration-dotted hover:text-zinc-800 dark:hover:text-zinc-100"
+                                onClick={() => {
+                                  setComparePaste((p) => ({ ...p, [key]: cmpShared.text }));
+                                  setCompareRuns((p) => ({ ...p, [key]: null }));
+                                  void runCompare(key, { text: cmpShared.text, share: false });
+                                }}
+                              >
+                                Use the shared sheet
+                              </button>
+                            </>
+                          )}
+                          {!sharedPasteConfirmClear[key] ? (
+                            <button
+                              type="button"
+                              className="underline decoration-dotted hover:text-red-700 disabled:opacity-50 dark:hover:text-red-400"
+                              disabled={!!sharedPasteClearing[key]}
+                              onClick={() => setSharedPasteConfirmClear((p) => ({ ...p, [key]: true }))}
+                            >
+                              Clear shared sheet
+                            </button>
+                          ) : (
+                            <span className="inline-flex flex-wrap items-center gap-1.5 text-red-700 dark:text-red-400">
+                              Clear it for everyone and empty this box?
+                              <button
+                                type="button"
+                                className="inline-flex items-center rounded border border-red-300 px-1.5 py-0.5 font-medium hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:hover:bg-red-950/40"
+                                disabled={!!sharedPasteClearing[key]}
+                                onClick={() => void clearSharedPaste(key)}
+                              >
+                                {sharedPasteClearing[key] ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : 'Clear'}
+                              </button>
+                              <button
+                                type="button"
+                                className="underline decoration-dotted disabled:opacity-50"
+                                disabled={!!sharedPasteClearing[key]}
+                                onClick={() => setSharedPasteConfirmClear((p) => ({ ...p, [key]: false }))}
+                              >
+                                Keep
+                              </button>
+                            </span>
+                          )}
+                        </>
+                      )}
+                      {!cmpShared && cmpSharedStatus === 'loaded' && (
+                        <span>Not shared yet — Compare shares your sheet with every manager of this department.</span>
+                      )}
+                      {sharedPasteError[key] && (
+                        <span className="text-red-600 dark:text-red-400">{sharedPasteError[key]}</span>
+                      )}
+                    </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <Button
                         size="sm"

@@ -124,6 +124,23 @@ export async function upsertAppSetting(key: string, value: string): Promise<{ er
 }
 
 /**
+ * Remove a setting row outright. For carriers whose ABSENCE means something
+ * ("no sheet has been shared for this week") — an empty-string value would read
+ * as a present-but-blank record and every reader would have to special-case it.
+ *
+ * Destructive: callers on an audited path write the audit row FIRST and refuse
+ * to call this when that write fails (the orphanage-step rule — nothing is
+ * destroyed unsnapshotted). Deleting a key that is already absent is not an
+ * error here; the caller decides whether it was.
+ */
+export async function deleteAppSetting(key: string): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase client unavailable' };
+  const { error } = await supabase.from('app_settings').delete().eq('key', key);
+  return { error: error ? error.message : null };
+}
+
+/**
  * Compare-and-swap write, for settings whose value is a MAP that several people
  * edit concurrently.
  *

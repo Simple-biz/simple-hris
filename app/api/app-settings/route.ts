@@ -8,6 +8,7 @@ import {
 import { requireElevatedSession, requireAdminSession, deniedResponse } from '@/lib/auth/authorize-email';
 import { requireFeatureEditAnyView } from '@/lib/auth/authorize-feature';
 import { isWizardAdditionsKey } from '@/lib/payroll/wizard-additions';
+import { isComparePasteKey } from '@/lib/qc/compare-paste';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
 
@@ -57,6 +58,18 @@ function isPayrollLockKey(key: string): boolean {
   return key.trim().toLowerCase().startsWith('payroll.dispatch_lock');
 }
 
+/**
+ * `qc.compare_paste.*` — the manager's shared Compare sheet — is refused on
+ * READ as well as write. Every other family here is gated by role; this one is
+ * gated by DEPARTMENT (a manager sees only the departments they manage, and the
+ * `qc` role must never see the sheet it is being compared against), which this
+ * generic route cannot express. `/api/qc/compare-paste` is the only door.
+ */
+function comparePasteRefusal(shape: 'value' | 'values'): NextResponse {
+  const error = 'qc.compare_paste.* is department-scoped — read and write it through /api/qc/compare-paste.';
+  return NextResponse.json(shape === 'values' ? { values: {}, error } : { value: null, error }, { status: 400 });
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
 
@@ -69,6 +82,7 @@ export async function GET(request: Request) {
     if (keys.length === 0) {
       return NextResponse.json({ values: {}, error: null });
     }
+    if (keys.some(isComparePasteKey)) return comparePasteRefusal('values');
     if (keys.some(isAdminOnlyKey)) {
       const authz = await requireAdminSession();
       if (!authz.ok) return deniedResponse(authz);
@@ -89,6 +103,7 @@ export async function GET(request: Request) {
   if (!key) {
     return NextResponse.json({ value: null, error: 'Missing key parameter' }, { status: 400 });
   }
+  if (isComparePasteKey(key)) return comparePasteRefusal('value');
   if (isAdminOnlyKey(key)) {
     const authz = await requireAdminSession();
     if (!authz.ok) return deniedResponse(authz);
@@ -143,6 +158,11 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+    // 0b. The manager's shared Compare sheet is department-scoped and must
+    //     never reach the QC officers who are being compared against it. This
+    //     route cannot scope by department, so the family is refused here on
+    //     write as on read — its only door is /api/qc/compare-paste.
+    if (isComparePasteKey(body.key)) return comparePasteRefusal('value');
 
     // 1. Secret credential keys: admin-only, even for elevated callers.
     if (isAdminOnlyKey(body.key) && !isAdmin) {

@@ -30,6 +30,7 @@ Complete documentation for all REST API endpoints. Base URL: `http://localhost:3
 15. [New endpoints (2026-07-08..10)](#15-new-endpoints-2026-07-0810)
 16. [Audit log + routes gated 2026-09-09](#16-audit-log--routes-gated-2026-09-09)
 17. [Penny AI (assistants)](#17-penny-ai-assistants-added-2026-09-12)
+18. [QC Compare sheet (shared)](#18-qc-compare-sheet-shared-added-2026-09-14)
 
 ---
 
@@ -2545,3 +2546,58 @@ on the `429` that says the allowance is spent — which is exactly when the indi
 
 **Do not copy the Admin route's generation config here.** Haiku 4.5 is an older generation: `output_config.effort` errors
 and adaptive `thinking` is the wrong shape.
+
+---
+
+## 18. QC Compare sheet (shared) *(added 2026-09-14)*
+
+The manager's "Compare with your sheet" paste, shared per (QC department, pay-week Sunday). Feature doc:
+[qc-scoring.md](../features/qc-scoring.md) § *The pasted sheet is SHARED per department-week*. Carrier:
+one `app_settings` row, key `qc.compare_paste.<dept>.<YYYY-MM-DD>`, value
+`{ v: 1, text, pastedBy, pastedAt, rowCount }` (`src/lib/qc/compare-paste.ts`). No migration.
+
+### `GET /api/qc/compare-paste?dept=<key>&period_start=<sunday>`
+
+**Auth**: `requireFeatureAccess('manager', 'hsl_bonus', 'view')` **and** a `department_managers` grant on `dept`
+(`listManagedQcDepts`; the `admin` role bypasses the scope). The **`qc` role is deliberately not a reader** — the
+officers being compared against must never see the sheet.
+
+**Params**: `dept` must be a QC-scored department key (`isQcDeptKey`; Lead Gen only today); `period_start` must be a
+pay-week **Sunday** (`qcPeriodStartError`), else `400` naming the weekday it actually is.
+
+**Response `200`**: `{ "paste": { "v": 1, "text": "…", "pastedBy": "jackie@simple.biz", "pastedAt": "…Z", "rowCount": 207 } | null, "error": null }`.
+A row that exists but does not decode is a **`500`** telling the caller to clear it and Compare again — never reported as
+"nothing shared".
+
+### `PUT /api/qc/compare-paste`
+
+Body `{ "dept": "lead_gen", "period_start": "2026-09-06", "text": "<verbatim paste>" }`.
+
+**Auth**: `requireFeatureEdit('manager', 'hsl_bonus')` + the same department scope. **`423`** while
+`payroll.dispatch_locked` (`rejectWhilePayrollProcessing`; admin bypasses).
+
+**Validation** (`parseComparePasteSaveBody`): text must be a non-blank string ≤ 200,000 chars with no control characters
+other than TAB/LF/CR, and **must parse to ≥ 1 row** under `parseAppointmentPaste` — a paste with nothing parseable is
+compared client-side but **not shared** (`400`, "nothing to share"). Stored **verbatim**. `pastedBy` = the **session**
+email, `pastedAt` = server clock, `rowCount` = re-derived server-side — none of the three is read from the body.
+
+**Write**: a plain `upsertAppSetting` — one scalar replaced whole, so last writer wins (the attribution says who); the
+client skips the PUT when the text already equals the shared text.
+
+**Response `200`**: `{ "paste": {…}, "error": null }`. **Audit**: `qc.compare_paste_saved` (`resource`
+`qc_compare_paste`, `resource_id` `<dept>:<sunday>`), metadata only — `row_count`, `chars`, `replaced_pasted_by/at`,
+`replaced_row_count`, `replaced_unreadable`.
+
+### `DELETE /api/qc/compare-paste?dept=<key>&period_start=<sunday>`
+
+**Auth / lock**: as `PUT`. **Order is fixed**: read the row → write `qc.compare_paste_cleared` carrying the **full
+text**, `pasted_by`, `pasted_at`, `row_count` → **refuse the delete (`500`, nothing deleted) if that audit write fails**
+→ `deleteAppSetting`. Another manager typed that sheet; after it is gone `audit_log` is the only place it survives.
+
+**Response `200`**: `{ "cleared": true | false, "error": null }` — `false` when no row existed.
+
+### The generic `/api/app-settings` route refuses the family
+
+`qc.compare_paste.*` is refused with `400` on **bulk GET, single GET and POST** (`isComparePasteKey`) — that route
+gates by role and this family is gated by **department**, which it cannot express. Pinned by a control test in
+`compare-paste.test.ts`.

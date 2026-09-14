@@ -1157,6 +1157,10 @@ open by default**:
   emerald rim** (`.compare-ring` in `src/index.css`, the `.urgent-ring` engine in
   green — Kane: *"an outline border color running color green"*); the rim is not
   rendered while disabled, because a running light on a dead control is a lie.
+  **Since 2026-09-14 the pasted sheet is SHARED per dept-week** (`qc-scoring.md`
+  §*The pasted sheet is SHARED*): Compare saves it to `/api/qc/compare-paste`,
+  opening the panel prefills an empty box and auto-runs Compare, and an
+  attribution line names who pasted it, when, and offers **Clear shared sheet**.
 - **Offboarded · last pay · N** — the `OffboardedStrip` (leavers whose final pay
   cycle is the week in view, one click to add). It used to sit open above the table;
   Kane, 2026-09-10: *"hide this first into a drop down as well"*. The chip shows

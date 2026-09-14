@@ -614,6 +614,68 @@ test whose point is seeing who was wrong.
 **Gate** (Q6): the existing `manager/hsl_bonus` edit + `department_managers` scope. Undo is the
 same person, same gate. The 423 dispatch lockout is inherited from the existing route.
 
+### The pasted sheet is SHARED per department-week (2026-09-14)
+
+Kane: *"whatever was pasted in there should be visible to all — similar to Payroll Wizard, Orphanage
+step."* Until this the text lived only in the tab that pasted it: Jackie pasted 207 rows and overrode
+18 on the evening of 2026-09-14, and nobody else could see what she had compared against.
+
+**Compare is the click that shares** — the orphanage step's "Lock in" moment. The text that was
+compared is written to **`app_settings['qc.compare_paste.<dept>.<sunday>']`** as
+`{ v, text, pastedBy, pastedAt, rowCount }`, stamped by the server from the **session** (never the
+body), with `rowCount` re-derived server-side from the same parser the panel uses. Anyone opening the
+panel for that dept-week gets the box **prefilled** and **Compare auto-runs** (`share: false`), so the
+differences are shared too, not just the text. An attribution line names who pasted, when, and how
+many rows. No migration: the carrier is the same `app_settings` table the orphanage blob uses.
+
+| Piece | File |
+|---|---|
+| Key, shape, codec, body validation (pure, client-safe) | `src/lib/qc/compare-paste.ts` · `compare-paste.test.ts` (17, incl. 3 source-scan controls) |
+| `GET` / `PUT` / `DELETE /api/qc/compare-paste` | `app/api/qc/compare-paste/route.ts` |
+| Load on open · save on Compare · Clear · reset on week change | `DeptBonusCalculator.tsx` — `loadSharedPaste`, `saveSharedPaste`, `clearSharedPaste`, the two effects after `runCompare` |
+
+What holds, and why:
+
+- **The `qc` role is not a reader.** *"The officers cannot see her sheet, so any delta is a scoring
+  error"* is the premise the four buckets rest on. The route gates on the manager's `hsl_bonus`
+  feature (`view` to read, `edit` to write) **and** a `department_managers` grant on the department
+  (admin bypasses the scope, as `/api/qc/review` does). The generic `/api/app-settings` route
+  **refuses the family on read as well as write** — it cannot scope by department — and a control
+  test pins the predicate at all three entry points (bulk GET, single GET, POST).
+- **The key is a QC department × a pay-week Sunday, or it is refused** — `isQcDeptKey` and the
+  `qcPeriodStartError` lock from [[qc-period-key-must-be-sunday]]. A Monday key would share a sheet
+  under a week no one else will ever open. The panel fetches only once `weekResolved`.
+- **One scalar, replaced whole ⇒ last writer wins**, which `casUpdateAppSetting`'s own header
+  prescribes for a scalar (CAS is for maps that carry deletions). The attribution says who wrote
+  last; the box shows an amber *"differs from the shared sheet"* notice with **Use the shared
+  sheet** when local text has drifted; and Compare **skips the write when the text already is the
+  shared text**, so re-Comparing produces no churn and no audit row.
+- **Nothing parseable ⇒ compared, not shared.** A paste with zero parsed rows still runs Compare
+  (the refusals are the point) but the route refuses to store it — there is nothing in it for a
+  second manager to see. Blank, oversize (>200,000 chars) and control-character text are refused
+  the same way; the text that IS stored is verbatim, tabs and refused lines included, so the next
+  viewer sees the same refusals.
+- **Clear is for everyone, confirmed inline, audited FIRST.** `Clear shared sheet` → *"Clear it for
+  everyone and empty this box?"* (never `window.confirm`). The route writes
+  `qc.compare_paste_cleared` carrying the **full text** before deleting and **refuses the delete
+  when that write fails** — another manager typed that sheet, and after it is gone `audit_log` is
+  the only place it survives. A successful clear also empties the local box and its result, the
+  orphanage step's "fresh start". Saves write `qc.compare_paste_saved` with metadata only
+  (row count, chars, whom it replaced) — the text is on the row.
+- **The panel is per dept AND per week now.** Switching weeks resets the box, the result, the
+  shared copy **and the Override Undo snapshot** — Undo writes `state[deptKey]`, which after a week
+  switch holds the other week's members. The disclosure (`compareOpen`) is kept; the load effect
+  fetches the new week's sheet for any panel still open. This is a tightening of "Undo lives until
+  the page is left": a week is a page.
+- **Prefill never overwrites.** A box with text in it when the shared sheet arrives is left alone —
+  the notice and **Use the shared sheet** cover that case. Only an empty box is filled.
+- **A load failure is not "nothing shared".** It is reported on the attribution line, and the next
+  open retries; Compare still works and still shares.
+
+**Open:** the body is still never rendered while `readOnly`, so a **published** week's shared sheet
+is not viewable from the panel (the row and the audit trail have it). Widening that is a separate
+decision — the draft-only rule above is unchanged.
+
 ### Not built, deliberately
 
 The officer-accuracy **histogram** (separate brief — it names officers' error rates to a manager
