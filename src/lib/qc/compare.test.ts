@@ -169,6 +169,13 @@ test('a pasted person QC scored, who is not on this week’s table, is refused a
   assert.ok(refusal, 'the line must be refused, never silently dropped');
   assert.equal(refusal.kind, 'off_table');
   assert.match(refusal.reason, /not on this week/i);
+  assert.match(refusal.reason, /Offboarded/, 'tells the manager how to reach them');
+  // The first cut asserted a CAUSE — "they left before the week being scored,
+  // so nothing here can pay them". That was true of the July ghosts, whose rows
+  // were deleted 2026-09-14; every refusal this fires on now is a leaver whose
+  // final pay cycle IS this week and who IS owed a score. A refusal may say
+  // what to do; it must not guess at why.
+  assert.doesNotMatch(refusal.reason, /nothing here can pay them/);
   assert.match(refusal.reason, /Robert/, 'names the person, not just the address');
 });
 

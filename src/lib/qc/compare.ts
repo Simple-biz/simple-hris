@@ -161,8 +161,16 @@ export function compareAppointments(
         line: p.line,
         email: p.email,
         kind: scored ? 'off_table' : 'unmatched',
+        // Do NOT assert why they are off the table — this module cannot know,
+        // and the first cut of this message guessed wrong. It said "they left
+        // before the week being scored, so nothing here can pay them", which
+        // was true of the July ghosts; those rows were deleted on 2026-09-14,
+        // so every refusal this now fires on is the OTHER population: leavers
+        // whose final pay cycle IS this week, who the QC deal adds and the
+        // manager's roster never carried. They are owed their score, and the
+        // Offboarded · last pay chip is exactly how to reach them.
         reason: scored
-          ? `${scored.employee_name || p.email} was scored by QC but is not on this week's table — they left before the week being scored, so nothing here can pay them`
+          ? `${scored.employee_name || p.email} was scored by QC but is not on this week's table — add them from the “Offboarded · last pay” chip in the card header, then Compare again`
           : 'No one in this department matches that work email',
       });
       continue;

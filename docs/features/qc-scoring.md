@@ -502,10 +502,16 @@ manager's table.** 122 were July leavers a `clearOffboarded` sync had resurrecte
 slice which the manager's roster never carried.
 
 `off_table` fires only when the pasted address matches a **`qc_kpi_submissions` row for this
-week** — i.e. QC really did score them — and names the person:
+week** — i.e. QC really did score them — and names the person **and the way to reach them**:
 
-> *Aguilar, John Robert B "Robert" was scored by QC but is not on this week's table — they left
-> before the week being scored, so nothing here can pay them.*
+> *Aguilar, John Robert B "Robert" was scored by QC but is not on this week's table — add them
+> from the "Offboarded · last pay" chip in the card header, then Compare again.*
+
+**The refusal says what to DO, never why they are off the table.** The first cut asserted a
+cause — *"they left before the week being scored, so nothing here can pay them"* — which was true
+of the July ghosts and became wrong for **every** case the moment those rows were deleted. What
+remains are leavers whose final pay cycle **is** this week: the QC deal adds them, the manager's
+roster never carried them, and they **are** owed their score. Pinned by test.
 
 A pasted address **nobody has scored** stays plain `unmatched`. A typo must never be dressed up
 as a departure; both cases are pinned by test.
@@ -523,8 +529,20 @@ departure record STRICTLY BEFORE the week the row scores**, resolved on **work e
 Left **during or after** the scored week, no evidence, or an undated record — the row stands.
 **`bonus_catalog_applied` is never touched**: that is the money table, this is the first pass.
 
-Planned 2026-09-14: **151 rows, ₱27,000 of staged first-pass values** — 146 in week `2026-09-06`,
-5 in `2026-06-14`, 150 Lead Gen and 1 Discovery.
+**Applied 2026-09-14: 151 rows deleted, 0 failures** — 146 in week `2026-09-06`, 5 in
+`2026-06-14`; 150 Lead Gen, 1 Discovery; ₱27,000 of staged first-pass values.
+
+| | before | after |
+|---|---|---|
+| `qc_kpi_submissions` | 400 rows | **249** |
+| rows scoring a prior leaver | 151 | **0** |
+| lead_gen @`2026-09-06` | 374 rows / ₱151,750 | **228 / ₱124,750** |
+| `bonus_catalog_applied` lead_gen | 218 / ₱38,000 | **218 / ₱38,000 — untouched** |
+
+**81 of the remaining 228 belong to people not on the active roster, and that is correct.** They
+are leavers whose final pay cycle is this week — the deal adds them, the manager's roster does
+not carry them. They reach the table through the **Offboarded · last pay** chip, which is what
+the `off_table` refusal now tells the manager to do.
 
 ### The paste is TAB-only, and a line without a tab is refused
 
