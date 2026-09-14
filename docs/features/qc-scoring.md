@@ -305,6 +305,75 @@ The verifier **exits 1 if anyone is dropped without a dated transfer-in record**
 > back to the live roster — exactly the pre-2026-09-14 behaviour, never a week silently missing
 > its leavers.
 
+## The roster carries people who have LEFT, and the deal now drops them
+
+Shipped 2026-09-14, after Kane spotted two long-gone people on the Lead Gen calculator:
+*"I shouldn't see him in Lead Gen KPI Calculator because he is long gone."*
+
+**`active_employees` cannot answer "has this person left."** `/api/hr/offboard` stamps a
+`global_master_list` row that is **not the one the view serves**, so the served row keeps
+`off_boarded_at = null` indefinitely. This was measured and written down for the Payment
+Catalog on 2026-08-21 (`catalog-roster-visibility.ts`: *zero* of 1,287 active rows carried a
+stamp while **294** of those people were off-boarded per the evidence sources) and the catalog
+shipped a guard. **The QC deal never got one.**
+
+Measured 2026-09-14, a month later and essentially unchanged:
+
+| | |
+|---|---|
+| Active roster the deal reads | 1,373 |
+| Carrying a **dated departure record** elsewhere | **284** |
+| …in a QC-scored department, dealt slots every week | **188** |
+| Hidden once all four guards apply | **158** in Lead Gen (the other 30 are correctly kept) |
+
+`johna@simple.biz` completed the offboarding pipeline on **2026-07-20** — `offboarding_queue`
+`completed`, an `offboarded_sheet` row written by the HRIS — and was still dealt a Lead Gen
+slot for **2026-09-14**, seven weeks later.
+
+### One implementation, four guards, shared with the Payment Catalog
+
+`hasDepartedBeforeWeek` (`catalog-roster-visibility.ts`) is now the single predicate; the
+catalog's own `isOffboardedForPaymentCatalog` is a pure delegation to it, pinned by test. **Do
+not write a second one** — two implementations of "has this person left" is how two surfaces
+come to disagree about one employee. The guards, unchanged: a canonical **departure reason**
+(allowlist, so `duplicate_cleanup` and `temporary_pause` never hide anyone), the record must
+**post-date their own Start Date** (re-hires), they must have left **before the scored week**,
+and **hours in that week always keep them** — a timesheet row cannot be forged by a stale stamp.
+
+Evidence is matched on **WORK email only**: a personal inbox is shared across duplicate master
+identities, so matching on it imports someone else's departure.
+
+### It is applied in TWO places, and the second is not optional
+
+1. **The deal** (`ensureQcAssignmentsForPeriod`) — no new slot is created for someone who had
+   already left.
+2. **The read** (`app/api/qc/assignments/route.ts`) — because a slot is a **sticky snapshot and
+   is never deleted**, the 188 dealt before this guard existed would otherwise render forever.
+   Nothing is deleted; the rows stay on the record and stop being shown. The filter runs
+   **before** `myRows`, so the officer's list, the manager's log, `deptTotals` and the officer
+   summary all derive from the same filtered set.
+
+> **This is not the `roster_status` filter that `officers.test.ts` forbids, and the difference
+> is the date.** `roster_status` describes somebody who **worked** the week and then moved or
+> left — it must never gate scoring, and it still doesn't. This guard drops only people whose
+> departure **pre-dates** the week, who therefore did not work it at all. Anyone who left during
+> or after the scored week is untouched. Both rules are pinned by their own control test.
+
+### What it does NOT fix
+
+- **The root cause is untouched and still open**: a completed offboard leaves the served master
+  row unstamped. This is the same second lock the Payment Catalog uses, on another surface.
+- **A departure the HRIS never recorded at all is invisible to it.** `amielaa@simple.biz` was
+  offboarded in the Google Sheet with no queue row, no `offboarded_sheet` row and no stamp — no
+  predicate can find evidence that does not exist. That class needs a master-sheet import.
+- **19 ghosts sit in `hogan_smith_law`**, which the HSL calculator reaches by a different roster
+  path. Not covered.
+
+Fails **OPEN** at every level: an unreadable evidence or timesheet read yields an empty set and
+a `degraded` note. Hiding a live person means their KPI bonus is never scored and never paid;
+showing a departed one is noise. Verified by `scripts/verify-qc-departed-members.mts`
+(read-only, runs the real function, asserts named emails are hidden).
+
 ## An absent officer does not block the week — the manager takes over
 
 Kane raised it on 2026-09-14: *"what if a certain person from QC is absent like the whole week?

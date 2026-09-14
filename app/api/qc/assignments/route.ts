@@ -54,14 +54,34 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: qcPeriodStartError(periodStart) }, { status: 400 });
   }
 
-  const { officers, rows: allRows, error } = await ensureQcAssignmentsForPeriod(periodStart);
+  const {
+    officers,
+    rows: allRows,
+    error,
+    departedEmails,
+    departedError,
+  } = await ensureQcAssignmentsForPeriod(periodStart);
   if (error) return NextResponse.json({ error }, { status: 500 });
 
   // Only surface departments currently in QC scope. ensureQcAssignmentsForPeriod
   // keeps sticky rows for departed slots (transfers), and legacy rows may exist
   // for a dept since moved out of QC (e.g. Discovery → its manager) — filtering
   // here keeps those out of the officer/manager view without deleting history.
-  const rows = allRows.filter((r) => isQcDeptKey(r.department));
+  //
+  // The second filter drops slot-holders who had already LEFT before this week.
+  // It has to happen HERE and not only in the deal: a slot is a STICKY SNAPSHOT,
+  // never deleted, so the 188 ghost slots dealt before the guard existed would
+  // otherwise keep rendering forever. Nothing is deleted — the rows stay on the
+  // record and stop being shown.
+  //
+  // This is NOT the `roster_status` filter that `officers.test.ts` forbids, and
+  // the distinction is the date: `roster_status` describes someone who WORKED
+  // the week and then moved or left, and must never gate scoring. This drops
+  // only people whose departure PRE-DATES the week, who therefore did not work
+  // it at all. Anyone who left during or after the week is untouched.
+  const rows = allRows
+    .filter((r) => isQcDeptKey(r.department))
+    .filter((r) => !departedEmails.has(norm(r.member_email)));
 
   const [allLocks, allReview] = await Promise.all([
     listQcOfficerLocks(periodStart),
@@ -121,5 +141,8 @@ export async function GET(request: Request) {
     review,
     mine: { memberEmails: myEmails, byDept: myByDept, members },
     error: null,
+    // Non-null when the departed-member evidence was unreadable, so the list may
+    // still contain people who have left. Never the reverse.
+    degraded: departedError,
   });
 }

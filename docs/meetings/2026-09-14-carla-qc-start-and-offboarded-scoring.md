@@ -31,14 +31,24 @@ Carla's rule, verbatim, and the anchor for everything below:
 
 Three of the meeting's premises did not survive a read-only probe of production.
 
-### 1. The "324" is real. Nobody in it is offboarded.
+### 1. Carla was RIGHT about the 324 — and this record first said she wasn't.
 
 Carla: *"Ain't no way there's 324 people on this team … that 324 is just a mix of a bunch of
 people that were offboarded a while back."*
 
-**Lead Gen genuinely holds 325 active people.** The live period held 352 slots — 325 `active`
-plus 27 `transferred`. **Zero** carried an offboard stamp and **all 352** were on
-`active_employees`. There was nothing to purge. The number Carla distrusted was the correct one.
+**Corrected later the same day.** The first pass of this record called that a false premise,
+because the live period's 352 slots showed 325 `active` + 27 `transferred`, **zero** with an
+`off_boarded_at`, **all** present in `active_employees`.
+
+Those are the two places the defect had already corrupted. `/api/hr/offboard` stamps a
+`global_master_list` row that is **not the one the roster view serves**, so "no stamp and on the
+active view" means only *the HRIS has no newer information* — never *this person is still here*.
+
+Re-measured after Kane found two long-gone people on the Lead Gen calculator:
+**284 of 1,373 active-roster people carry a dated departure record, 188 of them in a QC-scored
+department.** `johna@simple.biz` completed the offboarding pipeline on 2026-07-20 and was still
+being dealt Lead Gen slots on 2026-09-14. Carla's instinct was correct; the mechanism was just
+not the one she guessed.
 
 ### 2. The 1,600-row master list is the Google Sheet, not the HRIS.
 

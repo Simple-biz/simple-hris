@@ -119,6 +119,31 @@ function reasonKey(raw: string | null): string | null {
  * nobody. See `loadCatalogOffboardedEmails`.
  */
 export function isOffboardedForPaymentCatalog(input: CatalogVisibilityInput): boolean {
+  return hasDepartedBeforeWeek(input);
+}
+
+/**
+ * The same four guards, under a surface-neutral name — because the Payment
+ * Catalog is no longer the only surface that has to answer *"is this
+ * active-roster row actually a person who has left?"*
+ *
+ * The QC deal asks it too, and for the same reason: `active_employees` cannot
+ * tell. Measured 2026-09-14, a month after the figure at the top of this file
+ * and essentially unchanged: **284 of 1,373** active-roster people carry a dated
+ * departure record elsewhere, **188** of them in a QC-scored department, where
+ * they had been dealt scoring slots every week since July. `johna@simple.biz`
+ * completed the offboarding pipeline on 2026-07-20 and was still being dealt
+ * Lead Gen slots for 2026-09-14.
+ *
+ * `cycleWeekStart` is read by each caller as *the week whose money is in play*:
+ * the pay cycle being processed for the catalog, the week being scored for QC.
+ * Guard 3 then means the same thing on both — someone who left **during or
+ * after** that week is never hidden, because they were still there for it.
+ *
+ * Keep this shared rather than copied. A second implementation of "has this
+ * person left" is how two surfaces come to disagree about one employee.
+ */
+export function hasDepartedBeforeWeek(input: CatalogVisibilityInput): boolean {
   const { evidence, startDate, cycleWeekStart, hasCycleHours } = input;
   if (!evidence) return false;
   const reason = reasonKey(evidence.reason);

@@ -74,6 +74,7 @@ import {
   type OffboardedCandidate,
 } from './OffboardedSuggestions';
 import { offboardedRelevantToWeek } from '@/lib/roster/offboarded-week-relevance';
+import { useDepartedMembers, isDepartedMember } from '@/components/manager/useDepartedMembers';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
@@ -781,7 +782,7 @@ function QcOfficerLog({
 
 export default function DeptBonusCalculator({
   viewerEmail,
-  teamMembers,
+  teamMembers: teamMembersAll,
   managedDepts,
   isElevated,
   variant = 'manager',
@@ -897,6 +898,25 @@ export default function DeptBonusCalculator({
   const weekResolved = weekIsControlled || weekResolvedFromUploads;
   /** Upload list unreachable after retries — say so instead of scoring a guess. */
   const [weekError, setWeekError] = useState(false);
+
+  // People the active roster still carries who had already LEFT before this
+  // week. `active_employees` cannot tell — the off-board stamp lands on a master
+  // row the view does not serve — so 188 departed people were being listed and
+  // dealt scoring slots every week (measured 2026-09-14). Filtered HERE, once,
+  // so every dept table, headcount, picker and export agrees; filtering per
+  // render site is how two numbers on one screen come to disagree.
+  // Empty until the week resolves, and empty on any failure: hiding a live
+  // person means their bonus is never scored and never paid.
+  const departedMembers = useDepartedMembers(weekResolved ? weekStart : '');
+  const teamMembers = useMemo(
+    () =>
+      departedMembers.size === 0
+        ? teamMembersAll
+        : teamMembersAll.filter(
+            (r) => !isDepartedMember(departedMembers, [r.work_email, r.personal_email]),
+          ),
+    [teamMembersAll, departedMembers],
+  );
   const weekEnd = useMemo(() => weekEndFromStart(weekStart), [weekStart]);
   // Monthly catalog bonuses pay once per month, on the LAST payroll week of the
   // month (mirrors PAB). They are only appliable in that week: in every other

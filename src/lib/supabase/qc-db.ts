@@ -15,6 +15,7 @@ import { dealDeptSlots, leastLoadedOfficer } from '@/lib/qc/deal';
 import { qcSlotsAsOfWeek, type AsOfWeekCandidate, type AsOfWeekTransfer } from '@/lib/qc/roster-as-of-week';
 import { sanitizeOffboardDay } from '@/lib/roster/offboard-date-sanity';
 import { fetchDepartmentTransferRows } from '@/lib/payroll/hsl-transfer-effective';
+import { loadQcDepartedEmails } from '@/lib/qc/departed-members';
 import type { AppliedBonusRow } from './bonus-catalog-applied-db';
 
 /** A candidate plus the start date the caller gates on (the pure module
@@ -305,9 +306,19 @@ export async function ensureQcAssignmentsForPeriod(periodStart: string): Promise
   officers: string[];
   rows: QcAssignmentRow[];
   error: string | null;
+  /** Emails of slot-holders who had already LEFT before this week — the active
+   *  roster cannot tell, so callers must drop them from what they render. The
+   *  deal already refuses to create new slots for them, but a slot dealt before
+   *  this guard existed is STICKY and never deleted, so the read side has to
+   *  filter too (188 such slots measured 2026-09-14). */
+  departedEmails: Set<string>;
+  /** Non-null when the departed set is degraded, i.e. INCOMPLETE. Never a
+   *  reason to hide more — an empty set hides nobody. */
+  departedError: string | null;
 }> {
   const sb = createSupabaseServiceRoleClient();
-  if (!sb) return { officers: [], rows: [], error: 'Supabase not configured' };
+  const NO_DEPARTED = { departedEmails: new Set<string>(), departedError: null };
+  if (!sb) return { officers: [], rows: [], error: 'Supabase not configured', ...NO_DEPARTED };
 
   // Reassigned below once the week's freeze is applied.
   let officers = await listActiveQcOfficers();
@@ -316,12 +327,12 @@ export async function ensureQcAssignmentsForPeriod(periodStart: string): Promise
     .from('qc_score_assignments')
     .select('*')
     .eq('period_start', periodStart);
-  if (readErr) return { officers, rows: [], error: readErr.message };
+  if (readErr) return { officers, rows: [], error: readErr.message, ...NO_DEPARTED };
   const existing = (existingData ?? []) as QcAssignmentDbRow[];
 
   // No officers → nothing to (re)assign. Surface whatever exists (possibly stale).
   if (officers.length === 0) {
-    return { officers, rows: existing.map(toAssignmentRow), error: null };
+    return { officers, rows: existing.map(toAssignmentRow), error: null, ...NO_DEPARTED };
   }
 
   // Live slots: one per (member, QC-dept) from the master list. A person with
@@ -345,9 +356,17 @@ export async function ensureQcAssignmentsForPeriod(periodStart: string): Promise
   // opening the dashboard simply vanished. Carla, 2026-09-14: *"Every time
   // someone gets transferred, we have to just add it externally. Same as if
   // they were offboarded."* Rules and their proofs: src/lib/qc/roster-as-of-week.ts.
-  const [offboardedDuringWeek, transferRows] = await Promise.all([
+  const [offboardedDuringWeek, transferRows, departed] = await Promise.all([
     listOffboardedSince(periodStart),
     fetchDepartmentTransferRows().catch(() => null),
+    // People the ACTIVE roster still carries who had already left before this
+    // week. `/api/hr/offboard` stamps a master row the roster view does not
+    // serve, so 188 of them were being dealt Lead Gen slots every week
+    // (measured 2026-09-14). Fails open — see loadQcDepartedEmails.
+    loadQcDepartedEmails(allEmployees, periodStart).catch(() => ({
+      emails: new Set<string>(),
+      error: 'Departed-member evidence could not be read — nobody hidden.',
+    })),
   ]);
 
   const rosterCandidates: QcWeekCandidate[] = allEmployees.map((e) => ({
@@ -380,8 +399,12 @@ export async function ensureQcAssignmentsForPeriod(periodStart: string): Promise
     return !sd || sd.getTime() <= periodEnd.getTime();
   };
 
+  // A person who had already LEFT before this week is not dealt a new slot. This
+  // is narrowing only: the set is empty whenever the evidence cannot be read.
+  const stillHere = (c: QcWeekCandidate) => !departed.emails.has(c.email);
+
   const asOfWeek = qcSlotsAsOfWeek({
-    roster: rosterCandidates.filter(hadStarted),
+    roster: rosterCandidates.filter(hadStarted).filter(stillHere),
     offboarded: (offboardedDuringWeek ?? []).filter(hadStarted),
     transfers,
     weekStart: periodStart,
@@ -533,7 +556,7 @@ export async function ensureQcAssignmentsForPeriod(periodStart: string): Promise
     const { error } = await sb
       .from('qc_score_assignments')
       .upsert(toUpsert, { onConflict: 'period_start,member_email,department' });
-    if (error) return { officers, rows: [], error: error.message };
+    if (error) return { officers, rows: [], error: error.message, ...NO_DEPARTED };
   }
 
   const rows: QcAssignmentRow[] = desiredRows.map((d) => ({
@@ -544,7 +567,13 @@ export async function ensureQcAssignmentsForPeriod(periodStart: string): Promise
     roster_status: d.status,
     current_department: d.current,
   }));
-  return { officers, rows, error: null };
+  return {
+    officers,
+    rows,
+    error: null,
+    departedEmails: departed.emails,
+    departedError: departed.error,
+  };
 }
 
 /** Per-department totals + equal per-officer share, for the QC Overview. Counts
