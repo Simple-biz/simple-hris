@@ -305,6 +305,33 @@ The verifier **exits 1 if anyone is dropped without a dated transfer-in record**
 > back to the live roster — exactly the pre-2026-09-14 behaviour, never a week silently missing
 > its leavers.
 
+## An absent officer does not block the week — the manager takes over
+
+Kane raised it on 2026-09-14: *"what if a certain person from QC is absent like the whole week?
+They have people to score but they can't."* Carla: Jackie should jump in, *"as a manager, she
+should just be able to do it."*
+
+**Ruled 2026-09-14: nothing needs building.** Jackie already has every capability, and the code
+was checked against the claim rather than assumed:
+
+- **Her roster is the whole department, not a slice.** In manager mode the calculator reads
+  `rosterByDept`, never `qcRosterByDept` (`DeptBonusCalculator.tsx`) — the officer split governs
+  who is *asked* to score, never who *may be* scored.
+- **An unlocked slice cannot block her.** `readOnly` in manager mode depends on the
+  department's own status (`d.status !== 'draft'`), not on any `qc_officer_locks` row. An
+  officer who never locks — because they were never there — leaves the manager unblocked.
+- **She can see who is behind.** The QC first-pass rail shows each officer's slot count and
+  lock state, and clicking one filters the table to that officer's people.
+
+> One wrinkle worth knowing before it is reported as a bug: the officer filter narrows the
+> manager's table, and that table is built from the **active** roster. A leaver assigned to the
+> absent officer is therefore reached through the **Offboarded · last pay** strip rather than
+> the filter. Coverage is complete, but by two paths rather than one.
+
+The frozen-week rule is why this matters: an absent officer's slots are **not** redistributed
+mid-week (`regen = existing.length === 0`), so "the manager jumps in" is the whole recovery
+mechanism, not a fallback to one.
+
 ## Eligibility — start date only
 
 The only filter is employment start date: a member whose `start_date` is after the scoring

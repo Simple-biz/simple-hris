@@ -84,8 +84,10 @@ and syncs clobber departments, so a missing record always means *keep*.
 
 ## Open — carried to the session log
 
-1. **Absent QC officer.** *"What if Perry is absent the whole week?"* Carla: Jackie jumps in as
-   manager; possibly super-admin. **Unbuilt and unruled** — Carla to consult Jackie.
+1. ~~**Absent QC officer.**~~ **RULED 2026-09-14, nothing to build.** Kane: *"it's fine because
+   Jackie can still take over them via the KPI Calculator."* Verified against the code — manager
+   mode reads the **whole department**, and `readOnly` keys on the department's status, not on
+   any officer lock. See `qc-scoring.md` § *An absent officer does not block the week*.
 2. **Pending-hire promotion bug.** Four active people were invisible in the inbox and only
    findable under Pending Hires; Carla fixed it by un-promoting and re-promoting. **Not
    investigated.**
