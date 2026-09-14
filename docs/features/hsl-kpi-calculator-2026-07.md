@@ -1186,6 +1186,37 @@ open by default**:
   > The effect was a list that never emptied — the failure Carla actually
   > reported. Kane ruled the doc stale on 2026-09-14.
 
+### Active / Offboarded — the KPI tiles above the member table
+
+Two `StatCard`s sit between the department panel's header and the scrolling table
+(Kane, 2026-09-14: *"lets have a kpi at the top of this saying how many are active
+and how many were offboarded"*). They use the **shipped** tile from
+`src/components/accounting/kpi-stat-card.tsx`, whose own header says to keep it the
+single source of truth — a second copy is how two bands that should match drift.
+
+| Tile | Is | Is not |
+| --- | --- | --- |
+| **Active** | `allMembers.length − leaverCount` — people on *this week's* table who have not left | the department's headcount |
+| **Offboarded** | the leavers on the table, being scored for their **final pay week** | the people hidden because they left earlier |
+
+**Both figures count `allMembers` — the same array the panel header counts** — so
+the header's "N people" and the tiles can never disagree for one department. A
+leaver is identified by `offboardedEmailSet`, the very set the row chip uses, never
+by a second rule that could drift from it. Pinned by control tests in
+`src/lib/qc/departed-guard.test.ts`.
+
+The **third** number — people dropped because they left *before* the scored week
+(`qc-scoring.md` § *The roster carries people who have LEFT*) — is deliberately not
+a tile. It describes people who are not in the list at all, and a headline counting
+invisible people invites the reading that they are still owed something. It appears
+as a sub-line on the Offboarded tile only when there is nothing owed and something
+was hidden: *"none owed; 158 left earlier and are hidden."*
+
+**Neither tile prints a figure until the week resolves** — they render a skeleton.
+A count beside a week picker that does not move with the week is a lie, and `0` is a
+claim ("nobody is offboarded") where the skeleton is an admission. Same reason the
+calculators pass `weekResolved ? weekStart : ''` everywhere else.
+
 Both bodies unfold below the toolbar with the same `UNFOLD` transition (height +
 opacity on the file's `EASE`; `useReducedMotion` cuts). The first cut of Compare
 was a collapsed row above the table and Kane could not find it — a control that

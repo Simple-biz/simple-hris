@@ -107,14 +107,45 @@ test('CONTROL: the read-side filter is not a roster_status filter', () => {
   assert.doesNotMatch(line, /roster_status/);
 });
 
+const calcSrc = readFileSync(
+  join(process.cwd(), 'src/components/manager/DeptBonusCalculator.tsx'),
+  'utf8',
+);
+
 test('CONTROL: the calculator filters its member list in exactly one place', () => {
-  const src = readFileSync(join(process.cwd(), 'src/components/manager/DeptBonusCalculator.tsx'), 'utf8');
-  const uses = src.split('\n').filter((l) => l.includes('isDepartedMember(')).length;
-  assert.equal(
-    uses,
-    1,
-    'filtering per render site is how two numbers on one screen come to disagree — ' +
-      'the member list is filtered once, at the source',
+  // The first cut of this control counted every `isDepartedMember(` line and
+  // broke the moment a COUNT was derived beside the filter — a detector that
+  // cannot tell filtering from counting. What actually matters is that the
+  // member list is narrowed once, at the source: filtering per render site is
+  // how two numbers on one screen come to disagree.
+  const filters = calcSrc.split('\n').filter((l) => l.includes('teamMembersAll.filter(')).length;
+  assert.equal(filters, 1, 'the unfiltered roster is narrowed exactly once');
+  assert.match(
+    calcSrc,
+    /useDepartedMembers\(weekResolved \? weekStart : ''\)/,
+    'never filter on the unresolved week seed',
   );
-  assert.match(src, /useDepartedMembers\(weekResolved \? weekStart : ''\)/, 'never filter on the unresolved week seed');
+});
+
+test('CONTROL: the Active tile cannot disagree with the panel header', () => {
+  // Both count `allMembers`. A second source for either — the roster map, a
+  // re-filter, a length taken before the search — is how a header saying
+  // "40 people" ends up above a tile saying 38.
+  assert.match(
+    calcSrc,
+    /const activeCount = allMembers\.length - leaverCount;/,
+    'Active is allMembers minus the leavers counted from that same array',
+  );
+  assert.match(
+    calcSrc,
+    /const leaverCount = allMembers\.filter\(\(m\) =>\s*\n?\s*offboardedEmailSet\.has\(canonEmail\(m\.email\)\),\s*\n?\s*\)\.length;/,
+    'a leaver is identified by the SAME set the row chip uses, not a second rule',
+  );
+});
+
+test('CONTROL: the KPI tiles never print a figure for an unresolved week', () => {
+  // 0 is a claim ("nobody is offboarded"); the skeleton is an admission.
+  for (const m of [/\{weekResolved \? activeCount : <CountSkeleton \/>\}/, /\{weekResolved \? leaverCount : <CountSkeleton \/>\}/]) {
+    assert.match(calcSrc, m, 'both tiles gate on weekResolved');
+  }
 });

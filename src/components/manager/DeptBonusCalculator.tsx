@@ -52,6 +52,7 @@ import {
   User,
   UserPlus,
   Users,
+  UserMinus,
   X,
   Zap,
 } from 'lucide-react';
@@ -75,6 +76,7 @@ import {
 } from './OffboardedSuggestions';
 import { offboardedRelevantToWeek } from '@/lib/roster/offboarded-week-relevance';
 import { useDepartedMembers, isDepartedMember } from '@/components/manager/useDepartedMembers';
+import { StatCard, StatValue, StatSub } from '@/components/accounting/kpi-stat-card';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
@@ -917,6 +919,20 @@ export default function DeptBonusCalculator({
           ),
     [teamMembersAll, departedMembers],
   );
+  /** How many people this department LOST to the departed filter, per dept key.
+   *  Counted from the UNFILTERED roster and keyed exactly as `rosterByDept` keys
+   *  it, so "shown + hidden" adds up to what the roster actually holds. */
+  const departedCountByDept = useMemo(() => {
+    const map = new Map<string, number>();
+    if (departedMembers.size === 0) return map;
+    for (const r of teamMembersAll) {
+      if (!isDepartedMember(departedMembers, [r.work_email, r.personal_email])) continue;
+      const k = normalizeDeptToKey(r.department) ?? slugifyDeptKey(r.department ?? '');
+      if (!k) continue;
+      map.set(k, (map.get(k) ?? 0) + 1);
+    }
+    return map;
+  }, [teamMembersAll, departedMembers]);
   const weekEnd = useMemo(() => weekEndFromStart(weekStart), [weekStart]);
   // Monthly catalog bonuses pay once per month, on the LAST payroll week of the
   // month (mirrors PAB). They are only appliable in that week: in every other
@@ -2228,6 +2244,19 @@ export default function DeptBonusCalculator({
         if (needs) toFill += 1;
       }
 
+      // Who is on this table, split. Counted over `allMembers` — the SAME array
+      // the panel header counts — so the header and the KPI tiles can never
+      // print different numbers for one department. A leaver is identified the
+      // way the row chip identifies one (`offboardedEmailSet`), not by a second
+      // rule that could drift from it.
+      const leaverCount = allMembers.filter((m) =>
+        offboardedEmailSet.has(canonEmail(m.email)),
+      ).length;
+      const activeCount = allMembers.length - leaverCount;
+      // People this department LOST to the departed filter — they left before
+      // the scored week and are deliberately not on the table at all.
+      const deptDepartedHidden = departedCountByDept.get(key) ?? 0;
+
       return {
         d, dept, color, readOnly, total,
         common, sharedSet, normalCommon, sharedCommon,
@@ -2235,12 +2264,13 @@ export default function DeptBonusCalculator({
         hasIndividual, hasAnyBonus,
         colMeta, sharedMeta, indivSubtotal,
         entered, toFill,
+        activeCount, leaverCount, deptDepartedHidden,
       };
     },
     [
       state, cardSearch, deptTotal, commonByDept, sharedCommonByDept,
       individualByDept, applicableBonuses, fx, memberMatchesQuery, isQc, qcLocked,
-      weekPending, settledFigure,
+      weekPending, settledFigure, offboardedEmailSet, canonEmail, departedCountByDept,
     ],
   );
 
@@ -3053,6 +3083,7 @@ export default function DeptBonusCalculator({
       d, dept, color, total, common, sharedSet,
       colMeta, sharedMeta, indivSubtotal, hasIndividual, hasAnyBonus,
       allMembers, cq, entered, toFill,
+      activeCount, leaverCount, deptDepartedHidden,
     } = v;
     // QC officer filter (manager review): when an officer is picked in the left
     // rail, show only the people they scored. Matched on the canonical
@@ -3521,6 +3552,32 @@ export default function DeptBonusCalculator({
                 setLeadGenPage(0);
               }}
             />
+          )}
+          {/* Who is on this table, for the week in view. The Active figure is
+              `allMembers.length` minus the leavers below it — the SAME array the
+              panel header counts — so the two can never print different numbers
+              for one department. Skeletons until the week resolves: a count beside
+              a week picker that does not move with the week is a lie, and 0 is a
+              claim rather than a placeholder. */}
+          {d?.loaded && (
+            <div className="grid flex-none grid-cols-2 gap-3 px-4 pb-3 sm:px-5">
+              <StatCard tone="teal" icon={Users} label="Active">
+                <StatValue>{weekResolved ? activeCount : <CountSkeleton />}</StatValue>
+                <StatSub>on this week&rsquo;s table</StatSub>
+              </StatCard>
+              <StatCard tone="amber" icon={UserMinus} label="Offboarded">
+                <StatValue>{weekResolved ? leaverCount : <CountSkeleton />}</StatValue>
+                <StatSub>
+                  {!weekResolved
+                    ? 'resolving the pay week'
+                    : leaverCount > 0
+                      ? 'final pay — still scoreable'
+                      : deptDepartedHidden > 0
+                        ? `none owed; ${deptDepartedHidden} left earlier and are hidden`
+                        : 'nobody owed a final score'}
+                </StatSub>
+              </StatCard>
+            </div>
           )}
           <div className="min-h-0 min-w-0 flex-1 overflow-auto">
           <AnimatePresence mode="wait" initial={false}>
@@ -4973,6 +5030,15 @@ function VarFields({
  *  saved values load. The column count comes from the already-loaded catalog,
  *  so the skeleton lines up with the real grid that replaces it (no layout
  *  shift). A small per-element animation delay gives the pulse a gentle wave. */
+/** Placeholder for a figure whose pay week has not resolved yet. A 0 here would
+ *  be a claim ("nobody is offboarded"); this is an admission that we do not know
+ *  yet. Matches the skeleton bar the QC Overview uses for the same reason. */
+function CountSkeleton() {
+  return (
+    <span className="inline-block h-6 w-10 animate-pulse rounded bg-zinc-200/80 align-middle dark:bg-zinc-800" />
+  );
+}
+
 function DeptTableSkeleton({ rows, cols }: { rows: number; cols: number }) {
   const nameW = [124, 96, 142, 108, 88, 132, 100, 116, 92, 120];
   return (
