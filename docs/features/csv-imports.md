@@ -123,6 +123,67 @@ Errors are caught and re-thrown as JSON with `success: false` and a descriptive 
 
 ---
 
+### A sync NEVER un-writes an offboard *(2026-09-14)*
+
+Kane: *"everyone offboarded should not be in the GLOBAL MASTER LIST anywhere in the HRIS."*
+
+`replaceGlobalMasterListFromCsvText` used to take **`clearOffboarded`**, which re-activated any
+stamped row whose `off_boarded_at` was older than a 14-day final-pay grace — clearing all four
+`off_boarded_*` columns and both deletion timers. The Admin checkbox that set it
+(*"Restore off-boarded"*) **defaulted to `true`**, so every manual sheet sync re-activated
+leavers unless somebody remembered to untick it.
+
+**Measured 2026-09-14: 178 people** were sitting on the active roster with `off_boarded_at = null`
+despite a dated departure record elsewhere — **every one of them stamped in July 2026**, 158 of
+them in Lead Gen, where they had been dealt QC scoring slots every week since. `johna@simple.biz`
+completed the offboarding pipeline on 2026-07-20 and was still dealt a Lead Gen slot for
+2026-09-14.
+
+> The grace window was added on 2026-07-27 after a sync un-offboarded 19 leavers stamped 1–4 days
+> earlier. It bounded the damage without stopping it, because **the sheet keeps listing leavers
+> indefinitely** — so anyone more than a fortnight gone came back on the next sync.
+
+**The option is gone, not defaulted off.** Ingest cannot clear an offboard at all:
+
+| | |
+|---|---|
+| `clearOffboarded` parameter | removed from the function, the cron route, and the Admin request |
+| `OFFBOARD_REACTIVATION_GRACE_DAYS` | removed — there is nothing left to grace |
+| *"Restore off-boarded"* checkbox | **removed, not disabled.** A control that cannot act is a worse lie than no control |
+| the update payload | actively `delete`s all four `off_boarded_*` columns **and** both deletion timers, so a future edit that lets one into `payload` still cannot un-offboard anyone |
+
+Everything else about a stamped row still syncs — name, department, emails and
+`last_seen_upload_id` all update normally. They simply never re-enter `active_employees` from
+here.
+
+**The only way back onto the roster is the Restore button** — HR → Offboarding,
+`/api/hr/reonboard`, one deliberate audited person at a time (`hr.employee.reonboarded`). That
+path is untouched, and a control test asserts it still exists: removing the sheet route is only
+safe because an explicit one survives.
+
+Pinned by `src/lib/supabase/master-sync-never-reactivates.test.ts`.
+
+### Repairing the rows it already broke
+
+`scripts/backfill-offboard-stamps.mts` — read-only without `--apply`, and it writes a full SELECT
+backup of every row it intends to touch **before** any write (`docs/audits/backups/`, which is
+gitignored: those rows carry names, personal emails and addresses).
+
+It stamps only people who clear all four guards of `hasDepartedBeforeWeek` — the same shared
+predicate the Payment Catalog and the QC deal use: dated evidence matched on **work email only**,
+a canonical **departure reason**, the record **post-dating their own Start Date**, and **no hours
+in the current cycle's timesheet**. If the timesheet cannot be read it **refuses to apply**:
+three guards are not four, and the missing one is the only one a wrong date cannot defeat.
+
+Applied 2026-09-14: **178 rows stamped, 0 failures.** The active roster went **1,373 → 1,195**
+and Lead Gen from 382 to **224**. Of the 284 people carrying departure evidence, the guards
+correctly **kept 106** — re-hires, `temporary_pause` suspensions, `duplicate_cleanup` markers,
+and people with hours in the live timesheet.
+
+> **Order matters.** The code fix must be deployed before the backfill holds. Until it is, a
+> manual sheet sync running the old build would re-activate them again. The script is idempotent
+> (`.is('off_boarded_at', null)`), so re-running it repairs any recurrence.
+
 ## 4. Ingest pipeline behavior & guarantees
 
 ### Master list (`replaceGlobalMasterListFromCsvText`)

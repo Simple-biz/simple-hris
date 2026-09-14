@@ -65,7 +65,6 @@ export async function POST(req: NextRequest) {
       updated,
       rowsMissingPersonalEmail,
       duplicatesInCsv,
-      reonboarded,
       reconciledViaWorkEmail,
     } = await replaceGlobalMasterListFromCsvText(text, fileName);
 
@@ -107,7 +106,6 @@ export async function POST(req: NextRequest) {
         updated,
         rows_missing_personal_email: rowsMissingPersonalEmail,
         duplicates_in_csv: duplicatesInCsv,
-        reonboarded,
         reconciled_via_work_email: reconciledViaWorkEmail,
         upload_id: uploadId,
       },
@@ -121,7 +119,6 @@ export async function POST(req: NextRequest) {
       updated,
       rowsMissingPersonalEmail,
       duplicatesInCsv,
-      reonboarded,
       reconciledViaWorkEmail,
       uploadId,
       ratesReconcile,

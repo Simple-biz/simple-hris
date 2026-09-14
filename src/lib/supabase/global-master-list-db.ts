@@ -442,27 +442,33 @@ async function promoteMasterListUploadToCurrent(
  *   5. Promote the new upload to `is_current=true`.
  */
 /**
- * FINAL PAY GRACE window: a clearOffboarded sync re-activates a stamped row
- * only when the stamp is OLDER than this many days. Payroll pays one week in
- * arrears, so a leaver's last check can be marked paid up to ~13 days after
- * the stamp (offboarded at the START of a pay week → paid at the END of the
- * following week) — and the sheet routinely still lists fresh leavers, so an
- * unguarded sync would erase the offboard mid final-pay-cycle (they'd vanish
- * from the KPI calculators' "Offboarded — Last Pay" strips and re-enter the
- * roster as ghosts). This is a pure DB-record guard: account teardown
- * (webhooks/automation) is untouched — the offboard FACT simply can't be
- * un-written by a stale sheet row while the final check may still be pending.
+ * A SHEET SYNC NEVER UN-WRITES AN OFFBOARD.
  *
- * This never blocks a real re-hire: the guard only applies to same-person
- * (personal email) matches, and the HR Offboarding tab's Restore button
- * (/api/hr/reonboard) re-activates anyone instantly regardless of the window.
+ * Kane, 2026-09-14: *"everyone offboarded should not be in the GLOBAL MASTER LIST
+ * anywhere in the HRIS."*
+ *
+ * This function used to take `clearOffboarded`, which re-activated any stamped
+ * row whose stamp was older than a 14-day final-pay grace. That is how 158 Lead
+ * Gen people — every one of them stamped in **July 2026** — came back onto the
+ * active roster with `off_boarded_at = null`, and were then dealt QC scoring
+ * slots every week until 2026-09-14. The grace window was added in July after a
+ * sync un-offboarded 19 leavers stamped 1-4 days earlier; it bounded the damage
+ * without stopping it, because the sheet keeps listing leavers indefinitely.
+ *
+ * The offboard is now a one-way fact as far as ingest is concerned. **The only
+ * way back onto the roster is the explicit Restore button** — HR → Offboarding,
+ * `/api/hr/reonboard` — which is a deliberate, audited, per-person action
+ * (`hr.employee.reonboarded`). A stale sheet row can no longer make that
+ * decision on HR's behalf.
+ *
+ * Everything else about a stamped row still syncs: name, department, emails and
+ * `last_seen_upload_id` all update normally. Only the four `off_boarded_*`
+ * columns and the two deletion timers are now untouchable from here.
  */
-export const OFFBOARD_REACTIVATION_GRACE_DAYS = 14;
 
 export async function replaceGlobalMasterListFromCsvText(
   csvText: string,
   sourceFile: string,
-  options: { clearOffboarded?: boolean } = {},
 ): Promise<{
   rowCount: number;
   uploadId: string;
@@ -472,20 +478,6 @@ export async function replaceGlobalMasterListFromCsvText(
   /** Count of rows that shared a `(personal_email, department)` key with another row in the same CSV.
    *  Last occurrence wins; earlier ones are dropped silently to avoid violating the partial unique index. */
   duplicatesInCsv: number;
-  /** How many previously off-boarded rows were re-activated because clearOffboarded=true. */
-  reonboarded: number;
-  /** Re-activations SKIPPED because the person was off-boarded within the last
-   *  OFFBOARD_REACTIVATION_GRACE_DAYS — their final pay cycle. The row still
-   *  syncs (fields + last_seen bump) but keeps its off_boarded_* stamps, so a
-   *  stale sheet row can't un-offboard someone before their last check is out.
-   *  Re-run the sync with clearOffboarded after the window to re-activate. */
-  reonboardSkippedRecent: number;
-  /** Who was skipped (capped at 100), so the sync caller can surface them. */
-  reonboardSkippedPeople: Array<{
-    name: string | null;
-    work_email: string | null;
-    off_boarded_at: string;
-  }>;
   /** Rows matched to an existing DB row by Work Email + Department when (Personal Email, Department) did not match — fixes sheet/DB personal-email drift. */
   reconciledViaWorkEmail: number;
   /** INSERT candidates dropped because their (work email, department) was already
@@ -493,7 +485,6 @@ export async function replaceGlobalMasterListFromCsvText(
    *  `global_master_list_work_email_dept_uniq`. */
   skippedWorkDeptCollisions: number;
 }> {
-  const { clearOffboarded = false } = options;
   const supabase = requireServiceRole();
   const table = getMasterTableName();
 
@@ -640,14 +631,6 @@ export async function replaceGlobalMasterListFromCsvText(
 
   let inserted = 0;
   let updated = 0;
-  let reonboarded = 0;
-  let reonboardSkippedRecent = 0;
-  const reonboardSkippedKeys = new Set<string>();
-  const reonboardSkippedPeople: Array<{
-    name: string | null;
-    work_email: string | null;
-    off_boarded_at: string;
-  }> = [];
   let reconciledViaWorkEmail = 0;
   let skippedWorkDeptCollisions = 0;
   const rowsToInsert: Record<string, string | null>[] = [];
@@ -722,66 +705,22 @@ export async function replaceGlobalMasterListFromCsvText(
         }
       }
 
-      const offBoardedAtRaw =
-        match.kind === "work" ? match.row.off_boarded_at : match.off_boarded_at;
-      const isOffboarded = !!offBoardedAtRaw;
-      // FINAL PAY GRACE: never re-activate someone off-boarded within the
-      // grace window, even with clearOffboarded=true. Payroll pays one week in
-      // arrears, so their last check goes out during this window — and the
-      // sheet routinely still lists fresh leavers (rows lag HR), which used to
-      // silently erase real offboard stamps mid final-pay-cycle (2026-07-27:
-      // a sync un-offboarded 19 Lead Gen leavers stamped 1-4 days earlier).
-      // The row still syncs normally below; only the stamp-clearing is skipped.
-      //
-      // Scope guards (each keeps a documented flow working):
-      //  - PERSONAL-email matches only. A work-email-only match means the
-      //    personal emails differ — that's the recycled-work-email REPLACEMENT
-      //    HIRE pattern (a different human), and skipping would hide the new
-      //    hire from the roster while mislabeling them a leaver.
-      //  - age >= 0. A FUTURE stamp (hand-typed sheet date, e.g. the known
-      //    2027 typo) is corruption, not a fresh leaver — keep the pre-guard
-      //    self-heal where a clearOffboarded sync restores the row.
-      let reactivate = clearOffboarded && isOffboarded;
-      if (reactivate && offBoardedAtRaw && match.kind === "personal") {
-        const age = Date.now() - Date.parse(offBoardedAtRaw);
-        const withinGrace =
-          Number.isFinite(age) &&
-          age >= 0 &&
-          age < OFFBOARD_REACTIVATION_GRACE_DAYS * 86_400_000;
-        if (withinGrace) {
-          reactivate = false;
-          // Count PEOPLE, not rows — dual-role leavers have one stamped row
-          // per department and would otherwise double-count/double-list.
-          const skipKey =
-            normalizeEmail(payload["Work Email"]) || personalEmail || `name:${payload["Name"] ?? ""}`;
-          if (!reonboardSkippedKeys.has(skipKey)) {
-            reonboardSkippedKeys.add(skipKey);
-            reonboardSkippedRecent += 1;
-            if (reonboardSkippedPeople.length < 100) {
-              reonboardSkippedPeople.push({
-                name: payload["Name"] ?? null,
-                work_email: payload["Work Email"] ?? null,
-                off_boarded_at: offBoardedAtRaw,
-              });
-            }
-          }
-        }
-      }
-      if (reactivate) reonboarded += 1;
+      // A stamped row keeps its stamp. Every other field still syncs below, so
+      // a leaver's name/department/emails stay correct and `last_seen_upload_id`
+      // still bumps — they simply never re-enter `active_employees` from here.
+      // Re-hire is the Restore button (/api/hr/reonboard) and nothing else.
       const updatePayload: Record<string, string | null> = {
         ...payload,
         last_seen_upload_id: uploadId,
       };
-      if (reactivate) {
-        updatePayload["off_boarded_at"] = null;
-        updatePayload["off_boarded_reason"] = null;
-        updatePayload["off_boarded_by"] = null;
-        updatePayload["off_boarded_note"] = null;
-        // Also clear the pending hard-delete timer so a re-onboarded person
-        // isn't deleted by the scheduled-deletion cron within the 14-day window.
-        updatePayload["scheduled_deletion_at"] = null;
-        updatePayload["deletion_processed_at"] = null;
-      }
+      // Belt and braces: even if a future edit lets one of these into `payload`,
+      // ingest must not be the thing that un-writes an offboard.
+      delete updatePayload["off_boarded_at"];
+      delete updatePayload["off_boarded_reason"];
+      delete updatePayload["off_boarded_by"];
+      delete updatePayload["off_boarded_note"];
+      delete updatePayload["scheduled_deletion_at"];
+      delete updatePayload["deletion_processed_at"];
       updateOps.push({
         id: (match.kind === "work" ? match.row.id : match.id) as string | number,
         payload: updatePayload,
@@ -863,23 +802,11 @@ export async function replaceGlobalMasterListFromCsvText(
         // department, etc.) still syncs correctly. HR must fix the duplicate
         // work email in the sheet to get the assignment to move.
         delete op.payload["Work Email"];
-        // If this op was also RE-ACTIVATING an off-boarded row (clearOffboarded
-        // set off_boarded_at→null above), the re-activation itself — not the
-        // Work Email — is what violates global_master_list_work_email_dept_uniq:
-        // clearing off_boarded_at pulls a second row into the partial index for a
-        // (work email, department) an active row already owns, so the row's
-        // *existing, unchanged* work email collides. Stripping Work Email alone
-        // leaves the re-activation in the payload and the UPDATE still fails.
-        // Cancel the re-activation so the duplicate stays off-boarded; the sheet
-        // (or HR) must resolve which stint is the live one.
-        if (op.payload["off_boarded_at"] === null) {
-          delete op.payload["off_boarded_at"];
-          delete op.payload["off_boarded_reason"];
-          delete op.payload["off_boarded_by"];
-          delete op.payload["off_boarded_note"];
-          delete op.payload["scheduled_deletion_at"];
-          delete op.payload["deletion_processed_at"];
-        }
+        // This used to also have to cancel a re-activation: clearing
+        // off_boarded_at pulled a second row into the partial index for a
+        // (work email, department) an active row already owned, so stripping
+        // Work Email alone left the UPDATE still failing. Ingest no longer
+        // clears the stamp at all, so that whole class is gone with it.
         skippedWorkDeptCollisions += 1;
         continue;
       }
@@ -986,9 +913,6 @@ export async function replaceGlobalMasterListFromCsvText(
     updated,
     rowsMissingPersonalEmail,
     duplicatesInCsv,
-    reonboarded,
-    reonboardSkippedRecent,
-    reonboardSkippedPeople,
     reconciledViaWorkEmail,
     skippedWorkDeptCollisions,
   };

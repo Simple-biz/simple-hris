@@ -36,3 +36,8 @@ references/backups/
 *Payroll Dashboard*.csv
 *Payroll Dashboard*.xlsx
 NEW Payroll Dashboard*.csv
+
+# Pre-UPDATE SELECT backups written by scripts/backfill-*.mts and friends.
+# Full master rows — names, personal emails, addresses. CLAUDE.md requires the
+# backup on disk before a bulk UPDATE; it must never enter git history.
+docs/audits/backups/

@@ -69,7 +69,6 @@ interface MasterListResponse {
   updated?: number;
   rowsMissingPersonalEmail?: number;
   duplicatesInCsv?: number;
-  reonboarded?: number;
   reconciledViaWorkEmail?: number;
   uploadId?: string;
   ratesReconcile?: { hint?: string | null; ratesFewerThanMaster?: boolean } | null;
@@ -122,15 +121,6 @@ interface MasterSheetSyncResponse {
   activeCount?: number | null;
   inserted?: number;
   updated?: number;
-  reonboarded?: number;
-  /** Re-activations skipped because the person was off-boarded within the
-   *  final-pay grace window (their last check hasn't gone out yet). */
-  reonboardSkippedRecent?: number;
-  reonboardSkippedPeople?: Array<{
-    name: string | null;
-    work_email: string | null;
-    off_boarded_at: string;
-  }>;
   reconciledViaWorkEmail?: number;
   rowsMissingPersonalEmail?: number;
   duplicatesInCsv?: number;
@@ -247,7 +237,6 @@ export default function AdminCsvImports() {
   // ── Which upload card is currently "selected" — drives the batches list
   // shown at the bottom of the Upload tab. Click any card to switch.
   const [selectedSource, setSelectedSource] = useState<UploadKey>('hubstaff');
-  const [masterSyncClearOffboarded, setMasterSyncClearOffboarded] = useState(true);
 
   // ── Hubstaff uploads list (for "Uploaded batches" + Files tab)
   const [uploads, setUploads] = useState<HubstaffUploadMeta[]>([]);
@@ -499,7 +488,6 @@ export default function AdminCsvImports() {
       const res = await fetch('/api/cron/sync-master-from-sheet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clearOffboarded: masterSyncClearOffboarded }),
       });
       const json = (await res.json()) as MasterSheetSyncResponse;
       if (!res.ok || !json.success) {
@@ -514,20 +502,6 @@ export default function AdminCsvImports() {
       const sublines = [
         `${(json.inserted ?? 0).toLocaleString()} new · ${(json.updated ?? 0).toLocaleString()} updated`,
       ];
-      if ((json.reonboarded ?? 0) > 0) {
-        sublines.push(`${json.reonboarded} off-boarded employees restored to active roster`);
-      }
-      if ((json.reonboardSkippedRecent ?? 0) > 0) {
-        const names = (json.reonboardSkippedPeople ?? [])
-          .slice(0, 6)
-          .map((p) => p.name || p.work_email || '?')
-          .join(', ');
-        sublines.push(
-          `${json.reonboardSkippedRecent} kept off-boarded (recent leaver — final-pay protection; restore via HR → Offboarding if this is a mistake)${
-            names ? `: ${names}${(json.reonboardSkippedRecent ?? 0) > 6 ? ', …' : ''}` : ''
-          }`,
-        );
-      }
       if ((json.rowsMissingPersonalEmail ?? 0) > 0) {
         sublines.push(`${json.rowsMissingPersonalEmail} rows missing personal email (orphan)`);
       }
@@ -560,7 +534,7 @@ export default function AdminCsvImports() {
     } finally {
       stopProgress();
     }
-  }, [setResult, loadMasterUploads, masterSyncClearOffboarded, startProgress]);
+  }, [setResult, loadMasterUploads, startProgress]);
 
   /**
    * Pull payroll rates from the configured Google Sheet (env-driven service account).
@@ -928,8 +902,6 @@ export default function AdminCsvImports() {
               onRatesPick={() => ratesInputRef.current?.click()}
               onHubstaffPick={() => hubstaffInputRef.current?.click()}
               onMasterSheetSync={handleMasterSheetSync}
-              masterSyncClearOffboarded={masterSyncClearOffboarded}
-              onMasterSyncClearOffboardedChange={setMasterSyncClearOffboarded}
               onRatesSheetSync={handleRatesSheetSync}
               onHslSheetSync={handleHslSheetSync}
               selectedSource={selectedSource}
@@ -1161,8 +1133,6 @@ interface UploadTabProps {
   onRatesPick: () => void;
   onHubstaffPick: () => void;
   onMasterSheetSync: () => void | Promise<void>;
-  masterSyncClearOffboarded: boolean;
-  onMasterSyncClearOffboardedChange: (v: boolean) => void;
   onRatesSheetSync: () => void | Promise<void>;
   onHslSheetSync: () => void | Promise<void>;
   /** Which card is "selected" — drives the batches list rendered below. */
@@ -1194,8 +1164,6 @@ function UploadTab(props: UploadTabProps) {
     onDeleteRequest,
     onInspect,
     onMasterSheetSync,
-    masterSyncClearOffboarded,
-    onMasterSyncClearOffboardedChange,
     onRatesSheetSync,
     onHslSheetSync,
     selectedSource,
@@ -1248,18 +1216,14 @@ function UploadTab(props: UploadTabProps) {
             selected={selectedSource === 'master'}
             onSelect={() => onSelectSource('master')}
           />
-          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-emerald-200/70 bg-emerald-50/60 px-3 py-2 text-xs text-zinc-700 transition-colors hover:bg-emerald-50 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-zinc-300 dark:hover:bg-emerald-950/30">
-            <input
-              type="checkbox"
-              checked={masterSyncClearOffboarded}
-              onChange={(e) => onMasterSyncClearOffboardedChange(e.target.checked)}
-              className="h-3.5 w-3.5 accent-emerald-600"
-            />
-            <span>
-              <span className="font-medium">Restore off-boarded</span>
-              {' '}— re-activate anyone in the sheet who was previously off-boarded
-            </span>
-          </label>
+          {/* "Restore off-boarded" lived here until 2026-09-14, DEFAULTED ON,
+              and re-activated anyone the sheet still listed whose stamp was
+              older than a 14-day grace. That is how 158 July leavers walked
+              back onto the active roster with off_boarded_at = null and were
+              dealt QC scoring slots for weeks. A sync can no longer un-write an
+              offboard; re-hire is HR → Offboarding → Restore, one audited
+              person at a time. Removed rather than disabled: a checkbox that
+              cannot act is a worse lie than no checkbox. */}
 
           {/* The "Sync Offboarded sheet" button lived here until 2026-08-07 —
               offboarding no longer ingests from the Google Sheet. The HRIS

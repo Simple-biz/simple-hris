@@ -55,11 +55,32 @@ console.log(`QC-scored departments     : ${qcHidden} hidden / ${qcKept} kept`);
 console.log(`\nsample hidden:`);
 for (const s of sample) console.log(`   - ${s}`);
 
+// What the assert means: this person must not be REACHABLE on the calculator.
+// Two states satisfy that, and the first is strictly stronger:
+//   GONE   — not on the active roster at all, because their master row is
+//            stamped and `active_employees` never serves them. This is where
+//            the 2026-09-14 backfill put the 178 July leavers.
+//   HIDDEN — still on the roster, filtered out by the departed guard.
+// The first cut asserted HIDDEN only, and began failing the moment the backfill
+// made people GONE — reporting the fix as a regression.
+const onRoster = new Set<string>();
+for (const e of employees) {
+  for (const addr of [e.work_email, e.personal_email]) {
+    const n = normEmail(addr ?? null);
+    if (n) onRoster.add(n);
+  }
+}
 let failed = 0;
 for (const a of asserts) {
-  const ok = emails.has(a);
-  console.log(`\nASSERT ${a}: ${ok ? 'HIDDEN (correct)' : 'STILL VISIBLE'}`);
-  if (!ok) failed++;
+  const gone = !onRoster.has(a);
+  const hidden = emails.has(a);
+  const state = gone
+    ? 'GONE from the roster (correct, and stronger than hidden)'
+    : hidden
+      ? 'HIDDEN by the guard (correct)'
+      : 'REACHABLE';
+  console.log(`\nASSERT ${a}: ${state}`);
+  if (!gone && !hidden) failed++;
 }
 if (failed > 0) {
   console.error(`\nFAIL: ${failed} asserted email(s) are still visible for ${week}.`);

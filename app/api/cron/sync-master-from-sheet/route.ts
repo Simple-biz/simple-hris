@@ -44,18 +44,13 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // clearOffboarded=true re-activates anyone in the sheet who was previously offboarded.
-  // Passed as a query param (?clearOffboarded=true) or in the JSON body.
-  let clearOffboarded = false;
-  const url = new URL(req.url);
-  if (url.searchParams.get('clearOffboarded') === 'true') {
-    clearOffboarded = true;
-  } else if (req.method === 'POST') {
-    try {
-      const body = (await req.clone().json()) as { clearOffboarded?: boolean };
-      if (body?.clearOffboarded === true) clearOffboarded = true;
-    } catch { /* no body or non-JSON — ignore */ }
-  }
+  // `clearOffboarded` is GONE (2026-09-14). It re-activated anyone the sheet
+  // still listed whose stamp was older than a 14-day grace, which is how 158
+  // July leavers walked back onto the active roster. A sync can no longer
+  // un-write an offboard at all; re-hire is HR → Offboarding → Restore
+  // (/api/hr/reonboard), one audited person at a time. The parameter is not
+  // read here any more — an old caller still sending it simply gets a normal
+  // sync, which is now the only kind there is.
 
   const startedAt = new Date();
   try {
@@ -66,7 +61,7 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
     const stamp = startedAt.toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
     const sourceLabel = `google-sheet:${sheetId.slice(0, 12)}…@${stamp}`;
 
-    const result = await replaceGlobalMasterListFromCsvText(csvText, sourceLabel, { clearOffboarded });
+    const result = await replaceGlobalMasterListFromCsvText(csvText, sourceLabel);
 
     // Re-stamp the manually-seeded US employees (managed outside the Google sheet)
     // onto the new current upload so they stay visible in active_employees. Scoped
@@ -96,8 +91,6 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
         rowCount: result.rowCount,
         inserted: result.inserted,
         updated: result.updated,
-        reonboarded: result.reonboarded,
-        reonboardSkippedRecent: result.reonboardSkippedRecent,
         rowsMissingPersonalEmail: result.rowsMissingPersonalEmail,
         restampedNonSheetRows: restamped,
         uploadId: result.uploadId,
@@ -131,16 +124,12 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
         rows: result.rowCount,
         inserted: result.inserted,
         updated: result.updated,
-        reonboarded: result.reonboarded,
-        reonboard_skipped_recent: result.reonboardSkippedRecent,
-        reonboard_skipped_people: result.reonboardSkippedPeople,
         rows_missing_personal_email: result.rowsMissingPersonalEmail,
         duplicates_in_csv: result.duplicatesInCsv,
         reconciled_via_work_email: result.reconciledViaWorkEmail,
         skipped_work_dept_collisions: result.skippedWorkDeptCollisions,
         restamped_non_sheet_rows: restamped,
         upload_id: result.uploadId,
-        clear_offboarded: clearOffboarded,
       },
       ip_address: clientIp(req),
     });
