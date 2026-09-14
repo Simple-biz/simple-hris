@@ -5,6 +5,12 @@ import { getEmployeesForAuthorizedServerRoute, type EmployeeRow } from './employ
 import { listDepartmentsForManager } from './department-managers';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { QC_DEPT_KEYS, type QcDeptKey } from '@/lib/qc/constants';
+import {
+  officersFromRoster,
+  freezeOfficers,
+  currentDeptByEmail,
+  classifySlot,
+} from '@/lib/qc/officers';
 import { dealDeptSlots, leastLoadedOfficer } from '@/lib/qc/deal';
 import type { AppliedBonusRow } from './bonus-catalog-applied-db';
 
@@ -135,28 +141,28 @@ export interface QcReviewStatusRow {
 
 // ── Officers + roster ───────────────────────────────────────────────────────
 
-/** Active QC-role holders, ordered by assignment date → the "Officer 1, 2, …"
- *  order. Lowercased + de-duplicated. */
+/**
+ * Active QC officers — **the people in the QC department**, not holders of an admin
+ * grant.
+ *
+ * Changed 2026-09-14 (Kane: *"I dont want the admin provisions to be the source of the
+ * QC Pickers I just want the people under the QC Department to assist the LEADGEN
+ * manager in scoring their KPI's"*). The old source was `employee_roles.role='qc'`, and
+ * it had drifted: measured that day the grant held 10 people while the QC department
+ * held 9, the extra being `jeromer@`, who had moved to Callback Team and was still being
+ * dealt 34 Lead Gen slots a week. A roster-derived list cannot drift, because the roster
+ * is the thing that defines the department.
+ *
+ * The `qc` role rows are deliberately left in place, unused by the deal — removing
+ * provisions is a separate, audited decision.
+ *
+ * Derivation and ordering live in `src/lib/qc/officers.ts`, pure and unit-tested. Order
+ * is deterministic because the deal is SEEDED: an unstable officer order would make a
+ * reproducible seed produce a different split on every read.
+ */
 export async function listActiveQcOfficers(): Promise<string[]> {
-  const sb = createSupabaseServiceRoleClient();
-  if (!sb) return [];
-  const { data, error } = await sb
-    .from('employee_roles')
-    .select('work_email, assigned_at')
-    .eq('role', 'qc')
-    .is('revoked_at', null)
-    .order('assigned_at', { ascending: true });
-  if (error || !data) return [];
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const r of data as Array<{ work_email: string }>) {
-    const e = norm(r.work_email);
-    if (e && !seen.has(e)) {
-      seen.add(e);
-      out.push(e);
-    }
-  }
-  return out;
+  const { employees } = await getEmployeesForAuthorizedServerRoute();
+  return officersFromRoster(employees);
 }
 
 /** The QC dept keys (lead_gen/callback/discovery) a manager is assigned to —
@@ -234,7 +240,8 @@ export async function ensureQcAssignmentsForPeriod(periodStart: string): Promise
   const sb = createSupabaseServiceRoleClient();
   if (!sb) return { officers: [], rows: [], error: 'Supabase not configured' };
 
-  const officers = await listActiveQcOfficers();
+  // Reassigned below once the week's freeze is applied.
+  let officers = await listActiveQcOfficers();
 
   const { data: existingData, error: readErr } = await sb
     .from('qc_score_assignments')
@@ -253,7 +260,18 @@ export async function ensureQcAssignmentsForPeriod(periodStart: string): Promise
   // START DATE is after this scoring week is excluded — they hadn't joined yet,
   // so scoring them for this period makes no sense. Unknown/unparseable start
   // dates are kept (we can't prove they hadn't started).
-  const roster = await getQcRosterMembers();
+  // The FULL active roster, read once. Narrowing to the scored departments BEFORE
+  // this point is exactly what made `roster_status='transferred'` unreachable: a person
+  // who moved out of Lead Gen vanished from the only roster the deal could see, so there
+  // was nowhere to read "where are they now" from, and every departure fell through to
+  // `removed` — the same value as quitting. Measured 2026-09-14: 0 of 8,537 rows had
+  // ever been written as `transferred`.
+  const { employees: allEmployees } = await getEmployeesForAuthorizedServerRoute();
+  const currentDepts = currentDeptByEmail(allEmployees);
+  const roster = allEmployees.filter((e) => {
+    const k = normalizeDeptToKey(e.department);
+    return !!k && QC_DEPT_SET.has(k);
+  });
   const periodEnd = weekEndDate(periodStart);
   const eligibleRoster = periodEnd
     ? roster.filter((r) => {
@@ -263,7 +281,6 @@ export async function ensureQcAssignmentsForPeriod(periodStart: string): Promise
     : roster;
   const liveSlots: Array<{ email: string; dept: string; name: string | null }> = [];
   const liveSlotSet = new Set<string>();
-  const liveDeptsByEmail = new Map<string, string[]>();
   const nameBySlot = new Map<string, string | null>();
   for (const r of eligibleRoster) {
     const email = memberEmail(r);
@@ -274,19 +291,27 @@ export async function ensureQcAssignmentsForPeriod(periodStart: string): Promise
     liveSlotSet.add(key);
     liveSlots.push({ email, dept, name: r.name ?? null });
     nameBySlot.set(key, r.name ?? null);
-    const arr = liveDeptsByEmail.get(email) ?? [];
-    arr.push(dept);
-    liveDeptsByEmail.set(email, arr);
   }
 
+  // A DEALT WEEK IS FROZEN to the officers already on its slots.
+  //
+  // This is the guard that makes a roster-derived officer list safe. Under the old admin
+  // grant the officer set only moved when somebody clicked; derived from the roster, an
+  // ordinary department transfer, an offboard, or a master-sheet clobber (a documented
+  // live risk — `hris-is-dept-source-of-truth`) changes it, and an officer-set change
+  // used to re-deal the current week. Without the freeze, routine roster churn would
+  // reshuffle every officer's slice underneath people already scoring.
+  //
+  // Kane chose this for the Jerome case on 2026-09-14: he finishes the week he is in and
+  // is not dealt the next one. New officers likewise join on the NEXT week's deal; a
+  // slot appearing mid-week is still balance-filled among the frozen set.
+  const { officers: periodOfficers } = freezeOfficers(
+    existing.map((r) => norm(r.qc_officer_email)),
+    officers,
+  );
+  officers = periodOfficers;
   const activeOfficerSet = new Set(officers);
-  const existingOfficerSet = new Set(existing.map((r) => norm(r.qc_officer_email)));
-  const officerSetChanged =
-    existing.length > 0 &&
-    (existingOfficerSet.size !== activeOfficerSet.size ||
-      [...activeOfficerSet].some((o) => !existingOfficerSet.has(o)) ||
-      [...existingOfficerSet].some((o) => !activeOfficerSet.has(o)));
-  const regen = existing.length === 0 || officerSetChanged;
+  const regen = existing.length === 0;
 
   // officerForSlot: slotKey -> officer. Seed from existing (keep attribution)
   // unless we're regenerating the whole week.
@@ -361,18 +386,16 @@ export async function ensureQcAssignmentsForPeriod(periodStart: string): Promise
     const email = key.slice(0, sep);
     const dept = key.slice(sep + 1);
     const isLive = liveSlotSet.has(key);
-    let status: QcRosterStatus = 'active';
-    let current: string | null = dept;
-    if (!isLive) {
-      const liveDepts = liveDeptsByEmail.get(email) ?? [];
-      if (liveDepts.length > 0) {
-        status = 'transferred';
-        current = liveDepts[0]!;
-      } else {
-        status = 'removed';
-        current = null;
-      }
-    }
+    // `transferred` = still employed, in a different department (carries where).
+    // `removed`     = not on the active roster at all: they left.
+    // NEITHER means "stop scoring" — Kane, 2026-09-14: "we still need to score people
+    // who quit by the way like offboarded people". Status labels a person; the officer's
+    // slot list carries every status and must never gain a status filter.
+    const { status, currentDepartment: current } = classifySlot(
+      isLive,
+      dept,
+      currentDepts.get(email) ?? null,
+    );
     const name = nameBySlot.get(key) ?? existingByKey.get(key)?.member_name ?? email;
     return { key, officer, email, dept, name, status, current };
   });
@@ -439,9 +462,16 @@ export async function listQcAssignments(periodStart: string): Promise<QcAssignme
   return ((data ?? []) as QcAssignmentDbRow[]).map(toAssignmentRow);
 }
 
-/** Officer summary (1-based index + active member/slot count) for a week.
- *  Counts only `active` slots so a transferred/removed person no longer inflates
- *  the officer's current workload. */
+/**
+ * Officer summary (1-based index + slot count) for a week.
+ *
+ * Counts EVERY slot the officer must score, whatever its `roster_status`. It used to
+ * count only `active` ones, on the reasoning that a departed person "no longer inflates
+ * the officer's current workload" — but a transferred or offboarded person is still
+ * scored (Kane, 2026-09-14: *"we still need to score people who quit"*), so excluding
+ * them made the headline disagree with the list underneath it: 34 shown against 36 to
+ * do. The count is the half that was wrong; the list was always right.
+ */
 export function summarizeOfficers(
   officers: string[],
   rows: QcAssignmentRow[],
@@ -449,7 +479,6 @@ export function summarizeOfficers(
 ): QcOfficer[] {
   const counts = new Map<string, number>();
   for (const r of rows) {
-    if (r.roster_status !== 'active') continue;
     const o = norm(r.qc_officer_email);
     counts.set(o, (counts.get(o) ?? 0) + 1);
   }

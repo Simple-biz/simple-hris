@@ -54,6 +54,52 @@ view. Nothing is deleted, so nothing needs migrating either way.
 > history. Today it is retained-but-invisible, which is what the Discovery precedent
 > established. A history view would be additive.
 
+## Who the officers are — the QC DEPARTMENT, never an admin grant
+
+Changed 2026-09-14. Kane: *"I dont want the admin provisions to be the source of the QC
+Pickers I just want the people under the QC Department to assist the LEADGEN manager in
+scoring their KPI's."*
+
+`listActiveQcOfficers` derives the officer list from the **active roster**: everyone whose
+department normalizes to `QC_OFFICER_DEPT_KEY` (`'qc'`). It no longer reads
+`employee_roles.role='qc'`.
+
+> **`QC_OFFICER_DEPT_KEY` is where the scorers sit. `QC_DEPT_KEYS` is who gets scored.**
+> Conflating the two would either enrol Lead Gen people as officers or have officers score
+> themselves. They are different constants for that reason.
+
+**Why the grant had to go — it drifts, and it had.** Measured 2026-09-14: the `qc` role held
+**10** people, the QC department held **9**. The extra was `jeromer@`, who had transferred to
+**Callback Team** and was still being dealt **34 Lead Gen slots that week**. A roster-derived
+list cannot drift, because the roster is what defines the department.
+
+The `qc` role rows are **left in place, unused by the deal**. Removing provisions is a
+separate, audited decision, and leaving them costs nothing.
+
+> **There is no "QC Manager" role, and `qc` is not one.** `qc` is the OFFICER role (its UI
+> label in Admin → Roles & permissions is "Manager's assistant", which is what makes it look
+> like a manager grant). Granting it to a manager enrols them as somebody who gets dealt
+> people to score. A manager's authority comes from `department_managers`.
+
+### A dealt week is FROZEN
+
+Once a week has slots, its officers are **the officers already on those slots** — not
+whoever is in the QC department right now. `freezeOfficers` (`src/lib/qc/officers.ts`).
+
+This is what makes a roster-derived list safe. Under the old grant the officer set only moved
+when somebody clicked. Derived from the roster, an ordinary department transfer, an offboard,
+or a master-sheet clobber ([[hris-is-dept-source-of-truth]] — the sync still writes Department
+from the sheet) changes it, and an officer-set change re-deals the current week. Without the
+freeze, routine roster churn would reshuffle every officer's slice underneath people who are
+already scoring.
+
+So `regen = existing.length === 0`. **This supersedes the old
+`regen = existing.length === 0 || officerSetChanged`** and the line that said revoking
+membership "also triggers a re-deal of the current week" — it no longer does, deliberately.
+Kane chose this for the Jerome case: he finishes the week he is in and is not dealt the next
+one. A new officer likewise joins on the next week's deal, and a slot appearing mid-week is
+still balance-filled among the frozen set.
+
 ## The weekly deal — the rule most likely to be violated
 
 **Slots are dealt to officers in a SEEDED-RANDOM order, evenly, and re-dealt each week.**
@@ -92,7 +138,8 @@ that ever passes trivially again, the buddy risk is back.
 
 - **STICKY SNAPSHOT** (`qc-db.ts`): once a slot exists for a week it is **never deleted**. If
   the member transfers or offboards the row is kept and flagged (`roster_status`,
-  `current_department`) so their score and bonus for that week still stand.
+  `current_department`) so their score and bonus for that week still stand. See
+  *Transfer memory* below — the flag half was broken from 2026-06-26 until 2026-09-14.
 - **Diff-only writes, never deletes** — a no-op read must not churn Realtime.
 - **Even split**: counts differ by at most 1 per department. Dealing positions round-robin
   over a permutation preserves this exactly; only the order changes.
@@ -104,6 +151,53 @@ that ever passes trivially again, the buddy risk is back.
 - A re-deal moves **responsibility, not scores**: `qc_kpi_submissions` conflicts on
   `(period_start, department, employee_email, bonus_id)` — it is not officer-keyed — so moving
   a slot cannot orphan a number already entered.
+
+## Transfer memory — and why nobody's status means "stop scoring"
+
+Fixed 2026-09-14. Kane: *"If an employee was Leadgen on monday and was HSL on tuesday to
+friday due to midweek transfers the rules should be that if they have an appointment set for
+KPI on monday they should still be able to be scored"*, and separately *"we still need to
+score people who quit by the way like offboarded people."*
+
+Three statuses, three distinct facts:
+
+| `roster_status` | Means | `current_department` |
+| --- | --- | --- |
+| `active` | still in the department this slot scores | the slot's own department |
+| `transferred` | still employed, in a different department | **where they are now** |
+| `removed` | not on the active roster at all — they left | null |
+
+> **NONE of them gates scoring.** The officer's own slot list (`myRows`,
+> `app/api/qc/assignments/route.ts`) filters on officer email and nothing else, and **must
+> never gain a status filter** — a source-scan test in `src/lib/qc/officers.test.ts` is the
+> control. Status says what the surface SHOWS about a person; it never decides whether they
+> can be paid for work they already did. `members` in that route is for email aliasing of
+> active people only; transferred and removed people reach the calculator through
+> `myByDept`.
+
+**`transferred` was unreachable for its entire life — 0 of 8,537 rows.** The roster feeding
+the deal was narrowed to the scored departments *before* the status branch ran, so anyone who
+left them had no current department to record and fell through to `removed`. A Lead Gen → HSL
+transfer was therefore indistinguishable from quitting, and the data a "Transferred to
+&lt;Department&gt;" indicator would need was always null.
+
+The fix reads the **full active roster** once and derives both the scored slots and a
+current-department map from it (`currentDeptByEmail`). **The roster READ widened; the KEYS did
+not.** Do not ever "fix" a status problem by widening `QC_DEPT_KEYS` — that enrols a
+department into QC scoring, which is a scoring decision wearing a bug fix's clothes.
+
+**Forward only** (Kane's call). The 1,032 historical `removed` rows keep their value; only
+slots written from this deploy onward can carry `transferred`. Backfilling would re-classify
+closed weeks.
+
+### The officer's count matches the officer's list
+
+`summarizeOfficers` counts **every** slot, whatever its status. It used to count only
+`active` ones, so an officer holding 34 active plus 2 leavers saw a headline of **34** against
+a list of **36**. Once leavers and transfers are explicitly still scored, the count is the
+half that was wrong — the list was always right. Same failure mode this doc already warns
+about for week keys: give the cards one key and the summary another and both become
+untrustworthy.
 
 ## Eligibility — start date only
 
@@ -133,9 +227,11 @@ hadn't started") — the house fail-toward-keeping pattern.
 - **The `qc` role is the first thing to check when a chip is missing** — a QC officer's fetch
   403'ing once rendered every Colombian in the wrong currency
   ([[settlement-currency-per-person]]).
-- Officer membership is granted/revoked in **Admin → Roles & permissions**, group "Manager's
-  assistant". Revoking is a **soft** revoke (`revoked_at`), so it is reversible and audited —
-  and because the officer set changed, it also triggers a re-deal of the current week.
+- **Officer membership is not granted at all any more — it is department membership.** Moving
+  somebody into or out of the QC department on the master list is what adds or removes an
+  officer, and it takes effect on the **next** week's deal, never the current one (see *A
+  dealt week is FROZEN*). The `qc` role in Admin → Roles & permissions, group "Manager's
+  assistant", no longer feeds the deal; the rows are retained but inert.
 - **The period selector offers the upcoming week** (amber *Upcoming*, never *Past*) —
   `usePayWeeks().upcomingWeek`, the same `upcomingWeekFor` the manager calculator uses, so
   officers can do the first pass before the Hubstaff file exists (Kane Q2, 2026-09-10).
