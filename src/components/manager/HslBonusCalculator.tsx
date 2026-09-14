@@ -815,21 +815,21 @@ export default function HslBonusCalculator({
   }, [overlayDept, closeOverlay]);
   // Recently offboarded people (final bonuses may still be owed) — fetched once
   // and shared by the per-dept Offboarded strips and the add-member modal.
-  const { people: offboardedPeople, hoursWeekFloor: offboardedHoursFloor } = useOffboardedPeople(true);
-  // Only the ones still in their FINAL pay cycle for the week in view: left
-  // during/after the scored week, or logged hours in it. Anyone who left
-  // before the scored week started got their last check in an earlier run —
-  // re-offering them here only invites double-paying an old bonus. (Monthly
-  // branches use the same weekly rule: once the final check is out, nothing
-  // can pay a late-scored bonus anyway.) Until the week resolves to a real
-  // payroll Sunday, the Monday local-clock seed would filter against the WRONG
-  // week — skip scoping until then ('' = no filter).
+  const { people: offboardedPeople } = useOffboardedPeople(true);
+  // Only the ones whose FINAL pay cycle is the week in view — Carla, 2026-09-14:
+  // "If I was offboarded today, I should be on the list next week, but then
+  // after that I am gone." Bounded at BOTH ends now: a stamp inside
+  // [weekStart, weekEnd + one payroll cycle], or hours in the scored week
+  // itself. (Monthly branches use the same weekly rule: once the final check is
+  // out, nothing can pay a late-scored bonus anyway.) Until the week resolves to
+  // a real payroll Sunday, the Monday local-clock seed would filter against the
+  // WRONG week — skip scoping until then. See offboarded-week-relevance.ts.
   const offboardedForWeek = useMemo(
     () =>
       offboardedPeople.filter((p) =>
-        offboardedRelevantToWeek(p, weekResolved ? weekStart : '', offboardedHoursFloor),
+        offboardedRelevantToWeek(p, weekResolved ? weekStart : ''),
       ),
-    [offboardedPeople, offboardedHoursFloor, weekStart, weekResolved],
+    [offboardedPeople, weekStart, weekResolved],
   );
   // Identity emails of the week-relevant offboarded people, so table rows can
   // tag an added offboarded person ("Offboarded — Last Pay") apart from a

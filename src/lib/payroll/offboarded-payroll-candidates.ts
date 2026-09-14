@@ -161,7 +161,7 @@ export async function listOffboardedPayrollCandidates(sourceFile: string | null)
   const eligible = offboardedRes.people.filter(
     (person) =>
       isEligibleForFinalPayReview(person.off_boarded_reason) &&
-      offboardedRelevantToWeek(person, weekStart, offboardedRes.hoursWeekFloor) &&
+      offboardedRelevantToWeek(person, weekStart) &&
       (hoursIdx.error !== null ||
         personWorkedCycle(hoursIdx, {
           emails: [

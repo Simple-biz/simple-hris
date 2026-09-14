@@ -67,6 +67,13 @@ export interface RecentlyOffboardedPerson {
    *  scorable for a week they either worked or hadn't yet left). Null whenever
    *  `hubstaff_email` is null. */
   last_hours_week_start: string | null;
+  /** EVERY week-start day their hours appear in, within the two-week evidence
+   *  window — the membership test week-scoping actually needs. `last_hours_week_start`
+   *  answers "when did they last work"; this answers "did they work THIS week",
+   *  which a `>=` comparison against the newest week gets wrong whenever the
+   *  person worked a later week but not the one being scored. Empty whenever
+   *  `hubstaff_email` is null. */
+  hours_week_starts: string[];
   /** Gsuite aliases from the master row — the same second-inbox bridge
    *  `active_employees` carries. A leaver's rate/Hubstaff row can be keyed on
    *  one of these, so consumers matching them back to a person need both. */
@@ -248,11 +255,20 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
       }
       const out: { email: string; tokens: Set<string>; weekStartDay: string }[] = [];
       const seen = new Set<string>();
+      // EVERY week an email has hours in, not just the newest. Week-scoping asks
+      // "were they working the week being scored" — a `>=` against the newest
+      // week answers a different question, and answers it wrong: hours in week
+      // W+1 vouched for week W, which nothing in the timesheet actually says.
+      const weeksByEmail = new Map<string, Set<string>>();
       for (const { file, weekStartDay } of files) {
         const { rows } = await fetchHubstaffRowsBySourceFile(file);
         for (const r of rowsToPayrollRows(rows)) {
           const em = normEmail(r.email ?? '');
-          if (!em || seen.has(em)) continue;
+          if (!em) continue;
+          const weeks = weeksByEmail.get(em);
+          if (weeks) weeks.add(weekStartDay);
+          else weeksByEmail.set(em, new Set([weekStartDay]));
+          if (seen.has(em)) continue;
           seen.add(em);
           // Files iterate newest-week-first and `seen` keeps the first hit, so
           // each email's row carries the NEWEST week they logged hours in.
@@ -262,7 +278,11 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
       // weekFloor = the OLDER kept week: the boundary below which the hours
       // evidence sees nothing. Callers week-scoping the list must not trust
       // "no hours" for weeks before it.
-      return { rows: out, weekFloor: weekDays.length ? weekDays[weekDays.length - 1]! : null };
+      return {
+        rows: out,
+        weeksByEmail,
+        weekFloor: weekDays.length ? weekDays[weekDays.length - 1]! : null,
+      };
     })().catch(() => null),
   ]);
 
@@ -293,7 +313,7 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
       error: 'Hubstaff timesheets could not be read — payable identities cannot be resolved',
     };
   }
-  const { rows: hubRows, weekFloor: hoursWeekFloor } = hubRes;
+  const { rows: hubRows, weeksByEmail: hubWeeksByEmail, weekFloor: hoursWeekFloor } = hubRes;
   const hubEmails = new Set(hubRows.map((h) => h.email));
   const hubWeekByEmail = new Map(hubRows.map((h) => [h.email, h.weekStartDay]));
   const usEmails = new Set<string>();
@@ -606,6 +626,7 @@ export async function listRecentlyOffboardedPeople(days = 90): Promise<{
       off_boarded_reason: g.off_boarded_reason,
       hubstaff_email,
       last_hours_week_start: hubstaff_email ? hubWeekByEmail.get(hubstaff_email) ?? null : null,
+      hours_week_starts: hubstaff_email ? [...(hubWeeksByEmail.get(hubstaff_email) ?? [])].sort() : [],
       alternate_work_email: g.alternate_work_email,
       alternate_work_email_2: g.alternate_work_email_2,
       start_date: g.start_date,

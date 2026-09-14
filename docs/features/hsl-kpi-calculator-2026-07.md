@@ -1163,6 +1163,29 @@ open by default**:
   only when there is someone to show; the strip's own add rules are unchanged
   (memory `offboarded-bonus-scoring`).
 
+  **Week-scoping tightened 2026-09-14.** Carla: *"If I was offboarded today, I
+  should be on the list next week, but then after that I am gone. This is because
+  they won't be having hours after that."* `offboardedRelevantToWeek` now needs
+  POSITIVE evidence of that week — an offboard stamp inside
+  `[weekStart, weekEnd + one payroll cycle]`, or hours in the scored week itself.
+  Three things changed, all of them narrowing:
+
+  | Was | Now |
+  |---|---|
+  | `off >= weekStart`, no upper bound | bounded at both ends — a September leaver is no longer offered for June |
+  | no date signal at all ⇒ **kept on every week, forever** | not offered; Add External Member is the (unscoped) recovery path Carla already uses |
+  | week older than the hours floor ⇒ **the whole 90-day list** | scoped like any other week |
+  | newest hours week `>=` weekStart | exact membership in `hours_week_starts` — hours in W+1 no longer vouch for W |
+
+  Measured on prod: week `2026-09-06` offers **110 of 450**; `2026-07-19` offers
+  **19** where the floor fail-open previously returned all 450. The module had
+  **no test at all** before this; it has twelve now.
+
+  > The two removed branches were deliberate, and their comment said hiding
+  > someone owed a final check "is the one failure this list exists to prevent".
+  > The effect was a list that never emptied — the failure Carla actually
+  > reported. Kane ruled the doc stale on 2026-09-14.
+
 Both bodies unfold below the toolbar with the same `UNFOLD` transition (height +
 opacity on the file's `EASE`; `useReducedMotion` cuts). The first cut of Compare
 was a collapsed row above the table and Kane could not find it — a control that

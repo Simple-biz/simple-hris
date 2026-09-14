@@ -43,8 +43,8 @@ for (const p of people.slice(0, 15)) console.log(`  ${fmt(p)}`);
 
 let pool = people;
 if (weekArg) {
-  const shown = people.filter((p) => offboardedRelevantToWeek(p, weekArg, hoursWeekFloor));
-  const hidden = people.filter((p) => !offboardedRelevantToWeek(p, weekArg, hoursWeekFloor));
+  const shown = people.filter((p) => offboardedRelevantToWeek(p, weekArg));
+  const hidden = people.filter((p) => !offboardedRelevantToWeek(p, weekArg));
   console.log(`\nweek ${weekArg}: calculators would OFFER ${shown.length}, HIDE ${hidden.length}`);
   for (const p of shown) console.log(`  OFFER ${fmt(p)}`);
   for (const p of hidden.slice(0, 15)) console.log(`  hide  ${fmt(p)}`);

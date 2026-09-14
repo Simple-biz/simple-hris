@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
         (p) =>
           // A suspension is not a departure — never treat one as final pay.
           isEligibleForFinalPayReview(p.off_boarded_reason) &&
-          offboardedRelevantToWeek(p, weekStart, hoursWeekFloor) &&
+          offboardedRelevantToWeek(p, weekStart) &&
           // THE HARD GATE: only people with hours in THIS cycle's timesheet.
           // Date-based relevance above trusts `off_boarded_at`, and one bad
           // stamp defeats it (franm@'s 2027 year-typo kept her "relevant" to

@@ -93,7 +93,7 @@ if (error) {
   process.exit(1);
 }
 const dateScoped = people.filter(
-  (p) => isEligibleForFinalPayReview(p.off_boarded_reason) && offboardedRelevantToWeek(p, weekStart, hoursWeekFloor),
+  (p) => isEligibleForFinalPayReview(p.off_boarded_reason) && offboardedRelevantToWeek(p, weekStart),
 );
 // The HARD gate the route applies: hours in this cycle's actual timesheet.
 // Date-based relevance trusts off_boarded_at, and one bad stamp (franm@'s

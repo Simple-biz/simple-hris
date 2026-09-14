@@ -31,10 +31,13 @@ export interface OffboardedCandidate {
   /** The email their recent Hubstaff hours are keyed on (the payable
    *  identity), when determinable. */
   hubstaff_email: string | null;
-  /** Week-start day of the newest timesheet their hours appear in — feeds
-   *  offboardedRelevantToWeek so each calculator only lists people whose FINAL
-   *  pay cycle is the week it's viewing. */
+  /** Week-start day of the newest timesheet their hours appear in. Display and
+   *  diagnostics only — week-scoping uses `hours_week_starts` below, because
+   *  "the newest week they worked" cannot answer "did they work THIS week". */
   last_hours_week_start?: string | null;
+  /** EVERY week-start day their hours appear in, within the server's evidence
+   *  window. This is what offboardedRelevantToWeek tests membership against. */
+  hours_week_starts?: string[] | null;
 }
 
 /**
@@ -76,10 +79,6 @@ export function matchesOffboardedQuery(c: OffboardedCandidate, q: string): boole
 
 export interface OffboardedPeopleState {
   people: OffboardedCandidate[];
-  /** The server's `hours_week_floor`: the older week of its two-week Hubstaff
-   *  evidence window. Weeks before it can't be week-scoped — pass this to
-   *  offboardedRelevantToWeek so it degrades to the full list there. */
-  hoursWeekFloor: string | null;
 }
 
 /**
@@ -89,19 +88,19 @@ export interface OffboardedPeopleState {
  * two Hubstaff weeks — not something to re-run while typing).
  */
 export function useOffboardedPeople(enabled: boolean): OffboardedPeopleState {
-  const [state, setState] = useState<OffboardedPeopleState>({ people: [], hoursWeekFloor: null });
+  const [state, setState] = useState<OffboardedPeopleState>({ people: [] });
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
     fetch('/api/manager/transfer-candidates?offboarded=1', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { offboarded?: OffboardedCandidate[]; hours_week_floor?: string | null }) => {
-        if (!cancelled) setState({ people: j.offboarded ?? [], hoursWeekFloor: j.hours_week_floor ?? null });
+      .then((j: { offboarded?: OffboardedCandidate[] }) => {
+        if (!cancelled) setState({ people: j.offboarded ?? [] });
       })
       .catch(() => {
         // Best-effort: the strips/picker group simply don't render. The manual
         // search path (active candidates) is unaffected.
-        if (!cancelled) setState({ people: [], hoursWeekFloor: null });
+        if (!cancelled) setState({ people: [] });
       });
     return () => {
       cancelled = true;
