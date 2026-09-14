@@ -165,6 +165,39 @@ phone. A manager with a single department gets **no rail at all** (the old
 dropdown was hidden in the same case). Pure logic is unit-tested in
 `src/lib/manager/team-dept-rail.test.ts`.
 
+## Motion — one idea, four selectors
+
+Added 2026-09-14 (Kane: *"animate it properly please smoothen the tab switching within
+the my team"*).
+
+**The selection GLIDES; it never re-appears somewhere else.** My Team has four
+selectors — the three inner tabs, the department rail, Cards/List, and HSL's
+People/Scheduling — and each used to swap a static white pill instantly, which reads as
+a flicker rather than a move. They now share one component, `SlidingTab`, and one
+`layoutId` per group, so the indicator travels between siblings. That is the entire
+motion idea on this surface, used in four places rather than four different ideas.
+
+- **The rail is where it earns most.** Moving from a parent to a sub-team three rows
+  down is a jump the eye would otherwise have to re-find.
+- **The glide is a layout animation on a BACKGROUND element only**, never on text, so
+  nothing reflows and no 300-row list is asked to move.
+- **`mode="wait"` is deliberately NOT used on the panes.** Waiting for an exit before
+  the next pane mounts doubles the perceived latency of every click, and this is a
+  surface people work in rather than look at. Panes settle in; the old one is already
+  gone.
+- Pane keys cover **both axes** — which tab AND which department — so switching either
+  explains itself. This changes no mounting model: those panes were already
+  conditionally rendered, so nothing fetches twice.
+- **One curve**, `TEAM_EASE = [0.22, 1, 0.36, 1]`, the same value the Payment Catalog
+  surfaces use.
+- The per-card stagger is **capped at 180ms**; uncapped, a large department would read
+  as the page loading slowly.
+
+> **Reduced motion drops the travel, never the state.** `useReducedMotion` collapses
+> the glide to `duration: 0` and removes the y-rise, and the indicator still renders —
+> which tab is selected is information, not decoration. Nothing here gates a count, a
+> fetch or an error branch on an animation having finished.
+
 ## Suspend / Reactivation (the manager temporary-pause pair)
 
 Row actions in the My Team **list** and in every roster **card footer** (kept in

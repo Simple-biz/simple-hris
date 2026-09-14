@@ -235,6 +235,82 @@ function derivePendingResignations(
  * by the cache-seeded render, and if those produced different gates the cached
  * paint would be a quiet lie rather than a head start.
  */
+/** The project's arrival curve — same value the Payment Catalog surfaces use, so
+ *  motion reads as one system across the app rather than per-component taste. */
+const TEAM_EASE = [0.22, 1, 0.36, 1] as const;
+
+/**
+ * One tab button, with the selected background GLIDING between siblings.
+ *
+ * My Team has four selectors — the inner tabs, the department rail, Cards/List and
+ * HSL's People/Scheduling — and before this they all swapped a static white pill
+ * instantly, which reads as a flicker rather than a move. Sharing one component
+ * (and one `layoutId` per group) means the indicator travels, so the eye follows
+ * where the selection went instead of relocating it. That is the whole motion
+ * idea on this surface, used in four places rather than four different ideas.
+ *
+ * The glide is a LAYOUT animation on a background element only — never on the
+ * text — so nothing reflows and no row of 300 people is asked to move.
+ */
+function SlidingTab({
+  group,
+  selected,
+  onSelect,
+  children,
+  className,
+  activeClassName = 'text-blue-700 dark:text-blue-300',
+  idleClassName = 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+  indicatorClassName = 'bg-white shadow-sm dark:bg-zinc-950',
+  title,
+  ariaLabel,
+  reduceMotion,
+}: {
+  /** Shared `layoutId` namespace — one per group of siblings. */
+  group: string;
+  selected: boolean;
+  onSelect: () => void;
+  children: React.ReactNode;
+  className?: string;
+  activeClassName?: string;
+  idleClassName?: string;
+  indicatorClassName?: string;
+  title?: string;
+  ariaLabel?: string;
+  reduceMotion: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={selected}
+      aria-label={ariaLabel}
+      title={title}
+      onClick={onSelect}
+      className={cn(
+        'relative isolate rounded-[5px] transition-colors',
+        selected ? activeClassName : idleClassName,
+        className,
+      )}
+    >
+      {selected && (
+        <motion.span
+          layoutId={group}
+          aria-hidden
+          className={cn('absolute inset-0 -z-10 rounded-[5px]', indicatorClassName)}
+          // Reduced motion keeps the indicator — it carries which tab is active —
+          // and drops only the travel between positions.
+          transition={
+            reduceMotion
+              ? { duration: 0 }
+              : { type: 'spring', stiffness: 520, damping: 38, mass: 0.7 }
+          }
+        />
+      )}
+      <span className="relative flex items-center gap-1.5">{children}</span>
+    </button>
+  );
+}
+
 /**
  * One row of the My Team department rail.
  *
@@ -255,6 +331,7 @@ function TeamDeptRailRow({
   nested = false,
   onSelect,
   disclosure,
+  reduceMotion,
 }: {
   entry: DeptRailEntry;
   count: number;
@@ -264,6 +341,7 @@ function TeamDeptRailRow({
   nested?: boolean;
   onSelect: () => void;
   disclosure?: { open: boolean; locked: boolean; childCount: number; onToggle: () => void };
+  reduceMotion: boolean;
 }) {
   return (
     <div className="flex items-stretch">
@@ -298,12 +376,28 @@ function TeamDeptRailRow({
         onClick={onSelect}
         title={entry.key}
         className={cn(
-          'flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors',
+          'relative isolate flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors',
           selected
-            ? 'bg-blue-50 font-semibold text-blue-800 ring-1 ring-blue-200 dark:bg-blue-950/40 dark:text-blue-200 dark:ring-blue-900'
+            ? 'font-semibold text-blue-800 dark:text-blue-200'
             : 'text-zinc-600 hover:bg-blue-50/60 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-blue-950/25 dark:hover:text-zinc-100',
         )}
       >
+        {/* The rail is the tall, nested one, so this is where the glide earns the
+            most: moving between a parent and a sub-team three rows down is a jump
+            the eye would otherwise have to re-find. The travelling background is
+            what says "you went there". */}
+        {selected && (
+          <motion.span
+            layoutId="myTeamDeptRail"
+            aria-hidden
+            className="absolute inset-0 -z-10 rounded-md bg-blue-50 ring-1 ring-blue-200 dark:bg-blue-950/40 dark:ring-blue-900"
+            transition={
+              reduceMotion
+                ? { duration: 0 }
+                : { type: 'spring', stiffness: 460, damping: 40, mass: 0.8 }
+            }
+          />
+        )}
         <span className={cn('min-w-0 flex-1 truncate', nested ? 'text-[11px]' : 'text-xs')}>
           {entry.name}
         </span>
@@ -2224,6 +2318,10 @@ function TeamPanelInner({
   // second view today; the toggle is absent everywhere else, so this stays
   // 'roster' for every other department by construction.
   const [deptView, setDeptView] = useState<'roster' | 'scheduling'>('roster');
+  // One read, passed to every SlidingTab and pane below. Reduced motion here means
+  // the indicator stops TRAVELLING and panes stop rising — it never means the
+  // selected state becomes invisible.
+  const reduceMotion = useReducedMotion() ?? false;
   const [deptSearch, setDeptSearch] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [medalOpen, setMedalOpen] = useState(false);
@@ -2876,84 +2974,59 @@ function TeamPanelInner({
         </p>
         <div className="mt-2 flex items-center gap-2">
           <div role="tablist" aria-label="Team views" className="inline-flex w-fit rounded-md border border-blue-200 bg-blue-50/40 p-0.5 dark:border-blue-900/50 dark:bg-blue-950/20">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={innerTab === 'roster'}
-              onClick={() => setInnerTab('roster')}
-              className={cn(
-                'rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
-                innerTab === 'roster'
-                  ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
-                  : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
-              )}
+            <SlidingTab
+              group="myTeamInnerTab"
+              selected={innerTab === 'roster'}
+              onSelect={() => setInnerTab('roster')}
+              className="px-3 py-1.5 text-xs font-semibold"
+              reduceMotion={reduceMotion}
             >
               Roster
-              <span className="ml-1.5 rounded bg-zinc-200 px-1 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+              <span className="rounded bg-zinc-200 px-1 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
                 {members.length}
               </span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={innerTab === 'newly-hired'}
-              onClick={() => setInnerTab('newly-hired')}
-              className={cn(
-                'rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
-                innerTab === 'newly-hired'
-                  ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
-                  : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
-              )}
+            </SlidingTab>
+            <SlidingTab
+              group="myTeamInnerTab"
+              selected={innerTab === 'newly-hired'}
+              onSelect={() => setInnerTab('newly-hired')}
+              className="px-3 py-1.5 text-xs font-semibold"
+              reduceMotion={reduceMotion}
             >
               New Hire Check List
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={innerTab === 'orientation'}
-              onClick={() => setInnerTab('orientation')}
-              className={cn(
-                'rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
-                innerTab === 'orientation'
-                  ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
-                  : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
-              )}
+            </SlidingTab>
+            <SlidingTab
+              group="myTeamInnerTab"
+              selected={innerTab === 'orientation'}
+              onSelect={() => setInnerTab('orientation')}
+              className="px-3 py-1.5 text-xs font-semibold"
+              reduceMotion={reduceMotion}
             >
               Orientation
-            </button>
+            </SlidingTab>
           </div>
           {innerTab === 'roster' && !unassigned && members.length > 0 && (
             <div role="tablist" aria-label="Roster layout" className="flex items-center gap-0.5 rounded-lg border border-blue-100/80 bg-blue-50/50 p-0.5 dark:border-blue-950/50 dark:bg-blue-950/20">
-              <button
-                type="button"
-                role="tab"
-                onClick={() => setViewMode('cards')}
+              <SlidingTab
+                group="myTeamViewMode"
+                selected={viewMode === 'cards'}
+                onSelect={() => setViewMode('cards')}
                 title="Card view"
-                aria-selected={viewMode === 'cards'}
-                className={cn(
-                  'flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors',
-                  viewMode === 'cards'
-                    ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
-                    : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
-                )}
+                className="px-2 py-1 text-[11px] font-medium"
+                reduceMotion={reduceMotion}
               >
                 <LayoutGrid className="h-3.5 w-3.5" /> Cards
-              </button>
-              <button
-                type="button"
-                role="tab"
-                onClick={() => setViewMode('list')}
+              </SlidingTab>
+              <SlidingTab
+                group="myTeamViewMode"
+                selected={viewMode === 'list'}
+                onSelect={() => setViewMode('list')}
                 title="List view — multi-select to queue offboarding"
-                aria-selected={viewMode === 'list'}
-                className={cn(
-                  'flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors',
-                  viewMode === 'list'
-                    ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
-                    : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
-                )}
+                className="px-2 py-1 text-[11px] font-medium"
+                reduceMotion={reduceMotion}
               >
                 <List className="h-3.5 w-3.5" /> List
-              </button>
+              </SlidingTab>
             </div>
           )}
           {!unassigned && members.length > 0 && (
@@ -3027,6 +3100,7 @@ function TeamPanelInner({
                         searching={normalizedQuery !== ''}
                         selected={activeDept === group.parent.key}
                         onSelect={() => setSelectedDept(group.parent.key)}
+                        reduceMotion={reduceMotion}
                         disclosure={
                           hasKids
                             ? {
@@ -3069,6 +3143,7 @@ function TeamPanelInner({
                                   searching={normalizedQuery !== ''}
                                   selected={activeDept === c.key}
                                   onSelect={() => setSelectedDept(c.key)}
+                                  reduceMotion={reduceMotion}
                                 />
                               ))}
                             </div>
@@ -3114,23 +3189,43 @@ function TeamPanelInner({
           </div>
         )}
 
+        {/* Panes settle in; they do not wait for the old one to leave. `mode="wait"`
+            would double the perceived latency of every tab click, and this is a
+            surface people work in rather than look at. The key covers BOTH axes —
+            which tab, and which department — so switching either explains itself.
+            Nothing here changes the mounting model: these panes were already
+            conditionally rendered, so no fetch runs a second time. */}
         {innerTab === 'newly-hired' && (
-          <NewlyHiredPanel
-            viewerEmail={viewerEmail}
-            teamGate={teamGate}
-            rail={rail}
-            activeDept={activeDept}
-            deptLabel={activeEntry?.name ?? null}
-          />
+          <motion.div
+            key={`hires:${activeDept}`}
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: reduceMotion ? 0.12 : 0.22, ease: TEAM_EASE }}
+          >
+            <NewlyHiredPanel
+              viewerEmail={viewerEmail}
+              teamGate={teamGate}
+              rail={rail}
+              activeDept={activeDept}
+              deptLabel={activeEntry?.name ?? null}
+            />
+          </motion.div>
         )}
 
         {innerTab === 'orientation' && (
-          <OrientationAttendancePanel
-            teamGate={teamGate}
-            rail={rail}
-            activeDept={activeDept}
-            deptLabel={activeEntry?.name ?? null}
-          />
+          <motion.div
+            key={`orientation:${activeDept}`}
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: reduceMotion ? 0.12 : 0.22, ease: TEAM_EASE }}
+          >
+            <OrientationAttendancePanel
+              teamGate={teamGate}
+              rail={rail}
+              activeDept={activeDept}
+              deptLabel={activeEntry?.name ?? null}
+            />
+          </motion.div>
         )}
 
         {innerTab === 'roster' && (
@@ -3176,34 +3271,26 @@ function TeamPanelInner({
               aria-label={`${activeEntry?.name ?? 'Department'} views`}
               className="flex items-center gap-0.5 rounded-lg border border-blue-100/80 bg-blue-50/50 p-0.5 dark:border-blue-950/50 dark:bg-blue-950/20"
             >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeDeptView === 'roster'}
-                onClick={() => setDeptView('roster')}
-                className={cn(
-                  'rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors',
-                  activeDeptView === 'roster'
-                    ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
-                    : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100',
-                )}
+              <SlidingTab
+                group="myTeamDeptView"
+                selected={activeDeptView === 'roster'}
+                onSelect={() => setDeptView('roster')}
+                className="px-2.5 py-1 text-[11px] font-semibold"
+                idleClassName="text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100"
+                reduceMotion={reduceMotion}
               >
                 People
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeDeptView === 'scheduling'}
-                onClick={() => setDeptView('scheduling')}
-                className={cn(
-                  'inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors',
-                  activeDeptView === 'scheduling'
-                    ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
-                    : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100',
-                )}
+              </SlidingTab>
+              <SlidingTab
+                group="myTeamDeptView"
+                selected={activeDeptView === 'scheduling'}
+                onSelect={() => setDeptView('scheduling')}
+                className="px-2.5 py-1 text-[11px] font-semibold"
+                idleClassName="text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100"
+                reduceMotion={reduceMotion}
               >
                 <CalendarCog className="h-3.5 w-3.5" /> Scheduling
-              </button>
+              </SlidingTab>
             </div>
           )}
           <div className="ml-auto flex items-center gap-3">
@@ -3249,6 +3336,12 @@ function TeamPanelInner({
         )}
 
       {activeDeptView === 'scheduling' && (
+        <motion.div
+          key={`scheduling:${activeDept}`}
+          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: reduceMotion ? 0.12 : 0.22, ease: TEAM_EASE }}
+        >
         <SchedulingPanel
           myDepartments={teamGate.kind === 'department' ? teamGate.departments : undefined}
           department={activeDept}
@@ -3264,6 +3357,7 @@ function TeamPanelInner({
               : [[activeDept, deptCounts.get(activeDept) ?? 0]],
           )}
         />
+        </motion.div>
       )}
 
       <AnimatePresence initial={false}>
@@ -3353,7 +3447,7 @@ function TeamPanelInner({
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: 'auto' }}
                         exit={{ opacity: 0, height: 0 }}
-                        transition={{ duration: 0.2, ease: 'easeOut' }}
+                        transition={{ duration: reduceMotion ? 0.12 : 0.2, ease: TEAM_EASE }}
                         style={{ overflow: 'hidden' }}
                       >
                         <div className="flex flex-wrap items-center gap-2 border-b border-rose-100 bg-rose-50/70 px-4 py-2.5 dark:border-rose-950/50 dark:bg-rose-950/20">
@@ -3389,9 +3483,9 @@ function TeamPanelInner({
                   {viewMode === 'list' ? (
                     <motion.div
                       key="view-list"
-                      initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0, transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] } }}
-                      exit={{ opacity: 0, y: -6, transition: { duration: 0.12, ease: [0.4, 0, 1, 1] } }}
+                      initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0, transition: { duration: reduceMotion ? 0.12 : 0.28, ease: TEAM_EASE } }}
+                      exit={{ opacity: 0, y: reduceMotion ? 0 : -6, transition: { duration: 0.12, ease: [0.4, 0, 1, 1] } }}
                       className="overflow-x-auto"
                     >
                       <div>
@@ -3685,15 +3779,18 @@ function TeamPanelInner({
                   ) : (
                   <motion.div
                     key="view-cards"
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0, transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] } }}
-                    exit={{ opacity: 0, y: -6, transition: { duration: 0.12, ease: [0.4, 0, 1, 1] } }}
+                    initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0, transition: { duration: reduceMotion ? 0.12 : 0.28, ease: TEAM_EASE } }}
+                    exit={{ opacity: 0, y: reduceMotion ? 0 : -6, transition: { duration: 0.12, ease: [0.4, 0, 1, 1] } }}
                   >
+                  {/* Keyed on department + search, so changing either settles the
+                      grid rather than swapping it. Same curve as every other
+                      transition on this surface. */}
                   <motion.div
                     key={filterKey}
-                    initial={{ opacity: 0, y: 6 }}
+                    initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.2, ease: 'easeOut' }}
+                    transition={{ duration: reduceMotion ? 0.12 : 0.2, ease: TEAM_EASE }}
                   >
                   {/* Roster card grid — mirrors the employee My Team view,
                       with manager actions layered on. Medal drag-drop
@@ -3740,7 +3837,14 @@ function TeamPanelInner({
                           data-name={m.name ?? undefined}
                           initial={{ opacity: 0, y: 8 }}
                           animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.22, delay: Math.min(idx * 0.025, 0.18), ease: 'easeOut' }}
+                          transition={{
+                            duration: reduceMotion ? 0.12 : 0.22,
+                            // Capped: a roster page is up to 8 cards, and an
+                            // uncapped stagger on a 300-person department would
+                            // read as the page loading slowly.
+                            delay: reduceMotion ? 0 : Math.min(idx * 0.025, 0.18),
+                            ease: TEAM_EASE,
+                          }}
                           className={cn(
                             'group relative flex min-h-[232px] flex-col overflow-hidden rounded-2xl border border-blue-100/70 bg-white shadow-sm ring-1 ring-blue-500/5 transition-[transform,box-shadow,border-color] duration-300 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md dark:border-blue-950/50 dark:bg-zinc-950/80 dark:ring-blue-400/10 dark:hover:border-blue-900',
                             isOver && 'bg-amber-50/50 ring-2 ring-amber-400/70 dark:bg-amber-950/10',
