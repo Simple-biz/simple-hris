@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resolveFirstName } from '@/lib/name/first-name';
 import { toast } from 'sonner';
 import AppFooter from '@/components/AppFooter';
@@ -107,6 +107,12 @@ import {
   useMedalCtx,
 } from '@/components/manager/MedalRecognition';
 import { SmoothSelect } from '@/components/ui/smooth-select';
+import {
+  buildTeamDeptRail,
+  membersForRailKey,
+  flattenRail,
+} from '@/lib/manager/team-dept-rail';
+import type { DeptRailEntry } from '@/lib/payment-catalog/dept-rail';
 
 /** How `/api/manager/department-members` scoped the roster for this session (server-driven). */
 type ManagerTeamGate =
@@ -227,6 +233,101 @@ function derivePendingResignations(
  * by the cache-seeded render, and if those produced different gates the cached
  * paint would be a quiet lie rather than a head start.
  */
+/**
+ * One row of the My Team department rail.
+ *
+ * The label is ALREADY formatted — `buildTeamDeptRail` names every entry through
+ * `formatDeptLabel`, so `hsl:intake_specialist` reads "HSL — Intake Specialist"
+ * here while the rail KEY stays raw (dept-label-display-sweep: labels are
+ * formatted, values never are). The raw cell stays one hover away in `title`.
+ *
+ * Selection is carried by a background tint and weight rather than a coloured
+ * left bar, and the count is tabular so a column of numbers lines up.
+ */
+function TeamDeptRailRow({
+  entry,
+  count,
+  matches,
+  searching,
+  selected,
+  nested = false,
+  onSelect,
+  disclosure,
+}: {
+  entry: DeptRailEntry;
+  count: number;
+  matches: number;
+  searching: boolean;
+  selected: boolean;
+  nested?: boolean;
+  onSelect: () => void;
+  disclosure?: { open: boolean; locked: boolean; childCount: number; onToggle: () => void };
+}) {
+  return (
+    <div className="flex items-stretch">
+      {disclosure ? (
+        <button
+          type="button"
+          onClick={disclosure.locked ? undefined : disclosure.onToggle}
+          disabled={disclosure.locked}
+          aria-expanded={disclosure.open}
+          aria-label={`${disclosure.open ? 'Collapse' : 'Expand'} ${entry.name} sub-teams`}
+          title={
+            disclosure.locked
+              ? 'Every department is expanded while you are searching the rail'
+              : `${disclosure.open ? 'Collapse' : 'Expand'} ${disclosure.childCount} sub-teams`
+          }
+          className="flex w-5 shrink-0 items-center justify-center rounded-l-md text-zinc-400 transition-colors hover:text-blue-600 disabled:cursor-default disabled:opacity-50 dark:hover:text-blue-400"
+        >
+          <ChevronRight
+            className={cn(
+              'h-3.5 w-3.5 transition-transform duration-200 motion-reduce:transition-none',
+              disclosure.open && 'rotate-90',
+            )}
+          />
+        </button>
+      ) : (
+        <span className={cn('w-5 shrink-0', nested && 'w-1')} aria-hidden />
+      )}
+      <button
+        type="button"
+        role="tab"
+        aria-selected={selected}
+        onClick={onSelect}
+        title={entry.key}
+        className={cn(
+          'flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors',
+          selected
+            ? 'bg-blue-50 font-semibold text-blue-800 ring-1 ring-blue-200 dark:bg-blue-950/40 dark:text-blue-200 dark:ring-blue-900'
+            : 'text-zinc-600 hover:bg-blue-50/60 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-blue-950/25 dark:hover:text-zinc-100',
+        )}
+      >
+        <span className={cn('min-w-0 flex-1 truncate', nested ? 'text-[11px]' : 'text-xs')}>
+          {entry.name}
+        </span>
+        {searching && matches > 0 && (
+          <span
+            title={`${matches} matching this search`}
+            className="shrink-0 rounded-full bg-blue-600 px-1.5 font-mono text-[10px] leading-4 tabular-nums text-white dark:bg-blue-500"
+          >
+            {matches}
+          </span>
+        )}
+        {/* A headcount is content, not decoration — it stays at AA (zinc-500 is
+            4.6:1 on white; zinc-400 was 2.8:1 and failed). */}
+        <span
+          className={cn(
+            'shrink-0 font-mono text-[11px] tabular-nums',
+            selected ? 'text-blue-700 dark:text-blue-300' : 'text-zinc-500 dark:text-zinc-400',
+          )}
+        >
+          {count}
+        </span>
+      </button>
+    </div>
+  );
+}
+
 function rosterGateOf(payload: ManagerRosterPayload): ManagerTeamGate {
   return payload.scope === 'elevated'
     ? { kind: 'elevated' }
@@ -2090,7 +2191,17 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
     onFocusConsumed?.();
   }, [focusEmail, members, onFocusConsumed]);
   const [page, setPage] = useState(1);
-  const [deptFilter, setDeptFilter] = useState<string>('all');
+  // The department rail replaced the old "Department" dropdown on 2026-09-14:
+  // one department at a time, chosen on the left, instead of the whole roster on
+  // one page. There is deliberately no "All" entry (Kane's call) — SEARCH is what
+  // stays global, so nobody becomes unreachable just because the manager does not
+  // remember which team they are on.
+  const [selectedDept, setSelectedDept] = useManagerCachedState<string>(
+    MANAGER_CACHE_KEYS.teamDeptRailKey,
+    '',
+  );
+  const [openRailGroups, setOpenRailGroups] = useState<Map<string, boolean>>(new Map());
+  const [deptSearch, setDeptSearch] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [medalOpen, setMedalOpen] = useState(false);
 
@@ -2412,30 +2523,38 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
     return (w && lastSeen[w]) || (p && lastSeen[p]) || null;
   };
 
-  // Unique department list for the filter dropdown — sorted, blanks stripped.
-  const deptOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const m of members) {
-      const d = (m.department ?? '').trim();
-      if (d) set.add(d);
-    }
-    return [...set].sort((a, b) => a.localeCompare(b));
-  }, [members]);
+  // ── The department rail ──
+  // Geometry (HSL folding, one-home assignment, the No-department bucket) is the
+  // shared `dept-rail` library; `buildTeamDeptRail` supplies the entries My Team
+  // cannot get from the pay-structure registry. `granted` keeps a department the
+  // manager owns but has nobody in on the rail, reading 0.
+  const granted = teamGate.kind === 'department' ? teamGate.departments : [];
+  const grantedKey = granted.join('|');
+  const { rail, byKey: membersByDept, counts: deptCounts, defaultKey } = useMemo(
+    () => buildTeamDeptRail(members, granted),
+    // `granted` is rebuilt each render from the gate; key on its contents.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [members, grantedKey],
+  );
+  const railEntries = useMemo(() => flattenRail(rail), [rail]);
+  // The selection always resolves to an entry that is actually on the rail. A
+  // cached key from a previous session, or a department whose last member just
+  // left, falls back to the largest department rather than painting an empty
+  // roster under a heading nobody chose.
+  const activeDept =
+    railEntries.some((e) => e.key === selectedDept) ? selectedDept : defaultKey;
+  const activeEntry = railEntries.find((e) => e.key === activeDept) ?? null;
 
-  const filteredMembers = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
-
-    return members.filter((m) => {
-      const departmentMatches =
-        deptFilter === 'all' ||
-        (m.department ?? '').trim().toLowerCase() === deptFilter.toLowerCase();
-
-      if (!departmentMatches) return false;
+  const matchesQuery = useCallback(
+    (m: EmployeeRow, normalizedQuery: string): boolean => {
       if (!normalizedQuery) return true;
-
+      // The RAW department stays in the haystack alongside the formatted label,
+      // so both "HSL — Intake Specialist" and `hsl:intake_specialist` find the
+      // same people (dept-label-display-sweep: haystacks keep the raw value).
       const searchable = [
         m.name,
         m.department,
+        formatDeptLabel(m.department),
         m.hsl_role,
         m.work_email,
         m.personal_email,
@@ -2443,10 +2562,79 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
-
       return searchable.includes(normalizedQuery);
-    });
-  }, [members, deptFilter, searchQuery]);
+    },
+    [],
+  );
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  const filteredMembers = useMemo(
+    () =>
+      membersForRailKey(activeDept, rail, membersByDept).filter((m) =>
+        matchesQuery(m, normalizedQuery),
+      ),
+    [activeDept, rail, membersByDept, normalizedQuery, matchesQuery],
+  );
+
+  // Search is GLOBAL even though the roster is not: the four row actions —
+  // including Offboard — are only reachable through a roster row, so a manager
+  // who does not remember someone's department must still be able to find them.
+  // Every rail entry therefore knows its own match count while a query is live.
+  const railMatchCounts = useMemo(() => {
+    const out = new Map<string, number>();
+    if (!normalizedQuery) return out;
+    for (const entry of railEntries) {
+      out.set(
+        entry.key,
+        membersForRailKey(entry.key, rail, membersByDept).filter((m) =>
+          matchesQuery(m, normalizedQuery),
+        ).length,
+      );
+    }
+    return out;
+  }, [railEntries, rail, membersByDept, normalizedQuery, matchesQuery]);
+
+  // The matches sitting under the OTHER departments, offered as a jump rather
+  // than silently withheld.
+  const matchesElsewhere = useMemo(
+    () =>
+      railEntries
+        .filter((e) => e.key !== activeDept)
+        .map((entry) => ({ entry, count: railMatchCounts.get(entry.key) ?? 0 }))
+        .filter((x) => x.count > 0),
+    [railEntries, activeDept, railMatchCounts],
+  );
+
+  // A manager with exactly one department gets no rail — a one-tab navigation is
+  // dead weight, and the old dropdown was hidden in the same case.
+  const showRail = !unassigned && members.length > 0 && railEntries.length >= 2;
+
+  // The rail's own filter — for a manager (or admin) whose rail runs to 20-plus
+  // entries. A query force-opens every group so a matching sub-team is never
+  // hidden behind a collapsed parent.
+  const railQuery = deptSearch.trim().toLowerCase();
+  const filteredRail = useMemo(() => {
+    if (!railQuery) return rail;
+    return rail
+      .map((g) => {
+        const parentHit = g.parent.name.toLowerCase().includes(railQuery);
+        const kids = g.children.filter((c) => c.name.toLowerCase().includes(railQuery));
+        if (parentHit) return g;
+        return kids.length > 0 ? { parent: g.parent, children: kids } : null;
+      })
+      .filter((g): g is NonNullable<typeof g> => g !== null);
+  }, [rail, railQuery]);
+  const isRailGroupOpen = (key: string): boolean => {
+    if (railQuery !== '') return true;
+    const explicit = openRailGroups.get(key);
+    if (explicit !== undefined) return explicit;
+    // A group opens by default when the selection lives inside it, so the
+    // selected sub-team is always visible on arrival.
+    return rail.some(
+      (g) => g.parent.key === key && g.children.some((c) => c.key === activeDept),
+    );
+  };
 
   // The list view gains a "CallTools Username" column whenever the visible
   // roster includes a Lead Gen member — the dialer username is Lead-Gen-only, so
@@ -2505,9 +2693,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
     }
     const csv = '﻿' + lines.join('\r\n');
     const scope =
-      deptFilter !== 'all'
-        ? deptFilter.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase()
-        : 'all';
+      activeDept.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'team';
     const stamp = new Date().toISOString().slice(0, 10);
     downloadBlob(
       new Blob([csv], { type: 'text/csv;charset=utf-8' }),
@@ -2566,18 +2752,19 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
   };
   const clearSelection = () => setSelectedKeys(new Set());
 
-  // Snap back to page 1 when the roster changes (filter/refresh shrinks it under
-  // the current page) or the view toggles (page sizes differ). Cheap; no memo.
+  // Snap back to page 1 when the roster changes (a department switch or refresh
+  // shrinks it under the current page) or the view toggles (page sizes differ).
   useEffect(() => {
     setPage(1);
-  }, [filteredMembers.length, teamGate.kind, viewMode]);
+  }, [filteredMembers.length, activeDept, teamGate.kind, viewMode]);
 
-  // Snap filter back to "all" if the active selection is no longer in the list.
+  // Write the resolved selection back once the rail disagrees with the cached
+  // key — a department the manager left, or a first visit with nothing cached.
+  // `activeDept` already renders the right list, so this only keeps the cache
+  // honest; it can never be what decides which people are on screen.
   useEffect(() => {
-    if (deptFilter !== 'all' && !deptOptions.some((d) => d.toLowerCase() === deptFilter.toLowerCase())) {
-      setDeptFilter('all');
-    }
-  }, [deptOptions, deptFilter]);
+    if (activeDept && activeDept !== selectedDept) setSelectedDept(activeDept);
+  }, [activeDept, selectedDept, setSelectedDept]);
 
   if (teamGate.kind === 'loading') {
     return (
@@ -2760,56 +2947,169 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
 
       {innerTab === 'orientation' && <OrientationAttendancePanel teamGate={teamGate} />}
 
-      {innerTab === 'roster' && !unassigned && (
+      {innerTab === 'roster' && (
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-6">
+        {showRail && (
+          <aside
+            aria-label="Departments"
+            className="hidden w-56 shrink-0 flex-col self-stretch rounded-lg border border-blue-100/70 bg-white lg:sticky lg:top-6 lg:flex lg:max-h-[calc(100vh-7rem)] dark:border-blue-950/50 dark:bg-zinc-950"
+          >
+            <div className="flex items-baseline justify-between gap-2 border-b border-blue-100/70 px-3 py-2.5 dark:border-blue-950/50">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                Departments
+              </h3>
+              <span className="font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                {railEntries.length}
+              </span>
+            </div>
+            {railEntries.length > 8 && (
+              <div className="border-b border-blue-100/70 p-2 dark:border-blue-950/50">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                  <input
+                    type="search"
+                    value={deptSearch}
+                    onChange={(e) => setDeptSearch(e.target.value)}
+                    placeholder="Find a department"
+                    aria-label="Find a department"
+                    className="h-7 w-full rounded-md border border-blue-200 bg-white pl-7 pr-2 text-xs text-zinc-800 transition-colors hover:border-blue-300 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-blue-900/50 dark:bg-zinc-900 dark:text-zinc-200 dark:focus:ring-blue-900/50"
+                  />
+                </div>
+              </div>
+            )}
+            <div role="tablist" aria-orientation="vertical" aria-label="Select a department" className="min-h-0 flex-1 overflow-y-auto p-1.5">
+              {filteredRail.length === 0 ? (
+                <p className="px-2 py-6 text-center text-xs text-zinc-500 dark:text-zinc-400">
+                  No department matches “{deptSearch.trim()}”.
+                </p>
+              ) : (
+                filteredRail.map((group) => {
+                  const open = isRailGroupOpen(group.parent.key);
+                  const hasKids = group.children.length > 0;
+                  return (
+                    <div key={group.parent.key}>
+                      <TeamDeptRailRow
+                        entry={group.parent}
+                        count={deptCounts.get(group.parent.key) ?? 0}
+                        matches={railMatchCounts.get(group.parent.key) ?? 0}
+                        searching={normalizedQuery !== ''}
+                        selected={activeDept === group.parent.key}
+                        onSelect={() => setSelectedDept(group.parent.key)}
+                        disclosure={
+                          hasKids
+                            ? {
+                                open,
+                                // The rail search force-opens every group, so the
+                                // chevron is inert rather than lying about a state
+                                // it cannot change while a query is active.
+                                locked: railQuery !== '',
+                                childCount: group.children.length,
+                                onToggle: () =>
+                                  setOpenRailGroups((prev) => {
+                                    const next = new Map(prev);
+                                    // Write the negation of what is CURRENTLY shown,
+                                    // so the first click always visibly does
+                                    // something even when the auto-open rule opened
+                                    // the group.
+                                    next.set(group.parent.key, !open);
+                                    return next;
+                                  }),
+                              }
+                            : undefined
+                        }
+                      />
+                      {hasKids && (
+                        <div
+                          className={cn(
+                            'grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none',
+                            open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+                          )}
+                        >
+                          <div className="overflow-hidden">
+                            <div className="ml-3 border-l border-blue-100 pl-1.5 dark:border-blue-950/70">
+                              {group.children.map((c) => (
+                                <TeamDeptRailRow
+                                  key={c.key}
+                                  entry={c}
+                                  nested
+                                  count={deptCounts.get(c.key) ?? 0}
+                                  matches={railMatchCounts.get(c.key) ?? 0}
+                                  searching={normalizedQuery !== ''}
+                                  selected={activeDept === c.key}
+                                  onSelect={() => setSelectedDept(c.key)}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </aside>
+        )}
+
+        <div className="flex min-w-0 flex-1 flex-col gap-4">
+        {showRail && (
+          <div className="lg:hidden">
+            <label
+              htmlFor="team-dept-mobile"
+              className="mb-1 block text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
+            >
+              Department
+            </label>
+            <SmoothSelect
+              aria-label="Department"
+              value={activeDept}
+              onChange={(v) => setSelectedDept(v)}
+              triggerClassName="w-full"
+              // Indented rather than nested: SmoothSelect is a flat list, and
+              // dropping the children would make the whole HSL family unreachable
+              // on a phone.
+              options={rail.flatMap((g) => [
+                {
+                  value: g.parent.key,
+                  label: `${g.parent.name} (${deptCounts.get(g.parent.key) ?? 0})`,
+                },
+                ...g.children.map((c) => ({
+                  value: c.key,
+                  label: `   ${c.name} (${deptCounts.get(c.key) ?? 0})`,
+                })),
+              ])}
+            />
+          </div>
+        )}
+
+        {!unassigned && (
         <div className="flex flex-wrap items-center gap-2">
+          {activeEntry && (
+            <h3 className="mr-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              {activeEntry.name}
+            </h3>
+          )}
           <label
             htmlFor="team-search"
             className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
           >
             Search
           </label>
-          <div className="relative min-w-[220px] flex-1 sm:max-w-[340px]">
+          <div className="relative min-w-[200px] flex-1 sm:max-w-[300px]">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
             <input
               id="team-search"
               type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Name or email"
+              placeholder="Name or email — searches every department"
               className="h-8 w-full rounded-md border border-blue-200 bg-white pl-8 pr-2 text-xs text-zinc-800 shadow-sm transition-colors hover:border-blue-300 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-blue-900/50 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-blue-800 dark:focus:border-blue-700 dark:focus:ring-blue-900/50"
             />
           </div>
-          {deptOptions.length >= 2 && (
-            <>
-              <label
-                className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
-              >
-                Department
-              </label>
-              <SmoothSelect
-                aria-label="Department"
-                value={deptFilter}
-                onChange={(v) => setDeptFilter(v)}
-                triggerClassName="min-w-[180px]"
-                options={[
-                  { value: 'all', label: `All (${members.length})` },
-                  ...deptOptions.map((d) => {
-                    const count = members.filter(
-                      (m) => (m.department ?? '').trim().toLowerCase() === d.toLowerCase(),
-                    ).length;
-                    return { value: d, label: `${d} (${count})` };
-                  }),
-                ]}
-              />
-            </>
-          )}
-          {(deptFilter !== 'all' || searchQuery.trim() !== '') && (
+          {searchQuery.trim() !== '' && (
             <button
               type="button"
-              onClick={() => {
-                setDeptFilter('all');
-                setSearchQuery('');
-              }}
+              onClick={() => setSearchQuery('')}
               className="text-[11px] font-medium text-blue-600 hover:underline dark:text-blue-400"
             >
               Clear
@@ -2817,23 +3117,48 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
           )}
           <div className="ml-auto flex items-center gap-3">
             <span className="font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
-              Showing {filteredMembers.length} of {members.length}
+              {searchQuery.trim() === ''
+                ? `${filteredMembers.length} ${filteredMembers.length === 1 ? 'person' : 'people'}`
+                : `${filteredMembers.length} of ${deptCounts.get(activeDept) ?? 0}`}
             </span>
             <button
               type="button"
               onClick={exportRosterCsv}
               disabled={filteredMembers.length === 0}
-              title="Download the roster currently shown (respects search + department) as a CSV"
+              title="Download the people currently shown (this department, plus any search) as a CSV"
               className="inline-flex items-center gap-1.5 rounded-md border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-medium text-blue-700 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-blue-900/50 dark:bg-zinc-950 dark:text-blue-300 dark:hover:border-blue-800 dark:hover:bg-blue-950/30"
             >
               <Download className="h-3.5 w-3.5" /> Export CSV
             </button>
           </div>
         </div>
-      )}
+        )}
+
+        {/* Search is global while the roster is not. Rather than let a match sit
+            invisibly under another department — Offboard is only reachable
+            through a roster row — the other departments holding matches are
+            offered as a jump. */}
+        {matchesElsewhere.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md border border-blue-100/70 bg-blue-50/40 px-3 py-2 text-xs dark:border-blue-950/50 dark:bg-blue-950/20">
+            <span className="text-zinc-600 dark:text-zinc-300">
+              Also matching in {matchesElsewhere.length === 1 ? 'another department' : 'other departments'}:
+            </span>
+            {matchesElsewhere.map(({ entry, count }) => (
+              <button
+                key={entry.key}
+                type="button"
+                onClick={() => setSelectedDept(entry.key)}
+                className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-white px-2 py-0.5 font-medium text-blue-700 transition-colors hover:border-blue-300 hover:bg-blue-50 dark:border-blue-900/50 dark:bg-zinc-950 dark:text-blue-300 dark:hover:bg-blue-950/40"
+              >
+                {entry.name}
+                <span className="font-mono tabular-nums text-blue-500 dark:text-blue-400">{count}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
       <AnimatePresence initial={false}>
-        {innerTab === 'roster' && medalOpen && !unassigned && members.length > 0 && (
+        {medalOpen && !unassigned && members.length > 0 && (
           <motion.div
             key="medal-palette"
             initial={{ opacity: 0, height: 0, marginBottom: 0 }}
@@ -2847,7 +3172,6 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
         )}
       </AnimatePresence>
 
-      {innerTab === 'roster' && (
       <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15 dark:ring-blue-400/10">
         <CardContent className="p-0 sm:p-0">
           {unassigned ? (
@@ -2884,7 +3208,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
             </div>
           ) : (
             (() => {
-              const filterKey = `${deptFilter}|${searchQuery.trim()}`;
+              const filterKey = `${activeDept}|${searchQuery.trim()}`;
               const offboardBadge = (s: OffboardingQueueStatus | null) => {
                 switch (s) {
                   case 'pending':
@@ -3568,6 +3892,8 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
           )}
         </CardContent>
       </Card>
+        </div>
+      </div>
       )}
 
       <ManagerMemberDialog

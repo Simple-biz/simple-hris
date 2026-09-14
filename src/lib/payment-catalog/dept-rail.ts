@@ -115,8 +115,21 @@ export function buildDeptRail(entries: readonly DeptRailEntry[]): DeptRailGroup[
   return groups;
 }
 
+/**
+ * The only field rail ASSIGNMENT reads.
+ *
+ * Split out from {@link RailRosterPerson} so a caller that just wants people
+ * bucketed — My Team's department rail, whose rows are `EmployeeRow` — is not
+ * forced to carry an `email` that {@link assignRosterToRail} never touches.
+ * `department` is nullable because the function has always treated it that way
+ * (`(person.department ?? '').trim()`); the type now says so.
+ */
+export interface RailAssignable {
+  department: string | null;
+}
+
 /** Minimum this module needs to know about a roster person. */
-export interface RailRosterPerson {
+export interface RailRosterPerson extends RailAssignable {
   email: string;
   department: string;
 }
@@ -162,7 +175,7 @@ export function deptCellMatchesEntry(cell: string, entry: DeptRailEntry): boolea
  * Returns a map from rail key → people, and never loses anyone: the summed sizes
  * always equal `roster.length` (pinned by test).
  */
-export function assignRosterToRail<T extends RailRosterPerson>(
+export function assignRosterToRail<T extends RailAssignable>(
   roster: readonly T[],
   rail: readonly DeptRailGroup[],
 ): Map<string, T[]> {

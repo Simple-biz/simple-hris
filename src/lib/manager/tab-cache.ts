@@ -479,6 +479,15 @@ export const MANAGER_CACHE_KEYS = {
   resignations: 'team:resignations',
   /** `/api/employee-skill-sets` raw payload for the team roster. */
   skillSets: 'team:skill-sets',
+  /**
+   * The My Team department rail's selected entry — a raw rail KEY, never a
+   * resolved entry or a member list. Cached so returning to My Team lands on the
+   * department the manager was working in rather than snapping back to the
+   * largest one. A key that is no longer on the rail snaps to the default; the
+   * rail is rebuilt from the roster every render, so a stale key can only ever
+   * cost one redirect, never a wrong list.
+   */
+  teamDeptRailKey: 'team:dept-rail-key',
   /** The three `/api/department-transfers` scopes, cached as one raw triple. */
   transfers: 'transfers:scopes',
   /** The Bonus History tab's three raw summary payloads. */

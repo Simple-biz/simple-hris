@@ -93,6 +93,67 @@ weekend day at `hours >= 7` and get the overnight rule (`hslOvernightQualifies`,
 > **must** pass `department` or HSL members will be mis-colored against the
 > non-HSL rule.
 
+## The department rail (there is no "All")
+
+Shipped 2026-09-14, replacing the **Department dropdown filter**. Kane: *"instead
+of a filter we would have tabs arranged vertically on the left side where we can
+select Department rather than showing everything in one page and filtering them
+from there."* One department is on screen at a time; **there is deliberately no
+"All" entry** (Kane's call when asked directly) and the rail opens on the
+manager's **largest** department.
+
+Geometry is the shared rail library, `src/lib/payment-catalog/dept-rail.ts` —
+`buildDeptRail` / `assignRosterToRail` / `rollUpCounts`. That is what makes HSL
+fold into one parent disclosing its sub-teams (Kane 2026-08-21) instead of 16
+siblings, and what guarantees **a filter never hides a row**: `assignRosterToRail`
+files every person in exactly one bucket and its sizes sum to `roster.length`.
+
+`src/lib/manager/team-dept-rail.ts` supplies the half My Team cannot borrow — the
+catalog's rail is driven by the pay-structure **registry**, and My Team has none:
+
+- Entries are derived from the department cells the roster actually carries, plus
+  the manager's granted departments. **A granted department with nobody in it
+  still gets a tab reading 0** — it is how a mis-scoped grant becomes visible.
+- **A label with no payroll key is still a department here.** `normalizeDeptToKey`
+  returns null for USEE, Site Building (US/PH), Orphan Ministry and Manager — 61
+  people measured 2026-09-14 — and the catalog sweeps them into "No department"
+  because it is asking a payroll question. The manager is asking who is on their
+  team, so each earns its own entry. `RAIL_NO_DEPARTMENT_KEY` is left to catch a
+  genuinely **blank** cell (0 today) and is hidden while empty.
+- **The HSL parent is synthesised** whenever any `hsl:*` child is present. Exactly
+  one person carries the bare `HSL` label today; without this the rail would flatten
+  to 16 top-level HSL rows the moment they left.
+- **Ordering is by rolled-up headcount**, so HSL sorts on its ~625 people rather
+  than on the one left on the bare parent label. That ordering also picks the
+  default selection.
+- **Selecting a parent shows the whole family** (`membersForRailKey`), so the
+  number on the rail and the length of the list under it are the same number. A
+  row reading 625 must never hand back the 1 person on the bare parent label.
+
+> **Search stays GLOBAL while the roster does not.** The four row actions —
+> including **Offboard** — are only reachable through a roster row, so scoping
+> search to the selected tab would make a person unreachable unless the manager
+> already knew their department. Every rail entry carries its own match count
+> while a query is live, and the departments holding matches are offered as a jump
+> under the toolbar. Do not "simplify" this to a per-department search.
+
+Labels are formatted (`formatDeptLabel`) and **rail keys stay raw** — the
+dept-label-display-sweep rule. This also closed a live defect: the old dropdown
+built its option label from the raw cell, so an HSL manager read
+`hsl:intake_specialist` in the filter. The source-scan guard never caught it
+because it only inspects JSX children, and that label was an object property.
+
+Selection is cached in the shell store (`MANAGER_CACHE_KEYS.teamDeptRailKey`) as a
+**raw rail key** — never a resolved entry or a member list. A cached key that is no
+longer on the rail resolves to the default before it renders, so a stale key costs
+one redirect and can never decide which people are on screen.
+
+Below `lg` the rail is replaced by a flat picker with the sub-teams **indented,
+not dropped** — dropping them would make the whole HSL family unreachable on a
+phone. A manager with a single department gets **no rail at all** (the old
+dropdown was hidden in the same case). Pure logic is unit-tested in
+`src/lib/manager/team-dept-rail.test.ts`.
+
 ## Suspend / Reactivation (the manager temporary-pause pair)
 
 Row actions in the My Team **list** and in every roster **card footer** (kept in
