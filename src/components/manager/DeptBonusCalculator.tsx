@@ -2402,6 +2402,7 @@ export default function DeptBonusCalculator({
         const json = (await res.json()) as { rows?: DeptAppliedPayload['rows'] };
         const qcRows: QcSubmissionLite[] = (json.rows ?? []).map((r) => ({
           employee_email: r.employee_email,
+          employee_name: r.employee_name ?? null,
           bonus_id: r.bonus_id,
           vars: r.vars,
           scored_by: r.scored_by ?? null,
@@ -3445,7 +3446,14 @@ export default function DeptBonusCalculator({
               exit={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
               transition={reduceMotion ? { duration: 0 } : UNFOLD}
             >
-              <div className="px-4 py-3 sm:px-5">
+              {/* BOUNDED AND SCROLLABLE. The panel is `flex-none` inside a
+                  fixed-height card, so before this it grew to its natural
+                  height and was clipped by the ancestor's `overflow-hidden`:
+                  Carla pasted 18 overrides, saw 4, and could not reach the rest
+                  — including the skipped-lines list, which was sitting right
+                  underneath explaining exactly which people were unreachable.
+                  Capping the body is what makes that list readable at all. */}
+              <div className="max-h-[min(70vh,34rem)] overflow-y-auto px-4 py-3 sm:px-5">
                 <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
                   {/* Left: the paste */}
                   <div className="space-y-2">
@@ -3522,7 +3530,7 @@ export default function DeptBonusCalculator({
                     ) : (
                       <div className="overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-800">
                         <table className="w-full text-[11px]">
-                          <thead className="bg-zinc-50 text-left text-[10px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
+                          <thead className="sticky top-0 z-[1] bg-zinc-50 text-left text-[10px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
                             <tr>
                               <th className="px-2.5 py-1.5 font-medium">Person</th>
                               <th className="px-2.5 py-1.5 text-right font-medium">Your sheet</th>

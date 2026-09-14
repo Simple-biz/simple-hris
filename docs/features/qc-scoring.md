@@ -464,6 +464,56 @@ rendered while `readOnly`, so the draft-only rule is unchanged.
 | Panel + Override + Undo | `DeptBonusCalculator.tsx` — `compareMembersFor`, `runCompare`, `applyOverride`, `undoOverride`, and the panel above the officer rail |
 | Officer attribution | `DeptAppliedPayload.rows[].scored_by` — the GET always returned it; the client type dropped it until now |
 
+### The results panel is BOUNDED and scrolls
+
+Carla, 2026-09-14: she pasted **18 overrides**, could see **4**, and could not scroll to the
+rest. The panel is `flex-none` inside a fixed-height card, so it grew to its natural height and
+was clipped by the ancestor's `overflow-hidden` — with no scroll of its own.
+
+What that hid was not only the differences table. The **skipped-lines list sits directly
+underneath it**, already open by default, already naming every refused line and why. She could
+not reach the one thing on screen that explained what was happening.
+
+The body is now capped (`max-h-[min(70vh,34rem)] overflow-y-auto`) with a sticky table header.
+**Never remove the cap without giving the content its own scroll** — the failure is silent, and
+it presents as "the system is hiding people from me".
+
+### A person QC scored who is not on this week's table is refused as `off_table`
+
+The fifth refusal kind, added 2026-09-14. Before it, a pasted person the manager's table did not
+contain got `unmatched` — *"No one in this department matches that work email"* — which reads as
+*your paste is wrong*. It was the roster that moved.
+
+**Measured for week `2026-09-06`: 203 of the 374 Lead Gen people QC scored were not on the
+manager's table.** 122 were July leavers a `clearOffboarded` sync had resurrected
+([[master-sync-never-un-offboards]]); the rest are leavers the as-of-week deal adds to the QC
+slice which the manager's roster never carried.
+
+`off_table` fires only when the pasted address matches a **`qc_kpi_submissions` row for this
+week** — i.e. QC really did score them — and names the person:
+
+> *Aguilar, John Robert B "Robert" was scored by QC but is not on this week's table — they left
+> before the week being scored, so nothing here can pay them.*
+
+A pasted address **nobody has scored** stays plain `unmatched`. A typo must never be dressed up
+as a departure; both cases are pinned by test.
+
+> **Nothing about Override changed.** It still applies only to `mismatch` and `paste_only`
+> entries, which by construction are people on the table. A refused line was never silently
+> dropped — it was listed, under a panel nobody could scroll.
+
+### QC scores for people who left before the scored week are removed
+
+`scripts/cleanup-qc-scores-for-prior-leavers.mts` — read-only without `--apply`, full SELECT
+backup to disk first. It deletes a `qc_kpi_submissions` row only when its person has a **dated
+departure record STRICTLY BEFORE the week the row scores**, resolved on **work email**.
+
+Left **during or after** the scored week, no evidence, or an undated record — the row stands.
+**`bonus_catalog_applied` is never touched**: that is the money table, this is the first pass.
+
+Planned 2026-09-14: **151 rows, ₱27,000 of staged first-pass values** — 146 in week `2026-09-06`,
+5 in `2026-06-14`, 150 Lead Gen and 1 Discovery.
+
 ### The paste is TAB-only, and a line without a tab is refused
 
 `marcc@simple.biz ⇥ Cahig, Marc Joseph ⇥ 32`. Column 2 is the surname-first master name — it

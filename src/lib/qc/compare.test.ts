@@ -145,3 +145,40 @@ test('counts add up, and overrideTargets is exactly mismatch + paste_only', () =
   const targets = overrideTargets(r).map((e) => e.canonical).sort();
   assert.deepEqual(targets, ['jaysonm@simple.biz', 'marc.personal@gmail.com']);
 });
+
+test('a pasted person QC scored, who is not on this week’s table, is refused as off_table', () => {
+  // Measured 2026-09-14: 203 of the 374 Lead Gen people QC scored for that week
+  // were not on the manager's table (July leavers, plus leavers the as-of-week
+  // deal adds that the manager roster never carried). "No one matches that work
+  // email" reads as "your paste is wrong"; it was the roster that moved.
+  const result = compareAppointments(
+    [{ line: 2, email: 'gone@simple.biz', displayName: 'Robert', count: 7 }],
+    [], // nobody on the table
+    [
+      {
+        employee_email: 'gone@simple.biz',
+        employee_name: 'Aguilar, John Robert B "Robert"',
+        bonus_id: 'b1',
+        vars: { Appts_Set: 3 },
+        scored_by: 'perryb@simple.biz',
+      },
+    ],
+  );
+  assert.equal(result.entries.filter((e) => e.bucket !== 'qc_only').length, 0);
+  const refusal = result.refusals.find((r) => r.line === 2);
+  assert.ok(refusal, 'the line must be refused, never silently dropped');
+  assert.equal(refusal.kind, 'off_table');
+  assert.match(refusal.reason, /not on this week/i);
+  assert.match(refusal.reason, /Robert/, 'names the person, not just the address');
+});
+
+test('a pasted person nobody has ever scored is still plain "unmatched"', () => {
+  const result = compareAppointments(
+    [{ line: 3, email: 'typo@simple.biz', displayName: 'Typo', count: 1 }],
+    [],
+    [],
+  );
+  const refusal = result.refusals.find((r) => r.line === 3);
+  assert.ok(refusal);
+  assert.equal(refusal.kind, 'unmatched', 'a typo must not be dressed up as a departure');
+});

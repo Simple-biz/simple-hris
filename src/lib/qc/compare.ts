@@ -45,6 +45,10 @@ export interface CompareMember {
 
 export interface QcSubmissionLite {
   employee_email: string;
+  /** Name as the officer's row recorded it, so a refusal can name the person
+   *  rather than print an address the manager may not recognise. Optional:
+   *  older callers pass rows without it and fall back to the email. */
+  employee_name?: string | null;
   bonus_id: string;
   vars: Record<string, number> | null;
   /** Who typed it — `qc_kpi_submissions.scored_by`, stamped from the officer's session. */
@@ -77,7 +81,7 @@ export interface CompareEntry {
   line?: number;
 }
 
-export type CompareRefusalKind = 'unmatched' | 'ambiguous' | 'no_bonus' | 'duplicate_person';
+export type CompareRefusalKind = 'unmatched' | 'off_table' | 'ambiguous' | 'no_bonus' | 'duplicate_person';
 
 export interface CompareRefusal {
   line: number;
@@ -127,8 +131,14 @@ export function compareAppointments(
 
   // (canonical, bonus_id) → the QC row. One per key by the table's conflict target.
   const qcByKey = new Map<string, QcSubmissionLite>();
+  // Keyed two ways: by (email, bonus) for the comparison itself, and by email
+  // alone so a refusal can tell "QC scored this person" apart from "nobody by
+  // that address exists".
+  const qcByEmail = new Map<string, QcSubmissionLite>();
   for (const r of qcRows) {
     qcByKey.set(`${norm(r.employee_email)}|${r.bonus_id}`, r);
+    const e = norm(r.employee_email);
+    if (e && !qcByEmail.has(e)) qcByEmail.set(e, r);
   }
 
   const entries: CompareEntry[] = [];
@@ -139,11 +149,21 @@ export function compareAppointments(
     const key = norm(p.email);
     const set = canonicalsByEmail.get(key);
     if (!set || set.size === 0) {
+      // A pasted person QC DID score, who is nonetheless not on this week's
+      // table, is a different fact from a typo — and by far the more common one
+      // since the roster stopped carrying people who had already left. Measured
+      // 2026-09-14: 203 of the 374 Lead Gen people QC scored for that week were
+      // not on the manager's table. "No one matches that work email" reads as
+      // "your paste is wrong"; it was the roster that moved, and only the
+      // second message tells the manager what to do about it.
+      const scored = qcByEmail.get(key);
       refusals.push({
         line: p.line,
         email: p.email,
-        kind: 'unmatched',
-        reason: 'No one in this department matches that work email',
+        kind: scored ? 'off_table' : 'unmatched',
+        reason: scored
+          ? `${scored.employee_name || p.email} was scored by QC but is not on this week's table — they left before the week being scored, so nothing here can pay them`
+          : 'No one in this department matches that work email',
       });
       continue;
     }
