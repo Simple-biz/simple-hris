@@ -554,6 +554,68 @@ are leavers whose final pay cycle is this week — the deal adds them, the manag
 not carry them. They reach the table through the **Offboarded · last pay** chip, which is what
 the `off_table` refusal now tells the manager to do.
 
+### "Add N missing as externals" — one click adds everyone off the table, with a PAY KEY or a PROBLEM
+
+Shipped 2026-09-14. Carla asked for a button so staff stop hand-entering people QC already scored;
+Kane: *"These people are added externally so lets just add that button where we can add them into
+the thing as externals so this should have the total properly"*, and *"if one of those people
+doesnt appear on the global master list then they should be marked as problems."*
+
+**Measured before scoping** (`scripts/probe-lead-gen-qc-only-reach.mts`, read-only, runs the real
+strip functions), Lead Gen `2026-09-06`: **27** QC-scored people above ₱0 had no applied row —
+**12** leavers the Offboarded · last pay strip already offered, **15** transferred to
+`hsl:intake_specialist` after the week whom **nothing in the UI reached**, 0 unknown to every record;
+**78** more QC rows off the table were at ₱0. Jackie's sheet carried **73 `unmatched` lines**: a
+pasted WORK email cannot bridge to a PERSONAL-keyed QC row when the person is not on the table to
+bridge through, so `off_table` effectively never fired. The button works from **records**, not from
+that bridge.
+
+| Piece | File |
+|---|---|
+| The decision | `src/lib/qc/missing-people.ts` — pure, `missing-people.test.ts` (11 cases) |
+| The button, the run, Undo, the PROBLEMS list | `DeptBonusCalculator.tsx` — `addMissingPeople`, `undoAddMissing`, `deptScoringVar`; Compare action row + right column |
+| Audit | `qc.missing_added` — one row per click, registered in `src/lib/audit/registry.ts` |
+
+**Who is added.** Everyone on the sheet, or in the QC first pass, who is not on this week's table
+under any of their identity emails — provided a record **knows** them. **Counts: the sheet wins**
+(Override's own rule — the officers cannot see her sheet); QC fills the rest. **QC-scored at ₱0 and
+not on the sheet is NOT added**; it is counted and shown (*"N scored ₱0 by QC and not on your sheet
+were left off"*). A sheet count of 0 **is** added: the sheet says who was in the department.
+
+**The pay key is decided per SOURCE, by the component, never by the module** — a wrong key pays ₱0
+silently ([[offboarded-bonus-scoring]]):
+
+| Record consulted (in this order) | Pay key | Why |
+|---|---|---|
+| Active master list — `/api/manager/transfer-candidates` (name, dept, emails only) + this manager's own `teamMembers` | **personal-first**, like every roster row | the wizard's bridge resolves an active person under any identity |
+| Week-scoped Offboarded · last pay list | **`offboardedAddEmail(c, true)`** — the Hubstaff login | the ONLY key the wizard resolves for someone off the roster |
+
+An offboarded candidate sharing any address with an active person is **dropped — active wins**;
+an active person is never labelled offboarded.
+
+**PROBLEMS (Kane's rule).** Anyone neither record knows — not active on the Global Master List, not
+a recent leaver — is a problem: named, with line, email and reason, in a **red, open-by-default list
+under the sheet**, never folded into a toast, never added, never guessed. The other problem kinds:
+an address two people share (`ambiguous`), a second sheet line for the same person
+(`duplicate_person`), a department with no formula bonus (`no_bonus`). Anyone whose add the
+component itself refused (already on the table, week no longer a draft) is listed there too.
+
+**After the click:** each added person is an ordinary external member (`addExternalMember`) with
+the count set on the department's common formula bonus (`deptScoringVar` — externals do not exist
+yet, so this cannot go through `applicableBonuses(email)`); **Undo removes exactly the added**;
+Compare re-runs against the grown table (`share: false` — the text did not change) so matches appear
+and the skipped list shrinks to what is genuinely unknown. An active transfer's row chip reads
+**"Transferred → <department>"** from the live roster at add time (display only, this session —
+the `transferred` status column is still dead, [[qc-transferred-status-unreachable]]).
+
+> **The wizard still pays only people with hours this week.** The result line says so; anyone
+> without hours goes through People → Pay. The button cannot fix that and must not imply it did.
+
+> **What this does not settle:** Carla's own rule — *"if they were in Legion during the time that
+> we're scoring, then they need to be in there so that they don't have to use the add external
+> member button"* — is the manager's table reading the roster **as of the week**, the deal's
+> predicate. That would make this button unnecessary. It is its own hardening item.
+
 ### The paste is TAB-only, and a line without a tab is refused
 
 `marcc@simple.biz ⇥ Cahig, Marc Joseph ⇥ 32`. Column 2 is the surname-first master name — it

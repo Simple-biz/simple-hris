@@ -91,6 +91,7 @@ import {
 import { QC_DEPT_KEYS, isQcDeptKey } from '@/lib/qc/constants';
 import { upcomingWeekFor } from '@/lib/hubstaff/use-pay-weeks';
 import { parseAppointmentPaste, type PasteRefusal } from '@/lib/qc/paste';
+import { findMissingPeople, type KnownPerson, type MissingResult } from '@/lib/qc/missing-people';
 import type { SharedComparePaste } from '@/lib/qc/compare-paste';
 import {
   compareAppointments,
@@ -1542,6 +1543,9 @@ export default function DeptBonusCalculator({
     parseRefusals: PasteRefusal[];
     headerSkipped: boolean;
     pastedCount: number;
+    /** The officers' rows this run compared against — "Add missing as externals"
+     *  reads them to find QC-scored people the sheet does not list. */
+    qcRows: QcSubmissionLite[];
   };
   /** Pre-Override value of each cell Override changed — undefined when the member had
    *  no applied entry for that bonus at all, so Undo can remove it rather than blank it. */
@@ -1567,6 +1571,14 @@ export default function DeptBonusCalculator({
   /** Per-card Refresh in flight (see `refreshDept`). */
   const [deptRefreshing, setDeptRefreshing] = useState<Record<string, boolean>>({});
   const [overrideUndo, setOverrideUndo] = useState<Record<string, OverrideSnapshot | null>>({});
+  /** "Add missing as externals" — what the last run did, per dept: the pay keys it
+   *  added (Undo removes exactly those), the PROBLEMS (Kane, 2026-09-14: anyone not
+   *  on the Global Master List is marked as a problem, never added), how many
+   *  QC-scored-at-zero people were deliberately left off, and any add the
+   *  component itself refused (duplicate on the table, week no longer a draft). */
+  type MissingRun = MissingResult & { addedKeys: string[]; failed: Array<{ who: string; reason: string }> };
+  const [missingRuns, setMissingRuns] = useState<Record<string, MissingRun | null>>({});
+  const [missingBusy, setMissingBusy] = useState<Record<string, boolean>>({});
   // Recently offboarded people (final bonuses may still be owed) — fetched once
   // and shared by the per-dept Offboarded strips and the add-member modal.
   const { people: offboardedPeople } = useOffboardedPeople(!isQc);
@@ -2536,7 +2548,7 @@ export default function DeptBonusCalculator({
         const result = compareAppointments(parsed.rows, compareMembersFor(deptKey), qcRows);
         setCompareRuns((p) => ({
           ...p,
-          [deptKey]: { result, parseRefusals: parsed.refusals, headerSkipped: parsed.headerSkipped, pastedCount: parsed.rows.length },
+          [deptKey]: { result, parseRefusals: parsed.refusals, headerSkipped: parsed.headerSkipped, pastedCount: parsed.rows.length, qcRows },
         }));
       } catch (e) {
         setCompareError((p) => ({ ...p, [deptKey]: e instanceof Error ? e.message : 'Compare failed' }));
@@ -2545,6 +2557,162 @@ export default function DeptBonusCalculator({
       }
     },
     [comparePaste, weekStart, compareMembersFor, sharedPaste, saveSharedPaste],
+  );
+
+  /** The formula bonus + variable an EXTERNAL member of this department is scored
+   *  under: the dept's common formula bonus carrying an appointment variable,
+   *  picked the way `compareMembersFor` picks it. Externals do not exist yet when
+   *  "Add missing" runs, so this cannot go through `applicableBonuses(email)`. */
+  const deptScoringVar = useCallback(
+    (deptKey: string): { bonusId: string; varName: string } | null => {
+      const sharedSet = sharedCommonByDept.get(deptKey);
+      for (const b of commonByDept.get(deptKey) ?? []) {
+        if (sharedSet?.has(b.id)) continue;
+        const vars = bonusVariables(b);
+        if (vars.length === 0) continue;
+        const appt = vars.find((v) => /appt/i.test(v));
+        const pick = appt ?? (vars.length === 1 ? vars[0]! : null);
+        if (pick) return { bonusId: b.id, varName: pick };
+      }
+      return null;
+    },
+    [commonByDept, sharedCommonByDept],
+  );
+
+  /**
+   * "Add missing as externals" (Carla; Kane, 2026-09-14). Everyone on the sheet or
+   * in the QC first pass who is NOT on this week's table is added as an external
+   * member with their count — the sheet's where both exist — provided a record
+   * KNOWS them. Two records, consulted in this order:
+   *   1. the active master list (`/api/manager/transfer-candidates` — name, dept
+   *      and emails only — plus this manager's own `teamMembers`): pay key
+   *      personal-first like every roster row, because the wizard's bridge covers
+   *      an active person under any of their identities;
+   *   2. the week-scoped Offboarded · last pay list: pay key
+   *      `offboardedAddEmail(c, true)`, the Hubstaff login — the ONLY key the wizard
+   *      resolves for someone off the roster ([[offboarded-bonus-scoring]]).
+   * An offboarded candidate sharing any address with an active person is dropped:
+   * an active person is never labelled offboarded. Anyone neither record knows is
+   * a PROBLEM — named, listed, never added, never guessed; a wrong key pays ₱0
+   * silently. One audit row for the bulk action; Undo removes exactly the added.
+   */
+  const addMissingPeople = useCallback(
+    async (deptKey: string) => {
+      const run = compareRuns[deptKey];
+      const d = state[deptKey];
+      if (!run || !d) return;
+      if (d.status !== 'draft') {
+        toast.error('This week has already been submitted — reopen it to make changes.');
+        return;
+      }
+      setMissingBusy((p) => ({ ...p, [deptKey]: true }));
+      try {
+        const res = await fetch('/api/manager/transfer-candidates', { cache: 'no-store' });
+        const json = (await res.json().catch(() => ({}))) as {
+          people?: Array<{ name: string; department: string | null; work_email: string | null; personal_email: string | null }>;
+          error?: string | null;
+        };
+        if (!res.ok) throw new Error(json.error || `Could not load the master list (${res.status})`);
+
+        const known: KnownPerson[] = [];
+        const activeEmails = new Set<string>();
+        const pushActive = (
+          name: string | null | undefined,
+          department: string | null | undefined,
+          emails: Array<string | null | undefined>,
+        ) => {
+          const all = emails.map((e) => normEmail(e ?? null) || '').filter(Boolean);
+          const payKey = all[0] ?? ''; // personal-first: the order the caller passes
+          if (!name?.trim() || !payKey) return;
+          for (const e of all) activeEmails.add(e);
+          known.push({ name: name.trim(), emails: all, payKey, source: 'active', department: department ?? null });
+        };
+        for (const p of json.people ?? []) pushActive(p.name, p.department, [p.personal_email, p.work_email]);
+        for (const t of teamMembers) {
+          pushActive(t.name, t.department, [t.personal_email, t.work_email, t.alternate_work_email, t.alternate_work_email_2]);
+        }
+        for (const c of offboardedForWeek) {
+          const all = [c.hubstaff_email, c.work_email, c.personal_email].map((e) => normEmail(e ?? null) || '').filter(Boolean);
+          if (all.some((e) => activeEmails.has(e))) continue; // active wins
+          const payKey = offboardedAddEmail(c, true);
+          if (!payKey) continue;
+          known.push({ name: c.name, emails: all, payKey, source: 'offboarded', department: c.department });
+        }
+
+        const scoring = deptScoringVar(deptKey);
+        const members = compareMembersFor(deptKey).map((m) => ({ canonical: m.canonical, emails: m.emails }));
+        const pasted = parseAppointmentPaste(comparePaste[deptKey] ?? '').rows;
+        const result = findMissingPeople({ members, pasted, qcRows: run.qcRows, known, varName: scoring?.varName ?? null });
+
+        const addedKeys: string[] = [];
+        const failed: Array<{ who: string; reason: string }> = [];
+        for (const a of result.add) {
+          const err = addExternalMember(deptKey, a.name, a.payKey);
+          if (err) {
+            failed.push({ who: a.name, reason: err });
+            continue;
+          }
+          addedKeys.push(a.payKey);
+          if (scoring) setVar(deptKey, a.payKey, scoring.bonusId, scoring.varName, String(a.count));
+        }
+        setMissingRuns((p) => ({ ...p, [deptKey]: { ...result, addedKeys, failed } }));
+        void logAudit({
+          user_name: viewerEmail ?? 'anonymous',
+          action: 'qc.missing_added',
+          resource: 'qc_compare',
+          resource_id: `${deptKey}:${weekStart}`,
+          details: {
+            department: deptKey,
+            period_start: weekStart,
+            added: addedKeys.length,
+            problems: result.problems.length,
+            skipped_zero_qc: result.skippedZeroQc,
+            failed: failed.length,
+            people: result.add.map((a) => ({
+              email: a.payKey,
+              name: a.name,
+              source: a.source,
+              department: a.department,
+              count: a.count,
+              count_source: a.countSource,
+              scored_by: a.scoredBy,
+            })),
+            problem_list: result.problems.map((pr) => ({ email: pr.email, who: pr.who, kind: pr.kind, line: pr.line })),
+          },
+        });
+        const n = addedKeys.length;
+        const pn = result.problems.length + failed.length;
+        toast.success(
+          n > 0
+            ? `Added ${n} as external${n === 1 ? '' : 's'}${pn ? ` · ${pn} problem${pn === 1 ? '' : 's'} listed` : ''}.`
+            : pn
+              ? `Nobody added — ${pn} problem${pn === 1 ? '' : 's'} listed under the sheet.`
+              : 'Nobody is missing from this week’s table.',
+        );
+        // Compare again against the grown table so the matches appear and the
+        // skipped list shrinks to what is genuinely unknown. Not re-shared: the
+        // text did not change.
+        void runCompare(deptKey, { share: false });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Could not add the missing people');
+      } finally {
+        setMissingBusy((p) => ({ ...p, [deptKey]: false }));
+      }
+    },
+    [compareRuns, state, teamMembers, offboardedForWeek, deptScoringVar, compareMembersFor, comparePaste, viewerEmail, weekStart, runCompare],
+  );
+
+  /** Remove exactly the externals "Add missing" added. In memory, like Undo override. */
+  const undoAddMissing = useCallback(
+    (deptKey: string) => {
+      const r = missingRuns[deptKey];
+      if (!r || r.addedKeys.length === 0) return;
+      for (const k of r.addedKeys) removeExternalMember(deptKey, k);
+      setMissingRuns((p) => ({ ...p, [deptKey]: null }));
+      toast.success(`Removed the ${r.addedKeys.length} added external${r.addedKeys.length === 1 ? '' : 's'}.`);
+      void runCompare(deptKey, { share: false });
+    },
+    [missingRuns, runCompare],
   );
 
   /** Which week each dept's shared sheet has been fetched for. A ref, so the
@@ -3360,6 +3528,30 @@ export default function DeptBonusCalculator({
       : [];
     const cmpQcOnly = cmpRun ? cmpRun.result.entries.filter((e) => e.bucket === 'qc_only') : [];
     const cmpRefusals = cmpRun ? cmpRun.parseRefusals.length + cmpRun.result.refusals.length : 0;
+    // "Add missing as externals": the sheet's off-table lines (unmatched / off_table)
+    // plus QC-scored-above-zero people off the table the sheet does not list —
+    // deduped by address, an upper bound for the button label; the run reports
+    // exact numbers and names the problems.
+    const cmpMissingRun = missingRuns[key] ?? null;
+    const cmpMissingCount = (() => {
+      if (!cmpRun) return 0;
+      const seen = new Set<string>();
+      for (const r of cmpRun.result.refusals) {
+        if (r.kind === 'unmatched' || r.kind === 'off_table') seen.add(r.email.trim().toLowerCase());
+      }
+      const onTable = new Set<string>();
+      for (const m of compareMembersFor(key)) for (const e of [m.canonical, ...m.emails]) onTable.add(e.trim().toLowerCase());
+      const varName = deptScoringVar(key)?.varName ?? null;
+      for (const r of cmpRun.qcRows) {
+        const e = r.employee_email.trim().toLowerCase();
+        const v = varName ? r.vars?.[varName] : undefined;
+        if (e && !onTable.has(e) && typeof v === 'number' && v > 0) seen.add(e);
+      }
+      return seen.size;
+    })();
+    /** Active people "Add missing" brought in this session → where they are NOW, for the row chip. */
+    const cmpMissingDeptByKey = new Map<string, string>();
+    for (const a of cmpMissingRun?.add ?? []) if (a.source === 'active' && a.department) cmpMissingDeptByKey.set(a.payKey, a.department);
     const cmpUndo = overrideUndo[key] ?? null;
     // The shared sheet for this dept-week, and whether the box has drifted from it
     // (derived, never tracked: the box and the server copy are both state).
@@ -3837,6 +4029,30 @@ export default function DeptBonusCalculator({
                           <CornerUpLeft className="h-3.5 w-3.5" /> Undo override
                         </Button>
                       )}
+                      {cmpRun && cmpMissingCount > 0 && !(cmpMissingRun && cmpMissingRun.addedKeys.length > 0) && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 gap-1.5 border-sky-300 text-xs text-sky-800 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300"
+                          disabled={readOnly || !!missingBusy[key]}
+                          onClick={() => void addMissingPeople(key)}
+                          title="Adds everyone on your sheet or scored by QC who is not on this week's table, as external members with their count — when the Global Master List or the recent-leaver list knows them. Anyone it does not know is listed as a problem, not added."
+                        >
+                          {missingBusy[key] ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />}
+                          Add {cmpMissingCount} missing as external{cmpMissingCount === 1 ? '' : 's'}
+                        </Button>
+                      )}
+                      {cmpMissingRun && cmpMissingRun.addedKeys.length > 0 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 gap-1.5 text-xs"
+                          onClick={() => undoAddMissing(key)}
+                          title="Remove exactly the externals Add missing added"
+                        >
+                          <CornerUpLeft className="h-3.5 w-3.5" /> Undo add {cmpMissingRun.addedKeys.length}
+                        </Button>
+                      )}
                       {/* Delete all (Kane, 2026-09-14): the shared sheet goes for
                           everyone and this box empties — the orphanage step's
                           Remove all, confirmed inline, never window.confirm. The
@@ -3983,6 +4199,41 @@ export default function DeptBonusCalculator({
                             <li key={`c${r.line}`}>
                               <span className="font-mono text-zinc-400">L{r.line}</span> {r.email ? `${r.email}: ` : ''}
                               {r.reason}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+
+                    {cmpMissingRun && (
+                      <p className="shrink-0 text-[10.5px] text-zinc-500 dark:text-zinc-400">
+                        Added {cmpMissingRun.addedKeys.length} as external{cmpMissingRun.addedKeys.length === 1 ? '' : 's'}
+                        {cmpMissingRun.skippedZeroQc > 0
+                          ? ` · ${cmpMissingRun.skippedZeroQc} scored ₱0 by QC and not on your sheet were left off`
+                          : ''}
+                        . The wizard pays only people with hours this week — anyone without goes through People → Pay.
+                      </p>
+                    )}
+                    {/* PROBLEMS (Kane: "if one of those people doesnt appear on the global
+                        master list then they should be marked as problems"). Open by
+                        default, red, named — never folded into a toast. */}
+                    {cmpMissingRun && cmpMissingRun.problems.length + cmpMissingRun.failed.length > 0 && (
+                      <details className="shrink-0 text-[11px]" open>
+                        <summary className="cursor-pointer font-medium text-red-700 hover:text-red-800 dark:text-red-400">
+                          {cmpMissingRun.problems.length + cmpMissingRun.failed.length} problem
+                          {cmpMissingRun.problems.length + cmpMissingRun.failed.length === 1 ? '' : 's'} — not added, needs a human
+                        </summary>
+                        <ul className="mt-1 max-h-32 space-y-0.5 overflow-y-auto pl-3 text-zinc-600 dark:text-zinc-300">
+                          {cmpMissingRun.problems.map((pr, i) => (
+                            <li key={`m${i}`}>
+                              {pr.line != null && <span className="font-mono text-zinc-400">L{pr.line} </span>}
+                              <span className="font-medium text-zinc-800 dark:text-zinc-100">{pr.who}</span>
+                              {pr.email && pr.email !== pr.who ? <span className="text-zinc-400"> · {pr.email}</span> : null} — {pr.reason}
+                            </li>
+                          ))}
+                          {cmpMissingRun.failed.map((f, i) => (
+                            <li key={`f${i}`}>
+                              <span className="font-medium text-zinc-800 dark:text-zinc-100">{f.who}</span> — {f.reason}
                             </li>
                           ))}
                         </ul>
@@ -4231,7 +4482,9 @@ export default function DeptBonusCalculator({
                                     className="shrink-0 rounded bg-sky-100 px-1 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wide text-sky-700 dark:bg-sky-950/60 dark:text-sky-300"
                                     title="External member — not on the team roster; receives the team's common bonus"
                                   >
-                                    Ext
+                                    {cmpMissingDeptByKey.has(m.email)
+                                      ? `Transferred → ${formatDeptLabel(normalizeDeptToKey(cmpMissingDeptByKey.get(m.email)!) ?? cmpMissingDeptByKey.get(m.email)!)}`
+                                      : 'Ext'}
                                   </span>
                                 ))}
                             </span>

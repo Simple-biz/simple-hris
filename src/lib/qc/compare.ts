@@ -170,8 +170,8 @@ export function compareAppointments(
         // manager's roster never carried. They are owed their score, and the
         // Offboarded · last pay chip is exactly how to reach them.
         reason: scored
-          ? `${scored.employee_name || p.email} was scored by QC but is not on this week's table — add them from the “Offboarded · last pay” chip in the card header, then Compare again`
-          : 'No one in this department matches that work email',
+          ? `${scored.employee_name || p.email} was scored by QC but is not on this week's table — “Add missing as externals” below brings them in (or the “Offboarded · last pay” chip), then Compare again`
+          : 'No one on this week’s table matches that work email — “Add missing as externals” adds them if the Global Master List or the recent-leaver list knows them',
       });
       continue;
     }
