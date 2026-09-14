@@ -143,9 +143,56 @@ test('CONTROL: the Active tile cannot disagree with the panel header', () => {
   );
 });
 
-test('CONTROL: the KPI tiles never print a figure for an unresolved week', () => {
+test('CONTROL: neither figure prints for an unresolved week', () => {
   // 0 is a claim ("nobody is offboarded"); the skeleton is an admission.
-  for (const m of [/\{weekResolved \? activeCount : <CountSkeleton \/>\}/, /\{weekResolved \? leaverCount : <CountSkeleton \/>\}/]) {
-    assert.match(calcSrc, m, 'both tiles gate on weekResolved');
+  for (const m of [
+    /\{weekResolved \? activeCount : <CountSkeleton \/>\}/,
+    /\{weekResolved \? offboardedThisWeek : <CountSkeleton \/>\}/,
+  ]) {
+    assert.match(calcSrc, m, 'both figures gate on weekResolved');
   }
+});
+
+test('CONTROL: the Offboarded figure counts THIS WEEK, not everyone who ever left', () => {
+  // The bug Kane caught: it showed leavers already added to the table and
+  // carried the hidden-departed figure beside it — for Lead Gen on 2026-09-06
+  // that was 158 people who ALL left in July, printed under the word
+  // "offboarded". It read as "158 left last week". It was not: ZERO Lead Gen
+  // people left during that week, and the real figure is 93.
+  // Anchor on CODE. 'Add External Member' also appears in a comment far above,
+  // and indexOf would find that first — the slice then comes back empty and the
+  // control passes on nothing.
+  const figureAt = calcSrc.indexOf('offboardedThisWeek : <CountSkeleton');
+  const buttonAt = calcSrc.indexOf('setExtAddKey(key)}');
+  assert.ok(figureAt > 0 && buttonAt > figureAt, 'the offboarded figure sits before the Add External control');
+  const stat = calcSrc.slice(figureAt, buttonAt);
+  assert.doesNotMatch(
+    stat,
+    /deptDepartedHidden/,
+    'people who left in earlier weeks must never be counted beside the word "offboarded"',
+  );
+  assert.doesNotMatch(stat, /leaverCount/, 'not "leavers already added" — that shrinks as you add them');
+});
+
+test('CONTROL: the hidden-departed figure is disclosed, but never as "offboarded"', () => {
+  // Silence would be its own defect: a roster that quietly drops 158 people gets
+  // reported as data loss. It is shown — on its own line, in its own words.
+  const at = calcSrc.indexOf('deptDepartedHidden > 0 && (');
+  assert.ok(at > 0, 'the disclosure renders when there is something to disclose');
+  // End at the paragraph's own close: 700 characters would run into the
+  // "Recently offboarded members" comment below and match its word, not ours.
+  const snippet = calcSrc.slice(at, calcSrc.indexOf('</p>', at));
+  assert.match(snippet, /who left before\s+this week/, 'it says WHEN they left');
+  assert.doesNotMatch(
+    snippet.toLowerCase(),
+    /offboarded/,
+    'and never borrows the word the toolbar figure uses',
+  );
+});
+
+test('CONTROL: the figures sit in the toolbar, not in a gradient hero card', () => {
+  // PRODUCT.md anti-reference: "No gradient-heavy hero treatments." The craft
+  // floor refuses the hero-metric template outright. This is an Operate surface.
+  assert.doesNotMatch(calcSrc, /StatCard/, 'no gradient KPI card on this surface');
+  assert.doesNotMatch(calcSrc, /kpi-stat-card/, 'and no import left behind');
 });

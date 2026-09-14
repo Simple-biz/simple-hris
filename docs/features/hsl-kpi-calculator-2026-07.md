@@ -1186,38 +1186,66 @@ open by default**:
   > The effect was a list that never emptied — the failure Carla actually
   > reported. Kane ruled the doc stale on 2026-09-14.
 
-### Active / Offboarded — the KPI tiles above the member table
+### Active / Offboarded — two figures in the panel toolbar
 
-Two `StatCard`s sit between the department panel's header and the scrolling table
-(Kane, 2026-09-14: *"lets have a kpi at the top of this saying how many are active
-and how many were offboarded"*). They use the **shipped** tile from
-`src/components/accounting/kpi-stat-card.tsx`, whose own header says to keep it the
-single source of truth — a second copy is how two bands that should match drift.
+Kane, 2026-09-14: *"lets have a kpi at the top of this saying how many are active
+and how many were offboarded"*, then *"the design is too big the columns are too
+stupidly big lets just put the KPIs beside the add external member"*.
 
-| Tile | Is | Is not |
+They sit in the toolbar row, left of **Add External Member**, at `h-8` so the
+search input, the figures and the button share one rhythm.
+
+| Figure | Counts | Lead Gen, week `2026-09-06` |
 | --- | --- | --- |
-| **Active** | `allMembers.length − leaverCount` — people on *this week's* table who have not left | the department's headcount |
-| **Offboarded** | the leavers on the table, being scored for their **final pay week** | the people hidden because they left earlier |
+| **active** | `allMembers.length − leaverCount` — people on *this week's* table who have not left | **224** |
+| **offboarded** | leavers whose **final pay cycle is this week** | **93** |
 
-**Both figures count `allMembers` — the same array the panel header counts** — so
-the header's "N people" and the tiles can never disagree for one department. A
-leaver is identified by `offboardedEmailSet`, the very set the row chip uses, never
-by a second rule that could drift from it. Pinned by control tests in
-`src/lib/qc/departed-guard.test.ts`.
+**The rejected treatment, and why.** The first cut used the gradient `StatCard`
+from the Payment Catalog in a two-column band above the table. That is the
+hero-metric template, and `PRODUCT.md`'s anti-references rule out gradient-heavy
+hero treatments outright. This is an **Operate** surface: the manager is scanning a
+table, not being pitched — and a headline band pushed the table itself down, the
+actual work displaced by a decoration about the work.
 
-The **third** number — people dropped because they left *before* the scored week
-(`qc-scoring.md` § *The roster carries people who have LEFT*) — is deliberately not
-a tile. It describes people who are not in the list at all, and a headline counting
-invisible people invites the reading that they are still owed something. It appears
-as a sub-line on the Offboarded tile only when there is nothing owed and something
-was hidden: *"none owed; 158 left earlier and are hidden."*
+**Only the number carries colour.** The offboarded figure is `amber-700`
+(≈5.9:1 on this ground); its label is not. An amber micro-label at 9px lands near
+**3.5:1** and misses the 4.5:1 floor, so both labels stay `zinc-500` / `zinc-400`
+and the colour does its work in one place. Both figures are `tabular-nums` so they
+do not jitter as the week changes.
 
-**Neither tile prints a figure until the week resolves** — they render a skeleton.
-A count beside a week picker that does not move with the week is a lie, and `0` is a
-claim ("nobody is offboarded") where the skeleton is an admission. Same reason the
-calculators pass `weekResolved ? weekStart : ''` everywhere else.
+### The counting rules — the part worth protecting
 
-Both bodies unfold below the toolbar with the same `UNFOLD` transition (height +
-opacity on the file's `EASE`; `useReducedMotion` cuts). The first cut of Compare
-was a collapsed row above the table and Kane could not find it — a control that
-exists must be visible even when it cannot act: disable it and say why.
+**Active counts `allMembers`, the same array the panel header and the search
+placeholder count**, so "Search 224 people" and the figure beside it can never
+disagree. A leaver is identified by `offboardedEmailSet` — the very set the row
+chip uses — never by a second rule that could drift from it.
+
+**Offboarded is counted from `offboardedForWeek`, never from the per-department
+strip list.** The strip is gated on `canAddExternal`, so on a locked or read-only
+week it is empty: a figure reading from it would print **0** and claim nobody left.
+It also counts leavers **already added** to the table, so adding one does not make
+the figure shrink as you work.
+
+> **The mistake this section exists to prevent.** The first cut showed *leavers
+> already added* (usually 0) beside a sub-line carrying the hidden-departed
+> figure: *"none owed; 158 left earlier and are hidden."* Under the word
+> **Offboarded**, that read as **"158 left last week."** Measured: all 158 left in
+> **July**, and **zero** Lead Gen people left during the scored week. Kane caught
+> it in one question. A control test now asserts `deptDepartedHidden` never appears
+> between the offboarded figure and the Add External control.
+
+### The hidden-departed count is disclosed, but never called "offboarded"
+
+People who left in *earlier* weeks are filtered off the table entirely
+(`qc-scoring.md` § *The roster carries people who have LEFT*). That is a different
+fact, and it gets its own quiet line under the toolbar — *"158 people who left
+before this week are not shown."*
+
+Neither silence nor a third figure would do. Silence is worse: a roster that
+quietly drops 158 people reads as data loss and gets reported as a bug. A figure
+beside the other two is worse the other way — it invites exactly the misreading
+above.
+
+**Neither figure prints until the week resolves;** both render a skeleton. A count
+beside a week picker that does not move with the week is a lie, and `0` is a claim
+("nobody is offboarded") where the skeleton is an admission.

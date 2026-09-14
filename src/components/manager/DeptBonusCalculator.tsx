@@ -52,7 +52,6 @@ import {
   User,
   UserPlus,
   Users,
-  UserMinus,
   X,
   Zap,
 } from 'lucide-react';
@@ -76,7 +75,6 @@ import {
 } from './OffboardedSuggestions';
 import { offboardedRelevantToWeek } from '@/lib/roster/offboarded-week-relevance';
 import { useDepartedMembers, isDepartedMember } from '@/components/manager/useDepartedMembers';
-import { StatCard, StatValue, StatSub } from '@/components/accounting/kpi-stat-card';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
@@ -1581,6 +1579,24 @@ export default function DeptBonusCalculator({
     }
     return s;
   }, [offboardedForWeek, canonEmail]);
+
+  /** Leavers whose FINAL PAY CYCLE is the week in view, per dept key — the
+   *  honest "offboarded" figure for a scored week.
+   *
+   *  Counted from `offboardedForWeek`, never from the per-dept strip list: that
+   *  one is gated on `canAddExternal`, so a locked or read-only week would drop
+   *  this number to 0 and read as "nobody left", which is a different claim. It
+   *  also counts leavers ALREADY added to the table, so adding one does not make
+   *  the headline shrink. */
+  const offboardedCountByDept = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of offboardedForWeek) {
+      const k = normalizeDeptToKey(p.department) ?? slugifyDeptKey(p.department ?? '');
+      if (!k) continue;
+      map.set(k, (map.get(k) ?? 0) + 1);
+    }
+    return map;
+  }, [offboardedForWeek]);
   // Mirror of `submit` for the (stable) Escape handler so it can defer to the
   // modal without re-binding the drawer's keydown listener.
   const submitRef = useRef(submit);
@@ -2253,8 +2269,15 @@ export default function DeptBonusCalculator({
         offboardedEmailSet.has(canonEmail(m.email)),
       ).length;
       const activeCount = allMembers.length - leaverCount;
-      // People this department LOST to the departed filter — they left before
-      // the scored week and are deliberately not on the table at all.
+      // Leavers whose FINAL PAY is this week — the honest "offboarded" figure
+      // for a scored week, and what Kane asked the tile to say: "offboarded last
+      // week only". Includes those already added to the table, so adding one
+      // never makes the headline shrink.
+      const offboardedThisWeek = offboardedCountByDept.get(key) ?? 0;
+      // A SEPARATE fact, and never mixed into the tile above: people who left
+      // BEFORE this week and are filtered off the table entirely. For Lead Gen
+      // on 2026-09-06 that is 158 people who all left in JULY — putting that
+      // figure under a label saying "Offboarded" read as "158 left last week".
       const deptDepartedHidden = departedCountByDept.get(key) ?? 0;
 
       return {
@@ -2264,13 +2287,14 @@ export default function DeptBonusCalculator({
         hasIndividual, hasAnyBonus,
         colMeta, sharedMeta, indivSubtotal,
         entered, toFill,
-        activeCount, leaverCount, deptDepartedHidden,
+        activeCount, leaverCount, offboardedThisWeek, deptDepartedHidden,
       };
     },
     [
       state, cardSearch, deptTotal, commonByDept, sharedCommonByDept,
       individualByDept, applicableBonuses, fx, memberMatchesQuery, isQc, qcLocked,
       weekPending, settledFigure, offboardedEmailSet, canonEmail, departedCountByDept,
+      offboardedCountByDept,
     ],
   );
 
@@ -3083,7 +3107,7 @@ export default function DeptBonusCalculator({
       d, dept, color, total, common, sharedSet,
       colMeta, sharedMeta, indivSubtotal, hasIndividual, hasAnyBonus,
       allMembers, cq, entered, toFill,
-      activeCount, leaverCount, deptDepartedHidden,
+      activeCount, offboardedThisWeek, deptDepartedHidden,
     } = v;
     // QC officer filter (manager review): when an officer is picked in the left
     // rail, show only the people they scored. Matched on the canonical
@@ -3311,7 +3335,36 @@ export default function DeptBonusCalculator({
                 className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition-colors focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
               />
             </div>
-            <div className="flex shrink-0 items-center gap-2.5">
+            <div className="flex shrink-0 flex-wrap items-center gap-2.5">
+              {/* Who is on this table, as one quiet instrument rather than a
+                  headline. PRODUCT.md's anti-reference rules out gradient hero
+                  treatments, and this is an Operate surface: the manager is
+                  scanning, not being pitched. Only the NUMBER carries colour —
+                  an amber micro-label would land near 3.5:1 on this ground and
+                  miss the 4.5:1 floor. Heights match the search input and the
+                  button so the row keeps one rhythm. */}
+              <div className="flex h-8 items-center gap-2.5 rounded-md border border-zinc-200 bg-zinc-50/70 px-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
+                <span className="flex items-baseline gap-1">
+                  <span className="text-[13px] font-semibold tabular-nums leading-none text-zinc-900 dark:text-zinc-100">
+                    {weekResolved ? activeCount : <CountSkeleton />}
+                  </span>
+                  <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                    active
+                  </span>
+                </span>
+                <span aria-hidden className="h-3.5 w-px bg-zinc-200 dark:bg-zinc-700" />
+                <span
+                  className="flex items-baseline gap-1"
+                  title="Left during this pay week, or the week after — their final scores are still owed."
+                >
+                  <span className="text-[13px] font-semibold tabular-nums leading-none text-amber-700 dark:text-amber-400">
+                    {weekResolved ? offboardedThisWeek : <CountSkeleton />}
+                  </span>
+                  <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                    offboarded
+                  </span>
+                </span>
+              </div>
               {canAddExternal && (
                 <Button
                   size="sm"
@@ -3331,6 +3384,18 @@ export default function DeptBonusCalculator({
               />
             </div>
           </div>
+        )}
+
+        {/* People who left in EARLIER weeks and are filtered off the table. Its
+            own line, in its own words, never the label "offboarded" — that word
+            belongs to the toolbar figure above, which counts this week only.
+            Silence would be worse than either: a roster that quietly drops 158
+            people reads as data loss. */}
+        {tableReady && weekResolved && deptDepartedHidden > 0 && (
+          <p className="flex-none border-b border-zinc-100 px-4 py-1.5 text-[11px] text-zinc-500 dark:border-zinc-800/70 dark:text-zinc-400 sm:px-5">
+            {deptDepartedHidden} {deptDepartedHidden === 1 ? 'person' : 'people'} who left before
+            this week {deptDepartedHidden === 1 ? 'is' : 'are'} not shown.
+          </p>
         )}
 
         {/* Recently offboarded members of this dept — one click to add them so
@@ -3552,32 +3617,6 @@ export default function DeptBonusCalculator({
                 setLeadGenPage(0);
               }}
             />
-          )}
-          {/* Who is on this table, for the week in view. The Active figure is
-              `allMembers.length` minus the leavers below it — the SAME array the
-              panel header counts — so the two can never print different numbers
-              for one department. Skeletons until the week resolves: a count beside
-              a week picker that does not move with the week is a lie, and 0 is a
-              claim rather than a placeholder. */}
-          {d?.loaded && (
-            <div className="grid flex-none grid-cols-2 gap-3 px-4 pb-3 sm:px-5">
-              <StatCard tone="teal" icon={Users} label="Active">
-                <StatValue>{weekResolved ? activeCount : <CountSkeleton />}</StatValue>
-                <StatSub>on this week&rsquo;s table</StatSub>
-              </StatCard>
-              <StatCard tone="amber" icon={UserMinus} label="Offboarded">
-                <StatValue>{weekResolved ? leaverCount : <CountSkeleton />}</StatValue>
-                <StatSub>
-                  {!weekResolved
-                    ? 'resolving the pay week'
-                    : leaverCount > 0
-                      ? 'final pay — still scoreable'
-                      : deptDepartedHidden > 0
-                        ? `none owed; ${deptDepartedHidden} left earlier and are hidden`
-                        : 'nobody owed a final score'}
-                </StatSub>
-              </StatCard>
-            </div>
           )}
           <div className="min-h-0 min-w-0 flex-1 overflow-auto">
           <AnimatePresence mode="wait" initial={false}>
