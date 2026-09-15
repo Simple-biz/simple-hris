@@ -961,7 +961,8 @@ For dense in-page tab/filter rows the codebase uses a hand-rolled pill row
 instead of the shadcn `<Tabs>` primitive. The signature is a **single gradient
 indicator that physically glides between pills** via a Framer `layoutId`
 (shared-element transition) rather than each pill toggling its own background.
-Canonical references in `src/components/hr/`:
+Canonical references (this table is the set to copy from; the codebase holds about forty
+such indicators and `grep -rn 'layoutId=' src/components` is the inventory):
 
 | Pill component | File | `layoutId` |
 | --- | --- | --- |
@@ -969,6 +970,8 @@ Canonical references in `src/components/hr/`:
 | `TabPill` (Awaiting / Ready / Failed / Promoted / …) | `HrOnboarding.tsx` | `hr-pending-tab` |
 | `FilterPill` (Awaiting submission / Submitted / Archived / All) | `HrOnboardingForm.tsx` | `hr-onboarding-filter` |
 | Section strip (Departments / HSL) — **underline variant** | `PayrollWizard.tsx` (Additions step) | `additions-section-indicator` |
+| `SlidingTab` (My Team inner tabs · Cards/List · People/Scheduling/Rankings) — **spring variant, § 11.2** | `manager/ManagerApp.tsx` | `myTeamInnerTab` · `myTeamViewMode` · `myTeamDeptView` |
+| Department rail row (My Team) — **vertical rail variant, § 11.2** | `manager/ManagerApp.tsx` | `myTeamDeptRail` |
 
 The **underline variant** is the same mechanism with a different indicator: a 2px
 bar (`absolute inset-x-0 bottom-0 h-0.5`) instead of a filled pill, for a strip that
@@ -1031,6 +1034,50 @@ const SUB_TAB_VARIANTS = {
   </AnimatePresence>
 </div>
 ```
+
+### 11.2 `SlidingTab` and the vertical rail (Manager → My Team, 2026-09-14)
+
+My Team has four selectors on one screen — the three inner tabs, the department
+rail, Cards/List, and HSL's People/Scheduling/Rankings — and each used to swap a
+static white pill instantly. They now share one component, `SlidingTab`
+(`src/components/manager/ManagerApp.tsx`), and one `layoutId` per **group**, so the
+indicator travels between siblings instead of re-appearing somewhere else. Kane:
+*"animate it properly please smoothen the tab switching within the my team."* Feature
+doc: `manager-my-team.md` § *Motion*.
+
+What it keeps from § 11.1: only the selected item renders the indicator; the
+indicator is an `absolute inset-0` **background element** (`-z-10` under an `isolate`
+button), so text never reflows and no 300-row list is asked to move; and the
+indicator **survives reduced motion** — it carries which tab is active — with only the
+travel dropped (`duration: 0`).
+
+What differs — **recorded here, not ratified**:
+
+| | § 11.1 rule | `SlidingTab` as shipped |
+| --- | --- | --- |
+| Indicator transition | `duration: 0.28, ease: [0.22, 1, 0.36, 1]` | `{ type: 'spring', stiffness: 520, damping: 38, mass: 0.7 }`; the rail row uses `460 / 40 / 0.8` |
+| Indicator tone | emerald→teal gradient | flat `bg-white shadow-sm` (dark `bg-zinc-950`); the rail row `bg-blue-50 ring-1 ring-blue-200` |
+| ARIA | `aria-pressed={active}` | `role="tab"` + `aria-selected` |
+| Panel swap | `AnimatePresence mode="wait"` with a directional slide | **no `mode="wait"`** — panes settle in over `0.22` on `[0.22, 1, 0.36, 1]` (`TEAM_EASE`) while the old one is already gone, because waiting doubles the perceived latency of every click on a surface people work in rather than look at. Pane keys cover both axes (tab AND department) |
+
+> **OPEN — spring vs ease.** § 11.1 and § 18 item 8 name only the two eases; this is
+> the first indicator on a spring. Either the rule gains a spring allowance, with
+> these parameters as the reference, or the component moves to the 0.28 ease. Not
+> decided here — logged 2026-09-15 (Sep 14 session log, row 109). Do not resolve it
+> by editing only one side.
+
+**The vertical rail variant.** The department rail is a tall, nested list — parents
+disclosing their `hsl:*` sub-teams — and it is where the glide earns the most: moving
+from a parent to a sub-team three rows down is a jump the eye would otherwise have to
+re-find. One `layoutId` (`myTeamDeptRail`) serves the whole rail. Each row carries a
+headcount in `font-mono tabular-nums` that stays **AA** (`zinc-500`, 4.6:1 on white —
+`zinc-400` at 2.8:1 failed) and, while a search is live, a blue match-count chip. Below
+`lg` the rail is replaced by a flat `SmoothSelect` with the sub-teams **indented, not
+dropped** — dropping them would make the whole HSL family unreachable on a phone. A
+manager with a single department gets no rail at all.
+
+The roster-card stagger is capped at **180ms** (`Math.min(idx * 0.025, 0.18)`), inside
+the § 14.3 envelope; uncapped, a large department reads as the page loading slowly.
 
 ---
 
@@ -1180,7 +1227,8 @@ list never crawls — `delay: reduceMotion ? 0 : Math.min(i * 0.02, 0.2)` in
 `HrOnboardingForm.tsx` submissions table uses the same shape with a slightly
 larger cap (`Math.min(i * 0.025, 0.25)`) and **no exit** — its rows are keyed
 `` `${filter}:${r.id}` `` so switching filter remounts them and replays the
-cascade. Always gate the delay on `useReducedMotion()`.
+cascade. Always gate the delay on `useReducedMotion()`. The My Team roster cards cap
+at `Math.min(idx * 0.025, 0.18)` (§ 11.2).
 
 ### 14.4 Hover affordance
 
@@ -1390,6 +1438,11 @@ Every new surface must:
 - Family: editorial
 - 'Manager' caption under the brand mark; nav scoped to the manager's
   department members + leave requests + orphanage create
+- My Team (2026-09-14): a vertical **department rail** is the outer axis — no
+  "All" entry, HSL folded to one parent, a granted-but-empty department still
+  shows a 0 tab — then Roster / New Hire Check List / Orientation, with the
+  per-department views (HSL Scheduling, AI/API Rankings) beside the search. Every
+  selector on the screen is a `SlidingTab` (§ 11.2). Doc: `manager-my-team.md`.
 
 ### 17.6 Orphanage (`/orphanage`)
 
