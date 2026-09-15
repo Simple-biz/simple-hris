@@ -140,3 +140,35 @@ export async function closeMesaAccounts(email: string, closedOn: string): Promis
   if (error) return [];
   return ((data ?? []) as { account_number: string }[]).map((r) => r.account_number);
 }
+
+export type LatestClosedLookup =
+  | { ok: true; account: MesaAccount | null }
+  | { ok: false; error: string };
+
+/**
+ * The member's most recently CLOSED account (largest `closed_on`), so an
+ * enrollment can refuse an effective date that reaches back into it (see
+ * `closedStintConflict` in src/lib/mesa/enrollment-date.ts).
+ *
+ * A missing table (migration pending) is "no closed stints" — there is nothing
+ * to reach into. Any OTHER read failure is reported as such rather than as
+ * "none": the caller is deciding whether a back-dated opening would re-count a
+ * released balance, and an unreadable history must not read as a clean one.
+ */
+export async function getLatestClosedMesaAccount(email: string): Promise<LatestClosedLookup> {
+  const supabase = db();
+  if (!supabase) return { ok: false, error: "Supabase client not initialized" };
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select(ACCOUNT_SELECT)
+    .ilike("email", email.trim())
+    .not("closed_on", "is", null)
+    .order("closed_on", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    if (isMissingSchema(error.message)) return { ok: true, account: null };
+    return { ok: false, error: error.message };
+  }
+  return { ok: true, account: (data as MesaAccount | null) ?? null };
+}

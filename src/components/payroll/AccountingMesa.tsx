@@ -50,6 +50,8 @@ import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { DatePicker, toIso } from '@/components/ui/date-picker';
 import { parseDateOnlyLocal } from '@/lib/date-only';
+import { manilaTodayIso } from '@/lib/payroll/manila-week';
+import { isCalendarDate } from '@/lib/mesa/enrollment-date';
 import { toast } from 'sonner';
 import { clearTabCache, getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import {
@@ -223,30 +225,42 @@ function BulkBar({ count, children, onClear }: { count: number; children: React.
   );
 }
 
-/** Run an async op over each item sequentially, tallying success/failure. */
-async function runBulk<T>(items: T[], fn: (item: T) => Promise<void>): Promise<{ ok: number; fail: number }> {
+/** Run an async op over each item sequentially, tallying success/failure. The
+ *  FIRST failure's message is kept: a refused request carries its reason (a
+ *  400/409 from the server), and "1 failed" on its own throws that reason away. */
+async function runBulk<T>(
+  items: T[],
+  fn: (item: T) => Promise<void>,
+): Promise<{ ok: number; fail: number; firstError: string | null }> {
   let ok = 0;
   let fail = 0;
+  let firstError: string | null = null;
   for (const item of items) {
     try {
       await fn(item);
       ok += 1;
-    } catch {
+    } catch (e) {
       fail += 1;
+      if (firstError === null) firstError = e instanceof Error ? e.message : String(e);
     }
   }
-  return { ok, fail };
+  return { ok, fail, firstError };
 }
 
-/** Summarize a bulk run as a toast. */
-function reportBulk(verb: string, ok: number, fail: number) {
+/** Summarize a bulk run as a toast. When a reason is passed it rides along as
+ *  the toast description, so a refusal is readable rather than just counted. */
+function reportBulk(verb: string, ok: number, fail: number, firstError: string | null = null) {
+  const reason = firstError ? { description: firstError } : undefined;
   if (ok && !fail) toast.success(`${verb} ${ok}`);
-  else if (ok && fail) toast.warning(`${verb} ${ok}, ${fail} failed`);
-  else toast.error(`Nothing ${verb.toLowerCase()} — ${fail} failed`);
+  else if (ok && fail) toast.warning(`${verb} ${ok}, ${fail} failed`, reason);
+  else toast.error(`Nothing ${verb.toLowerCase()} — ${fail} failed`, reason);
 }
 
-/** POST the enrollment flip for one roster row. Throws on non-OK. */
-async function postToggleMesa(row: MesaRosterRow, mesaMember: boolean): Promise<void> {
+/** POST the enrollment flip for one roster row. Throws on non-OK, with the
+ *  server's reason as the message. `since` is the enrollment effective date
+ *  (YYYY-MM-DD) — sent only on opt-in; the route stamps it on both
+ *  `mesa_member_since` and the new account's `opened_on`. */
+async function postToggleMesa(row: MesaRosterRow, mesaMember: boolean, since?: string): Promise<void> {
   const res = await fetch('/api/toggle-mesa-member', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -255,6 +269,7 @@ async function postToggleMesa(row: MesaRosterRow, mesaMember: boolean): Promise<
       personalEmail: row.workEmail ? undefined : row.personalEmail ?? undefined,
       mesaMember,
       name: row.name,
+      ...(mesaMember && since ? { since } : {}),
     }),
   });
   if (!res.ok) {
@@ -2420,6 +2435,11 @@ function MesaNonMembers() {
   const [page, setPage] = useState(0);
   const [viewTarget, setViewTarget] = useState<MesaRosterRow | null>(null);
   const [optInTargets, setOptInTargets] = useState<MesaRosterRow[] | null>(null);
+  // Enrollment effective date for the pending Opt In. Set when the dialog
+  // OPENS — today in Manila, the payroll timezone, exactly what the server
+  // would have defaulted to — never during render, so hydration stays in sync
+  // and a US-side viewer late in their day does not enrol someone "yesterday".
+  const [optInSince, setOptInSince] = useState('');
   const [toggling, setToggling] = useState(false);
 
   const load = async (showSpinner = true) => {
@@ -2528,15 +2548,36 @@ function MesaNonMembers() {
     toast.success('Refreshed employee roster');
   };
 
-  // Opt one or many not-yet-enrolled employees into MESA. Direct enrollment
-  // flip — bypasses the mesa_requests review queue (temporary bridge).
+  // Open the Opt In dialog for one or many rows, defaulting the effective date
+  // to today (Manila) at that moment.
+  const openOptIn = (targets: MesaRosterRow[]) => {
+    setOptInSince(manilaTodayIso());
+    setOptInTargets(targets);
+  };
+  // Same rule the server applies (src/lib/mesa/enrollment-date.ts) — the
+  // button cannot offer a date the route will refuse.
+  const optInDateValid = isCalendarDate(optInSince);
+
+  // Opt one or many not-yet-enrolled employees into MESA, effective on the
+  // picked date. Direct enrollment flip — bypasses the mesa_requests review
+  // queue (temporary bridge). Not floored at today: like the opt-out date,
+  // Accounting back-dates corrections; the server refuses a date that reaches
+  // into a previous, closed stint.
   const confirmOptIn = async () => {
     if (!optInTargets || optInTargets.length === 0) return;
+    if (!optInDateValid) {
+      toast.error('Pick the effective date first');
+      return;
+    }
     setToggling(true);
-    const { ok, fail } = await runBulk(optInTargets, (t) => postToggleMesa(t, true));
-    reportBulk('Opted in', ok, fail);
-    setOptInTargets(null);
-    sel.clear();
+    const { ok, fail, firstError } = await runBulk(optInTargets, (t) => postToggleMesa(t, true, optInSince));
+    reportBulk('Opted in', ok, fail, firstError);
+    // When nothing went through, keep the dialog open with the reason on
+    // screen so the date can be corrected — closing would hide what to fix.
+    if (ok > 0 || fail === 0) {
+      setOptInTargets(null);
+      sel.clear();
+    }
     setToggling(false);
     clearTabCache(TAB_CACHE_KEYS.mesaNonMembers);
     clearTabCache(TAB_CACHE_KEYS.mesaActiveMembers);
@@ -2593,7 +2634,7 @@ function MesaNonMembers() {
         <CardContent className="p-0">
           {sel.selectedRows.length > 0 && (
             <BulkBar count={sel.selectedRows.length} onClear={sel.clear}>
-              <Button type="button" size="sm" disabled={toggling} onClick={() => setOptInTargets(sel.selectedRows)} className="h-7 bg-teal-600 text-[11px] text-white hover:bg-teal-700 dark:bg-teal-600 dark:hover:bg-teal-500">
+              <Button type="button" size="sm" disabled={toggling} onClick={() => openOptIn(sel.selectedRows)} className="h-7 bg-teal-600 text-[11px] text-white hover:bg-teal-700 dark:bg-teal-600 dark:hover:bg-teal-500">
                 <UserPlus className="mr-1 h-3 w-3" />Opt In
               </Button>
             </BulkBar>
@@ -2671,7 +2712,7 @@ function MesaNonMembers() {
                             type="button"
                             size="sm"
                             variant="outline"
-                            onClick={() => setOptInTargets([r])}
+                            onClick={() => openOptIn([r])}
                             className="h-7 gap-1 border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60"
                           >
                             <UserPlus className="h-3 w-3" />
@@ -2723,7 +2764,7 @@ function MesaNonMembers() {
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-teal-100 text-teal-600 dark:bg-teal-950/40 dark:text-teal-400">
                 <UserPlus className="h-5 w-5" />
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <h3 className="text-base font-bold text-zinc-900 dark:text-white">
                   {optInTargets.length === 1 ? 'Opt in to MESA?' : `Opt ${optInTargets.length} employees in to MESA?`}
                 </h3>
@@ -2733,9 +2774,43 @@ function MesaNonMembers() {
                     <> for <span className="font-medium text-zinc-800 dark:text-zinc-200">{optInTargets[0].name}</span></>
                   ) : (
                     <> for the selected employees</>
-                  )}, effective today.
+                  )}.
                   {' '}This is a direct enrollment change — it does not go through the request queue.
                 </p>
+                {/* The effective date is what the server stamps on BOTH
+                    mesa_member_since (when the ₱100 starts) and the new
+                    account's opened_on (the balance window + the number's
+                    YY-MM). Not floored at today — Accounting back-dates
+                    corrections, as on the opt-out date. One date for every
+                    selected row. */}
+                <div className="mt-4">
+                  <label
+                    htmlFor="mesa-optin-effective"
+                    className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500"
+                  >
+                    Effective date
+                  </label>
+                  <DatePicker
+                    id="mesa-optin-effective"
+                    value={optInSince}
+                    onChange={setOptInSince}
+                    disabled={toggling}
+                    required
+                    placeholder="Pick the enrollment date"
+                    className="mt-1 dark:bg-zinc-900"
+                  />
+                  <p className="mt-2 text-[11.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                    {optInDateValid ? (
+                      <>
+                        The ₱100 deduction and ₱300 match apply to pay weeks ending on or after{' '}
+                        <span className="font-medium text-zinc-700 dark:text-zinc-200">{formatDateOnly(optInSince)}</span>.
+                        The new account number takes its month from this date.
+                      </>
+                    ) : (
+                      <>Pick the date their participation starts. The ₱100 deduction and ₱300 match apply to pay weeks ending on or after it.</>
+                    )}
+                  </p>
+                </div>
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
@@ -2745,7 +2820,7 @@ function MesaNonMembers() {
               <Button
                 type="button"
                 size="sm"
-                disabled={toggling}
+                disabled={toggling || !optInDateValid}
                 onClick={confirmOptIn}
                 className="bg-teal-600 text-white hover:bg-teal-700 dark:bg-teal-600 dark:hover:bg-teal-500"
               >

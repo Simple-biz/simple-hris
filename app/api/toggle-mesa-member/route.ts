@@ -1,8 +1,15 @@
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/lib/supabase/server';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { invalidateRateProfilesCache } from '@/lib/supabase/employee-rate-profiles';
-import { closeMesaAccounts, openMesaAccount } from '@/lib/supabase/mesa-accounts';
+import {
+  closeMesaAccounts,
+  getLatestClosedMesaAccount,
+  getOpenMesaAccount,
+  openMesaAccount,
+} from '@/lib/supabase/mesa-accounts';
 import { releaseMesaBalanceOnClose } from '@/lib/mesa/release-balance';
+import { closedStintConflict, openAccountConflict, resolveEnrollmentDate } from '@/lib/mesa/enrollment-date';
+import { manilaTodayIso } from '@/lib/payroll/manila-week';
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -14,7 +21,7 @@ import { deniedResponse } from '@/lib/auth/authorize-email';
 const RATES_TABLE = process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() || 'employee_hourly_rates';
 
 // POST /api/toggle-mesa-member
-// Body: { workEmail?: string; personalEmail?: string; mesaMember: boolean; name?: string }
+// Body: { workEmail?: string; personalEmail?: string; mesaMember: boolean; name?: string; since?: string }
 export async function POST(req: Request) {
   const authz = await requireFeatureEditAnyView('mesa');
   if (!authz.ok) return deniedResponse(authz);
@@ -24,7 +31,12 @@ export async function POST(req: Request) {
       personalEmail?: string;
       mesaMember: boolean;
       name?: string;
-      /** Optional enrollment effective date (YYYY-MM-DD). Defaults to today (Manila). */
+      /**
+       * Enrollment effective date, strict YYYY-MM-DD. Accounting picks it on
+       * Non Members → Opt In (since 2026-09-15); other callers omit it and get
+       * today in Manila. Ignored on unenroll. Stamped onto BOTH
+       * `mesa_member_since` and the new account's `opened_on`.
+       */
       since?: string | null;
     };
 
@@ -50,13 +62,17 @@ export async function POST(req: Request) {
     // roll a day off. On unenroll we leave the date in place; the deduction is
     // gated on `mesa_member` anyway, and keeping it preserves tenure if HR
     // revokes an opt-out and re-enrolls.
-    const manilaToday = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Manila',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(new Date());
-    const sinceIso = (since ?? '').trim().slice(0, 10) || manilaToday;
+    //
+    // The date is validated at this boundary, not by the database: it lands in
+    // two DATE columns and mints the account number's YY-MM, so a sliced
+    // timestamp or a typo must be refused here with a reason, not surface as a
+    // Postgres error after the account row is already half-written.
+    const manilaToday = manilaTodayIso();
+    const resolved = resolveEnrollmentDate(since, manilaToday);
+    if (!resolved.ok) {
+      return NextResponse.json({ error: resolved.error }, { status: 400 });
+    }
+    let sinceIso = resolved.date;
 
     // MESA account lifecycle: opting in opens an account (a fresh YY-MM-#####
     // number unless one is already open); opting out CLOSES it — the account is
@@ -70,6 +86,42 @@ export async function POST(req: Request) {
     /** The payout raised for a departing member's balance, when there was one. */
     let releasedPayout: { amount_php: number; due_week_end: string } | null = null;
     if (mesaMember) {
+      // An account already open means they are enrolled. Re-enrolling with no
+      // date (HR re-approving a duplicate opt-in, a stale Non Members tab) is
+      // idempotent and keeps mesa_member_since equal to the account's
+      // opened_on — the two used to drift here, because "today" was stamped
+      // over the original date. A DIFFERENT explicit date is refused: an open
+      // account's window cannot be moved by re-enrolling.
+      const open = await getOpenMesaAccount(accountEmail);
+      const openConflict = openAccountConflict(sinceIso, !resolved.defaulted, open);
+      if (openConflict) {
+        return NextResponse.json({ error: openConflict }, { status: 409 });
+      }
+      if (open) {
+        sinceIso = open.opened_on;
+      } else {
+        // The new stint must start strictly after the previous one closed.
+        // Balances are the ledger sliced to events >= opened_on, and the
+        // closed stint's balance was already RELEASED as an offboard_payout
+        // when it closed — a window reaching back into it would count that
+        // money a second time. Fails CLOSED: if the history cannot be read,
+        // the member is not enrolled and nothing is written.
+        const latest = await getLatestClosedMesaAccount(accountEmail);
+        if (!latest.ok) {
+          return NextResponse.json(
+            {
+              error:
+                `Could not read this member's MESA account history, so they were NOT opted in. ` +
+                `Nothing was changed. (${latest.error})`,
+            },
+            { status: 503 },
+          );
+        }
+        const closedConflict = closedStintConflict(sinceIso, latest.account?.closed_on ?? null);
+        if (closedConflict) {
+          return NextResponse.json({ error: closedConflict }, { status: 400 });
+        }
+      }
       const account = await openMesaAccount(accountEmail, name ?? null, sinceIso);
       accountNumber = account?.account_number ?? null;
     } else {
@@ -133,6 +185,8 @@ export async function POST(req: Request) {
         personal_email: personalEmail ?? null,
         mesa_member: mesaMember,
         mesa_member_since: mesaMember ? sinceIso : null,
+        // Whether the caller chose the date or it defaulted to today (Manila).
+        mesa_member_since_explicit: mesaMember ? !resolved.defaulted : null,
         mesa_account_number: mesaMember ? accountNumber : null,
         mesa_accounts_closed: mesaMember ? null : closedAccounts,
         mesa_balance_released_php: releasedPayout?.amount_php ?? null,
@@ -143,6 +197,9 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       accountNumber: mesaMember ? accountNumber : null,
+      // The date actually stamped — the caller's pick, today (Manila), or the
+      // already-open account's opened_on on an idempotent re-enroll.
+      memberSince: mesaMember ? sinceIso : null,
       // So the caller can tell Accounting what was just promised to this person
       // instead of the balance appearing to vanish.
       releasedPayout,
