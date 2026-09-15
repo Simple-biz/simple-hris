@@ -421,28 +421,25 @@ export default function PabDisputeQueue() {
   const [taDeleteTarget, setTaDeleteTarget] = useState<TimeAdjustmentRow | null>(null);
   const [taDeleting, setTaDeleting] = useState(false);
   const decideTimeAdjustment = useCallback(
-    async (
-      row: TimeAdjustmentRow,
-      action: 'approve' | 'deny',
-      approvedHours: number | null,
-      note: string,
-    ): Promise<boolean> => {
+    async (row: TimeAdjustmentRow, action: 'approve' | 'deny', note: string): Promise<boolean> => {
       setTaActingId(row.id);
       try {
+        // No hours are sent (Kane, 2026-09-15): approving applies the time ranges the
+        // employee submitted, and the day total is derived wherever pay reads it.
         const res = await fetch(`/api/time-adjustments/${row.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             action,
-            approved_hours: action === 'approve' ? approvedHours : null,
             decision_note: note.trim() || null,
           }),
         });
         const json = (await res.json()) as { success?: boolean; error?: string | null };
         if (!res.ok || json.error) throw new Error(json.error ?? 'Action failed');
+        const added = fmtTimeAdjustmentHours(row.requested_hours);
         toast.success(
           action === 'approve'
-            ? `Approved — ${row.work_email}'s ${row.adjust_date} is set to ${fmtTimeAdjustmentHours(approvedHours) ?? 'the entered total'} for payroll.`
+            ? `Approved — ${added ?? 'the missed time'} added to ${row.work_email}'s ${row.adjust_date}.`
             : `Denied ${row.work_email}'s time adjustment for ${row.adjust_date}.`,
         );
         fetchDisputes();

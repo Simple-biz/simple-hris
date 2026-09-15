@@ -159,6 +159,18 @@ name/emails/department/off-board reason, a per-department dropdown with counts
 (plus a "No department" bucket), and a stranded-filter release when a refresh
 drops the selected department's last row.
 
+**Offboarded pane fixers are a COMPLETE OVERRIDE (2026-09-15).** Both row
+actions show what is currently on file (the rate and its source; the effective
+rail with a server-masked account / wallet readout) and seed the dialog from it,
+so a re-opened dialog proves the save landed. Set rate keys to the hours-carrying
+email, retires the person's other individual structures, supersedes history from
+the chosen date and tells the open wizard to re-pull its rates; Set bank is
+mounted with `override` — rail unlocked, saved through the Accounting banking
+PATCH with both routing columns pinned. The Readiness Bank Info pane keeps the
+locked-rail dialog. Owned by
+[payroll-readiness.md](./payroll-readiness.md) § *Offboarded tab — complete
+override*.
+
 Notes:
 
 - The FAB's score ring and the Readiness pane share **one** readiness cache

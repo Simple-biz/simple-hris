@@ -21,11 +21,10 @@
  *    `awaiting_second_approval`) are shown read-only so a live request is never
  *    invisible, and they do NOT count toward the Pending KPI — the same way a
  *    `pending_orphanage_manager` dispute shows but does not count.
- *  - Approve REQUIRES a day total. `decideTimeAdjustment` treats a null
- *    `approved_hours` as "no override", so an approved row with no hours moves no
- *    money; the button stays disabled until a value is set.
- *  - Segment rows are NEVER prefilled from `requested_hours` — that figure is the
- *    MISSED time to add, not the day total Accounting is asked to set.
+ *  - Approve and Deny only, with no hours entry (Kane, 2026-09-15: *"we dont need to
+ *    put in the hours as the Employee side was already sent"*). Approving applies the
+ *    time ranges the employee submitted; the day total is derived wherever it is read,
+ *    by `approvedAdjustmentDayHours` in `src/lib/payroll/approved-adjustment-hours.ts`.
  *
  * Doc: `docs/features/time-adjustment-requests.md` § Accounting flow.
  */
@@ -187,60 +186,24 @@ export function timeAdjustmentRequestedLabel(
   return hours ? `requested ${hours}` : null;
 }
 
-/**
- * The Approve dialog's starting value. A LEGACY row (no segments) stored a claimed
- * day total, which is a fair starting point; a SEGMENT row stored the missed time,
- * which is the wrong number for a day total — so it starts blank and the clerk
- * types tracked + missed. Same rule as the wizard panel.
- */
-export function timeAdjustmentHoursPrefill(
-  row: Pick<TimeAdjustmentRow, 'requested_hours' | 'requested_segments'>,
-): { hours: string; minutes: string } {
-  const blank = { hours: '', minutes: '' };
-  if ((row.requested_segments ?? []).length > 0) return blank;
-  if (row.requested_hours == null || !Number.isFinite(row.requested_hours) || row.requested_hours < 0) return blank;
-  const totalMin = Math.round(row.requested_hours * 60);
-  return { hours: String(Math.floor(totalMin / 60)), minutes: String(totalMin % 60) };
-}
-
-/**
- * Hour + minute fields → the decimal `approved_hours` to send, or null when the
- * pair does not name a valid day total. Null is what keeps Approve disabled.
- *
- *  - both blank → null (no value, not zero)
- *  - "0" / "0" → 0 (a deliberate zero-out of the day, which the server accepts)
- *  - anything negative, non-numeric, minutes ≥ 60, or a total over 24h → null
- */
-export function approvedHoursFromInputs(hours: string, minutes: string): number | null {
-  const h = hours.trim();
-  const m = minutes.trim();
-  if (!h && !m) return null;
-  const hh = h ? Number(h) : 0;
-  const mm = m ? Number(m) : 0;
-  if (!Number.isInteger(hh) || !Number.isInteger(mm)) return null;
-  if (hh < 0 || mm < 0 || mm > 59) return null;
-  const total = hh + mm / 60;
-  if (total > 24) return null;
-  return total;
-}
-
 export type TimeAdjustmentApproveCheck = { ok: true } | { ok: false; reason: string };
 
 /**
- * May THIS viewer approve THIS row with THIS value? Every refusal names its reason
- * so the button's tooltip can say why, and the server re-checks all three anyway.
+ * May THIS viewer approve THIS row? No hours are involved (Kane, 2026-09-15):
+ * approving applies the time ranges the employee already submitted, so there is
+ * nothing left for a clerk to type and nothing to validate beyond who and what.
+ * Every refusal names its reason so the button's tooltip can say why, and the
+ * server re-checks both anyway.
  */
 export function canApproveTimeAdjustment(params: {
   row: Pick<TimeAdjustmentRow, 'status'>;
   canApprove: boolean;
-  approvedHours: number | null;
 }): TimeAdjustmentApproveCheck {
-  if (!params.canApprove) return { ok: false, reason: 'Requires accounting, hr_coordinator, or admin' };
+  if (!params.canApprove) {
+    return { ok: false, reason: 'Requires Accounting → Issues edit and an Accounting role' };
+  }
   if (!timeAdjustmentAwaitsAccounting(params.row)) {
     return { ok: false, reason: 'Only a request with both stage-1 signatures can be approved' };
-  }
-  if (params.approvedHours == null) {
-    return { ok: false, reason: "Set the employee's final total for this day first" };
   }
   return { ok: true };
 }

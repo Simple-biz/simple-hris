@@ -12,10 +12,8 @@ import path from 'node:path';
 
 import {
   ALL_TIME_ADJUSTMENT_STATUSES,
-  approvedHoursFromInputs,
   canApproveTimeAdjustment,
   fmtTimeAdjustmentHours,
-  timeAdjustmentHoursPrefill,
   timeAdjustmentIsDeletable,
   timeAdjustmentIssueCounts,
   timeAdjustmentIssuesUrl,
@@ -147,66 +145,20 @@ test('a legacy row with no segments is labelled as a requested day total', () =>
   );
 });
 
-// ─── Prefill rule ────────────────────────────────────────────────────────────
-
-test('a SEGMENT row is never prefilled from requested_hours — that is the missed time, not the day total', () => {
-  assert.deepEqual(timeAdjustmentHoursPrefill(base), { hours: '', minutes: '' });
-});
-
-test('a legacy row prefills its claimed day total, split into hours and minutes', () => {
-  assert.deepEqual(
-    timeAdjustmentHoursPrefill({ requested_hours: 7.5, requested_segments: [] }),
-    { hours: '7', minutes: '30' },
-  );
-});
-
-// ─── Inputs → approved_hours ─────────────────────────────────────────────────
-
-test('two blank inputs are NO value, not zero — Approve must stay disabled', () => {
-  assert.equal(approvedHoursFromInputs('', ''), null);
-  assert.equal(approvedHoursFromInputs('  ', ''), null);
-});
-
-test('an explicit 0h 0m IS a value — zeroing the day is a decision the server accepts', () => {
-  assert.equal(approvedHoursFromInputs('0', '0'), 0);
-  assert.equal(approvedHoursFromInputs('0', ''), 0);
-});
-
-test('hours and minutes combine into decimal hours', () => {
-  assert.equal(approvedHoursFromInputs('8', '30'), 8.5);
-  assert.equal(approvedHoursFromInputs('', '45'), 0.75);
-});
-
-test('negative, fractional, non-numeric, 60+ minutes, or over 24h are refused as no value', () => {
-  assert.equal(approvedHoursFromInputs('-1', '0'), null);
-  assert.equal(approvedHoursFromInputs('8', '60'), null);
-  assert.equal(approvedHoursFromInputs('8.5', '0'), null);
-  assert.equal(approvedHoursFromInputs('eight', ''), null);
-  assert.equal(approvedHoursFromInputs('25', '0'), null);
-  assert.equal(approvedHoursFromInputs('24', '1'), null);
-  assert.equal(approvedHoursFromInputs('24', '0'), 24);
-});
-
-// ─── Approve gate ────────────────────────────────────────────────────────────
-
-test('Approve is refused without a day total, even for an authorized user on an actionable row', () => {
-  const r = canApproveTimeAdjustment({ row: base, canApprove: true, approvedHours: null });
-  assert.equal(r.ok, false);
-});
+// ─── Approve gate — no hours are involved since 2026-09-15 ──────────────────
 
 test('Approve is refused on a row still owed a stage-1 signature', () => {
-  const r = canApproveTimeAdjustment({ row: withStatus('awaiting_second_approval'), canApprove: true, approvedHours: 8 });
+  const r = canApproveTimeAdjustment({ row: withStatus('awaiting_second_approval'), canApprove: true });
   assert.equal(r.ok, false);
 });
 
 test('Approve is refused for a viewer without an acting role', () => {
-  const r = canApproveTimeAdjustment({ row: base, canApprove: false, approvedHours: 8 });
+  const r = canApproveTimeAdjustment({ row: base, canApprove: false });
   assert.equal(r.ok, false);
 });
 
-test('Approve is allowed with all three: role, both signatures, a value (zero included)', () => {
-  assert.equal(canApproveTimeAdjustment({ row: base, canApprove: true, approvedHours: 8 }).ok, true);
-  assert.equal(canApproveTimeAdjustment({ row: base, canApprove: true, approvedHours: 0 }).ok, true);
+test('Approve needs only the role and both signatures — nothing is typed', () => {
+  assert.equal(canApproveTimeAdjustment({ row: base, canApprove: true }).ok, true);
 });
 
 // ─── Delete rule ─────────────────────────────────────────────────────────────
@@ -296,11 +248,9 @@ test('the Issues queue renders time adjustments as a third IssueRow kind and fol
   assert.ok(!src.includes('hasFetchedThisSession'), 'a shared approval queue must never use the skip-fetch flag');
 
   // The row + dialogs live in their own file; the Approve button and the dialog's
-  // submit both go through the shared gate, and the value through the shared parser.
+  // submit both go through the shared gate.
   const rows = read('src', 'components', 'payroll', 'TimeAdjustmentIssueRows.tsx');
   assert.ok(rows.includes('canApproveTimeAdjustment('), 'Approve is not gated by the shared rule');
-  assert.ok(rows.includes('approvedHoursFromInputs('), 'the day total is not parsed by the shared rule');
-  assert.ok(rows.includes('timeAdjustmentHoursPrefill('), 'the prefill rule is not the shared one');
   assert.ok(!rows.includes('hasFetchedThisSession'));
 });
 

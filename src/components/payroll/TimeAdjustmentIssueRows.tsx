@@ -17,7 +17,6 @@
 import { useEffect, useState } from 'react';
 import { Clock, Eye, ImageOff, Loader2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { TableCell, TableRow } from '@/components/ui/table';
@@ -32,11 +31,9 @@ import {
 import { cn } from '@/lib/utils';
 import type { TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
 import {
-  approvedHoursFromInputs,
   canApproveTimeAdjustment,
   fmtTimeAdjustmentHours,
   timeAdjustmentAwaitsAccounting,
-  timeAdjustmentHoursPrefill,
   timeAdjustmentIsDeletable,
   timeAdjustmentReasonLabel,
   timeAdjustmentRequestedLabel,
@@ -81,7 +78,17 @@ export function TimeAdjustmentIssueTableRow({
   const badge = TIME_ADJUSTMENT_STATUS_BADGE[r.status];
   const actionable = timeAdjustmentAwaitsAccounting(r);
   const requested = timeAdjustmentRequestedLabel(r);
-  const setHours = r.status === 'approved' ? fmtTimeAdjustmentHours(r.approved_hours) : null;
+  // What the approval applied. A row decided before 2026-09-15 carries a stored day
+  // total; one decided since carries none, and what was applied is the missed time the
+  // employee submitted, added to that day's tracked hours wherever pay reads it.
+  const appliedLabel =
+    r.status !== 'approved'
+      ? null
+      : r.approved_hours != null
+        ? fmtTimeAdjustmentHours(r.approved_hours)
+        : fmtTimeAdjustmentHours(r.requested_hours)
+          ? `+${fmtTimeAdjustmentHours(r.requested_hours)}`
+          : null;
   const secondName = r.second_decided_by ?? r.second_approver_email;
   const cannotActHint = blockedHint ?? ROLE_HINT;
 
@@ -122,9 +129,16 @@ export function TimeAdjustmentIssueTableRow({
         </Badge>
       </TableCell>
       <TableCell className="whitespace-nowrap text-xs">
-        {setHours ? (
-          <span className="rounded-md bg-emerald-50 px-2 py-0.5 font-mono text-[11px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
-            {setHours}
+        {appliedLabel ? (
+          <span
+            title={
+              r.approved_hours != null
+                ? 'Day total set by Accounting'
+                : 'Missed time added to this day’s tracked hours'
+            }
+            className="rounded-md bg-emerald-50 px-2 py-0.5 font-mono text-[11px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"
+          >
+            {appliedLabel}
           </span>
         ) : (
           <span className="text-[10px] text-zinc-400">—</span>
@@ -219,7 +233,6 @@ export function TimeAdjustmentIssueDialogs({
   onSubmitDecide: (
     row: TimeAdjustmentRow,
     action: 'approve' | 'deny',
-    approvedHours: number | null,
     note: string,
   ) => Promise<boolean>;
   acting: boolean;
@@ -239,24 +252,15 @@ export function TimeAdjustmentIssueDialogs({
     return () => window.removeEventListener('keydown', handler);
   }, [lightboxUrl]);
 
-  // Decide-dialog inputs reset per target: a legacy row prefills its claimed day
-  // total, a segment row starts blank (the missed time is not the day total).
-  const [hrs, setHrs] = useState('');
-  const [mins, setMins] = useState('');
+  // Only a note is collected now — the hours came from the employee (2026-09-15).
   const [note, setNote] = useState('');
   const decideRowId = decideTarget?.row.id ?? null;
   useEffect(() => {
-    if (!decideTarget) return;
-    const prefill = timeAdjustmentHoursPrefill(decideTarget.row);
-    setHrs(prefill.hours);
-    setMins(prefill.minutes);
     setNote('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [decideRowId]);
 
-  const approvedHours = approvedHoursFromInputs(hrs, mins);
   const approveCheck = decideTarget
-    ? canApproveTimeAdjustment({ row: decideTarget.row, canApprove, approvedHours })
+    ? canApproveTimeAdjustment({ row: decideTarget.row, canApprove })
     : null;
   const submitBlocked =
     acting ||
@@ -467,39 +471,9 @@ export function TimeAdjustmentIssueDialogs({
             <div className="space-y-3">
               {decideTarget.action === 'approve' && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Set the employee&apos;s FINAL total for this day</Label>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1">
-                      <Input
-                        type="number"
-                        step="1"
-                        min="0"
-                        max="24"
-                        placeholder="0"
-                        value={hrs}
-                        onChange={(e) => setHrs(e.target.value)}
-                        className="h-9 w-20 text-sm"
-                      />
-                      <span className="text-xs text-zinc-500">hrs</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Input
-                        type="number"
-                        step="1"
-                        min="0"
-                        max="59"
-                        placeholder="0"
-                        value={mins}
-                        onChange={(e) => setMins(e.target.value)}
-                        className="h-9 w-20 text-sm"
-                      />
-                      <span className="text-xs text-zinc-500">mins</span>
-                    </div>
-                  </div>
-                  <p className="text-[10px] text-zinc-500">
-                    {(decideTarget.row.requested_segments ?? []).length > 0
-                      ? 'Tracked hours PLUS the missed time above. This replaces the Hubstaff total for the day at pay-calc time; the tracked data itself is never changed.'
-                      : 'Replaces the Hubstaff total for this day at pay-calc time; the tracked data itself is never changed.'}
+                  <p className="rounded-md border border-emerald-200/80 bg-emerald-50/70 px-2.5 py-2 text-[11px] leading-snug text-emerald-950 dark:border-emerald-900/50 dark:bg-emerald-950/25 dark:text-emerald-100">
+                    Approving adds the missed time above to this day&apos;s tracked hours. The tracked data
+                    itself is never changed, and a later Hubstaff correction to the same day still counts.
                   </p>
                   {approveCheck && !approveCheck.ok && (
                     <p className="text-[10.5px] font-medium text-amber-700 dark:text-amber-400">{approveCheck.reason}</p>
@@ -527,12 +501,7 @@ export function TimeAdjustmentIssueDialogs({
                 title={approveCheck && !approveCheck.ok && decideTarget.action === 'approve' ? approveCheck.reason : undefined}
                 className={decideTarget.action === 'approve' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}
                 onClick={async () => {
-                  const ok = await onSubmitDecide(
-                    decideTarget.row,
-                    decideTarget.action,
-                    decideTarget.action === 'approve' ? approvedHours : null,
-                    note,
-                  );
+                  const ok = await onSubmitDecide(decideTarget.row, decideTarget.action, note);
                   if (ok) onCloseDecide();
                 }}
               >

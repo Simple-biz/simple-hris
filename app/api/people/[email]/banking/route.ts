@@ -19,6 +19,7 @@ import {
   mirroredDisbursementFor,
 } from '@/lib/employee-payment-processors';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+import { normalizeSource, PEOPLE_TAB_SOURCE } from '@/lib/payroll/readiness-audit';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -63,6 +64,13 @@ const ALLOWED_BANK_PREFERRED = new Set<string>(BANK_PREFERRED_OPTIONS.map((o) =>
 
 interface Body {
   patch?: Record<string, unknown>;
+  /** Where the edit was made from — labels the audit row and the People-tab
+   *  "Bank changes" feed. Accepts only the known `CHANGE_SOURCES`; anything
+   *  else falls back to `people_tab`. Added 2026-09-15 so the Payroll Notes
+   *  Offboarded tab's complete-override Set bank (which rides this route
+   *  because an Accounting edit IS the approval, §8) reads "via Payroll Wizard
+   *  (Readiness)" instead of impersonating a People-tab edit. */
+  source?: string;
 }
 
 /**
@@ -91,6 +99,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ email
 
   // Allowlist + validate the patch, mirroring the self-service save route.
   const raw = body?.patch ?? {};
+  const source = normalizeSource(body?.source, PEOPLE_TAB_SOURCE);
   const update: Record<string, string | null> = {};
   for (const key of ALLOWED_FIELDS) {
     if (!Object.prototype.hasOwnProperty.call(raw, key)) continue;
@@ -234,7 +243,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ email
     resource: 'employee_ids',
     resource_id: row?.work_email ?? email,
     details: {
-      via: 'people_tab',
+      via: source,
       edited_for: row?.work_email ?? email,
       fields: changedFields,
       processor: update.preferred_processor ?? row?.preferred_processor ?? null,
@@ -251,7 +260,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ email
     changes,
     processor: update.preferred_processor ?? row?.preferred_processor ?? null,
     created_new: created,
-    via: 'people_tab',
+    via: source,
     ip_address: null,
   }).catch(() => undefined);
   // Nudge the live "Bank changes" feed to refetch.

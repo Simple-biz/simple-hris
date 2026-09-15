@@ -166,3 +166,46 @@ export async function deletePayStructure(id: string): Promise<{ error: string | 
   const { error } = await supabase.from(TABLE).delete().eq('id', id);
   return { error: error ? error.message : null };
 }
+
+/**
+ * Every EMPLOYEE-scope structure a person holds, in ANY department — the input
+ * to the fixer's complete override (`shadowEmployeeStructures`). Reads the
+ * employee-scope rows paged and compares emails in JS after normalisation: a
+ * `.ilike()` would treat `_` and `%` as wildcards on a write path
+ * (bonus-catalog.md §5.6 rule 2).
+ */
+export async function listEmployeeStructuresForEmail(
+  email: string,
+): Promise<{ structures: PayStructure[]; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { structures: [], error: 'Supabase client unavailable' };
+  const want = email.trim().toLowerCase();
+  if (!want) return { structures: [], error: null };
+  const rows: PayRow[] = [];
+  const SIZE = 1000;
+  for (let from = 0; ; from += SIZE) {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select('*')
+      .eq('scope', 'employee')
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + SIZE - 1);
+    if (error) return { structures: [], error: error.message };
+    const page = (data ?? []) as PayRow[];
+    for (const r of page) {
+      if ((r.employee_email ?? '').trim().toLowerCase() === want) rows.push(r);
+    }
+    if (page.length < SIZE) break;
+  }
+  return { structures: rows.map(mapRow), error: null };
+}
+
+/** Delete several structures by id in one statement. No-op on an empty list. */
+export async function deletePayStructures(ids: readonly string[]): Promise<{ error: string | null }> {
+  if (ids.length === 0) return { error: null };
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase client unavailable' };
+  const { error } = await supabase.from(TABLE).delete().in('id', [...ids]);
+  return { error: error ? error.message : null };
+}

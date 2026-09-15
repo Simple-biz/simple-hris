@@ -91,13 +91,17 @@ import type {
   ReadinessScore,
   WizardSetupStep,
 } from "@/lib/payroll/payroll-readiness";
-import type { OffboardedPayrollCandidate } from "@/lib/payroll/offboarded-payroll-candidates";
+import type {
+  OffboardedPayrollCandidate,
+  OffboardedRateCurrent,
+} from "@/lib/payroll/offboarded-payroll-candidates";
 import { celebrationStep, type ReadyWatchState } from "@/lib/payroll/readiness-celebration";
 import {
   APPLY_NOTE_ADJUSTMENTS_EVENT,
   NOTE_ADJUSTMENT_REMOVED_EVENT,
   WIZARD_CYCLE_EVENT,
   REQUEST_WIZARD_CYCLE_EVENT,
+  RATES_CHANGED_EVENT,
   adjustmentDupKey,
   parseAdjustmentAmount,
   payWeekStartFromSourceFile,
@@ -2356,18 +2360,27 @@ const EDITOR_SELECT_CLS =
  */
 function SetRateDialog({
   person,
+  current,
   onClose,
   onSaved,
 }: {
   person: ReadinessMissingRate;
+  /** What the person is paid TODAY (the Offboarded tab passes this; the
+   *  Readiness No-Pay-Rate tab has, by definition, nothing to pass and leaves
+   *  it undefined). Seeds the form so a re-opened dialog shows the saved figure
+   *  - the proof a save landed that a blank-every-time editor never gave - and
+   *  starts the Department picker on the slot the person's individual structure
+   *  already files under, so a re-save updates THAT row instead of minting a
+   *  second, shadowing one. `null` = passed but nothing resolves. */
+  current?: OffboardedRateCurrent | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const mappedKey = catalogDeptKeyFromLabel(person.department);
-  const [deptKey, setDeptKey] = useState(mappedKey);
-  const [regular, setRegular] = useState("");
-  const [ot, setOt] = useState("");
-  const [currency, setCurrency] = useState<PayCurrency>("PHP");
+  const [deptKey, setDeptKey] = useState(current?.departmentKey ?? mappedKey);
+  const [regular, setRegular] = useState(current?.regular != null ? String(current.regular) : "");
+  const [ot, setOt] = useState(current?.ot != null ? String(current.ot) : "");
+  const [currency, setCurrency] = useState<PayCurrency>(current?.currency ?? "PHP");
   // Defaults to TODAY so this dialog's existing behaviour is byte-identical for
   // anyone who does not touch the field. Deliberately NOT the week being paid:
   // the effective date is what the proration engine splits a changed week on,
@@ -2455,6 +2468,11 @@ function SetRateDialog({
           DEPARTMENTS.find((d) => d.key === deptKey)?.name ?? deptKey
         } · effective ${effectiveDate}`,
       });
+      // Tell a mounted wizard to re-pull its rate sources, so Step 2 and the
+      // snapshot it republishes carry this figure without a remount.
+      window.dispatchEvent(
+        new CustomEvent(RATES_CHANGED_EVENT, { detail: { email: structure.employeeEmail ?? null } }),
+      );
       onSaved();
       onClose();
     } catch (e) {
@@ -2475,10 +2493,39 @@ function SetRateDialog({
           <DialogDescription>
             {person.name}
             {person.email ? ` · ${person.email}` : ""} — saves an individual rate to the
-            Payment Catalog, from the effective date you choose.
+            Payment Catalog, from the effective date you choose. It replaces every other
+            individual rate this person holds.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
+          {current !== undefined && (
+            <div
+              data-testid="setrate-current"
+              className="rounded-lg border border-zinc-200 bg-zinc-50/70 px-3 py-2 text-[11px] leading-relaxed text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800/40 dark:text-zinc-200"
+            >
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Currently on file
+              </div>
+              {current ? (
+                <div className="mt-0.5">
+                  {formatRate(current.regular, current.currency)}
+                  {current.ot != null ? ` · OT ${formatRate(current.ot, current.currency)}` : ""}
+                  {" · "}
+                  {current.source === "employee"
+                    ? `individual catalog rate${
+                        current.departmentKey
+                          ? ` under ${DEPARTMENTS.find((d) => d.key === current.departmentKey)?.name ?? current.departmentKey}`
+                          : ""
+                      }`
+                    : current.source === "sheet"
+                      ? "rates-sheet rate (no individual catalog rate yet)"
+                      : "department base rate (no individual rate yet)"}
+                </div>
+              ) : (
+                <div className="mt-0.5">No rate resolves anywhere — they cannot be paid until one is set.</div>
+              )}
+            </div>
+          )}
           <div className="grid gap-1">
             <label className={EDITOR_LABEL_CLS} htmlFor="readiness-rate-dept">
               Department
@@ -4223,8 +4270,10 @@ function OffboardedGlance({
   // reads Polling, which is what's actually covering the pane until then).
   const [rtLive, setRtLive] = useState<boolean | null>(null);
   const [ratePerson, setRatePerson] = useState<ReadinessMissingRate | null>(null);
+  const [rateCurrent, setRateCurrent] = useState<OffboardedPayrollCandidate["rateCurrent"]>(null);
   const [bankPerson, setBankPerson] = useState<ReadinessMissingBank | null>(null);
   const [bankPrefill, setBankPrefill] = useState<OffboardedPayrollCandidate["bankPrefill"]>(null);
+  const [bankCurrent, setBankCurrent] = useState<OffboardedPayrollCandidate["bankCurrent"]>(null);
   // Search + department filter over the list ("" = all departments).
   const [offQuery, setOffQuery] = useState("");
   const [offDept, setOffDept] = useState("");
@@ -4458,7 +4507,20 @@ function OffboardedGlance({
                     {r.offBoardedReasonLabel ? ` · ${r.offBoardedReasonLabel}` : ""}
                   </span>
                 )}
-                <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${badgeCls(r.rateStatus === "ok")}`}>
+                <span
+                  className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${badgeCls(r.rateStatus === "ok")}`}
+                  title={
+                    r.rateCurrent
+                      ? `${formatRate(r.rateCurrent.regular, r.rateCurrent.currency)} · ${
+                          r.rateCurrent.source === "employee"
+                            ? "individual catalog rate"
+                            : r.rateCurrent.source === "sheet"
+                              ? "rates-sheet rate"
+                              : "department base"
+                        }`
+                      : undefined
+                  }
+                >
                   {r.rateStatus === "ok" ? "Rate OK" : "No rate"}
                 </span>
                 <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${badgeCls(r.bankStatus === "ok")}`}>
@@ -4472,23 +4534,28 @@ function OffboardedGlance({
                   <>
                     <RowFixButton
                       label="Set rate"
-                      disabled={!r.workEmail && !r.personalEmail}
-                      onClick={() =>
+                      disabled={!r.rateWriteEmail}
+                      onClick={() => {
+                        setRateCurrent(r.rateCurrent);
                         setRatePerson({
                           name: r.name,
-                          email: r.workEmail ?? r.personalEmail,
+                          // THE payable identity: the email the hours ride, then work,
+                          // then personal (rate-override.ts `rateWriteEmail`). A rate
+                          // filed under an alias the hours do not ride prices nothing.
+                          email: r.rateWriteEmail,
                           department: r.department,
                           startDate: null,
                           recentlyOnboarded: false,
                           offBoardedAt: r.offBoardedAt,
-                        })
-                      }
+                        });
+                      }}
                     />
                     <RowFixButton
                       label="Set bank"
                       disabled={!r.workEmail && !r.personalEmail}
                       onClick={() => {
                         setBankPrefill(r.bankPrefill);
+                        setBankCurrent(r.bankCurrent);
                         setBankPerson({
                           name: r.name,
                           email: r.workEmail ?? r.personalEmail,
@@ -4511,15 +4578,30 @@ function OffboardedGlance({
       )}
       </div>
       {ratePerson && (
-        <SetRateDialog person={ratePerson} onClose={() => setRatePerson(null)} onSaved={() => void load()} />
+        <SetRateDialog
+          person={ratePerson}
+          current={rateCurrent}
+          onClose={() => {
+            setRatePerson(null);
+            setRateCurrent(null);
+          }}
+          onSaved={() => void load()}
+        />
       )}
       {bankPerson && (
+        // COMPLETE OVERRIDE (2026-09-15): the Offboarded tab is the only place a
+        // leaver's routing can still be decided, so the picker is unlocked and the
+        // save rides the Accounting direct-edit route. The Bank Info tab above keeps
+        // the locked-rail dialog — see SetBankDialog's component doc.
         <SetBankDialog
           person={bankPerson}
           prefill={bankPrefill ?? undefined}
+          override
+          current={bankCurrent}
           onClose={() => {
             setBankPerson(null);
             setBankPrefill(null);
+            setBankCurrent(null);
           }}
           onSaved={() => void load()}
         />

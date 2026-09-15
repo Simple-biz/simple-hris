@@ -32,6 +32,10 @@ import {
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import { applyPabAdjustments, getHslAdjustedEnd } from '@/lib/payroll/dispatch-bonuses';
 import {
+  approvedAdjustmentDayHours,
+  type ApprovedAdjustmentFacts,
+} from '@/lib/payroll/approved-adjustment-hours';
+import {
   HSL_WEEK_MODEL_CUTOVER_KEY,
   resolveHslWeekModelWithDefault,
   type HslWeekModel,
@@ -510,7 +514,11 @@ export default function EmployeePabCalendar({
   // whose midnight-split hours were corrected via a time adjustment would show
   // ineligible here while the wizard pays the PAB. Best-effort: a failed fetch
   // leaves the map empty and the calendar behaves like before.
-  const [timeAdjustments, setTimeAdjustments] = useState<Map<string, number>>(new Map());
+  /** Approved adjustments as RAW FACTS — the day total each makes is derived against
+   *  tracked hours below, because since 2026-09-15 an approval carries no total. */
+  const [timeAdjustments, setTimeAdjustments] = useState<Map<string, ApprovedAdjustmentFacts>>(
+    new Map(),
+  );
   useEffect(() => {
     if (!pabMonthRange || aliasEmails.length === 0) return;
     let cancelled = false;
@@ -530,16 +538,25 @@ export default function EmployeePabCalendar({
             `/api/time-adjustments?status=approved&email=${encodeURIComponent(a)}&from=${from}&to=${to}`,
             { cache: 'no-store' },
           )
-            .then((r) => r.json() as Promise<{ rows?: { adjust_date: string; approved_hours: number | null }[] }>)
-            .catch(() => ({ rows: [] as { adjust_date: string; approved_hours: number | null }[] })),
+            .then(
+              (r) =>
+                r.json() as Promise<{
+                  rows?: Array<{ adjust_date: string } & ApprovedAdjustmentFacts>;
+                }>,
+            )
+            .catch(() => ({ rows: [] as Array<{ adjust_date: string } & ApprovedAdjustmentFacts> })),
         ),
       );
       if (cancelled) return;
-      const map = new Map<string, number>();
+      const map = new Map<string, ApprovedAdjustmentFacts>();
       for (const json of results) {
         for (const row of json.rows ?? []) {
-          if (row.approved_hours == null || !row.adjust_date) continue;
-          map.set(row.adjust_date, row.approved_hours);
+          if (!row.adjust_date) continue;
+          map.set(row.adjust_date, {
+            approved_hours: row.approved_hours,
+            requested_hours: row.requested_hours,
+            requested_segments: row.requested_segments,
+          });
         }
       }
       setTimeAdjustments(map);
@@ -643,8 +660,19 @@ export default function EmployeePabCalendar({
       if (disputeGrantsPabForgiveness(d)) forgivenDates.set(d.dispute_date, d.override_hours ?? null);
     }
     // Approved time adjustments overlay disputes on the same day (wizard's
-    // effectiveOverrides ordering — the adjustment is the explicit number).
-    for (const [iso, h] of timeAdjustments) forgivenDates.set(iso, h);
+    // effectiveOverrides ordering — the adjustment is the explicit number). The day
+    // total is resolved against RAW tracked hours, before the SET writes below mutate
+    // `hoursByDateKey`, or an adjustment would be added to its own result.
+    const resolvedAdjustments = new Map<string, number>();
+    for (const [iso, facts] of timeAdjustments) {
+      const [y, m, day] = iso.split('-').map(Number);
+      if (!y || !m || !day) continue;
+      const trackedHours = (rawHours.get(`${y}-${m}-${day}`) ?? 0) / 3600;
+      const dayHours = approvedAdjustmentDayHours(facts, trackedHours);
+      if (dayHours == null) continue;
+      resolvedAdjustments.set(iso, dayHours);
+    }
+    for (const [iso, h] of resolvedAdjustments) forgivenDates.set(iso, h);
     const orphanageByIso = orphanageHoursIndex.size
       ? orphanageHoursByCoveredDate(orphanageHoursIndex, email)
       : new Map<string, number>();
@@ -661,7 +689,7 @@ export default function EmployeePabCalendar({
     }
     // Approved time adjustments = SET semantics too, winning over a same-day
     // dispute override — the displayed hours match what the wizard shows.
-    for (const [iso, h] of timeAdjustments) {
+    for (const [iso, h] of resolvedAdjustments) {
       const [y, m, day] = iso.split('-').map(Number);
       if (!y || !m || !day) continue;
       hoursByDateKey.set(`${y}-${m}-${day}`, h * 3600);

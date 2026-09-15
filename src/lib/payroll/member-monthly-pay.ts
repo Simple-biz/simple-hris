@@ -43,6 +43,10 @@ import {
   resolveIsTechBonusWeek,
   TECH_BONUS_WEEK_OVERRIDES_KEY,
 } from '@/lib/payroll/dispatch-bonuses';
+import {
+  mergeAdjustmentsIntoForgivenDates,
+  type ApprovedAdjustmentFacts,
+} from '@/lib/payroll/approved-adjustment-hours';
 import { listSystemBonuses } from '@/lib/supabase/system-bonuses-db';
 import { listAllOrphanagePayHours } from '@/lib/supabase/orphanage-pay-db';
 import {
@@ -246,14 +250,21 @@ async function fetchHubstaffRowsForEmail(
  * Time adjustments win on a same day (overlaid last), matching
  * `mergeApprovedTimeAdjustments` in current-pay.
  */
-async function fetchForgivenDatesForEmails(
-  emailNorms: Set<string>,
-): Promise<Map<string, number | null>> {
-  const out = new Map<string, number | null>();
+async function fetchForgivenDatesForEmails(emailNorms: Set<string>): Promise<{
+  disputes: Map<string, number | null>;
+  /**
+   * Approved time adjustments as RAW FACTS, not resolved hours. Since 2026-09-15 the
+   * day total an approval makes is derived from what was tracked, and the tracked
+   * figure is not known until the Hubstaff rows are parsed below.
+   */
+  adjustments: Map<string, ApprovedAdjustmentFacts>;
+}> {
+  const disputesOut = new Map<string, number | null>();
+  const adjustmentsOut = new Map<string, ApprovedAdjustmentFacts>();
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
-  if (!supabase) return out;
+  if (!supabase) return { disputes: disputesOut, adjustments: adjustmentsOut };
   const emails = [...emailNorms].filter(Boolean);
-  if (emails.length === 0) return out;
+  if (emails.length === 0) return { disputes: disputesOut, adjustments: adjustmentsOut };
 
   const matchesAlias = (raw: string | null | undefined): boolean => {
     const e = normEmail(raw ?? null) ?? (raw ?? '').toLowerCase();
@@ -270,24 +281,25 @@ async function fetchForgivenDatesForEmails(
     override_hours: number | null;
   }>) {
     if (!matchesAlias(row.work_email)) continue;
-    out.set(row.dispute_date, row.override_hours);
+    disputesOut.set(row.dispute_date, row.override_hours);
   }
 
   const { data: adjustments } = await supabase
     .from('time_adjustment_requests')
-    .select('work_email, adjust_date, approved_hours')
+    .select('work_email, adjust_date, approved_hours, requested_hours, requested_segments')
     .eq('status', 'approved');
-  for (const row of (adjustments ?? []) as Array<{
-    work_email: string;
-    adjust_date: string;
-    approved_hours: number | null;
-  }>) {
-    if (row.approved_hours == null) continue;
+  for (const row of (adjustments ?? []) as Array<
+    { work_email: string; adjust_date: string } & ApprovedAdjustmentFacts
+  >) {
     if (!matchesAlias(row.work_email)) continue;
-    out.set(row.adjust_date, row.approved_hours);
+    adjustmentsOut.set(row.adjust_date, {
+      approved_hours: row.approved_hours,
+      requested_hours: row.requested_hours,
+      requested_segments: row.requested_segments,
+    });
   }
 
-  return out;
+  return { disputes: disputesOut, adjustments: adjustmentsOut };
 }
 
 interface MasterMin {
@@ -552,7 +564,7 @@ export async function computeMemberMonthlyPay(args: {
   // (disputes + time adjustments) in parallel. Forgiveness is applied to the
   // PAB eligibility check only — never to paid hours — so the dashboard / My
   // Hours bonus matches what dispatch actually pays.
-  const [hsRes, forgivenDates, orphanagePayRows] = await Promise.all([
+  const [hsRes, forgiveness, orphanagePayRows] = await Promise.all([
     fetchHubstaffRowsForEmail(aliasNorms),
     fetchForgivenDatesForEmails(aliasNorms),
     // TEMPORARY orphanage → PAB coverage (see orphanage-pab-coverage.ts).
@@ -661,6 +673,14 @@ export async function computeMemberMonthlyPay(args: {
   // auto-pass — exactly mirroring the dispatch path (`dispatch-bonuses.ts`).
   // Paid hours (`hoursByDateKey`) are never touched.
   const holidaySet = new Set(holidayMap.keys());
+  // Approved time adjustments resolve to a day total against the tracked seconds in
+  // `hoursByDateKey` — the same map the eligibility walk reads — so the overlay and
+  // the walk can never disagree about a day.
+  const forgivenDates = mergeAdjustmentsIntoForgivenDates(
+    forgiveness.disputes,
+    forgiveness.adjustments,
+    hoursByDateKey,
+  );
   const eligibilityHours = applyPabAdjustments(hoursByDateKey, forgivenDates, holidaySet, orphanageHoursByIso);
 
   function computeEligibilityForPabMonth(year: number, month: number): boolean {

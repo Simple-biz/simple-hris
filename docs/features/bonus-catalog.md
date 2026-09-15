@@ -858,6 +858,21 @@ slots, close enough to the PostgREST 1000-row cap to matter.
 > regardless of the person's department label. That tab is the final-pay rate editor,
 > so it offers the action on every row by design.
 
+**The Readiness / Offboarded fixer is a COMPLETE OVERRIDE (2026-09-15).** When the
+POST carries `source: payroll_wizard_readiness` and `scope: employee`, the route
+does three things the editor does not: after the natural-key upsert it **deletes the
+person's other employee-scope structures in every other department** (rate
+resolution keys on email only and the newest-created row wins, so a second row is a
+shadow, never a second rate — 19 people held two on 2026-09-15, 17 of them leavers;
+each deletion is named in the `payroll.rate.set` audit row as
+`superseded_structures`); it supersedes `employee_rate_history` from the **earlier**
+of today and the chosen effective date; and it **awaits** the history/cache writes
+so a failure is an error the clerk retries, not a warning behind a green toast. The
+lookup still compares emails in JS (`listEmployeeStructuresForEmail`), never with
+`.ilike()`. The editor's semantics above are unchanged — from the Pay Structure tab
+a person can still hold one override per department, which is the still-open
+shadow class recorded in `readiness-setrate-cannot-backdate`.
+
 ### 5.7 OPEN gap -- COP is silently written as PHP
 
 `upsertPayStructure` writes `currency: s.currency === 'USD' ? 'USD' : 'PHP'`. The

@@ -54,6 +54,7 @@ import {
   parsePabPeriodExclusions,
   yearMonthKey,
 } from "@/lib/pab-period-settings";
+import type { ApprovedAdjustmentFacts } from "@/lib/payroll/approved-adjustment-hours";
 import {
   computeEmployeeBonus,
   computePabEligibleEmails,
@@ -267,24 +268,28 @@ async function fetchAllApprovedDisputes(
  * (time adjustments win on a same day). Used so an employee's PAB eligibility reflects
  * accounting-corrected hours. Never touches hubstaff_hours — hours are overlaid at calc time.
  */
-async function mergeApprovedTimeAdjustments(
+async function fetchApprovedTimeAdjustments(
   supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
-  map: Map<string, Map<string, number | null>>,
-): Promise<Map<string, Map<string, number | null>>> {
+): Promise<Map<string, Map<string, ApprovedAdjustmentFacts>>> {
   const { data, error } = await supabase
     .from("time_adjustment_requests")
-    .select("work_email, adjust_date, approved_hours")
+    .select("work_email, adjust_date, approved_hours, requested_hours, requested_segments")
     .eq("status", "approved");
-  if (error || !data) return map;
-  for (const row of data as Array<{ work_email: string; adjust_date: string; approved_hours: number | null }>) {
-    if (row.approved_hours == null) continue;
+  const out = new Map<string, Map<string, ApprovedAdjustmentFacts>>();
+  if (error || !data) return out;
+  for (const row of data as Array<{ work_email: string; adjust_date: string } & ApprovedAdjustmentFacts>) {
     const email = normEmail(row.work_email) ?? (row.work_email ?? "").toLowerCase();
     if (!email) continue;
-    if (!map.has(email)) map.set(email, new Map());
-    map.get(email)!.set(row.adjust_date, row.approved_hours);
+    if (!out.has(email)) out.set(email, new Map());
+    out.get(email)!.set(row.adjust_date, {
+      approved_hours: row.approved_hours,
+      requested_hours: row.requested_hours,
+      requested_segments: row.requested_segments,
+    });
   }
-  return map;
+  return out;
 }
+
 
 interface MasterEmployeeMin {
   work_email: string | null;
@@ -706,6 +711,7 @@ export async function computeCurrentPay(
     onboardingCountryRows,
     hslTransferEffective,
     deptRegistry,
+    approvedAdjustmentFacts,
   ] = await Promise.all([
     hubstaffPromise,
     getEmployeeHourlyRatesRows(),
@@ -724,7 +730,7 @@ export async function computeCurrentPay(
     fetchAllRateHistory(),
     listOrphanageBudgetRequests({ status: "approved" }),
     supabase
-      ? fetchAllApprovedDisputes(supabase).then((m) => mergeApprovedTimeAdjustments(supabase, m))
+      ? fetchAllApprovedDisputes(supabase)
       : Promise.resolve(new Map<string, Map<string, number | null>>()),
     listPayStructures(),
     listSystemBonuses(),
@@ -738,6 +744,12 @@ export async function computeCurrentPay(
     // degrades to the built-in-only behaviour that shipped before this, never to
     // something worse.
     getDepartmentRegistry().catch(() => null),
+    // Approved time adjustments as RAW FACTS. They are overlaid onto the dispute map
+    // only once the Hubstaff rows are merged below, because the day total an approval
+    // makes is derived from what was tracked (2026-09-15).
+    supabase
+      ? fetchApprovedTimeAdjustments(supabase)
+      : Promise.resolve(new Map<string, Map<string, ApprovedAdjustmentFacts>>()),
   ]);
 
   // Deferred: the full-table Hubstaff scan (every row, every upload) is ONLY
@@ -1043,6 +1055,7 @@ export async function computeCurrentPay(
       hslAdjustedEnd,
       hslEmails,
       approvedDisputeDates,
+      approvedAdjustments: approvedAdjustmentFacts,
       usHolidayDates,
       orphanageHoursByEmailIso,
       weekModel: hslWeekModel,

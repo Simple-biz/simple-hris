@@ -369,6 +369,18 @@ by resolving everything People shows through the SAME dispatch-parity helpers:
   pinning. The employee self-service path keeps the §3 approval gate unchanged.
   (A direct edit does not cancel an employee's pending request; the approval
   PATCH re-checks the rule at approve time as before.)
+- **Payroll Notes → Offboarded "Set bank" rides this same route (2026-09-15).**
+  A leaver has nobody left to file a request, so the Offboarded tab's dialog is
+  mounted in override mode: rail unlocked, and the save is a
+  `PATCH /api/people/[email]/banking` with **both** `preferred_processor` and
+  `bank_preferred` pinned to the chosen rail (equal values are always legal under
+  §4) plus only the typed details, and `preferred_bank_slot: 'primary'` when a
+  primary wire field was typed. Same gate, same 423 under the dispatch lock, same
+  1:1 re-check. The PATCH accepts an optional `source` (one of the known
+  `CHANGE_SOURCES`, default `people_tab`) so the audit row reads `via
+  payroll_wizard_readiness`. The Readiness **Bank Info** fixer and the employee
+  self-service route are unchanged — the §3 intercept still never writes without
+  a request.
 
 Parity is pinned by `src/lib/employee/payout-completeness.test.ts` and the
 audit script's post-fix run: **0 disagreements across 1,498 active people**.

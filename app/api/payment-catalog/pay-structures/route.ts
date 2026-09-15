@@ -3,7 +3,10 @@ import {
   listPayStructures,
   upsertPayStructure,
   deletePayStructure,
+  deletePayStructures,
+  listEmployeeStructuresForEmail,
 } from '@/lib/supabase/pay-structures-db';
+import { historySupersedeFloor, shadowEmployeeStructures } from '@/lib/payroll/rate-override';
 import { deniedResponse, requireRateVisibilitySession } from '@/lib/auth/authorize-email';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
@@ -45,6 +48,14 @@ async function syncRateHistory(
   actor: string,
   source: string,
   effectiveDateIso?: string,
+  /** COMPLETE OVERRIDE (the Readiness / Offboarded "Set rate" fixer, 2026-09-15):
+   *  supersede every history row dated on/after the EARLIER of today and the
+   *  chosen date, not just `>= today OR == date`. A back-dated fix used to leave
+   *  a newer past-dated row in force (`gracechellem@`: ₱175 eff 09-01 outlived a
+   *  ₱175 eff 08-30 save), so the save reported success and the week kept
+   *  pricing from the row it was meant to replace. The Payment Catalog editor
+   *  keeps its own clause — this flag is set only for the fixer source. */
+  override = false,
 ): Promise<void> {
   const email = normEmail(s.employeeEmail ?? '') ?? null;
   if (!email) return;
@@ -85,14 +96,25 @@ async function syncRateHistory(
       // effective date, which is how cheskac@ accumulated three rows all dated
       // 2026-08-09 (whichever the resolver's unstable same-date ordering
       // returned first won). One row per (email, effective_from).
-      await supabase
-        .from('employee_rate_history')
-        .delete()
-        .eq('employee_email', email)
-        .or(`effective_from.gte.${todayIso},effective_from.eq.${effectiveIso}`);
+      if (override) {
+        const floor = historySupersedeFloor(todayIso, effectiveIso);
+        const { error: delErr } = await supabase
+          .from('employee_rate_history')
+          .delete()
+          .eq('employee_email', email)
+          .gte('effective_from', floor);
+        // The override is awaited by its caller precisely so this can be heard.
+        if (delErr) throw new Error(`Could not supersede the rate history: ${delErr.message}`);
+      } else {
+        await supabase
+          .from('employee_rate_history')
+          .delete()
+          .eq('employee_email', email)
+          .or(`effective_from.gte.${todayIso},effective_from.eq.${effectiveIso}`);
+      }
     }
 
-    await insertRateHistoryRow({
+    const inserted = await insertRateHistoryRow({
       email,
       regularRate: s.regularRate,
       otRate: s.otRate ?? null,
@@ -100,13 +122,19 @@ async function syncRateHistory(
       createdBy: actor,
       note: rateNote,
     });
+    if (override && inserted.error) {
+      throw new Error(`Could not write the rate history row: ${inserted.error}`);
+    }
 
     if (effective.getTime() <= today.getTime()) {
-      await updateEmployeeRates({
+      const cache = await updateEmployeeRates({
         workEmail: email,
         regularRate: String(s.regularRate),
         otRate: String(s.otRate ?? s.regularRate),
       });
+      if (override && cache.error) {
+        throw new Error(`Could not update the hourly-rate cache: ${cache.error}`);
+      }
     }
 
     // Push to the Google Sheet rates tab so the Sheet stays in sync.
@@ -208,10 +236,61 @@ export async function POST(request: Request) {
   // merge — a structure change must show there immediately, not after the TTL.
   invalidateRateProfilesCache();
 
+  // COMPLETE OVERRIDE for the Readiness / Offboarded "Set rate" fixer
+  // (2026-09-15). Rate resolution keys on email only and the newest-created
+  // structure wins, so a second employee-scope row in ANOTHER department is
+  // never a second rate — it is a shadow that can silently outrank the one the
+  // clerk just saved (19 people held two on 2026-09-15, 17 of them leavers).
+  // The fixer therefore leaves exactly ONE individual structure per person. The
+  // Payment Catalog editor is untouched: it groups overrides by department and
+  // keeps its add/edit-per-slot semantics.
+  const isFixerOverride = s.scope === 'employee' && source === READINESS_SOURCE;
+  let supersededStructures: Array<Pick<PayStructure, 'id' | 'departmentKey' | 'regularRate' | 'otRate' | 'currency'>> = [];
+  if (isFixerOverride && row && s.employeeEmail) {
+    const { structures: mine, error: listErr } = await listEmployeeStructuresForEmail(s.employeeEmail);
+    if (listErr) {
+      return NextResponse.json(
+        { error: `Rate saved, but the person's other individual rates could not be checked: ${listErr}. Save again to retry.` },
+        { status: 500 },
+      );
+    }
+    const shadows = shadowEmployeeStructures(s.employeeEmail, row.id, mine);
+    if (shadows.length > 0) {
+      const { error: delErr } = await deletePayStructures(shadows.map((x) => x.id));
+      if (delErr) {
+        return NextResponse.json(
+          { error: `Rate saved, but a conflicting individual rate could not be retired: ${delErr}. Save again to retry.` },
+          { status: 500 },
+        );
+      }
+      supersededStructures = shadows.map((x) => ({
+        id: x.id,
+        departmentKey: x.departmentKey,
+        regularRate: x.regularRate,
+        otRate: x.otRate,
+        currency: x.currency,
+      }));
+    }
+  }
+
   if (s.scope === 'employee') {
-    void syncRateHistory(s, actor, source, body.effectiveDate ?? undefined).catch((err: unknown) => {
-      console.warn('[pay-structures] syncRateHistory failed:', err);
-    });
+    if (isFixerOverride) {
+      // Awaited: the fixer's response must mean "the week prices from this".
+      // A history failure surfaces as an error the clerk can retry — the
+      // upsert above is idempotent, so a second click finishes the job.
+      try {
+        await syncRateHistory(s, actor, source, body.effectiveDate ?? undefined, true);
+      } catch (err: unknown) {
+        return NextResponse.json(
+          { error: `Rate saved to the catalog, but ${err instanceof Error ? err.message : String(err)}` },
+          { status: 500 },
+        );
+      }
+    } else {
+      void syncRateHistory(s, actor, source, body.effectiveDate ?? undefined).catch((err: unknown) => {
+        console.warn('[pay-structures] syncRateHistory failed:', err);
+      });
+    }
 
     // Audit trail (this route had none): an individual rate set, tagged with its
     // source so a Payroll-Wizard fix reads "via Payroll Wizard". Best-effort —
@@ -233,11 +312,15 @@ export async function POST(request: Request) {
         ot_rate: s.otRate ?? null,
         currency: s.currency,
         effective_date: body.effectiveDate ?? null,
+        // Complete override (fixer only): what the save retired, so the trail
+        // can answer "where did their Hogan rate go" without a table diff.
+        override: isFixerOverride,
+        superseded_structures: isFixerOverride ? supersededStructures : undefined,
       },
     }).catch(() => undefined);
   }
 
-  return NextResponse.json({ row, error: null });
+  return NextResponse.json({ row, error: null, supersededStructures });
 }
 
 export async function DELETE(request: Request) {

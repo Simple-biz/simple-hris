@@ -280,3 +280,18 @@ export function combineAdjustmentTexts(
   }
   return combineAdjustments(contributions);
 }
+
+/**
+ * Window event the Notes FAB's "Set rate" fixer dispatches after a rate save
+ * LANDS (structure upserted, history superseded). A mounted wizard answers by
+ * re-pulling its three rate sources — the Payment Catalog structures, the
+ * `employee_hourly_rates` cache and the rate history — so the Step-2 table and
+ * the 1.5s snapshot republish carry the new figure without a remount. Until
+ * 2026-09-15 the wizard loaded those once on mount, so a fix made beside it
+ * kept reading the old rate (and republishing it) for as long as the tab lived.
+ * detail: `{ email: string | null }` — informational; the wizard reloads all.
+ */
+export const RATES_CHANGED_EVENT = "payroll-wizard:rates-changed";
+
+/** Shape of a {@link RATES_CHANGED_EVENT} detail. */
+export type RatesChangedDetail = { email: string | null };

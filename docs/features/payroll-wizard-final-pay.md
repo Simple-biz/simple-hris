@@ -16,6 +16,36 @@ Last substantive update: **2026-09-09**.
 
 ---
 
+## 2026-09-15 — Leavers are priced from the catalog, and a rate fix beside the wizard lands live
+
+Two small changes in the Step-2 rate index (`ratesByEmail`), both driven by the
+Payroll Notes → Offboarded fixers becoming a complete override
+([payroll-readiness.md](./payroll-readiness.md) § *Offboarded tab*):
+
+1. **Catalog-only leavers.** Step 2 of the overlay synthesized a rate row from the
+   Payment Catalog for anyone in `masterEmployees` with no legacy
+   `employee_hourly_rates` row. A recently-offboarded person is absent from
+   `masterEmployees` by construction (the final-pay overlay is never merged into it),
+   so a leaver with an individual catalog rate and no rates row computed as
+   **"No rate"** however many times Readiness set it. A third pass now walks
+   `offboardedRoster` with the same `has()` guard the start-date map uses: an
+   overlay row can never move an active person's rate and can only annotate an
+   email that already has a calc row.
+2. **`RATES_CHANGED_EVENT`.** The three rate sources — `payStructures`,
+   `hourlyRateRows`, `rateHistoryByEmail` — were loaded once on mount, so a Set
+   rate made in the FAB beside an open wizard left that wizard showing, and
+   republishing into `payroll.wizard.final_pay.<file>`, the OLD rate until a
+   remount. The FAB now dispatches `payroll-wizard:rates-changed` after a save
+   lands and the wizard re-pulls all three (they must move together: the proration
+   engine's catalog-consistency gate compares two of them).
+
+Unchanged: dispatch precedence (a re-lock is still authoritative — a re-rated
+leaver's staged `disbursement_records` row keeps its figure until the snapshot
+qualifies or the week is re-locked), replay (`isReplay` still skips the catalog
+overlay), and every department rule.
+
+---
+
 ## 2026-09-09 — Reports step (9): the Salaries table has a search bar, and it is DISPLAY ONLY
 
 The step-9 Salaries / Wages table can now be narrowed by a search box. Nothing else on

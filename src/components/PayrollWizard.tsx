@@ -109,6 +109,7 @@ import {
   pabDateKey,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import { getHslAdjustedEnd } from '@/lib/payroll/dispatch-bonuses';
+import { approvedAdjustmentDayHours } from '@/lib/payroll/approved-adjustment-hours';
 import {
   buildOrphanageHoursIndex,
   orphanageHoursByCoveredDate,
@@ -204,6 +205,7 @@ import {
   NOTE_ADJUSTMENT_REMOVED_EVENT,
   WIZARD_CYCLE_EVENT,
   REQUEST_WIZARD_CYCLE_EVENT,
+  RATES_CHANGED_EVENT,
   adjustmentToPhp,
   combineAdjustments,
   combineAdjustmentTexts,
@@ -3770,7 +3772,10 @@ export default function PayrollWizard({
    *  window (file week + week before); no dispute/excuse record needed. */
   const [orphanageHoursIndex, setOrphanageHoursIndex] = useState<OrphanageHoursIndex>(new Map());
   /** Approved time-adjustment overrides: normalized work_email -> (ISO date -> SET hours). */
-  const [approvedTimeAdjustments, setApprovedTimeAdjustments] = useState<Map<string, Map<string, number>>>(new Map());
+  /** Approved time-adjustment ROWS for the PAB period. The day total each one makes is
+   *  DERIVED against tracked hours (`approvedTimeAdjustments` below), not stored here:
+   *  since 2026-09-15 Accounting approves without typing a total. */
+  const [approvedAdjustmentRows, setApprovedAdjustmentRows] = useState<TimeAdjustmentRow[]>([]);
   /**
    * Approved, not-yet-dispatched MESA disbursements: normalized work_email -> total PHP.
    * Surfaced in the Additions MESA column and added to Final pay. Excludes already
@@ -3793,7 +3798,6 @@ export default function PayrollWizard({
   const [timeAdjustmentSignedUrls, setTimeAdjustmentSignedUrls] = useState<Record<string, string>>({});
   const [decidingAdjustmentId, setDecidingAdjustmentId] = useState<string | null>(null);
   const [deletingAdjustmentId, setDeletingAdjustmentId] = useState<string | null>(null);
-  const [adjustmentHoursDraft, setAdjustmentHoursDraft] = useState<Record<string, string>>({});
   /** ISO date (YYYY-MM-DD) -> holiday name. Built from app_settings; empty when disabled. */
   const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
   /** Full holiday list (enabled + disabled) — used for validation-section display. */
@@ -4253,6 +4257,25 @@ export default function PayrollWizard({
   useEffect(() => {
     void loadRateHistory();
   }, [loadRateHistory]);
+
+  // A rate fix made beside this tab — the Notes FAB's Readiness / Offboarded
+  // "Set rate" — must reach THIS tab's figures without a remount. The three rate
+  // sources above were loaded once on mount, so until 2026-09-15 an open wizard
+  // kept the old rate in Step 2 AND kept republishing it into the final_pay
+  // snapshot Payment Dispatch reads (the "it's not sticking" the fixer got
+  // blamed for). Reloading all three keeps the catalog, the flat cache and the
+  // dated history in step — the proration engine's catalog-consistency gate
+  // compares two of them. See adjustment-bridge.ts (RATES_CHANGED_EVENT).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onRatesChanged = () => {
+      void loadPayStructures();
+      void loadEmployeeHourlyRates();
+      void loadRateHistory();
+    };
+    window.addEventListener(RATES_CHANGED_EVENT, onRatesChanged);
+    return () => window.removeEventListener(RATES_CHANGED_EVENT, onRatesChanged);
+  }, [loadPayStructures, loadEmployeeHourlyRates, loadRateHistory]);
 
   // Into-HSL transfer effective dates — day-scopes the HSL Weekend Hours
   // treatment in a transfer week (resolveHslWeekScope): the dept label moves
@@ -4877,9 +4900,48 @@ export default function PayrollWizard({
         };
         for (const em of emails) idx.set(em, synthetic);
       }
+      // 3) Catalog-only LEAVERS. A recently-offboarded person is absent from
+      //    `masterEmployees` by construction (the overlay is never merged into
+      //    it), so the loop above never reached them: a leaver with an
+      //    individual catalog rate and NO legacy rates row computed as "No rate"
+      //    no matter how many times Readiness set it. Same has()-guarded
+      //    append the start-date map uses — an overlay row can never move an
+      //    active person's rate, and it can only annotate an email that already
+      //    has a calc row (offboarded-roster-row.ts).
+      for (const r of offboardedRoster) {
+        const emails = [r.hubstaff_email, r.work_email, r.personal_email, r.alternate_work_email, r.alternate_work_email_2]
+          .map((x) => normEmail(x ?? ''))
+          .filter((x): x is string => !!x);
+        if (emails.length === 0) continue;
+        if (emails.some((em) => idx.has(em))) continue;
+        const empCat = resolveEmployeeCatalogRate(catIdx, emails, fxRates);
+        const deptCat = empCat ? null : resolveDeptCatalogRate(catIdx, r.department, fxRates);
+        const applied = empCat ?? deptCat;
+        if (!applied) continue;
+        const synthetic: EmployeeHourlyRateRow = {
+          work_email: r.work_email ?? null,
+          personal_email: r.personal_email ?? null,
+          regular_rate: String(applied.regPhp),
+          ot_rate: String(applied.otPhp),
+          department: r.department ?? null,
+          bank_preferred: null,
+          hurupay_email: null,
+          higlobe_email: null,
+          higlobe_account_name: null,
+          phone_number: null,
+          full_address: null,
+          city: null,
+          province_state: null,
+          mesa_member: null,
+          mesa_member_since: null,
+          mesa_fpu_completed_on: null,
+          mesa_account_number: null,
+        };
+        for (const em of emails) idx.set(em, synthetic);
+      }
     }
     return idx;
-  }, [hourlyRateRows, masterEmployees, payStructures, isReplay, fxRates]);
+  }, [hourlyRateRows, masterEmployees, offboardedRoster, payStructures, isReplay, fxRates]);
 
   // Lookup maps over masterEmployees, built once per roster change. The Step 2
   // calc, the department auto-assign effect, and dispatchData each need to match
@@ -5679,17 +5741,11 @@ export default function PayrollWizard({
     fetch(`/api/time-adjustments?status=approved&from=${from}&to=${to}`, { cache: 'no-store' })
       .then(r => r.json())
       .then((json: { rows?: TimeAdjustmentRow[] }) => {
-        const map = new Map<string, Map<string, number>>();
-        for (const row of json.rows ?? []) {
-          if (row.approved_hours == null) continue;
-          const em = (row.work_email ?? '').trim().toLowerCase();
-          if (!em) continue;
-          if (!map.has(em)) map.set(em, new Map());
-          map.get(em)!.set(row.adjust_date, row.approved_hours);
-        }
-        setApprovedTimeAdjustments(map);
+        // Rows are kept RAW. Their day total depends on tracked hours, which are not
+        // known here, so the overlay is derived in a memo further down.
+        setApprovedAdjustmentRows(json.rows ?? []);
       })
-      .catch(() => setApprovedTimeAdjustments(new Map()));
+      .catch(() => setApprovedAdjustmentRows([]));
   }, [pabMonthRange]);
 
   useEffect(() => {
@@ -5815,27 +5871,13 @@ export default function PayrollWizard({
   );
 
   /**
-   * Override lookup the PAB memos consume: approved PAB disputes overlaid by approved
-   * time adjustments (time adjustments win on a same day — they are the explicit
-   * "this is the real number" decision). SET semantics, hours-or-null per date.
-   */
-  const effectiveOverrides = useMemo<Map<string, Map<string, number | null>>>(() => {
-    const map = new Map<string, Map<string, number | null>>();
-    for (const [em, dates] of approvedDisputeDates) {
-      map.set(em, new Map(dates));
-    }
-    for (const [em, dates] of approvedTimeAdjustments) {
-      if (!map.has(em)) map.set(em, new Map());
-      const target = map.get(em)!;
-      for (const [d, h] of dates) target.set(d, h);
-    }
-    return map;
-  }, [approvedDisputeDates, approvedTimeAdjustments]);
-
-  /**
    * Raw per-day worked hours per employee (NO overrides applied) for the PAB period.
-   * Used to value an approved time adjustment as a pay delta: (SET hours - raw hours)
-   * for each in-period adjustment date. Keyed by normalized + raw Hubstaff email.
+   * Used to value an approved time adjustment as a pay delta, and — since 2026-09-15 —
+   * to DERIVE the day total an adjustment makes, because Accounting no longer types one.
+   * Keyed by normalized + raw Hubstaff email.
+   *
+   * Declared before the two memos that consume it; moving it below them silently
+   * yields an empty map on first render.
    */
   const rawDayHoursByEmail = useMemo<Map<string, Map<string, number>>>(() => {
     const map = new Map<string, Map<string, number>>();
@@ -5855,6 +5897,46 @@ export default function PayrollWizard({
     }
     return map;
   }, [hubstaffRowsForPab, allDaysColumnGroups]);
+
+  /**
+   * What each approved time adjustment makes its day, per employee.
+   *
+   * A row approved before 2026-09-15 carries a stored total and keeps it; a row
+   * approved since carries none, and the day becomes tracked hours + the missed time
+   * the employee submitted. One rule, {@link approvedAdjustmentDayHours}, shared with
+   * the live estimate, HSL monthly pay, the Overview and the employee's own calendar.
+   */
+  const approvedTimeAdjustments = useMemo<Map<string, Map<string, number>>>(() => {
+    const map = new Map<string, Map<string, number>>();
+    for (const row of approvedAdjustmentRows) {
+      const em = (row.work_email ?? '').trim().toLowerCase();
+      if (!em) continue;
+      const tracked = rawDayHoursByEmail.get(em)?.get(row.adjust_date) ?? 0;
+      const dayHours = approvedAdjustmentDayHours(row, tracked);
+      if (dayHours == null) continue;
+      if (!map.has(em)) map.set(em, new Map());
+      map.get(em)!.set(row.adjust_date, dayHours);
+    }
+    return map;
+  }, [approvedAdjustmentRows, rawDayHoursByEmail]);
+
+  /**
+   * Override lookup the PAB memos consume: approved PAB disputes overlaid by approved
+   * time adjustments (time adjustments win on a same day — they are the explicit
+   * "this is the real number" decision). SET semantics, hours-or-null per date.
+   */
+  const effectiveOverrides = useMemo<Map<string, Map<string, number | null>>>(() => {
+    const map = new Map<string, Map<string, number | null>>();
+    for (const [em, dates] of approvedDisputeDates) {
+      map.set(em, new Map(dates));
+    }
+    for (const [em, dates] of approvedTimeAdjustments) {
+      if (!map.has(em)) map.set(em, new Map());
+      const target = map.get(em)!;
+      for (const [d, h] of dates) target.set(d, h);
+    }
+    return map;
+  }, [approvedDisputeDates, approvedTimeAdjustments]);
 
   /**
    * TEMPORARY orphanage → PAB coverage overlay (see orphanage-pab-coverage.ts).
@@ -5920,15 +6002,16 @@ export default function PayrollWizard({
   }, [approvedTimeAdjustments, rawDayHoursByEmail, allDaysColumnGroups]);
 
   const decideTimeAdjustmentRequest = useCallback(
-    async (id: string, action: 'approve' | 'deny', approvedHours: number | null, note?: string) => {
+    async (id: string, action: 'approve' | 'deny', note?: string) => {
       setDecidingAdjustmentId(id);
       try {
+        // No hours are sent (Kane, 2026-09-15): the day total is derived from the
+        // employee's own submitted time ranges wherever it is read.
         const res = await fetch(`/api/time-adjustments/${id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             action,
-            approved_hours: action === 'approve' ? approvedHours : null,
             decision_note: note ?? null,
           }),
         });
@@ -15906,8 +15989,6 @@ export default function PayrollWizard({
                   adjustments={deptAdjustments}
                   signedUrls={timeAdjustmentSignedUrls}
                   decidingId={decidingAdjustmentId}
-                  hoursDraft={adjustmentHoursDraft}
-                  setHoursDraft={setAdjustmentHoursDraft}
                   onDecide={decideTimeAdjustmentRequest}
                   onDelete={deleteTimeAdjustmentRequest}
                   deletingId={deletingAdjustmentId}

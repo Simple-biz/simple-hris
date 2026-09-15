@@ -32,6 +32,7 @@ Every row below has its own section further down — this is the index, so a
 | 2026-08-18 | Pane infrastructure, shared with its sibling panes: **cached-then-revalidated** paints, a per-pane **"Last data pull"** stamp, and a Realtime **signal dot** (emerald = live, amber = polling). The read-only **Rates** glance was removed the same day. Owned by [payroll-wizard-notes.md](../features/payroll-wizard-notes.md). |
 | 2026-09-01 | No Pay Rate **"Ignore"** — the rate twin of the Bank Info Temporary Exemption: acknowledge one person's missing rate for the week in view only. |
 | 2026-09-11 | **"Set rate" gains an "Effective from" date** — defaults to today, no `min`, sent verbatim, blank REFUSES. Closes the class where a leaver's final-pay rate could only ever be written effective-today and so never reached the week being paid. |
+| 2026-09-15 | **Offboarded tab: "Set rate" and "Set bank" are a COMPLETE OVERRIDE** (Kane: *"it's not sticking at all"*). Both dialogs show what is on file; Set rate leaves exactly ONE individual structure per person, supersedes history from the chosen date, keys to the hours-carrying email, and tells the open wizard to re-pull its rates; Set bank (Offboarded only) unlocks the rail and saves through the Accounting direct-edit route. See "Offboarded tab — complete override" below. |
 
 The **Wizard Setup checklist** (2026-08-03) is a separate, later addition: a
 per-week checklist of wizard-step prerequisites that sits *beside* the four
@@ -57,8 +58,11 @@ week's readiness at all.
 | 100% celebration — trigger rule (pure, unit-tested) | `src/lib/payroll/readiness-celebration.ts` (+ `readiness-celebration.test.ts`) |
 | 100% celebration — canvas confetti | `components/ui/confetti-burst.tsx` (`ConfettiBurst`) |
 | Change-source tagging (audit) | `src/lib/payroll/readiness-audit.ts` (`READINESS_SOURCE = 'payroll_wizard_readiness'`) |
-| Rate-fix write path | `app/api/payment-catalog/pay-structures/route.ts` |
-| Bank-fix write path | `app/api/update-employee-ids/route.ts` |
+| Rate-fix write path | `app/api/payment-catalog/pay-structures/route.ts` (fixer source = complete override; rules in `src/lib/payroll/rate-override.ts` + `.test.ts`) |
+| Bank-fix write path — Readiness Bank Info | `app/api/update-employee-ids/route.ts` |
+| Bank-fix write path — Offboarded tab (override) | `PATCH app/api/people/[email]/banking/route.ts` (Accounting direct-edit; accepts `source`) — patch built by `src/lib/employee/bank-override-patch.ts` (+ `.test.ts`) |
+| Offboarded tab payload (payable identity, current rate, MASKED current bank) | `src/lib/payroll/offboarded-payroll-candidates.ts` · `src/lib/payroll/offboarded-bank-current.ts` (+ `.test.ts`) |
+| Offboarded fixers — wiring guards | `src/lib/payroll/offboarded-fixers-override.test.ts` |
 | KPI mark-ready/lock audit | `app/api/hsl-bonus/period-status/route.ts` |
 | CLI verifier (runs the REAL fn) | `scripts/verify-readiness.mts` + `scripts/server-only-stub.ts` + `tsconfig.readiness-verify.json` |
 | Bank-dimension reconciliation audit | `scripts/audit-readiness-bank-score.mjs` (local-only diagnostic) |
@@ -676,9 +680,14 @@ celebration.
   week must be **re-locked** or its `disbursement_records` row keeps the old
   money. The chosen date is named in the success toast for the same reason.
   **Back-dating still supersedes rather than stacks** — the route deletes rows
-  with `effective_from >= today` OR `== the new date` before inserting. Known
-  gap, unchanged by this: back-dating *behind* an existing PAST-dated row leaves
-  that newer row in place while the live rate cache takes the back-dated value. Department defaults from the row's label; any HSL
+  with `effective_from >= today` OR `== the new date` before inserting — **for the
+  Payment Catalog editor.** For THIS fixer (source `payroll_wizard_readiness`) the
+  route is a **complete override since 2026-09-15**: it supersedes every history row
+  dated on/after the EARLIER of today and the chosen date (`historySupersedeFloor`),
+  so back-dating behind a newer past-dated row now retires that row too — the
+  `gracechellem@` class (₱175 eff 09-01 outliving a ₱175 eff 08-30 save) is closed
+  for this dialog. The editor's own clause is unchanged (still a known gap there).
+  Department defaults from the row's label; any HSL
   sub-department label files under the one Hogan Smith Law dept (the dialog
   says so).
   **The write is keyed to THAT ROW's email, and that is not always the email
@@ -709,8 +718,95 @@ celebration.
   hard blockers (hidden — and auto-released — when none qualify). Blocker rows
   carry a rose "Paying this week" badge next to the amber
   "`<processor>` · incomplete / No processor" pill.
+  **This locked-rail rule is the Bank Info tab's.** The Offboarded tab mounts the
+  same dialog in **override mode** (2026-09-15) — see the next section.
 - **Exceptions** — read-only list with kind pills and a detail sub-label
   (e.g. "Started 2026-07-21 — first pay period not closed").
+
+## Offboarded tab — "Set rate" / "Set bank" are a COMPLETE OVERRIDE (2026-09-15)
+
+Kane, 2026-09-15: *"Payroll Notes - Readiness - Offboarded Set payrates and set
+banks should be a complete override fix this issue its not sticking at all."*
+A leaver has no self-service surface left (`updateMasterListProfile` refuses
+off-boarded rows, transfers auto-cancel, the employee cannot sign in), so the
+Offboarded tab is the **only** place Accounting can still decide a final check's
+rate, rail and destination. What the evidence showed (read-only probes, 09-15):
+
+- `carla@` saved `michaelsy@` 265/Hogan **three times** in one afternoon with
+  identical values — the dialogs opened BLANK every time, so nothing on screen ever
+  said a save had landed.
+- **19 people held two individual structures in different departments, 17 of them
+  leavers.** Resolution keys on email only and the newest-CREATED row wins
+  (`buildCatalogRateIndex`), so a re-save that UPDATES the older row can never
+  outrank the newer shadow: the save persists and changes nothing.
+- 7 leavers re-rated to ₱175 on 09-14/15 while their staged Sep 6–12
+  `disbursement_records` rows still read ₱225 (staged 09-14 15:52). The wizard
+  snapshot republished 09-15 15:50 already carried 175, so dispatch's
+  B→A→C precedence prices them right once a wizard tab **reloads its rates** —
+  which, until this change, it did only on mount.
+
+**Set rate (both fixer tabs — the dialog is shared):**
+
+- The dialog shows **"Currently on file"** (rate, OT, source: individual /
+  sheet / department base, and the department the individual structure files
+  under) and seeds its fields from it, so a re-opened dialog proves the save.
+  The Readiness No-Pay-Rate tab has nothing to show by definition and passes
+  nothing.
+- The Offboarded tab keys the write to the **hours-carrying email**
+  (`rateWriteEmail`: Hubstaff → work → personal), the identity the wizard prices.
+  The tab's own "Rate OK" pill resolves over that alias too.
+- Server, fixer source only (`isFixerOverride` in the pay-structures route):
+  after the natural-key upsert the person's **other** employee-scope structures
+  (any department) are deleted and named in the `payroll.rate.set` audit row
+  (`superseded_structures`); the rate history is superseded from
+  `min(today, effective)`; and the history/cache writes are **awaited** so a
+  failure returns an error the clerk can retry (the upsert is idempotent) instead
+  of a `console.warn` behind a green toast. The Payment Catalog editor keeps its
+  add/edit-per-department semantics and its old supersede clause byte-for-byte.
+- On success the FAB dispatches `RATES_CHANGED_EVENT`; a mounted wizard re-pulls
+  the catalog, the `employee_hourly_rates` cache and the rate history, so Step 2
+  and the 1.5s `final_pay` republish carry the new figure without a remount.
+- The wizard's catalog-only synthesis now also walks the final-pay overlay
+  (`offboardedRoster`, has()-guarded), so a leaver with an individual rate and no
+  legacy rates row no longer computes as "No rate" no matter how often it is set.
+
+**Set bank (Offboarded tab ONLY — `override` prop; Bank Info is unchanged):**
+
+- The rail picker is **never locked**; it pre-selects the effective rail. A
+  **"Currently on file"** card shows the effective rail, payability, and the paid
+  slot's bank / holder / masked account / masked SWIFT (or the masked wallet
+  email). Masking happens on the **server** (`offboarded-bank-current.ts`,
+  same masks as the People "Bank changes" feed) — the Offboarded payload is
+  readable on the wizard VIEW grant and never carries a full account number.
+- Descriptive fields (bank, holder, HiGlobe name) are pre-filled; credentials
+  stay blank with the masked value as placeholder. **Blank = keep what is on
+  file; typed = replace.** A rail's requirement is satisfied by typed OR on-file
+  (wire details are shared columns; a wallet email counts only for the SAME rail)
+  — `validateBankOverride`, pure + tested.
+- The save is a `PATCH /api/people/[email]/banking` with
+  `buildBankOverridePatch`: **both** `preferred_processor` and `bank_preferred`
+  pinned to the chosen rail (equal values are always legal under the 1:1 rule,
+  and a stale send-from can no longer outrank the clerk's choice), the typed
+  details, and `preferred_bank_slot: 'primary'` whenever a primary wire field was
+  typed (dispatch shows the preferred slot first; a stale `alternative` pointer
+  would route the money to the OLD account). Accounting's edit **is** the approval
+  (bank-preferred-routing.md §8); the route re-checks the 1:1 rule and returns
+  **423** under the dispatch lock. The PATCH now accepts `source`, so the row is
+  audited `people.banking.updated` **via `payroll_wizard_readiness`**.
+- Never loosened: the default dialog (Readiness Bank Info, People → Offboarded)
+  still locks a resolved rail and never writes `bank_preferred`; the
+  `update-employee-ids` approval intercept is untouched; no mirror ever writes a
+  receiving column the clerk did not type.
+
+**Still open (not built, decided by Kane):** a leaver's **department** has no
+owner. `michaelsy@` is the case — master says Lead Gen (he fell off the sheet),
+his rates row and 265 rate are Hogan's, he was staged as Lead Gen (no weekend
+premium), and his three identical Hogan saves were the department "not sticking".
+Set rate has no department write (`markm-hsl-transfer-never-filed`). Two shapes,
+neither chosen: (a) a leaver's pay department = the department their individual
+structure files under — data Set rate already writes, no new store, but it changes
+HSL weekend/OT classification for leavers; (b) an HRIS transfer path for
+off-boarded rows. Recorded in the 2026-09-14 session log § Open items.
 
 ## Audit trail (`readiness-audit.ts`)
 
@@ -723,6 +819,14 @@ send `READINESS_SOURCE` (`payroll_wizard_readiness`, label "Payroll Wizard
 - **Set bank** → `insertAuditLog` + `insertBankUpdateHistory` with
   `via: source`, attributed to the verified session actor (the accountant),
   not the employee — the People-tab "Bank changes" source label agrees.
+  The Offboarded tab's override rides the People banking PATCH instead, so it
+  lands as `people.banking.updated` with `via: payroll_wizard_readiness` (the
+  PATCH accepts `source` since 2026-09-15); the Readiness activity feed already
+  allowlists that action.
+- **Set rate override** → the same `payroll.rate.set` row also carries
+  `override: true` and `superseded_structures` (id, department, rates) for every
+  individual structure the save retired, so "where did their Hogan rate go" is
+  answerable from the trail.
 - **Set rate** → the pay-structures route writes the Rate History note
   `Set from Payroll Wizard (Readiness) by <actor>` (a normal catalog save
   writes the literal `Set via Payment Catalog`, which the Payment Catalog's

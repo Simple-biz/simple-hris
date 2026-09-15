@@ -11,6 +11,8 @@
 > signature, from Accounting (`stage1_waived_reason` — **migration PENDING Kane's `--apply`**, see
 > [Prerequisites](#prerequisites) step 5); and stage 2 gates on **Accounting → Issues edit**, with
 > three named accounts excluded — see [Dual approval](#dual-approval) and [Authorization](#authorization).
+> **Accounting approves or denies with NO hours entry since 2026-09-15** — the day total is derived
+> as tracked + the missed time the employee submitted; see [Pay wiring](#pay-wiring).
 > Requires five manual Supabase steps before use — see [Prerequisites](#prerequisites).
 
 A distinct, evidence-backed mechanism for employees to ask Accounting to correct the tracked hours for any past day. Designed to handle cases where work happened but Hubstaff did not record it (forgot to start the tracker, tracker crashed, worked offline or in a meeting, etc.).
@@ -571,12 +573,9 @@ What the row does, and the rules it carries over unchanged from the wizard panel
   the Pending KPI — the same way a `pending_orphanage_manager` dispute shows but does not
   count. The **Pending** filter asks the API for `manager_approved` only (parity with the
   disputes' `awaiting_accounting=1`); **Denied** folds in `manager_denied`.
-- **Approve requires the day total.** `decideTimeAdjustment` treats a null
-  `approved_hours` as "no override", so an approval with no value would move no money; the
-  dialog's Approve stays disabled until hours are set (`canApproveTimeAdjustment`), and a
-  **segment row is never prefilled** from `requested_hours` — that is the MISSED time, not
-  the day total (`timeAdjustmentHoursPrefill`). An explicit `0h 0m` IS a value (a
-  deliberate zero-out) and is accepted; blank is not.
+- **Approve and Deny only — no hours are entered** (Kane, 2026-09-15). Approving applies the
+  time ranges the employee submitted; see [Pay wiring](#pay-wiring) for what the day becomes.
+  `canApproveTimeAdjustment` gates on the role and on both stage-1 signatures, nothing else.
 - **View** opens the evidence (signed URLs from the same GET, never cached — they expire),
   the segments, the employee's explanation and the full decision trail
   (`timeAdjustmentTrail`: filed → named → manager → second approver → Accounting).
@@ -620,9 +619,10 @@ the same PATCH.
 The `TimeAdjustmentReviewPanel` now shows **three sections** for the selected department:
 
 **Manager-approved** (actionable — blue badge):
-- Full decision UI: hours input, Approve button (requires hours value), Deny button.
+- **Approve / Deny only** since 2026-09-15 — no hours field, same as the Issues tab.
 - Shows the manager's name and any manager note.
-- Approve/Deny → `PATCH /api/time-adjustments/[id]` with `action: approve|deny`.
+- Approve/Deny → `PATCH /api/time-adjustments/[id]` with `action: approve|deny` and no
+  `approved_hours`.
 
 **Awaiting manager** (read-only — lock icon + amber rows) — status `pending` **or `awaiting_second_approval`**:
 - Accounting can see these but cannot act on them.
@@ -648,7 +648,45 @@ The per-department formula info cards and bonus configuration inputs are hidden 
 
 ### How approved hours change pay
 
-Approval does not modify Hubstaff data. `approved_hours` is a **SET-semantics override** that replaces the Hubstaff-tracked seconds for that date at calculation time only.
+Approval does not modify Hubstaff data.
+
+**Since 2026-09-15 an approval carries NO day total.** Kane: *"When it gets sent to accounting
+please lets just approve it or deny it we dont need to put in the hours as the Employee side was
+already sent."* Approving means **add the missed time the employee evidenced to whatever was
+tracked that day**, and the day total is derived where it is read rather than frozen at approval.
+
+One rule, `approvedAdjustmentDayHours` in
+[`src/lib/payroll/approved-adjustment-hours.ts`](../../src/lib/payroll/approved-adjustment-hours.ts):
+
+1. **A stored `approved_hours` wins outright.** Rows approved before this change carry one, and
+   so would any future manual correction. Those are a human's statement about that day and are
+   never recomputed — recomputing would silently restate an already-paid figure.
+2. Otherwise, **segments present** → `tracked hours + requested_hours`.
+3. Otherwise → **nothing is applied**. A row with no segments stored a claimed DAY TOTAL in
+   `requested_hours` (pre-2026-07-17), so adding it would double-count the whole day. The
+   `null` return is exactly what every caller already did with a row it could not use, so an
+   unusable row behaves as it always did.
+
+Why derived rather than computed at approval: the per-day tracked figure has **no single
+implementation** in this codebase — the Payroll Wizard parses it one way and the employee
+calendar another — so computing a total at approval would have meant writing a **third** one on
+a money path. Deriving instead lets each surface use the tracked figure it already has, and a
+later Hubstaff correction to the same day flows through instead of being overwritten by a stale
+total. It is also the same number a clerk typed when they typed correctly, so it is a no-op on
+correct history.
+
+**Every overlay surface goes through that module** — pinned by a source scan in
+`approved-adjustment-hours.test.ts`, because a surface left behind would silently apply
+*nothing*: no pay delta and no PAB forgiveness. The six are the Payroll Wizard
+(`approvedTimeAdjustments`, derived against `rawDayHoursByEmail`), the dispatch PAB engine
+(`computePabEligibleEmails`, which takes `approvedAdjustments` as raw facts and resolves them
+per row against that row's own tracked seconds), the live pay estimate (which passes them to
+that engine), HSL monthly pay, the Accounting Overview and the employee PAB calendar. The two
+server PAB paths share `mergeAdjustmentsIntoForgivenDates`, the one place the ISO-date ↔
+`pabDateKey` bridge is written.
+
+`approved_hours`, when present, remains a **SET-semantics override** that replaces the
+Hubstaff-tracked seconds for that date at calculation time only.
 
 **Two integration points in the wizard:**
 
@@ -685,7 +723,7 @@ newInitialPay = initialPay ± adjPesos
 | `requested_segments` | jsonb (default `[]`) | Missed time in/out ranges: `[{time_in:"HH:MM",time_out:"HH:MM"}]` (2026-07-17 alter) |
 | `image_paths` | text[] | Storage object paths (not URLs); max 5 enforced in app |
 | `status` | text | `pending` \| `manager_approved` \| `manager_denied` \| `approved` \| `denied` |
-| `approved_hours` | numeric nullable | Set by Accounting on approval; the override value |
+| `approved_hours` | numeric nullable | A day total a human stored. **Null on every approval since 2026-09-15** — the day is derived as tracked + the missed time instead (see [Pay wiring](#pay-wiring)). When present it still wins outright |
 | `decided_by` | text nullable | Accounting user email |
 | `decided_at` | timestamptz nullable | |
 | `decision_note` | text nullable | |
@@ -799,7 +837,7 @@ Private. Object path: `{sanitized_email}/{requestKey}/{idx}-{timestamp}.{ext}`. 
 |---|---|
 | `src/lib/accounting/issues-time-adjustments.ts` | **New** — pure: filter → statuses, list URL, KPI counts, badges, hours formatting (0 → "0h"), requested label, prefill rule, inputs → `approved_hours`, Approve gate, search blob, decision trail |
 | `src/lib/accounting/issues-time-adjustments.test.ts` | **New** — 30 tests, failure-direction first, plus two source-shape guards (the queue fetches/folds these rows; the Overview tile counts them) |
-| `src/components/payroll/TimeAdjustmentIssueRows.tsx` | **New** — the table row and its View (evidence + lightbox + trail), Approve/Deny (day total required) and Delete dialogs |
+| `src/components/payroll/TimeAdjustmentIssueRows.tsx` | **New** — the table row and its View (evidence + lightbox + trail), Approve/Deny and Delete dialogs |
 | `src/components/payroll/PabDisputeQueue.tsx` | **Edited** — third `IssueRow` kind; per-filter fetch + cache alongside disputes and bank rows; KPI fold; search; error banner; copy |
 | `src/lib/accounting/tab-cache.ts` | **Edited** — `timeAdjustmentIssues(filter)` key |
 | `src/components/Overview.tsx` | **Edited** — "Needs your decision" + Pending list count `manager_approved` time adjustments; rows carry `kind` |
@@ -825,3 +863,17 @@ Private. Object path: `{sanitized_email}/{requestKey}/{idx}-{timestamp}.{ext}`. 
 | `src/components/payroll/TimeAdjustmentReviewPanel.tsx` | **Edited** — waived rows badge *Filed by a manager — straight to Accounting* instead of *Manager approved* |
 | `src/components/employee/TimeAdjustmentDialog.tsx` | **Edited** — a waived row's status reads *With Accounting*, not *Manager approved* |
 | `scripts/probe-time-adjustment-deciders.mts` | **New** — read-only: Issues-edit holders, their roles, and the roster rows behind "Jake / April / Lenny" |
+
+### 2026-09-15 (third commit) — Accounting approves or denies; the day total is derived
+
+| Path | Change |
+|---|---|
+| `src/lib/payroll/approved-adjustment-hours.ts` | **New** — `approvedAdjustmentDayHours` (stored total wins · segments → tracked + missed · otherwise nothing), `mergeAdjustmentsIntoForgivenDates` (the ISO ↔ `pabDateKey` bridge both server PAB paths share), `adjustmentNeedsTrackedHours` |
+| `src/lib/payroll/approved-adjustment-hours.test.ts` | **New** — 14 tests incl. the double-count guard, and source scans that all six overlay surfaces import the module and that none still drops a row for having no stored total |
+| `src/components/PayrollWizard.tsx` | **Edited** — holds approved adjustment ROWS; `approvedTimeAdjustments` is now a memo derived against `rawDayHoursByEmail` (moved above it); no hours in the decide call; hours-draft state and panel props removed. `timeAdjustDeltaByEmail` needed no change — `setHours − rawHours` still yields the delta |
+| `src/lib/payroll/dispatch-bonuses.ts` | **Edited** — `computePabEligibleEmails` takes `approvedAdjustments` as raw facts and resolves them per row against that row's tracked seconds |
+| `src/lib/payroll/current-pay.ts` | **Edited** — fetches adjustments as facts and passes them to the engine; `mergeApprovedTimeAdjustments` replaced by `fetchApprovedTimeAdjustments` |
+| `src/lib/payroll/member-monthly-pay.ts` | **Edited** — `fetchForgivenDatesForEmails` returns disputes and adjustment facts separately; merged against `hoursByDateKey` |
+| `src/components/Overview.tsx` · `src/components/employee/EmployeePabCalendar.tsx` | **Edited** — hold facts, resolve against tracked hours. The calendar resolves against the RAW copy before its own SET writes mutate the map |
+| `src/components/payroll/TimeAdjustmentIssueRows.tsx` · `PabDisputeQueue.tsx` · `TimeAdjustmentReviewPanel.tsx` | **Edited** — hours entry removed from both Accounting surfaces; the applied figure renders as the added missed time when no total was stored |
+| `src/lib/accounting/issues-time-adjustments.ts` (+ test) | **Edited** — `canApproveTimeAdjustment` drops the hours argument; `approvedHoursFromInputs` and `timeAdjustmentHoursPrefill` deleted |

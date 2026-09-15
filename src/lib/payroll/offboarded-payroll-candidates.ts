@@ -45,6 +45,9 @@ import { getAppSettings } from '@/lib/supabase/app-settings';
 import { weekRangeLabel } from '@/lib/payroll/manila-week';
 import { offboardReasonLabel } from '@/lib/hr/offboard-reasons';
 import { normEmail } from '@/lib/email/norm-email';
+import { readOffboardedBankCurrent, type OffboardedBankCurrent } from '@/lib/payroll/offboarded-bank-current';
+import { rateWriteEmail } from '@/lib/payroll/rate-override';
+import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
 
 export interface OffboardedBankPrefill {
   /** The processor the snapshot resolved. Seeds the Set Bank picker's initial
@@ -62,11 +65,39 @@ export interface OffboardedBankPrefill {
   swiftCode: string;
 }
 
+/** What the person is paid TODAY, resolved the way payroll resolves it
+ *  (`resolvePeopleRate`: individual catalog → sheet → department base), so the
+ *  Set rate dialog can show what a save replaces and prove afterwards that it
+ *  landed. Null when nothing resolves — the row reads "No rate". */
+export interface OffboardedRateCurrent {
+  regular: number | null;
+  ot: number | null;
+  currency: PayCurrency;
+  source: 'employee' | 'sheet' | 'department';
+  /** The department the INDIVIDUAL structure files under (source `employee`
+   *  only) — the dialog's Department picker starts there so a re-save updates
+   *  that slot instead of minting a second, shadowing structure. */
+  departmentKey: string | null;
+}
+
 export interface OffboardedPayrollCandidate {
   name: string;
   department: string | null;
   workEmail: string | null;
   personalEmail: string | null;
+  /** The email their Hubstaff hours ride — THE payable identity. Set rate keys
+   *  its write here first (`rateWriteEmail`): an individual rate filed under a
+   *  master alias the hours do not ride is a rate nobody prices from
+   *  (`lawang-rate-shadow-duplicate-identity`). Null when they have no hours in
+   *  the two-timesheet window. */
+  hubstaffEmail: string | null;
+  /** The email Set rate will key the individual structure to. */
+  rateWriteEmail: string | null;
+  rateCurrent: OffboardedRateCurrent | null;
+  /** Masked readout of the LIVE payout record (never a full account number)
+   *  — what the override Set bank shows as "currently on file". Null when
+   *  there is no live row and no legacy rail at all. */
+  bankCurrent: OffboardedBankCurrent | null;
   /** `YYYY-MM-DD` they left; null when they only fell off the sheet unstamped. */
   offBoardedAt: string | null;
   /** Human-readable reason label, null when unknown (never `temporary_pause` —
@@ -209,7 +240,11 @@ export async function listOffboardedPayrollCandidates(sourceFile: string | null)
   for (const person of eligible) {
     const w = normEmail(person.work_email ?? '');
     const p = normEmail(person.personal_email ?? '');
-    const aliases = [w, p].filter((e): e is string => !!e);
+    const h = normEmail(person.hubstaff_email ?? '');
+    // The Hubstaff email joins the alias set: it is the identity the wizard
+    // prices, so a structure filed under it must read as this person's rate here
+    // too — otherwise the tab could say "No rate" about someone the wizard pays.
+    const aliases = [...new Set([h, w, p].filter((e): e is string => !!e))];
 
     // The two exclusions payroll-readiness's own checks apply, mirrored here so
     // a leaver's pills never contradict them. Both are "not applicable", NOT
@@ -228,6 +263,22 @@ export async function listOffboardedPayrollCandidates(sourceFile: string | null)
     const rate = resolvePeopleRate(rateCtx, aliases, person.department);
     const rateStatus: 'ok' | 'missing' =
       offChannel || isContractor || rate.source !== null ? 'ok' : 'missing';
+    // The individual structure behind a `source: 'employee'` resolution — the
+    // first alias that owns one, in the same order resolvePeopleRate walked.
+    const ownStructure =
+      rate.source === 'employee'
+        ? aliases.map((e) => rateCtx.catalogIndex.byEmail.get(e)).find(Boolean) ?? null
+        : null;
+    const rateCurrent: OffboardedRateCurrent | null =
+      rate.source === null
+        ? null
+        : {
+            regular: rate.regular,
+            ot: rate.ot,
+            currency: rate.currency,
+            source: rate.source,
+            departmentKey: ownStructure?.departmentKey ?? null,
+          };
 
     const idRow = (w && idRowByEmail.get(w)) || (p && idRowByEmail.get(p)) || null;
     const legacyRates = (w && ratesByEmail.get(w)) || (p && ratesByEmail.get(p)) || null;
@@ -241,6 +292,8 @@ export async function listOffboardedPayrollCandidates(sourceFile: string | null)
       : undefined;
 
     const payable = isPayoutComplete(idRow, extras);
+    // Masked on the server — this payload is readable on the wizard VIEW grant.
+    const bankCurrent = readOffboardedBankCurrent(idRow, extras);
     // LIVE-resolved only — deliberately never merged with the snapshot's
     // processor. See the `bankProcessor` field doc: this value LOCKS the Set Bank
     // picker, and a locked picker skips writing `preferred_processor`.
@@ -285,6 +338,10 @@ export async function listOffboardedPayrollCandidates(sourceFile: string | null)
       department: person.department,
       workEmail: person.work_email,
       personalEmail: person.personal_email,
+      hubstaffEmail: person.hubstaff_email,
+      rateWriteEmail: rateWriteEmail(person.hubstaff_email, person.work_email, person.personal_email),
+      rateCurrent,
+      bankCurrent,
       offBoardedAt: person.off_boarded_at,
       offBoardedReasonLabel: person.off_boarded_reason ? offboardReasonLabel(person.off_boarded_reason) : null,
       rateStatus,

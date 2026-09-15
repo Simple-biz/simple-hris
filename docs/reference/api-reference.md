@@ -522,6 +522,14 @@ Updates bank information and other employee ID fields.
 
 ## 4. Employee Rate Profiles
 
+### `POST /api/payment-catalog/pay-structures`
+
+Gate: `requireFeatureEdit('accounting','bonus_catalog')`; `423` via `rejectWhilePayrollProcessing` (admins bypass). Body: `{ structure, effectiveDate?, source? }`. Upserts a department- or employee-scoped Payment Catalog pay structure on its **natural key** (`resolvePayStructureWriteTargetId`; bonus-catalog.md §5.6). For an employee structure it also writes the dated `employee_rate_history` row, the `employee_hourly_rates` cache (when effective ≤ today), both Google Sheets (best-effort) and the employee notification, and audits `payroll.rate.set`. **Two behaviours by `source`:** the Payment Catalog editor (`payment_catalog`, default) supersedes history rows `effective_from >= today OR == effectiveDate` and fires the sync without awaiting it; the Readiness / Offboarded fixer (`payroll_wizard_readiness`) is a **complete override** (2026-09-15) — deletes the person's other employee-scope structures in every other department (named in the audit row as `superseded_structures`), supersedes history from `min(today, effectiveDate)` (`historySupersedeFloor`), and **awaits** the sync so a failure returns `500` with a retryable message. Returns `{ row, error, supersededStructures }`. `GET` lists structures (`requireRateVisibilitySession`); `DELETE ?id=` removes one. [route.ts](app/api/payment-catalog/pay-structures/route.ts)
+
+### `GET /api/payroll-wizard/offboarded`
+
+Gate: `requireFeatureAccess('accounting','payroll_wizard','view')`. Powers the Payroll Notes → **Offboarded** pane: recently-offboarded people with hours in the cycle's timesheet who may still need their final check's rate or bank set, scoped by `?source_file=` (default: the live upload). Each row carries `rateStatus` / `bankStatus`, the payable identity (`hubstaffEmail`, `rateWriteEmail` = Hubstaff → work → personal), `rateCurrent` (rate, OT, currency, source, and the department the individual structure files under) and `bankCurrent` — a **server-masked** readout of the live payout record (effective rail, paid slot, bank, holder, last-4 account, tail-masked SWIFT, masked wallet email, payability). A full account number never leaves this route. `500` only when the leaver list itself cannot be read; partial reads land in `degraded[]`. [route.ts](app/api/payroll-wizard/offboarded/route.ts) · `src/lib/payroll/offboarded-payroll-candidates.ts`
+
 ### `GET /api/employee-rate-profiles`
 
 Fetches merged employee profiles combining data from multiple Supabase tables.
@@ -2162,7 +2170,6 @@ Route gate: **`accounting:disputes` edit** (Accounting → Issues) since 2026-09
 ```json
 {
   "action": "approve",
-  "approved_hours": 8,
   "decision_note": "Confirmed with Asana activity log."
 }
 ```
@@ -2170,7 +2177,7 @@ Route gate: **`accounting:disputes` edit** (Accounting → Issues) since 2026-09
 | Field | Stage | Notes |
 |---|---|---|
 | `action` | both | `"approve"`, `"deny"`, `"manager_approve"`, or `"manager_deny"` |
-| `approved_hours` | accounting only | Required when `action = approve`. SET-semantics override replacing Hubstaff for this day at pay-calc time. |
+| `approved_hours` | accounting only | **No longer sent since 2026-09-15** — approving applies the time ranges the employee submitted, and the day becomes tracked + that missed time wherever it is read. Still accepted and still a SET-semantics override when present, so a stored total from an older approval keeps winning. |
 | `decision_note` | both | Optional free text forwarded to the employee notification. |
 
 On accounting decision the employee receives an `employee_notifications` row (`type: time_adjustment.approved` or `time_adjustment.denied`).
@@ -2296,6 +2303,10 @@ Pay-bearing reads, all gated by `requireRateVisibilitySession()`.
 ### `PATCH /api/people/[email]/profile`
 
 Gate: `requireFeatureEditAnyView('people')` (`accounting` | `ceo` | `admin`). Edits one person's master-list identity/contact fields from the People → View Modal. Body: `{ id, original_work_email?, original_personal_email?, original_department?, patch }`. Writes `global_master_list` **by row id**, then best-effort flips the matching cells in the master Google Sheet so the next Sheet→DB sync won't revert the edit. The `patch` is allowlisted (`name`, `department`, `work_email`, `personal_email`, `alternate_work_email`(`_2`), `start_date`, `phone_number`, `location`, `street`, `city`, `province`, `postal_code`, `full_address`) — a crafted body can't touch `off_boarded_*`/`employee_id`/upload ids; structured-address fields have no sheet column. `400` (missing id / no editable fields / bad JSON), `409` (identity collision), `404`, `503` (sheet not configured). Audit `people.profile.updated`. [route.ts](app/api/people/[email]/profile/route.ts)
+
+### `PATCH /api/people/[email]/banking`
+
+Gate: `requireFeatureEditAnyView('people')` (`accounting` | `ceo` | `admin`). Accounting's direct edit of one person's payout record from People → View → Banking — and, since 2026-09-15, the write path behind the Payroll Notes → **Offboarded** tab's override "Set bank". Body: `{ patch, source? }`. `patch` is allowlisted to the `employee_ids` payout columns (incl. `bank_preferred`, `preferred_processor`, `preferred_bank_slot`); empty strings become `null`. `source` is optional and must be one of the known `CHANGE_SOURCES` (`readiness-audit.ts`), default `people_tab` — it labels `details.via` on the audit row and the `bank_update_history` entry. **Accounting's edit IS the approval**: `bank_preferred` is written directly (no change request), the 1:1 rule is checked against the receiving channel the save leaves in place (`400` on a mismatch), and both wallet mirrors apply immediately. `423` while the dispatch lock is on. Resolves the row by `employee_id` via a case-insensitive email lookup; bootstraps a `SELF-…` row when none exists. Awaits the audit write `people.banking.updated`. Returns `{ ok, created, banking, bankHistory }`. [route.ts](app/api/people/[email]/banking/route.ts)
 
 ### `/api/hr/new-hire-checklist`
 

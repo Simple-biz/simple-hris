@@ -91,6 +91,10 @@ import {
   parseMasterStartDate,
 } from '@/lib/payroll/dispatch-bonuses';
 import {
+  mergeAdjustmentsIntoForgivenDates,
+  type ApprovedAdjustmentFacts,
+} from '@/lib/payroll/approved-adjustment-hours';
+import {
   HSL_WEEK_MODEL_CUTOVER_KEY,
   resolveHslWeekModelWithDefault,
 } from '@/lib/payroll/hsl-week-model';
@@ -3602,7 +3606,9 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
         const hslWeekModel = resolveHslWeekModelWithDefault(start, hslCutoverValue);
 
         const approvedDisputesByEmail = new Map<string, Map<string, number | null>>();
-        const approvedAdjustmentsByEmail = new Map<string, Map<string, number>>();
+        // Raw facts, not resolved hours: since 2026-09-15 an approval carries no day
+        // total, so it is resolved per row below against that row's tracked hours.
+        const approvedAdjustmentsByEmail = new Map<string, Map<string, ApprovedAdjustmentFacts>>();
         let orphanageCoverage = new Map<string, Map<string, number>>();
         {
           const from = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
@@ -3631,13 +3637,19 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
               .catch(() => { /* best-effort — no dispute forgiveness this pass */ }),
             fetch(`/api/time-adjustments?status=approved&from=${from}&to=${to}`, { cache: 'no-store' })
               .then((r) => r.json())
-              .then((tJson: { rows?: { work_email: string; adjust_date: string; approved_hours: number | null }[] }) => {
+              .then((tJson: {
+                rows?: Array<{ work_email: string; adjust_date: string } & ApprovedAdjustmentFacts>;
+              }) => {
                 for (const row of tJson.rows ?? []) {
-                  if (row.approved_hours == null) continue;
                   const em = (row.work_email ?? '').trim().toLowerCase();
                   if (!em) continue;
-                  const dates = approvedAdjustmentsByEmail.get(em) ?? new Map<string, number>();
-                  dates.set(row.adjust_date, row.approved_hours);
+                  const dates =
+                    approvedAdjustmentsByEmail.get(em) ?? new Map<string, ApprovedAdjustmentFacts>();
+                  dates.set(row.adjust_date, {
+                    approved_hours: row.approved_hours,
+                    requested_hours: row.requested_hours,
+                    requested_segments: row.requested_segments,
+                  });
                   approvedAdjustmentsByEmail.set(em, dates);
                 }
               })
@@ -3790,13 +3802,11 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
           // effectiveOverrides ordering), US-holiday force-pass, and orphanage
           // top-up — the exact semantics of the server/wizard engine, keyed by
           // the Hubstaff row email exactly like both of them.
-          const disputeDates = approvedDisputesByEmail.get(rowEmail);
-          const adjustmentDates = approvedAdjustmentsByEmail.get(rowEmail);
-          let forgivenDates: Map<string, number | null> | undefined;
-          if (disputeDates?.size || adjustmentDates?.size) {
-            forgivenDates = new Map(disputeDates ?? []);
-            if (adjustmentDates) for (const [d, h] of adjustmentDates) forgivenDates.set(d, h);
-          }
+          const forgivenDates = mergeAdjustmentsIntoForgivenDates(
+            approvedDisputesByEmail.get(rowEmail),
+            approvedAdjustmentsByEmail.get(rowEmail),
+            hoursByDateKey,
+          );
           const orphanageByIso = orphanageCoverage.get(rowEmail);
           const effectiveHours = applyPabAdjustments(hoursByDateKey, forgivenDates, holidayIsoSet, orphanageByIso);
 

@@ -41,6 +41,10 @@ import {
   parseColDate,
 } from "@/lib/hubstaff/calendar-column-dedupe";
 import { normEmail } from "@/lib/email/norm-email";
+import {
+  mergeAdjustmentsIntoForgivenDates,
+  type ApprovedAdjustmentFacts,
+} from "@/lib/payroll/approved-adjustment-hours";
 import { orphanageCoversDay } from "@/lib/payroll/orphanage-pab-coverage";
 import {
   formatIsoFromLocalDate,
@@ -213,6 +217,15 @@ export function computePabEligibleEmails(args: {
    */
   approvedDisputeDates?: Map<string, Map<string, number | null>>;
   /**
+   * Approved TIME ADJUSTMENTS as raw facts, keyed by lowercased work email then by
+   * ISO `adjust_date`. Kept separate from the dispute map because since 2026-09-15 the
+   * day total an approval makes is DERIVED from what was tracked — Accounting approves
+   * without typing one. Resolved per row below, against that row's own tracked
+   * seconds, so the overlay and the eligibility walk can never disagree about a day.
+   * Adjustments win over a same-day dispute, matching the wizard's ordering.
+   */
+  approvedAdjustments?: Map<string, Map<string, ApprovedAdjustmentFacts>>;
+  /**
    * ISO date strings for enabled US holidays in the PAB period.
    * Matching days auto-pass the >= 7 h gate regardless of Hubstaff hours.
    */
@@ -250,7 +263,13 @@ export function computePabEligibleEmails(args: {
     const cols = Object.keys(row).length > 0 ? Object.keys(row) : sampleCols;
     const rawHours = dateSecondsFromRow(row, cols);
 
-    const forgivenDates = args.approvedDisputeDates?.get(email);
+    // Approved time adjustments resolve to a day total HERE, where this row's tracked
+    // seconds are already parsed and correctly keyed.
+    const forgivenDates = mergeAdjustmentsIntoForgivenDates(
+      args.approvedDisputeDates?.get(email),
+      args.approvedAdjustments?.get(email),
+      rawHours,
+    );
     const orphanageHoursByIso = args.orphanageHoursByEmailIso?.get(email);
     const hoursByDateKey = applyPabAdjustments(
       rawHours,

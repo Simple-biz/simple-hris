@@ -7,7 +7,6 @@ import { Check, Clock, Eye, ImageOff, Loader2, Lock, Trash2, X } from 'lucide-re
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import {
   TIME_ADJUSTMENT_REASONS,
   fmtAdjustmentSegments,
@@ -19,9 +18,8 @@ type Props = {
   adjustments: TimeAdjustmentRow[];
   signedUrls: Record<string, string>;
   decidingId: string | null;
-  hoursDraft: Record<string, string>;
-  setHoursDraft: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  onDecide: (id: string, action: 'approve' | 'deny', approvedHours: number | null, note?: string) => void;
+  /** No hours argument since 2026-09-15 — the day total is derived from the submission. */
+  onDecide: (id: string, action: 'approve' | 'deny', note?: string) => void;
   onDelete: (id: string) => void;
   deletingId: string | null;
   locked?: boolean;
@@ -57,34 +55,11 @@ function fmtHM(dec: number): string {
   return `${m}m`;
 }
 
-// Combine hour + minute input strings into a single decimal-hours value (or null if both blank).
-function toDecimalHours(h: string, m: string): number | null {
-  const hTrim = h.trim();
-  const mTrim = m.trim();
-  if (!hTrim && !mTrim) return null;
-  const hh = hTrim ? parseInt(hTrim, 10) : 0;
-  const mm = mTrim ? parseInt(mTrim, 10) : 0;
-  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
-  return hh + mm / 60;
-}
-
-// Split a stored decimal-hours draft string back into hour/minute field values.
-function splitHM(decStr: string): { h: string; m: string } {
-  const trimmed = decStr.trim();
-  if (!trimmed) return { h: '', m: '' };
-  const dec = parseFloat(trimmed);
-  if (!Number.isFinite(dec)) return { h: '', m: '' };
-  const total = Math.round(dec * 60);
-  return { h: String(Math.floor(total / 60)), m: String(total % 60) };
-}
-
 export default function TimeAdjustmentReviewPanel({
   deptName,
   adjustments,
   signedUrls,
   decidingId,
-  hoursDraft,
-  setHoursDraft,
   onDecide,
   onDelete,
   deletingId,
@@ -190,12 +165,6 @@ export default function TimeAdjustmentReviewPanel({
         {/* Actionable: manager already approved, Accounting can decide */}
         {actionable.map((a) => {
           const hasSegments = (a.requested_segments ?? []).length > 0;
-          // Segment-based requests claim MISSED time to add on top of tracked hours, so the
-          // requested amount is not a valid prefill for the "Set time" day-total override.
-          const draft =
-            hoursDraft[a.id] ??
-            (!hasSegments && a.requested_hours != null ? String(a.requested_hours) : '');
-          const draftHM = splitHM(draft);
           const isDeciding = decidingId === a.id;
           return (
             <div
@@ -282,49 +251,20 @@ export default function TimeAdjustmentReviewPanel({
                 <p className="mt-2 text-[11px] italic text-zinc-400">No evidence images attached.</p>
               )}
 
-              {/* Decision controls */}
+              {/* Decision controls — approve or deny only (Kane, 2026-09-15). Nobody
+                  types a total: approving adds the time ranges the employee submitted
+                  to whatever Hubstaff tracked that day, wherever the day is read. */}
               {hasSegments && (
                 <p className="mt-3 text-[10.5px] text-zinc-500 dark:text-zinc-400">
-                  Set time = the employee&apos;s FINAL total for this day (tracked hours + the missed time above).
+                  Approving adds the missed time above to this day&apos;s tracked hours.
                 </p>
               )}
               <div className={`flex flex-wrap items-center gap-2 ${hasSegments ? 'mt-1.5' : 'mt-3'}`}>
-                <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">Set time</label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={24}
-                  step={1}
-                  value={draftHM.h}
-                  onChange={(e) => {
-                    const dec = toDecimalHours(e.target.value, draftHM.m);
-                    setHoursDraft((prev) => ({ ...prev, [a.id]: dec == null ? '' : String(dec) }));
-                  }}
-                  placeholder="e.g. 8"
-                  disabled={locked}
-                  className="h-8 w-16"
-                />
-                <span className="text-[11px] text-zinc-500 dark:text-zinc-400">hr</span>
-                <Input
-                  type="number"
-                  min={0}
-                  max={59}
-                  step={5}
-                  value={draftHM.m}
-                  onChange={(e) => {
-                    const dec = toDecimalHours(draftHM.h, e.target.value);
-                    setHoursDraft((prev) => ({ ...prev, [a.id]: dec == null ? '' : String(dec) }));
-                  }}
-                  placeholder="e.g. 30"
-                  disabled={locked}
-                  className="h-8 w-16"
-                />
-                <span className="text-[11px] text-zinc-500 dark:text-zinc-400">min</span>
                 <Button
                   size="sm"
                   className="h-8 bg-emerald-600 text-white hover:bg-emerald-700"
-                  disabled={locked || isDeciding || draft.trim() === ''}
-                  onClick={() => onDecide(a.id, 'approve', draft.trim() === '' ? null : parseFloat(draft))}
+                  disabled={locked || isDeciding}
+                  onClick={() => onDecide(a.id, 'approve')}
                 >
                   {isDeciding ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Check className="mr-1 h-3 w-3" />}
                   Approve
@@ -334,7 +274,7 @@ export default function TimeAdjustmentReviewPanel({
                   variant="outline"
                   className="h-8 border-rose-300 text-rose-600 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-400"
                   disabled={locked || isDeciding}
-                  onClick={() => onDecide(a.id, 'deny', null)}
+                  onClick={() => onDecide(a.id, 'deny')}
                 >
                   <X className="mr-1 h-3 w-3" />
                   Deny
