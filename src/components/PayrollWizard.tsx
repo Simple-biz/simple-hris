@@ -313,7 +313,7 @@ import {
 import { HSL_DEPT_KEYS, HSL_DEPTS, calcManagerBonus, hslDeptAutoDispatches, type DeptConfig } from '@/lib/hsl-bonus/schema';
 import WizardCursorOverlay, { type WizardCursorOverlayHandle } from '@/components/payroll/WizardCursorOverlay';
 import LockToggleConfirmDialog, { deriveFirstName } from '@/components/payroll/LockToggleConfirmDialog';
-import { playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
+import { holdStagePrepped, playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
 import { payrollNotesWeekStart, weekRangeLabel } from '@/lib/payroll/manila-week';
 import {
   cycleFxSettingKey,
@@ -11398,9 +11398,12 @@ export default function PayrollWizard({
     if (togglingLock) return;
     setTogglingLock(true);
     const goingLocked = !lockState.locked;
-    // Fire the "stage prepped" alert the instant Start is confirmed — synced
-    // with the Preparing Dispatch scene, same as Payment Dispatch. Start only.
-    if (goingLocked) playStagePrepped();
+    // The cue is already playing — it started on the Start Processing click, as
+    // the modal opened. Confirming HOLDS it, so it survives the modal closing
+    // ~2s from now and plays its full run (Kane 2026-09-15: "at least 10
+    // seconds"). Cancelling instead of confirming never reaches here, which is
+    // exactly how a dismissed modal still ends in silence. Start only.
+    if (goingLocked) holdStagePrepped();
     // Minimum on-screen time for the "Preparing Dispatch…" scene so it plays
     // gracefully instead of flashing by when the optimistic POST returns fast.
     const minShow = new Promise((r) => setTimeout(r, 1600));
@@ -12943,7 +12946,13 @@ export default function PayrollWizard({
                   </div>
                   <motion.button
                     type="button"
-                    onClick={() => setConfirmingLockToggle(true)}
+                    onClick={() => {
+                      // Start the cue on the CLICK, as the modal opens — a user
+                      // gesture, so autoplay policy allows it. START only: the
+                      // same button stops processing, and that is not a party.
+                      if (!lockState.locked) playStagePrepped();
+                      setConfirmingLockToggle(true);
+                    }}
                     disabled={togglingLock}
                     whileHover={{ y: -1 }}
                     whileTap={{ scale: 0.95 }}

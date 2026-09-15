@@ -34,7 +34,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
+import { holdStagePrepped, playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
 import { announceDispatchPaid } from '@/hooks/useDispatchPaidToasts';
 import {
   PAID_TOAST_REMOTE_EVENT,
@@ -1397,9 +1397,11 @@ export default function PayrollDispatch() {
     // the block otherwise, so the state can only be stale-true — guard anyway).
     const wantsReport =
       !goingLocked && downloadReportOn && !viewingPastWeek && Boolean(period.sourceFile);
-    // Fire the "stage prepped" alert the instant Start is confirmed — synced
-    // with the optimistic retract + the Preparing Dispatch scene. Start only.
-    if (goingLocked) playStagePrepped();
+    // The cue is already playing — it started on the Start Processing click, as
+    // the modal opened. Confirming HOLDS it so it outlives the modal and plays
+    // its full run; cancelling never reaches here, so a dismissed modal still
+    // ends in silence. Start only. Same contract as the Payroll Wizard.
+    if (goingLocked) holdStagePrepped();
     // Minimum on-screen time for the "Preparing Dispatch…" scene so it plays
     // gracefully instead of flashing by when the optimistic POST returns fast.
     const minShow = new Promise((r) => setTimeout(r, 1600));
@@ -1643,7 +1645,12 @@ export default function PayrollDispatch() {
               <ProcessingPill locked={lockState.locked} />
               <ProcessingToggleButton
                 locked={lockState.locked}
-                onClick={() => setConfirmingLockToggle(true)}
+                onClick={() => {
+                  // Start the cue on the CLICK, as the modal opens — a user
+                  // gesture, so autoplay policy allows it. START only.
+                  if (!lockState.locked) playStagePrepped();
+                  setConfirmingLockToggle(true);
+                }}
                 disabled={viewingPastWeek}
               />
               {/* Closed-week state + Reopen. Only rendered for payroll_manager /
