@@ -164,6 +164,43 @@ Wizard now mirrors that tab exactly so a flag-drifted ex-member is never charged
 - Everything downstream (paystub-fresh, Payment Dispatch, Mark Paid) inherits the
   Wizard's `mesa_deduction`, so this one change fixes the whole chain.
 
+### The opposite drift — an ALIASED member who is never deducted (OPEN, found 2026-09-15)
+
+The section above covers a flag that stayed `true` after the ledger said otherwise.
+The mirror-image failure is live and unfixed: a member the **ledger** knows under an
+old address, whose **rate rows** are under their current one.
+
+**The read path resolves aliases; the pay path does not.** `summarizeMembers` and
+`/api/mesa-ledger` run every ledger email through `resolveMesaEmail`
+(`src/data/mesa-email-aliases.json`), so Accounting → MESA → **Active Members** shows
+such a person correctly, with their balance. The Payroll Wizard, both employee
+estimates and the ledger writer all gate on `employee_hourly_rates.mesa_member`,
+which nothing alias-resolves. When the two disagree the tab says "member" and payroll
+takes nothing.
+
+**Why the flag is missing.** `scripts/backfill-mesa-from-csv.mjs` — the 2026-08-27/28
+rebuild that is the sole source of current membership for CSV-imported members —
+stamps `mesa_member` / `mesa_member_since` / `mesa_account_number` by matching the
+**ledger** email against rate rows, and never consults the alias map (`grep -i alias`
+on it returns nothing). Its sibling `scripts/backfill-mesa-fpu-aliases.mjs` *does* use
+the map, which is why the affected people have a correct **FPU date** on their rate
+rows and no membership. That asymmetry is the defect.
+
+**Measured on production, read-only, 2026-09-15** (`scripts/probe-mesa-flag-vs-account.mts`):
+**7 of 238 open accounts carry no `mesa_member=true` on any rate row.** Two are active
+employees and are pure alias cases — `jimg@simple.biz` (ledger `jim@`) and
+`dales@simple.biz` (ledger `dale@`), each FPU 2026-06-15, account opened 2026-06-22,
+balance ₱3,600, and **0 of 14 staged paystubs ever carrying a `mesa_deduction`**. The
+other five have no rate row under any address and are departed.
+
+**Fix the script, not the rows.** Hand-patching two rate rows works until the next CSV
+rebuild silently un-flags them again; the repair belongs in the backfill's rate-row
+match. Two decisions ride on it and are Kane's: the ledger credits both men 9 weekly
+deposits across a span in which their paystubs show no deduction (so a balance may
+overstate by ₱900 of worker money plus its ₱2,700 match), and `mesa_member_since` must
+be chosen knowing the deduction is forward-only — back weeks are never recomputed.
+See memory `mesa-alias-members-never-flagged` and the Sep 14 log, Open items 125–127.
+
 ### Weekly deposits from the Hubstaff upload (and their reversal)
 
 Uploading a pay week's Hubstaff CSV — or the API sync, manual or the
