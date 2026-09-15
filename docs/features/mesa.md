@@ -193,13 +193,54 @@ employees and are pure alias cases — `jimg@simple.biz` (ledger `jim@`) and
 balance ₱3,600, and **0 of 14 staged paystubs ever carrying a `mesa_deduction`**. The
 other five have no rate row under any address and are departed.
 
-**Fix the script, not the rows.** Hand-patching two rate rows works until the next CSV
-rebuild silently un-flags them again; the repair belongs in the backfill's rate-row
-match. Two decisions ride on it and are Kane's: the ledger credits both men 9 weekly
-deposits across a span in which their paystubs show no deduction (so a balance may
-overstate by ₱900 of worker money plus its ₱2,700 match), and `mesa_member_since` must
-be chosen knowing the deduction is forward-only — back weeks are never recomputed.
-See memory `mesa-alias-members-never-flagged` and the Sep 14 log, Open items 125–127.
+**The repair is against the people, not the backfill** (Kane, 2026-09-15: *"The backfill
+was just for initializing we need to hardcode fix him"*). That script was a one-time
+initialisation and will not run again, so there is nothing there to protect.
+`scripts/fix-mesa-aliased-membership.mjs` holds the aliased pair as a hardcoded list and
+stamps the **same three columns the backfill's own enrolment step writes** —
+`mesa_member`, `mesa_member_since` = the open account's `opened_on`, `mesa_account_number`
+— onto **every** rate row carrying the member's roster email (the flag is denormalised per
+upload, so a partial stamp drifts straight back). Dry run by default, `--apply` to write,
+`--only <email>` to narrow, a full `SELECT` of every targeted row saved to
+`references/backups/` before the first write, and a re-read verification afterwards. It
+refuses per target on anything unexpected: no open account, more than one, no rate rows,
+or a ledger email that has rate rows of its own (which would mean the map joins two real
+people).
+
+**`mesa_member_since` is taken from the account row, never computed.**
+`scripts/verify-mesa-backfill.mjs` asserts the two are equal and
+`POST /api/toggle-mesa-member` keeps them equal on every re-enrolment, so the value is
+fixed by an existing invariant rather than chosen. Because the deduction is forward-only,
+an `opened_on` in the past charges nothing retroactively — it only decides that every
+future week qualifies.
+
+> **Never fix an aliased member through `POST /api/toggle-mesa-member`.** That route
+> resolves the open account by the email it is handed. For a drifted member it finds none
+> and **mints a second account**, whose window starts today — hiding the balance the member
+> already holds. Latent rather than live, because contributions alone put them on **Active
+> Members** (`isActiveMember` counts deposits), so the Non Members Opt In button cannot be
+> reached for them; the opt-**out** path is alias-aware (`mesaEmailAliasesFor`) and safe.
+
+**Applied 2026-09-15: `jimg@simple.biz` only** — 24 rate rows stamped `mesa_member=true ·
+since 2026-06-22 · account 26-06-00059`, verified by re-read. `dales@simple.biz` is
+**outstanding**, awaiting Kane's word; the script covers him with `--only`. Neither man's
+ledger was touched, so the three weekly deposits each missed while unflagged (2026-08-28,
+09-04, 09-11) are **not** backfilled — that is a separate decision, tied to the open
+question of whether their imported balance already credits contributions nobody collected.
+
+**The audit follows the alias map too, as of the same day.**
+`scripts/verify-mesa-backfill.mjs` keyed rate rows by the CSV/ledger email, so it **skipped
+a drifted member's membership entirely** and would have reported a correctly-stamped row as
+*"flagged but not in the CSV"*. It now resolves through `src/data/mesa-email-aliases.json`
+on three checks — the rate-row lookup, the ledger-rows-for-nobody sweep and the
+flagged-but-not-in-the-CSV sweep — and merges a drifted member's rows from both addresses
+(skipping the merge when the target is itself a CSV member, which would join two people).
+The effect is strictly more checking: the run went 70 → 73 discrepancies, and all three new
+lines are **true** findings about `dale@` that the audit could not previously see
+(`mesa_member=false expected true`, `rates acct null`, `since null`), with **zero** false
+positives introduced.
+
+See memory `mesa-alias-members-never-flagged` and the Sep 14 log, Open items 125–128.
 
 ### Weekly deposits from the Hubstaff upload (and their reversal)
 

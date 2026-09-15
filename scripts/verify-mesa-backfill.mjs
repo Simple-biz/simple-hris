@@ -43,6 +43,27 @@ const RATES_TABLE =
   process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() || 'employee_hourly_rates';
 
 const low = (s) => (s ?? '').trim().toLowerCase();
+
+// ── MESA email drift ────────────────────────────────────────────────────────
+// Some members' LEDGER address is not their ROSTER address — the tracker sheet
+// still says `jim@simple.biz` while the roster, the rate rows and Hubstaff all
+// say `jimg@simple.biz`. Every READ path in the app already follows
+// src/data/mesa-email-aliases.json, and `scripts/fix-mesa-aliased-membership.mjs`
+// stamps such a member's enrolment onto the ROSTER email's rate rows (the
+// original CSV backfill matched by ledger email only, which is why they were
+// left unflagged and never deducted — found 2026-09-15).
+//
+// This audit has to follow the same map or it lies in three ways: it SKIPS the
+// membership flag entirely (no rate row under the ledger email), it reports the
+// correctly-stamped rate row as "flagged but not in the CSV", and once the app
+// writes a weekly deposit under the roster email it reports those rows as
+// belonging to nobody. Added 2026-09-15.
+const ALIASES = JSON.parse(fs.readFileSync('src/data/mesa-email-aliases.json', 'utf8'));
+/** The roster email a ledger email drifted to, or null when there is no drift. */
+const aliasTarget = (e) => {
+  const t = low(ALIASES[e] ?? '');
+  return t && t !== e ? t : null;
+};
 const php = (n) => 'PHP ' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -246,7 +267,14 @@ function expectedFromCsv(csvText, cutoff) {
   let checked = 0, balanceOk = 0;
   for (const [email, exp] of expected) {
     checked++;
-    const rows = byEmail.get(email) ?? [];
+    // A drifted member's ledger rows can sit under EITHER address: the imported
+    // history under the ledger email, anything the app has written since under
+    // the roster one. Merge them — unless the target is itself a CSV member,
+    // which would mean the map joins two real people and must not be followed.
+    const drift = aliasTarget(email);
+    const rows = drift && !expected.has(drift)
+      ? [...(byEmail.get(email) ?? []), ...(byEmail.get(drift) ?? [])]
+      : (byEmail.get(email) ?? []);
     const deposits = rows.filter((r) => r.simple_match_php === 300 && r.total_daily_deposit_php === 400);
     const backs = rows.filter((r) => r.total_daily_deposit_php != null && r.simple_match_php === 0);
     const draws = rows.filter((r) => r.disbursement_type === 'Disbursement');
@@ -280,7 +308,8 @@ function expectedFromCsv(csvText, cutoff) {
     }
 
     // membership flag
-    const rate = rateByEmail.get(email);
+    // The flag lives on the ROSTER email's rate rows for a drifted member.
+    const rate = rateByEmail.get(email) ?? (drift ? rateByEmail.get(drift) : undefined);
     if (rate) {
       const shouldBe = exp.hasOpen;
       if ((rate.mesa_member === true) !== shouldBe) P(`${email}: mesa_member=${rate.mesa_member}, expected ${shouldBe}`);
@@ -290,11 +319,15 @@ function expectedFromCsv(csvText, cutoff) {
   }
 
   // ---- nothing extra ------------------------------------------------------
-  for (const e of byEmail.keys()) if (!expected.has(e)) P(`ledger has rows for ${e}, which is not in the CSV`);
+  // Every roster email a CSV member drifted to — their ledger rows and their
+  // membership flag belong to that member, not to nobody.
+  const aliasTargets = new Set();
+  for (const e of expected.keys()) { const t = aliasTarget(e); if (t) aliasTargets.add(t); }
+  for (const e of byEmail.keys()) if (!expected.has(e) && !aliasTargets.has(e)) P(`ledger has rows for ${e}, which is not in the CSV`);
   for (const a of accounts) if (!expected.has(low(a.email))) P(`account ${a.account_number} belongs to ${a.email}, not in the CSV`);
   // no one outside the CSV may still be flagged
   for (const [e, r] of rateByEmail) {
-    if (r.mesa_member === true && !expected.has(e)) P(`${e}: flagged mesa_member=true but not in the CSV`);
+    if (r.mesa_member === true && !expected.has(e) && !aliasTargets.has(e)) P(`${e}: flagged mesa_member=true but not in the CSV`);
   }
 
   console.log('── RESULT ──────────────────────────────────────────────────');
