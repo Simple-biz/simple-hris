@@ -4,6 +4,9 @@
 > **Dual approval (manager + a named second approver) added 2026-08-19** — migration APPLIED and
 > verified 2026-08-20 (see `docs/features/INDEX.md` "Migrations & deploy state").
 > **Second approver opened to the whole team, 2026-08-27** — see [Dual approval](#dual-approval).
+> **Accounting's queue is the Issues tab since 2026-09-15** — see [Accounting → Issues](#accounting--issues-the-queue-since-2026-09-15);
+> the same commit made "neither reviewer may be the filer" hold at EVERY stage, not just for the second approver.
+> **OPEN (Kane):** whether a team's *managers* may countersign that team's requests — see the note under [Dual approval](#dual-approval).
 > Requires four manual Supabase steps before use — see [Prerequisites](#prerequisites).
 
 A distinct, evidence-backed mechanism for employees to ask Accounting to correct the tracked hours for any past day. Designed to handle cases where work happened but Hubstaff did not record it (forgot to start the tracker, tracker crashed, worked offline or in a meeting, etc.).
@@ -101,6 +104,27 @@ Added 2026-08-19. Stage 1 requires **two** sign-offs before Accounting sees anyt
   not the named person — a manager holding every grant in the system included.
 - **Two signatures need two people.** A manager cannot name themselves, and neither
   reviewer may be the employee who filed the request.
+  **Enforced at every stage since 2026-09-15.** Until then only the second approver was
+  checked against the filer: a manager who manages their own department could approve
+  their own request (carla@ did, on her 2026-09-10 row — probe
+  `scripts/probe-time-adjustment-signatures.mts`), and Accounting could decide a request
+  they had filed. One pure rule, `reviewerIsFiler`, now runs in `assignSecondApprover`
+  (the naming manager), `managerDecideTimeAdjustment` and `decideTimeAdjustment`, and
+  answers **403** ("Not authorized — you filed this request…"). The already-signed
+  2026-09-10 row was left as it is; whether it stands is Kane's call.
+
+> **OPEN — Kane's ruling pending (2026-09-15).** Carla: *"my second signature person is
+> Claire. She is no longer on this list."* Measured: Julia's roster department is
+> **Accounting Team**; Claire's roster department is **USEE**, and she holds a
+> `department_managers` assignment for Accounting Team but is not on its roster. The
+> 2026-08-27 rule above therefore excludes her, correctly. The question is whether the
+> rule should change: **(a) doc stands** — the picker is right, Carla names an Accounting
+> Team roster member (or Claire's roster row is corrected through the normal roster path);
+> **(b) doc is stale** — the pool ALSO includes the ACTIVE `department_managers`
+> assignees of the request's team, still excluding the filer and the naming manager.
+> Under (b) an Accounting Team request would add claire@, kaner@, aliviah@, accounting@,
+> ainsleyw@ and hgk2ghobden@; managers hold broad assignments (Carla: 40+), so (b) is
+> materially wider than "own team". Nothing about the pool was changed pending the answer.
 - **Re-pointing is blocked once the second approver has decided** — recall instead, which
   clears all three decision sets *and* the assignment so the review restarts clean.
 - **Recall also rescues a parked request.** `awaiting_second_approval` is recallable
@@ -484,7 +508,66 @@ The endpoint takes **no email parameter**. There is nothing to authorize beyond 
 
 ## Accounting flow
 
+### Accounting → Issues: the queue since 2026-09-15
+
+**Where Accounting decides a time adjustment is the Issues tab** (`src/App.tsx` case
+`disputes`, `PabDisputeQueue.tsx`). Rows with both stage-1 signatures render inside the
+merged Issues table as a third row kind next to PAB disputes and Bank Preferred changes —
+the 2026-09-01 Bank Preferred merge is the precedent and the shape is identical: same
+table, same per-filter stale-while-revalidate cache (`TAB_CACHE_KEYS.timeAdjustmentIssues`),
+same KPI cards, **same PATCH** (`/api/time-adjustments/[id]` `approve` / `deny`) the
+wizard panel below has always called, so the two surfaces cannot disagree on what a
+decision does. No route and no authorization changed.
+
+Why this exists — Carla, 2026-09-15: *"When a time adjustment has two signatures, it
+should go to Accounting > Issues for one last approval/check. Right now, two signatures
+happen, nothing changes, but HRIS tells us we're waiting on something."* Measured: two
+rows sat at `manager_approved` (one since 2026-08-20), and the only place Accounting
+could see them was the wizard's step 5, on the right department tab, **with a batch loaded
+whose week covered the adjusted day** (`weekScopedAdjustmentRows`). Not on Issues, not on
+the Overview tile, no notification — while the manager's chip read *With Accounting* and
+the employee's card *Manager approved — with Accounting*.
+
+What the row does, and the rules it carries over unchanged from the wizard panel:
+
+- **Actionable only at `manager_approved`.** Upstream rows (`pending`,
+  `awaiting_second_approval`) render read-only with *Awaiting manager* / *Awaiting second
+  approver* badges so a live request is never invisible, and they **do not count** toward
+  the Pending KPI — the same way a `pending_orphanage_manager` dispute shows but does not
+  count. The **Pending** filter asks the API for `manager_approved` only (parity with the
+  disputes' `awaiting_accounting=1`); **Denied** folds in `manager_denied`.
+- **Approve requires the day total.** `decideTimeAdjustment` treats a null
+  `approved_hours` as "no override", so an approval with no value would move no money; the
+  dialog's Approve stays disabled until hours are set (`canApproveTimeAdjustment`), and a
+  **segment row is never prefilled** from `requested_hours` — that is the MISSED time, not
+  the day total (`timeAdjustmentHoursPrefill`). An explicit `0h 0m` IS a value (a
+  deliberate zero-out) and is accepted; blank is not.
+- **View** opens the evidence (signed URLs from the same GET, never cached — they expire),
+  the segments, the employee's explanation and the full decision trail
+  (`timeAdjustmentTrail`: filed → named → manager → second approver → Accounting).
+- **Delete** appears on `denied` / `manager_denied` rows only, for `DISPUTE_DELETE_ROLES`,
+  and calls the existing `DELETE /api/time-adjustments/[id]`.
+- Rows sort **after Bank Preferred and before disputes**: a bank row holds payout routing,
+  a time adjustment changes a pay figure, a dispute changes PAB only.
+- The **Overview "Needs your decision" tile** and its Pending list now count
+  `manager_approved` time adjustments alongside disputes awaiting Accounting (labelled
+  *Time adjustment · date*), because the tile opens the Issues tab and must agree with
+  what that tab can act on. A failed time-adjustment read keeps the dispute count rather
+  than blanking the tile.
+
+Every derivation is pure and tested in `src/lib/accounting/issues-time-adjustments.ts`
+(30 tests); the row and its three dialogs are `src/components/payroll/TimeAdjustmentIssueRows.tsx`.
+
+**Known limits, flagged not built:** the stage-2 PATCH gate is still
+`accounting:payroll_wizard` edit, so an Issues user holding only the `disputes` grant gets a
+server 403 (fails closed); and Issues has no payroll-processing lock — the wizard panel
+disables decisions while a run is locked, Issues (like the disputes beside it) does not.
+
 ### Payroll Wizard Additions tab
+
+**Retained as the in-run view**: the same rows, scoped to the pay week being processed,
+so the clerk sees the adjustment beside the pay it changes. Decisions here and on Issues are
+the same PATCH.
 
 The `TimeAdjustmentReviewPanel` now shows **three sections** for the selected department:
 
@@ -590,13 +673,13 @@ Private. Object path: `{sanitized_email}/{requestKey}/{idx}-{timestamp}.{ext}`. 
 | List own requests | Employee with `?email=` |
 | List all requests (accounting) | Elevated roles (`requireElevatedSession`) |
 | List department requests (manager) | `manager` or `admin` role + scoped to `department_managers` assignments |
-| Manager approve / deny | `manager:time_adjustments` **edit** grant + caller manages the employee's department |
-| Name / re-name the second approver | same as manager approve; blocked once the second approver has decided |
+| Manager approve / deny | `manager:time_adjustments` **edit** grant + caller manages the employee's department + **caller is not the filer** (2026-09-15, 403) |
+| Name / re-name the second approver | same as manager approve (filer check included); blocked once the second approver has decided |
 | Second approver approve / deny | The row must name the caller in `second_approver_email`. **No role, no feature grant, no department check** — the assignment IS the authorization (2026-08-27) |
 | Read own second-approver queue | Signed in. `GET /api/time-adjustments/second-approvals` is scoped to the caller's own assignments and takes no email parameter |
 | Appear in the second-approver picker | ACTIVE roster member of the request's own department, excluding the filer and the naming manager. **No role required** (2026-08-27) |
 | Recall | same as manager approve; allowed from `manager_approved` **or** `awaiting_second_approval` |
-| Accounting approve / deny | Accounting role (`canActOnDisputes`) + row must be `manager_approved` |
+| Accounting approve / deny | Accounting role (`canActOnDisputes`) + row must be `manager_approved` + **decider is not the filer** (2026-09-15, 403). Route gate: `accounting:payroll_wizard` edit — from the Issues tab too |
 | Accounting delete | Accounting role (`canActOnDisputes`) + row must be `denied` or `manager_denied` |
 | Evidence signed URLs | Included in GET response only for elevated/accounting callers |
 
@@ -661,3 +744,17 @@ Private. Object path: `{sanitized_email}/{requestKey}/{idx}-{timestamp}.{ext}`. 
 | `src/components/manager/ManagerApp.tsx` | **Edited** — 1,051 lines removed; keeps `TA_REASON_LABEL` for the Overview gallery, whose raw-hours bug is fixed with it |
 | `src/lib/manager/tab-cache.ts` | **Edited** — `timeAdjustmentQueue` key (the tab's RAW payload, distinct from the shell's pending-only copy) |
 | `src/lib/manager/manager-time-adjustments-live.test.ts` | **Edited** — repointed at the extracted file; 9 guards |
+
+### 2026-09-15 — Accounting → Issues queue, and reviewer ≠ filer at every stage
+
+| Path | Change |
+|---|---|
+| `src/lib/accounting/issues-time-adjustments.ts` | **New** — pure: filter → statuses, list URL, KPI counts, badges, hours formatting (0 → "0h"), requested label, prefill rule, inputs → `approved_hours`, Approve gate, search blob, decision trail |
+| `src/lib/accounting/issues-time-adjustments.test.ts` | **New** — 30 tests, failure-direction first, plus two source-shape guards (the queue fetches/folds these rows; the Overview tile counts them) |
+| `src/components/payroll/TimeAdjustmentIssueRows.tsx` | **New** — the table row and its View (evidence + lightbox + trail), Approve/Deny (day total required) and Delete dialogs |
+| `src/components/payroll/PabDisputeQueue.tsx` | **Edited** — third `IssueRow` kind; per-filter fetch + cache alongside disputes and bank rows; KPI fold; search; error banner; copy |
+| `src/lib/accounting/tab-cache.ts` | **Edited** — `timeAdjustmentIssues(filter)` key |
+| `src/components/Overview.tsx` | **Edited** — "Needs your decision" + Pending list count `manager_approved` time adjustments; rows carry `kind` |
+| `src/lib/supabase/time-adjustments.ts` | **Edited** — `reviewerIsFiler` + `OWN_REQUEST_REVIEW_ERROR`; guard added to `assignSecondApprover`, `managerDecideTimeAdjustment`, `decideTimeAdjustment` |
+| `src/lib/supabase/time-adjustments-reviewer-guard.test.ts` | **New** — the rule + a source scan that all three write paths call it |
+| `scripts/probe-time-adjustment-signatures.mts` | **New** — read-only detector: status vs derived status, rows owed a decision, both-signature rows and what Accounting did, roster rows for the people named |

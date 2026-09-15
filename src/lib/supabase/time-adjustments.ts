@@ -154,6 +154,29 @@ export function deriveAdjustmentStatus(params: {
   return secondDecision === 'approved' ? 'manager_approved' : 'awaiting_second_approval';
 }
 
+/**
+ * "Two signatures need two people, and neither reviewer may be the employee who
+ * filed the request" (time-adjustment-requests.md § Dual approval). Until 2026-09-15
+ * only the SECOND approver was checked against the filer: a manager whose own
+ * department they manage could approve their own request (carla@ did, on her
+ * 2026-09-10 row, and nothing refused it), and Accounting could decide a request
+ * they had filed themselves. Every reviewing path now runs this same test.
+ *
+ * Pure so the rule is testable; the async write paths call it after loading the row.
+ */
+export function reviewerIsFiler(
+  reviewerEmail: string | null | undefined,
+  filerEmail: string | null | undefined,
+): boolean {
+  const reviewer = normEmail(reviewerEmail ?? null) ?? (reviewerEmail ?? '').trim().toLowerCase();
+  const filer = normEmail(filerEmail ?? null) ?? (filerEmail ?? '').trim().toLowerCase();
+  return !!reviewer && !!filer && reviewer === filer;
+}
+
+/** Route layer maps "Not authorized" to 403, so the refusal reads as forbidden, not as a bad request. */
+export const OWN_REQUEST_REVIEW_ERROR =
+  'Not authorized — you filed this request. A reviewer cannot approve their own hours; someone else must sign it';
+
 export type TimeAdjustmentRow = {
   id: string;
   work_email: string;
@@ -546,11 +569,15 @@ export async function assignSecondApprover(
     return { error: 'The second approver has already decided — recall the request to start over' };
   }
   // Two sign-offs must come from two people, and neither may be the employee whose
-  // hours are being corrected.
+  // hours are being corrected — the NAMING manager included (2026-09-15): naming a
+  // countersigner on your own request is the first half of approving it yourself.
+  if (reviewerIsFiler(managerLower, row.work_email)) {
+    return { error: OWN_REQUEST_REVIEW_ERROR };
+  }
   if (approver === managerLower) {
     return { error: 'Pick someone other than yourself as the second approver' };
   }
-  if (approver === row.work_email.trim().toLowerCase()) {
+  if (reviewerIsFiler(approver, row.work_email)) {
     return { error: 'The employee who filed the request cannot approve it' };
   }
 
@@ -650,6 +677,9 @@ export async function managerDecideTimeAdjustment(
   if (!row) return { error: 'Request not found' };
   if (row.manager_decision != null) return { error: 'You have already decided this request' };
   if (row.status !== 'pending') return { error: 'Request is no longer pending manager review' };
+  // A manager who manages their own department still may not sign their own request
+  // (2026-09-15). Department scope is checked next; this refuses before it can pass.
+  if (reviewerIsFiler(managerLower, row.work_email)) return { error: OWN_REQUEST_REVIEW_ERROR };
 
   const authErr = await authorizeManagerOverAdjustment(supabase, managerLower, row.work_email);
   if (authErr.error) return authErr;
@@ -986,6 +1016,10 @@ export async function decideTimeAdjustment(
   if (row.status !== 'manager_approved') {
     return { error: 'Request must be approved by a manager before Accounting can act on it' };
   }
+  // Stage 2 is a review too: an Accounting member who filed the request hands it to
+  // a colleague (2026-09-15). The doc's "neither reviewer may be the filer" now holds
+  // at every stage, not just for the second approver.
+  if (reviewerIsFiler(approverLower, row.work_email)) return { error: OWN_REQUEST_REVIEW_ERROR };
 
   const nowIso = new Date().toISOString();
   // 0 is a valid SET override (zero the day). Only null/negative/undefined means "no override".

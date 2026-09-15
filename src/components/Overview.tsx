@@ -2675,8 +2675,17 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
   /** Pending counts surfaced in the simple view's attention row. */
   const [pendingDisputes, setPendingDisputes] = useState<number | null>(null);
   const [oldestDisputeDays, setOldestDisputeDays] = useState<number | null>(null);
+  /** Rows awaiting Accounting on the Issues tab — PAB disputes AND time adjustments
+   *  with both stage-1 signatures (2026-09-15). `kind` labels each in the list. */
   const [pendingDisputeRows, setPendingDisputeRows] = useState<
-    Array<{ id: string; work_email: string; dispute_date: string; created_at?: string; reason: string }>
+    Array<{
+      id: string;
+      work_email: string;
+      dispute_date: string;
+      created_at?: string;
+      reason: string;
+      kind: 'dispute' | 'time_adjustment';
+    }>
   >([]);
   const [pendingLeaves, setPendingLeaves] = useState<number | null>(null);
   /** Full leave-request rows (email + window + type + status). Powers the
@@ -2776,8 +2785,19 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/pab-disputes?awaiting_accounting=1&limit=500', { cache: 'no-store' });
-        const json = (await res.json()) as {
+        // The tile opens the Issues tab, so it must count what that tab can act on:
+        // PAB disputes awaiting Accounting AND time adjustments that hold both
+        // stage-1 signatures (2026-09-15 — until then a countersigned adjustment
+        // showed nowhere but the wizard, while the manager saw "With Accounting").
+        // A failed time-adjustment read keeps the dispute count rather than
+        // blanking the tile; a failed dispute read is the error path below.
+        const [disputeRes, adjustmentRes] = await Promise.all([
+          fetch('/api/pab-disputes?awaiting_accounting=1&limit=500', { cache: 'no-store' }),
+          fetch('/api/time-adjustments?status=manager_approved&limit=500', { cache: 'no-store' }).catch(
+            () => null,
+          ),
+        ]);
+        const json = (await disputeRes.json()) as {
           rows?: Array<{
             id: string;
             work_email: string;
@@ -2786,8 +2806,34 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
             created_at?: string;
           }>;
         };
+        let adjustmentRows: Array<{
+          id: string;
+          work_email: string;
+          adjust_date: string;
+          reason: string;
+          created_at?: string;
+        }> = [];
+        if (adjustmentRes && adjustmentRes.ok) {
+          try {
+            const aj = (await adjustmentRes.json()) as { rows?: typeof adjustmentRows };
+            adjustmentRows = Array.isArray(aj.rows) ? aj.rows : [];
+          } catch {
+            adjustmentRows = [];
+          }
+        }
         if (cancelled) return;
-        const rows = Array.isArray(json.rows) ? json.rows : [];
+        const disputeRows = Array.isArray(json.rows) ? json.rows : [];
+        const rows = [
+          ...disputeRows.map((r) => ({ ...r, kind: 'dispute' as const })),
+          ...adjustmentRows.map((r) => ({
+            id: r.id,
+            work_email: r.work_email,
+            dispute_date: r.adjust_date,
+            reason: r.reason,
+            created_at: r.created_at,
+            kind: 'time_adjustment' as const,
+          })),
+        ];
         setPendingDisputes(rows.length);
         setPendingDisputeRows(rows);
         if (rows.length > 0) {
@@ -5312,7 +5358,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
                             {name}
                           </div>
                           <div className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                            Issue · {row.dispute_date}
+                            {row.kind === 'time_adjustment' ? 'Time adjustment' : 'Issue'} · {row.dispute_date}
                             {ageDays != null && (
                               <span className="ml-1.5 text-zinc-400">· {ageDays}d ago</span>
                             )}

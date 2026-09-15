@@ -62,6 +62,18 @@ import {
 } from '@/lib/employee-payment-processors';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import type { TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
+import {
+  fmtTimeAdjustmentHours,
+  timeAdjustmentIssueCounts,
+  timeAdjustmentIssuesUrl,
+  timeAdjustmentSearchBlob,
+} from '@/lib/accounting/issues-time-adjustments';
+import {
+  TimeAdjustmentIssueDialogs,
+  TimeAdjustmentIssueTableRow,
+  type TimeAdjustmentDecideTarget,
+} from '@/components/payroll/TimeAdjustmentIssueRows';
 
 const PAGE_SIZE = 15;
 
@@ -134,11 +146,14 @@ function StatCard({
   );
 }
 
-/** One row of the merged Issues table — a PAB short-day dispute or a Bank
- *  Preferred change request. Both are a yes/no for Accounting. */
+/** One row of the merged Issues table — a PAB short-day dispute, a Bank Preferred
+ *  change request, or (2026-09-15) a time adjustment carrying both stage-1
+ *  signatures. Each is a yes/no for Accounting; the time adjustment also takes the
+ *  day total to set. */
 type IssueRow =
   | { kind: 'dispute'; dispute: PabDayDisputeRow }
-  | { kind: 'bank'; request: BankPreferredRequestRow };
+  | { kind: 'bank'; request: BankPreferredRequestRow }
+  | { kind: 'time_adjustment'; request: TimeAdjustmentRow };
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
@@ -202,6 +217,17 @@ export default function PabDisputeQueue() {
     () => getTabCache<BankPreferredRequestRow[]>(TAB_CACHE_KEYS.bankPreferredRequests('all')) ?? [],
   );
   const [bankError, setBankError] = useState<string | null>(null);
+  // Time adjustments (2026-09-15): the rows Accounting used to find only inside the
+  // Payroll Wizard, filtered to one pay week. Cached per filter like the other two
+  // kinds; the evidence signed URLs are NOT cached because they expire.
+  const [timeAdjustments, setTimeAdjustments] = useState<TimeAdjustmentRow[]>(
+    () => getTabCache<TimeAdjustmentRow[]>(TAB_CACHE_KEYS.timeAdjustmentIssues('all')) ?? [],
+  );
+  const [allTimeAdjustments, setAllTimeAdjustments] = useState<TimeAdjustmentRow[]>(
+    () => getTabCache<TimeAdjustmentRow[]>(TAB_CACHE_KEYS.timeAdjustmentIssues('all')) ?? [],
+  );
+  const [taSignedUrls, setTaSignedUrls] = useState<Record<string, string>>({});
+  const [taError, setTaError] = useState<string | null>(null);
   const [reasonCodes, setReasonCodes] = useState<PabDisputeReasonCode[]>(
     () => getTabCache<PabDisputeReasonCode[]>(TAB_CACHE_KEYS.pabReasonCodes) ?? [],
   );
@@ -264,6 +290,9 @@ export default function PabDisputeQueue() {
       setLoading(true);
     }
     if (cachedBank) setBankRequests(cachedBank);
+    const taCacheKey = TAB_CACHE_KEYS.timeAdjustmentIssues(statusFilter);
+    const cachedTa = getTabCache<TimeAdjustmentRow[]>(taCacheKey);
+    if (cachedTa) setTimeAdjustments(cachedTa);
 
     const loadBank = async (filter: typeof statusFilter): Promise<BankPreferredRequestRow[]> => {
       const qs = filter === 'all' ? '' : `?status=${filter}`;
@@ -314,6 +343,41 @@ export default function PabDisputeQueue() {
       }
     })();
 
+    // Time adjustments load the same way: alongside, never blanking the others on a
+    // failure, and the 'all' set refreshed for the KPI cards whatever the filter.
+    const loadTimeAdjustments = async (
+      filter: typeof statusFilter,
+    ): Promise<{ rows: TimeAdjustmentRow[]; signedUrls: Record<string, string> }> => {
+      const res = await fetch(timeAdjustmentIssuesUrl(filter), { cache: 'no-store' });
+      const json = (await res.json()) as {
+        rows?: TimeAdjustmentRow[];
+        signedUrls?: Record<string, string>;
+        error?: string | null;
+      };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load time adjustments');
+      return { rows: json.rows ?? [], signedUrls: json.signedUrls ?? {} };
+    };
+    const taPromise = (async () => {
+      try {
+        const { rows, signedUrls } = await loadTimeAdjustments(statusFilter);
+        setTabCache(taCacheKey, rows);
+        setTimeAdjustments(rows);
+        setTaSignedUrls((prev) => ({ ...prev, ...signedUrls }));
+        setTaError(null);
+        if (statusFilter === 'all') {
+          setAllTimeAdjustments(rows);
+        } else {
+          const all = await loadTimeAdjustments('all');
+          setTabCache(TAB_CACHE_KEYS.timeAdjustmentIssues('all'), all.rows);
+          setAllTimeAdjustments(all.rows);
+          setTaSignedUrls((prev) => ({ ...prev, ...all.signedUrls }));
+        }
+      } catch (e) {
+        if (!hasTabCache(taCacheKey)) setTimeAdjustments([]);
+        setTaError(e instanceof Error ? e.message : 'Failed to load time adjustments');
+      }
+    })();
+
     try {
       const rows = await loadDisputeRows(statusFilter);
       setTabCache(cacheKey, rows);
@@ -330,11 +394,75 @@ export default function PabDisputeQueue() {
       if (!hasTabCache(cacheKey)) setDisputes([]);
     } finally {
       await bankPromise;
+      await taPromise;
       setLoading(false);
     }
   }, [statusFilter]);
 
   useEffect(() => { fetchDisputes(); }, [fetchDisputes]);
+
+  // Time adjustment decisions ride the SAME PATCH the Payroll Wizard panel uses —
+  // `approve` (with the day total) / `deny` on /api/time-adjustments/[id] — so the
+  // two Accounting surfaces cannot disagree on what a decision does. The server
+  // re-checks the role, the manager_approved status, and (2026-09-15) that the
+  // decider is not the person who filed the request.
+  const [taActingId, setTaActingId] = useState<string | null>(null);
+  const [taDecide, setTaDecide] = useState<TimeAdjustmentDecideTarget | null>(null);
+  const [viewTaTarget, setViewTaTarget] = useState<TimeAdjustmentRow | null>(null);
+  const [taDeleteTarget, setTaDeleteTarget] = useState<TimeAdjustmentRow | null>(null);
+  const [taDeleting, setTaDeleting] = useState(false);
+  const decideTimeAdjustment = useCallback(
+    async (
+      row: TimeAdjustmentRow,
+      action: 'approve' | 'deny',
+      approvedHours: number | null,
+      note: string,
+    ): Promise<boolean> => {
+      setTaActingId(row.id);
+      try {
+        const res = await fetch(`/api/time-adjustments/${row.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action,
+            approved_hours: action === 'approve' ? approvedHours : null,
+            decision_note: note.trim() || null,
+          }),
+        });
+        const json = (await res.json()) as { success?: boolean; error?: string | null };
+        if (!res.ok || json.error) throw new Error(json.error ?? 'Action failed');
+        toast.success(
+          action === 'approve'
+            ? `Approved — ${row.work_email}'s ${row.adjust_date} is set to ${fmtTimeAdjustmentHours(approvedHours) ?? 'the entered total'} for payroll.`
+            : `Denied ${row.work_email}'s time adjustment for ${row.adjust_date}.`,
+        );
+        fetchDisputes();
+        return true;
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Action failed');
+        return false;
+      } finally {
+        setTaActingId(null);
+      }
+    },
+    [fetchDisputes],
+  );
+  const handleTaDelete = useCallback(async () => {
+    if (!taDeleteTarget) return;
+    setTaDeleting(true);
+    try {
+      const res = await fetch(`/api/time-adjustments/${taDeleteTarget.id}`, { method: 'DELETE' });
+      const json = (await res.json()) as { error?: string | null };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed');
+      toast.success('Time adjustment request deleted');
+      setTaDeleteTarget(null);
+      fetchDisputes();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete request');
+    } finally {
+      setTaDeleting(false);
+    }
+  }, [taDeleteTarget, fetchDisputes]);
 
   // Approve/deny a Bank Preferred change request. The PATCH is the real gate —
   // it re-checks the 1:1 rule against the employee's LIVE receiving bank and
@@ -467,10 +595,14 @@ export default function PabDisputeQueue() {
         return blob.includes(q);
       })
       .map(d => ({ kind: 'dispute' as const, dispute: d }));
+    const adjustments: IssueRow[] = timeAdjustments
+      .filter(r => !q || timeAdjustmentSearchBlob(r).includes(q))
+      .map(r => ({ kind: 'time_adjustment' as const, request: r }));
     // Bank rows first — a pending request holds the employee's payout routing
     // until it's decided (same slot they occupied as a card above the table).
-    return [...bank, ...disp];
-  }, [disputes, bankRequests, searchQuery]);
+    // Time adjustments next: they change a pay figure, disputes change PAB only.
+    return [...bank, ...adjustments, ...disp];
+  }, [disputes, bankRequests, timeAdjustments, searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -479,18 +611,23 @@ export default function PabDisputeQueue() {
   useEffect(() => { setPage(1); }, [searchQuery, statusFilter]);
 
   // KPI counts fold the FULL dataset, never the filtered slice — the table
-  // filter narrows the rows below, the cards keep the whole picture.
+  // filter narrows the rows below, the cards keep the whole picture. Time
+  // adjustments count as Pending ONLY at manager_approved (Accounting's turn);
+  // rows still owed a stage-1 signature show in the table but are not our work.
+  const taCounts = useMemo(() => timeAdjustmentIssueCounts(allTimeAdjustments), [allTimeAdjustments]);
   const pendingCount = useMemo(
     () =>
       allDisputes.filter((d) => d.status === 'pending' || d.status === 'orphanage_manager_approved').length +
-      allBankRequests.filter((r) => r.status === 'pending').length,
-    [allDisputes, allBankRequests],
+      allBankRequests.filter((r) => r.status === 'pending').length +
+      taCounts.pending,
+    [allDisputes, allBankRequests, taCounts],
   );
   const approvedCount = useMemo(
     () =>
       allDisputes.filter((d) => d.status === 'approved' || d.status === 'accounting_approved').length +
-      allBankRequests.filter((r) => r.status === 'approved').length,
-    [allDisputes, allBankRequests],
+      allBankRequests.filter((r) => r.status === 'approved').length +
+      taCounts.approved,
+    [allDisputes, allBankRequests, taCounts],
   );
   const deniedCount = useMemo(
     () =>
@@ -500,8 +637,9 @@ export default function PabDisputeQueue() {
           d.status === 'orphanage_manager_denied' ||
           d.status === 'accounting_denied',
       ).length +
-      allBankRequests.filter((r) => r.status === 'denied').length,
-    [allDisputes, allBankRequests],
+      allBankRequests.filter((r) => r.status === 'denied').length +
+      taCounts.denied,
+    [allDisputes, allBankRequests, taCounts],
   );
 
   const handleEdit = useCallback(async () => {
@@ -673,7 +811,8 @@ export default function PabDisputeQueue() {
               Issues
             </h2>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-              Approval queue for short-day issues and Bank Preferred changes. Any Accounting user can approve or deny.
+              Approval queue for short-day issues, Bank Preferred changes, and time adjustments that carry both
+              manager signatures. Any Accounting user can approve or deny.
             </p>
           </div>
         </div>
@@ -706,7 +845,7 @@ export default function PabDisputeQueue() {
 
       {/* KPI cards */}
       <div className="grid shrink-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Total" value={allDisputes.length + allBankRequests.length} tone="indigo" icon={ClipboardList} />
+        <StatCard label="Total" value={allDisputes.length + allBankRequests.length + taCounts.total} tone="indigo" icon={ClipboardList} />
         <StatCard label="Pending" value={pendingCount} tone="amber" icon={Clock} />
         <StatCard label="Approved" value={approvedCount} tone="emerald" icon={CheckCircle2} />
         <StatCard label="Denied" value={deniedCount} tone="rose" icon={XCircle} />
@@ -750,6 +889,12 @@ export default function PabDisputeQueue() {
           Bank Preferred change requests couldn&apos;t be refreshed: {bankError}
         </div>
       )}
+      {/* Same for time adjustments — said out loud, never a silently shorter queue. */}
+      {taError && (
+        <div className="shrink-0 rounded-md border border-rose-200 bg-rose-50/60 px-3 py-2 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+          Time adjustments couldn&apos;t be refreshed: {taError}
+        </div>
+      )}
 
       {/* Table */}
       {loading ? (
@@ -760,7 +905,9 @@ export default function PabDisputeQueue() {
         <div className="flex flex-1 flex-col items-center justify-center gap-2 py-12 text-center">
           <AlertCircle className="h-8 w-8 text-zinc-300 dark:text-zinc-700" />
           <p className="text-sm text-zinc-500">
-            {disputes.length === 0 && bankRequests.length === 0 ? 'No issues filed yet.' : 'No issues match your filters.'}
+            {disputes.length === 0 && bankRequests.length === 0 && timeAdjustments.length === 0
+              ? 'No issues filed yet.'
+              : 'No issues match your filters.'}
           </p>
         </div>
       ) : (
@@ -795,6 +942,22 @@ export default function PabDisputeQueue() {
               </TableHeader>
               <TableBody>
                 {pageRows.map((row) => {
+                  if (row.kind === 'time_adjustment') {
+                    const r = row.request;
+                    return (
+                      <TimeAdjustmentIssueTableRow
+                        key={`ta-${r.id}`}
+                        row={r}
+                        canApprove={canApprove}
+                        canDelete={canDelete}
+                        acting={taActingId === r.id}
+                        onView={() => setViewTaTarget(r)}
+                        onApprove={() => setTaDecide({ row: r, action: 'approve' })}
+                        onDeny={() => setTaDecide({ row: r, action: 'deny' })}
+                        onDelete={() => setTaDeleteTarget(r)}
+                      />
+                    );
+                  }
                   if (row.kind === 'bank') {
                     const r = row.request;
                     const acting = bankActingId === r.id;
@@ -1095,6 +1258,22 @@ export default function PabDisputeQueue() {
           </div>
         </div>
       )}
+
+      {/* Time adjustment View / Approve-Deny / Delete — see TimeAdjustmentIssueRows.tsx */}
+      <TimeAdjustmentIssueDialogs
+        viewTarget={viewTaTarget}
+        onCloseView={() => setViewTaTarget(null)}
+        signedUrls={taSignedUrls}
+        decideTarget={taDecide}
+        onCloseDecide={() => setTaDecide(null)}
+        onSubmitDecide={decideTimeAdjustment}
+        acting={taDecide != null && taActingId === taDecide.row.id}
+        canApprove={canApprove}
+        deleteTarget={taDeleteTarget}
+        onCloseDelete={() => setTaDeleteTarget(null)}
+        onConfirmDelete={() => void handleTaDelete()}
+        deleting={taDeleting}
+      />
 
       {/* View details modal — smooth backdrop fade + card zoom/slide-in */}
       {viewTarget && (

@@ -420,6 +420,10 @@ export const TAB_CACHE_KEYS = {
   // Bank Preferred change requests render as rows in the same Issues table and
   // are cached per status filter alongside the disputes they sit with.
   bankPreferredRequests: (statusFilter: string) => `bank-preferred-requests:${statusFilter}`,
+  // Time adjustments awaiting Accounting render as rows in the same Issues table
+  // (2026-09-15), cached per status filter. Evidence signed URLs are NOT cached —
+  // they expire, so they are re-fetched with every revalidation.
+  timeAdjustmentIssues: (statusFilter: string) => `time-adjustment-issues:${statusFilter}`,
   overviewPayouts: 'overview:payouts',
   overviewPabMetrics: 'overview:pab-metrics',
   peopleRoster: 'people:list',

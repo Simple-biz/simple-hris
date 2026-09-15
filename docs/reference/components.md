@@ -129,9 +129,17 @@ The component reflects the two-stage approval model. Accounting can only act on 
 
 ---
 
+## `src/components/payroll/TimeAdjustmentIssueRows.tsx` *(added 2026-09-15)*
+
+**Accounting → Issues, the time-adjustment row and its dialogs.** Exports `TimeAdjustmentIssueTableRow` (one `<TableRow>` matching the Issues table's eight columns: employee, date, a *Time adjustment* badge + reason, the requested missed time + explanation + who signed, status, set hours, decision, actions) and `TimeAdjustmentIssueDialogs` (View with evidence thumbnails, a lightbox and the decision trail; Approve/Deny where **Approve requires the day total** and a segment row is never prefilled; Delete for denied rows). JSX only — every rule is a pure, tested function in `src/lib/accounting/issues-time-adjustments.ts`. Decisions call `PATCH /api/time-adjustments/[id]` (`approve` with `approved_hours` / `deny`) and `DELETE /api/time-adjustments/[id]`, the same endpoints the Payroll Wizard panel uses. Doc: [time-adjustment-requests.md](../features/time-adjustment-requests.md) § Accounting → Issues.
+
+---
+
 ## `src/components/payroll/PabDisputeQueue.tsx`
 
-**Accounting → Disputes.** Lists `pab_day_disputes` via `GET /api/pab-disputes` with `awaiting_accounting=1` when the status filter is **Pending** (so Accounting sees both plain `pending` and `orphanage_manager_approved` rows). Search, pagination, and filters for Approved / Denied / All.
+**Accounting → Issues.** Lists `pab_day_disputes` via `GET /api/pab-disputes` with `awaiting_accounting=1` when the status filter is **Pending** (so Accounting sees both plain `pending` and `orphanage_manager_approved` rows). Search, pagination, and filters for Approved / Denied / All.
+
+**Three row kinds since 2026-09-15** (`IssueRow.kind`): `dispute`, `bank` (Bank Preferred change requests, merged 2026-09-01) and `time_adjustment` — time adjustments fetched from `GET /api/time-adjustments` with the statuses `timeAdjustmentStatusesForFilter` maps from the shared filter (Pending → `manager_approved` only), cached per filter under `TAB_CACHE_KEYS.timeAdjustmentIssues`, folded into the four KPI cards by `timeAdjustmentIssueCounts`, and rendered through `TimeAdjustmentIssueRows.tsx`. Rows order bank → time adjustment → dispute. A failed read of any one kind shows its own banner and never blanks the others.
 
 **Manager-submitted note display.** For orphanage-style rows (`orphanage_visit` + `ceo_visitation`, tested via `isOrphanageStyleReason`), the **Explanation** column widens to 240–320px, drops truncation, and renders a small "Manager note" badge before the text — Carla reads Alyson's submission context before deciding without expanding any row.
 
