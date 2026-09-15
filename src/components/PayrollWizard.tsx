@@ -175,6 +175,7 @@ import {
 import { SettlementChip } from '@/components/payroll/SettlementChip';
 import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from '@/lib/payment-catalog/system-bonus';
 import { normEmail } from '@/lib/email/norm-email';
+import { mesaContributesForWeek } from '@/lib/mesa/deposit-date';
 import { TIME_ADJUSTMENT_REASONS, type TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
 import { sortHubstaffColumnsForDisplay } from '@/lib/supabase/hubstaff-hours-db';
 import { comparePayrollToMaster } from '@/lib/payroll/compare-to-master';
@@ -2833,6 +2834,19 @@ export default function PayrollWizard({
     const r = parseDateRangeFromFilename(calcSourceFile);
     if (!r) return null;
     const d = r.start;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, [calcSourceFile]);
+
+  /** ISO week-END of the active Hubstaff source file — the pay week the MESA
+   *  ₱100 gate is judged against (`mesaContributesForWeek`: enrolled on/before
+   *  this week's FRIDAY deposit date). Same filename range the final-pay
+   *  compute derives its own `week.end` from, so the display columns and the
+   *  charged figure judge the same week. */
+  const hubstaffWeekEnd = useMemo(() => {
+    if (!calcSourceFile) return null;
+    const r = parseDateRangeFromFilename(calcSourceFile);
+    if (!r) return null;
+    const d = r.end;
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }, [calcSourceFile]);
 
@@ -5780,6 +5794,24 @@ export default function PayrollWizard({
       return candidates.some((e) => mesaOptedOutEmails.has(e));
     },
     [mesaOptedOutEmails],
+  );
+
+  /**
+   * The ONE answer to "is this row charged ₱100 this week" for every display
+   * recompute (Additions per-row + dept summary, HSL per-row + footer,
+   * Validation rows): enrolled, not opted out in the ledger, AND enrolled
+   * on/before this week's FRIDAY deposit date — Kane's 2026-09-15 ruling,
+   * "Friday should be the deposit dates", shared with the final-pay compute,
+   * both employee estimates and the ledger writer via `mesaContributesForWeek`.
+   * Before this the display sites ignored `mesa_member_since` entirely, so a
+   * column could show a ₱100 the final-pay compute never charged.
+   */
+  const mesaChargedThisWeek = useCallback(
+    (rowEmail: string | null | undefined, rateRow: EmployeeHourlyRateRow | undefined | null): boolean =>
+      !!rateRow?.mesa_member &&
+      !isMesaOptedOut(rowEmail, rateRow) &&
+      mesaContributesForWeek(rateRow?.mesa_member_since ?? null, hubstaffWeekEnd),
+    [isMesaOptedOut, hubstaffWeekEnd],
   );
 
   /**
@@ -9451,18 +9483,21 @@ export default function PayrollWizard({
       const rateRowForMesa = em ? ratesByEmail.get(em) : undefined;
       // Accounting-approved disbursement (not yet paid via Urgent Payments) — paid out this run.
       const mesaDisbursement = em ? (mesaDisbursements.get(em) ?? 0) : 0;
-      // A member only contributes for pay weeks on/after their enrollment date —
-      // so back weeks (and replayed periods before they joined) are NOT charged.
-      // A null enrollment date = legacy member (enrolled before we tracked it) →
-      // treated as always contributing, preserving prior behavior. `week.end` and
-      // `mesa_member_since` are both YYYY-MM-DD, so the compare is lexical.
+      // A member only contributes for pay weeks whose FRIDAY deposit date is
+      // on/after their enrollment date (`mesaContributesForWeek` — Kane's
+      // 2026-09-15 ruling, "Friday should be the deposit dates"): a Saturday
+      // enrollment starts the following week, so the ₱400 the upload writes on
+      // the Friday is never dated before the account opened. Back weeks (and
+      // replayed periods before they joined) are NOT charged. A null enrollment
+      // date = legacy member (enrolled before we tracked it) → always
+      // contributing. ONE definition shared with the writer and both estimates.
       const mesaSince = rateRowForMesa?.mesa_member_since ?? null;
       // Ledger opt-out overrides a stale true flag: someone whose MESA ledger last
       // event is an opt-out is a Non Member (per Accounting's tab) even if
       // mesa_member drifted true, and must not be charged. See isMesaOptedOut.
       const optedOut = isMesaOptedOut(r.email, rateRowForMesa);
       const enrolledForThisWeek =
-        !!rateRowForMesa?.mesa_member && !optedOut && (!mesaSince || !week?.end || mesaSince <= week.end);
+        !!rateRowForMesa?.mesa_member && !optedOut && mesaContributesForWeek(mesaSince, week?.end ?? null);
       // The ₱100 contribution is charged ONLY to enrolled members (for this week).
       // A pending disbursement does NOT imply membership: an opted-out ex-member can
       // still be paid out an approved disbursement, and they must not be re-charged
@@ -11839,7 +11874,7 @@ export default function PayrollWizard({
                             const hslRateRow = ratesByEmail.get(hslMesaEmail);
                             const empMesaDisbursement = mesaDisbursements.get(hslMesaEmail) ?? 0;
                             const empMesaDeduction =
-                              (r.initialPay != null && hslRateRow?.mesa_member && !isMesaOptedOut(r.email, hslRateRow)) ? 100 : 0;
+                              (r.initialPay != null && mesaChargedThisWeek(r.email, hslRateRow)) ? 100 : 0;
                             const totalPay = (r.initialPay ?? 0) + effectiveBonus + pabAmt + techAmt + orphanagePay - empMesaDeduction + empMesaDisbursement;
 
                             return (
@@ -12079,7 +12114,7 @@ export default function PayrollWizard({
                               // opted-out ex-member can still receive) never forces the ₱100 charge.
                               // A ledger opt-out also suppresses it even if the flag drifted true.
                               const ded =
-                                (r.initialPay != null && memailRateRow?.mesa_member && !isMesaOptedOut(r.email, memailRateRow)) ? 100 : 0;
+                                (r.initialPay != null && mesaChargedThisWeek(r.email, memailRateRow)) ? 100 : 0;
                               totalMesaDisbursement += disb;
                               totalMesaDeduction += ded;
                             }
@@ -16670,7 +16705,7 @@ export default function PayrollWizard({
                             // deduction. A ledger opt-out also suppresses it even if the flag
                             // drifted true. Mirrors the final-pay compute.
                             const empMesaDeduction =
-                              (emp.initialPay != null && empRateRow?.mesa_member && !isMesaOptedOut(emp.email, empRateRow)) ? 100 : 0;
+                              (emp.initialPay != null && mesaChargedThisWeek(emp.email, empRateRow)) ? 100 : 0;
                             // Orphanage pay — manual positive amount added on top of final pay.
                             const hasOrphanage = orphanageAmounts[emp.email] !== undefined;
                             const orphanagePay = orphanageAmounts[emp.email] ?? 0;
@@ -17087,11 +17122,11 @@ export default function PayrollWizard({
                         // and the exported XLSX got it right).
                         const deptMesaTotal = deptEmployees.reduce((sum, e) => {
                           const rr = ratesByEmail.get(normEmail(e.email) ?? '');
-                          return sum + (e.initialPay != null && rr?.mesa_member && !isMesaOptedOut(e.email, rr) ? 100 : 0);
+                          return sum + (e.initialPay != null && mesaChargedThisWeek(e.email, rr) ? 100 : 0);
                         }, 0);
                         const deptMesaCount = deptEmployees.reduce((n, e) => {
                           const rr = ratesByEmail.get(normEmail(e.email) ?? '');
-                          return n + (e.initialPay != null && rr?.mesa_member && !isMesaOptedOut(e.email, rr) ? 1 : 0);
+                          return n + (e.initialPay != null && mesaChargedThisWeek(e.email, rr) ? 1 : 0);
                         }, 0);
                         const deptBonusTotal = deptEmployees.reduce(
                           (sum, e) => sum + getEffectiveBonus(e.email),

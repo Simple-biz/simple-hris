@@ -124,3 +124,81 @@ test('a malformed date is rejected rather than silently mis-dated', () => {
     assert.throws(() => mesaDepositDateFor(bad), /YYYY-MM-DD/, `accepted ${JSON.stringify(bad)}`);
   }
 });
+
+// ── mesaContributesForWeek — Kane's 2026-09-15 ruling ─────────────────────────
+//
+// "Friday should be the deposit dates." A member contributes for a pay week
+// only when their enrollment date is on/before that week's Friday deposit
+// date. Before this, the Wizard charged ₱100 for any week ENDING on/after the
+// enrollment date while the writer dated the ₱400 on the Friday before it —
+// for a Saturday enrollment the deposit landed before the account opened and
+// the balance never showed it. Charged, nothing visible.
+
+import { mesaContributesForWeek } from './deposit-date';
+
+// 2026-09-13 (Sun) … 2026-09-19 (Sat) is the pay week; its deposit is Fri 09-18.
+const SAT_WEEK_END = '2026-09-19';
+const FRI = '2026-09-18';
+
+test('a legacy member (no enrollment date) always contributes', () => {
+  for (const weekEnd of EVERY_DATE.slice(0, 60)) {
+    assert.equal(mesaContributesForWeek(null, weekEnd), true);
+    assert.equal(mesaContributesForWeek(undefined, weekEnd), true);
+    assert.equal(mesaContributesForWeek('', weekEnd), true);
+  }
+});
+
+test('no week yet → contributing (the Wizard fallback before a file is chosen)', () => {
+  assert.equal(mesaContributesForWeek('2026-09-19', null), true);
+  assert.equal(mesaContributesForWeek('2026-09-19', undefined), true);
+});
+
+test('enrolled on or before the Friday → charged for that week', () => {
+  assert.equal(isoDayOfWeek(SAT_WEEK_END), 6);
+  assert.equal(mesaDepositDateFor(SAT_WEEK_END), FRI);
+  for (const since of ['2026-09-13', '2026-09-14', '2026-09-17', FRI, '2026-01-01']) {
+    assert.equal(mesaContributesForWeek(since, SAT_WEEK_END), true, since);
+  }
+});
+
+test('a SATURDAY enrollment is NOT charged for the week ending that day — the old rule was', () => {
+  const oldRule = SAT_WEEK_END <= SAT_WEEK_END; // since <= weekEnd
+  assert.equal(oldRule, true, 'the rule being replaced charged this week');
+  assert.equal(mesaContributesForWeek(SAT_WEEK_END, SAT_WEEK_END), false);
+});
+
+test('a Saturday enrollment starts with the FOLLOWING week', () => {
+  const nextWeekEnd = '2026-09-26';
+  assert.equal(isoDayOfWeek(nextWeekEnd), 6);
+  assert.equal(mesaContributesForWeek(SAT_WEEK_END, nextWeekEnd), true);
+  // And a Sunday enrollment, likewise, waits for the week whose Friday it precedes.
+  assert.equal(mesaContributesForWeek('2026-09-20', SAT_WEEK_END), false);
+  assert.equal(mesaContributesForWeek('2026-09-20', nextWeekEnd), true);
+});
+
+test('an HSL Mon–Sun week is judged by ITS Friday too', () => {
+  // HSL weeks end on Sunday 2026-09-20; the deposit date is still Fri 09-18.
+  const sunWeekEnd = '2026-09-20';
+  assert.equal(isoDayOfWeek(sunWeekEnd), 0);
+  assert.equal(mesaDepositDateFor(sunWeekEnd), FRI);
+  assert.equal(mesaContributesForWeek(FRI, sunWeekEnd), true);
+  assert.equal(mesaContributesForWeek('2026-09-19', sunWeekEnd), false);
+  assert.equal(mesaContributesForWeek(sunWeekEnd, sunWeekEnd), false);
+});
+
+test('THE INVARIANT: whenever a member is charged, the deposit is never dated before their enrollment', () => {
+  // This is the ruling's whole point: the ₱400 the writer dates on the Friday
+  // must fall inside the account (>= opened_on), or the balance never shows it.
+  for (const weekEnd of EVERY_DATE) {
+    const deposit = mesaDepositDateFor(weekEnd);
+    for (let back = -8; back <= 8; back++) {
+      const since = new Date(Date.parse(`${weekEnd}T00:00:00Z`) - back * 86_400_000).toISOString().slice(0, 10);
+      const charged = mesaContributesForWeek(since, weekEnd);
+      if (charged) {
+        assert.ok(deposit >= since, `since ${since} charged for week ending ${weekEnd} but deposit ${deposit} predates it`);
+      } else {
+        assert.ok(deposit < since, `since ${since} NOT charged for week ending ${weekEnd} although deposit ${deposit} is on/after it`);
+      }
+    }
+  }
+});

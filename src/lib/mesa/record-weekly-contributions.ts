@@ -7,6 +7,7 @@ import {
   indexHourlyRatesByEmail,
 } from "@/lib/supabase/employee-hourly-rates";
 import {
+  mesaContributesForWeek,
   mesaDepositDateFor,
   mesaDepositDatesToReverse,
   mesaWeekStartFor,
@@ -40,8 +41,10 @@ function parseWeekEnd(filename: string | null | undefined): string | null {
  * Hubstaff" API path (which passes weekEnd directly).
  *
  * Who gets credited mirrors the Wizard's deduction EXACTLY: a payroll row is
- * charged ₱100 when its rate row has `mesa_member = true` AND
- * `mesa_member_since <= week end` (a null enrollment date = legacy member, always
+ * charged ₱100 when its rate row has `mesa_member = true` AND the member was
+ * enrolled on/before the week's FRIDAY deposit date — `mesaContributesForWeek`,
+ * the ONE definition both sides import (Kane's 2026-09-15 ruling: "Friday
+ * should be the deposit dates"; a null enrollment date = legacy member, always
  * contributing). We resolve each Hubstaff "Email" to a rate row the same way the
  * Wizard does — `indexHourlyRatesByEmail` on Work/Personal email, no alias
  * expansion — so a deposit lands for precisely the people who were deducted.
@@ -106,8 +109,10 @@ export async function recordMesaWeeklyContributions(opts: {
   for (const [email, meta] of batch) {
     const rate = ratesByEmail.get(email);
     if (!rate || rate.mesa_member !== true) continue;
-    // Enrolled AFTER this week → not yet contributing (lexical YYYY-MM-DD compare).
-    if (rate.mesa_member_since && rate.mesa_member_since > weekEnd) continue;
+    // Enrolled after this week's Friday deposit date → not yet contributing.
+    // The deposit would be dated BEFORE the account opened and never show in
+    // the balance; the Wizard does not charge that week either (same predicate).
+    if (!mesaContributesForWeek(rate.mesa_member_since, weekEnd)) continue;
     // Ground the deposit on the member's Work Email so it groups with their
     // existing ledger history (summarizeMembers keys on lowercased email).
     const ledgerEmail = rate.work_email ?? rate.personal_email ?? email;

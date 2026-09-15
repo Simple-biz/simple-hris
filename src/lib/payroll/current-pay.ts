@@ -39,6 +39,7 @@ import {
 import { priceChangedWeek2dp } from "@/lib/payroll/prorate-mid-period";
 import { buildFxRates, USD_TO_COP_SETTINGS_KEY, type FxRates } from "@/lib/fx/currency-fx";
 import { normEmail } from "@/lib/email/norm-email";
+import { mesaContributesForWeek } from "@/lib/mesa/deposit-date";
 import { applyDeptOverrideToRawRow } from "@/lib/departments/dept-email-overrides";
 import {
   getPabMonthRange,
@@ -1197,14 +1198,15 @@ export async function computeCurrentPay(
       techDeptEligible: isDeptEligible(sysBonuses.tech, empDeptKey),
     });
 
-    // MESA: ₱100 deducted from members with a rates row, but only when this
-    // cycle's week ends on/after the member's enrollment date (lexical
-    // YYYY-MM-DD compare; null since = legacy member, always contributing).
-    // Mirrors the Payroll Wizard dispatch gate. Accumulate into the stash
-    // total so the dispatch screen can show the pool being built.
+    // MESA: ₱100 deducted from members with a rates row, but only when the
+    // member was enrolled on/before this week's FRIDAY deposit date
+    // (`mesaContributesForWeek` — Kane's 2026-09-15 ruling, ONE definition
+    // shared with the Wizard and the ledger writer; null since = legacy member,
+    // always contributing). Accumulate into the stash total so the dispatch
+    // screen can show the pool being built.
     const mesaSince = mesaSinceByEmail.has(em) ? mesaSinceByEmail.get(em) ?? null : undefined;
     const mesaEnrolledThisWeek =
-      mesaSince !== undefined && (!mesaSince || !periodEndIso || mesaSince <= periodEndIso);
+      mesaSince !== undefined && mesaContributesForWeek(mesaSince, periodEndIso);
     const mesaDeductionPHP = hasRates && mesaEnrolledThisWeek ? 100 : 0;
     if (mesaDeductionPHP > 0) stashedMesaTotalPHP += mesaDeductionPHP;
 

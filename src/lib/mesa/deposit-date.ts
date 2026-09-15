@@ -103,3 +103,37 @@ export function mesaWeekStartFor(weekEnd: string): string {
   assertIso(weekEnd, 'weekEnd');
   return isoMinusDays(weekEnd, MESA_WEEK_SPAN_DAYS);
 }
+
+/**
+ * Whether a member enrolled effective `since` contributes for the pay week
+ * ending `weekEnd` — charged the ₱100 AND credited the ₱100 + ₱300 deposit.
+ *
+ * Kane's ruling, 2026-09-15: "Friday should be the deposit dates." The week's
+ * deposit is dated its Friday (`mesaDepositDateFor`), and a deposit can only be
+ * seen by an account whose `opened_on` is on or before it — every balance is
+ * the ledger sliced to events >= opened_on, so a deposit dated before the
+ * opening is money charged and never shown. A member therefore contributes
+ * for a week exactly when their enrollment date is ON OR BEFORE that week's
+ * Friday; a Saturday (or later) enrollment starts with the FOLLOWING week.
+ *
+ * This replaces `since <= weekEnd`, which charged the join week and then wrote
+ * a deposit the account could not see (the 2026-08-28 backfill already used
+ * "first Friday on or after the open" — this makes the live rule agree).
+ *
+ * `since` null/undefined = legacy member (enrolled before the date was
+ * tracked) → always contributing. `weekEnd` null = the caller has no week yet
+ * → contributing, the Wizard's pre-existing fallback; the ledger writer always
+ * has a week.
+ *
+ * ONE definition, imported by the Wizard (every deduction site), the employee
+ * live estimate, the monthly estimate and the ledger writer, so the ₱100 and
+ * the ₱400 can never disagree about which week is a member's first.
+ */
+export function mesaContributesForWeek(
+  since: string | null | undefined,
+  weekEnd: string | null | undefined,
+): boolean {
+  if (!since) return true;
+  if (!weekEnd) return true;
+  return since <= mesaDepositDateFor(weekEnd);
+}

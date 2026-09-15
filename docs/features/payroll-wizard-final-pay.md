@@ -598,6 +598,19 @@ where lower("Work Email") in ('someone@simple.biz')
 This only flips the payroll flag; it does **not** write an opt-out record in the `mesa_requests`
 table (the opt-in/opt-out/disbursement workflow). Handle that separately if needed.
 
+**Which week is a member's first (2026-09-15 ruling).** The ₱100 is charged for a pay week only
+when `mesa_member_since` is on/before that week's **Friday deposit date** — `mesaContributesForWeek`
+in `src/lib/mesa/deposit-date.ts`, Kane: *"Friday should be the deposit dates."* A Saturday or Sunday
+enrollment starts the following week. It is ONE predicate for the final-pay compute, the five
+display recomputes (Additions per-row + dept summary, HSL per-row + footer, Validation rows — which
+previously ignored the enrollment date), `current-pay.ts`, `member-monthly-pay.ts` and the ledger
+writer, so the ₱100 charged and the ₱400 deposited always name the same first week.
+
+**Forward-only.** A rule change here never rewrites a snapshotted week (Kane, same day — snapshots
+carry Payroll Notes adjustments). A replay has Lock In disabled and never publishes `final_pay`; every
+stub reader takes the snapshot's `mesaDeduction` when one exists. See
+[mesa.md](mesa.md) § "Rule changes are forward-only" for the per-carrier proof and the two logged gaps.
+
 ## 7. Contractors step — Actions column gating
 
 Step 5 (`Contractors`, id 6 before the 2026-08-28 merge) lists pending contractor

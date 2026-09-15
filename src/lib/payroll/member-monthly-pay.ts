@@ -79,6 +79,7 @@ import {
 import { buildFxRates, USD_TO_COP_SETTINGS_KEY } from '@/lib/fx/currency-fx';
 import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
+import { mesaContributesForWeek } from '@/lib/mesa/deposit-date';
 
 const NON_DATE_COLS = new Set([
   'id',
@@ -870,11 +871,13 @@ export async function computeMemberMonthlyPay(args: {
 
     // MESA deduction: ₱100 per week, applied only to weeks where the employee
     // has rates AND actually worked some in-month hours AND was already
-    // enrolled — the week must END on/after `mesa_member_since` (both are
-    // YYYY-MM-DD, so the compare is lexical; null = legacy member, always
-    // contributing). Mirrors the Payroll Wizard dispatch gate so the employee
-    // sees the same contributions Accounting actually collects.
-    const enrolledForThisWeek = mesaMember && (!mesaSince || mesaSince <= fmtIso(weekEnd));
+    // enrolled on/before the week's FRIDAY deposit date
+    // (`mesaContributesForWeek` — Kane's 2026-09-15 ruling; null = legacy
+    // member, always contributing). ONE definition shared with the Payroll
+    // Wizard and the ledger writer, so the employee sees the same
+    // contributions Accounting actually collects. `weekEnd` is Sunday for HSL
+    // and Saturday otherwise; the predicate finds that week's Friday either way.
+    const enrolledForThisWeek = mesaMember && mesaContributesForWeek(mesaSince, fmtIso(weekEnd));
     const mesaDeductionPHP =
       enrolledForThisWeek && hasRates && weekTotalSec > 0 ? MESA_DEDUCTION_PHP : 0;
 
