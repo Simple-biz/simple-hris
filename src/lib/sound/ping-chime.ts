@@ -184,7 +184,7 @@ const STAGE_PREPPED_FADE_TAIL = 1.2;
 // CEILING — a held run fades here even if the installed clip runs for minutes.
 // A clip SHORTER than this LOOPS up to the boundary, so re-trimming the asset
 // can never quietly drop the cue below the promised floor.
-const STAGE_PREPPED_RUN_SECONDS = 12;
+export const STAGE_PREPPED_RUN_SECONDS = 12;
 
 /**
  * Decoded once and cached; a failed fetch/decode resolves null (silent no-op)
@@ -367,6 +367,95 @@ export function stopStagePrepped(fadeMs = 450): void {
   stagePreppedHeld = false;
   stagePreppedGen += 1;
   killEngine(Math.max(0, fadeMs) / 1000);
+}
+
+/* ── Peer side: the Start Processing broadcast ────────────────────────────
+ * When a clerk starts processing, every OTHER open Payroll Wizard / Payment
+ * Dispatch plays the same cue (Kane 2026-09-15). Those viewers clicked nothing,
+ * so their AudioContext may be suspended and the browser will refuse audio.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/** The armed one-shot unlock, if the peer’s browser refused the cue. */
+let peerUnlock: (() => void) | null = null;
+
+function disarmPeerUnlock(): void {
+  if (!peerUnlock || typeof window === 'undefined') return;
+  window.removeEventListener('pointerdown', peerUnlock);
+  window.removeEventListener('keydown', peerUnlock);
+  peerUnlock = null;
+}
+
+/**
+ * Play the cue for someone who did NOT press the button.
+ *
+ * Resolves `true` when the sound is audible right now — which it is for anyone
+ * who has clicked anywhere on the page since it loaded, i.e. nearly every real
+ * spectator. Kane 2026-09-15: *"this should sound right away."*
+ *
+ * Resolves `false` when the browser refused it, having armed a ONE-SHOT unlock
+ * on the next pointer/key. The caller must then show the affordance ("Tap
+ * anywhere for sound") — a silent modal with no explanation is the failure this
+ * return value exists to prevent.
+ *
+ * This is NOT a weakening of the never-`withCtx`-queued rule. `withCtx` parks a
+ * cue on a module global indefinitely and fires it on the next unrelated click
+ * anywhere in the app. This arm is owned by an open modal, is advertised on
+ * screen, and MUST be torn down by `stopStagePreppedForPeer()` when that modal
+ * closes — which is what keeps it an offer rather than an ambush. Precedent:
+ * `src/lib/sound/carla-song.ts`.
+ */
+export async function playStagePreppedForPeer(): Promise<boolean> {
+  const c = getCtx();
+  if (!c) return false;
+  // Never leave two arms live: a second broadcast supersedes the first.
+  disarmPeerUnlock();
+
+  if (c.state !== 'running') {
+    try {
+      await c.resume();
+    } catch {
+      /* autoplay policy refused — fall through to the armed path */
+    }
+  }
+
+  const start = () => {
+    playStagePrepped();
+    // A peer has no confirm step, so the run is held immediately. It is still
+    // bounded at STAGE_PREPPED_RUN_SECONDS like every other run, and
+    // `stopStagePreppedForPeer()` can always cut it.
+    holdStagePrepped();
+  };
+
+  if (c.state === 'running') {
+    start();
+    return true;
+  }
+
+  const fire = () => {
+    disarmPeerUnlock();
+    start();
+  };
+  peerUnlock = fire;
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pointerdown', fire);
+    window.addEventListener('keydown', fire);
+  }
+  return false;
+}
+
+/**
+ * Stop the peer cue and disarm any pending unlock — call on dismiss AND on
+ * unmount. Dismissing the modal stops the song, the same contract the
+ * operator’s Cancel already has.
+ *
+ * Clears the hold first: a peer run is held from the moment it starts, so a
+ * plain `stopStagePrepped()` would be a no-op and the song would play on behind
+ * a dismissed modal.
+ */
+export function stopStagePreppedForPeer(): void {
+  disarmPeerUnlock();
+  stagePreppedHeld = false;
+  stopStagePrepped();
 }
 
 /** Sender cue: one soft, short blip — quiet so it never nags. */

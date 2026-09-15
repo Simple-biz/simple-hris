@@ -314,6 +314,8 @@ import { HSL_DEPT_KEYS, HSL_DEPTS, calcManagerBonus, hslDeptAutoDispatches, type
 import WizardCursorOverlay, { type WizardCursorOverlayHandle } from '@/components/payroll/WizardCursorOverlay';
 import LockToggleConfirmDialog, { deriveFirstName } from '@/components/payroll/LockToggleConfirmDialog';
 import { holdStagePrepped, playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
+import { useStartProcessingBroadcast } from '@/hooks/useStartProcessingBroadcast';
+import StartProcessingBroadcastModal from '@/components/payroll/StartProcessingBroadcastModal';
 import { payrollNotesWeekStart, weekRangeLabel } from '@/lib/payroll/manila-week';
 import {
   cycleFxSettingKey,
@@ -2163,6 +2165,15 @@ export default function PayrollWizard({
   }, [driverEmail, lockState.locked]);
   const isSpectator = canSpectate && observing;
   const driverLabel = driverEmail ? driverEmail.split('@')[0] : 'operator';
+
+  // Tell every OTHER open wizard / dispatch screen that processing is starting,
+  // so they pop the modal and hear the same cue (Kane 2026-09-15). Its own
+  // topic — never the follow channel below — see start-processing-broadcast.ts.
+  const {
+    announceStart,
+    announcement: startAnnouncement,
+    dismiss: dismissStartAnnouncement,
+  } = useStartProcessingBroadcast({ selfEmail: sessionEmail, surface: 'wizard' });
 
   const { broadcastLockAcquired } = useWizardFollow({
     selfEmail: sessionEmail,
@@ -11404,6 +11415,9 @@ export default function PayrollWizard({
     // seconds"). Cancelling instead of confirming never reaches here, which is
     // exactly how a dismissed modal still ends in silence. Start only.
     if (goingLocked) holdStagePrepped();
+    // Everyone else with the wizard or dispatch open gets the modal + the cue.
+    // START only — stopping processing stays silent on every screen.
+    if (goingLocked) announceStart(lockFirstName);
     // Minimum on-screen time for the "Preparing Dispatch…" scene so it plays
     // gracefully instead of flashing by when the optimistic POST returns fast.
     const minShow = new Promise((r) => setTimeout(r, 1600));
@@ -12988,6 +13002,11 @@ export default function PayrollWizard({
 
                 {/* Confirm toggle dialog — the exact Payment Dispatch modal
                     (confirm copy + "Preparing Dispatch" scene + sound). */}
+                <StartProcessingBroadcastModal
+                  announcement={startAnnouncement}
+                  onDismiss={dismissStartAnnouncement}
+                />
+
                 <LockToggleConfirmDialog
                   open={confirmingLockToggle}
                   locked={lockState.locked}

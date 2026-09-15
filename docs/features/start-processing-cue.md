@@ -71,7 +71,61 @@ To swap the song: replace `public/sounds/jellyfish-jam.mp3`, or change
 a reference card in `references/sound-tester/sound-tester.html`;
 `public/sounds/truckstart.mp3` is retired but left on disk.
 
-## Not covered here
+## The broadcast — everyone else hears it too
 
-Broadcasting this modal to every Payroll Wizard viewer (Kane, 2026-09-15) is a
-**new** surface and has not been built. It goes through `blueprint`, not this doc.
+Shipped 2026-09-15, same day, after a `blueprint` brief. When a clerk confirms
+Start, every **other** open Payroll Wizard and Payment Dispatch pops
+`StartProcessingBroadcastModal` and plays the same cue.
+
+| Piece | File |
+| --- | --- |
+| Topic, payload, staleness rule (pure + tested) | `src/lib/payroll/start-processing-broadcast.ts` |
+| Subscription + send | `src/hooks/useStartProcessingBroadcast.ts` |
+| The modal | `src/components/payroll/StartProcessingBroadcastModal.tsx` |
+| Peer cue | `playStagePreppedForPeer` / `stopStagePreppedForPeer` in `ping-chime.ts` |
+
+10. **Its OWN topic, `payroll-start-processing`.** Never `payroll-wizard-follow`,
+    `payment-dispatch-sync` or `payment-dispatch-paid`: realtime-js `channel()`
+    returns the EXISTING channel for a repeated topic, so sharing one would let
+    this hook's `removeChannel` tear down the wizard's follow mode or the
+    dispatch queue's live sync. **Both surfaces share this one topic
+    deliberately** — one cue for one action, the same ruling as invariant 1.
+    A test pins the topic against all three.
+11. **Broadcast, never `postgres_changes`** — the browser client is `anon` and
+    the lock tables are RLS-protected, so row events never arrive
+    ([[supabase-realtime-anon-rls-dead]]).
+12. **A late arrival never hears it** (Kane 2026-09-15). Broadcast is not
+    replayed, so the ordinary late joiner is handled by the transport — but a
+    reconnecting or backgrounded tab *can* be handed a message after the fact,
+    so `shouldAnnounceStart` also drops anything older than
+    `START_CUE_WINDOW_MS`, judged at RECEIVE time. There is deliberately **no
+    replay from lock state**: that would let the song fire on a page load, a
+    failure class nobody asked for.
+13. **`START_CUE_WINDOW_MS` must equal `STAGE_PREPPED_RUN_SECONDS`.** It is both
+    the modal's auto-dismiss deadline and the staleness cutoff; drift leaves a
+    peer in front of a silent modal or cuts the tail off the song. A test pins
+    them together — do not change one alone.
+14. **The operator never sees it.** The channel is `broadcast: { self: false }`,
+    so they keep exactly the behaviour above; `shouldAnnounceStart` re-checks the
+    sender anyway, because a second tab of the same person is a different client
+    that `self: false` does not cover.
+15. **Dismissible, and dismissing STOPS the song** (Kane, Q3) — the same contract
+    Cancel already has. It also auto-dismisses at the window, so it cannot sit on
+    top of the oversee/follow mirror spectators are there to watch.
+16. **A peer's audio is attempted IMMEDIATELY** (Kane: *"this should sound right
+    away"*), which works for anyone who has clicked anywhere on the page since it
+    loaded. A tab that has never been touched is refused by the browser, and only
+    then does the modal show "Tap anywhere for sound", arming a **scoped** one-shot
+    unlock. This is not a hole in invariant 6: `withCtx` parks a cue on a module
+    global indefinitely and fires it on the next unrelated click anywhere in the
+    app, whereas this arm is owned by an open modal, advertised on screen, and torn
+    down by `stopStagePreppedForPeer()` on dismiss **and** on unmount. Leaving that
+    teardown to the dismiss handler alone would strand an armed listener — which is
+    exactly the ambush invariant 6 exists to prevent. Precedent: `carla-song.ts`.
+17. **Payload off the wire is untrusted.** `parseStartPayload` returns `null` for
+    anything malformed and nothing is rendered from an unparsed message.
+18. **START only, both surfaces.** Stopping processing is silent on every screen.
+
+**Who hears it = who has the surface OPEN** (Kane, Q1). This is a broadcast, not a
+notification: it reaches live pages, not people. Reaching everyone who *could* open
+the wizard would need a notification type and a DDL, and is a different feature.

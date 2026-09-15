@@ -35,6 +35,8 @@ import {
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { holdStagePrepped, playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
+import { useStartProcessingBroadcast } from '@/hooks/useStartProcessingBroadcast';
+import StartProcessingBroadcastModal from '@/components/payroll/StartProcessingBroadcastModal';
 import { announceDispatchPaid } from '@/hooks/useDispatchPaidToasts';
 import {
   PAID_TOAST_REMOTE_EVENT,
@@ -230,6 +232,17 @@ export default function PayrollDispatch() {
     session?.user?.name,
     session?.user?.email,
   ]);
+  // Tell every OTHER open dispatch / wizard screen that processing is starting,
+  // so they pop the modal and hear the same cue (Kane 2026-09-15). Its own
+  // topic — never `payment-dispatch-sync` or `payment-dispatch-paid`, which
+  // realtime-js would hand back as the SAME channel — see
+  // src/lib/payroll/start-processing-broadcast.ts.
+  const {
+    announceStart,
+    announcement: startAnnouncement,
+    dismiss: dismissStartAnnouncement,
+  } = useStartProcessingBroadcast({ selfEmail: session?.user?.email, surface: 'dispatch' });
+
   const [activeTab, setActiveTab] = useState<TabId>('all');
   // Which pay week the dispatch screen operates on. `null` = the live
   // (`is_current`) cycle — the default. The CSV selector in the header sets a
@@ -1402,6 +1415,9 @@ export default function PayrollDispatch() {
     // its full run; cancelling never reaches here, so a dismissed modal still
     // ends in silence. Start only. Same contract as the Payroll Wizard.
     if (goingLocked) holdStagePrepped();
+    // Everyone else with dispatch or the wizard open gets the modal + the cue.
+    // START only — stopping processing stays silent on every screen.
+    if (goingLocked) announceStart(firstName);
     // Minimum on-screen time for the "Preparing Dispatch…" scene so it plays
     // gracefully instead of flashing by when the optimistic POST returns fast.
     const minShow = new Promise((r) => setTimeout(r, 1600));
@@ -2036,6 +2052,10 @@ export default function PayrollDispatch() {
         name={viewInvoice?.name}
         invoiceNumber={viewInvoice?.invoiceNumber}
         onClose={() => setViewInvoice(null)}
+      />
+      <StartProcessingBroadcastModal
+        announcement={startAnnouncement}
+        onDismiss={dismissStartAnnouncement}
       />
       <LockToggleConfirmDialog
         open={confirmingLockToggle}
