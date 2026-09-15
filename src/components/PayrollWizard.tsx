@@ -3925,22 +3925,27 @@ export default function PayrollWizard({
    * is deliberately NOT influenced by this list.
    */
   const offboardedRosterSeqRef = useRef(0);
-  useEffect(() => {
+  /** Re-runnable so a Set-rate save beside this tab (RATES_CHANGED_EVENT) can
+   *  re-pull the overlay: since 2026-09-15 a leaver's department follows the
+   *  structure that dialog writes (leaver-pay-department.ts), so the roster
+   *  must move with the rates or Step 2 keeps the old cohort. */
+  const loadOffboardedRoster = React.useCallback(async () => {
     const seq = ++offboardedRosterSeqRef.current;
     const qs = calcSourceFile ? `?source_file=${encodeURIComponent(calcSourceFile)}` : '';
-    (async () => {
-      try {
-        const res = await fetch(`/api/payroll-wizard/offboarded-roster${qs}`, { cache: 'no-store' });
-        const json = (await res.json()) as { rows?: OffboardedRosterRow[] };
-        // A response for a cycle the clerk has already switched away from must
-        // never land — it would cohort this week's people off another week's list.
-        if (seq !== offboardedRosterSeqRef.current) return;
-        setOffboardedRoster(res.ok ? json.rows ?? [] : []);
-      } catch {
-        if (seq === offboardedRosterSeqRef.current) setOffboardedRoster([]);
-      }
-    })();
+    try {
+      const res = await fetch(`/api/payroll-wizard/offboarded-roster${qs}`, { cache: 'no-store' });
+      const json = (await res.json()) as { rows?: OffboardedRosterRow[] };
+      // A response for a cycle the clerk has already switched away from must
+      // never land — it would cohort this week's people off another week's list.
+      if (seq !== offboardedRosterSeqRef.current) return;
+      setOffboardedRoster(res.ok ? json.rows ?? [] : []);
+    } catch {
+      if (seq === offboardedRosterSeqRef.current) setOffboardedRoster([]);
+    }
   }, [calcSourceFile]);
+  useEffect(() => {
+    void loadOffboardedRoster();
+  }, [loadOffboardedRoster]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4272,10 +4277,13 @@ export default function PayrollWizard({
       void loadPayStructures();
       void loadEmployeeHourlyRates();
       void loadRateHistory();
+      // A leaver's DEPARTMENT follows their Set-rate structure (2026-09-15), and
+      // the overlay is where the wizard reads it.
+      void loadOffboardedRoster();
     };
     window.addEventListener(RATES_CHANGED_EVENT, onRatesChanged);
     return () => window.removeEventListener(RATES_CHANGED_EVENT, onRatesChanged);
-  }, [loadPayStructures, loadEmployeeHourlyRates, loadRateHistory]);
+  }, [loadPayStructures, loadEmployeeHourlyRates, loadRateHistory, loadOffboardedRoster]);
 
   // Into-HSL transfer effective dates — day-scopes the HSL Weekend Hours
   // treatment in a transfer week (resolveHslWeekScope): the dept label moves
@@ -10033,6 +10041,13 @@ export default function PayrollWizard({
       // was effective inside this pay week; older snapshots omit the field and
       // the staged block stays untouched.
       departmentTransfer: DepartmentTransferBlockRaw | null;
+      // The Department line as this wizard resolved it (2026-09-15). Rides the
+      // snapshot so an UNPAID stub follows a leaver's Set-rate department without
+      // a re-lock — paystub-fresh merges it under the transfer block's tri-state
+      // (undefined = older snapshot, keep the staged label). Kane: "make sure the
+      // paystub department will change."
+      departmentKey: string | null;
+      departmentName: string | null;
       // Approved time-adjustment delta AS PAID (2026-09-10) — the pesos are
       // already inside `initial`; this only explains them. The Reports replay
       // overlay reads it so a replayed export's Regular + OT + Time Adj. Pay =
@@ -10074,6 +10089,8 @@ export default function PayrollWizard({
         proration: r.proration,
         hoganSheet: r.hogan_sheet,
         departmentTransfer: r.department_transfer,
+        departmentKey: r.department_key,
+        departmentName: r.department_name,
         timeAdjustmentHours: r.time_adjustment.hours,
         timeAdjustmentPay: r.time_adjustment.pay_php,
         timeAdjustmentDays: r.time_adjustment.days,

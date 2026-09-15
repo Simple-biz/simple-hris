@@ -22,10 +22,20 @@
  */
 export interface OffboardedRosterRow {
   name: string;
-  /** Master-list Department as of the CURRENT sheet upload (see the
-   *  current-upload promotion in recently-offboarded.ts — a retired duplicate
-   *  row must never describe someone the sheet still carries). */
+  /** The leaver's PAY department. Since 2026-09-15 (Kane: *"make sure the
+   *  paystub department will change"*) this is `leaverPayDepartment()`: the
+   *  master-list cell as of the CURRENT sheet upload (see the current-upload
+   *  promotion in recently-offboarded.ts), OVERRIDDEN by the department the
+   *  leaver's effective individual Payment Catalog structure files under when
+   *  that structure was touched on/after the departure and names a different
+   *  department — the Offboarded tab's "Set rate" is the only surface that can
+   *  still move a leaver, and its Department picker writes that key. */
   department: string | null;
+  /** Where `department` came from: `master` = the master cell, `catalog` = the
+   *  individual structure's department. Optional so pre-rule readers compile. */
+  department_source?: 'master' | 'catalog';
+  /** The master-list cell verbatim, for transparency when it was overridden. */
+  master_department?: string | null;
   work_email: string | null;
   personal_email: string | null;
   alternate_work_email: string | null;

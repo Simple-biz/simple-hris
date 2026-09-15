@@ -2549,6 +2549,13 @@ function SetRateDialog({
                 Smith Law.
               </p>
             )}
+            {current !== undefined && (
+              <p className="text-[10px] text-amber-700 dark:text-amber-300">
+                For someone who has left, this is also the department their final pay is
+                filed under: the paystub&apos;s Department line and the pay rules (HSL
+                weekend premium, OT) follow it.
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="grid gap-1">
@@ -4498,6 +4505,14 @@ function OffboardedGlance({
             department={r.department}
             right={
               <div className="flex shrink-0 items-center gap-1.5">
+                {r.departmentSource === "catalog" && (
+                  <span
+                    className="shrink-0 rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300"
+                    title={`Department set from their pay rate — the master list says ${r.masterDepartment ?? "nothing"}.`}
+                  >
+                    Dept via Set rate
+                  </span>
+                )}
                 {r.offBoardedAt && (
                   <span
                     className="shrink-0 rounded-full border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-400"

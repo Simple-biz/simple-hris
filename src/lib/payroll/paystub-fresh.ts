@@ -473,6 +473,26 @@ export function mergeSnapshotIntoStaged(
   const transferChanged =
     hasTransferField && !sameTransferBlock(oldTransfer, entry.departmentTransfer ?? null);
 
+  // ── The Department line itself (snapshots since 2026-09-15) ──
+  // A leaver's department follows the structure the Offboarded "Set rate"
+  // writes (leaver-pay-department.ts), and the label is what the statement
+  // PRINTS — so it rides the snapshot under the transfer block's tri-state:
+  // undefined = an older snapshot that cannot speak for it, keep the staged
+  // label; a string or null = the wizard's current resolution, replace. It
+  // counts into `changed` on its own: a department-only move is exactly the
+  // case Kane asked for ("make sure the paystub department will change"), and
+  // it moves no money so nothing else would flag it.
+  const hasDeptField = entry.departmentName !== undefined;
+  const oldDeptName = typeof p.department_name === "string" ? p.department_name : null;
+  const oldDeptKey = typeof p.department_key === "string" ? p.department_key : null;
+  const nextDeptName = !hasDeptField ? oldDeptName : (entry.departmentName ?? null);
+  const nextDeptKey = !hasDeptField
+    ? oldDeptKey
+    : entry.departmentKey === undefined
+      ? oldDeptKey
+      : (entry.departmentKey ?? null);
+  const deptChanged = hasDeptField && (nextDeptName !== oldDeptName || nextDeptKey !== oldDeptKey);
+
   // Field-by-field change detection (NOT JSON.stringify — jsonb round-trips
   // reorder keys, which would flag every merge as a change). fx_rate is part of
   // the statement too (the USD line), so an fx-only snapshot update must merge.
@@ -484,6 +504,7 @@ export function mergeSnapshotIntoStaged(
     prorationChanged ||
     hoganChanged ||
     transferChanged ||
+    deptChanged ||
     (snapFx > 0 && !sameAmount(oldPeriod.fx_rate, snapFx)) ||
     (nextNote ?? null) !== ((typeof p.adjustment_note === "string" ? p.adjustment_note : null) ?? null);
   if (!changed) return base;
@@ -501,6 +522,8 @@ export function mergeSnapshotIntoStaged(
     ...(hasHoganField ? { hogan_sheet: nextHogan } : {}),
     // Same rule for the mid-week transfer block (see above).
     ...(hasTransferField ? { department_transfer: nextTransfer } : {}),
+    // The Department line follows the wizard's current resolution (see above).
+    ...(hasDeptField ? { department_name: nextDeptName, department_key: nextDeptKey } : {}),
     rates_php: nextRates,
     pay_php: nextPay,
     adjustment_note: nextNote,

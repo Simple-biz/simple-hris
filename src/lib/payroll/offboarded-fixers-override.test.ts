@@ -29,6 +29,8 @@ const WIZARD = read('src/components/PayrollWizard.tsx');
 const CANDIDATES = read('src/lib/payroll/offboarded-payroll-candidates.ts');
 const PEOPLE_OFFBOARDED = read('src/components/people/PeopleOffboarded.tsx');
 const BANK_CURRENT = read('src/lib/payroll/offboarded-bank-current.ts');
+const ROSTER_ROUTE = read('app/api/payroll-wizard/offboarded-roster/route.ts');
+const FRESH = read('src/lib/payroll/paystub-fresh.ts');
 
 function sliceFrom(src: string, marker: string, len: number): string {
   const i = src.indexOf(marker);
@@ -125,4 +127,32 @@ test('the Offboarded payload is masked on the server and keys Set rate to the ho
 test('both dialogs show what is currently on file', () => {
   assert.match(FAB, /data-testid="setrate-current"/);
   assert.match(BANK_DIALOG, /data-testid="setbank-current"/);
+});
+
+// ── 7: a leaver's DEPARTMENT follows the Set-rate structure, everywhere it is read ──
+
+test('both readers of a leaver\'s department call the ONE pure rule', () => {
+  assert.match(ROSTER_ROUTE, /leaverPayDepartment\(\{/);
+  assert.match(ROSTER_ROUTE, /pickLeaverStructure\(catalogIndex, \[/);
+  assert.match(ROSTER_ROUTE, /department_source: dept\.source,/);
+  assert.match(CANDIDATES, /leaverPayDepartment\(\{/);
+  assert.match(CANDIDATES, /pickLeaverStructure\(rateCtx\.catalogIndex, aliases\)/);
+  assert.match(CANDIDATES, /departmentSource: dept\.source,/);
+});
+
+test('a Set-rate save also re-pulls the final-pay overlay, and the snapshot carries the Department line', () => {
+  const listener = sliceFrom(WIZARD, 'const onRatesChanged = () => {', 600);
+  assert.match(listener, /loadOffboardedRoster\(\)/);
+  assert.match(WIZARD, /departmentKey: r\.department_key,\s*\n\s*departmentName: r\.department_name,/);
+});
+
+test('the paystub merge applies the Department line under the tri-state and counts it as a change', () => {
+  assert.match(FRESH, /const hasDeptField = entry\.departmentName !== undefined;/);
+  assert.match(FRESH, /deptChanged \|\|/);
+  assert.match(FRESH, /\.\.\.\(hasDeptField \? \{ department_name: nextDeptName, department_key: nextDeptKey \} : \{\}\)/);
+});
+
+test('the Offboarded Set rate dialog says the department drives a leaver\'s paystub', () => {
+  assert.match(FAB, /this is also the department their final pay is\s*\n?\s*filed under/);
+  assert.match(FAB, /Dept via Set rate/);
 });

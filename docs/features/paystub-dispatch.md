@@ -739,6 +739,30 @@ no label — the same precedent the weekend block set for pre-feature weeks. Tha
 **today's** department onto every reconstructed week, so adding a disclosure on top of an already
 ahistorical Department line would explain the wrong thing.
 
+## A leaver's Department line follows "Set rate", and the line rides the snapshot — 2026-09-15
+
+Kane: *"Please make sure that the paystub department will change please."* Context and the
+rule itself live in [payroll-readiness.md](./payroll-readiness.md) § *Offboarded tab — complete
+override* (`src/lib/roster/leaver-pay-department.ts`). What changed HERE:
+
+- **`department_name` / `department_key` now travel with the `final_pay` snapshot**
+  (`WizardFinalPayEntry.departmentName` / `departmentKey`, written by every publish since
+  2026-09-15) and `mergeSnapshotIntoStaged` applies them to an UNPAID staged payload under
+  the same tri-state as the transfer block: `undefined` (older snapshot) keeps the staged
+  label; a string or `null` replaces it. A department-only move **counts as a change on its
+  own** — like the transfer block it explains no money, so nothing else would flag it.
+- Consequence: the Accounting stub viewer, the Employee Dashboard modal and the emailed
+  statement all print the wizard's CURRENT Department line for an unpaid row the moment a
+  wizard tab republishes — no re-lock needed for the label (money still needs the snapshot
+  to qualify or a re-lock, exactly as before). **Paid stubs stay frozen** as-paid, so a
+  department fixed after payment never rewrites a statement already in an inbox.
+- The wizard's own Step-8 preview and `PayStubStatement` were already reading
+  `department_name`; nothing changed in the renderers. Tests: `paystub-fresh.test.ts`
+  (three department cases) and `offboarded-fixers-override.test.ts`.
+- Not covered, on purpose (same precedent as the transfer label): the employee route's
+  `computeCurrentPay` **reconstruction** path stamps today's rates-row department onto a
+  reconstructed week and does not read the leaver rule.
+
 ## Exported stubs name the CURRENT department — 2026-08-26
 
 Kane: *"when someone exports their PDF Paystubs whether approved by accounting or not it should

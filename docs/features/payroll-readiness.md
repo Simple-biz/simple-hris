@@ -32,6 +32,7 @@ Every row below has its own section further down — this is the index, so a
 | 2026-08-18 | Pane infrastructure, shared with its sibling panes: **cached-then-revalidated** paints, a per-pane **"Last data pull"** stamp, and a Realtime **signal dot** (emerald = live, amber = polling). The read-only **Rates** glance was removed the same day. Owned by [payroll-wizard-notes.md](../features/payroll-wizard-notes.md). |
 | 2026-09-01 | No Pay Rate **"Ignore"** — the rate twin of the Bank Info Temporary Exemption: acknowledge one person's missing rate for the week in view only. |
 | 2026-09-11 | **"Set rate" gains an "Effective from" date** — defaults to today, no `min`, sent verbatim, blank REFUSES. Closes the class where a leaver's final-pay rate could only ever be written effective-today and so never reached the week being paid. |
+| 2026-09-15 | **A leaver's DEPARTMENT follows "Set rate"** (Kane: *"make sure the paystub department will change"*) — `leaverPayDepartment`, read by the wizard's final-pay overlay and this tab; the Department line rides the `final_pay` snapshot so an unpaid stub follows without a re-lock. |
 | 2026-09-15 | **Offboarded tab: "Set rate" and "Set bank" are a COMPLETE OVERRIDE** (Kane: *"it's not sticking at all"*). Both dialogs show what is on file; Set rate leaves exactly ONE individual structure per person, supersedes history from the chosen date, keys to the hours-carrying email, and tells the open wizard to re-pull its rates; Set bank (Offboarded only) unlocks the rail and saves through the Accounting direct-edit route. See "Offboarded tab — complete override" below. |
 
 The **Wizard Setup checklist** (2026-08-03) is a separate, later addition: a
@@ -63,6 +64,7 @@ week's readiness at all.
 | Bank-fix write path — Offboarded tab (override) | `PATCH app/api/people/[email]/banking/route.ts` (Accounting direct-edit; accepts `source`) — patch built by `src/lib/employee/bank-override-patch.ts` (+ `.test.ts`) |
 | Offboarded tab payload (payable identity, current rate, MASKED current bank) | `src/lib/payroll/offboarded-payroll-candidates.ts` · `src/lib/payroll/offboarded-bank-current.ts` (+ `.test.ts`) |
 | Offboarded fixers — wiring guards | `src/lib/payroll/offboarded-fixers-override.test.ts` |
+| A leaver's pay department (one rule for the overlay AND this tab) | `src/lib/roster/leaver-pay-department.ts` (+ `.test.ts`) · `app/api/payroll-wizard/offboarded-roster/route.ts` |
 | KPI mark-ready/lock audit | `app/api/hsl-bonus/period-status/route.ts` |
 | CLI verifier (runs the REAL fn) | `scripts/verify-readiness.mts` + `scripts/server-only-stub.ts` + `tsconfig.readiness-verify.json` |
 | Bank-dimension reconciliation audit | `scripts/audit-readiness-bank-score.mjs` (local-only diagnostic) |
@@ -798,15 +800,33 @@ rate, rail and destination. What the evidence showed (read-only probes, 09-15):
   `update-employee-ids` approval intercept is untouched; no mirror ever writes a
   receiving column the clerk did not type.
 
-**Still open (not built, decided by Kane):** a leaver's **department** has no
-owner. `michaelsy@` is the case — master says Lead Gen (he fell off the sheet),
-his rates row and 265 rate are Hogan's, he was staged as Lead Gen (no weekend
-premium), and his three identical Hogan saves were the department "not sticking".
-Set rate has no department write (`markm-hsl-transfer-never-filed`). Two shapes,
-neither chosen: (a) a leaver's pay department = the department their individual
-structure files under — data Set rate already writes, no new store, but it changes
-HSL weekend/OT classification for leavers; (b) an HRIS transfer path for
-off-boarded rows. Recorded in the 2026-09-14 session log § Open items.
+**A leaver's DEPARTMENT follows "Set rate" — Kane, 2026-09-15: *"Please make sure that
+the paystub department will change please."*** One pure rule,
+`src/lib/roster/leaver-pay-department.ts` (`leaverPayDepartment`, + tests), read by BOTH
+consumers of a leaver's department — the wizard's final-pay roster overlay
+(`GET /api/payroll-wizard/offboarded-roster`) and this tab's payload — so they can never
+disagree. For someone off the active roster, the department their EFFECTIVE individual
+Payment Catalog structure files under (the one Set rate writes; walked Hubstaff-first like the
+rate itself) overrides the master-list cell, with three guards, each closing a way the rule
+could relabel someone Accounting never meant to move: (1) no individual structure → master;
+(2) a structure last touched BEFORE the departure is history, not a final-pay decision —
+the 2026-08-17 HSL bulk rate must not undo a later, properly-filed HRIS move to Lead Gen
+(undated departures have no such line and the structure speaks); (3) the same department
+under another spelling keeps the MASTER cell — an `hsl:filing_specialist` cell and a
+`hogan_smith_law` structure are one family, and the sub-team is the more specific truth.
+Rows carry `departmentSource` (`master` | `catalog`) and `masterDepartment`; the tab shows a
+sky **"Dept via Set rate"** chip when overridden, and the Set rate dialog says the pick also
+sets the paystub department. On the wizard side the Set-rate event now also re-pulls the
+overlay, so Step 2 re-cohorts the leaver at once, and the Department line **rides the
+`final_pay` snapshot** (`departmentKey` / `departmentName`, merged by `paystub-fresh.ts` under
+the transfer block's tri-state and counted as a change on its own) so an UNPAID stub's
+Department line follows without a re-lock; paid stubs stay frozen. This is a deliberate,
+LEAVER-ONLY exception to `hris-is-dept-source-of-truth`: for an active person the master list
+still wins and Set rate still moves no department. `michaelsy@` is the worked case — master
+Lead Gen (fell off the sheet), one Hogan 265 structure saved 09-15 → Hogan Smith Law.
+`computeCurrentPay` (dispatch carrier C, the lowest-precedence fallback) still resolves a
+leaver through the rates-row label and does not read this rule — a pre-existing parity gap,
+now recorded.
 
 ## Audit trail (`readiness-audit.ts`)
 

@@ -47,6 +47,9 @@ import { offboardReasonLabel } from '@/lib/hr/offboard-reasons';
 import { normEmail } from '@/lib/email/norm-email';
 import { readOffboardedBankCurrent, type OffboardedBankCurrent } from '@/lib/payroll/offboarded-bank-current';
 import { rateWriteEmail } from '@/lib/payroll/rate-override';
+import { leaverPayDepartment, pickLeaverStructure, type LeaverDeptSource } from '@/lib/roster/leaver-pay-department';
+import { getDepartmentRegistry } from '@/lib/departments/registry-db';
+import type { DepartmentRegistryEntry } from '@/lib/departments/registry';
 import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
 
 export interface OffboardedBankPrefill {
@@ -82,7 +85,13 @@ export interface OffboardedRateCurrent {
 
 export interface OffboardedPayrollCandidate {
   name: string;
+  /** The department their final pay is filed under — `leaverPayDepartment()`:
+   *  the master cell, or the department their Set-rate structure names (see
+   *  `departmentSource`). The SAME rule the wizard's final-pay overlay applies. */
   department: string | null;
+  departmentSource: LeaverDeptSource;
+  /** The master-list cell verbatim, so the tab can say what was overridden. */
+  masterDepartment: string | null;
   workEmail: string | null;
   personalEmail: string | null;
   /** The email their Hubstaff hours ride — THE payable identity. Set rate keys
@@ -131,7 +140,7 @@ export async function listOffboardedPayrollCandidates(sourceFile: string | null)
 }> {
   const { weekStart, degraded: weekDegraded } = await resolveCurrentWeek(sourceFile);
 
-  const [offboardedRes, rateCtx, idsRes, ratesRes, contractorEmailsRes, hoursIdx] = await Promise.all([
+  const [offboardedRes, rateCtx, idsRes, ratesRes, contractorEmailsRes, hoursIdx, registry] = await Promise.all([
     listRecentlyOffboardedPeople(90),
     loadPeopleRateContext(),
     getEmployeeIds().catch(() => ({ rows: [], error: 'unreachable' })),
@@ -141,6 +150,8 @@ export async function listOffboardedPayrollCandidates(sourceFile: string | null)
     // than failing the load (same posture as payroll-readiness's own call).
     loadContractorEmails().catch(() => null),
     loadCycleHoursIndex(sourceFile),
+    // Key → label for in-app departments when a leaver's structure names one.
+    getDepartmentRegistry().catch(() => [] as DepartmentRegistryEntry[]),
   ]);
 
   if (offboardedRes.error) {
@@ -257,18 +268,28 @@ export async function listOffboardedPayrollCandidates(sourceFile: string | null)
     //   · contractor (Admin `contractor` role): paid per-invoice, not hourly, so
     //     RATE is not applicable — but bank details still fund those invoices,
     //     so their bank status is left computed normally.
-    const offChannel = isOffChannelDept(person.department);
+    // The department their final pay is filed under (leaver-pay-department.ts):
+    // the master cell unless the individual structure their rate resolves to —
+    // the one "Set rate" writes — was touched after they left and names a
+    // different department. Same rule, same inputs as the wizard's overlay.
+    const structure = pickLeaverStructure(rateCtx.catalogIndex, aliases);
+    const dept = leaverPayDepartment({
+      masterDepartment: person.department,
+      offBoardedAt: person.off_boarded_at,
+      structure,
+      registry,
+    });
+    const department = dept.department;
+
+    const offChannel = isOffChannelDept(department);
     const isContractor = aliases.some((e) => contractorEmails.has(e));
 
-    const rate = resolvePeopleRate(rateCtx, aliases, person.department);
+    const rate = resolvePeopleRate(rateCtx, aliases, department);
     const rateStatus: 'ok' | 'missing' =
       offChannel || isContractor || rate.source !== null ? 'ok' : 'missing';
     // The individual structure behind a `source: 'employee'` resolution — the
     // first alias that owns one, in the same order resolvePeopleRate walked.
-    const ownStructure =
-      rate.source === 'employee'
-        ? aliases.map((e) => rateCtx.catalogIndex.byEmail.get(e)).find(Boolean) ?? null
-        : null;
+    const ownStructure = rate.source === 'employee' ? structure : null;
     const rateCurrent: OffboardedRateCurrent | null =
       rate.source === null
         ? null
@@ -335,7 +356,9 @@ export async function listOffboardedPayrollCandidates(sourceFile: string | null)
 
     people.push({
       name: person.name,
-      department: person.department,
+      department,
+      departmentSource: dept.source,
+      masterDepartment: person.department,
       workEmail: person.work_email,
       personalEmail: person.personal_email,
       hubstaffEmail: person.hubstaff_email,

@@ -711,3 +711,42 @@ test('an old-shape snapshot over a payload WITHOUT a transfer block never invent
   assert.equal(r.refreshed, true);
   assert.equal('department_transfer' in (r.payload as Record<string, unknown>), false);
 });
+
+// ── The Department line rides the snapshot (2026-09-15) ─────────────────────
+// A leaver's department follows the Offboarded "Set rate" structure; the label
+// must reach an UNPAID stub without a re-lock, under the transfer block's
+// tri-state.
+
+function deptStagedRow(): StagedPaystubLike {
+  const row = transferBaseRow();
+  (row.payload as Record<string, unknown>).department_name = 'Lead Gen';
+  (row.payload as Record<string, unknown>).department_key = 'lead_gen';
+  return row;
+}
+
+test('a snapshot carrying departmentName/Key replaces the staged Department line', () => {
+  const staged = deptStagedRow();
+  const entry = snapEntry(transferOnly({ departmentName: 'Hogan Smith Law', departmentKey: 'hogan_smith_law' }));
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, true, 'a department-only move fires the refresh');
+  assert.equal((r.payload as Record<string, unknown>).department_name, 'Hogan Smith Law');
+  assert.equal((r.payload as Record<string, unknown>).department_key, 'hogan_smith_law');
+});
+
+test('an OLD-shape snapshot (no departmentName key) keeps the staged Department line', () => {
+  const staged = deptStagedRow();
+  const entry = snapEntry(transferOnly({ regularPay: 8300, initial: 9003.13, final: 8903.13 }));
+  delete entry.departmentName;
+  delete entry.departmentKey;
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, true, 'the figures still merge');
+  assert.equal((r.payload as Record<string, unknown>).department_name, 'Lead Gen');
+  assert.equal((r.payload as Record<string, unknown>).department_key, 'lead_gen');
+});
+
+test('an unchanged department is not a change', () => {
+  const staged = deptStagedRow();
+  const entry = snapEntry(transferOnly({ departmentName: 'Lead Gen', departmentKey: 'lead_gen' }));
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, false);
+});

@@ -39,10 +39,27 @@ Payroll Notes → Offboarded fixers becoming a complete override
    lands and the wizard re-pulls all three (they must move together: the proration
    engine's catalog-consistency gate compares two of them).
 
-Unchanged: dispatch precedence (a re-lock is still authoritative — a re-rated
-leaver's staged `disbursement_records` row keeps its figure until the snapshot
-qualifies or the week is re-locked), replay (`isReplay` still skips the catalog
-overlay), and every department rule.
+3. **A leaver's department follows "Set rate"** (Kane, same day: *"make sure the
+   paystub department will change"*). The final-pay overlay's `department` is now
+   `leaverPayDepartment()` (`src/lib/roster/leaver-pay-department.ts`): the master
+   cell, overridden by the department the leaver's effective individual catalog
+   structure files under when that structure was touched on/after the departure
+   and names a different department (same-family spellings keep the master cell).
+   Tier 1b consumes it unchanged, and because the overlay is the authoritative
+   tier for a leaver the key re-derives on every run. `RATES_CHANGED_EVENT` also
+   re-pulls the overlay (`loadOffboardedRoster`), so a Set-rate save re-cohorts the
+   person in Step 2 immediately. The snapshot finals now carry `departmentKey` /
+   `departmentName`, and `paystub-fresh.ts` merges them into an UNPAID staged stub
+   under the transfer block's tri-state — the Department line changes without a
+   re-lock; paid stubs stay frozen. Active people are untouched: the master list
+   remains their source of truth and Set rate moves no department for them.
+
+Unchanged: dispatch precedence for MONEY (a re-lock is still authoritative — a
+re-rated leaver's staged `disbursement_records` row keeps its figure until the
+snapshot qualifies or the week is re-locked), replay (`isReplay` still skips the
+catalog overlay), and every department rule for people on the active roster.
+`computeCurrentPay` (carrier C) still resolves a leaver through the rates-row
+label — a pre-existing parity gap this change does not close.
 
 ---
 

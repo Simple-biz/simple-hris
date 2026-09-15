@@ -51,6 +51,11 @@ export interface WizardFinalPayEntry extends WizardSnapshotEntry {
    *  people's entries can be byte-identical — aggregate readers dedupe by this.
    *  Older snapshots omit it → undefined. */
   workEmail?: string | null;
+  /** The Department line as the wizard resolved it (added 2026-09-15 so a
+   *  leaver's Set-rate department reaches an UNPAID stub without a re-lock).
+   *  Older snapshots omit both → undefined → the merge keeps the staged label. */
+  departmentKey?: string | null;
+  departmentName?: string | null;
   /** The exact net pay the wizard computed = what Payment Dispatch paid out. */
   final: number;
   regularPay: number | null;
