@@ -71,13 +71,13 @@ Defined in `src/lib/anthropic/ceo-tools.ts`. The model **never writes SQL** — 
 
 | Tool | Input | What it returns |
 |---|---|---|
-| `find_employee` | `query` *(string, required)* — name, partial name, or email | `{ match_count, matches[≤8], truncated, note? }`. Each match: `{ name, work_email, department, employee_id }`. The model is told to call this **first** whenever a person is named, and to disambiguate (not guess) on multiple matches. |
+| `find_employee` | `query` *(string, required)* — name, partial name, or email | `{ match_count, active_matches, offboarded_matches, matches[≤8], truncated, lookup_errors?, note? }`. Each match: `{ name, work_email, department, employee_id, status }`, plus `off_boarded_at / off_boarded_reason / off_boarded_by / departments` when `status = 'offboarded'`. The model is told to call this **first** whenever a person is named, and to disambiguate (not guess) on multiple matches. |
 | `get_employee_pay` | `work_email` *(string, required)*, `weeks` *(int 1–12, default 1)* | One entry per pay week (most recent first) + a summed `totals`. |
 | `get_payroll_report` | `weeks` *(int 1–12, default 4)* | Company-wide weekly totals (paid / outstanding / owed) + a combined `totals`. |
 
 ### `find_employee`
 
-Loads the active roster via `getEmployeesForAuthorizedServerRoute()` and filters in memory. Email queries (contain `@`) match `work_email`/`personal_email` exactly; name queries match `name` substring or the work-email local part. Returns at most 8 matches with a `note` that nudges the model to ask the user when 0 or >1 match.
+Loads the active roster via `getEmployeesForAuthorizedServerRoute()` **and every off-boarded `global_master_list` row** (paged; since 2026-09-15 — a leaver asked about the day after they left was being reported as "not in the system"), and filters in memory. Email queries (contain `@`) match `work_email`/`personal_email` exactly; name queries match `name` substring or the work-email local part. Each match carries `status: 'active' | 'offboarded'`; an off-boarded match also carries `off_boarded_at`, `off_boarded_reason`, `off_boarded_by` and every `departments` its rows held (a person's duplicate rows collapse to one match, latest stamp wins). The active roster is the authority — a stamped duplicate beside an active row never demotes anyone — and active matches rank first. Returns at most 8 matches with a `note` that nudges the model to ask the user when >1 match, and that spells out the off-boarded state when the single match is a leaver. The matching and labelling rules are pure and tested in `src/lib/penny/roster-match.ts`.
 
 ### `get_employee_pay`
 

@@ -17,7 +17,7 @@
 
 export const TOOL_PHASES: Record<string, string> = {
   // ── Identity & roster ────────────────────────────────────────────────────
-  find_employee: 'Matching the name against the active roster',
+  find_employee: 'Matching the name against the full roster',
   get_employee_profile: 'Opening the employee record',
   get_employee_access: 'Checking dashboard access and roles',
 
@@ -39,6 +39,8 @@ export const TOOL_PHASES: Record<string, string> = {
   get_rate_history: 'Reading the rate history',
   get_transfer_history: 'Reading the transfer history',
   get_onboarding_info: 'Reading the onboarding record',
+  get_offboarding_info: 'Reading the off-boarding record',
+  get_bonus_breakdown: 'Tracing each bonus back to its source',
   get_bank_change_history: 'Reading the bank-change history',
   get_change_timeline: 'Merging every change source into one timeline',
   get_payroll_notes_history: 'Reading the payroll-note edits',

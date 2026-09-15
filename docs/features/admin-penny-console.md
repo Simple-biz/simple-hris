@@ -68,7 +68,7 @@ source-scans `CEO_TOOLS` and `ADMIN_TOOLS` (both files are `server-only`, so
 they cannot be imported in a node test — the employee tool guards solved this
 the same way) and asserts:
 
-- every one of the 22 tools has a phrase — an unmapped tool would print a raw
+- every one of the 24 tools has a phrase — an unmapped tool would print a raw
   `get_bank_change_history` to an admin mid-answer;
 - no phrase is the fallback, compared against the exact fallback **output**, not
   its prefix ("Running the diagnostic probes" is correct copy for

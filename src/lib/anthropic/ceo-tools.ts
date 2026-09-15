@@ -6,6 +6,15 @@ import {
   getEmployeesForAuthorizedServerRoute,
   getEmployeeMasterRecord,
 } from '@/lib/supabase/employees';
+import { selectAllPaged } from '@/lib/supabase/select-all-paged';
+import {
+  collapseOffboardedRows,
+  matchesRosterQuery,
+  rankRosterMatches,
+  rosterMatchNote,
+  type OffboardedMasterRow,
+  type RosterCandidate,
+} from '@/lib/penny/roster-match';
 import {
   createSupabaseServiceRoleClient,
   createSupabaseServerClient,
@@ -55,13 +64,13 @@ export const CEO_TOOLS: Anthropic.Tool[] = [
   {
     name: 'find_employee',
     description:
-      "Resolve a person's name or email to their employee record(s). ALWAYS call this first whenever the user names a person (e.g. \"Kane\", \"kane@simple.biz\") — you need the exact work_email it returns before you can look up their pay. Returns 0, 1, or several matches. If several match, ask the user which one (by department or work email) before continuing; never guess.",
+      "Resolve a person's name or email to their employee record(s). ALWAYS call this first whenever the user names a person (e.g. \"Kane\", \"kane@simple.biz\") — you need the exact work_email it returns before you can look up their pay. Searches ACTIVE and OFF-BOARDED people: every match carries status, and an off-boarded match also carries when they left, the recorded reason and who recorded it. An off-boarded person is still a real record — their pay, history and audit trail remain searchable with the other tools — so never describe one as 'not in the system'; say they were off-boarded on that date. Returns 0, 1, or several matches (active first). If several match, ask the user which one (by department or work email) before continuing; never guess.",
     input_schema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'A name, partial name, or email address to search the active employee roster for.',
+          description: 'A name, partial name, or email address. Matches active employees AND off-boarded people (labelled).',
         },
       },
       required: ['query'],
@@ -283,40 +292,103 @@ export async function runCeoTool(
   }
 }
 
+/**
+ * Every `global_master_list` row that carries an off-board stamp. Read directly
+ * from the table — `active_employees` cannot see these people by definition,
+ * and `getEmployeeMasterRecord` deliberately refuses stamped rows (work emails
+ * are recycled, so resolving a LOGIN identity to a leaver would surface the
+ * wrong account). A SEARCH that labels each hit as off-boarded has neither
+ * problem. Paged: 1,058 stamped rows on 2026-09-15, past the 1,000-row cap.
+ */
+async function listOffboardedMasterRows(): Promise<{ rows: OffboardedMasterRow[]; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { rows: [], error: 'Service-role client unavailable — off-boarded people were not searched.' };
+  const { rows, error } = await selectAllPaged<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('global_master_list')
+      .select(
+        'id, Name, Department, "Work Email", "Personal Email", employee_id, off_boarded_at, off_boarded_reason, off_boarded_by',
+      )
+      .not('off_boarded_at', 'is', null)
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  if (error) return { rows: [], error };
+  const s = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
+  return {
+    rows: rows.map((r) => ({
+      name: s(r['Name']),
+      work_email: s(r['Work Email']),
+      personal_email: s(r['Personal Email']),
+      department: s(r['Department']),
+      employee_id: s(r['employee_id']),
+      off_boarded_at: s(r['off_boarded_at']),
+      off_boarded_reason: s(r['off_boarded_reason']),
+      off_boarded_by: s(r['off_boarded_by']),
+    })),
+    error: null,
+  };
+}
+
 async function findEmployee(query: string): Promise<ToolResult> {
-  const q = query.trim().toLowerCase();
+  const q = query.trim();
   if (!q) return { error: 'Empty search query.' };
 
   const { employees, error } = await getEmployeesForAuthorizedServerRoute();
   if (error) return { error };
 
-  const isEmail = q.includes('@');
-  const matches = employees.filter((e) => {
-    const name = (e.name ?? '').toLowerCase();
-    const we = (e.work_email ?? '').toLowerCase();
-    const pe = (e.personal_email ?? '').toLowerCase();
-    if (isEmail) return we === q || pe === q;
-    const local = we.split('@')[0] ?? '';
-    return name.includes(q) || local.includes(q);
-  });
-
-  const shown = matches.slice(0, 8).map((e) => ({
-    name: e.name,
+  const activeCandidates: RosterCandidate[] = employees.map((e) => ({
+    name: e.name ?? null,
     work_email: e.work_email ?? null,
-    department: e.department,
-    employee_id: e.employee_id,
+    personal_email: e.personal_email ?? null,
+    department: e.department ?? null,
+    employee_id: e.employee_id ?? null,
+    status: 'active',
+    off_boarded_at: null,
+    off_boarded_reason: null,
+    off_boarded_by: null,
+    departments: e.department ? [e.department] : [],
+  }));
+  const activeWorkEmails = new Set(
+    employees.map((e) => (e.work_email ?? '').trim().toLowerCase()).filter(Boolean),
+  );
+
+  // Leavers too (Carla, 2026-09-15: a person off-boarded the day before was
+  // reported as "not in the system"). The active roster stays the authority:
+  // a stamped duplicate beside an active row never demotes anyone.
+  const stamped = await listOffboardedMasterRows();
+  const offboardedCandidates = collapseOffboardedRows(stamped.rows, activeWorkEmails);
+
+  const matches = rankRosterMatches(
+    [...activeCandidates, ...offboardedCandidates].filter((c) => matchesRosterQuery(c, q)),
+  );
+
+  const shown = matches.slice(0, 8).map((m) => ({
+    name: m.name,
+    work_email: m.work_email,
+    department: m.department,
+    employee_id: m.employee_id,
+    status: m.status,
+    ...(m.status === 'offboarded'
+      ? {
+          off_boarded_at: m.off_boarded_at,
+          off_boarded_reason: m.off_boarded_reason,
+          off_boarded_by: m.off_boarded_by,
+          departments: m.departments,
+        }
+      : {}),
   }));
 
   return {
     match_count: matches.length,
+    active_matches: matches.filter((m) => m.status === 'active').length,
+    offboarded_matches: matches.filter((m) => m.status === 'offboarded').length,
     matches: shown,
     truncated: matches.length > shown.length,
-    note:
-      matches.length === 0
-        ? 'No active employee matched. Try a different spelling, or ask the user for their work email.'
-        : matches.length > 1
-          ? 'Multiple matches — ask the user which person (department or work email) before looking up pay.'
-          : undefined,
+    lookup_errors: stamped.error
+      ? [`off-boarded people lookup failed: ${stamped.error} — these results cover ACTIVE people only`]
+      : undefined,
+    note: rosterMatchNote(matches),
   };
 }
 

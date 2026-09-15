@@ -2,13 +2,36 @@ import 'server-only';
 
 import type Anthropic from '@anthropic-ai/sdk';
 import { normEmail } from '@/lib/email/norm-email';
-import { getEmployeeMasterRecord } from '@/lib/supabase/employees';
+import {
+  getEmployeeMasterRecord,
+  getEmployeesForAuthorizedServerRoute,
+} from '@/lib/supabase/employees';
 // Service-role only (no anon fallback): these tables sit behind RLS, where an
 // anon client "succeeds" with zero rows — a silent wrong answer, not an error.
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { getPayrollDispatchLock } from '@/lib/supabase/payroll-dispatch-lock';
-import { getAppSetting } from '@/lib/supabase/app-settings';
+import { getAppSetting, getAppSettingsWithMeta } from '@/lib/supabase/app-settings';
 import { listHubstaffUploads } from '@/lib/supabase/hubstaff-hours-db';
+import { listPaystubPayloadsForEmployee } from '@/lib/supabase/paystub-dispatch-queue';
+import { mapPayloadToPayStub } from '@/lib/payroll/paystub-view';
+import { finalPaySnapshotKey } from '@/lib/payroll/paystub-fresh';
+import { manilaTodayIso } from '@/lib/payroll/manila-week';
+import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
+import { HSL_DEPTS, matchHslSubDeptKey, type BonusRule } from '@/lib/hsl-bonus/schema';
+import {
+  assembleBonusBreakdown,
+  resolveBonusWeek,
+  type CatalogAppliedIn,
+  type DispatchIn,
+  type HslEntryIn,
+  type HslStatusIn,
+  type MasterRowIn,
+  type NoteIn,
+  type PaystubIn,
+  type RuleLabeller,
+  type SnapshotIn,
+  type WizardControlsIn,
+} from '@/lib/penny/bonus-breakdown';
 import { buildPaymentsLive } from '@/lib/ceo/payments-live';
 import { getPeopleBankHistory, type BankChangeEntry } from '@/lib/supabase/bank-update-history';
 import { getProfilePhotoUrlForEmail } from '@/lib/supabase/employee-profile-photo';
@@ -181,6 +204,41 @@ export const ADMIN_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'get_offboarding_info',
+    description:
+      'Whether and how a person was OFF-BOARDED. Use for "was X off-boarded", "when did X leave", "who off-boarded X", "why was X removed", "is X still with us", and whenever find_employee returns status offboarded. Reads every place an off-board is recorded and returns them side by side: the master-list stamps (date, reason, note, who recorded it, any deletion schedule — one per master row, because a person can have several rows), the HR off-boarding queue requests (who requested, who processed, the decision date), the Offboarded-sheet ledger row, and the audit events (hr.employee.offboarded / reonboarded / scheduled_deletion, offboarding.*, manager.suspended / reactivated). Also says whether the person is on the ACTIVE roster right now, so a re-hire or a temporary pause reads correctly. Takes a work or personal email.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        email: {
+          type: 'string',
+          description: "The person's work email (preferred, from find_employee) or personal email.",
+        },
+      },
+      required: ['email'],
+    },
+  },
+  {
+    name: 'get_bonus_breakdown',
+    description:
+      "WHERE one person's bonus for a pay week came from — the drill-down behind the Payroll Wizard's Bonus column. Use for \"where did X's 500 come from\", \"why does X have a bonus of N when it should be M\", \"break down X's performance bonus\", \"which KPI paid X\", \"was X's bonus submitted\". Returns (1) what the HRIS SHOWS for the week: the wizard's final-pay snapshot (PAB, Tech, other bonuses, accounting adjustment, final pay), the staged or paid paystub lines and the paid dispatch's system-bonus line; (2) every SOURCE feeding it: each HSL KPI Calculator row for the person (department, amount, the inputs the manager typed with the rule behind each, whether the period is submitted = payable, who locked it, when it was last saved), each Payment Catalog department bonus row (e.g. Lead Gen appointments), the wizard's per-person controls (PAB/Tech toggles, the accounting Adj. and its note, a manual department) and the Payroll Notes adjustments for the week; (3) a RECONCILIATION: whether the sources add up to the shown figure, and if not, by how much and why it cannot be traced further (KPI saves are not audited). Also lists every master-list row the person has: a duplicate identity is scored in several calculators at once. Requires the work_email from find_employee. week = any date inside the pay week (Sunday–Saturday); omit it for the most recently completed week.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        work_email: {
+          type: 'string',
+          description: "The person's work email, exactly as returned by find_employee.",
+        },
+        week: {
+          type: 'string',
+          description:
+            'Any YYYY-MM-DD date inside the pay week to explain (weeks run Sunday–Saturday; a mid-week date is snapped to its own Sunday). Defaults to the most recently completed week.',
+        },
+      },
+      required: ['work_email'],
+    },
+  },
+  {
     name: 'get_bank_change_history',
     description:
       'A person\'s bank / payout details change history — who changed their bank info and when. Use for "who changed X\'s bank info", "when did X update their account". Returns (1) the dedicated bank_update_history trail: each save with the field names written, MASKED before→after values, processor, channel (e.g. external_link = the self-service link, so the employee themself made the change), and IP; and (2) related audit-log events, which capture ADMIN-side edits (people.banking.updated, bank_override.saved) with the acting admin\'s email. Full account numbers are never stored or returned. Requires the exact work_email from find_employee.',
@@ -308,6 +366,10 @@ export async function runAdminTool(
         return await getTransferHistory(str(input.work_email), input.limit);
       case 'get_onboarding_info':
         return await getOnboardingInfo(str(input.email));
+      case 'get_offboarding_info':
+        return await getOffboardingInfo(str(input.email));
+      case 'get_bonus_breakdown':
+        return await getBonusBreakdown(input);
       case 'get_bank_change_history':
         return await getBankChangeHistory(str(input.work_email));
       case 'get_change_timeline':
@@ -943,6 +1005,457 @@ async function getOnboardingInfo(emailRaw: string): Promise<ToolResult> {
     field_notes:
       'roster.start_date is the canonical "when were they onboarded" answer (the master-list Start Date, also used for tenure). onboarding_submissions covers the paperwork pipeline: invite_created_at/by = when HR minted the invite and who; paperwork_submitted_at = when the hire completed onboarding; status pending = invited but not yet submitted. People hired before the digital pipeline may have a roster row and no submission — that is normal.',
   };
+}
+
+// ── off-boarding ─────────────────────────────────────────────────────────────
+
+/** Every family that records a departure, a return, or a pause. `hr.employee.%`
+ *  carries offboarded / reonboarded / scheduled_deletion; `offboarding.` is the
+ *  HR queue; `offboarded.` the sheet ledger sync; `manager.` the temp-pause
+ *  suspend/reactivate envelope, which writes NO stamp and must read as a pause. */
+const OFFBOARD_ACTION_OR = [
+  'action.ilike.hr.employee.%',
+  'action.ilike.offboarding.%',
+  'action.ilike.offboarded.%',
+  'action.ilike.resignation.%',
+  'action.ilike.manager.%',
+].join(',');
+
+/** `<col>.ilike.<alias>` for every safe alias × column, ready for `.or()`. */
+function aliasOr(aliases: Iterable<string>, columns: string[]): string {
+  const safe = [...aliases].filter(isSafeEmail);
+  return columns.flatMap((c) => safe.map((a) => `${c}.ilike.${escapeLike(a)}`)).join(',');
+}
+
+async function getOffboardingInfo(emailRaw: string): Promise<ToolResult> {
+  const email = normEmail(emailRaw) ?? '';
+  if (!email || !isSafeEmail(email)) return { error: 'Missing or invalid email.' };
+
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Database is not reachable.' };
+
+  const aliases = await aliasesFor(email);
+  const lookupErrors: string[] = [];
+
+  const [masterRes, roster, queueRes, sheetRes, auditScan] = await Promise.all([
+    supabase
+      .from('global_master_list')
+      .select(
+        'id, Name, Department, "Work Email", "Personal Email", employee_id, "Start Date", off_boarded_at, off_boarded_reason, off_boarded_note, off_boarded_by, scheduled_deletion_at, deletion_processed_at, created_at',
+      )
+      .or(aliasOr(aliases, ['"Work Email"', '"Personal Email"', '"Alternate Work Email"', '"Alternate Work Email 2"']))
+      .order('created_at', { ascending: true }),
+    getEmployeesForAuthorizedServerRoute(),
+    supabase
+      .from('offboarding_queue')
+      .select(
+        'id, status, reason, note, offboard_reason, department, employee_name, employee_email, employee_work_email, employee_personal_email, requested_by, requested_by_name, processed_by, processed_note, decided_at, created_at, updated_at',
+      )
+      .or(aliasOr(aliases, ['employee_email', 'employee_work_email', 'employee_personal_email']))
+      .order('created_at', { ascending: false })
+      .limit(10),
+    supabase
+      .from('offboarded_sheet')
+      .select(
+        'name, department, work_email, personal_email, start_date, off_boarded_at, off_boarded_reason, off_boarded_note, off_boarded_by, synced_at, origin',
+      )
+      .or(aliasOr(aliases, ['work_email', 'personal_email']))
+      .order('off_boarded_at', { ascending: false })
+      .limit(10),
+    fetchPersonAuditEvents(aliases, OFFBOARD_ACTION_OR, { deepLimit: 2000 }),
+  ]);
+
+  if (masterRes.error) return { error: `master list lookup failed: ${masterRes.error.message}` };
+  if (roster.error) lookupErrors.push(`active roster lookup failed: ${roster.error} — on_active_roster is unknown`);
+  if (queueRes.error) lookupErrors.push(`off-boarding queue lookup failed: ${queueRes.error.message}`);
+  if (sheetRes.error) lookupErrors.push(`offboarded sheet lookup failed: ${sheetRes.error.message}`);
+  if (auditScan.error) lookupErrors.push(`audit trail lookup failed: ${auditScan.error}`);
+
+  const activeEmails = new Set(
+    roster.error ? [] : roster.employees.map((e) => normEmail(e.work_email ?? '') ?? '').filter(Boolean),
+  );
+  const masterRows = ((masterRes.data ?? []) as Array<Record<string, unknown>>).map((r) => {
+    const we = normEmail(str(r['Work Email'])) ?? '';
+    return {
+      department: str(r['Department']) || null,
+      name: str(r['Name']) || null,
+      work_email: str(r['Work Email']) || null,
+      personal_email: str(r['Personal Email']) || null,
+      employee_id: str(r['employee_id']) || null,
+      start_date: str(r['Start Date']) || null,
+      off_boarded_at: str(r['off_boarded_at']) || null,
+      off_boarded_reason: str(r['off_boarded_reason']) || null,
+      off_boarded_note: str(r['off_boarded_note']) || null,
+      off_boarded_by: str(r['off_boarded_by']) || null,
+      scheduled_deletion_at: str(r['scheduled_deletion_at']) || null,
+      deletion_processed_at: str(r['deletion_processed_at']) || null,
+      on_active_roster: roster.error ? null : !!we && activeEmails.has(we),
+    };
+  });
+
+  const stampedRows = masterRows.filter((r) => r.off_boarded_at);
+  const activeRows = masterRows.filter((r) => r.on_active_roster === true);
+  const status: 'active' | 'offboarded' | 'not_on_master_list' | 'mixed' =
+    masterRows.length === 0
+      ? 'not_on_master_list'
+      : stampedRows.length === masterRows.length && activeRows.length === 0
+        ? 'offboarded'
+        : stampedRows.length === 0 && activeRows.length > 0
+          ? 'active'
+          : stampedRows.length === 0
+            ? 'active'
+            : 'mixed';
+
+  const latest = stampedRows
+    .map((r) => r.off_boarded_at!)
+    .sort()
+    .at(-1);
+  const latestRow = stampedRows.find((r) => r.off_boarded_at === latest);
+  const summary =
+    status === 'offboarded'
+      ? `OFF-BOARDED on ${isoDay(latest ?? '') ?? latest}${latestRow?.off_boarded_reason ? ` — reason "${latestRow.off_boarded_reason}"` : ''}${latestRow?.off_boarded_note ? ` (${latestRow.off_boarded_note})` : ''}${latestRow?.off_boarded_by ? `, recorded by ${latestRow.off_boarded_by}` : ''}. ${masterRows.length} master row${masterRows.length === 1 ? '' : 's'} stamped; not on the active roster.`
+      : status === 'active'
+        ? `ACTIVE — on the current roster, no off-board stamp on any of their ${masterRows.length} master row${masterRows.length === 1 ? '' : 's'}.`
+        : status === 'mixed'
+          ? `MIXED — ${stampedRows.length} of ${masterRows.length} master rows carry an off-board stamp while ${activeRows.length} row${activeRows.length === 1 ? ' is' : 's are'} on the active roster. Read the rows: this is either a re-hire, a temporary pause, or a stamped duplicate beside a live row.`
+          : 'No global_master_list row matches this email. If the person exists, they are keyed under another address — try their personal email.';
+
+  return {
+    email_checked: email,
+    aliases_searched: [...aliases],
+    status,
+    summary,
+    lookup_errors: lookupErrors.length ? lookupErrors : undefined,
+    master_rows: masterRows,
+    offboarding_requests: ((queueRes.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+      status: r.status,
+      reason: r.reason,
+      offboard_reason: r.offboard_reason,
+      note: r.note,
+      department: r.department,
+      requested_by: r.requested_by,
+      requested_by_name: r.requested_by_name,
+      requested_at: r.created_at,
+      processed_by: r.processed_by,
+      processed_note: r.processed_note,
+      decided_at: r.decided_at,
+    })),
+    offboarded_sheet: ((sheetRes.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+      off_boarded_at: r.off_boarded_at,
+      reason: r.off_boarded_reason,
+      note: r.off_boarded_note,
+      recorded_by: r.off_boarded_by,
+      department: r.department,
+      origin: r.origin,
+      synced_at: r.synced_at,
+    })),
+    audit_events: auditScan.rows.slice(0, 25).map(compactAuditRow),
+    audit_scan_note: scanNote(auditScan.deepCutoff),
+    field_notes:
+      'status: offboarded = every master row is stamped and none is on the active roster; active = no stamp; mixed = some rows stamped while a row is still active (re-hire, temporary pause, or a stamped duplicate) — read master_rows before concluding; not_on_master_list = nothing matched. master_rows.off_boarded_by is WHO recorded the departure (the HR user, or a batch), off_boarded_reason is the category, off_boarded_note the free text. offboarding_requests is the HR queue (requested_by asked, processed_by decided). A manager.suspended audit event is a TEMPORARY PAUSE, not a departure. Times are UTC.',
+  };
+}
+
+// ── bonus breakdown ──────────────────────────────────────────────────────────
+
+/** Human wording for the HSL rule behind a `kpi_data` key. */
+function describeHslRule(r: BonusRule): string {
+  const cur = 'currency' in r && r.currency === 'USD' ? '$' : '₱';
+  switch (r.type) {
+    case 'per_unit':
+      return `${cur}${r.rate} per unit${r.managerOnly ? ' (managers only)' : ''}`;
+    case 'tiered':
+      return `tiered: ${r.tiers.map((t) => `${t.min}${t.max == null ? '+' : `–${t.max}`} → ₱${t.rate}/unit`).join(', ')}`;
+    case 'flat':
+      return `flat ${cur}${r.amount}${r.managerOnly ? ' (managers only)' : ''}${r.cadence === 'monthly' ? ', monthly — final payroll week only' : ''}${r.exemptFromMonthlyMax ? ', outside the monthly cap' : ''}`;
+    case 'manual':
+      return `manual peso amount typed by the manager${r.managerOnly ? ' (managers only)' : ''}`;
+    case 'team_split':
+      return `team split across ${r.subTeams.join('/')}: ${r.thresholds.map((t) => `${t.minPct}${t.maxPct == null ? '%+' : `–${t.maxPct}%`} → ₱${t.ratePerRecord}/record`).join(', ')}`;
+    case 'team_pool':
+      return `team pool ₱${r.ratePerRecord}/record split evenly across ${r.subTeams.join('/')}`;
+  }
+}
+
+const labelHslRule: RuleLabeller = (department, key) => {
+  const deptKey = matchHslSubDeptKey(department) ?? matchHslSubDeptKey(`hsl:${department}`);
+  if (!deptKey) return null;
+  const rule = HSL_DEPTS[deptKey]?.rules.find((x) => x.key === key);
+  return rule ? { label: rule.label, how: describeHslRule(rule) } : null;
+};
+
+/** `YYYY-MM-DD` of a LOCAL-time Date (what `parseDateRangeFromFilename` builds). */
+function localIso(d: Date): string {
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+/** Case-insensitive lookup of an email-keyed record for any alias. */
+function pickByAlias(rec: Record<string, unknown> | null, aliases: Set<string>): unknown {
+  if (!rec) return undefined;
+  for (const [k, v] of Object.entries(rec)) {
+    if (aliases.has(k.trim().toLowerCase())) return v;
+  }
+  return undefined;
+}
+
+/** Whether an alias appears in a list, or as a truthy key of a record. */
+function aliasFlag(v: unknown, aliases: Set<string>): boolean {
+  if (Array.isArray(v)) return v.some((x) => typeof x === 'string' && aliases.has(x.trim().toLowerCase()));
+  if (isRecord(v)) return !!pickByAlias(v, aliases);
+  return false;
+}
+
+async function getBonusBreakdown(input: Record<string, unknown>): Promise<ToolResult> {
+  const email = normEmail(str(input.work_email)) ?? '';
+  if (!email || !isSafeEmail(email)) return { error: 'Missing or invalid work_email.' };
+  const weekRes = resolveBonusWeek(str(input.week), manilaTodayIso());
+  if ('error' in weekRes) return { error: weekRes.error };
+  const { week, resolved_from } = weekRes;
+
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Database is not reachable.' };
+
+  const aliases = await aliasesFor(email);
+  const aliasList = [...aliases];
+  const lookupErrors: string[] = [];
+
+  // The wizard keys its snapshot and its additions blob by the Hubstaff upload
+  // that names the week. Prefer the batch the wizard is using, then the newest.
+  let sourceFile: string | null = null;
+  try {
+    const uploads = await listHubstaffUploads();
+    const forWeek = uploads.filter((u) => {
+      if (!u.source_file) return false;
+      const range = parseDateRangeFromFilename(u.source_file);
+      return !!range && localIso(range.start) === week.start;
+    });
+    forWeek.sort((a, b) => Number(b.is_current) - Number(a.is_current) || b.uploaded_at.localeCompare(a.uploaded_at));
+    sourceFile = forWeek[0]?.source_file ?? null;
+  } catch (e) {
+    lookupErrors.push(`hours upload lookup failed: ${e instanceof Error ? e.message : String(e)} — no wizard snapshot could be read`);
+  }
+
+  const [masterRes, roster, hslRes, catalogRes, notesRes, dispatchRes, settings, payloadLists] = await Promise.all([
+    supabase
+      .from('global_master_list')
+      .select('Department, "Work Email", employee_id, off_boarded_at, created_at')
+      .or(aliasOr(aliases, ['"Work Email"', '"Personal Email"', '"Alternate Work Email"', '"Alternate Work Email 2"']))
+      .order('created_at', { ascending: true }),
+    getEmployeesForAuthorizedServerRoute(),
+    supabase
+      .from('hsl_bonus_entries')
+      .select('department, employee_email, calculated_bonus, kpi_data, is_manager, period_type, created_at, updated_at')
+      .eq('period_start', week.start)
+      .or(aliasOr(aliases, ['employee_email'])),
+    supabase
+      .from('bonus_catalog_applied')
+      .select('department, employee_email, bonus_name, kind, vars, amount, applied_by, created_at, updated_at, cadence')
+      .eq('period_start', week.start)
+      .or(aliasOr(aliases, ['employee_email'])),
+    supabase
+      .from('payroll_wizard_notes')
+      .select('worker, worker_email, adjustment, notes, done, payroll_clerk, created_by, updated_at')
+      .eq('week_start', week.start)
+      .or(aliasOr(aliases, ['worker_email'])),
+    supabase
+      .from('payment_dispatches')
+      .select('status, amount_php, system_bonus_php, system_bonus_label, sent_date, created_by, recipient_email')
+      .eq('cycle_period_start', week.start)
+      .or(aliasOr(aliases, ['recipient_email'])),
+    sourceFile
+      ? getAppSettingsWithMeta([finalPaySnapshotKey(sourceFile), `payroll.wizard.additions.${sourceFile}`])
+      : Promise.resolve({} as Record<string, { value: string; updatedAt: string | null }>),
+    Promise.all(aliasList.filter(isSafeEmail).map((a) => listPaystubPayloadsForEmployee(a))),
+  ]);
+
+  if (masterRes.error) lookupErrors.push(`master list lookup failed: ${masterRes.error.message}`);
+  if (roster.error) lookupErrors.push(`active roster lookup failed: ${roster.error}`);
+  if (hslRes.error) lookupErrors.push(`HSL KPI entries lookup failed: ${hslRes.error.message}`);
+  if (catalogRes.error) lookupErrors.push(`Payment Catalog applied-bonus lookup failed: ${catalogRes.error.message}`);
+  if (notesRes.error) lookupErrors.push(`payroll notes lookup failed: ${notesRes.error.message}`);
+  if (dispatchRes.error) lookupErrors.push(`payment dispatch lookup failed: ${dispatchRes.error.message}`);
+  for (const p of payloadLists) if (p.error) lookupErrors.push(`paystub payload lookup failed: ${p.error}`);
+
+  const activeEmails = new Set(
+    roster.error ? [] : roster.employees.map((e) => normEmail(e.work_email ?? '') ?? '').filter(Boolean),
+  );
+  const masterRows: MasterRowIn[] = ((masterRes.data ?? []) as Array<Record<string, unknown>>).map((r) => {
+    const we = normEmail(str(r['Work Email'])) ?? '';
+    return {
+      department: str(r['Department']) || null,
+      work_email: str(r['Work Email']) || null,
+      employee_id: str(r['employee_id']) || null,
+      off_boarded_at: isoDay(str(r['off_boarded_at'])),
+      on_active_roster: !!we && activeEmails.has(we),
+    };
+  });
+
+  const hslEntries: HslEntryIn[] = ((hslRes.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+    department: str(r.department),
+    employee_email: str(r.employee_email),
+    calculated_bonus: numOrNull(r.calculated_bonus),
+    kpi_data: isRecord(r.kpi_data) ? r.kpi_data : null,
+    is_manager: typeof r.is_manager === 'boolean' ? r.is_manager : null,
+    period_type: str(r.period_type) || null,
+    created_at: str(r.created_at) || null,
+    updated_at: str(r.updated_at) || null,
+  }));
+
+  let hslStatus: HslStatusIn[] = [];
+  const depts = [...new Set(hslEntries.map((e) => e.department).filter(Boolean))];
+  if (depts.length) {
+    const st = await supabase
+      .from('hsl_bonus_period_status')
+      .select('department, status, locked_by, locked_at, updated_at')
+      .eq('period_start', week.start)
+      .in('department', depts);
+    if (st.error) lookupErrors.push(`HSL period status lookup failed: ${st.error.message} — payability is unknown`);
+    hslStatus = ((st.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+      department: str(r.department),
+      status: str(r.status),
+      locked_by: str(r.locked_by) || null,
+      locked_at: str(r.locked_at) || null,
+      updated_at: str(r.updated_at) || null,
+    }));
+  }
+
+  const catalog: CatalogAppliedIn[] = ((catalogRes.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+    department: str(r.department),
+    employee_email: str(r.employee_email),
+    bonus_name: str(r.bonus_name) || null,
+    kind: str(r.kind) || null,
+    vars: isRecord(r.vars) ? r.vars : null,
+    amount: numOrNull(r.amount),
+    applied_by: str(r.applied_by) || null,
+    created_at: str(r.created_at) || null,
+    updated_at: str(r.updated_at) || null,
+    cadence: str(r.cadence) || null,
+  }));
+
+  const notes: NoteIn[] = ((notesRes.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+    worker: str(r.worker) || null,
+    adjustment: r.adjustment ?? null,
+    notes: str(r.notes) || null,
+    done: typeof r.done === 'boolean' ? r.done : null,
+    payroll_clerk: str(r.payroll_clerk) || null,
+    created_by: str(r.created_by) || null,
+    updated_at: str(r.updated_at) || null,
+  }));
+
+  const dispatches: DispatchIn[] = ((dispatchRes.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+    status: str(r.status),
+    amount_php: numOrNull(r.amount_php),
+    system_bonus_php: numOrNull(r.system_bonus_php),
+    system_bonus_label: str(r.system_bonus_label) || null,
+    sent_date: str(r.sent_date) || null,
+    created_by: str(r.created_by) || null,
+  }));
+
+  // Wizard snapshot: `finals` keys the SAME entry under work and personal
+  // email; take the first alias hit (they are byte-identical duplicates).
+  let snapshot: SnapshotIn | null = null;
+  if (sourceFile) {
+    const meta = settings[finalPaySnapshotKey(sourceFile)];
+    if (meta) {
+      try {
+        const parsed = JSON.parse(meta.value) as unknown;
+        const finals = isRecord(parsed) && isRecord(parsed.finals) ? parsed.finals : null;
+        let entry = pickByAlias(finals, aliases);
+        if (entry === undefined && finals) {
+          entry = Object.values(finals).find(
+            (v) => isRecord(v) && typeof v.workEmail === 'string' && aliases.has(v.workEmail.trim().toLowerCase()),
+          );
+        }
+        if (isRecord(entry)) {
+          snapshot = {
+            updated_at: meta.updatedAt,
+            perfectAttendanceBonus: numOrNull(entry.perfectAttendanceBonus),
+            techBonus: numOrNull(entry.techBonus),
+            otherBonuses: numOrNull(entry.otherBonuses),
+            adjustment: numOrNull(entry.adjustment),
+            adjustmentNote: typeof entry.adjustmentNote === 'string' ? entry.adjustmentNote : null,
+            initial: numOrNull(entry.initial),
+            final: numOrNull(entry.final),
+          };
+        }
+      } catch (e) {
+        lookupErrors.push(`wizard snapshot for ${sourceFile} is unreadable: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+
+  // Wizard additions blob: per-person controls the clerk set on this week.
+  let controls: WizardControlsIn | null = null;
+  if (sourceFile) {
+    const meta = settings[`payroll.wizard.additions.${sourceFile}`];
+    if (meta) {
+      try {
+        const b = JSON.parse(meta.value) as unknown;
+        if (isRecord(b)) {
+          const rec = (k: string) => (isRecord(b[k]) ? (b[k] as Record<string, unknown>) : null);
+          const adj = pickByAlias(rec('bonusOverrides'), aliases);
+          const adjNote = pickByAlias(rec('bonusOverrideNotes'), aliases);
+          const toggles = pickByAlias(rec('employeeBonuses'), aliases);
+          controls = {
+            accounting_adjustment: adj == null ? null : numOrNull(adj),
+            accounting_adjustment_note: typeof adjNote === 'string' && adjNote.trim() ? adjNote : null,
+            toggles: isRecord(toggles) ? toggles : null,
+            wizard_department: (pickByAlias(rec('employeeDepts'), aliases) as string | undefined) ?? null,
+            wizard_department_manual: (pickByAlias(rec('employeeDeptsManual'), aliases) as string | undefined) ?? null,
+            tech_manual_grant: aliasFlag(b.techBonusManualGrants, aliases),
+            tech_manual_revoke: aliasFlag(b.techBonusManualRevokes, aliases),
+            blob_updated_at: meta.updatedAt,
+          };
+        }
+      } catch (e) {
+        lookupErrors.push(`wizard additions for ${sourceFile} are unreadable: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+
+  // The staged / paid statement for the week, through the ONE payload mapper.
+  let paystub: PaystubIn | null = null;
+  if (sourceFile) {
+    const row = payloadLists.flatMap((p) => p.rows).find((r) => r.cycle_source_file === sourceFile && r.payload);
+    if (row) {
+      const view = mapPayloadToPayStub(row.payload, row.pay_period);
+      paystub = {
+        paid: dispatches.some((d) => d.status === 'paid'),
+        sent_at: row.sent_at,
+        techBonus: view.techBonus,
+        attendanceBonus: view.attendanceBonus,
+        performanceBonus: view.performanceBonus,
+        adjustment: view.adjustment,
+        adjustmentNote: view.adjustmentNote,
+        totalPayPhp: view.totalPayPhp,
+      };
+    }
+  }
+
+  return assembleBonusBreakdown({
+    email,
+    aliases: aliasList,
+    week,
+    week_resolved_from: resolved_from,
+    source_file: sourceFile,
+    master_rows: masterRows,
+    hsl_entries: hslEntries,
+    hsl_status: hslStatus,
+    catalog_applied: catalog,
+    snapshot,
+    paystub,
+    dispatches,
+    wizard_controls: controls,
+    payroll_notes: notes,
+    lookup_errors: lookupErrors,
+    labelRule: labelHslRule,
+  });
 }
 
 // ── bank change history ──────────────────────────────────────────────────────
@@ -1883,6 +2396,14 @@ function nextIsoDay(day: string): string {
   const d = new Date(`${day}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);
+}
+
+/** null/undefined → null; anything else (a legitimate 0 or "0.00" included)
+ *  parses to its numeric value. Never special-case zero. */
+function numOrNull(v: unknown): number | null {
+  if (v == null) return null;
+  const n = typeof v === 'number' ? v : typeof v === 'string' ? parseFloat(v) : NaN;
+  return Number.isFinite(n) ? n : 0;
 }
 
 function str(v: unknown): string {

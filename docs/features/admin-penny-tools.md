@@ -1,6 +1,6 @@
 # What Admin Penny can be asked
 
-The capability reference for the Admin dashboard's Penny AI: the **22 tools** it
+The capability reference for the Admin dashboard's Penny AI: the **24 tools** it
 can call, what each one really answers, and — the more useful half — **what it
 will refuse to tell you and why**.
 
@@ -35,7 +35,7 @@ Mark" costs an extra step — "what happened to markm@simple.biz" does not.
 
 | Tool | Ask it |
 |---|---|
-| `find_employee` | Resolve a name or partial email to the exact `work_email` every other tool needs. Returns 0, 1 or several matches. |
+| `find_employee` | Resolve a name or partial email to the exact `work_email` every other tool needs. Returns 0, 1 or several matches — **active AND off-boarded people** (since 2026-09-15). Every match carries `status`; an off-boarded match also carries when they left, the recorded reason, who recorded it, and every department their master rows held. Active matches rank first. |
 | `get_employee_profile` | A balanced read on a person: identity, department, employee id, start date, current regular + OT rate, self-entered skill sets, **recognition** (commendations) **and concerns** (manager "flag for review" notes). Deliberately returns both sides so an assessment is never praise alone. |
 | `get_employee_access` | What someone is *allowed* to do: active roles, which dashboards they can open, the per-tab hidden/view/edit overlay, departments they manage, and the admin / elevated / pay-rate-visible flags. **Access rights, not pay.** |
 
@@ -60,6 +60,7 @@ did.
 | `get_rate_history` | Every rate change with **who set it**: the `employee_rate_history` rows, the Payment Catalog structure (the current source of truth) with who created/updated it, and the matching audit events. For the current *effective* rate use `get_employee_profile`. |
 | `get_transfer_history` | Department transfers — from, to, when, who requested and approved. Omit the email for recent transfers company-wide. |
 | `get_onboarding_info` | Start date, department, employee id, plus the HR onboarding submission: who invited them, when paperwork was submitted, status, and onboarding-pipeline audit events. Takes a work **or** personal email. |
+| `get_offboarding_info` | *(2026-09-15)* Whether and how someone **left**: every master-list row's off-board stamp (date, reason, note, **who recorded it**, deletion schedule), the HR off-boarding queue request (who asked, who processed, when decided), the Offboarded-sheet ledger row, and the `hr.employee.*` / `offboarding.*` / `manager.suspended` audit events — plus whether they are on the active roster right now. `status` is `offboarded`, `active`, `mixed` (a stamped row beside a live one: re-hire, temporary pause or duplicate) or `not_on_master_list`. Takes a work **or** personal email. |
 | `get_bank_change_history` | Who changed someone's payout details. Returns the non-clearable `bank_update_history` trail (fields written, **masked** before→after, processor, channel, IP) plus admin-side audit events. |
 
 ## 4. The files on record *(new — 2026-09-12)*
@@ -93,6 +94,7 @@ theirs.
 | `get_financial_summary` | A **calendar month**'s payroll financials with a per-week breakdown *and* the prior month's headline plus % change — enough to write a trend. Pass `YYYY-MM`. |
 | `get_overtime_leaders` | Rank people by overtime over recent pay weeks, with the exact period covered so a report can be labelled. |
 | `get_department_bonuses` | Rank departments by bonuses actually awarded, from the Payment Catalog. Cross-currency totals are approximate — the amounts are stored mostly in PHP. |
+| `get_bonus_breakdown` | *(2026-09-15)* **Where one person's bonus for one pay week came from.** Side by side: what the HRIS *shows* (the Payroll Wizard's final-pay snapshot — PAB, Tech, other bonuses, accounting Adj., final; the staged/paid paystub lines; the paid dispatch's system-bonus line) and every *source* (each HSL KPI Calculator row with the manager's inputs, the rule behind each input, whether the period is `ready`/`locked` = payable and who locked it; each Payment Catalog department row such as Lead Gen appointments; the wizard's per-person toggles and Adj.; the Payroll Notes adjustments for the week) — then a **reconciliation**: do the sources add up to the shown figure. Lists every master-list row the person has, because a duplicate identity is scored in several calculators. `week` is any date in the Sunday–Saturday week; defaults to the just-completed week. |
 | `get_hours_uploads` | The weekly Hubstaff batches behind each pay run: source file, period, uploader, row count, and which batch the wizard is currently using. |
 | `get_uploaded_hours` | The raw hours *inside* one batch — time logged before rates or bonuses. For money, use the pay tools instead. |
 | `get_payroll_wizard_notes` | The clerks' carry-over checklist: open items by default, grouped by who wrote them. |
@@ -143,6 +145,58 @@ a gap waiting to be filled.
 - **It never answers a data question from memory.** If a tool errors or returns
   nothing, it says so and suggests what to check — it does not fabricate an
   event, a date, a rate or a status.
+- **An off-boarded person is never "not in the system".** `find_employee`
+  returns leavers with `status: offboarded` and the date; only zero matches
+  across active *and* off-boarded rows means the name is unknown. Until
+  2026-09-15 the search covered the active roster only, so someone off-boarded
+  the day before a question (adrianm@simple.biz, 2026-09-14) was reported as
+  absent while his pay records were sitting one tool away.
+- **It cannot recover what a KPI score used to be.** The HSL KPI Calculator and
+  the Payment Catalog calculators save without an audit row (a deliberate
+  decision — autosave volume, see `audit-log.md`), so `get_bonus_breakdown`
+  quotes the **current** stored value of every source. When the sources do not
+  add up to the wizard's figure it says so, compares the snapshot's save time
+  with each source's, and stops — it does not infer the value that was
+  overwritten.
+
+---
+
+## 6a. Leavers and bonus provenance (2026-09-15)
+
+Carla, on adrianm@simple.biz's Sep 6–12 bonus: *"according to all of our stuff he
+should only have 250, but he has 500 in HRIS, where does the other 250 come
+from?"* — then *"Also it's saying he's not in the system. How is he NOT lol"*,
+then *"He was offboarded 9/14. Penny should also be able to look at the
+offboards."*
+
+Two defects, one session:
+
+- **`find_employee` read `active_employees` only.** He had been off-boarded by
+  jakec@ the previous afternoon, so Penny said he was not on the roster and
+  went looking for the nearest Adrian. The search now reads the stamped
+  `global_master_list` rows too (paged — 1,058 of them), collapses a person's
+  duplicate rows into one labelled match, and keeps the active roster as the
+  authority: a stamped duplicate beside a live row never demotes anyone.
+  `getEmployeeMasterRecord`'s rule (never resolve a *login identity* to an
+  off-boarded row — work emails are recycled) is untouched; a labelled search
+  hit is not an identity resolution.
+- **No tool read a bonus source.** `get_employee_pay` excludes bonuses by
+  design and the audit log never sees a KPI save, so Penny had four tools that
+  could each honestly say "nothing" and none that could say where ₱250 came
+  from. The data had it: one `hsl_bonus_entries` row (attestation, ₱250 =
+  1 × SSA.Gov), one `bonus_catalog_applied` row (Lead Gen, ₱0), and a wizard
+  snapshot showing ₱250 of other bonuses. He carries **two master rows** —
+  `Lead Gen` and `hsl:attestation` — so he is scored in two calculators, which
+  is the shape a 250 + 250 = 500 takes. The Lead Gen dept-week was re-saved at
+  15:16 that day with his appointments at 0; whether it held 1 before is
+  unrecoverable, because that save is unaudited. The tool now says exactly
+  that instead of guessing.
+
+The pure rules live in `src/lib/penny/roster-match.ts` and
+`src/lib/penny/bonus-breakdown.ts` (25 tests between them); the reads in
+`ceo-tools.ts` / `admin-tools.ts`; the live check in
+`scripts/verify-penny-bonus-tools.mts` (read-only, runs the real tool runners
+against production and fails loudly).
 
 ---
 
