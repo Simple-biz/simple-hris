@@ -101,6 +101,7 @@ export async function GET(req: NextRequest) {
         const dept = leaverPayDepartment({
           masterDepartment: p.department,
           offBoardedAt: p.off_boarded_at,
+          weekStart,
           structure,
           registry,
         });

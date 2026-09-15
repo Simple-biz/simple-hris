@@ -17,9 +17,38 @@ test('michaelsy@: a Hogan structure saved after he fell off the sheet moves his 
   const r = leaverPayDepartment({
     masterDepartment: 'Lead Gen',
     offBoardedAt: null,
+    weekStart: '2026-09-06',
     structure: structure('hogan_smith_law', '2026-09-15T13:52:00Z'),
   });
   assert.deepEqual(r, { department: 'Hogan Smith Law', source: 'catalog' });
+});
+
+test('an UNDATED departure uses the pay week in view as its floor: a structure untouched since before the week does not relabel', () => {
+  const r = leaverPayDepartment({
+    masterDepartment: 'Lead Gen',
+    offBoardedAt: null,
+    weekStart: '2026-09-06',
+    structure: structure('hogan_smith_law', '2026-08-17T19:00:00Z'),
+  });
+  assert.deepEqual(r, { department: 'Lead Gen', source: 'master' });
+});
+
+test('a structure with no readable date cannot prove it is a final-pay decision', () => {
+  const r = leaverPayDepartment({
+    masterDepartment: 'Lead Gen',
+    offBoardedAt: '2026-09-14',
+    structure: { departmentKey: 'hogan_smith_law', createdAt: null, updatedAt: null },
+  });
+  assert.deepEqual(r, { department: 'Lead Gen', source: 'master' });
+});
+
+test('with neither a departure date nor a week to anchor on, the structure speaks', () => {
+  const r = leaverPayDepartment({
+    masterDepartment: 'Lead Gen',
+    offBoardedAt: null,
+    structure: structure('hogan_smith_law', '2026-08-17'),
+  });
+  assert.equal(r.source, 'catalog');
 });
 
 // ── guard 1: no structure → master ──

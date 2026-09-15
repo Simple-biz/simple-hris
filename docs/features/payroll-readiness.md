@@ -810,8 +810,10 @@ Payment Catalog structure files under (the one Set rate writes; walked Hubstaff-
 rate itself) overrides the master-list cell, with three guards, each closing a way the rule
 could relabel someone Accounting never meant to move: (1) no individual structure → master;
 (2) a structure last touched BEFORE the departure is history, not a final-pay decision —
-the 2026-08-17 HSL bulk rate must not undo a later, properly-filed HRIS move to Lead Gen
-(undated departures have no such line and the structure speaks); (3) the same department
+the 2026-08-17 HSL bulk rate must not undo a later, properly-filed HRIS move to Lead Gen;
+an UNDATED departure ("fell off the sheet") uses the **pay week in view** as its floor, so a
+structure untouched since before the week being paid never relabels anyone; a structure with no
+readable date → master; (3) the same department
 under another spelling keeps the MASTER cell — an `hsl:filing_specialist` cell and a
 `hogan_smith_law` structure are one family, and the sub-team is the more specific truth.
 Rows carry `departmentSource` (`master` | `catalog`) and `masterDepartment`; the tab shows a
@@ -822,8 +824,12 @@ overlay, so Step 2 re-cohorts the leaver at once, and the Department line **ride
 the transfer block's tri-state and counted as a change on its own) so an UNPAID stub's
 Department line follows without a re-lock; paid stubs stay frozen. This is a deliberate,
 LEAVER-ONLY exception to `hris-is-dept-source-of-truth`: for an active person the master list
-still wins and Set rate still moves no department. `michaelsy@` is the worked case — master
-Lead Gen (fell off the sheet), one Hogan 265 structure saved 09-15 → Hogan Smith Law.
+still wins and Set rate still moves no department. Verified against live data the day it shipped: the rule moved exactly **five** people
+(`michaelsy@`, `cinderellar@`, `vanessas@`, `ronaldt@` → Hogan Smith Law; `jjr@` → Lead Gen),
+and every one of those structures had been saved THAT day by carla@ or aliviah@ — Accounting
+was already using Set rate to move them, which is the intent; twelve other leavers with an
+individual structure kept their master cell (same family, or a structure older than the
+departure).
 `computeCurrentPay` (dispatch carrier C, the lowest-precedence fallback) still resolves a
 leaver through the rates-row label and does not read this rule — a pre-existing parity gap,
 now recorded.

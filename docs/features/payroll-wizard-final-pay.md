@@ -44,7 +44,8 @@ Payroll Notes → Offboarded fixers becoming a complete override
    `leaverPayDepartment()` (`src/lib/roster/leaver-pay-department.ts`): the master
    cell, overridden by the department the leaver's effective individual catalog
    structure files under when that structure was touched on/after the departure
-   and names a different department (same-family spellings keep the master cell).
+   (or, for an undated departure, on/after the pay week in view began) and names
+   a different department (same-family spellings keep the master cell).
    Tier 1b consumes it unchanged, and because the overlay is the authoritative
    tier for a leaver the key re-derives on every run. `RATES_CHANGED_EVENT` also
    re-pulls the overlay (`loadOffboardedRoster`), so a Set-rate save re-cohorts the

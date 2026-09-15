@@ -22,8 +22,14 @@
  *   2. A structure last touched BEFORE the departure is history, not a final-pay
  *      decision. The HSL bulk rate set of 2026-08-17 gave many later Lead Gen
  *      leavers a `hogan_smith_law` structure; their properly-filed HRIS transfer
- *      to Lead Gen must still win. Undated departures ("fell off the sheet") have
- *      no such line to draw, so the structure speaks.
+ *      to Lead Gen must still win. An UNDATED departure ("fell off the sheet")
+ *      has no departure day to draw that line at, so the pay week in view stands
+ *      in: a structure untouched since before the week being paid began is not
+ *      this week's final-pay decision either. (Verified live 2026-09-15: every
+ *      structure the rule moved — `michaelsy@`, `cinderellar@`, `vanessas@`,
+ *      `ronaldt@`, `jjr@` — had been saved THAT day by carla@ / aliviah@, which
+ *      is the intent; a months-old one would stay put.) A structure with no
+ *      readable date cannot prove it is a decision at all → master.
  *   3. Same department, different spelling → keep the MASTER label. An HSL
  *      sub-team cell (`hsl:filing_specialist`) and a `hogan_smith_law` structure
  *      resolve to one family; the sub-team is the more specific truth and must
@@ -105,6 +111,9 @@ export function leaverPayDepartment(args: {
   masterDepartment: string | null;
   /** `YYYY-MM-DD` (or ISO) they left; null when the departure is undated. */
   offBoardedAt: string | null;
+  /** `YYYY-MM-DD` the pay week in view begins — the floor for an UNDATED
+   *  departure: a structure untouched since before this week is history. */
+  weekStart?: string | null;
   structure: LeaverDeptStructure | null;
   registry?: readonly DepartmentRegistryEntry[];
 }): { department: string | null; source: LeaverDeptSource } {
@@ -113,10 +122,12 @@ export function leaverPayDepartment(args: {
   const s = args.structure;
   // 1. no individual structure → the master label stands.
   if (!s || !s.departmentKey?.trim()) return { department: master, source: 'master' };
-  // 2. touched before the departure → history, not a final-pay decision.
+  // 2. touched before the departure (or, undated, before the pay week in view)
+  //    → history, not a final-pay decision. No readable date → cannot be proven
+  //    a decision → master.
   const touched = dayOf(s.updatedAt) ?? dayOf(s.createdAt);
-  const left = dayOf(args.offBoardedAt);
-  if (left && touched && touched < left) return { department: master, source: 'master' };
+  const floor = dayOf(args.offBoardedAt) ?? dayOf(args.weekStart);
+  if (floor && (!touched || touched < floor)) return { department: master, source: 'master' };
   // 3. same department under another spelling → keep the more specific master cell.
   const structureKey = s.departmentKey.trim();
   const structureFamily = normalizeDeptToKey(structureKey) ?? structureKey;

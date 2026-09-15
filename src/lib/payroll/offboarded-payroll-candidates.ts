@@ -276,6 +276,7 @@ export async function listOffboardedPayrollCandidates(sourceFile: string | null)
     const dept = leaverPayDepartment({
       masterDepartment: person.department,
       offBoardedAt: person.off_boarded_at,
+      weekStart,
       structure,
       registry,
     });
