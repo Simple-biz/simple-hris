@@ -544,7 +544,6 @@ export default function AdminCsvImports() {
   const handleRatesSheetSync = useCallback(async () => {
     const synthFileName = 'Google Sheet · payroll rates';
     const stopProgress = startProgress('rates', synthFileName);
-    let succeeded = false;
     try {
       const res = await fetch('/api/cron/sync-rates-from-sheet', { method: 'POST' });
       const json = (await res.json()) as RatesSheetSyncResponse;
@@ -561,7 +560,6 @@ export default function AdminCsvImports() {
         toast.error('Google Sheet sync failed', { description: message });
         return;
       }
-      succeeded = true;
       const tab = json.tabName ?? 'sheet';
       const fileName = `Google Sheet · ${tab}`;
       const sublines = [

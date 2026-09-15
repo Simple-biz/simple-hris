@@ -61,8 +61,6 @@ interface NewlyHiredPanelProps {
   rail: readonly DeptRailGroup[];
   /** The selected rail key. A parent carries its whole family. */
   activeDept: string;
-  /** That entry's already-formatted label, for headings and empty states. */
-  deptLabel: string | null;
   teamGate:
     | { kind: 'loading' }
     | { kind: 'elevated' }
@@ -273,7 +271,6 @@ export default function NewlyHiredPanel({
   teamGate,
   rail,
   activeDept,
-  deptLabel,
 }: NewlyHiredPanelProps) {
   const [rows, setRows] = useState<PendingHireRow[]>([]);
   const [loading, setLoading] = useState(true);

@@ -8,7 +8,6 @@
  * to agree, and the one place a column name appears next to a field name.
  */
 import type { SchedulePeriod, Weekday } from '@/lib/manager/scheduling';
-import { WEEKDAYS } from '@/lib/manager/scheduling';
 import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 
@@ -112,6 +111,3 @@ export function departmentHasScheduling(deptKeyOrLabel: string | null | undefine
   // collapses onto it. Either is the HSL family.
   return normalizeDeptToKey(raw) === 'hogan_smith_law';
 }
-
-/** Rest days are stored as numbers; this is the only place they become `Weekday`. */
-export const SCHEDULE_WEEKDAYS = WEEKDAYS;

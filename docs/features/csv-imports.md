@@ -163,6 +163,12 @@ safe because an explicit one survives.
 
 Pinned by `src/lib/supabase/master-sync-never-reactivates.test.ts`.
 
+> **Three senders, not two (found 2026-09-15).** The Payroll Wizard's Setup step has its own
+> *Sync master list* button (`PayrollWizard.tsx`, `handleMasterSheetSync`), and a day after the
+> option was removed it was still posting `{ clearOffboarded: true }`. Inert — the route reads no
+> body now — but the control test named only the cron and the Admin screen, so a third caller could
+> have carried the flag back in unnoticed. The body is gone and the control now scans all three.
+
 ### Repairing the rows it already broke
 
 `scripts/backfill-offboard-stamps.mts` — read-only without `--apply`, and it writes a full SELECT

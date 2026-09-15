@@ -10,32 +10,23 @@ import {
   AlertTriangle,
   Briefcase,
   Building2,
-  CalendarDays,
-  Camera,
   Check,
   CheckCircle2,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CalendarCog,
   Trophy,
   CirclePause,
   CirclePlay,
-  ClipboardCheck,
-  Clock,
   DoorOpen,
   Download,
   Eye,
-  EyeOff,
   ImageOff,
-  Inbox,
   LayoutGrid,
   List,
   Loader2,
   Mail,
   Pencil,
-  Sparkles,
-  Undo2,
   UserMinus,
   X,
   Menu,
@@ -82,7 +73,6 @@ import ManagerOffboardQueueDialog, {
 import { Checkbox } from '@/components/ui/checkbox';
 import type { OffboardingQueueStatus } from '@/lib/supabase/offboarding-queue';
 import type { ResignationRequestRow } from '@/lib/supabase/resignation-requests';
-import { offboardReasonLabel } from '@/lib/hr/offboard-reasons';
 import NewlyHiredPanel from '@/components/manager/NewlyHiredPanel';
 import OrientationAttendancePanel from '@/components/manager/OrientationAttendancePanel';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
@@ -3282,7 +3272,6 @@ function TeamPanelInner({
               teamGate={teamGate}
               rail={rail}
               activeDept={activeDept}
-              deptLabel={activeEntry?.name ?? null}
             />
           </motion.div>
         )}

@@ -841,7 +841,6 @@ export default function DeptBonusCalculator({
   // shell's state wins whenever it is provided (see the prop's doc).
   const { state: dispatchLockFallback } = useDispatchLock();
   const payrollDispatch = dispatchLockFromShell ?? dispatchLockFallback;
-  const payrollProcessing = payrollDispatch.locked;
   const appliedEndpoint = isQc ? '/api/qc/submissions' : '/api/bonus-catalog-applied';
   // QC mode roster source: the officer's assigned members per department (the
   // authoritative per-dept roster in QC mode), plus a per-dept email set for
@@ -5314,7 +5313,7 @@ export default function DeptBonusCalculator({
           HSL blocks mark ready/unready while the lock is on, this one
           deliberately does not, and a banner that claimed otherwise would be
           telling an admin they cannot do something they can. See
-          `payrollProcessing` above. */}
+          `payrollDispatch` above. */}
       <PayrollLockBanner
         state={payrollDispatch}
         detail="Accounting is dispatching from these figures — locked for everyone except admins; your changes still save."

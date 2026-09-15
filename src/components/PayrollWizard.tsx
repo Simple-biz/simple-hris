@@ -11347,7 +11347,10 @@ export default function PayrollWizard({
     const stopProgress = startSyncProgress('master', setMasterSyncPct);
     let succeeded = false;
     try {
-      const res = await fetch('/api/cron/sync-master-from-sheet', { method: 'POST', body: JSON.stringify({ clearOffboarded: true }), headers: { 'Content-Type': 'application/json' } });
+      // No body: the sync takes no options and can never un-write an offboard
+      // (csv-imports.md § A sync NEVER un-writes an offboard). This button was the
+      // third caller still sending the retired re-activation flag, found 2026-09-15.
+      const res = await fetch('/api/cron/sync-master-from-sheet', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
       const json = (await res.json()) as { success?: boolean; rowCount?: number; activeCount?: number | null; inserted?: number; updated?: number; error?: string };
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Master list sync failed');
       succeeded = true;

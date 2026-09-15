@@ -885,22 +885,6 @@ export default function HslBonusCalculator({
     setDeptState((prev) => ({ ...prev, [key]: { ...prev[key]!, ...patch } }));
   }
 
-  function patchEntry(key: HslDeptKey, email: string, patch: Partial<EntryRow>) {
-    setDeptState((prev) => {
-      const d = prev[key]!;
-      return {
-        ...prev,
-        [key]: {
-          ...d,
-          dirty: true,
-          entries: d.entries.map((e) =>
-            e.employee_email === email ? { ...e, ...patch } : e,
-          ),
-        },
-      };
-    });
-  }
-
   // ── External members ───────────────────────────────────────────────────────
   // "Add external member" appends an off-roster person to a dept's calculator.
   // No employee/roster record is created — the saved hsl_bonus_entries row is the
@@ -2236,9 +2220,6 @@ function DeptBlock({
   // employee table (right) so clicking either surface filters the roster live.
   // 'ALL' shows everyone, 'NONE' shows only the unassigned.
   const [subTeamFilter, setSubTeamFilter] = useState<SubTeamFilter>('ALL');
-  const toggleSubTeamFilter = useCallback((name: SubTeamName) => {
-    setSubTeamFilter((prev) => (prev === name ? 'ALL' : name));
-  }, []);
 
   const filteredEntries = useMemo(() => {
     const q = search.trim().toLowerCase();

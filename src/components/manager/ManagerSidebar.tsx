@@ -19,7 +19,6 @@ import {
   Moon,
   MoreHorizontal,
   Newspaper,
-  CalendarCog,
   Sun,
   Users,
 } from 'lucide-react';

@@ -15,6 +15,12 @@
  * is that the capability is *absent*, and absence is exactly what a scan can
  * prove. The behaviour is verified against production by
  * `scripts/verify-master-sync-preserves-offboard.mts`.
+ *
+ * Three UI callers post to the sync, not two: the Admin CSV Imports tab, the
+ * Payroll Wizard's Setup step, and the cron. The wizard was still sending the
+ * flag a day after removal (2026-09-15) — inert, because the route no longer
+ * reads it, but a control that names two senders while three exist is the kind
+ * of gap this file exists to close.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,6 +44,9 @@ const cronCode = stripComments(
 );
 const adminCode = stripComments(
   readFileSync(join(process.cwd(), 'src/components/admin/AdminCsvImports.tsx'), 'utf8'),
+);
+const wizardCode = stripComments(
+  readFileSync(join(process.cwd(), 'src/components/PayrollWizard.tsx'), 'utf8'),
 );
 
 test('the stripper strips (the detector that broke four times today)', () => {
@@ -87,9 +96,14 @@ test('CONTROL: the sync actively strips offboard columns from its update payload
   }
 });
 
-test('CONTROL: neither the cron nor the Admin screen can ask for a re-activation', () => {
+test('CONTROL: no caller — cron, Admin screen, or Payroll Wizard — can ask for a re-activation', () => {
   assert.doesNotMatch(cronCode, /clearOffboarded/, 'the cron must not read the flag');
   assert.doesNotMatch(adminCode, /clearOffboarded/, 'the Admin sync must not send it');
+  assert.doesNotMatch(
+    wizardCode,
+    /clearOffboarded/,
+    'the Payroll Wizard Setup sync must not send it — it was the third caller, still posting the flag on 2026-09-15',
+  );
   assert.doesNotMatch(
     adminCode,
     /masterSyncClearOffboarded/,

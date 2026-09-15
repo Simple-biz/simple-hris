@@ -9,7 +9,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
-  Crown,
   HandHeart,
   HeartHandshake,
   Inbox,
