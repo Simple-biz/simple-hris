@@ -3,7 +3,7 @@
 Approved 2026-09-14 (Kane: *"These people are added externally so lets just add that button where
 we can add them into the thing as externals so this should have the total properly"*; then *"if one
 of those people doesnt appear on the global master list then they should be marked as problems"*).
-Brief in the Sep 14 session log, row 97. Q1 answered by that message (button, not the as-of-week
+Brief in the Sep 14 session log, row 99 (numbered 97 until the 2026-09-15 renumbering). Q1 answered by that message (button, not the as-of-week
 table). Q2 taken as recommended (QC-scored at ₱0 and not on the sheet are skipped, counted). Q3
 taken as recommended (an active transfer's row shows where they are now, from the live roster,
 display only).
@@ -28,5 +28,5 @@ display only).
   - [x] Row chip for an active transfer: `Transferred → <dept>`.
 - [x] Typecheck (dev server live — no `next build`).
 - [x] Docs: `qc-scoring.md` § Add missing as externals · INDEX row 24 · memory
-      `qc-add-missing-externals-button` + MEMORY.md pointer · session log row 97 → SHIPPED.
+      `qc-add-missing-externals-button` + MEMORY.md pointer · session log row 99 (was 97) → SHIPPED.
 - [x] One commit, explicit paths.

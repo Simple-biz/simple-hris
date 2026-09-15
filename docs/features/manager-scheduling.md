@@ -164,6 +164,9 @@ actually bring here.
 
 **MIGRATION PENDING — Kane runs it.**
 
+*Re-verified 2026-09-15: a read-only `select` against production returns `PGRST205` — the
+table is still absent, so the route is still answering `migrated: false`.*
+
 ```
 node --import tsx scripts/apply-employee-schedules-migration.mts          # rehearse (rolls back)
 node --import tsx scripts/apply-employee-schedules-migration.mts --apply  # COMMIT

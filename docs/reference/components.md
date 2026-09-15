@@ -1183,7 +1183,7 @@ Two sections:
 
 The sidebar pending-approval badge (`pendingApprovals`) is updated by a `useEffect` keyed on `activeTab` that fetches the same endpoint and counts `status === 'pending'` rows. Previously this was a hardcoded `0`.
 
-**TeamPanel (My Team)** is the most complex tab: wrapped in `<MedalProvider>`; toggles between **Roster** and **Newly Hired** (`NewlyHiredPanel`). A **per-department wallpaper banner** (multipart upload, 10 MB cap, drag-to-reposition that PATCHes a `background-position` string) via `GET/POST/PATCH/DELETE /api/manager/team-wallpaper?department=`. The roster table has client search + dept-filter + pagination (`TEAM_PAGE_SIZE=10`); rate columns (`hsl_hourly_rate ?? regular_rate`) are masked by default (`AnimatedRate`, opacity+translate, no blur for mobile perf); MESA badge; per-row **View** (`ManagerMemberDialog`) and **Transfer** (`ManagerTransferDialog`). Live presence via `useOnlineEmails()` (green dots + `ActiveNowButton`). Roster rows are medal drop targets.
+**TeamPanel (My Team)** is the most complex tab: wrapped in `<MedalProvider>`. **Since 2026-09-14 the department RAIL is the outer axis** (`manager-my-team.md` § *The department rail*): a vertical rail on the left built by `src/lib/manager/team-dept-rail.ts` over the catalog's `dept-rail.ts` geometry — no "All" entry, HSL folded to one parent disclosing its sub-teams, a granted-but-empty department still gets a 0 tab, labels through `formatDeptLabel` with keys kept raw, and the selection cached as a raw key under `MANAGER_CACHE_KEYS.teamDeptRailKey`. Three inner tabs — **Roster** (opens as the LIST, switchable to cards), **New Hire Check List** (`NewlyHiredPanel`) and **Orientation** (`OrientationAttendancePanel`) — all scope to the selected entry through one splitter, `scopeRowsToDept`; hires in a department with nobody on the active roster are named in an amber banner, never dropped. Beside the department search sit the per-department views: **Scheduling** (`SchedulingPanel`, HSL family only via `departmentHasScheduling`) and **Rankings** (`RankingsPane`, data-driven via `hasSpRankings`, readable only by `canViewTeamRankings`). Search stays GLOBAL, with a per-entry match count and a jump list. A **per-department wallpaper banner** (multipart upload, 10 MB cap, drag-to-reposition that PATCHes a `background-position` string) via `GET/POST/PATCH/DELETE /api/manager/team-wallpaper?department=`. Row actions are **View** (`ManagerMemberDialog`) · **Suspend** · **Reactivation** · **Offboard** (the queue dialog), identical in the list and in every card footer; **there is no rate column anywhere** (stripped 2026-06-16). Live presence via `useOnlineEmails()` (green dots + `ActiveNowButton`). Roster rows are medal drop targets. Every selector's indicator is one `SlidingTab` with a shared `layoutId` per group on `TEAM_EASE`; reduced motion collapses the glide to zero duration but keeps the indicator.
 
 ### `src/components/manager/ManagerSidebar.tsx`
 
@@ -1243,11 +1243,23 @@ Drag-to-award peer-recognition system for the My Team roster (context provider +
 
 ### `src/components/manager/NewlyHiredPanel.tsx`
 
-Orientation-attendance gate for HR pending hires routed to the manager's departments; the "Newly Hired" inner tab of My Team. `GET /api/manager/pending-hires` -> `PendingHireRow[]`. **Mark orientation attended** -> `POST /api/manager/pending-hires/{id}/orientation`; **Clear** -> `DELETE`. Purpose: HR cannot promote a hire to the master list until the manager marks orientation attended.
+Orientation-attendance gate for HR pending hires routed to the manager's departments; the **New Hire Check List** inner tab of My Team. `GET /api/manager/pending-hires` -> `PendingHireRow[]`. **Mark orientation attended** -> `POST /api/manager/pending-hires/{id}/orientation`; **Clear** -> `DELETE`. Purpose: HR cannot promote a hire to the master list until the manager marks orientation attended. **2026-09-14**: scoped to the My Team department rail through `scopeRowsToDept(rows, rail, activeDept)` — the same splitter the roster and the Orientation tally use — and hires whose department has no active roster member are named in an amber banner rather than dropped.
+
+### `src/components/manager/OrientationAttendancePanel.tsx`
+
+The **Orientation** inner tab of My Team: weekly attendance cards and tally built by `buildOrientationWeeks` from `GET /api/manager/orientation-history` (one hook, `useOrientationHistory`, shared with the New Hire Check List so the two cannot disagree on a week or a count), PDF export of the selected department's history. Department-scoped by the rail since 2026-09-14 — scoping filters the INPUT hires and re-runs the same model; `attendanceRate` is not department-aware and must not become so, because the HR twin imports it. Doc: `manager-orientation-attendance.md`.
+
+### `src/components/manager/SchedulingPanel.tsx`
+
+**Manager → My Team → (HSL selected) → Scheduling** — a per-department view beside the department search, HSL family only (`departmentHasScheduling`). Shipped UI-only on 2026-08-26; **wired on 2026-09-14**: `GET /api/manager/scheduling` on open, `PUT /api/manager/scheduling` on save (the person's full period list). Renders `SchedulePeriod` rows (model `src/lib/manager/scheduling.ts`, row mapping `scheduling-rows.ts`) as effective-dated **periods** — rest days plus an optional integer-minute shift window (`parseShiftWindow`, a REJECTING parser) — with team defaults derived from the sub-teams present as a seeding aid, a coverage summary (`summarizeScheduling`, `weekdayWeekendLoad`), overlaps rendered in rose (`findOverlaps`), and "Hours not set" as its own state, never 00:00. While the table is absent (`migrated: false`) the panel names the migration script instead of pretending a save stuck. Gated on the `scheduling` feature key, **not** `team`. Nothing here feeds pay. Doc: `manager-scheduling.md`.
+
+### `src/components/manager/useDepartedMembers.ts` *(added 2026-09-14)*
+
+`useDepartedMembers(weekStart)` → a `ReadonlySet<string>` of lower-cased emails who had **left before that pay week**, from `GET /api/manager/departed-members?week=`; `isDepartedMember(set, emails[])` tests any of a person's addresses. Used by `DeptBonusCalculator` to drop leavers from the member list (`hsl-kpi-calculator-2026-07.md`). Refetched per week; `''` disables it (the calculator passes `weekResolved ? weekStart : ''` so a clock-seeded Monday can never hide anyone), and any failure yields the empty set — nobody is ever hidden by an error.
 
 ### `src/components/manager/ManagerTransferDialog.tsx`
 
-Department-transfer request modal (roster "Transfer" button). Target dept list from `GET /api/employee-rate-profiles/summary` (current dept excluded). **Send to HR** -> `POST /api/department-transfers`. Amber note reminds HR to also update the master Google Sheet so the next sync preserves the new department.
+Department-transfer request modal (opened from `ManagerTransfers.tsx`; no longer a My Team roster action). Target dept list from `GET /api/employee-rate-profiles/summary` (current dept excluded). **Send to HR** -> `POST /api/department-transfers`. Amber note reminds HR to also update the master Google Sheet so the next sync preserves the new department.
 
 ---
 
@@ -1401,7 +1413,7 @@ The core employee components (EmployeeApp, EmployeeSidebar, EmployeeDashboard, E
 
 ### `src/components/employee/EmployeeTeam.tsx`
 
-"My Team" tab -- roster of same-department teammates with live presence dots. Read-only department wallpaper banner, a department `<select>` (own department only), a live "N online" pill, search, and a card list. Roster = same-department profiles UNIONed with that department's assigned managers (a manager's own dept may differ from the team they oversee). Presence via `useOnlineEmails()` (Supabase Realtime). Sort: managers first, then online, then alphabetical.
+"My Team" tab -- roster of same-department teammates with live presence dots. Read-only department wallpaper banner, a department `<select>` (own department only), a live "N online" pill, search, and a card list. Roster = same-department profiles UNIONed with that department's assigned managers (a manager's own dept may differ from the team they oversee). Presence via `useOnlineEmails()` (Supabase Realtime). Sort: managers first, then online, then alphabetical. **Rankings left this file on 2026-09-14** — the SP rankings pane now lives in `src/components/team/RankingsPane.tsx`, shared with the manager surface; this component only decides whether to render it.
 
 | Method | Endpoint |
 |---|---|
@@ -1600,6 +1612,10 @@ The employee-facing counterpart of the shipping flow is `GiftShippingCard`.
 ## Shared / Cross-Cutting Components
 
 These mount across multiple dashboards. (Auth/RBAC libs + `ViewSwitcher` are documented at the top under **Auth, RBAC & Role Routing**; `useDispatchLock` under the Payroll Clerk shared data layer.)
+
+### `src/components/team/RankingsPane.tsx` *(extracted 2026-09-14)*
+
+The **SP Rankings** pane shared by Employee → My Team and Manager → My Team → (AI/API Team) → Rankings — extracted from `EmployeeTeam.tsx` rather than copied, so the **no-pesos rule holds identically on both surfaces**. Reads `/api/team-rankings` (the projection has NO `amount`; a test pins the projection string), derives `#1..#n` by sorting SP descending (`vars.Ranking` is a TIER FLAG 1/25/50/0, never a stored rank) and crowns the leader. Who may read it is `canViewTeamRankings` — a one-name allow-list above the elevated bypass (Kane 2026-08-29, reaffirmed 2026-09-14: managers do NOT gain access); a denied viewer sees the same empty week list as an unscored team, so the pane has **no gate of its own and must not grow one**. Props: `rankings`, `loading`, `selfNorm` (highlights the viewer on the employee surface; null on the manager's). Docs: `manager-my-team.md` § *Rankings*, `employee-team-directory.md`.
 
 ### `src/components/presence/PresenceProvider.tsx`
 

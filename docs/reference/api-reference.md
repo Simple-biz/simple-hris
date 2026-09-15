@@ -31,6 +31,7 @@ Complete documentation for all REST API endpoints. Base URL: `http://localhost:3
 16. [Audit log + routes gated 2026-09-09](#16-audit-log--routes-gated-2026-09-09)
 17. [Penny AI (assistants)](#17-penny-ai-assistants-added-2026-09-12)
 18. [QC Compare sheet (shared)](#18-qc-compare-sheet-shared-added-2026-09-14)
+19. [Manager departed members, HSL scheduling and the QC assignments contract](#19-manager-departed-members-hsl-scheduling-and-the-qc-assignments-contract-added-2026-09-14)
 
 ---
 
@@ -2601,3 +2602,88 @@ text**, `pasted_by`, `pasted_at`, `row_count` → **refuse the delete (`500`, no
 `qc.compare_paste.*` is refused with `400` on **bulk GET, single GET and POST** (`isComparePasteKey`) — that route
 gates by role and this family is gated by **department**, which it cannot express. Pinned by a control test in
 `compare-paste.test.ts`.
+
+---
+
+## 19. Manager departed members, HSL scheduling and the QC assignments contract *(added 2026-09-14)*
+
+Three routes from the 2026-09-14 QC-start and My Team work, documented 2026-09-15. Feature docs:
+[qc-scoring.md](../features/qc-scoring.md) (the deal, the departed guard),
+[manager-scheduling.md](../features/manager-scheduling.md) (the periods table and route),
+[hsl-kpi-calculator-2026-07.md](../features/hsl-kpi-calculator-2026-07.md) (the calculator that consumes the departed set).
+
+### `GET /api/manager/departed-members?week=<sunday>`
+
+Active-roster people who had already **left before the pay week being scored**, so the KPI calculator
+(`DeptBonusCalculator`) can drop them from its member list. Consumed through `useDepartedMembers(weekStart)`
+(`src/components/manager/useDepartedMembers.ts`), refetched **per week** — the answer is week-dependent, so it is
+deliberately not a field on the cached roster payload (`MANAGER_CACHE_KEYS.teamRoster`).
+
+**Auth**: session required (`401`); `qc`, `manager` or `admin` role (`403`).
+**Params**: `week` must be a pay-week **Sunday** (`isQcPeriodStart`), else `400` naming the weekday it actually is —
+the same lock the QC period key carries.
+
+**Logic**: `loadQcDepartedEmails(employees, week)` (`src/lib/qc/departed-members.ts`) — the Payment Catalog's
+`hasDepartedBeforeWeek` predicate with all four guards, including the hours guard: someone with a row in that week's
+timesheet is **never** hidden, whatever the stamps say. Server-side because the client cannot read a timesheet.
+
+**Response `200`**: `{ "emails": ["…"], "degraded": string | null, "error": null }`. **Fails OPEN**: an unreadable
+evidence or timesheet read — and any thrown error — returns an empty set with `degraded` set, never a `500`. Hiding a
+live person means their KPI bonus is never scored and never paid; showing a departed one is noise.
+
+**Reads**: the roster via `getEmployeesForAuthorizedServerRoute`, offboard evidence via `loadOffboardEvidenceByEmail`,
+the cycle's `hubstaff_hours` via `loadCycleHoursIndex`. No writes, no audit action.
+
+### `GET /api/manager/scheduling`
+
+Every `employee_schedule_periods` row in the caller's department scope, mapped to `SchedulePeriod`
+(`toSchedulePeriod`, `src/lib/manager/scheduling-rows.ts`).
+
+**Auth**: session (`401`); `manager`, `admin` or an elevated role (`403`). **Scope** is exactly
+`/api/manager/department-members`: explicit `department_managers` rows win whenever the list is non-empty, and the
+full set applies only to an elevated session with **no** assignments. `departmentMatchesManagedAssignments` collapses
+every `hsl:*` onto the family key, so a sub-team grant reads the whole HSL family and the rail narrows it on screen.
+
+**Response `200`**: `{ "migrated": true, "departments": [...], "periods": SchedulePeriod[] }`. Paged with
+`selectAllPaged` from day one. **Before the migration has run** the route answers
+`{ "migrated": false, "periods": [], "departments": [...] }` — a real `42P01` / "does not exist" check, **never**
+`head: true` (which hides a missing table). A manager with no assignments and no elevated role gets `migrated: true`
+with empty lists.
+
+### `PUT /api/manager/scheduling`
+
+Body `{ "workEmail": "…", "periods": SchedulePeriod[] }` — **the person's full period list**, replaced whole
+(delete by `work_email`, then insert), which is what makes "close the current period and open a new one" one call.
+
+**Auth**: as `GET`. **Validation** (`400`): `workEmail` and `periods[]` required; every period's `department` must pass
+`departmentHasScheduling` (HSL family only) and must belong to the named person; a department outside the caller's
+scope is `403`. **Overlaps are refused (`409`)**, not warned about — `findOverlaps`; an overlapping date has two
+answers. Rows are written through `toScheduleRow` with `updated_by` = the session email.
+
+**Response `200`**: `{ "migrated": true, "saved": <n> }`. **Missing table**: `503`
+`{ "error": "Schedules cannot be saved until the migration has run", "migrated": false }`.
+**Table**: `employee_schedule_periods` (DDL `references/sql/create/2026-09-14_employee_schedule_periods.sql`; runner
+`scripts/apply-employee-schedules-migration.mts --apply` — **PENDING, verified absent in prod 2026-09-15**).
+No audit action yet. Nothing here feeds pay.
+
+### `GET /api/qc/assignments?period_start=<sunday>` — the contract that changed on 2026-09-14
+
+Documented here for the first time because its contract moved three times in one day; the deal itself is in
+[qc-scoring.md](../features/qc-scoring.md).
+
+**This GET WRITES**: `ensureQcAssignmentsForPeriod` upserts a full week of slots for whatever key it is given, so the
+key is validated **before** the deal — `period_start` must be a Sunday (`isQcPeriodStart`), else `400`. An unvalidated
+Monday key manufactured **ten phantom weeks** (measured 2026-09-14; left in place, audited by
+`scripts/audit-qc-period-key-drift.mts`).
+
+**Auth**: session (`401`); `qc`, `manager` or `admin` (`403`). A plain department manager sees only the departments
+they manage (`listManagedQcDepts`); officers and admins see every QC department.
+
+**Since 2026-09-14**: officers are the **QC department's** roster (`officersFromRoster`, `src/lib/qc/officers.ts`), not
+`employee_roles.role='qc'`; a dealt week is **frozen** to the officers on its slots; slots are the roster **as of the
+scored week** (`src/lib/qc/roster-as-of-week.ts`); and rows whose holder had **left before the week** are filtered at
+the read as well as at the deal (`departedEmails`), because slots are sticky and never deleted.
+
+**Response `200`**: `{ periodStart, officers, officerCount, deptTotals, assignments, locks, review, mine: { memberEmails,
+byDept, members }, error: null, degraded }` — `degraded` is non-null when the departed-member evidence was unreadable,
+meaning the list **may still contain** people who have left, never the reverse. `500` only when the deal itself fails.
