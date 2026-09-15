@@ -6,8 +6,12 @@
 > **Second approver opened to the whole team, 2026-08-27** — see [Dual approval](#dual-approval).
 > **Accounting's queue is the Issues tab since 2026-09-15** — see [Accounting → Issues](#accounting--issues-the-queue-since-2026-09-15);
 > the same commit made "neither reviewer may be the filer" hold at EVERY stage, not just for the second approver.
-> **OPEN (Kane):** whether a team's *managers* may countersign that team's requests — see the note under [Dual approval](#dual-approval).
-> Requires four manual Supabase steps before use — see [Prerequisites](#prerequisites).
+> **Kane's rulings of 2026-09-15 (same day, second commit):** the countersigner pool ALSO admits the
+> team's active managers (Claire); **a request filed by a MANAGER skips stage 1** and takes ONE
+> signature, from Accounting (`stage1_waived_reason` — **migration PENDING Kane's `--apply`**, see
+> [Prerequisites](#prerequisites) step 5); and stage 2 gates on **Accounting → Issues edit**, with
+> three named accounts excluded — see [Dual approval](#dual-approval) and [Authorization](#authorization).
+> Requires five manual Supabase steps before use — see [Prerequisites](#prerequisites).
 
 A distinct, evidence-backed mechanism for employees to ask Accounting to correct the tracked hours for any past day. Designed to handle cases where work happened but Hubstaff did not record it (forgot to start the tracker, tracker crashed, worked offline or in a meeting, etc.).
 
@@ -24,28 +28,32 @@ A distinct, evidence-backed mechanism for employees to ask Accounting to correct
 ## Status lifecycle
 
 ```
-employee submits
-       |
-   pending                   <- manager has not decided; Accounting sees it read-only
-       |
-       |  manager approves (naming a second approver)
-       v
-awaiting_second_approval     <- still read-only to Accounting
-       |
-       |  second approver approves
-       v
-manager_approved             <- BOTH signed off; Accounting can now set hours and approve
-       |
+employee submits                          MANAGER submits (2026-09-15)
+       |                                          |
+   pending                   <- manager has       |  stage 1 WAIVED: stage1_waived_reason =
+       |                        not decided       |  'manager_filed'; no one to name, nothing
+       |  manager approves                        |  to countersign
+       |  (naming a second approver)              |
+       v                                          |
+awaiting_second_approval     <- still read-only   |
+       |                        to Accounting     |
+       |  second approver approves                |
+       v                                          v
+manager_approved             <- BOTH signed off (or waived); Accounting's ONE signature
+       |                        on the Issues tab sets hours and approves
    approved                  <- approved_hours overlay applied to pay
    denied                    <- Accounting declined
 
-manager_denied               <- EITHER reviewer declined; flow ends, employee notified
+manager_denied               <- EITHER stage-1 reviewer declined; flow ends, employee notified
 ```
 
 `status` is **derived, never written by hand** — `deriveAdjustmentStatus()` in
-`src/lib/supabase/time-adjustments.ts` maps the two sign-offs onto it, which is what makes
-the order they arrive in irrelevant. If the second approver acts first the row stays
-`pending` (the manager still owes a decision) and only moves once they approve too.
+`src/lib/supabase/time-adjustments.ts` maps the two sign-offs **and the waiver** onto it,
+which is what makes the order they arrive in irrelevant. If the second approver acts first
+the row stays `pending` (the manager still owes a decision) and only moves once they approve
+too. A waived row derives to `manager_approved` with no stage-1 decision at all; a recorded
+denial still wins over the waiver. The waiver is a **persisted column**, not a roster
+lookup at read time, precisely so `status` stays a pure function of the row.
 
 ---
 
@@ -80,6 +88,27 @@ Added 2026-08-19. Stage 1 requires **two** sign-offs before Accounting sees anyt
   > One resolver, `resolveAdjustmentDepartment`, feeds **both** the pool and the manager's
   > own authorization check. If they resolved the team differently, the dropdown could
   > offer a candidate the guard then refuses — or the reverse.
+- **…plus the team's active MANAGERS (2026-09-15).** Kane: *"Claire is a contractor that
+  works for Accounting."* Claire's roster row says **USEE** because that is her pay bucket;
+  what says she works for Accounting is her `department_managers` row for Accounting Team.
+  So the pool is the team's active roster **∪** the people holding an active
+  `department_managers` assignment for that team **who are on the active roster somewhere**
+  (a stale assignment on a leaver admits nobody), still minus the filer and the naming
+  manager. Same matcher as the roster rows (`departmentMatchesManagedAssignments`), fetched
+  in `listSecondApproverCandidates`, re-verified in `assignSecondApprover`; an unreadable
+  assignment list **refuses** rather than silently shrinking the pool. Not changed: the
+  roster row itself — moving Claire to Accounting Team would have moved her pay bucket.
+- **A request filed by a MANAGER skips stage 1 (2026-09-15).** Kane: *"All Manager's just
+  need one signature, and it comes from Accounting/Payroll only."* "Manager" is the HRIS
+  fact — an active `department_managers` assignment on the filer, resolved server-side in
+  `createTimeAdjustment` — and it is persisted as `stage1_waived_reason = 'manager_filed'`
+  so the status stays derivable. The row is created at `manager_approved` with **no**
+  manager or second-approver decision, is read-only to every stage-1 action (naming,
+  manager decide, countersign, recall all refuse with a 400 — there is nothing to sign or
+  to recall into), stays editable by the filer until Accounting decides (nobody has signed
+  anything an edit could invalidate), and every trail says *"sent it straight to Accounting
+  — filed by a manager"* so the missing signatures read as the rule, not a gap. A failed
+  assignment lookup yields "not a manager" — it fails towards MORE review, never less.
 - **Naming someone now GRANTS them access — to this one surface and nothing else**
   (changed 2026-08-27; Kane's ruling, superseding the 2026-08-19 ruling that the picker
   could only list already-provisioned people). Being named is itself the authorization to
@@ -110,21 +139,20 @@ Added 2026-08-19. Stage 1 requires **two** sign-offs before Accounting sees anyt
   `scripts/probe-time-adjustment-signatures.mts`), and Accounting could decide a request
   they had filed. One pure rule, `reviewerIsFiler`, now runs in `assignSecondApprover`
   (the naming manager), `managerDecideTimeAdjustment` and `decideTimeAdjustment`, and
-  answers **403** ("Not authorized — you filed this request…"). The already-signed
-  2026-09-10 row was left as it is; whether it stands is Kane's call.
+  answers **403** ("Not authorized — you filed this request…"). Carla's already-signed
+  2026-09-10 row is caught by the manager-filed backfill instead: the migration marks every
+  OPEN row filed by a manager `manager_filed`, so that row now stands at `manager_approved`
+  **because she is a manager**, not because of the self-signature — and Accounting (someone
+  other than Carla) signs it.
 
-> **OPEN — Kane's ruling pending (2026-09-15).** Carla: *"my second signature person is
-> Claire. She is no longer on this list."* Measured: Julia's roster department is
-> **Accounting Team**; Claire's roster department is **USEE**, and she holds a
-> `department_managers` assignment for Accounting Team but is not on its roster. The
-> 2026-08-27 rule above therefore excludes her, correctly. The question is whether the
-> rule should change: **(a) doc stands** — the picker is right, Carla names an Accounting
-> Team roster member (or Claire's roster row is corrected through the normal roster path);
-> **(b) doc is stale** — the pool ALSO includes the ACTIVE `department_managers`
-> assignees of the request's team, still excluding the filer and the naming manager.
-> Under (b) an Accounting Team request would add claire@, kaner@, aliviah@, accounting@,
-> ainsleyw@ and hgk2ghobden@; managers hold broad assignments (Carla: 40+), so (b) is
-> materially wider than "own team". Nothing about the pool was changed pending the answer.
+> **RULED 2026-09-15.** Carla: *"my second signature person is Claire. She is no longer on
+> this list."* Measured: Julia's roster department is **Accounting Team**; Claire's is
+> **USEE**, and she holds a `department_managers` assignment for Accounting Team but is not
+> on its roster, so the 2026-08-27 rule excluded her. Kane: *"Claire is a contractor that
+> works for Accounting"* → the pool admits the team's active managers (the bullet above).
+> For an Accounting Team request that adds claire@, kaner@, aliviah@, accounting@, ainsleyw@
+> and hgk2ghobden@. Kane also ruled that Carla's own requests need no countersigner at all —
+> a manager's request goes straight to Accounting, and *"Claire signs Carla's time"* there.
 - **Re-pointing is blocked once the second approver has decided** — recall instead, which
   clears all three decision sets *and* the assignment so the review restarts clean.
 - **Recall also rescues a parked request.** `awaiting_second_approval` is recallable
@@ -157,6 +185,13 @@ Four one-time Supabase steps are required before the feature works end-to-end:
    node scripts/apply-time-adjustment-second-approver.mjs --apply  # execute
    ```
    No `status` CHECK exists (see `add_manager_approval_to_time_adjustments.sql:4`), so the new `awaiting_second_approval` value needs no constraint change.
+5. **Run the stage-1 waiver migration** (`references/sql/alter/2026-09-15_time_adjustment_stage1_waived.sql`) — adds `stage1_waived_reason` (CHECK: null | `'manager_filed'`) and backfills it on OPEN rows whose filer holds an active `department_managers` assignment, then moves any such row still at `pending` / `awaiting_second_approval` to `manager_approved`. **PENDING as of 2026-09-15 — Kane's `--apply`.** Dry-runs by default and writes a SELECT backup to disk first:
+   ```
+   node scripts/apply-time-adjustment-stage1-waived.mjs          # dry run
+   node scripts/apply-time-adjustment-stage1-waived.mjs --apply  # execute
+   node scripts/apply-time-adjustment-stage1-waived.mjs --verify # verify only
+   ```
+   The SQL carries no `BEGIN`/`COMMIT` (the script owns the transaction). **Deploy AFTER apply**: an ordinary employee filing keeps working without the column (the key is written only when it must be set or cleared), but a **manager's filing fails loudly** until the column exists — by design, rather than silently taking the dual-approval path.
 
 Without the table the API 500s on every request. Without the manager columns the manager approve/deny writes will fail. Without the bucket, image uploads fail but a request with no images still works. **Without the second-approver columns every manager approval fails** — the write targets columns that do not exist, and the backfill is what stops already-decided rows from deriving back to `pending` and re-entering the queue.
 
@@ -558,10 +593,23 @@ What the row does, and the rules it carries over unchanged from the wizard panel
 Every derivation is pure and tested in `src/lib/accounting/issues-time-adjustments.ts`
 (30 tests); the row and its three dialogs are `src/components/payroll/TimeAdjustmentIssueRows.tsx`.
 
-**Known limits, flagged not built:** the stage-2 PATCH gate is still
-`accounting:payroll_wizard` edit, so an Issues user holding only the `disputes` grant gets a
-server 403 (fails closed); and Issues has no payroll-processing lock — the wizard panel
-disables decisions while a run is locked, Issues (like the disputes beside it) does not.
+**Who may decide (Kane, 2026-09-15: *"any one with Acct>Issues>Edit can adjust. (Exclude
+Jake/April/Lenny)"*).** The route gate is `accounting:disputes` **edit** — the grant of the
+tab the decision is made on — and it is the SAME gate for the wizard panel, which calls the
+same route. Kept additive: the DB layer still requires an Accounting role
+(`canActOnDisputes`), so an Issues-edit grant with no role (three such accounts existed on
+2026-09-15) is still refused — that check was not loosened to match the wording. The three
+exclusions are `TIME_ADJUSTMENT_DECIDER_EXCLUSIONS` in
+`src/lib/accounting/time-adjustment-deciders.ts` — jakec@ (King Gaspar "Jake" Calma),
+april@ (April Pearl Galang), lenny@ (Maria Linda Tesalona), all Accounting Team; the
+probe `scripts/probe-time-adjustment-deciders.mts` showed no role or grant separates them
+from the other Issues editors, so the rule has to name them. Applied on the server (403)
+for approve, deny and delete, and mirrored in the Issues UI as a disabled button with the
+reason. A code constant, not a setting, so it is reviewed in git; if the list starts
+changing often it should become admin-editable.
+
+**Known limit, flagged not built:** Issues has no payroll-processing lock — the wizard
+panel disables decisions while a run is locked, Issues (like the disputes beside it) does not.
 
 ### Payroll Wizard Additions tab
 
@@ -673,14 +721,14 @@ Private. Object path: `{sanitized_email}/{requestKey}/{idx}-{timestamp}.{ext}`. 
 | List own requests | Employee with `?email=` |
 | List all requests (accounting) | Elevated roles (`requireElevatedSession`) |
 | List department requests (manager) | `manager` or `admin` role + scoped to `department_managers` assignments |
-| Manager approve / deny | `manager:time_adjustments` **edit** grant + caller manages the employee's department + **caller is not the filer** (2026-09-15, 403) |
-| Name / re-name the second approver | same as manager approve (filer check included); blocked once the second approver has decided |
+| Manager approve / deny | `manager:time_adjustments` **edit** grant + caller manages the employee's department + **caller is not the filer** (2026-09-15, 403). **Refused (400) on a manager-filed row** — there is no stage 1 |
+| Name / re-name the second approver | same as manager approve (filer check included); blocked once the second approver has decided; refused on a manager-filed row |
 | Second approver approve / deny | The row must name the caller in `second_approver_email`. **No role, no feature grant, no department check** — the assignment IS the authorization (2026-08-27) |
 | Read own second-approver queue | Signed in. `GET /api/time-adjustments/second-approvals` is scoped to the caller's own assignments and takes no email parameter |
-| Appear in the second-approver picker | ACTIVE roster member of the request's own department, excluding the filer and the naming manager. **No role required** (2026-08-27) |
-| Recall | same as manager approve; allowed from `manager_approved` **or** `awaiting_second_approval` |
-| Accounting approve / deny | Accounting role (`canActOnDisputes`) + row must be `manager_approved` + **decider is not the filer** (2026-09-15, 403). Route gate: `accounting:payroll_wizard` edit — from the Issues tab too |
-| Accounting delete | Accounting role (`canActOnDisputes`) + row must be `denied` or `manager_denied` |
+| Appear in the second-approver picker | ACTIVE roster member of the request's own department **or** an active `department_managers` assignee of that department who is on the active roster (2026-09-15), excluding the filer and the naming manager. **No role required** (2026-08-27) |
+| Recall | same as manager approve; allowed from `manager_approved` **or** `awaiting_second_approval`; refused on a manager-filed row (nothing to recall into) |
+| Accounting approve / deny | Route gate **`accounting:disputes` edit** (Accounting → Issues, 2026-09-15 — the wizard panel calls the same route, so it needs the same grant) + Accounting role (`canActOnDisputes`) + row must be `manager_approved` + **decider is not the filer** (403) + **not one of the named exclusions** (`TIME_ADJUSTMENT_DECIDER_EXCLUSIONS`: jakec@, april@, lenny@ — Kane, 403) |
+| Accounting delete | same gate, role check and exclusions as approve / deny + row must be `denied` or `manager_denied` |
 | Evidence signed URLs | Included in GET response only for elevated/accounting callers |
 
 ---
@@ -758,3 +806,22 @@ Private. Object path: `{sanitized_email}/{requestKey}/{idx}-{timestamp}.{ext}`. 
 | `src/lib/supabase/time-adjustments.ts` | **Edited** — `reviewerIsFiler` + `OWN_REQUEST_REVIEW_ERROR`; guard added to `assignSecondApprover`, `managerDecideTimeAdjustment`, `decideTimeAdjustment` |
 | `src/lib/supabase/time-adjustments-reviewer-guard.test.ts` | **New** — the rule + a source scan that all three write paths call it |
 | `scripts/probe-time-adjustment-signatures.mts` | **New** — read-only detector: status vs derived status, rows owed a decision, both-signature rows and what Accounting did, roster rows for the people named |
+
+### 2026-09-15 (second commit) — Kane's rulings: team managers in the pool · manager-filed skips stage 1 · Issues edit decides, three excluded
+
+| Path | Change |
+|---|---|
+| `references/sql/alter/2026-09-15_time_adjustment_stage1_waived.sql` | **New** — `stage1_waived_reason` column + CHECK; backfills OPEN manager-filed rows and moves them to `manager_approved`. **PENDING Kane's `--apply`** |
+| `scripts/apply-time-adjustment-stage1-waived.mjs` | **New** — dry-run-by-default `--apply` / `--verify` gate; SELECT backup to disk before the UPDATE; verifies no waived row is stored pending |
+| `src/lib/supabase/time-adjustments.ts` | **Edited** — `Stage1WaivedReason`, `adjustmentStage1Waived`, `MANAGER_FILED_STAGE1_ERROR`; `deriveAdjustmentStatus` takes REQUIRED `stage1Waived`; `createTimeAdjustment` resolves the filer's assignments and persists the waiver (edit-lock allows an unsigned waived row); naming / manager decide / countersign / recall refuse waived rows; `selectTeamApproverCandidates` admits `teamManagers` on the active roster; `listSecondApproverCandidates` fetches them and fails closed; `decideTimeAdjustment` + `deleteTimeAdjustment` apply the exclusions |
+| `src/lib/accounting/time-adjustment-deciders.ts` | **New** — `TIME_ADJUSTMENT_DECIDER_EXCLUSIONS`, `isExcludedTimeAdjustmentDecider`, the 403 message and the UI hint |
+| `src/lib/accounting/time-adjustment-deciders.test.ts` | **New** — 7 tests incl. source scans: both Accounting writes apply it, the Issues UI mirrors it, the route gates on Issues edit |
+| `src/lib/supabase/time-adjustments.test.ts` | **Edited** — `derive` helper carries `stage1Waived`; 4 waiver tests; 5 team-manager pool tests (Claire admitted, other team's manager not, stale assignment not, filer/naming manager still excluded, no list = roster only) |
+| `app/api/time-adjustments/[id]/route.ts` | **Edited** — stage 2 and DELETE gate on `accounting:disputes` edit; "straight to Accounting" refusals map to 400 |
+| `src/lib/manager/time-adjustment-queue.ts` (+ test) | **Edited** — `decisionTrail` carries the waiver entry at filing time |
+| `src/lib/accounting/issues-time-adjustments.ts` (+ test) | **Edited** — `timeAdjustmentTrail` carries the waiver step |
+| `src/components/payroll/TimeAdjustmentIssueRows.tsx` | **Edited** — waived rows say so in the row; `blockedHint` so an excluded viewer's disabled button says why |
+| `src/components/payroll/PabDisputeQueue.tsx` | **Edited** — mirrors the exclusion (`taCanApprove` / `taCanDelete`) |
+| `src/components/payroll/TimeAdjustmentReviewPanel.tsx` | **Edited** — waived rows badge *Filed by a manager — straight to Accounting* instead of *Manager approved* |
+| `src/components/employee/TimeAdjustmentDialog.tsx` | **Edited** — a waived row's status reads *With Accounting*, not *Manager approved* |
+| `scripts/probe-time-adjustment-deciders.mts` | **New** — read-only: Issues-edit holders, their roles, and the roster rows behind "Jake / April / Lenny" |

@@ -75,6 +75,29 @@ function row(over: Partial<TimeAdjustmentRow> = {}): TimeAdjustmentRow {
 
 const managed = (...ids: string[]) => new Set(ids);
 
+// ── Manager-filed rows skip stage 1 (2026-09-15) ───────────────────────────────
+
+test('a waived row says so in the trail, at the moment it was filed', () => {
+  const trail = decisionTrail(
+    row({ status: 'manager_approved', stage1_waived_reason: 'manager_filed' }),
+  );
+  assert.equal(trail.length, 2);
+  assert.equal(trail[0].what, 'submitted the request');
+  assert.ok(trail[1].what.includes('straight to Accounting'));
+  assert.equal(trail[1].at, trail[0].at);
+});
+
+test('an ordinary row never gains the waiver entry', () => {
+  const trail = decisionTrail(row({ status: 'pending' }));
+  assert.ok(trail.every((e) => !e.what.includes('straight to Accounting')));
+});
+
+test('a waived row sits in the in-flight bucket as "With Accounting" for its own manager', () => {
+  const r = row({ status: 'manager_approved', stage1_waived_reason: 'manager_filed' });
+  assert.equal(bucketOfRequest(r, managed(r.id), ME), 'in-flight');
+  assert.equal(rowStatusChip(r, managed(r.id), ME).label, 'With Accounting');
+});
+
 // ── Hours: display rounds, math does not ───────────────────────────────────────
 
 test('hours round to 2dp for display — the defect visible in the old UI', () => {

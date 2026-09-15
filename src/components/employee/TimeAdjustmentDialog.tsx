@@ -364,7 +364,12 @@ export default function TimeAdjustmentDialog({
             <div className="flex items-center gap-2">
               <span className="text-zinc-600 dark:text-zinc-400">Status:</span>
               <Badge variant="outline" className={STATUS_STYLES[existingRequest.status] ?? ''}>
-                {STATUS_LABEL[existingRequest.status] ?? existingRequest.status}
+                {/* A manager's own request skips stage 1 (2026-09-15): nobody "manager
+                    approved" it, so the label must not claim someone did. */}
+                {existingRequest.stage1_waived_reason === 'manager_filed' &&
+                existingRequest.status === 'manager_approved'
+                  ? 'With Accounting'
+                  : STATUS_LABEL[existingRequest.status] ?? existingRequest.status}
               </Badge>
             </div>
             <div><span className="text-zinc-600 dark:text-zinc-400">Reason:</span> {reasonLabel}</div>

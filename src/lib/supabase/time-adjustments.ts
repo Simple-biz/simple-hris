@@ -3,9 +3,13 @@ import { insertAuditLog } from './audit-log';
 import { canActOnDisputes, resolveUserRole } from './pab-day-disputes';
 import { normEmail } from '@/lib/email/norm-email';
 import { overrideDeptLabel } from '@/lib/departments/dept-email-overrides';
-import { listDepartmentsForManager } from './department-managers';
+import { listAllDepartmentManagers, listDepartmentsForManager } from './department-managers';
 import { getEmployeesForAuthorizedServerRoute } from './employees';
 import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
+import {
+  EXCLUDED_DECIDER_ERROR,
+  isExcludedTimeAdjustmentDecider,
+} from '@/lib/accounting/time-adjustment-deciders';
 
 /**
  * Time Adjustment Requests — employee-initiated, evidence-backed requests for Accounting
@@ -126,29 +130,55 @@ export type TimeAdjustmentStatus =
 export type ApprovalDecision = 'approved' | 'denied';
 
 /**
+ * Why stage 1 was skipped on a row. `manager_filed` (Kane, 2026-09-15): the filer
+ * holds an active `department_managers` assignment, so the request goes straight to
+ * Accounting for ONE signature — there is no manager above them in this flow to sign
+ * it and no countersigner to name. Persisted on the row (`stage1_waived_reason`) so
+ * `status` stays a pure function of the row.
+ */
+export type Stage1WaivedReason = 'manager_filed';
+
+/** True when the row skipped stage 1 — no manager or second-approver decision exists or is expected. */
+export function adjustmentStage1Waived(
+  row: Pick<TimeAdjustmentRow, 'stage1_waived_reason'>,
+): boolean {
+  return row.stage1_waived_reason === 'manager_filed';
+}
+
+/** Refusal for stage-1 actions on a waived row. The route maps "straight to Accounting" to 400. */
+export const MANAGER_FILED_STAGE1_ERROR =
+  'This request was filed by a manager and went straight to Accounting — there is no stage-1 review to sign or recall';
+
+/**
  * The single rule turning the two independent sign-offs into the row's status.
  * Pure and order-independent — the manager and the second approver may act in
  * either sequence and the same inputs always yield the same status.
  *
  * Precedence, highest first:
  *  1. EITHER denial is terminal and blocks the adjustment (`manager_denied`).
- *  2. No manager approval yet => `pending`, whatever the second approver did.
- *  3. No second approver named => legacy single-approval row => `manager_approved`.
- *  4. Both approved => `manager_approved`; else => `awaiting_second_approval`.
+ *  2. Stage 1 waived (filed by a manager, 2026-09-15) => `manager_approved` with no
+ *     stage-1 decisions at all — Accounting's single signature is the whole review.
+ *  3. No manager approval yet => `pending`, whatever the second approver did.
+ *  4. No second approver named => legacy single-approval row => `manager_approved`.
+ *  5. Both approved => `manager_approved`; else => `awaiting_second_approval`.
  *
- * Note (3) exists only for rows created before dual approval shipped; the write
+ * Note (4) exists only for rows created before dual approval shipped; the write
  * paths below refuse to approve a new row without a named second approver.
+ * `stage1Waived` is REQUIRED, not defaulted: a caller that forgets it must not
+ * silently get the dual-approval answer for a manager's row.
  */
 export function deriveAdjustmentStatus(params: {
   managerDecision: ApprovalDecision | null;
   secondDecision: ApprovalDecision | null;
   secondApproverEmail: string | null;
+  stage1Waived: boolean;
 }): TimeAdjustmentStatus {
-  const { managerDecision, secondDecision, secondApproverEmail } = params;
+  const { managerDecision, secondDecision, secondApproverEmail, stage1Waived } = params;
   // A denial from either party ends the request. Deliberately reuses the existing
   // terminal status so every downstream reader (Accounting's decided list, the
   // employee's status card, delete-eligibility) keeps working unchanged.
   if (managerDecision === 'denied' || secondDecision === 'denied') return 'manager_denied';
+  if (stage1Waived) return 'manager_approved';
   if (managerDecision !== 'approved') return 'pending';
   if (!secondApproverEmail) return 'manager_approved';
   return secondDecision === 'approved' ? 'manager_approved' : 'awaiting_second_approval';
@@ -205,6 +235,11 @@ export type TimeAdjustmentRow = {
   second_decided_at: string | null;
   second_decision_note: string | null;
   period_label: string | null;
+  /**
+   * Why stage 1 was skipped; null on an ordinary dual-approval row. Optional in the
+   * type because rows read before the 2026-09-15 migration carry no such column.
+   */
+  stage1_waived_reason?: Stage1WaivedReason | null;
   created_at: string;
   created_by: string | null;
   updated_at: string;
@@ -370,19 +405,42 @@ export async function createTimeAdjustment(params: {
   // Upsert on (work_email, adjust_date) so editing/re-requesting the same day overwrites
   // the prior PENDING row rather than failing the unique index. Once a manager or
   // Accounting has acted, the row is locked against employee edits.
+  // A MANAGER's own request skips stage 1 (Kane, 2026-09-15: "All Manager's just need
+  // one signature, and it comes from Accounting/Payroll only"). "Manager" is the HRIS
+  // fact — an active department_managers assignment — resolved here, server-side, and
+  // persisted on the row so `status` stays derivable. A failed lookup yields no
+  // assignments, i.e. the ordinary dual-approval path: fail towards MORE review.
+  const { rows: filerAssignments } = await listDepartmentsForManager(email);
+  const stage1Waived = filerAssignments.length > 0;
+
   const { row: existing } = await getTimeAdjustmentByEmailDate(email, params.adjust_date);
   // Locked once ANY reviewer has signed off — not merely once the status left `pending`.
   // Under dual approval a row stays `pending` after the second approver approves (the
   // manager still owes a decision), and letting the employee rewrite it then would apply
-  // a recorded sign-off to content nobody with that sign-off ever saw.
+  // a recorded sign-off to content nobody with that sign-off ever saw. A waived row sits
+  // at manager_approved with NO signature until Accounting decides, so it stays editable
+  // until then — nobody has signed anything the edit could invalidate.
+  const existingUnsignedWithAccounting =
+    !!existing &&
+    existing.status === 'manager_approved' &&
+    adjustmentStage1Waived(existing) &&
+    existing.decided_at == null;
   if (
     existing &&
-    (existing.status !== 'pending' ||
+    ((existing.status !== 'pending' && !existingUnsignedWithAccounting) ||
       existing.manager_decision != null ||
-      existing.second_decision != null)
+      existing.second_decision != null ||
+      existing.decided_at != null)
   ) {
     return { id: null, error: 'This day\'s request has already been reviewed and can no longer be changed' };
   }
+
+  const status = deriveAdjustmentStatus({
+    managerDecision: null,
+    secondDecision: null,
+    secondApproverEmail: null,
+    stage1Waived,
+  });
 
   const payload = {
     work_email: email,
@@ -392,10 +450,15 @@ export async function createTimeAdjustment(params: {
     requested_hours: reqHours,
     requested_segments: segments,
     image_paths: paths,
-    status: 'pending' as const,
+    status,
     period_label: periodLabelFor(new Date()),
     created_by: params.created_by?.trim() || null,
     updated_at: nowIso,
+    // Written only when it must be set or cleared, so an ordinary filing keeps working
+    // before the 2026-09-15 migration lands; a manager's filing fails loudly instead.
+    ...(stage1Waived || existing?.stage1_waived_reason
+      ? { stage1_waived_reason: stage1Waived ? ('manager_filed' as const) : null }
+      : {}),
   };
 
   const { data, error } = await supabase
@@ -422,6 +485,9 @@ export async function createTimeAdjustment(params: {
         reason: params.reason,
         // True when the employee edited a still-pending request (row overwritten).
         resubmission: !!existing,
+        // 'manager_filed' when stage 1 was skipped — the filer manages a department.
+        stage1_waived: stage1Waived ? 'manager_filed' : null,
+        resulting_status: status,
       },
     });
   })();
@@ -562,6 +628,7 @@ export async function assignSecondApprover(
   const { row, error: fetchErr } = await getTimeAdjustmentById(id);
   if (fetchErr) return { error: fetchErr };
   if (!row) return { error: 'Request not found' };
+  if (adjustmentStage1Waived(row)) return { error: MANAGER_FILED_STAGE1_ERROR };
   if (row.status !== 'pending' && row.status !== 'awaiting_second_approval') {
     return { error: 'Request is no longer open for review' };
   }
@@ -675,6 +742,7 @@ export async function managerDecideTimeAdjustment(
   const { row, error: fetchErr } = await getTimeAdjustmentById(id);
   if (fetchErr) return { error: fetchErr };
   if (!row) return { error: 'Request not found' };
+  if (adjustmentStage1Waived(row)) return { error: MANAGER_FILED_STAGE1_ERROR };
   if (row.manager_decision != null) return { error: 'You have already decided this request' };
   if (row.status !== 'pending') return { error: 'Request is no longer pending manager review' };
   // A manager who manages their own department still may not sign their own request
@@ -696,6 +764,7 @@ export async function managerDecideTimeAdjustment(
     managerDecision,
     secondDecision: row.second_decision,
     secondApproverEmail: row.second_approver_email,
+    stage1Waived: adjustmentStage1Waived(row),
   });
   const nowIso = new Date().toISOString();
 
@@ -762,6 +831,7 @@ export async function secondDecideTimeAdjustment(
   const { row, error: fetchErr } = await getTimeAdjustmentById(id);
   if (fetchErr) return { error: fetchErr };
   if (!row) return { error: 'Request not found' };
+  if (adjustmentStage1Waived(row)) return { error: MANAGER_FILED_STAGE1_ERROR };
 
   // The assignment IS the authorization. No assignment, no access.
   const named = (row.second_approver_email ?? '').trim().toLowerCase();
@@ -779,6 +849,7 @@ export async function secondDecideTimeAdjustment(
     managerDecision: row.manager_decision,
     secondDecision,
     secondApproverEmail: row.second_approver_email,
+    stage1Waived: adjustmentStage1Waived(row),
   });
   const nowIso = new Date().toISOString();
 
@@ -861,8 +932,20 @@ export async function listSecondApproverCandidates(params: {
   const { employees, error } = await getEmployeesForAuthorizedServerRoute();
   if (error) return { emails: [], error };
 
+  // The team's MANAGERS join the pool (Kane, 2026-09-15 — Claire is a contractor who
+  // works for Accounting; her roster row says USEE because that is her pay bucket, and
+  // her `department_managers` row for Accounting Team is what says she works for them).
+  // Fails CLOSED: an unreadable assignment list refuses rather than silently shrinking
+  // the pool to roster-only, which would hide the change instead of surfacing the read.
+  const { rows: managerRows, error: managerErr } = await listAllDepartmentManagers();
+  if (managerErr) return { emails: [], error: `Could not read department managers: ${managerErr}` };
+
   return {
-    emails: selectTeamApproverCandidates(employees, { department, exclude: params.exclude }),
+    emails: selectTeamApproverCandidates(employees, {
+      department,
+      exclude: params.exclude,
+      teamManagers: managerRows,
+    }),
     error: null,
   };
 }
@@ -879,7 +962,17 @@ export function selectTeamApproverCandidates(
     department: string | null;
     work_email?: string | null;
   }[],
-  params: { department: string; exclude?: readonly string[] },
+  params: {
+    department: string;
+    exclude?: readonly string[];
+    /**
+     * ACTIVE `department_managers` rows (2026-09-15). A manager of THIS team joins the
+     * pool even when their own roster row sits in another department — but only if
+     * they are on the active roster at all (an offboarded manager's stale assignment
+     * admits nobody). The filer / naming-manager exclusions apply to them too.
+     */
+    teamManagers?: readonly { manager_email: string; department: string }[];
+  },
 ): string[] {
   const department = params.department.trim();
   // An empty team is not "everyone" — it is nobody. Guarded here as well as at the
@@ -891,13 +984,24 @@ export function selectTeamApproverCandidates(
   );
 
   const out = new Set<string>();
+  const activeRoster = new Set<string>();
   for (const row of rows) {
+    const email = normEmail(row.work_email ?? null);
+    if (email) activeRoster.add(email);
     // Effective department, so a Sales-Assistant roster row does not land in the
     // Sales pool (and vice versa) just because the stored label says "Sales".
     const rowDept = overrideDeptLabel(row.department, row.work_email ?? null) ?? row.department;
     if (!departmentMatchesManagedAssignments(rowDept, [department])) continue;
-    const email = normEmail(row.work_email ?? null);
     if (!email || excluded.has(email)) continue;
+    out.add(email);
+  }
+
+  for (const m of params.teamManagers ?? []) {
+    // Same matcher as the roster rows, so "Accounting" and "Accounting Team" agree here too.
+    if (!departmentMatchesManagedAssignments(m.department, [department])) continue;
+    const email = normEmail(m.manager_email ?? null);
+    if (!email || excluded.has(email)) continue;
+    if (!activeRoster.has(email)) continue;
     out.add(email);
   }
 
@@ -928,6 +1032,9 @@ export async function recallTimeAdjustment(
   const { row, error: fetchErr } = await getTimeAdjustmentById(id);
   if (fetchErr) return { error: fetchErr };
   if (!row) return { error: 'Request not found' };
+  // A manager-filed row has no stage 1 to recall INTO: "pending" would put it in a
+  // manager queue that can never sign it (the filer cannot review their own request).
+  if (adjustmentStage1Waived(row)) return { error: MANAGER_FILED_STAGE1_ERROR };
   // Recallable once the manager has approved: either already with Accounting, or
   // parked waiting on a second approver (which is the case that MUST be recoverable —
   // otherwise a request naming someone unavailable is stuck forever).
@@ -1009,6 +1116,9 @@ export async function decideTimeAdjustment(
   if (!(await canActOnDisputes(approverLower))) {
     return { error: 'Not authorized — only Accounting roles can decide time adjustments' };
   }
+  // Kane, 2026-09-15: Issues edit decides, EXCEPT the named exclusions. Additive to the
+  // role check above and the route's grant check — never a replacement for either.
+  if (isExcludedTimeAdjustmentDecider(approverLower)) return { error: EXCLUDED_DECIDER_ERROR };
 
   const { row, error: fetchErr } = await getTimeAdjustmentById(id);
   if (fetchErr) return { error: fetchErr };
@@ -1076,6 +1186,7 @@ export async function deleteTimeAdjustment(
   if (!(await canActOnDisputes(actorLower))) {
     return { error: 'Not authorized — only Accounting roles can delete time adjustments' };
   }
+  if (isExcludedTimeAdjustmentDecider(actorLower)) return { error: EXCLUDED_DECIDER_ERROR };
 
   const { row, error: fetchErr } = await getTimeAdjustmentById(id);
   if (fetchErr) return { error: fetchErr };

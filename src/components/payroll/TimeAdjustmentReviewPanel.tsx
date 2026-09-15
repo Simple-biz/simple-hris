@@ -234,7 +234,11 @@ export default function TimeAdjustmentReviewPanel({
                   </p>
                 </div>
                 <Badge variant="outline" className={STATUS_BADGE.manager_approved}>
-                  {a.manager_decided_by ? `Approved by ${a.manager_decided_by.split('@')[0]}` : 'Manager approved'}
+                  {a.manager_decided_by
+                    ? `Approved by ${a.manager_decided_by.split('@')[0]}`
+                    : a.stage1_waived_reason === 'manager_filed'
+                      ? 'Filed by a manager — straight to Accounting'
+                      : 'Manager approved'}
                 </Badge>
               </div>
 

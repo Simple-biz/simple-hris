@@ -260,6 +260,30 @@ test('an undated step is never dated today — it keeps its slot with when=null'
   assert.equal(mgr.when, null);
 });
 
+test('a manager-filed row explains its missing stage-1 steps in the trail', () => {
+  const trail = timeAdjustmentTrail({
+    ...base,
+    manager_decision: null,
+    manager_decided_by: null,
+    manager_decided_at: null,
+    second_approver_email: null,
+    second_approver_assigned_by: null,
+    second_approver_assigned_at: null,
+    second_decision: null,
+    second_decided_by: null,
+    second_decided_at: null,
+    stage1_waived_reason: 'manager_filed',
+  });
+  assert.equal(trail.length, 2);
+  assert.ok(trail[1].what.includes('straight to Accounting'));
+});
+
+test('a manager-filed row still counts as Pending for Accounting at manager_approved', () => {
+  const waived: TimeAdjustmentRow = { ...base, stage1_waived_reason: 'manager_filed' };
+  const c = timeAdjustmentIssueCounts([waived]);
+  assert.equal(c.pending, 1);
+});
+
 // ─── Source-shape guards: the surfaces actually use these rules ──────────────
 
 const read = (...p: string[]) => fs.readFileSync(path.join(process.cwd(), ...p), 'utf8');

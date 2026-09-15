@@ -46,7 +46,7 @@ import {
 
 export type TimeAdjustmentDecideTarget = { row: TimeAdjustmentRow; action: 'approve' | 'deny' };
 
-const ROLE_HINT = 'Requires accounting, hr_coordinator, or admin';
+const ROLE_HINT = 'Requires Accounting → Issues edit and an Accounting role';
 
 function fmtWhen(iso: string | null): string | null {
   if (!iso) return null;
@@ -61,6 +61,7 @@ export function TimeAdjustmentIssueTableRow({
   canApprove,
   canDelete,
   acting,
+  blockedHint,
   onView,
   onApprove,
   onDeny,
@@ -70,6 +71,8 @@ export function TimeAdjustmentIssueTableRow({
   canApprove: boolean;
   canDelete: boolean;
   acting: boolean;
+  /** Why this viewer cannot act, when `canApprove` is false for a reason other than role. */
+  blockedHint?: string;
   onView: () => void;
   onApprove: () => void;
   onDeny: () => void;
@@ -80,6 +83,7 @@ export function TimeAdjustmentIssueTableRow({
   const requested = timeAdjustmentRequestedLabel(r);
   const setHours = r.status === 'approved' ? fmtTimeAdjustmentHours(r.approved_hours) : null;
   const secondName = r.second_decided_by ?? r.second_approver_email;
+  const cannotActHint = blockedHint ?? ROLE_HINT;
 
   return (
     <TableRow className="border-indigo-100/70 transition-colors hover:bg-indigo-50/50 dark:border-indigo-900/30 dark:hover:bg-indigo-950/20">
@@ -107,7 +111,9 @@ export function TimeAdjustmentIssueTableRow({
           '—'
         ) : null}
         <p className="mt-1 text-[10px] text-zinc-400 dark:text-zinc-500">
-          Manager {r.manager_decided_by ?? '—'} · Second approver {secondName ?? '—'}
+          {r.stage1_waived_reason === 'manager_filed'
+            ? 'Filed by a manager — straight to Accounting, no stage-1 review'
+            : `Manager ${r.manager_decided_by ?? '—'} · Second approver ${secondName ?? '—'}`}
         </p>
       </TableCell>
       <TableCell>
@@ -152,7 +158,7 @@ export function TimeAdjustmentIssueTableRow({
                 size="sm"
                 variant="outline"
                 disabled={!canApprove || acting}
-                title={!canApprove ? ROLE_HINT : 'Set the day total and approve'}
+                title={!canApprove ? cannotActHint : 'Set the day total and approve'}
                 className="h-7 border-emerald-300 px-2 text-[11px] text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-400"
                 onClick={onApprove}
               >
@@ -162,7 +168,7 @@ export function TimeAdjustmentIssueTableRow({
                 size="sm"
                 variant="outline"
                 disabled={!canApprove || acting}
-                title={!canApprove ? ROLE_HINT : undefined}
+                title={!canApprove ? cannotActHint : undefined}
                 className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
                 onClick={onDeny}
               >

@@ -51,16 +51,18 @@ type Row = {
   decided_at: string | null;
   approved_hours: number | null;
   requested_hours: number | null;
+  /** Present only once the 2026-09-15 migration has landed. */
+  stage1_waived_reason?: string | null;
   created_at: string;
   updated_at: string;
 };
 
+// `*` rather than a column list so the probe runs both before and after the
+// stage1_waived_reason migration (an explicit missing column is a PostgREST error).
 const { rows, error: rowsErr } = await selectAllPaged<Row>((from, to) =>
   supabase
     .from("time_adjustment_requests")
-    .select(
-      "id,work_email,adjust_date,status,manager_decision,manager_decided_by,manager_decided_at,second_approver_email,second_approver_assigned_by,second_decision,second_decided_by,second_decided_at,decided_by,decided_at,approved_hours,requested_hours,created_at,updated_at",
-    )
+    .select("*")
     .order("created_at", { ascending: true })
     .range(from, to),
 );
@@ -82,6 +84,8 @@ line("1b. rows whose stored status differs from the derived status (derivation d
       managerDecision: r.manager_decision as "approved" | "denied" | null,
       secondDecision: r.second_decision as "approved" | "denied" | null,
       secondApproverEmail: r.second_approver_email,
+      // Absent before the 2026-09-15 migration; a missing column reads as "not waived".
+      stage1Waived: r.stage1_waived_reason === "manager_filed",
     });
     if (derived !== r.status) {
       n++;

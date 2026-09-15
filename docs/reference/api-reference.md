@@ -2144,7 +2144,7 @@ Two-stage decision endpoint. The caller identity is always taken from the sessio
 
 **Stage 1 — Manager (`manager_approve` / `manager_deny`)**
 
-Requires `manager` or `admin` role. The DB layer additionally checks that the session email manages the employee's department (via `department_managers`). Row must be in `pending` status.
+Requires `manager` or `admin` role. The DB layer additionally checks that the session email manages the employee's department (via `department_managers`), and since 2026-09-15 that the manager **is not the filer** (403). Row must be in `pending` status. **A manager-filed row has no stage 1**: `manager_approve` / `manager_deny` / `assign_second_approver` / `second_approve` / `second_deny` / `recall` all return `400` ("…went straight to Accounting") on a row whose `stage1_waived_reason = 'manager_filed'`.
 
 ```json
 {
@@ -2157,7 +2157,7 @@ On `manager_deny` the employee receives an `employee_notifications` row. On `man
 
 **Stage 2 — Accounting (`approve` / `deny`)**
 
-Requires an active accounting role (`canActOnDisputes`). Row **must be `manager_approved`**; returns `400` if still `pending`.
+Route gate: **`accounting:disputes` edit** (Accounting → Issues) since 2026-09-15 — previously `accounting:payroll_wizard` edit; the Issues tab and the Payroll Wizard panel both call this route, so both need the Issues grant. The DB layer additionally requires an active accounting role (`canActOnDisputes`), refuses the decider who **filed** the request (403), and refuses the named exclusions in `TIME_ADJUSTMENT_DECIDER_EXCLUSIONS` (jakec@, april@, lenny@ — 403). Row **must be `manager_approved`**; returns `400` if still `pending`.
 
 ```json
 {
@@ -2234,7 +2234,7 @@ Signed URLs are always included (manager must be able to view evidence). 1-hour 
 
 Hard-deletes a denied time adjustment request. Only callable by Accounting roles (`canActOnDisputes`). Only rows with `status = 'denied'` or `status = 'manager_denied'` may be deleted — attempting to delete any other status returns `400`.
 
-**Auth:** accounting role required (same gate as approve/deny). Session identity used — no body needed.
+**Auth:** route gate `accounting:disputes` edit (2026-09-15; was `payroll_wizard`) + accounting role + not one of the named exclusions (same gate as approve/deny). Session identity used — no body needed.
 
 **Response `200`:**
 ```json

@@ -123,9 +123,12 @@ export async function PATCH(
         .toLowerCase();
       if (!sessionEmail) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
     } else {
+      // Stage 2 gates on ACCOUNTING → ISSUES edit since 2026-09-15 (Kane: "any one with
+      // Acct>Issues>Edit can adjust") — the tab the decision is made on. The DB layer
+      // additionally requires an Accounting role and refuses the named exclusions.
       const authz = isManagerStage
         ? await requireFeatureEdit('manager', 'time_adjustments')
-        : await requireFeatureEdit('accounting', 'payroll_wizard');
+        : await requireFeatureEdit('accounting', 'disputes');
       if (!authz.ok) return deniedResponse(authz);
 
       const session = await getServerSession(authOptions);
@@ -145,7 +148,7 @@ export async function PATCH(
       if (error) {
         const code = error === 'Request not found' ? 404
           : error.includes('Not authorized') || error.includes('not in your managed') ? 403
-          : error.includes('can be recalled') ? 400
+          : error.includes('can be recalled') || error.includes('straight to Accounting') ? 400
           : 500;
         return NextResponse.json({ error }, { status: code });
       }
@@ -169,6 +172,7 @@ export async function PATCH(
             || error.includes('already decided')
             || error.includes('cannot approve')
             || error.includes('Pick someone')
+            || error.includes('straight to Accounting')
             || error.includes('cannot approve it') ? 400
           : 500;
         return NextResponse.json({ error }, { status: code });
@@ -192,6 +196,7 @@ export async function PATCH(
             || error.includes('Select a second approver')
             || error.includes('no longer open')
             || error.includes('cannot approve')
+            || error.includes('straight to Accounting')
             || error.includes('Pick someone') ? 400
           : 500;
         return NextResponse.json({ error }, { status: code });
@@ -214,7 +219,9 @@ export async function PATCH(
       if (error) {
         const code = error === 'Request not found' ? 404
           : error.includes('Not authorized') ? 403
-          : error.includes('already decided') || error.includes('no longer open') ? 400
+          : error.includes('already decided')
+            || error.includes('no longer open')
+            || error.includes('straight to Accounting') ? 400
           : 500;
         return NextResponse.json({ error }, { status: code });
       }
@@ -289,7 +296,9 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    const authz = await requireFeatureEdit('accounting', 'payroll_wizard');
+    // Same gate as the stage-2 decision (Issues edit, 2026-09-15); the DB layer adds the
+    // role check and the named exclusions.
+    const authz = await requireFeatureEdit('accounting', 'disputes');
     if (!authz.ok) return deniedResponse(authz);
 
     const { id } = await context.params;

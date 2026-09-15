@@ -1,0 +1,113 @@
+{
+  "takenAt": "2026-09-15T15:25:17.152Z",
+  "candidates": [
+    {
+      "id": "e26aeb0a-19b9-4c1d-8af7-f745850b3803",
+      "work_email": "kaner@simple.biz",
+      "adjust_date": "2026-08-19",
+      "status": "manager_approved",
+      "manager_decision": "approved",
+      "second_decision": "approved"
+    },
+    {
+      "id": "ca7bb9a1-75fb-46d2-b205-ec45808769ac",
+      "work_email": "carla@simple.biz",
+      "adjust_date": "2026-09-10",
+      "status": "manager_approved",
+      "manager_decision": "approved",
+      "second_decision": "approved"
+    }
+  ],
+  "rows": [
+    {
+      "id": "0500f610-7536-4c8e-9a8b-54c5433cfd79",
+      "work_email": "adriant@simple.biz",
+      "adjust_date": "2026-05-08",
+      "status": "approved",
+      "manager_decision": "approved",
+      "second_decision": null,
+      "updated_at": "2026-06-11T18:49:31.732Z"
+    },
+    {
+      "id": "44cbb7f4-9e47-4740-a129-c333117a926a",
+      "work_email": "carla@simple.biz",
+      "adjust_date": "2026-04-09",
+      "status": "manager_denied",
+      "manager_decision": "denied",
+      "second_decision": null,
+      "updated_at": "2026-07-02T22:22:30.854Z"
+    },
+    {
+      "id": "d24a2580-1c1b-45d4-aa3c-fc0df3ec9d63",
+      "work_email": "carla@simple.biz",
+      "adjust_date": "2026-07-08",
+      "status": "manager_denied",
+      "manager_decision": "denied",
+      "second_decision": null,
+      "updated_at": "2026-07-10T17:30:13.633Z"
+    },
+    {
+      "id": "12346d8a-8978-4351-8512-fd065e43af58",
+      "work_email": "earlv@simple.biz",
+      "adjust_date": "2026-08-14",
+      "status": "manager_denied",
+      "manager_decision": "denied",
+      "second_decision": null,
+      "updated_at": "2026-08-17T15:24:29.583Z"
+    },
+    {
+      "id": "e26aeb0a-19b9-4c1d-8af7-f745850b3803",
+      "work_email": "kaner@simple.biz",
+      "adjust_date": "2026-08-19",
+      "status": "manager_approved",
+      "manager_decision": "approved",
+      "second_decision": "approved",
+      "updated_at": "2026-08-20T17:52:16.300Z"
+    },
+    {
+      "id": "5af13438-14b1-411f-9127-6e9dce43e289",
+      "work_email": "vincib@simple.biz",
+      "adjust_date": "2026-08-19",
+      "status": "manager_denied",
+      "manager_decision": "denied",
+      "second_decision": null,
+      "updated_at": "2026-08-24T17:33:06.022Z"
+    },
+    {
+      "id": "0911d0ec-3d47-4f7d-97d3-77329dd039e4",
+      "work_email": "carla@simple.biz",
+      "adjust_date": "2026-08-03",
+      "status": "manager_denied",
+      "manager_decision": "denied",
+      "second_decision": null,
+      "updated_at": "2026-09-10T20:37:51.542Z"
+    },
+    {
+      "id": "bbce27d9-ddd9-40c1-81fe-95573ace5c3e",
+      "work_email": "carla@simple.biz",
+      "adjust_date": "2026-08-24",
+      "status": "manager_denied",
+      "manager_decision": "approved",
+      "second_decision": "denied",
+      "updated_at": "2026-08-27T17:32:10.261Z"
+    },
+    {
+      "id": "ca7bb9a1-75fb-46d2-b205-ec45808769ac",
+      "work_email": "carla@simple.biz",
+      "adjust_date": "2026-09-10",
+      "status": "manager_approved",
+      "manager_decision": "approved",
+      "second_decision": "approved",
+      "updated_at": "2026-09-10T20:56:59.330Z"
+    },
+    {
+      "id": "002e9630-6875-4314-9cbf-61425dc23372",
+      "work_email": "juliar@simple.biz",
+      "adjust_date": "2026-09-10",
+      "status": "pending",
+      "manager_decision": null,
+      "second_decision": null,
+      "updated_at": "2026-09-10T21:18:05.046Z"
+    }
+  ]
+}

@@ -294,6 +294,17 @@ export function timeAdjustmentTrail(row: TimeAdjustmentRow): TimeAdjustmentTrail
     when: row.created_at ?? null,
     note: null,
   });
+  // A manager's own request skips stage 1 (Kane, 2026-09-15): one signature, from
+  // Accounting. Said in the trail so the absent manager/second-approver steps read as
+  // the rule, not as a gap.
+  if (row.stage1_waived_reason === 'manager_filed') {
+    steps.push({
+      who: 'HRIS',
+      what: 'sent it straight to Accounting — filed by a manager, no stage-1 review',
+      when: row.created_at ?? null,
+      note: null,
+    });
+  }
   if (row.second_approver_email) {
     steps.push({
       who: row.second_approver_assigned_by || 'Manager',

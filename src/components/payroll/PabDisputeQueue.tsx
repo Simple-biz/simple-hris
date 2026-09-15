@@ -74,6 +74,10 @@ import {
   TimeAdjustmentIssueTableRow,
   type TimeAdjustmentDecideTarget,
 } from '@/components/payroll/TimeAdjustmentIssueRows';
+import {
+  EXCLUDED_DECIDER_HINT,
+  isExcludedTimeAdjustmentDecider,
+} from '@/lib/accounting/time-adjustment-deciders';
 
 const PAGE_SIZE = 15;
 
@@ -408,6 +412,11 @@ export default function PabDisputeQueue() {
   // decider is not the person who filed the request.
   const [taActingId, setTaActingId] = useState<string | null>(null);
   const [taDecide, setTaDecide] = useState<TimeAdjustmentDecideTarget | null>(null);
+  // Kane, 2026-09-15: Issues edit decides time adjustments EXCEPT the named exclusions.
+  // Mirrored here so the button says why; the server refuses regardless (403).
+  const taExcluded = isExcludedTimeAdjustmentDecider(currentUser);
+  const taCanApprove = canApprove && !taExcluded;
+  const taCanDelete = canDelete && !taExcluded;
   const [viewTaTarget, setViewTaTarget] = useState<TimeAdjustmentRow | null>(null);
   const [taDeleteTarget, setTaDeleteTarget] = useState<TimeAdjustmentRow | null>(null);
   const [taDeleting, setTaDeleting] = useState(false);
@@ -948,8 +957,9 @@ export default function PabDisputeQueue() {
                       <TimeAdjustmentIssueTableRow
                         key={`ta-${r.id}`}
                         row={r}
-                        canApprove={canApprove}
-                        canDelete={canDelete}
+                        canApprove={taCanApprove}
+                        canDelete={taCanDelete}
+                        blockedHint={taExcluded ? EXCLUDED_DECIDER_HINT : undefined}
                         acting={taActingId === r.id}
                         onView={() => setViewTaTarget(r)}
                         onApprove={() => setTaDecide({ row: r, action: 'approve' })}
@@ -1268,7 +1278,7 @@ export default function PabDisputeQueue() {
         onCloseDecide={() => setTaDecide(null)}
         onSubmitDecide={decideTimeAdjustment}
         acting={taDecide != null && taActingId === taDecide.row.id}
-        canApprove={canApprove}
+        canApprove={taCanApprove}
         deleteTarget={taDeleteTarget}
         onCloseDelete={() => setTaDeleteTarget(null)}
         onConfirmDelete={() => void handleTaDelete()}

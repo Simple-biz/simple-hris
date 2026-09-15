@@ -436,6 +436,15 @@ export function decisionTrail(row: TimeAdjustmentRow): TrailEntry[] {
       who: row.created_by || row.work_email,
       what: 'submitted the request',
     });
+    // A manager's own request skips stage 1 (2026-09-15). Said in the trail, at the
+    // moment it happened, so nobody reads the missing signatures as an oversight.
+    if (row.stage1_waived_reason === 'manager_filed') {
+      entries.push({
+        at: row.created_at,
+        who: 'HRIS',
+        what: 'sent it straight to Accounting — filed by a manager, no stage-1 review',
+      });
+    }
   }
 
   if (row.second_approver_email && row.second_approver_assigned_at) {

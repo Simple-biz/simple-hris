@@ -31,8 +31,31 @@ const derive = (
   managerDecision: ApprovalDecision | null,
   secondDecision: ApprovalDecision | null,
   secondApproverEmail: string | null = SECOND,
+  stage1Waived = false,
 ): TimeAdjustmentStatus =>
-  deriveAdjustmentStatus({ managerDecision, secondDecision, secondApproverEmail });
+  deriveAdjustmentStatus({ managerDecision, secondDecision, secondApproverEmail, stage1Waived });
+
+// ─── Manager-filed requests skip stage 1 (Kane's ruling 2026-09-15) ──────────
+//
+// "All Manager's just need one signature, and it comes from Accounting/Payroll only."
+// The waiver is a persisted fact on the row, so status stays a pure function of it.
+
+test('a manager-filed request goes straight to Accounting with NO stage-1 decision', () => {
+  assert.equal(derive(null, null, null, true), 'manager_approved');
+});
+
+test('a waived row never needs a named second approver to reach Accounting', () => {
+  assert.equal(derive(null, null, SECOND, true), 'manager_approved');
+});
+
+test('a denial still wins over a waiver — a recorded "no" is never overridden by the filer being a manager', () => {
+  assert.equal(derive('denied', null, null, true), 'manager_denied');
+  assert.equal(derive(null, 'denied', SECOND, true), 'manager_denied');
+});
+
+test('an un-waived row is unchanged: no manager approval is still pending', () => {
+  assert.equal(derive(null, null, null, false), 'pending');
+});
 
 // ─── The dual-approval rule ──────────────────────────────────────────────────
 
@@ -315,4 +338,61 @@ test('duplicate roster rows for one person collapse to a single candidate', () =
     { department: 'Edit' },
   );
   assert.deepEqual(pool, ['ana@simple.biz']);
+});
+
+// ─── The team's MANAGERS join the pool (Kane's ruling 2026-09-15) ────────────
+//
+// Claire works for Accounting as a contractor; her roster row says USEE (her pay
+// bucket) and her department_managers row says Accounting Team. The pool is now the
+// team's active roster PLUS its active managers who are on the roster somewhere.
+
+const ACCOUNTING_ROSTER = [
+  { department: 'Accounting Team', work_email: 'juliar@simple.biz' },
+  { department: 'Accounting Team', work_email: 'lenny@simple.biz' },
+  { department: 'USEE', work_email: 'claire@simple.biz' },
+  { department: 'USEE', work_email: 'carla@simple.biz' },
+];
+const ACCOUNTING_MANAGERS = [
+  { manager_email: 'claire@simple.biz', department: 'Accounting Team' },
+  { manager_email: 'carla@simple.biz', department: 'Accounting Team' },
+  { manager_email: 'gone@simple.biz', department: 'Accounting Team' }, // offboarded: not on the roster
+  { manager_email: 'warren@simple.biz', department: 'Edit Team' },
+];
+
+test('a manager of the team is in the pool even though their roster row is another department', () => {
+  const pool = selectTeamApproverCandidates(ACCOUNTING_ROSTER, {
+    department: 'Accounting Team',
+    teamManagers: ACCOUNTING_MANAGERS,
+  });
+  assert.ok(pool.includes('claire@simple.biz'), pool.join(','));
+});
+
+test('a manager of ANOTHER team is not admitted by managing something', () => {
+  const pool = selectTeamApproverCandidates(ACCOUNTING_ROSTER, {
+    department: 'Accounting Team',
+    teamManagers: ACCOUNTING_MANAGERS,
+  });
+  assert.ok(!pool.includes('warren@simple.biz'));
+});
+
+test('a stale assignment on someone no longer on the active roster admits nobody', () => {
+  const pool = selectTeamApproverCandidates(ACCOUNTING_ROSTER, {
+    department: 'Accounting Team',
+    teamManagers: ACCOUNTING_MANAGERS,
+  });
+  assert.ok(!pool.includes('gone@simple.biz'));
+});
+
+test('the filer and the naming manager are excluded even when they manage the team', () => {
+  const pool = selectTeamApproverCandidates(ACCOUNTING_ROSTER, {
+    department: 'Accounting Team',
+    exclude: ['juliar@simple.biz', 'carla@simple.biz'],
+    teamManagers: ACCOUNTING_MANAGERS,
+  });
+  assert.deepEqual(pool, ['claire@simple.biz', 'lenny@simple.biz']);
+});
+
+test('without a managers list the pool is exactly the roster team, as before', () => {
+  const pool = selectTeamApproverCandidates(ACCOUNTING_ROSTER, { department: 'Accounting Team' });
+  assert.deepEqual(pool, ['juliar@simple.biz', 'lenny@simple.biz']);
 });
