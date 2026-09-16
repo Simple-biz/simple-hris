@@ -1174,11 +1174,11 @@ The **Transfers** tab -- approve/reject manager-submitted department-transfer re
 
 ### `src/components/hr/HrMesa.tsx`
 
-The **MESA** tab (Medical Emergency Savings Account). Two sub-tabs: **MESA Eligible** and **FPU Enrollments** (embeds `HrFpuEnrollments`). MESA membership is flagged per-employee via `mesa_member=true` on the rates table; **FPU completion is the only path into MESA**, which is why the two tabs live together. `MesaEligibleList` fetches `GET /api/employee-hourly-rates` + `GET /api/employees` + `GET /api/mesa-ledger` (best-effort) in parallel, builds a `mesa_member` lookup keyed by work+personal email, and joins each member to their `mesa_ledger` rollup so the table shows per-person **Contributed / Matched / Balance** columns (plus program-wide totals in a stat strip) alongside status; module-level cache (`cachedEligible_v3`) so sub-tab switches skip refetch (Refresh clears it).
+The **MESA** tab (Medical Emergency Savings Account). Two sub-tabs: **MESA Eligible** and **FPU Classes** (`HrFpuEnrollments`). The **Opt-in Requests** sub-tab was retired 2026-09-16 — membership opens through the FPU class pipeline. `MesaEligibleList` fetches `GET /api/employee-hourly-rates` + `GET /api/employees` + `GET /api/mesa-ledger` (best-effort) in parallel, builds a `mesa_member` lookup keyed by work+personal email, and joins each member to their `mesa_ledger` rollup (Contributed / Matched / Balance).
 
 ### `src/components/hr/HrFpuEnrollments.tsx`
 
-FPU (Financial Peace University) sign-up submissions list, rendered inside MESA's FPU sub-tab. Stat strip (Total / This month / Distinct departments) + search + list (name, email, department, EST shift, submitted). Data: `GET /api/hr/fpu-enrollments` -> `{rows, source, error}`. **`source` is `'table'` or `'audit'`** -- when the `fpu_enrollments` table does not exist yet the API falls back to the audit log and the UI shows an amber notice pointing to `references/add_fpu_enrollments.sql`.
+HR → MESA → **FPU Classes** (2026-09-16 rewrite). A **class strip** (one chip per class: `FPU 2026 · Batch 1`, phase pill Open / Upcoming / Closed, pending count; **+ New class**), the selected class's header (window · class dates · schedule · Edit · Delete when empty), status filter chips + search, and the enrollment table with **checkbox multi-select** (`src/components/mesa/bulk-selection.tsx`). Bulk bar: **Approve** / **Deny** / **Reset** (`PATCH /api/hr/fpu-enrollments`) and **Mark completed** (approved rows only → `POST /api/hr/fpu-enrollments/complete`, then `POST /api/toggle-mesa-member` per returned `toEnroll` row). Tenure column recomputes `start_date_used + 3 months` against the class start and flags amber if the class start moved. Off-GML rows are badged, not hidden. Doc: [fpu-enrollment.md](../features/fpu-enrollment.md).
 
 ### `src/components/hr/DeptFilter.tsx`
 
@@ -1469,22 +1469,21 @@ The core employee components (EmployeeApp, EmployeeSidebar, EmployeeDashboard, E
 
 ### `src/components/employee/EmployeeFpu.tsx`
 
-FPU (Financial Peace University) enrollment sign-up form. Standalone tab OR embedded inside `EmployeeMesa`'s "FPU Enrollment" sub-tab (`embedded` prop strips the page wrapper). **FPU is the only path into the MESA program.** Hardcoded `CLASS_DETAILS` (start date, 6-week duration, Thursday EST / Friday PHT), and a 4-field form (Simple.biz email, full name, department, EST shift). **Tenure gate:** requires >= 3 calendar months at Simple (`monthsBetween`, date-aware); **fails open** when `startDate` is missing so bad records do not block people. `POST /api/fpu-enroll`.
+Employee → MESA → **FPU Class** (2026-09-16 rewrite; the previous form had been mounted nowhere). One class card (`GET /api/fpu-enroll?email=`): label, phase, enrollment window, class dates, schedule. Below it ONE line — the server's verdict painted (`fpuVerdict`) — and, when eligible, a shift field + **Enroll** (`POST /api/fpu-enroll`). An existing enrollment shows Pending / Approved / Denied (+ note) / Completed. Past classes list underneath. Doc: [fpu-enrollment.md](../features/fpu-enrollment.md).
 
 ### `src/components/employee/EmployeeMesa.tsx`
 
-"MESA" tab (Medical Emergency Savings Account). **Four sub-tabs** *(Request added 2026-06-01)*:
+"MESA" tab (Medical Emergency Savings Account). **Four sub-tabs** *(FPU Class restored 2026-09-16)*:
 
 | Sub-tab | Content |
 |---|---|
-| About MESA | Program overview: why it exists, what it covers, contribution breakdown (PHP 100 employee + PHP 400 company = PHP 500/week), program rules, FPU-only enrollment path |
-| FPU Enrollment | Embeds `EmployeeFpu embedded` — FPU sign-up |
+| About MESA | Program overview: why it exists, what it covers, contribution breakdown (PHP 100 employee + PHP 300 company = PHP 400/week), program rules, one "Enroll in an FPU class" card |
+| FPU Class | `EmployeeFpu` — the current class, the eligibility verdict, Enroll |
 | **Request** *(new)* | Self-service form to submit a MESA request; past submissions shown below the form |
 | History | Contribution ledger — real `mesa_ledger` data when present, else a projected ledger (see below) |
 
-**Request sub-tab — `MesaRequestForm`:** A single dropdown selects the request type (Opt-in, Opt-out, Disbursement Request, Return). The relevant panel animates in via a `motion.div` with `key={requestType}` (no exit animation — old panel unmounts instantly, new one fades in once from slightly above, no cycling). Changing the option resets all sub-form state.
+**Request sub-tab — `MesaRequestForm`:** Tabs select the request type (Opt-out, Disbursement Request, Return — **Opt-in was retired 2026-09-16**; joining is the FPU Class sub-tab). The relevant panel animates in via a `motion.div` with `key={requestType}` (no exit animation — old panel unmounts instantly, new one fades in once from slightly above, no cycling). Changing the option resets all sub-form state.
 
-- **Opt-in**: enrollment confirmation checkbox + 5 agreement checkboxes + FPU completion date input.
 - **Opt-out**: single removal confirmation checkbox.
 - **Disbursement**: confirmation checkbox + reason dropdown (Medical Emergency / Natural Disaster / Computer Repair / Other) + explanation textarea (250-char) + PHP amount input + policy note.
 - **Return**: optional notes field.

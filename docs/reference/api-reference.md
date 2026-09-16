@@ -2385,6 +2385,39 @@ Gate: `requireFeatureEdit('hr','offboarding')`. Fills the blank Location / Conta
 
 ---
 
+## 20. FPU classes & enrollment *(added 2026-09-16)*
+
+Governing doc: [fpu-enrollment.md](../features/fpu-enrollment.md). Every HR route answers `migrated: false` (503 on writes) until `scripts/apply-fpu-classes-migration.mts --apply` has run.
+
+### `GET /api/hr/fpu-classes`
+Gate: `requireFeatureAccess('hr','mesa','view')`. `{ classes: FpuClass[] (newest first), counts: { [classId]: { pending, approved, denied, completed } }, migrated }`.
+
+### `POST /api/hr/fpu-classes`
+Gate: `…'edit'`. Body `{ year, batch?, opens_on, closes_on, class_starts_on, class_ends_on?, schedule_note? }` — `batch` defaults to the next number in that year. Validated by `validateFpuClassInput` (real calendar dates, `closes_on >= opens_on`, `class_ends_on >= class_starts_on`) → 400 in words; duplicate `(year, batch)` → 409. Audits `fpu.class.created`.
+
+### `PATCH /api/hr/fpu-classes`
+Gate: `…'edit'`. Body = the full form plus `id`. Same validation. Audits `fpu.class.updated` with before/after.
+
+### `DELETE /api/hr/fpu-classes?id=`
+Gate: `…'edit'`. Refuses (409) a class with any enrollment; the FK is `on delete restrict` as the backstop. Audits `fpu.class.deleted`.
+
+### `GET /api/hr/fpu-enrollments?class_id=`
+Gate: `requireFeatureAccess('hr','mesa','view')` — **this route was ungated until 2026-09-16.** `{ rows, migrated }`; legacy rows with `class_id NULL` are never returned. The audit-log fallback is gone.
+
+### `PATCH /api/hr/fpu-enrollments`
+Gate: `…'edit'`. Body `{ ids: string[] (≤200), status: 'approved' | 'denied' | 'pending', review_notes? }`. Touches only `fpu_enrollments`; `completed` rows are skipped and counted. `{ updated, skipped, rows }`. Audits `fpu.enrollment.approved|denied|reset` per row.
+
+### `POST /api/hr/fpu-enrollments/complete`
+Gate: `…'edit'`. Body `{ ids (≤200), completed_on: 'YYYY-MM-DD' }`. For each **approved** row: stamps `employee_hourly_rates.mesa_fpu_completed_on` on every rate row for the work email, marks the enrollment `completed`, then sorts the person into `toEnroll` (not a member, no open account under any alias — the client calls `POST /api/toggle-mesa-member` with `since = completed_on`), `alreadyMembers` (never sent to toggle), or `noRateRow`. Non-approved rows → `skipped`. Audits `fpu.enrollment.completed`.
+
+### `GET /api/fpu-enroll?email=`
+Gate: `authorizeEmailAccess` (self or elevated). `{ today, class, enrollment, verdict, history, fpuCompletedOn, isMesaMember, migrated }` — `class` is `pickCurrentFpuClass` (open → nearest upcoming → most recently closed), `verdict` is `fpuVerdict` computed server-side.
+
+### `POST /api/fpu-enroll`
+Gate: `authorizeEmailAccess`. Body `{ email?, shift_schedule_est }`. **Re-derives the verdict**; a refusal is 409 `{ error: <the sentence>, reason }`. Identity / name / department come from the active roster row, never the body. Duplicate → 409 `already_enrolled`. Audits `fpu.enroll`.
+
+---
+
 ## Error Handling
 
 All endpoints follow a consistent error pattern:
@@ -2460,7 +2493,7 @@ gone — it was the one action that could not record itself.
 | `POST /api/import-daily-report` | `requireElevatedSession()` + `daily_report.imported` — see §8. Dead endpoint; delete it. |
 
 **Still ungated as of 2026-09-10:** `manager/member-monthly-pay` (anyone's monthly pay by `?email=` — fix first),
-`hr/fpu-enrollments`, `hsl-bonus/period-summary`, `presence/last-seen`. Helpers exist (`authorizeEmailAccess` /
+~~`hr/fpu-enrollments`~~ (**gated 2026-09-16**, §20), `hsl-bonus/period-summary`, `presence/last-seen`. Helpers exist (`authorizeEmailAccess` /
 `requireFeatureAccess` / `requireAdminSession`); this is wiring. See
 [pre-release-security-readiness.md](../features/pre-release-security-readiness.md) §2.
 

@@ -1,82 +1,103 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+import { requireFeatureAccess } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
+import { getSessionActor } from '@/lib/auth/session-actor';
+import { insertAuditLogs } from '@/lib/supabase/audit-log';
+import {
+  FPU_ENROLLMENTS_TABLE,
+  FPU_ENROLLMENT_SELECT,
+  isFpuNotMigrated,
+  listFpuEnrollments,
+  type FpuEnrollmentRow,
+} from '@/lib/mesa/fpu-server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-type Row = {
-  id: string;
-  email: string;
-  full_name: string;
-  department: string;
-  shift_schedule_est: string;
-  created_at: string;
-};
+/** Bulk decisions are capped so one click cannot flip an unbounded set. */
+const MAX_BULK = 200;
 
-type AuditDetails = {
-  email?: string;
-  full_name?: string;
-  department?: string;
-  shift_schedule_est?: string;
-};
+/**
+ * GET /api/hr/fpu-enrollments?class_id= — a class's enrollments (or every
+ * class-linked enrollment with no filter). Legacy pre-class rows never appear.
+ * Gate: HR · MESA · view — this route was one of the four ungated ones in
+ * pre-release-security-readiness.md until 2026-09-16.
+ */
+export async function GET(req: NextRequest) {
+  const authz = await requireFeatureAccess('hr', 'mesa', 'view');
+  if (!authz.ok) return deniedResponse(authz);
+  const sb = createSupabaseServiceRoleClient();
+  if (!sb) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
 
-export async function GET() {
-  const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) {
-    return NextResponse.json({
-      rows: [] as Row[],
-      source: 'audit' as const,
-      error: 'Supabase not configured',
-    });
+  const classId = req.nextUrl.searchParams.get('class_id')?.trim() || null;
+  const { rows, error, migrated } = await listFpuEnrollments(sb, { classId });
+  if (error) return NextResponse.json({ rows: [], migrated, error }, { status: 500 });
+  return NextResponse.json({ rows, migrated, error: null });
+}
+
+type Decision = 'approved' | 'denied' | 'pending';
+
+/**
+ * PATCH /api/hr/fpu-enrollments — bulk decision.
+ * Body: { ids: string[], status: 'approved' | 'denied' | 'pending', review_notes?: string | null }
+ *
+ * `approved` is a SEAT in the class — no money moves and nothing touches MESA
+ * membership; that happens on Mark completed (`./complete`). `pending` resets a
+ * decision. A `completed` row is never changed here: completion has already
+ * stamped the FPU date and enrolled the member, so it is skipped and counted.
+ * Gate: HR · MESA · edit.
+ */
+export async function PATCH(req: NextRequest) {
+  const authz = await requireFeatureAccess('hr', 'mesa', 'edit');
+  if (!authz.ok) return deniedResponse(authz);
+  const sb = createSupabaseServiceRoleClient();
+  if (!sb) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
+
+  let body: { ids?: unknown; status?: unknown; review_notes?: unknown };
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  // Prefer the dedicated table when present.
-  const tableRes = await supabase
-    .from('fpu_enrollments')
-    .select('id, email, full_name, department, shift_schedule_est, created_at')
-    .order('created_at', { ascending: false })
-    .limit(500);
-
-  if (!tableRes.error && tableRes.data) {
-    return NextResponse.json({
-      rows: tableRes.data as Row[],
-      source: 'table' as const,
-      error: null,
-    });
+  const ids = Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map((x) => x.trim()) : [];
+  if (ids.length === 0) return NextResponse.json({ error: 'ids is required' }, { status: 400 });
+  if (ids.length > MAX_BULK) return NextResponse.json({ error: `At most ${MAX_BULK} enrollments per decision.` }, { status: 400 });
+  const status = body.status as Decision;
+  if (!['approved', 'denied', 'pending'].includes(status)) {
+    return NextResponse.json({ error: "status must be 'approved', 'denied' or 'pending'" }, { status: 400 });
   }
+  const notes = typeof body.review_notes === 'string' && body.review_notes.trim() ? body.review_notes.trim().slice(0, 500) : null;
 
-  // Fallback: reconstruct from audit_log entries written by /api/fpu-enroll.
-  // This keeps HR's view working pre-migration.
-  const auditRes = await supabase
-    .from('audit_log')
-    .select('id, created_at, details')
-    .eq('action', 'fpu.enroll')
-    .order('created_at', { ascending: false })
-    .limit(500);
+  const patch =
+    status === 'pending'
+      ? { status, reviewed_by: null, reviewed_at: null, review_notes: null }
+      : { status, reviewed_by: authz.sessionEmail, reviewed_at: new Date().toISOString(), review_notes: notes };
 
-  if (auditRes.error || !auditRes.data) {
-    return NextResponse.json({
-      rows: [] as Row[],
-      source: 'audit' as const,
-      error: auditRes.error?.message ?? 'Could not load enrollments',
-    });
+  const res = await sb
+    .from(FPU_ENROLLMENTS_TABLE)
+    .update(patch)
+    .in('id', ids)
+    .neq('status', 'completed')
+    .select(FPU_ENROLLMENT_SELECT);
+  if (res.error) {
+    if (isFpuNotMigrated(res.error)) return NextResponse.json({ error: 'FPU classes are not set up yet — run the migration first.', migrated: false }, { status: 503 });
+    return NextResponse.json({ error: res.error.message }, { status: 500 });
   }
+  const updated = (res.data ?? []) as FpuEnrollmentRow[];
 
-  const rows: Row[] = auditRes.data.map((entry) => {
-    const details = (entry.details ?? {}) as AuditDetails;
-    return {
-      id: String(entry.id),
-      email: details.email ?? '',
-      full_name: details.full_name ?? '',
-      department: details.department ?? '',
-      shift_schedule_est: details.shift_schedule_est ?? '',
-      created_at: String(entry.created_at),
-    };
-  });
+  const actor = await getSessionActor();
+  void insertAuditLogs(
+    updated.map((r) => ({
+      user_name: actor.user_name,
+      user_role: actor.user_role,
+      action: status === 'pending' ? 'fpu.enrollment.reset' : `fpu.enrollment.${status}`,
+      resource: FPU_ENROLLMENTS_TABLE,
+      resource_id: r.id,
+      details: { email: r.email, full_name: r.full_name, class_id: r.class_id, status, review_notes: notes },
+    })),
+  );
 
-  return NextResponse.json({
-    rows,
-    source: 'audit' as const,
-    error: tableRes.error?.message ?? null,
-  });
+  return NextResponse.json({ updated: updated.length, skipped: ids.length - updated.length, rows: updated, error: null });
 }

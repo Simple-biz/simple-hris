@@ -15,6 +15,7 @@ import {
   Sparkles,
   ArrowRight,
   History as HistoryIcon,
+  GraduationCap,
   Lock,
   ClipboardList,
   Loader2,
@@ -39,6 +40,7 @@ import {
   sumOutstandingDisbursements,
 } from '@/lib/mesa/disbursement-guard';
 import MesaReceiptDialog from './MesaReceiptDialog';
+import EmployeeFpu from './EmployeeFpu';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
 interface Props {
@@ -48,7 +50,7 @@ interface Props {
   startDate?: string | null;
 }
 
-type SubTab = 'about' | 'request' | 'history';
+type SubTab = 'about' | 'fpu' | 'request' | 'history';
 
 // Weekly contribution shape — employee ₱100, company (Simple.biz) ₱300.
 // The "matched three times over" copy in About is the source of truth here:
@@ -116,6 +118,13 @@ export default function EmployeeMesa({
             tabKey="about"
           />
           <SubTabButton
+            active={subTab === 'fpu'}
+            onClick={() => setSubTab('fpu')}
+            icon={GraduationCap}
+            label="FPU Class"
+            tabKey="fpu"
+          />
+          <SubTabButton
             active={subTab === 'request'}
             onClick={() => setSubTab('request')}
             icon={ClipboardList}
@@ -141,6 +150,8 @@ export default function EmployeeMesa({
           >
             {isMember === null ? (
               <MesaAboutSkeleton />
+            ) : subTab === 'fpu' ? (
+              <EmployeeFpu employeeEmail={employeeEmail} />
             ) : subTab === 'request' ? (
               <MesaRequestForm
                 employeeEmail={employeeEmail}
@@ -156,12 +167,12 @@ export default function EmployeeMesa({
                 isMember={isMember}
                 startDate={startDate ?? null}
                 enrolledSince={enrolledSince}
-                onGoToRequest={() => setSubTab('request')}
+                onGoToFpu={() => setSubTab('fpu')}
               />
             ) : (
               <AboutMesa
                 isMember={isMember}
-                onGoToRequest={() => setSubTab('request')}
+                onGoToFpu={() => setSubTab('fpu')}
               />
             )}
           </motion.div>
@@ -274,10 +285,10 @@ function SubTabButton({
 
 function AboutMesa({
   isMember,
-  onGoToRequest,
+  onGoToFpu,
 }: {
   isMember: boolean | null;
-  onGoToRequest: () => void;
+  onGoToFpu: () => void;
 }) {
   return (
     <div className="space-y-6">
@@ -455,29 +466,24 @@ function AboutMesa({
                 How to join MESA
               </p>
               <h3 className="text-base font-semibold text-zinc-900 dark:text-white">
-                Complete FPU, then submit an Opt-in request
+                Enroll in an FPU class
               </h3>
             </div>
           </div>
           <Card className="overflow-hidden border-orange-100/80 shadow-sm dark:border-orange-900/40">
             <CardContent className="p-5 sm:p-6">
               <p className="text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
-                The <strong>only way to join MESA</strong> is to complete a Financial Peace
-                University (FPU) class. Once you finish, submit an <strong>Opt-in request</strong>{' '}
-                using the Request tab — HR will review and enroll you.
+                Completing a Financial Peace University class is the <strong>only way in</strong>. Enroll during an open window; finishing the class enrolls you in MESA.
               </p>
-              <div className="mt-4 flex flex-wrap items-center gap-3">
+              <div className="mt-4">
                 <Button
                   type="button"
-                  onClick={onGoToRequest}
+                  onClick={onGoToFpu}
                   className="bg-orange-500 text-white shadow-sm hover:bg-orange-600 focus-visible:ring-orange-500/40 dark:bg-orange-500 dark:hover:bg-orange-400"
                 >
-                  Apply for MESA
+                  FPU class
                   <ArrowRight className="ml-1.5 h-4 w-4" />
                 </Button>
-                <span className="text-xs text-zinc-500 dark:text-zinc-500">
-                  Opens the Request tab to submit your opt-in.
-                </span>
               </div>
             </CardContent>
           </Card>
@@ -495,9 +501,7 @@ function AboutMesa({
                   Thank you for your hard work and dedication
                 </h3>
                 <p className="mt-1 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-                  We are grateful to support you and your family when it matters most. If you
-                  understand and agree to these guidelines, you may proceed with enrollment
-                  during the next enrollment window.
+                  We are grateful to support you and your family when it matters most.
                 </p>
               </div>
             </div>
@@ -744,12 +748,14 @@ function RequiredMark() {
 
 // Request options rendered as tabs (replaces the old dropdown). Each maps to a
 // RequestType and reveals its own option-specific section below.
+// Opt-in is NOT offered here since 2026-09-16: joining MESA is the FPU class
+// pipeline (Employee -> MESA -> FPU Class; HR marks the class completed). The
+// route still accepts the type for the derived history line.
 const REQUEST_TYPE_TABS: {
-  value: Exclude<RequestType, ''>;
+  value: Exclude<RequestType, '' | 'opt_in'>;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
 }[] = [
-  { value: 'opt_in', label: 'Opt-in', icon: HeartHandshake },
   { value: 'opt_out', label: 'Opt-out', icon: XCircle },
   { value: 'disbursement', label: 'Disbursement Request', icon: ReceiptText },
   { value: 'return', label: 'Return', icon: PiggyBank },
@@ -876,14 +882,6 @@ function ReasonOption({
   );
 }
 
-const OPT_IN_AGREEMENTS = [
-  'I understand the MESA terms provided above.',
-  'I understand that PHP 100 will be deducted from my paycheck each week and put into my MESA account.',
-  'I understand that when I contribute, Simple will match my contribution and put PHP 300 each week into my MESA account.',
-  'I understand that distributions are only for medical emergencies for me or my immediate family, computer repairs for my primary device, or natural disasters. Disbursements outside of these reasons will make me ineligible for program participation.',
-  'I understand that distributions are to be infrequent, as this program is intended to have me prepared for emergencies, which are also infrequent. More than one disbursement in a 90 day period will make me ineligible for program participation, even if the disbursements are for qualified reasons. I understand that since I am no longer contributing, Simple will no longer be contributing to my account as well.',
-];
-
 interface MesaRequestRow {
   id: string;
   request_type: string;
@@ -903,14 +901,6 @@ interface MesaRequestRow {
   /** Set once the money has been sent. A dispatched draw is already in the
    *  ledger, so it must NOT be counted again as an outstanding commitment. */
   dispatched_at?: string | null;
-}
-
-// The date <input> needs a strict YYYY-MM-DD value. mesa_member_since already
-// arrives in that shape; a prior request's fpu_date is free text, so only reuse
-// it when it happens to be a clean ISO date (otherwise fall back to enrollment).
-function toDateInputValue(raw: string | null | undefined): string {
-  if (!raw) return '';
-  return /^\d{4}-\d{2}-\d{2}$/.test(raw.trim()) ? raw.trim() : '';
 }
 
 // The "what was this about" cell in Past requests: an opt-out carries the date
@@ -945,13 +935,10 @@ function MesaRequestForm({
 }) {
   const reduceMotion = useReducedMotion();
   const [requestType, setRequestType] = React.useState<RequestType>('');
-  const [agreements, setAgreements] = React.useState<boolean[]>(OPT_IN_AGREEMENTS.map(() => false));
-  const [optInChecked, setOptInChecked] = React.useState(false);
   // Opt-out: the day participation ends. Submitting the form IS the request, so
   // there's no "yes I mean it" checkbox — this date is the one thing the member
   // has to tell us, and it's what Accounting stops the deduction on.
   const [optOutEffective, setOptOutEffective] = React.useState('');
-  const [fpuDate, setFpuDate] = React.useState('');
   const [disbursementReason, setDisbursementReason] = React.useState('');
   const [explanation, setExplanation] = React.useState('');
   const [amountNeeded, setAmountNeeded] = React.useState('');
@@ -1039,17 +1026,6 @@ function MesaRequestForm({
     return () => { cancelled = true; };
   }, [employeeEmail]);
 
-  // FPU completion date to pre-fill for already-enrolled members. Priority:
-  //   1. Real backfilled FPU date (mesa_fpu_completed_on) — authoritative.
-  //   2. A prior opt-in request that carried a clean ISO fpu_date.
-  //   3. Enrollment date as a last-resort anchor.
-  const prefilledFpuDate = React.useMemo(() => {
-    const priorIso = pastRequests
-      .map((r) => (r.request_type === 'opt_in' ? toDateInputValue(r.fpu_date) : ''))
-      .find(Boolean);
-    return toDateInputValue(fpuCompletedOn) || priorIso || toDateInputValue(enrolledSince);
-  }, [pastRequests, enrolledSince, fpuCompletedOn]);
-
   // Rows shown in "Past requests". The opt-in "request" is now represented by
   // the member's enrollment record — NOT the raw mesa_requests opt_in rows: a
   // member can submit opt-in more than once (re-joining, or correcting details),
@@ -1095,30 +1071,18 @@ function MesaRequestForm({
     return rows.sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
   }, [pastRequests, isMember, enrolledSince, fpuCompletedOn]);
 
-  // Switching request tabs. For an already-enrolled member landing on Opt-in we
-  // reflect their standing enrollment: agreements checked + FPU date pre-filled.
+  // Switching request tabs. Opt-out defaults its effective date on the click.
   const selectRequestType = (value: RequestType) => {
     setRequestType(value);
     // Default the opt-out to today — the common case is "stop me now" — but
     // only on the click, never during render, so the clock can't desync
     // hydration. Anything already typed survives a tab round-trip.
     if (value === 'opt_out') setOptOutEffective((prev) => prev || toIso(new Date()));
-    if (value === 'opt_in' && isMember) {
-      setAgreements(OPT_IN_AGREEMENTS.map(() => true));
-      setOptInChecked(true);
-      setFpuDate((prev) => prev || prefilledFpuDate);
-    } else {
-      setAgreements(OPT_IN_AGREEMENTS.map(() => false));
-      setOptInChecked(false);
-    }
   };
 
   const resetForm = () => {
     setRequestType('');
-    setAgreements(OPT_IN_AGREEMENTS.map(() => false));
-    setOptInChecked(false);
     setOptOutEffective('');
-    setFpuDate('');
     setDisbursementReason('');
     setExplanation('');
     setAmountNeeded('');
@@ -1128,11 +1092,6 @@ function MesaRequestForm({
     e.preventDefault();
     if (!requestType) { toast.error('Please select an option'); return; }
 
-    if (requestType === 'opt_in') {
-      if (!optInChecked) { toast.error('Please check the enrollment confirmation'); return; }
-      if (agreements.some((a) => !a)) { toast.error('Please agree to all terms'); return; }
-      if (!fpuDate) { toast.error('Please enter your FPU completion date'); return; }
-    }
     if (requestType === 'opt_out' && !optOutEffective) {
       toast.error('Please pick the date your opt-out takes effect'); return;
     }
@@ -1158,7 +1117,7 @@ function MesaRequestForm({
           full_name: fullName,
           department: dept,
           request_type: requestType,
-          fpu_date: requestType === 'opt_in' ? fpuDate : null,
+          fpu_date: null,
           effective_date: requestType === 'opt_out' ? optOutEffective : null,
           disbursement_reason: requestType === 'disbursement' ? disbursementReason : null,
           explanation: requestType === 'disbursement' ? explanation.trim() : null,
@@ -1241,65 +1200,6 @@ function MesaRequestForm({
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
               >
-                {requestType === 'opt_in' && (
-                  <div className="space-y-4 rounded-lg border border-teal-100 bg-teal-50/40 p-4 dark:border-teal-900/40 dark:bg-teal-950/20">
-                    {isMember && (
-                      <div className="flex items-start gap-2 rounded-md border border-teal-200 bg-white/80 p-3 text-xs leading-relaxed text-teal-900 dark:border-teal-500/40 dark:bg-teal-950/40 dark:text-teal-100">
-                        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-teal-600 dark:text-teal-300" />
-                        <span>
-                          You&rsquo;re already enrolled in MESA
-                          {enrolledSince && parseStartDate(enrolledSince)
-                            ? ` (since ${formatDateLong(parseStartDate(enrolledSince)!)})`
-                            : ''}
-                          . Your agreement is on file and pre-filled below &mdash; there&rsquo;s no
-                          need to opt in again unless you&rsquo;re correcting your details.
-                        </span>
-                      </div>
-                    )}
-                    <label className="flex cursor-pointer items-start gap-2 text-sm font-medium text-zinc-900 dark:text-white">
-                      <input
-                        type="checkbox"
-                        checked={optInChecked}
-                        onChange={(e) => setOptInChecked(e.target.checked)}
-                        className="mt-0.5 h-4 w-4 rounded border-zinc-300 accent-teal-600"
-                      />
-                      Select this option to enroll{' '}
-                      <RequiredMark />
-                    </label>
-                    <div className="space-y-2 border-t border-teal-100 pt-3 dark:border-teal-900/40">
-                      {OPT_IN_AGREEMENTS.map((text, i) => (
-                        <label key={i} className="flex cursor-pointer items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-                          <input
-                            type="checkbox"
-                            checked={agreements[i]}
-                            onChange={(e) => {
-                              const next = [...agreements];
-                              next[i] = e.target.checked;
-                              setAgreements(next);
-                            }}
-                            className="mt-0.5 h-4 w-4 shrink-0 rounded border-zinc-300 accent-teal-600"
-                          />
-                          <span>
-                            Agree <RequiredMark />
-                            <span className="ml-1 text-zinc-600 dark:text-zinc-400">&mdash; {text}</span>
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-sm font-semibold text-zinc-900 dark:text-white">
-                        Date you completed FPU <RequiredMark />
-                      </label>
-                      <DatePicker
-                        value={fpuDate}
-                        onChange={setFpuDate}
-                        required
-                        className="dark:bg-zinc-900 focus-visible:border-teal-500 focus-visible:ring-teal-500/20"
-                      />
-                    </div>
-                  </div>
-                )}
-
                 {requestType === 'opt_out' && (
                   /* No confirmation checkbox: picking the Opt-out tab and
                      submitting the form already says "remove me" twice over —
@@ -1719,7 +1619,7 @@ function MesaHistory({
   isMember,
   startDate,
   enrolledSince,
-  onGoToRequest,
+  onGoToFpu,
 }: {
   employeeEmail: string;
   isMember: boolean | null;
@@ -1727,7 +1627,7 @@ function MesaHistory({
   /** MESA enrollment date (YYYY-MM-DD). When set, the ledger counts from here —
    *  NOT the hire date — so a member only sees contributions since they joined. */
   enrolledSince: string | null;
-  onGoToRequest: () => void;
+  onGoToFpu: () => void;
 }) {
   // Real contribution history from the mesa_ledger backfill. When present, this
   // is authoritative and replaces the projected ledger below.
@@ -1786,10 +1686,10 @@ function MesaHistory({
               <div className="mt-4">
                 <Button
                   type="button"
-                  onClick={onGoToRequest}
+                  onClick={onGoToFpu}
                   className="bg-orange-500 text-white shadow-sm hover:bg-orange-600 focus-visible:ring-orange-500/40 dark:bg-orange-500 dark:hover:bg-orange-400"
                 >
-                  Apply for MESA
+                  Enroll in FPU
                   <ArrowRight className="ml-1.5 h-4 w-4" />
                 </Button>
               </div>

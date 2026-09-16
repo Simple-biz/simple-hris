@@ -4,7 +4,7 @@
 
 MESA is an **employee savings / contribution program** framed as a *Medical Emergency Savings Account*. Enrolled members have **₱100 deducted from their paycheck each week**, which Simple.biz **matches three times over (+₱300)** — so the account grows by **₱400/week**. Funds are meant for infrequent emergencies: medical needs for the member or immediate family (spouse + children only), natural disasters, or a necessary primary-computer repair. Program rules (from the About tab): one disbursement per 90 days, receipts within 14 days / 30 calendar days, and temporary removal for non-compliance.
 
-The **only way to join is to complete a Financial Peace University (FPU) class**, then submit an Opt-in request.
+The **only way to join is to complete a Financial Peace University (FPU) class.** Since 2026-09-16 that is a pipeline of its own — HR-created classes with an enrollment window, bulk seat approval, and a **Mark completed** that stamps the FPU date and opens the membership — governed by [fpu-enrollment.md](fpu-enrollment.md). The employee **Opt-in request** and HR's **Opt-in Requests** queue are retired.
 
 Contribution amounts are single-sourced in `EmployeeMesa.tsx`:
 
@@ -47,12 +47,12 @@ Employees submit from the **Employee → MESA → Request** tab (`src/components
 
 | Type | What it does | Reviewed by |
 |---|---|---|
-| `opt_in` | Join MESA after FPU. Requires all agreement checkboxes + an FPU completion date. | **HR** |
+| `opt_in` | **Retired 2026-09-16** — not offered on the form. Joining is the FPU class pipeline ([fpu-enrollment.md](fpu-enrollment.md)); the route still accepts the type and the Past-requests "Opt-in" line is derived from `mesa_member_since`. | — |
 | `opt_out` | Leave the program (stops the weekly deduction + match). Requires an **effective date** (`effective_date`, defaults to today, can't be back-dated) — no confirmation checkbox: choosing the tab and submitting *is* the request. | **Accounting** |
 | `disbursement` | Withdraw funds for an emergency. Requires a reason (Medical Emergency / Natural Disaster / Computer Repair / Other), a ≤250-char explanation, and a PHP amount. | **Accounting** |
 | `return` | Return funds to the account (optional notes). | **Accounting** |
 
-**Routing:** opt-in goes to HR because FPU/enrollment is HR's domain; the money-related types go to Accounting.
+**Routing:** the money-related types go to Accounting. Joining (FPU classes → completion → membership) is HR's, on HR → MESA → FPU Classes.
 
 ### Global Master List is the source of truth
 
@@ -81,7 +81,7 @@ Reviews go through `PATCH /api/mesa-requests/[id]` (`requireFeatureEditAnyView('
 - A date **on or before the member's latest `closed_on`** → **400**. The new account's window (events ≥ `opened_on`) would reach into the closed stint and re-count deposits whose balance was already released as an `offboard_payout` at close. If that history cannot be read the member is **not** enrolled (**503**, fails closed).
 - An explicit date that differs from an **already-open** account's `opened_on` → **409**. A re-enroll with no date, or the same date, is idempotent and now keeps `mesa_member_since` **equal to** `opened_on` instead of stamping today over it (the drift `scripts/verify-mesa-backfill.mjs` reports).
 
-A refused Opt In leaves the dialog open with the server's reason in the toast (bulk failures used to be counted, never explained). The `employee.mesa.enroll` audit row records `mesa_member_since_explicit`; the response returns `memberSince`. HR's opt-in approval (`HrMesa.tsx`) still sends no date and enrolls as of the approval day.
+A refused Opt In leaves the dialog open with the server's reason in the toast (bulk failures used to be counted, never explained). The `employee.mesa.enroll` audit row records `mesa_member_since_explicit`; the response returns `memberSince`. HR's path (FPU **Mark completed**, 2026-09-16) sends `since` = the class completion date.
 
 **RULED 2026-09-15 — a Saturday effective date: "Friday should be the deposit dates."** The Wizard used to charge ₱100 for the pay week ending on that Saturday (`mesa_member_since <= week end`) while the deposit writer dated that week's ₱400 on the **Friday before it**, which `summarizeMemberAccount` drops as earlier than `opened_on` — charged, nothing visible; the 2026-08-28 prod backfill had already used the opposite rule ("first Friday **on or after** the open"). Kane ruled for the backfill's rule: a member contributes for a week only when enrolled **on or before that week's Friday deposit date** (`mesaContributesForWeek`, see "The Payroll Wizard deduction" below), so the join week of a Saturday or Sunday enrollment is the following one. Measured read-only the same day (`scripts/probe-mesa-deposits-before-open.mts`): **zero** members carry a Saturday `mesa_member_since`, and the only deposits dated before an open account belong to four re-joiners' prior stints — nothing already recorded was affected.
 
@@ -107,7 +107,7 @@ Apply `references/sql/migrate/2026-07-29_mesa_request_receipts.sql` (`node scrip
 
 ### HR tab — `HrMesa.tsx`
 
-`src/components/hr/HrMesa.tsx` (HR → MESA) has an **Eligible** sub-tab, a **Requests** sub-tab (opt-in queue, `?request_type=opt_in`), and an **FPU** sub-tab. Approving an opt-in fires `POST /api/toggle-mesa-member` with `mesaMember: true`, enrolling the member so the Wizard begins the weekly deduction.
+`src/components/hr/HrMesa.tsx` (HR → MESA) has two sub-tabs: **MESA Eligible** and **FPU Classes** (`HrFpuEnrollments.tsx`). The **Opt-in Requests** sub-tab was retired 2026-09-16: membership now opens when HR marks an FPU class **completed**, which stamps `mesa_fpu_completed_on` and calls `POST /api/toggle-mesa-member` with `since` = the completion date, per person, skipping anyone already a member or holding an open account under an alias. Full rules: [fpu-enrollment.md](fpu-enrollment.md).
 
 ---
 
@@ -312,7 +312,8 @@ Approving a disbursement in Accounting is a *signal*, not a payment. The actual 
 | `src/components/employee/EmployeeMesa.tsx` | Employee About / Request / History tabs + the Past-requests **Receipt** column |
 | `src/components/employee/MesaReceiptDialog.tsx` | Receipt upload dialog (portaled, drag-and-drop, ≤3 files, thumbnails, per-file remove) |
 | `src/components/payroll/AccountingMesa.tsx` | Accounting Requests queue + Non Members (temp Opt In/Out) + MESA Active Members + View drill-down |
-| `src/components/hr/HrMesa.tsx` | HR Eligible / opt-in Requests / FPU tabs |
+| `src/components/hr/HrMesa.tsx` | HR Eligible / FPU Classes tabs (Opt-in Requests retired 2026-09-16) |
+| `src/components/hr/HrFpuEnrollments.tsx` · `src/components/employee/EmployeeFpu.tsx` · `app/api/hr/fpu-classes` · `app/api/hr/fpu-enrollments[/complete]` · `app/api/fpu-enroll` | The FPU class pipeline — see [fpu-enrollment.md](fpu-enrollment.md) |
 | `src/components/PayrollWizard.tsx` | Weekly deduction + disbursement folded into Final pay |
 | `src/lib/mesa/ledger.ts` | Shared ledger types + `summarizeMember` / `summarizeMembers` |
 | `src/lib/mesa/enrollment-date.ts` | Enrollment effective-date rules — strict calendar date, closed-stint guard, open-account guard — shared by the Opt In dialog and the toggle route (`enrollment-date.test.ts`) |

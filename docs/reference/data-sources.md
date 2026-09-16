@@ -342,7 +342,7 @@ Employee-submitted MESA program requests. Run `references/sql/create/add_mesa_re
 | `full_name` | text NOT NULL | Employee's full name at time of submission |
 | `department` | text NOT NULL | Department at time of submission |
 | `request_type` | text NOT NULL | `opt_in` \| `opt_out` \| `disbursement` \| `return` |
-| `fpu_date` | text | Opt-in only — free-text date FPU was completed |
+| `fpu_date` | text | Opt-in only — free-text date FPU was completed. **Opt-in is retired on the form since 2026-09-16** (joining is the FPU class pipeline, §16); the route still accepts it |
 | `effective_date` *(2026-07-29)* | date | Opt-out only — the day participation ends (weekly deduction + match stop). Required by `POST /api/mesa-requests` for an `opt_out` (strict `YYYY-MM-DD`), forced null for every other type |
 | `disbursement_reason` | text | Disbursement only — Medical Emergency / Natural Disaster / Computer Repair / Other |
 | `explanation` | text | Disbursement explanation or return notes (max 250 chars enforced by UI) |
@@ -517,6 +517,38 @@ A faithful 1:1 backfill of the external MESA program tracker (medical-emergency 
 **Who writes it:** `scripts/load-mesa-ledger.mjs` only (backfill import). The app never mutates this table — it is the historical record; membership changes flow through `mesa_requests`.
 
 **Related flag — `employee_hourly_rates.mesa_member` / `mesa_member_since`:** `scripts/preload-mesa-membership.mjs` seeds these from the ledger (everyone Active → `mesa_member=true`, `mesa_member_since` = first recorded deposit) so the Payroll Wizard charges the correct weeks. Dry-run by default; `--apply` writes.
+
+---
+
+## 16. `fpu_classes` + `fpu_enrollments` *(classes added 2026-09-16)*
+
+The pipeline INTO MESA — see [fpu-enrollment.md](../features/fpu-enrollment.md). DDL: `references/sql/create/2026-09-16_fpu_classes.sql`, applied by `scripts/apply-fpu-classes-migration.mts` (**PENDING**). Both tables are RLS-enabled with no policies: service-role only, through gated routes.
+
+**`fpu_classes`** — one row per class.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | |
+| `year` / `batch` | integer / smallint | **unique together**; label `FPU 2026 · Batch 1` (`fpuClassLabel`). year 2000–2100, batch 1–12 |
+| `opens_on` / `closes_on` | date NOT NULL | Enrollment window, **inclusive both ends**, compared as Manila dates. `closes_on >= opens_on` |
+| `class_starts_on` | date NOT NULL | The tenure cutoff (`start_date + 3 months <= this`) and the first meeting |
+| `class_ends_on` | date | NULL = not announced. Default completion date for Mark completed. `>= class_starts_on` |
+| `schedule_note` | text | Free text shown to the employee |
+| `created_by/at`, `updated_by/at` | | `updated_at` bumped by trigger |
+
+**`fpu_enrollments`** — pre-existing sign-up table (`references/sql/create/add_fpu_enrollments.sql`: `email`, `full_name`, `department`, `shift_schedule_est`, `created_at`) plus, since 2026-09-16:
+
+| Column | Type | Notes |
+|---|---|---|
+| `class_id` | uuid FK → `fpu_classes` **on delete restrict** | NULL only on the one legacy row (2026-05-14), which no surface shows |
+| `status` | text NOT NULL default `pending` | `pending` → `approved` (a seat) \| `denied` → `completed` (FPU date stamped, MESA enrolled) |
+| `start_date_used` | date | The roster Start Date the verdict used, frozen at submission |
+| `reviewed_by` / `reviewed_at` / `review_notes` | | Stamped by the bulk PATCH; cleared on reset to `pending` |
+| `completed_on` | date | Stamped by Mark completed; the same value goes to `employee_hourly_rates.mesa_fpu_completed_on` and to `mesa_member_since` via `toggle-mesa-member` |
+
+**Indexes:** unique `(class_id, lower(email)) WHERE class_id IS NOT NULL` — one enrollment per person per class, case-insensitive; `(class_id, status)`.
+
+**Who reads / writes:** `GET|POST|PATCH|DELETE /api/hr/fpu-classes`, `GET|PATCH /api/hr/fpu-enrollments`, `POST /api/hr/fpu-enrollments/complete` (all `requireFeatureAccess('hr','mesa', view|edit)`); `GET|POST /api/fpu-enroll` (self, `authorizeEmailAccess`). Reads page with `selectAllPaged`.
 
 ---
 
