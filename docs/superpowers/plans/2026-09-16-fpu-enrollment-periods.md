@@ -60,6 +60,4 @@ history` — so no employee could sign up for FPU from the dashboard. Prod: `fpu
 
 ## Deploy notes
 
-- `scripts/Apply FPU Classes migration.cmd` (double-click) or `node --import tsx scripts/apply-fpu-classes-migration.mts --apply` — **PENDING, Kane
-  runs it.** Until then both HR routes report `migrated: false` and the surfaces say so;
-  nothing 500s.
+- `scripts/Apply FPU Classes migration.cmd` (double-click) or `node --import tsx scripts/apply-fpu-classes-migration.mts --apply` — **APPLIED by Kane 2026-09-16, verified `--verify` all checks passed.**

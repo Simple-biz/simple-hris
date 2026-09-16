@@ -116,11 +116,11 @@ Audit actions: `fpu.enroll` (employee), `fpu.class.created | updated | deleted`,
 
 ## Deploy notes
 
-- **PENDING — Kane runs:** double-click `scripts/Apply FPU Classes migration.cmd` (rehearsal, then type `APPLY`), or `node --import tsx scripts/apply-fpu-classes-migration.mts --apply`
+- **APPLIED 2026-09-16 by Kane** via `scripts/Apply FPU Classes migration.cmd`; verified the same day with `node --import tsx scripts/apply-fpu-classes-migration.mts --verify` (all checks passed). Re-runnable: the script is `IF NOT EXISTS` throughout. For the record: double-click the `.cmd` (rehearsal, then type `APPLY`), or the `--apply` flag
   (dry-run by default; `--verify` afterwards). Creates `fpu_classes` and adds `class_id`,
   `status`, `start_date_used`, `reviewed_by/at`, `review_notes`, `completed_on` plus the unique
   index to `fpu_enrollments`. Needs the session-pooler `DATABASE_URL`.
-- Until it lands every route reports `migrated: false`; the HR tab shows an amber line and the
+- Before it landed every route reported `migrated: false`; the HR tab shows an amber line and the
   employee tab says enrollment is not open yet. Nothing 500s. The one legacy `fpu_enrollments`
   row (2026-05-14, `class_id NULL`) is shown nowhere.
 - No env vars, no n8n.
