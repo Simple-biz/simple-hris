@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { formatDateOnly } from '@/lib/date-only';
-import { fpuClassLabel, fpuClassPhase, type FpuClass, type FpuEnrollmentStatus } from '@/lib/mesa/fpu-class';
+import { fpuClassCode, fpuClassLabel, fpuClassPhase, type FpuClass, type FpuEnrollmentStatus } from '@/lib/mesa/fpu-class';
 import type { FpuVerdict } from '@/lib/mesa/fpu-eligibility';
 
 interface Enrollment {
@@ -130,6 +130,7 @@ export default function EmployeeFpu({ employeeEmail }: Props) {
             <div className="min-w-0">
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/70">Financial Peace University</p>
               <h2 className="mt-0.5 text-xl font-bold tracking-tight sm:text-2xl">{cls ? fpuClassLabel(cls) : 'No class scheduled'}</h2>
+              {cls?.name && <p className="text-xs text-white/60">{fpuClassCode(cls)}</p>}
             </div>
           </div>
           {phase && (

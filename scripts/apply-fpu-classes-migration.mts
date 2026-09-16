@@ -34,10 +34,21 @@ dotenv.config();
 
 const SQL_RELATIVE = 'references/sql/create/2026-09-16_fpu_classes.sql';
 const SQL_PATH = path.join(REPO_ROOT, ...SQL_RELATIVE.split('/'));
-if (!existsSync(SQL_PATH)) {
-  console.error(`Migration SQL not found at ${SQL_PATH}`);
-  process.exit(1);
+/** The 2026-09-16 follow-up (optional class NAME). Applied after the CREATE so a
+ *  database that already ran the first cut gains the column; a fresh one gets it
+ *  from the CREATE and this is a no-op. Both files are IF NOT EXISTS throughout. */
+const ALTER_RELATIVE = 'references/sql/alter/2026-09-16_fpu_classes_name.sql';
+const ALTER_PATH = path.join(REPO_ROOT, ...ALTER_RELATIVE.split('/'));
+for (const f of [SQL_PATH, ALTER_PATH]) {
+  if (!existsSync(f)) {
+    console.error(`Migration SQL not found at ${f}`);
+    process.exit(1);
+  }
 }
+const applySql = async () => {
+  await client.query(readFileSync(SQL_PATH, 'utf8'));
+  await client.query(readFileSync(ALTER_PATH, 'utf8'));
+};
 const CLASSES = 'public.fpu_classes';
 const ENROLLMENTS = 'public.fpu_enrollments';
 
@@ -72,6 +83,7 @@ const CLASS_CONSTRAINTS = [
   'fpu_classes_batch_sane',
   'fpu_classes_window_ordered',
   'fpu_classes_class_ordered',
+  'fpu_classes_name_len',
 ];
 
 const CHECKS: Array<[string, string]> = [
@@ -83,6 +95,11 @@ const CHECKS: Array<[string, string]> = [
          WHERE table_schema='public' AND table_name='fpu_classes' AND column_name='${col}'), false) AS ok`,
     ],
   ),
+  [
+    'fpu_classes.name exists and is NULLABLE (the 2026-09-16 follow-up)',
+    `SELECT COALESCE((SELECT is_nullable = 'YES' FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='fpu_classes' AND column_name='name'), false) AS ok`,
+  ],
   [
     'fpu_classes.class_ends_on is NULLABLE ("not announced" is a state)',
     `SELECT COALESCE((SELECT is_nullable = 'YES' FROM information_schema.columns
@@ -155,7 +172,11 @@ const NO_END_CONTROL: [string, string] = [
   insertClass({ class_ends_on: 'NULL' }),
 ];
 
+const NAMED_CONTROL: [string, string] = ['a class with a NAME is ACCEPTED', insertClass({ name: "'Summer Cohort'" })];
+
 const NEGATIVE_CLASS_CONTROLS: Array<[string, string]> = [
+  ['a blank name is rejected (NULL is how "no name" is stored)', insertClass({ name: "'   '" })],
+  ['a name over 80 characters is rejected', insertClass({ name: `'${'x'.repeat(81)}'` })],
   ['a window that closes before it opens is rejected', insertClass({ closes_on: "date '2026-08-31'" })],
   ['a class that ends before it starts is rejected', insertClass({ class_ends_on: "date '2026-10-01'" })],
   ['batch 0 is rejected', insertClass({ batch: '0' })],
@@ -226,8 +247,9 @@ async function main() {
       `${verifyOnly ? 'VERIFY ONLY' : dryRun ? 'DRY RUN' : 'APPLY'} — FPU classes + enrollment review columns`,
       '',
       `  SQL      : ${SQL_PATH}`,
+      `  ALTER    : ${ALTER_PATH}`,
       `  Tables   : ${CLASSES}, ${ENROLLMENTS} (ALTER)`,
-      `  Controls : 2 positive, ${NEGATIVE_CLASS_CONTROLS.length + 3} negative`,
+      `  Controls : 3 positive, ${NEGATIVE_CLASS_CONTROLS.length + 3} negative`,
       '',
       verifyOnly
         ? '  Nothing is written; the objects are only re-checked.'
@@ -243,10 +265,10 @@ async function main() {
   if (dryRun) {
     console.log(`Applying ${SQL_PATH} inside a transaction, then rolling back.\n`);
     await client.query('BEGIN');
-    await client.query(readFileSync(SQL_PATH, 'utf8'));
+    await applySql();
   } else if (!verifyOnly) {
-    console.log(`Applying ${SQL_PATH} ...`);
-    await client.query(readFileSync(SQL_PATH, 'utf8'));
+    console.log(`Applying ${SQL_PATH} + ${ALTER_PATH} ...`);
+    await applySql();
     console.log('  applied.\n');
   } else {
     console.log('Verify only — not applying.\n');
@@ -271,6 +293,7 @@ async function main() {
     process.exit(1);
   }
   if (!(await runControl(NO_END_CONTROL[0], NO_END_CONTROL[1], 'accept'))) failed++;
+  if (!(await runControl(NAMED_CONTROL[0], NAMED_CONTROL[1], 'accept'))) failed++;
   for (const [label, sql] of NEGATIVE_CLASS_CONTROLS) {
     if (!(await runControl(label, sql, 'reject'))) failed++;
   }

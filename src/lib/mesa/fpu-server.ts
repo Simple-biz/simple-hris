@@ -55,7 +55,7 @@ export interface FpuEnrollmentRow {
 }
 
 export const FPU_CLASS_SELECT =
-  'id, year, batch, opens_on, closes_on, class_starts_on, class_ends_on, schedule_note, created_by, created_at, updated_at';
+  'id, year, batch, opens_on, closes_on, class_starts_on, class_ends_on, schedule_note, name, created_by, created_at, updated_at';
 
 export const FPU_ENROLLMENT_SELECT =
   'id, email, full_name, department, shift_schedule_est, created_at, class_id, status, start_date_used, reviewed_by, reviewed_at, review_notes, completed_on';

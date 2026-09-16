@@ -39,6 +39,8 @@ import { normEmail } from '@/lib/email/norm-email';
 import { offboardReasonLabel } from '@/lib/hr/offboard-reasons';
 import { BulkBar, reportBulk, runBulk, SelectCheckbox, useRowSelection } from '@/components/mesa/bulk-selection';
 import {
+  FPU_CLASS_NAME_MAX,
+  fpuClassCode,
   fpuClassLabel,
   fpuClassPhase,
   nextFpuBatch,
@@ -314,6 +316,7 @@ export default function HrFpuEnrollments() {
               >
                 <GraduationCap className={cn('h-3.5 w-3.5', active ? 'text-teal-600 dark:text-teal-300' : 'text-zinc-400')} />
                 <span className="font-semibold">{fpuClassLabel(c)}</span>
+                {c.name && <span className="text-[10px] text-zinc-500 dark:text-zinc-400">{fpuClassCode(c)}</span>}
                 <PhasePill phase={phase} />
                 {k && k.pending > 0 && (
                   <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-amber-800 dark:bg-amber-500/20 dark:text-amber-200" title="Pending review">
@@ -346,6 +349,7 @@ export default function HrFpuEnrollments() {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-sm font-bold text-zinc-900 dark:text-white">{fpuClassLabel(selected)}</h3>
+                {selected.name && <span className="text-xs text-zinc-500 dark:text-zinc-400">{fpuClassCode(selected)}</span>}
                 <PhasePill phase={fpuClassPhase(selected, today)} />
               </div>
               <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
@@ -603,6 +607,7 @@ function ClassDialog({
   const [starts, setStarts] = useState(cls?.class_starts_on ?? '');
   const [ends, setEnds] = useState(cls?.class_ends_on ?? '');
   const [note, setNote] = useState(cls?.schedule_note ?? '');
+  const [name, setName] = useState(cls?.name ?? '');
   const [saving, setSaving] = useState(false);
 
   // A new year defaults its batch to the next free number for THAT year.
@@ -622,6 +627,7 @@ function ClassDialog({
         class_starts_on: starts,
         class_ends_on: ends || null,
         schedule_note: note.trim() || null,
+        name: name.trim() || null,
       };
       const json = await requestJson<{ class: FpuClass }>('/api/hr/fpu-classes', {
         method: mode === 'create' ? 'POST' : 'PATCH',
@@ -637,14 +643,19 @@ function ClassDialog({
     }
   };
 
-  const label = fpuClassLabel({ year: Number(year) || thisYear, batch: Number(batch) || 1 });
+  const code = fpuClassCode({ year: Number(year) || thisYear, batch: Number(batch) || 1 });
   const disabled = busy || saving;
   const ready = !!opens && !!closes && !!starts && Number(year) > 0 && Number(batch) > 0;
 
   return (
     <Overlay onClose={onClose}>
-      <h3 className="text-base font-bold text-zinc-900 dark:text-white">{mode === 'create' ? 'New class' : 'Edit class'} · {label}</h3>
-      <div className="mt-4 grid grid-cols-2 gap-3">
+      <h3 className="text-base font-bold text-zinc-900 dark:text-white">{mode === 'create' ? 'New class' : 'Edit class'} · {code}</h3>
+      <div className="mt-4">
+        <Field label="Batch name (optional)">
+          <Input value={name} onChange={(e) => setName(e.target.value)} disabled={disabled} placeholder={code} className="h-9" maxLength={FPU_CLASS_NAME_MAX} />
+        </Field>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-3">
         <Field label="Year"><Input type="number" value={year} onChange={(e) => setYear(e.target.value)} disabled={disabled} className="h-9" /></Field>
         <Field label="Batch"><Input type="number" min={1} max={12} value={batch} onChange={(e) => setBatch(e.target.value)} disabled={disabled} className="h-9" /></Field>
         <Field label="Enrollment opens"><DatePicker value={opens} onChange={setOpens} disabled={disabled} required /></Field>

@@ -2393,7 +2393,7 @@ Governing doc: [fpu-enrollment.md](../features/fpu-enrollment.md). Every HR rout
 Gate: `requireFeatureAccess('hr','mesa','view')`. `{ classes: FpuClass[] (newest first), counts: { [classId]: { pending, approved, denied, completed } }, migrated }`.
 
 ### `POST /api/hr/fpu-classes`
-Gate: `…'edit'`. Body `{ year, batch?, opens_on, closes_on, class_starts_on, class_ends_on?, schedule_note? }` — `batch` defaults to the next number in that year. Validated by `validateFpuClassInput` (real calendar dates, `closes_on >= opens_on`, `class_ends_on >= class_starts_on`) → 400 in words; duplicate `(year, batch)` → 409. Audits `fpu.class.created`.
+Gate: `…'edit'`. Body `{ year, batch?, opens_on, closes_on, class_starts_on, class_ends_on?, schedule_note?, name? }` — `batch` defaults to the next number in that year; `name` is trimmed, blank → null, >80 chars → 400. Validated by `validateFpuClassInput` (real calendar dates, `closes_on >= opens_on`, `class_ends_on >= class_starts_on`) → 400 in words; duplicate `(year, batch)` → 409. Audits `fpu.class.created`.
 
 ### `PATCH /api/hr/fpu-classes`
 Gate: `…'edit'`. Body = the full form plus `id`. Same validation. Audits `fpu.class.updated` with before/after.

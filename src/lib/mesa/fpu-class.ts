@@ -19,6 +19,8 @@ export interface FpuClass {
   class_starts_on: string;
   class_ends_on: string | null;
   schedule_note: string | null;
+  /** Optional cohort name HR gives the class (2026-09-16). */
+  name?: string | null;
 }
 
 export type FpuClassPhase = 'upcoming' | 'open' | 'closed';
@@ -26,10 +28,19 @@ export type FpuClassPhase = 'upcoming' | 'open' | 'closed';
 export const FPU_ENROLLMENT_STATUSES = ['pending', 'approved', 'denied', 'completed'] as const;
 export type FpuEnrollmentStatus = (typeof FPU_ENROLLMENT_STATUSES)[number];
 
-/** "FPU 2026 · Batch 1" */
-export function fpuClassLabel(cls: Pick<FpuClass, 'year' | 'batch'>): string {
+/** The generated code, always: "FPU 2026 · Batch 1". */
+export function fpuClassCode(cls: Pick<FpuClass, 'year' | 'batch'>): string {
   return `FPU ${cls.year} · Batch ${cls.batch}`;
 }
+
+/** What people call the class: HR's name when set, else the code. The (year,
+ *  batch) pair stays the identity either way — the code is always shown too. */
+export function fpuClassLabel(cls: Pick<FpuClass, 'year' | 'batch'> & { name?: string | null }): string {
+  const n = (cls.name ?? '').trim();
+  return n || fpuClassCode(cls);
+}
+
+export const FPU_CLASS_NAME_MAX = 80;
 
 /** Stable short key, e.g. "2026-1". */
 export function fpuClassKey(cls: Pick<FpuClass, 'year' | 'batch'>): string {
@@ -83,6 +94,7 @@ export interface FpuClassInput {
   class_starts_on: string;
   class_ends_on: string | null;
   schedule_note: string | null;
+  name: string | null;
 }
 
 export type FpuClassValidation = { ok: true; value: FpuClassInput } | { ok: false; error: string };
@@ -119,6 +131,9 @@ export function validateFpuClassInput(raw: unknown): FpuClassValidation {
 
   const noteRaw = b.schedule_note;
   const note = typeof noteRaw === 'string' && noteRaw.trim() ? noteRaw.trim().slice(0, 300) : null;
+  const nameRaw = b.name;
+  const name = typeof nameRaw === 'string' && nameRaw.trim() ? nameRaw.trim() : null;
+  if (name && name.length > FPU_CLASS_NAME_MAX) return { ok: false, error: `Name must be ${FPU_CLASS_NAME_MAX} characters or fewer.` };
 
   return {
     ok: true,
@@ -130,6 +145,7 @@ export function validateFpuClassInput(raw: unknown): FpuClassValidation {
       class_starts_on: starts as string,
       class_ends_on: (ends as string | null) ?? null,
       schedule_note: note,
+      name,
     },
   };
 }

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  fpuClassCode,
   fpuClassLabel,
   fpuClassKey,
   fpuClassPhase,
@@ -26,7 +27,15 @@ const cls = (over: Partial<FpuClass> = {}): FpuClass => ({
 
 test('label and key follow the (year, batch) identity Kane named', () => {
   assert.equal(fpuClassLabel({ year: 2026, batch: 3 }), 'FPU 2026 · Batch 3');
+  assert.equal(fpuClassCode({ year: 2026, batch: 3 }), 'FPU 2026 · Batch 3');
   assert.equal(fpuClassKey({ year: 2026, batch: 3 }), '2026-3');
+});
+
+test('a name replaces the label but never the code; blank names do not count', () => {
+  assert.equal(fpuClassLabel({ year: 2026, batch: 1, name: 'Summer Cohort' }), 'Summer Cohort');
+  assert.equal(fpuClassCode({ year: 2026, batch: 1 }), 'FPU 2026 · Batch 1');
+  assert.equal(fpuClassLabel({ year: 2026, batch: 1, name: '   ' }), 'FPU 2026 · Batch 1');
+  assert.equal(fpuClassLabel({ year: 2026, batch: 1, name: null }), 'FPU 2026 · Batch 1');
 });
 
 test('the window is inclusive on both ends', () => {
@@ -85,6 +94,18 @@ test('validateFpuClassInput accepts a legal payload and trims the note', () => {
     assert.equal(r.value.schedule_note, 'Thursdays 5 PM EST');
     assert.equal(r.value.class_ends_on, '2026-11-12');
   }
+});
+
+test('validateFpuClassInput: name is trimmed, blank becomes null, over 80 refused', () => {
+  const r = validateFpuClassInput({ ...legal, name: '  Summer Cohort ' });
+  assert.ok(r.ok && r.value.name === 'Summer Cohort');
+  const blank = validateFpuClassInput({ ...legal, name: '   ' });
+  assert.ok(blank.ok && blank.value.name === null);
+  const none = validateFpuClassInput(legal);
+  assert.ok(none.ok && none.value.name === null);
+  const long = validateFpuClassInput({ ...legal, name: 'x'.repeat(81) });
+  assert.equal(long.ok, false);
+  if (!long.ok) assert.match(long.error, /80 characters/);
 });
 
 test('validateFpuClassInput: no end date is a state, not an error', () => {

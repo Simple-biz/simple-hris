@@ -21,15 +21,14 @@ attendees **completed**, which stamps their FPU date and opens their MESA member
 | HR surface | `src/components/hr/HrFpuEnrollments.tsx` (inside `HrMesa.tsx`) |
 | Employee surface | `src/components/employee/EmployeeFpu.tsx` (inside `EmployeeMesa.tsx`, sub-tab `fpu`) |
 | Shared bulk select | `src/components/mesa/bulk-selection.tsx` (lifted from `AccountingMesa.tsx`) |
-| DDL | `references/sql/create/2026-09-16_fpu_classes.sql` |
-| Migration script | `scripts/apply-fpu-classes-migration.mts` |
+| DDL | `references/sql/create/2026-09-16_fpu_classes.sql` · `references/sql/alter/2026-09-16_fpu_classes_name.sql` (the `name` column; folded into the CREATE too) |
+| Migration script | `scripts/apply-fpu-classes-migration.mts` — applies both files, idempotent · `scripts/Apply FPU Classes migration.cmd` (double-click) |
 
 ## A class is (year, batch) with an inclusive window
 
 `fpu_classes` holds one row per class: `year`, `batch` (unique together), `opens_on`,
 `closes_on`, `class_starts_on`, optional `class_ends_on`, and a free-text `schedule_note`
-the employee sees. The label is always `fpuClassLabel()` — `FPU 2026 · Batch 3` — and the batch
-number defaults to one past the highest already in that year (`nextFpuBatch`).
+the employee sees, plus an optional **`name`** (≤80 chars, Kane's follow-up the same day: *"set the Batch name"*). Two functions, one rule: `fpuClassCode()` is always `FPU 2026 · Batch 3`; `fpuClassLabel()` is the name when set, else the code. **Wherever a name shows, the code shows under it** — the (year, batch) pair stays the identity and a renamed cohort is still findable by its number. A blank name is stored as NULL (the CHECK refuses whitespace), never as an empty label. The batch number defaults to one past the highest already in that year (`nextFpuBatch`).
 
 The window is **`opens_on ≤ today ≤ closes_on`**, compared as **Manila** calendar dates
 (`manilaTodayIso`). Kane: *"if they miss it they miss it."* There is no late-enroll path; HR
@@ -116,7 +115,7 @@ Audit actions: `fpu.enroll` (employee), `fpu.class.created | updated | deleted`,
 
 ## Deploy notes
 
-- **APPLIED 2026-09-16 by Kane** via `scripts/Apply FPU Classes migration.cmd`; verified the same day with `node --import tsx scripts/apply-fpu-classes-migration.mts --verify` (all checks passed). Re-runnable: the script is `IF NOT EXISTS` throughout. For the record: double-click the `.cmd` (rehearsal, then type `APPLY`), or the `--apply` flag
+- **First cut APPLIED 2026-09-16 by Kane** via `scripts/Apply FPU Classes migration.cmd`, verified. **The `name` column (same day, later) needs the `.cmd` run ONCE MORE — PENDING until Kane confirms.** The script applies both SQL files and is `IF NOT EXISTS` throughout, so re-running is a no-op for everything already there. Until the column exists the classes select fails with `42703` and both surfaces read `migrated: false`. For the record: double-click the `.cmd` (rehearsal, then type `APPLY`), or the `--apply` flag
   (dry-run by default; `--verify` afterwards). Creates `fpu_classes` and adds `class_id`,
   `status`, `start_date_used`, `reviewed_by/at`, `review_notes`, `completed_on` plus the unique
   index to `fpu_enrollments`. Needs the session-pooler `DATABASE_URL`.

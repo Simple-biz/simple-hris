@@ -106,6 +106,7 @@ function publicClass(c: FpuClass): FpuClass {
     class_starts_on: c.class_starts_on,
     class_ends_on: c.class_ends_on,
     schedule_note: c.schedule_note,
+    name: c.name ?? null,
   };
 }
 
