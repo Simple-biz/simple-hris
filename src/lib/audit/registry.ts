@@ -107,7 +107,7 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     match: 'wizard.',
     surfaces: ['payroll', 'accounting'],
     label: 'Payroll Wizard',
-    note: 'opened, cycle_selected, bonus_edited, addition_edited, config.dept_pay, fx_rate_changed, orphanage_period_cleared',
+    note: 'opened, cycle_selected, bonus_edited, addition_edited, config.dept_pay, fx_rate_changed, orphanage_period_cleared, orphanage_oms_locked_in',
   },
   {
     match: 'payroll.',

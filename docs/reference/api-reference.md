@@ -2324,6 +2324,17 @@ Granular per-row checklist API (rows persist atomically as they're typed — no 
 | `DELETE` | `{ id? }` or `{ ids[] }` | Delete exactly the named ids (never "everything not in the payload"). Audit `…row_deleted`. |
 | `PUT` | `{ period_start, period_end?, action }` | `action: 'lock'` freezes the week and fires the orientation webhook off the **DB's** current rows (best-effort); `'reopen'` flips it back to `open`. Audit `…locked` / `…reopened`. |
 
+### Orphanage Management System (OMS) pull — Payroll Wizard Orphanage step
+
+Read-only against a SEPARATE Supabase project (env `OMS_*`, server-only; see
+[orphanage-oms-pull.md](../features/orphanage-oms-pull.md)). Gate:
+`requireFeatureAccess('accounting','payroll_wizard','view')`. Every branch answers JSON.
+
+| Method / path | Purpose |
+|---|---|
+| `GET /api/orphanage-pay/oms?mode=status&week_start=YYYY-MM-DD` | Approved-row COUNT for the week + newest stamp — the tab's "ready to pull" indicator. Never returns rows. [route.ts](app/api/orphanage-pay/oms/route.ts) |
+| `GET /api/orphanage-pay/oms?mode=pull&week_start=YYYY-MM-DD` | The APPROVED rows for that Sunday's week, paged (`selectAllPaged`), capped at `OMS_MAX_ROWS` with a `truncated` flag. Fired ONLY by the Load Orphanage Hours button. `503 { configured:false, reason, missing }` when env is unset (names the variable, never a value); `502` when OMS is unreachable; `400` on a bad mode/week. |
+
 ### 3rd-Party Vendors (Orphanage)
 
 Vendor directory + SIMPLE-branded invoices, separate from Payment Dispatch. Reads are `requireFeatureAccess('orphanage','third_party_vendors','view')` (rows carry vendor banking details — not an open read); writes are `requireFeatureEdit('orphanage','third_party_vendors')`.

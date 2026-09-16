@@ -225,6 +225,29 @@ The legacy "verify or deny pending orphanage_visit submitted by employee" flow c
 
 ---
 
+## `src/components/payroll/OrphanageOmsPanel.tsx`
+
+**Payroll Wizard → Orphanage step → "Orphanage Management System" tab** (2026-09-16). Pulls
+APPROVED hours for the period from OMS on the **Load Orphanage Hours** button, resolves them
+through the paste tool's resolver (`resolveOrphanageHourRows`, passed in as `resolved`) and
+shows matched rows with the HRIS's reg/OT split + amount, and skipped rows with reasons.
+TEST/LIVE `Switch` (state lives in the wizard: `omsTestMode`, default TEST every mount);
+LIVE shows an amber warning and locks in through `OrphanageOmsLiveConfirmDialog` →
+`onLockIn` (the wizard's `lockInOmsRows`). Indicator (`role="status"`) rides the count ping
+from `use-oms-hours.ts` (`useOmsHours`): idle/checking → ready (N approved, "prepared … ago")
+/ empty / unconfigured / error. Motion: `motion/react`, staggered rows (24ms, capped),
+crossfading indicator and footer, all gated on `useReducedMotion`. Doc:
+[orphanage-oms-pull.md](../features/orphanage-oms-pull.md).
+
+## `src/components/payroll/OrphanageOmsLiveConfirmDialog.tsx`
+
+The OMS tab's LIVE confirmation — `OrphanageClearConfirmDialog` vocabulary (shadcn Dialog,
+icon-in-title, amber verb+object confirm, outline Cancel, undismissable while `busy`). Says
+in words that the amounts reach Additions, Validation, Dispatch and the paystub. Display-only;
+the write is the wizard's lock-in.
+
+---
+
 ## `src/components/payroll/OrphanageVisits.tsx`
 
 **Accounting → Orphanage Visits** queue. Lists `accounting_approved` orphanage-style visits.

@@ -58,6 +58,7 @@ import {
   Columns3,
   Cpu,
   HelpCircle,
+  Database,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
@@ -176,6 +177,15 @@ import {
 import { SettlementChip } from '@/components/payroll/SettlementChip';
 import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from '@/lib/payment-catalog/system-bonus';
 import { normEmail } from '@/lib/email/norm-email';
+import {
+  mergeOrphanageErrors,
+  resolveOrphanageHourRows,
+  tokenizeOrphanagePaste,
+  type OrphanageResolveContext,
+  type OrphanageResolvedErr,
+  type OrphanageResolvedOk,
+  type OrphanageRowTarget,
+} from '@/lib/payroll/orphanage-rows';
 import { mesaContributesForWeek } from '@/lib/mesa/deposit-date';
 import { TIME_ADJUSTMENT_REASONS, type TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
 import { sortHubstaffColumnsForDisplay } from '@/lib/supabase/hubstaff-hours-db';
@@ -341,6 +351,8 @@ import PabIneligibleTable, { type PabIneligibleRow } from '@/components/payroll/
 import PabDoneTable, { type PabDoneRow } from '@/components/payroll/PabDoneTable';
 import PabDecisionConfirmDialog, { type PabDecisionTarget } from '@/components/payroll/PabDecisionConfirmDialog';
 import OrphanageClearConfirmDialog from '@/components/payroll/OrphanageClearConfirmDialog';
+import OrphanageOmsPanel from '@/components/payroll/OrphanageOmsPanel';
+import { useOmsHours } from '@/components/payroll/use-oms-hours';
 import { TransferKpiCard } from '@/components/transfers/TransferToolbar';
 
 function findHeaderColumn(header: string[], ...labels: string[]): number {
@@ -708,26 +720,9 @@ type CalcRow = {
 // "Prorated" basis segments are unit-tested); imported above.
 
 /** A pasted Orphanage row resolved to an Additions-table employee + PHP amount. */
-type OrphanagePasteOk = {
-  line: number;
-  payWeek: string;
-  /** The Additions row's literal `.email` — the key {@link orphanageAmounts} uses. */
-  emailKey: string;
-  matchedEmail: string;
-  name: string;
-  hours: number;
-  /** Regular hourly rate (PHP). */
-  rate: number;
-  /** OT hourly rate (PHP) actually paid for the OT-crossing hours, or null when none
-   *  on file. Always the FULL rate: on HSL sheet-form rows this is regular × 1.5,
-   *  never the weekly 0.5× differential (orphanage hours have no base leg). */
-  otRate: number | null;
-  /** Split of the pasted hours after stacking on worked hours against the 40h/week cap. */
-  regH: number;
-  otH: number;
-  amount: number;
-};
-type OrphanagePasteErr = { line: number; email: string; reason: string };
+/** One resolver for the paste tool AND the OMS pull — see `orphanage-rows.ts`. */
+type OrphanagePasteOk = OrphanageResolvedOk;
+type OrphanagePasteErr = OrphanageResolvedErr;
 type OrphanagePasteParse = { ok: OrphanagePasteOk[]; errors: OrphanagePasteErr[] };
 
 type PayPeriodPayload = {
@@ -2066,6 +2061,18 @@ const ADDITIONS_SECTION_VARIANTS = {
   exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -20 : 20 }),
 };
 
+/**
+ * Orphanage step sections: the two doors hours come through. ONE resolver and ONE
+ * lock-in behind both (`orphanage-rows.ts`, `lockInResolvedOrphanageRows`); the
+ * strip only chooses the input surface. Same shape as ADDITIONS_SECTIONS.
+ */
+const ORPHANAGE_SECTIONS = [
+  { key: 'paste', label: 'Paste data', icon: FileText },
+  { key: 'oms', label: 'Orphanage Management System', icon: Database },
+] as const;
+
+type OrphanageSectionKey = (typeof ORPHANAGE_SECTIONS)[number]['key'];
+
 export default function PayrollWizard({
   sessionEmail,
   sessionRole,
@@ -2808,6 +2815,13 @@ export default function PayrollWizard({
    *  user toggle wins until the next lock-in resets it to `null`. Never hides an
    *  in-progress draft — the collapsed bar reports the parse counts. */
   const [orphPasteOpen, setOrphPasteOpen] = useState<boolean | null>(null);
+  /** Which door the Orphanage step shows: the paste tool or the OMS pull. Paste is the
+   *  default so the tutorial's `step3-paste-data` anchor is mounted on arrival. */
+  const [orphanageSection, setOrphanageSection] = useState<OrphanageSectionKey>('paste');
+  const [orphanageSectionDir, setOrphanageSectionDir] = useState(1);
+  /** OMS TEST mode. TRUE on every mount, session-only, never persisted (Kane 2026-09-16):
+   *  LIVE is a conscious act each session. TEST writes nothing anywhere. */
+  const [omsTestMode, setOmsTestMode] = useState(true);
   /** Honour the OS reduced-motion setting: the Paste/Preview disclosure crossfades
    *  instead of animating its height. */
   const reduceMotion = useReducedMotion() ?? false;
@@ -8502,130 +8516,64 @@ export default function PayrollWizard({
    * edited. Matching is by work email (case-insensitive, trimmed), bridged through the
    * master list so a person's alternate / personal / Hubstaff email still finds their row.
    */
-  const orphanagePasteParse = useMemo<OrphanagePasteParse>(() => {
-    const ok: OrphanagePasteOk[] = [];
-    const errors: OrphanagePasteErr[] = [];
-    if (!orphanagePaste.trim()) return { ok, errors };
-
-    // Index every Additions row by each normalized email we can attach to it.
-    const rowByEmail = new Map<string, CalcRow>();
+  /**
+   * The matching + pricing context both orphanage-hours doors resolve through. Every
+   * Additions row indexed by each normalized email that reaches it; the master-list
+   * bridge for alternate / personal / Hubstaff addresses; the rates index as the
+   * regular-rate fallback; and the Initial Calculation's OT switches. The loop itself
+   * lives in `orphanage-rows.ts` so the paste tool and the OMS pull cannot drift.
+   */
+  const orphanageResolveCtx = useMemo<OrphanageResolveContext>(() => {
+    const rowByEmail = new Map<string, OrphanageRowTarget>();
     for (const r of effectiveCalcResults) {
       const k = normEmail(r.email) ?? r.email.trim().toLowerCase();
-      if (k && !rowByEmail.has(k)) rowByEmail.set(k, r);
+      if (k && !rowByEmail.has(k)) {
+        rowByEmail.set(k, {
+          email: r.email,
+          name: r.name,
+          regularRate: r.regularRate,
+          otRate: r.otRate,
+          isHslSheetForm: r.hogan != null,
+          workedRegularHours: r.regularHours,
+          deptKey: employeeDepts[r.email],
+        });
+      }
     }
-
-    const seenKeys = new Set<string>();
-    let headerHandled = false;
-    const lines = orphanagePaste.split(/\r?\n/);
-    for (let i = 0; i < lines.length; i++) {
-      const raw = lines[i];
-      if (!raw || !raw.trim()) continue;
-      // Spreadsheet paste is tab-delimited. Fall back to comma / 2+ spaces only when
-      // the line has no tabs at all (hand-typed input).
-      const cells = (raw.includes('\t') ? raw.split('\t') : raw.split(/,|\s{2,}/)).map((c) => c.trim());
-      const payWeekRaw = cells[0] ?? '';
-      const emailRaw = cells[1] ?? '';
-      const hoursRaw = cells[2] ?? '';
-
-      // Treat only the first content line as a possible header ("Pay week / Email / Hours").
-      if (!headerHandled) {
-        headerHandled = true;
-        if (!emailRaw.includes('@') && (/pay\s*week/i.test(payWeekRaw) || /e-?mail/i.test(emailRaw))) continue;
-      }
-
-      if (cells.filter(Boolean).length < 3) {
-        errors.push({ line: i + 1, email: emailRaw, reason: 'Expected 3 columns: Pay week, Work email, Hours' });
-        continue;
-      }
-
-      const emKey = normEmail(emailRaw);
-      if (!emKey) {
-        errors.push({ line: i + 1, email: emailRaw, reason: 'Missing or invalid email' });
-        continue;
-      }
-
-      const hours = Number(hoursRaw.replace(/,/g, ''));
-      if (!Number.isFinite(hours) || hours < 0) {
-        errors.push({ line: i + 1, email: emailRaw, reason: `Invalid hours: "${hoursRaw}"` });
-        continue;
-      }
-
-      // Resolve the pasted work email → an Additions row. Direct hit first, then
-      // bridge through the master list (alternate / personal / Hubstaff-email mismatches).
-      let row = rowByEmail.get(emKey) ?? null;
-      if (!row) {
+    return {
+      rowByEmail,
+      masterAliasesFor: (emKey) => {
         const master = masterIndex.byWorkEmail.get(emKey) ?? masterIndex.byPersonalEmail.get(emKey);
-        if (master) {
-          const candidates = [master.work_email, master.personal_email, master.alternate_work_email, master.alternate_work_email_2]
-            .map((x) => normEmail(x ?? ''))
-            .filter((x): x is string => !!x);
-          for (const c of candidates) {
-            const hit = rowByEmail.get(c);
-            if (hit) { row = hit; break; }
-          }
-        }
-      }
-      if (!row) {
-        errors.push({ line: i + 1, email: emailRaw, reason: 'No employee in this pay period matches that work email' });
-        continue;
-      }
-
-      // The Orphanage column holds one value per person, so a repeat in the paste is an error.
-      if (seenKeys.has(row.email)) {
-        errors.push({ line: i + 1, email: emailRaw, reason: 'Duplicate — this employee already appears above in the paste' });
-        continue;
-      }
-
-      // PHP regular rate. Prefer the row's computed rate; fall back to the rates index.
-      let rate: number | null = row.regularRate;
-      if (rate == null) {
-        const rr = ratesByEmail.get(normEmail(row.email) ?? row.email.toLowerCase()) ?? ratesByEmail.get(emKey);
-        rate = rr ? parseRateField(rr.regular_rate) : null;
-      }
-
+        if (!master) return null;
+        return [master.work_email, master.personal_email, master.alternate_work_email, master.alternate_work_email_2]
+          .map((x) => normEmail(x ?? ''))
+          .filter((x): x is string => !!x);
+      },
+      regularRateFallback: (rowEmail, emKey) => {
+        const rr = ratesByEmail.get(normEmail(rowEmail) ?? rowEmail.toLowerCase()) ?? ratesByEmail.get(emKey);
+        return rr ? parseRateField(rr.regular_rate) : null;
+      },
       // Whether overtime applies at all for this person's department this week —
       // the same global / per-department switches the Initial Calculation honours.
-      const deptKey = employeeDepts[row.email];
-      const deptOtOn = otGlobalSuspended
-        ? false
-        : (deptKey ? (otDeptEnabled[`ot_dept_${deptKey}`] ?? true) : true);
+      overtimeEnabledFor: (deptKey) =>
+        otGlobalSuspended ? false : (deptKey ? (otDeptEnabled[`ot_dept_${deptKey}`] ?? true) : true),
+    };
+  }, [effectiveCalcResults, masterIndex, ratesByEmail, employeeDepts, otGlobalSuspended, otDeptEnabled]);
 
-      // All the arithmetic lives in `orphanage-pay-pricing.ts` (extracted +
-      // unit-tested 2026-08-21). It owns the 40h cap, the sheet's 2dp-hours
-      // rounding, and the rule this step exists to protect: orphanage OT prices
-      // at the FULL 1.5× rate, never the weekly 0.5× differential, because
-      // orphanage hours have no base leg for a differential to top up. It
-      // REFUSES a row it cannot price rather than returning a smaller number.
-      const priced = priceOrphanageHours({
-        hours,
-        regularRatePhp: rate,
-        storedOtRatePhp: row.otRate,
-        isHslSheetForm: row.hogan != null,
-        workedRegularHours: row.regularHours,
-        overtimeEnabled: deptOtOn,
-      });
-      if (!priced.ok) {
-        errors.push({ line: i + 1, email: emailRaw, reason: priced.reason });
-        continue;
-      }
+  const orphanagePasteParse = useMemo<OrphanagePasteParse>(() => {
+    const tokenized = tokenizeOrphanagePaste(orphanagePaste);
+    const resolved = resolveOrphanageHourRows(tokenized.rows, orphanageResolveCtx);
+    return { ok: resolved.ok, errors: mergeOrphanageErrors(tokenized.errors, resolved.errors) };
+  }, [orphanagePaste, orphanageResolveCtx]);
 
-      seenKeys.add(row.email);
-      ok.push({
-        line: i + 1,
-        payWeek: payWeekRaw,
-        emailKey: row.email,
-        matchedEmail: emKey,
-        name: row.name || row.email,
-        hours: priced.hours,
-        rate: priced.rate,
-        otRate: priced.otRate,
-        regH: priced.regH,
-        otH: priced.otH,
-        amount: priced.amount,
-      });
-    }
-    return { ok, errors };
-  }, [orphanagePaste, effectiveCalcResults, masterIndex, ratesByEmail, employeeDepts, otGlobalSuspended, otDeptEnabled]);
+  /** The OMS door. Status ping when the tab is open; rows ONLY on the Load button. */
+  const omsHours = useOmsHours({
+    weekStart: markerWeekStart,
+    active: currentStep === 3 && orphanageSection === 'oms',
+  });
+  const omsResolved = useMemo<OrphanagePasteParse | null>(
+    () => (omsHours.pull ? resolveOrphanageHourRows(omsHours.pull.rows, orphanageResolveCtx) : null),
+    [omsHours.pull, orphanageResolveCtx],
+  );
 
   /**
    * Tech Bonus week detection — mirrors the logic inside `dispatchData` but
@@ -10130,16 +10078,17 @@ export default function PayrollWizard({
    * Orphanage column (orphanageAmounts) and persist the Additions blob. The fresh map is
    * passed to saveAdditionsProgress explicitly because the state set below is a render behind.
    */
-  const lockInOrphanagePaste = React.useCallback(async () => {
+  /**
+   * THE lock-in for orphanage hours, whichever door they came through. Blob save under
+   * CAS first; a refused save aborts everything after it. Resolves true only when the
+   * money landed. The paste tool and the OMS tab are thin wrappers below.
+   */
+  const lockInResolvedOrphanageRows = React.useCallback(async (ok: OrphanagePasteOk[], source: 'paste' | 'oms'): Promise<boolean> => {
     if (isReplay) {
       toast.error('Replaying a past period is view-only', { description: 'Return to the current period to make changes.' });
-      return;
+      return false;
     }
-    const { ok } = orphanagePasteParse;
-    if (ok.length === 0) {
-      toast.error('Nothing to lock in', { description: 'Paste rows that resolve to an employee first.' });
-      return;
-    }
+    if (ok.length === 0) return false;
     setOrphanageLockingIn(true);
     try {
       const next = { ...orphanageAmounts };
@@ -10152,7 +10101,7 @@ export default function PayrollWizard({
       // a failed save mints record↔column divergence client-side — hours on
       // record, no money on the column. The save already explained itself.
       const saved = await saveAdditionsProgress({ orphanageAmounts: next });
-      if (!saved) return;
+      if (!saved) return false;
       void publishFinalPaySnapshot();
 
       // Also persist a first-class record (see references/create_orphanage_pay.sql).
@@ -10200,17 +10149,71 @@ export default function PayrollWizard({
         `Locked in ${ok.length} orphanage ${ok.length === 1 ? 'amount' : 'amounts'}`,
         { description: 'Saved to this period — see "Locked in this period" below.' },
       );
-      setOrphanagePaste('');
-      // Hand the step back to the locked-in list: `null` restores "follow the period",
-      // which now has amounts, so the paste pair folds to its bar.
-      setOrphPasteOpen(null);
+      if (source === 'paste') {
+        setOrphanagePaste('');
+        // Hand the step back to the locked-in list: `null` restores "follow the period",
+        // which now has amounts, so the paste pair folds to its bar.
+        setOrphPasteOpen(null);
+      }
       // Refresh the month-wide orphanage-hours index so the just-locked hours
       // immediately feed PAB eligibility (top-up) without a reload.
       refreshOrphanageHoursIndex();
+      return true;
     } finally {
       setOrphanageLockingIn(false);
     }
-  }, [isReplay, orphanagePasteParse, orphanageAmounts, updateOrphanageAmount, saveAdditionsProgress, publishFinalPaySnapshot, calcSourceFile, refreshOrphanageHoursIndex]);
+  }, [isReplay, orphanageAmounts, updateOrphanageAmount, saveAdditionsProgress, publishFinalPaySnapshot, calcSourceFile, refreshOrphanageHoursIndex]);
+
+  const lockInOrphanagePaste = React.useCallback(async () => {
+    const { ok } = orphanagePasteParse;
+    if (ok.length === 0) {
+      toast.error('Nothing to lock in', { description: 'Paste rows that resolve to an employee first.' });
+      return;
+    }
+    await lockInResolvedOrphanageRows(ok, 'paste');
+  }, [orphanagePasteParse, lockInResolvedOrphanageRows]);
+
+  /**
+   * The OMS tab's LIVE lock-in. Refused in TEST mode by construction (the panel never
+   * offers it, and this refuses anyway), audited as its own event so a week's
+   * orphanage money can be traced back to an OMS pull, and the pull is cleared so the
+   * panel returns to its indicator — the locked-in list below now holds the rows.
+   */
+  const lockInOmsRows = React.useCallback(async (): Promise<boolean> => {
+    const pull = omsHours.pull;
+    const ok = omsResolved?.ok ?? [];
+    if (!pull || ok.length === 0) {
+      toast.error('Nothing to lock in', { description: 'Pull approved hours from OMS first.' });
+      return false;
+    }
+    if (omsTestMode) {
+      toast.error('Test mode is on', { description: 'Switch Test off to lock these amounts in for real.' });
+      return false;
+    }
+    const landed = await lockInResolvedOrphanageRows(ok, 'oms');
+    if (!landed) return false;
+    void logAudit({
+      user_name: sessionEmail ?? 'anonymous',
+      user_role: sessionRole ?? 'user',
+      action: 'wizard.orphanage_oms_locked_in',
+      resource: 'orphanage_pay',
+      resource_id: pull.weekStart,
+      cycle: auditCycle,
+      details: {
+        week_start: pull.weekStart,
+        source_file: calcSourceFile,
+        people: ok.length,
+        total_php: Math.round(ok.reduce((sum, r) => sum + r.amount, 0) * 100) / 100,
+        approved_rows: pull.approvedCount,
+        pulled_rows: pull.rows.length,
+        skipped: omsResolved?.errors.length ?? 0,
+        truncated: pull.truncated,
+        latest_updated_at: pull.latestUpdatedAt,
+      },
+    });
+    omsHours.clearPull();
+    return true;
+  }, [omsHours, omsResolved, omsTestMode, lockInResolvedOrphanageRows, sessionEmail, sessionRole, auditCycle, calcSourceFile]);
 
   /** Load the locked-in orphanage pay detail (hours / OT split) for the active period
    *  when the user lands on the Orphanage step, so the "Locked in this period" list shows
@@ -17512,6 +17515,94 @@ export default function PayrollWizard({
               </div>
             )}
 
+            {/* ── Section tabs: Paste data | Orphanage Management System ──────────
+                Two doors for hours, ONE resolver and ONE lock-in behind both. The strip
+                mirrors step 4's Departments | HSL strip (ui-standards §11.1, underline
+                variant). The "Locked in this period" list and the reconciliation panels
+                stay OUTSIDE the swap — they are the period's money whichever door it
+                came through. The OMS tab badges the approved-row count the moment the
+                status ping knows it: the "data is ready" signal is visible from either tab. */}
+            <div role="tablist" aria-label="Orphanage hours source" className="flex items-center gap-1 border-b border-zinc-200 dark:border-zinc-800">
+              {ORPHANAGE_SECTIONS.map((sec) => {
+                const isActive = orphanageSection === sec.key;
+                const count = sec.key === 'paste'
+                  ? orphOk.length
+                  : (omsHours.status.kind === 'ready' ? omsHours.status.approvedCount : 0);
+                const indigo = sec.key === 'oms';
+                return (
+                  <button
+                    key={sec.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => {
+                      if (isActive) return;
+                      const from = ORPHANAGE_SECTIONS.findIndex((x) => x.key === orphanageSection);
+                      const to = ORPHANAGE_SECTIONS.findIndex((x) => x.key === sec.key);
+                      setOrphanageSectionDir(to >= from ? 1 : -1);
+                      setOrphanageSection(sec.key);
+                    }}
+                    className={cn(
+                      'relative -mb-px flex items-center gap-2 px-3.5 py-2 text-sm font-semibold transition-colors duration-200',
+                      isActive
+                        ? indigo ? 'text-indigo-700 dark:text-indigo-300' : 'text-rose-700 dark:text-rose-300'
+                        : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+                    )}
+                  >
+                    {isActive && (
+                      <motion.span
+                        layoutId="orphanage-section-indicator"
+                        className={cn(
+                          'absolute inset-x-0 bottom-0 h-0.5 rounded-full',
+                          indigo ? 'bg-indigo-600 dark:bg-indigo-400' : 'bg-rose-600 dark:bg-rose-400',
+                        )}
+                        transition={{ duration: reduceMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+                      />
+                    )}
+                    <sec.icon className="relative h-3.5 w-3.5 shrink-0" />
+                    <span className="relative">{sec.label}</span>
+                    {count > 0 && (
+                      <span
+                        className={cn(
+                          'relative rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none transition-colors duration-200',
+                          isActive
+                            ? indigo ? 'bg-indigo-600 text-white' : 'bg-rose-600 text-white'
+                            : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+                        )}
+                      >
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="overflow-x-clip">
+              <AnimatePresence mode="wait" initial={false} custom={orphanageSectionDir}>
+                <motion.div
+                  key={orphanageSection}
+                  custom={orphanageSectionDir}
+                  variants={ADDITIONS_SECTION_VARIANTS}
+                  initial="enter"
+                  animate="center"
+                  exit="exit"
+                  transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                >
+            {orphanageSection === 'oms' ? (
+              <OrphanageOmsPanel
+                weekStart={markerWeekStart}
+                periodLabel={orphPeriodLabel}
+                isReplay={isReplay}
+                testMode={omsTestMode}
+                onTestModeChange={setOmsTestMode}
+                oms={omsHours}
+                resolved={omsResolved}
+                lockingIn={orphanageLockingIn}
+                onLockIn={lockInOmsRows}
+              />
+            ) : (
+            <>
             {/* Paste + Preview. Once this period has locked-in amounts the pair folds
                 into a slim bar: the locked-in list becomes the subject of the step, and
                 the paste tool is one click away. A draft in the textarea is never
@@ -17720,6 +17811,12 @@ export default function PayrollWizard({
                     </div>
                   </motion.div>
                 )}
+              </AnimatePresence>
+            </div>
+
+            </>
+            )}
+                </motion.div>
               </AnimatePresence>
             </div>
 

@@ -17,6 +17,11 @@ column of the Additions tab and from there into **Final pay**
 ([payroll-wizard-final-pay.md:217](./payroll-wizard-final-pay.md)) and onto its own
 paystub line.
 
+Since 2026-09-16 hours can also be **pulled from OMS** — the Orphanage Management System
+tab, [orphanage-oms-pull.md](./orphanage-oms-pull.md) — through the SAME resolver
+(`src/lib/payroll/orphanage-rows.ts`) and the SAME lock-in; that document adds an input
+surface and changes nothing below about money.
+
 The pay-week column is **informational only**: every matched row applies to the period
 being edited. Matching is by work email, case-insensitive, bridged through the master
 list so an alternate / personal / Hubstaff address still finds the person's row.
@@ -239,6 +244,11 @@ What closed, and what proves it:
   (`orphanageConfirmedSettingKey`), audited as `wizard.orphanage_none_confirmed`, so a
   week with no visits is distinguishable from a week nobody got to.
 - Replay is view-only: no paste, no re-price, no remove.
+- **Paste data | Orphanage Management System** section strip (2026-09-16) in the step-4
+  `Departments | HSL` shape; Paste is the default. The OMS tab pulls APPROVED rows for the
+  period on the Load button only, TEST mode (default, session-only) writes nothing, LIVE
+  rides the paste's lock-in after a confirm dialog — [orphanage-oms-pull.md](./orphanage-oms-pull.md).
+  The locked-in list and the reconciliation panels sit OUTSIDE the swap.
 - **Step heading is plain** (2026-09-16, Kane: *"delete this gradient AI Slop card"*): an
   `h2` + the pay-period line + the "No orphanage hours this week" button in one flat row.
   The rose gradient banner card, its eyebrow and its column-format prose are gone — the
