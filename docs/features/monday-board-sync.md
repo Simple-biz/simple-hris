@@ -1823,3 +1823,116 @@ All thirteen rows were re-read individually with `verify-one.mts` (1 call each) 
 2026-08-20. Confirmed on the board: the ten Done rows carry an Actual SP **and** a Completed Date;
 the three held rows carry **neither**; all thirteen sit in the Sprint 28 group under the Sprint 28
 label.
+
+## Pass 28 — 2026-09-16 · STAGED, NOTHING WRITTEN — the budget died on the review
+
+Kane: *"All withheld SP please push them to monday."* Session `22d13446`. **There is no approval hash
+and nothing reached the board.**
+
+### "Withheld" was measured in all three waiting rooms
+
+| Waiting room | Measured 2026-09-16 | Owed |
+|---|---|---|
+| `pending-sp.json` | 42 entries, **0 unflushed** | nothing |
+| a staged, unapplied pass | pass 27 **applied and verified** 2026-09-13 | nothing |
+| commits with no row | **63 commits**, `9803bba6..1f7e2078` (Sep 13-16) | this pass |
+
+Pass 22 taught that the ledger alone is not the answer and pass 24 added the third room. This pass is
+the first where the answer was **entirely** in the third room: the ledger owed literally nothing.
+
+**The ledger is not the recovery path here, and that is a rule, not an accident.** `pending-sp.json`
+holds corrections to rows that **already exist**; 32 of these 35 rows do not exist on the board yet,
+and queueing a new row produces a guaranteed refusal at flush time. Staging the plan **is** how a row
+that is not on the board yet waits. So the recovery is `review.mts` after the budget resets, not a
+flush.
+
+### What is staged
+
+**32 new rows ≈ 113 SP**, plus **3 corrections** to pass-27 rows. `selfcheck()` returns **0 errors**.
+
+Clustered by **file overlap, never by commit message**, and this range is a textbook case for the
+rule: `1d418b4a` ("S") carries 37 files and two unrelated features, `f2b797e0` ("Paystub") carries
+both the Offboarded fixer override and the leaver-department rule, `e5411cbf` ("Manager Dashboard")
+carries the QC officers module and no manager-dashboard change at all, `9c674472` ("c") is an audio
+asset, and `40d0bc1c` ("tt") is a build artefact that gets **no row**. A message-clustered pass would
+have invented rows for two of those and split three real features across the wrong ones.
+
+### `selfcheck()` caught a name Monday would have silently rewritten
+
+The Documents cache row was first named `Accounting > Documents no longer reloads itself…`. Monday
+**strips HTML tags on create**, so the stored name would have differed from the sent name and the
+reconciler — which matches byte-exact — would have recreated that row on every sync, forever. Renamed
+to `The Accounting Documents tab…`. This is the guard rail earning its keep; it cost one rename
+instead of a permanent duplicate.
+
+### Four claims measured read-only, and they did not all agree
+
+All probed with `.limit(1)` — never `head: true`, the shape that returns *no error at all* for a
+missing table — alongside negative controls (`definitely_not_a_table_xyz` and a nonexistent column)
+that **both correctly reported MISSING** on the same run.
+
+| Claim | Verdict | Consequence |
+|---|---|---|
+| `employee_schedule_periods` | **ABSENT** | HSL Scheduling is code-complete and **dead**. The memory note was right. Pending Deploy, blocker named. |
+| `time_adjustment_requests.stage1_waived_reason` | **PRESENT** | The *"MIGRATION PENDING --apply"* line in `time-adjustments-accounting-issues-queue` is **STALE**. That row carries **no** migration blocker. |
+| `paystub_issues` | **ABSENT still** | The pass-27 held row stays held. An assertion still cannot create a table. |
+| Lead Gen QC restore | **still un-run** | 192 people at ₱0 on both sides, 119 matching; applied rows last written by `carla@` 2026-09-15T15:16Z. Money that has not moved. |
+
+Same instrument, opposite answers, third pass running. **Measure; assume staleness in neither
+direction.**
+
+### The only two rows this pass can close on its own evidence
+
+Both are data fixes, and a script has no production surface to click through — so Done means **run**,
+proven by reading the database back:
+
+- **juliar@'s catalog override** now reads **280**, updated `2026-09-15T17:31:12Z`. One individual
+  override from 2026-06-15 had outranked the 280 already in both the sheet and the rates for eleven
+  weeks; 419.99 is just 279.99 × 1.5, so it was ONE bad base value propagated. Corrected
+  **forward-only**; the 06-22 history row is retained.
+- **Her 09-10 `approved_hours`** is **NULL**, updated `2026-09-15T15:54:29Z`, so derivation rule 2
+  now produces 8.6767. **The rule was not loosened** — a stored total still wins; the VALUE was wrong.
+
+### Nothing else is Done, deliberately
+
+29 rows sit at **Pending Deploy** with "on `origin/main`, not confirmed live" stated as the reason.
+One sits at **In Progress** — `1f7e2078` is the range's only unpushed commit, and nothing here pushes.
+One sits at **Waiting for Review** — the Employee Support blueprint, Q1-Q9 unanswered, nothing built.
+
+**Kane has not been asked which of these he has clicked through in production.** That question is the
+only thing standing between ~113 staged SP and Done, and asking it is not the same as assuming the
+answer — the 2026-08-26 pass recorded a blanket confirmation *as evidence*, and the 2026-09-13 pass
+showed why it still may not be applied blanket.
+
+### The budget died, and the number named its own reset
+
+A cheap `boardGroups` probe succeeded first (25 groups — the skill's "probe before you plan" rule).
+Then `review.mts`'s full board page returned `DAILY_LIMIT_EXCEEDED` at **2026-09-16T16:50:09Z** with
+`retry_in_seconds: 25790`, which lands on **00:00 UTC** — the clean UTC-day bucket for the **fourth**
+measured time. The budget was evidently already nearly spent before this session touched it, which is
+the 2026-08-13 scenario repeating: *assume nothing about how much is left.*
+
+### One decision is Kane's, and it moves ten rows
+
+The live group title reads **`Sprint 29 · Sep 15-Sep 25`**. Pass 27 recorded `Sep 14-Sep 25` off the
+same board eleven days ago. The board owns that range, so `TASK_SPRINT_WINDOWS.S29.start` was
+re-mirrored to **2026-09-15** — which, because `taskSprintAttribution()` ends a sprint the day before
+the next one starts, re-bounds S28's attribution to **Sep 1-14** and files all of Sun Sep 13 and Mon
+Sep 14 under **S28**.
+
+If the board title is the typo and Sep 14 is right, **ten rows move to S29**. It is a one-line change
+plus a re-review, so it is cheap — but it must be settled **before** apply, because a sprint label
+asserts a date range and a wrong one is the same class of falsehood as a wrong Completed Date.
+
+### Next session
+
+1. Wait for **00:00 UTC**.
+2. **Re-derive every staged row's status from git.** Staged prose is a snapshot of a claim, not a
+   standing fact — the tickets row proved that on 2026-08-21, when a row staged as "NOT STARTED"
+   shipped entirely hours later. `revalidate()` does not reach rows staged in `pass.mts`.
+3. Settle the S29 window with Kane.
+4. `review.mts` → show Kane → `apply.mts --apply --approve <hash>`.
+5. Expect **`--only-new`** to still be the only safe path: the 12 Q2 epics and the Q2 group deleted
+   off the shared Roadmap board on 2026-09-12 remain unresolved (Kane's standing ruling: *leave them,
+   ask Abby*), so a full reconcile would mint twelve duplicate epics against a dead group id.
+6. Verify with `verify-one.mts` per row, never `verify.mts`, which pages all 3,133 items.

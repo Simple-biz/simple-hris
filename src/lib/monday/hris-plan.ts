@@ -192,7 +192,10 @@ export const TASK_SPRINT_WINDOWS: Record<Exclude<TaskSprint, 'BL'>, { start: str
   S28: { start: '2026-09-01', end: '2026-09-12' },
   // Added 2026-09-13 from the live group title "Sprint 29 · Sep 14-Sep 25". Adding it re-bounds S28's
   // attribution to Sep 1-13, giving the gap day Sun Sep 13 a sprint to belong to.
-  S29: { start: '2026-09-14', end: '2026-09-25' },
+  // Re-mirrored 2026-09-16: the live group title reads 'Sprint 29 · Sep 15-Sep 25', not the Sep 14
+  // that pass 27 recorded. The board owns this range, so the start moves to Sep 15 — which re-bounds
+  // S28's ATTRIBUTION to Sep 1-14 and gives Sun Sep 13 + Mon Sep 14 a sprint to belong to.
+  S29: { start: '2026-09-15', end: '2026-09-25' },
 };
 
 /**
@@ -1796,4 +1799,138 @@ export const PLAN_TASKS: PlanTask[] = [
   // this week's Sunday, and every failure path WIDENS. Kane chose NO browser cache, so paints-never-decides
   // stands. See [[employee-live-hours-window]].
   { epic: 'HRIS-09', name: 'The live Hubstaff window is derived from the weekly batch’s own coverage instead of a fixed 13 days, taking the request cost from 46% of the hourly cap to 22%', type: 'Feature', sp: 3, done: true, sprint: 'S28', priority: 'Medium' },
+
+  // ── PASS 28 · 2026-09-16 · the Sep 13-16 range, 63 commits ──────────────────────────────────────
+  // 2 SP: the expanded Dispatch row shows the BACKUP account as a row, not a second card — a card
+  // facing forward would imply routing. Gated on DATA (no backup slot, no row), and BACKUP is never
+  // read off `alt`. See [[dispatch-backup-account-on-expanded-row]].
+  { epic: 'HRIS-03a', name: 'The expanded Payment Dispatch row shows the backup account as data, not as a second card that would imply where the money goes', type: 'Feature', sp: 2, done: false, sprint: 'S28', priority: 'Medium' },
+  // 5 SP: My Team picks a department on a vertical RAIL on the left instead of filtering everything on
+  // one page, and the rail is the OUTER axis for all three tabs. There is deliberately no "All".
+  // The selection glides rather than reappearing elsewhere. See [[manager-team-department-rail]].
+  { epic: 'HRIS-10', name: 'My Team picks a department on a vertical rail that is the outer axis for all three tabs, and the selection glides instead of reappearing elsewhere', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  // 3 SP: the AI/API Team's rankings render on My Team for the ONE person allowed to read them. TIER
+  // is shown, never pesos, and the one-name gate stands. See [[employee-team-directory-rankings-policies]].
+  { epic: 'HRIS-10', name: 'The AI/API Team rankings render on My Team for the one person allowed to read them, as a tier and never as pesos', type: 'Feature', sp: 3, done: false, sprint: 'S28', priority: 'Medium' },
+  // 3 SP: `GET /api/qc/assignments` WRITES, so a non-Sunday period key minted phantom periods. The
+  // guard now runs BEFORE the deal; the phantom periods already created were LEFT rather than swept.
+  // See [[qc-period-key-must-be-sunday]].
+  { epic: 'HRIS-16', name: 'The QC period key must be a Sunday, and the boundary enforces it before the deal rather than after the write', type: 'Bug', sp: 3, done: false, sprint: 'S28', priority: 'High' },
+  // 5 SP: the weekly deal reads the roster AS OF THE SCORED WEEK, not as of today, so a week scored
+  // late no longer deals slots to whoever happens to be on the roster now. See [[qc-deal-reads-roster-as-of-week]].
+  { epic: 'HRIS-16', name: 'The QC weekly deal reads the roster as of the scored week instead of as of today, so scoring a week late no longer deals it to the wrong people', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  // 3 SP: officers are the QC DEPARTMENT, read from the roster, not a role flag — and a DEALT WEEK IS
+  // FROZEN, so widening the read can never re-deal one. See [[qc-officers-from-department]] and
+  // [[qc-manager-role-does-not-exist]].
+  { epic: 'HRIS-16', name: 'QC officers are the QC department read from the roster rather than a role flag, and a week already dealt stays frozen', type: 'Feature', sp: 3, done: false, sprint: 'S28', priority: 'Medium' },
+  // 5 SP: people who have already left stop appearing in the KPI Calculator, and an offboarded person
+  // is scoreable for their FINAL PAY WEEK and no others. ONE dated predicate `hasDepartedBeforeWeek` —
+  // the active roster cannot say who left. See [[active-roster-cannot-say-who-left]].
+  { epic: 'HRIS-06', name: 'An offboarded person is scoreable for their final pay week and no others, and one dated predicate decides it instead of the active roster', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  // 2 SP: Active / Offboarded tiles above the member table, counting THIS WEEK, moved into the toolbar.
+  // Both tiles count `allMembers`. See [[kpi-calculator-active-offboarded-tiles]].
+  { epic: 'HRIS-06', name: 'Active and Offboarded tiles sit in the KPI Calculator toolbar and count this week rather than the whole roster', type: 'Feature', sp: 2, done: false, sprint: 'S28', priority: 'Low' },
+  // 3 SP: the Compare panel scrolls per column, yields to the department table (which keeps a floor),
+  // and an `off_table` refusal NAMES THE PERSON and says what to do instead of guessing why. A first
+  // pass is NOT payable. See [[qc-compare-panel-clipped-and-off-table]].
+  { epic: 'HRIS-16', name: 'The QC Compare panel scrolls per column and yields to the department table, and an off-table refusal names the person instead of guessing why', type: 'Bug', sp: 3, done: false, sprint: 'S28', priority: 'Medium' },
+  // 5 SP: the Compare sheet is SHARED per department-week via `app_settings`, so two officers see one
+  // sheet. The `qc` role is NOT a reader of it. OPEN: the published week. See [[qc-compare-paste-shared]].
+  { epic: 'HRIS-16', name: 'The QC Compare sheet is shared per department-week through app settings, so two officers work one sheet instead of two', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  // 2 SP: per-card Refresh SAVES pending edits (the toolbar Refresh SKIPS them, and QC mode refuses),
+  // plus Delete all on the Compare sheet. See [[kpi-calculator-per-card-refresh]].
+  { epic: 'HRIS-06', name: 'A per-card Refresh saves pending edits where the toolbar Refresh discards them, and the Compare sheet gains Delete all', type: 'Feature', sp: 2, done: false, sprint: 'S28', priority: 'Low' },
+  // 3 SP: "Add N missing as externals" — sheet/QC people off the table, keyed PER SOURCE to PAY, or
+  // marked PROBLEMS. Not on GML means the PROBLEM is never added. See [[qc-add-missing-externals-button]].
+  { epic: 'HRIS-16', name: 'Add N missing as externals pulls sheet and QC people off the table keyed to pay, and marks the ones it refuses as problems', type: 'Feature', sp: 3, done: false, sprint: 'S28', priority: 'Medium' },
+  // 5 SP: `clearOffboarded` re-activated leavers on every sheet sync. REMOVED, with a regression test
+  // pinning it, and the backfill was APPLIED (1,373 to 1,195). See [[master-sync-never-un-offboards]].
+  { epic: 'HRIS-14', name: 'A Google Sheet sync can no longer un-write an offboard — the re-activation path is removed and the roster backfilled', type: 'Bug', sp: 5, done: false, sprint: 'S28', priority: 'Critical' },
+  // 5 SP: Scheduling moves INSIDE the HSL department and starts saving. Gated on `scheduling`, NOT
+  // `team`. done:false and held at Pending Deploy — `employee_schedule_periods` was MEASURED ABSENT
+  // from production on 2026-09-16, so the feature is code-complete and dead. See [[hsl-scheduling-in-department]].
+  { epic: 'HRIS-10', name: 'Scheduling moves inside the HSL department and starts saving, gated on the scheduling grant rather than team membership', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  // 1 SP: the Offboarded list shows the inbox that still works after the work account is gone.
+  { epic: 'HRIS-01a', name: 'The Offboarded list shows the inbox that still reaches a leaver once the work account is gone', type: 'Feature', sp: 1, done: false, sprint: 'S28', priority: 'Low' },
+  // 3 SP: Lead Gen 2026-09-06 pays PHP 38,000 where QC scored PHP 124,750 — a first pass stranded in
+  // staging. The restore is BUILT and --apply is still NOT RUN, re-measured 2026-09-16 (192 rows both
+  // at zero). OPEN RULING. See [[lead-gen-qc-first-pass-stranded-in-staging]].
+  { epic: 'HRIS-16', name: 'Lead Gen’s QC first pass never reached the applied rows — the gap is measured and the restore is built behind an apply gate', type: 'Bug', sp: 3, done: false, sprint: 'S28', priority: 'Critical' },
+  // 2 SP Spike: the Sep 14 Carla meeting record plus four findings measured the same day — there is no
+  // QC Manager role to flip on (granting `qc` makes jackie@ an OFFICER and re-deals the live week), the
+  // transferred status has never once fired and cannot, an absent officer does not block the week, and
+  // the Executive Assistants department is intact with the grant on the wrong one of three same-named
+  // labels. See [[qc-manager-role-does-not-exist]], [[qc-transferred-status-unreachable]],
+  // [[executive-assistants-three-way-name-collision]].
+  { epic: 'HRIS-16', name: 'The QC start meeting and four findings it settled — no QC Manager role exists, the transferred status cannot fire, an absent officer does not block the week', type: 'Spike', sp: 2, done: true, sprint: 'S28', priority: 'Medium' },
+  // 1 SP Spike: the Employee Support blueprint is POSTED and awaiting Kane's answers — Q1 to Q9 are
+  // PENDING and NOTHING has been built. `tickets` has NO RLS. See [[employee-support-blueprint-pending]].
+  { epic: 'HRIS-17', name: 'The Employee Support blueprint is posted and waiting on nine answers before any code is written', type: 'Spike', sp: 1, done: false, sprint: 'S28', priority: 'Medium' },
+  // 8 SP: countersigned time adjustments reach Accounting on the ISSUES tab (the same PATCH as the
+  // wizard), and reviewer != filer at EVERY stage. Kane's rulings: the pool is the team UNION its
+  // MANAGERS, a MANAGER's own request SKIPS stage 1 via `stage1_waived_reason`, and stage 2 is Issues
+  // EDIT plus role, excluding jakec@/april@/lenny@. The migration was MEASURED PRESENT on 2026-09-16,
+  // so the "MIGRATION PENDING" note is now stale. See [[time-adjustments-accounting-issues-queue]].
+  { epic: 'HRIS-04', name: 'Countersigned time adjustments reach Accounting on the Issues tab, and the reviewer is never the filer at any stage', type: 'Feature', sp: 8, done: false, sprint: 'S29', priority: 'High' },
+  // 3 SP: Accounting approves or denies with NO hours, so the day total is DERIVED — a stored total
+  // wins, else segments give tracked+requested, else NOTHING. All six overlay surfaces import the one
+  // module or an approval applies nothing. See [[time-adjustment-approved-hours-derived]].
+  { epic: 'HRIS-04', name: 'An approved time adjustment derives its day total from one module that every overlay surface imports, instead of each surface deciding for itself', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'High' },
+  // 5 SP: an Offboarded Set rate / Set bank is a COMPLETE OVERRIDE, the dialogs show what is ON FILE,
+  // and there is ONE individual structure per person. A LEAVER's department follows the Set-rate
+  // structure and the Department line RIDES THE SNAPSHOT; an undated departure anchors on the pay week
+  // in view and a dateless structure never relabels. See [[offboarded-fixers-complete-override]].
+  { epic: 'HRIS-01a', name: 'An offboarded person’s Set rate and Set bank are a complete override, and an undated departure anchors on the pay week in view instead of relabelling', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
+  // 5 SP: `find_employee` sees OFF-BOARDED people (labelled, active first, PAGED), plus admin tools
+  // `get_offboarding_info` and `get_bonus_breakdown`. KPI saves are UNAUDITED, so a prior value is
+  // unrecoverable and is never inferred. See [[penny-leavers-and-bonus-provenance]].
+  { epic: 'HRIS-28', name: 'Penny can see off-boarded people and trace a leaver and a bonus back to their sources, without ever inferring a value it cannot recover', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
+  // 3 SP: Non Members Opt In takes an EFFECTIVE DATE with NO new column (`since` already stamped both),
+  // and the route refuses a date on or before the previous `closed_on`. See [[mesa-optin-effective-date]].
+  { epic: 'HRIS-07', name: 'MESA Non Members Opt In takes an effective date, and the route refuses one that falls inside a closed stint', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Medium' },
+  // 5 SP: Kane's ruling — FRIDAY is the deposit date, so a member's first charged week is the first
+  // whose Friday is on or after their enrollment, applied at every PHP 100 / PHP 400 site via
+  // `mesaContributesForWeek`. A payroll rule change NEVER rewrites a snapshotted week. Two pre-existing
+  // gaps remain. See [[mesa-friday-deposit-date-single-source]], [[payroll-rule-changes-forward-only]].
+  { epic: 'HRIS-07', name: 'Friday is the MESA deposit date, so a member’s first charged week is the first whose Friday follows their enrollment — and no rule change rewrites a snapshotted week', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
+  // 3 SP: jimg@ and dales@ were NEVER deducted across 14 stubs because ledger identity is an ALIAS and
+  // the CSV backfill stamps `mesa_member` WITHOUT the alias map. jimg@ FIXED; dales@ STILL OPEN. NEVER
+  // repair via toggle-mesa-member — it MINTS A SECOND ACCOUNT. See [[mesa-alias-members-never-flagged]].
+  { epic: 'HRIS-07', name: 'An aliased MESA member was never charged the deduction — the membership is stamped onto the rate rows and the backfill audit learns the alias map', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'Critical' },
+  // 3 SP: juliar@ was paid PHP 279.99/hr for ELEVEN WEEKS — one individual catalog override from
+  // 2026-06-15 outranked the 280 already in the sheet and the rates. Corrected to 280/420 effective
+  // 2026-09-06, FORWARD-ONLY, the 06-22 history row RETAINED. done:true — the catalog structure was
+  // MEASURED at 280 on 2026-09-16. See [[juliar-rate-279-99-override]].
+  { epic: 'HRIS-02b', name: 'A stray individual catalog override paid one person PHP 279.99 an hour for eleven weeks — corrected forward-only, with the dated history row retained', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'Critical' },
+  // 2 SP: an approved 09-10 adjustment stored FRIDAY's total on a THURSDAY, and SET-semantics made it a
+  // PAY CUT of about PHP 367 rather than a rise. CLEARED to NULL so rule 2 derives the right figure.
+  // Rule 1 was NOT loosened — the VALUE was wrong. done:true — approved_hours MEASURED NULL on
+  // 2026-09-16. See [[time-adjustment-stored-total-wrong-day]].
+  { epic: 'HRIS-04', name: 'An approved time adjustment stored the wrong day’s total and became a pay cut — the value was cleared rather than the rule loosened', type: 'Bug', sp: 2, done: true, sprint: 'S29', priority: 'Critical' },
+  // 5 SP: Start Processing plays Jellyfish Jam on the BUTTON CLICK (confirm HOLDS it past the modal
+  // close, cancel KILLS it), bounded by a 12s floor AND ceiling, and pops a modal plus the cue on every
+  // OTHER open Wizard and Dispatch over its OWN topic. A LATE arrival never hears it. See
+  // [[start-processing-jellyfish-jam]] and [[start-processing-broadcast]].
+  { epic: 'HRIS-02a', name: 'Start Processing plays one bounded cue and pops a modal on every other open Wizard and Dispatch, over its own topic that a late arrival never hears', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
+  // 3 SP: the payroll lock banner defaulted to "Issues are temporarily paused" and the Issues tab is
+  // GONE, so every employee on EVERY tab read it — the lock never gated Documents at all. `detail` is
+  // now REQUIRED with no default and per-tab sentences. NEVER "fix" this by loosening
+  // `decideCoeActiveGate`, which fails closed BY DESIGN. See [[documents-not-gated-by-payroll-lock]].
+  { epic: 'HRIS-09', name: 'The payroll lock banner named a tab that no longer exists, so every employee read it on every tab — the detail is now required and written per tab', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'High' },
+  // 3 SP: "JSON Token" was the BROWSER's SyntaxError, never our string — eight unguarded `res.json()`
+  // calls hid every real cause. The route answers JSON on every branch it knows, so a non-JSON body
+  // means the request never REACHED the handler; `requireFeatureEdit` sat OUTSIDE the try. Fixed via
+  // `readJsonResponse`, and the 412 steer now keys on STATUS before the body. ROOT CAUSE STILL UNKNOWN.
+  // See [[documents-json-token-is-the-parser]].
+  { epic: 'HRIS-18', name: 'A failing Documents request showed the JSON parser’s complaint instead of the cause — every response is read through one guarded reader', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'High' },
+  // 3 SP: Accounting > Documents joins the shared tab cache — 3 keys, 3 categories. `documentsQueue` is
+  // a SHARED QUEUE, `documentsSignature` is cached but `signatureLoaded` is NEVER seeded (a cached null
+  // pops the capture dialog every switch), and the spinner is DERIVED. done:false and In Progress —
+  // 1f7e2078 is NOT an ancestor of origin/main. See [[accounting-documents-tab-cache]].
+  { epic: 'HRIS-18', name: 'The Accounting Documents tab no longer reloads itself on every tab switch, and a cached null can never pop the signature dialog', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Medium' },
+  // 2 SP Chore: reference docs for 3 routes and 4 components, ui-standards learns SlidingTab and the
+  // vertical rail (the spring-vs-ease deviation RECORDED, not ratified), the Sep 14 leftovers removed,
+  // and the stale "Paystubs send 1-by-1" pill dropped from the Dispatch step. See
+  // [[reference-docs-rot-silently]].
+  { epic: 'HRIS-15', name: 'The reference docs and UI standards catch up with the Sep 14 work, and the Dispatch step drops a pill that stopped being true', type: 'Chore', sp: 2, done: false, sprint: 'S29', priority: 'Low' },
 ];
