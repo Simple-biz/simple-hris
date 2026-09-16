@@ -75,7 +75,7 @@ test('PayrollLockBanner REQUIRES a detail prop, and the shell feeds it from this
   const app = read('src/components/employee/EmployeeApp.tsx');
   assert.match(
     app,
-    /<PayrollLockBanner[^>]*detail=\{payrollLockDetailFor\(activeTab\)\}/s,
+    /<PayrollLockBanner[^>]*detail=\{payrollLockDetailFor\(activeTab\)\}/,
     'the employee shell must scope the banner sentence to the active tab',
   );
 });

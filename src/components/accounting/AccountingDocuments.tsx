@@ -57,6 +57,7 @@ import {
 import TerminationDocsTabRow from '@/components/accounting/termination-docs/TerminationDocsTabRow';
 import TerminationDocsPanel from '@/components/accounting/termination-docs/TerminationDocsPanel'; // [TERMINATION-DOCS]
 import GenerateCoeDialog from '@/components/accounting/GenerateCoeDialog';
+import { readJsonResponse } from '@/lib/documents/read-json-response';
 
 type Filter = DocumentRequestStatus | 'all';
 
@@ -125,8 +126,7 @@ export default function AccountingDocuments({
     setError(null);
     try {
       const res = await fetch('/api/accounting/documents', { cache: 'no-store' });
-      const json = (await res.json()) as { rows?: DocumentRequestRow[]; error?: string };
-      if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
+      const json = await readJsonResponse<{ rows?: DocumentRequestRow[]; error?: string }>(res, 'Loading the signing queue');
       setRows(json.rows ?? []);
     } catch (e) {
       if (!opts?.silent) setError(e instanceof Error ? e.message : 'Failed to load requests');
@@ -138,8 +138,7 @@ export default function AccountingDocuments({
   const fetchSignature = useCallback(async () => {
     try {
       const res = await fetch('/api/accounting/documents/signature', { cache: 'no-store' });
-      const json = (await res.json()) as { row?: DocumentSignatureRow | null; error?: string };
-      if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
+      const json = await readJsonResponse<{ row?: DocumentSignatureRow | null; error?: string }>(res, 'Loading your signature');
       setSignature(json.row ?? null);
     } catch {
       /* the queue still renders; signing surfaces its own error */
@@ -208,8 +207,8 @@ export default function AccountingDocuments({
           enabled: true,
         }),
       });
-      const json = (await res.json()) as { row?: DocumentSignatureRow; error?: string };
-      if (!res.ok || json.error || !json.row) throw new Error(json.error || 'Save failed');
+      const json = await readJsonResponse<{ row?: DocumentSignatureRow; error?: string }>(res, 'Saving your signature');
+      if (!json.row) throw new Error('Saving your signature failed — the server answered OK but returned no signature');
       setSignature(json.row);
       setSigDialogOpen(false);
       toast.success('Signature saved', {
@@ -231,8 +230,8 @@ export default function AccountingDocuments({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: next }),
       });
-      const json = (await res.json()) as { row?: DocumentSignatureRow; error?: string };
-      if (!res.ok || json.error || !json.row) throw new Error(json.error || 'Update failed');
+      const json = await readJsonResponse<{ row?: DocumentSignatureRow; error?: string }>(res, next ? 'Re-enabling your signature' : 'Revoking your signature');
+      if (!json.row) throw new Error('The update failed — the server answered OK but returned no signature');
       setSignature(json.row);
       toast.success(next ? 'Signature re-enabled' : 'Signature revoked', {
         description: next
@@ -250,8 +249,8 @@ export default function AccountingDocuments({
     setPreviewingId(`${row.id}:${which}`);
     try {
       const res = await fetch(`/api/accounting/documents/${row.id}?which=${which}`, { cache: 'no-store' });
-      const json = (await res.json()) as { url?: string; error?: string };
-      if (!res.ok || !json.url) throw new Error(json.error || 'Could not open the file');
+      const json = await readJsonResponse<{ url?: string; error?: string }>(res, 'Opening the file');
+      if (!json.url) throw new Error('Could not open the file — no link came back');
       window.open(json.url, '_blank', 'noopener,noreferrer');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not open the file');
@@ -266,8 +265,7 @@ export default function AccountingDocuments({
     setActingId(row.id);
     try {
       const res = await fetch(`/api/accounting/documents/${row.id}`, { method: 'DELETE' });
-      const json = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(json.error || 'Delete failed');
+      await readJsonResponse<{ error?: string }>(res, 'Deleting the request');
       setDeleteTarget(null);
       setViewTarget((v) => (v?.id === row.id ? null : v));
       toast.success('Request deleted', {
@@ -289,14 +287,21 @@ export default function AccountingDocuments({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, ...(note ? { note } : {}) }),
       });
-      const json = (await res.json()) as { row?: DocumentRequestRow; error?: string };
-      if (!res.ok || json.error || !json.row) {
-        // 412 = no active signature — steer straight into the capture dialog.
-        if (res.status === 412) {
-          setSignTarget(null);
-          openSignatureDialog();
-        }
-        throw new Error(json.error || 'Decision failed');
+      // 412 = no active signature — steer straight into the capture dialog.
+      // Judged on the STATUS, before the body is read, so the steer still
+      // happens if the body is unreadable.
+      if (res.status === 412) {
+        setSignTarget(null);
+        openSignatureDialog();
+      }
+      const json = await readJsonResponse<{ row?: DocumentRequestRow; error?: string }>(
+        res,
+        action === 'sign' ? 'Signing the document' : 'Rejecting the request',
+      );
+      if (!json.row) {
+        throw new Error(
+          `${action === 'sign' ? 'Signing' : 'Rejecting'} failed — the server answered OK but returned no request`,
+        );
       }
       setSignTarget(null);
       setRejectTarget(null);
@@ -1293,8 +1298,8 @@ function DocumentDetailDialog({
       let signedUrl: string | null = null;
       try {
         const res = await fetch(`/api/accounting/documents/${rowId}?which=${pane}`, { cache: 'no-store' });
-        const json = (await res.json()) as { url?: string; error?: string };
-        if (!res.ok || !json.url) throw new Error(json.error || `Could not open the file (${res.status})`);
+        const json = await readJsonResponse<{ url?: string; error?: string }>(res, 'Opening the file');
+        if (!json.url) throw new Error('Could not open the file — no link came back');
         signedUrl = json.url;
 
         const file = await fetch(json.url);

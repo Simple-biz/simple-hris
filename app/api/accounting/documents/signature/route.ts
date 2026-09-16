@@ -16,19 +16,29 @@ export const runtime = 'nodejs';
  */
 
 export async function GET() {
-  const authz = await requireFeatureAccess('accounting', 'documents', 'view');
-  if (!authz.ok) return deniedResponse(authz);
+  try {
+    const authz = await requireFeatureAccess('accounting', 'documents', 'view');
+    if (!authz.ok) return deniedResponse(authz);
 
-  const { row, error } = await getDocumentSignature(authz.sessionEmail);
-  if (error) return NextResponse.json({ error }, { status: 500 });
-  return NextResponse.json({ row });
+    const { row, error } = await getDocumentSignature(authz.sessionEmail);
+    if (error) return NextResponse.json({ error }, { status: 500 });
+    return NextResponse.json({ row });
+  } catch (e) {
+    return NextResponse.json({ error: describeThrow(e) }, { status: 500 });
+  }
 }
 
 export async function PUT(req: NextRequest) {
-  const authz = await requireFeatureEdit('accounting', 'documents');
-  if (!authz.ok) return deniedResponse(authz);
-
   try {
+    // INSIDE the try on purpose. Authorization resolves the NextAuth session
+    // and reads feature grants from the database, so it can throw — a stale or
+    // undecryptable session cookie ("JSON Web Token" errors), a Supabase
+    // hiccup. An unhandled throw here escapes as the framework's own error
+    // page, and the client's `res.json()` then reports a parse failure instead
+    // of the cause. Every exit from this route answers JSON.
+    const authz = await requireFeatureEdit('accounting', 'documents');
+    if (!authz.ok) return deniedResponse(authz);
+
     const body = (await req.json().catch(() => ({}))) as {
       image_data_url?: string | null;
       owner_name?: string | null;
@@ -46,7 +56,21 @@ export async function PUT(req: NextRequest) {
     if (error || !row) return NextResponse.json({ error: error ?? 'Save failed' }, { status: 400 });
     return NextResponse.json({ row });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: describeThrow(e) }, { status: 500 });
   }
+}
+
+/** A thrown value as a message the operator can report back. A bare
+ *  `String(e)` on a non-Error prints "[object Object]", which is no more use
+ *  than the parse error this route exists to avoid. */
+function describeThrow(e: unknown): string {
+  if (e instanceof Error) return e.message || e.name || 'Unknown error';
+  if (typeof e === 'string' && e.trim()) return e;
+  try {
+    const json = JSON.stringify(e);
+    if (json && json !== '{}') return json;
+  } catch {
+    /* fall through to the generic message */
+  }
+  return 'The signature service threw a non-Error value';
 }
