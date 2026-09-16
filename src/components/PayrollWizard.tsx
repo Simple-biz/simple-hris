@@ -19183,12 +19183,10 @@ export default function PayrollWizard({
             <div className="space-y-2">
               <h3 className="text-2xl font-bold text-zinc-900 dark:text-white">Lock in Values &amp; Send to Payment Dispatch</h3>
               <p className="max-w-md text-zinc-600 dark:text-zinc-400">
-                Locks this cycle&apos;s pay and stages each paystub to Payment Dispatch.{' '}
                 <span className="font-semibold text-zinc-800 dark:text-zinc-200">{dispatchData.rows.length}</span> payable
                 {dispatchData.excludedRows.length > 0 && (
-                  <> · <span className="font-semibold text-rose-600 dark:text-rose-400">{dispatchData.excludedRows.length}</span> excluded (do not pay)</>
-                )}.
-                The Dispatch office emails each paystub as it marks the person Paid.
+                  <> · <span className="font-semibold text-rose-600 dark:text-rose-400">{dispatchData.excludedRows.length}</span> excluded</>
+                )}
               </p>
             </div>
             {/* Rate-SOURCE disagreement. Every stub's arithmetic is correct — the
@@ -19199,31 +19197,21 @@ export default function PayrollWizard({
               <div className="w-full max-w-2xl rounded-xl border border-amber-300 bg-amber-50/80 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/20">
                 <div className="flex items-center gap-2 text-sm font-bold text-amber-800 dark:text-amber-300">
                   <AlertTriangle className="h-4 w-4 shrink-0" />
-                  {dispatchData.rateIssues.length} employee
-                  {dispatchData.rateIssues.length === 1 ? ' was' : 's were'} paid at a rate that
-                  differs from the rate sheet
+                  {dispatchData.rateIssues.length} rate mismatch
+                  {dispatchData.rateIssues.length === 1 ? '' : 'es'}
                 </div>
                 <p className="mt-1 text-xs text-amber-800/80 dark:text-amber-300/70">
-                  Each paystub is internally correct — hours × rate matches its amount. But pay
-                  resolved from the dated history (<code>employee_rate_history</code>) while the
-                  sheet (<code>employee_hourly_rates</code>) says something else. If the sheet
-                  holds a raise history never received, the difference is owed. Record the rate as
-                  a per-employee Payment Catalog structure to settle it in both places.
+                  Pay used the dated rate history; the sheet disagrees. If the sheet is right, the
+                  difference is owed — settle it with a per-employee Payment Catalog rate.
                 </p>
                 <ul className="mt-2 space-y-1">
                   {dispatchData.rateIssues.slice(0, 8).map((x) => (
                     <li key={x.email} className="text-xs text-amber-900 dark:text-amber-200">
                       <span className="font-semibold">{x.name}</span>
-                      {x.department ? (
-                        <span className="text-amber-800/70 dark:text-amber-300/60">
-                          {' '}
-                          · {x.department}
-                        </span>
-                      ) : null}
                       {x.paidRate != null && x.sheetRate != null && (
                         <span>
                           {' '}
-                          · paid ₱{x.paidRate.toFixed(2)}/h, sheet ₱{x.sheetRate.toFixed(2)}/h
+                          · ₱{x.paidRate.toFixed(2)} → ₱{x.sheetRate.toFixed(2)}
                         </span>
                       )}
                       {x.shortfallPhp > 0 && (
@@ -19234,7 +19222,7 @@ export default function PayrollWizard({
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}{' '}
-                          short this week
+                          short
                         </span>
                       )}
                     </li>
@@ -19267,9 +19255,7 @@ export default function PayrollWizard({
                     </p>
                   )}
                   <p className="text-center text-xs text-emerald-700/80 dark:text-emerald-300/70">
-                    The Dispatch office can pay + email paystubs now. The values are frozen — to change
-                    anything, Unlock, make the change, then lock in again. Unlock clears Payment Dispatch
-                    in real time.
+                    Values are frozen. Unlocking clears Payment Dispatch in real time.
                   </p>
                   <Button
                     variant="outline"
@@ -19376,7 +19362,7 @@ export default function PayrollWizard({
                   if (rateIssues.length > 0) {
                     const owed = rateIssues.reduce((s, x) => s + x.shortfallPhp, 0);
                     toast.warning(
-                      `${rateIssues.length} employee${rateIssues.length === 1 ? '' : 's'} paid at a rate that differs from the rate sheet`,
+                      `${rateIssues.length} rate mismatch${rateIssues.length === 1 ? '' : 'es'}`,
                       {
                         duration: 20_000,
                         description:
