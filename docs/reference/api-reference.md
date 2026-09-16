@@ -2332,7 +2332,7 @@ Read-only against a SEPARATE Supabase project (env `OMS_*`, server-only; see
 
 | Method / path | Purpose |
 |---|---|
-| `GET /api/orphanage-pay/oms?mode=status&week_start=YYYY-MM-DD` | Approved-row COUNT for the week + newest stamp — the tab's "ready to pull" indicator. Never returns rows. [route.ts](app/api/orphanage-pay/oms/route.ts) |
+| `GET /api/orphanage-pay/oms?mode=status&week_start=YYYY-MM-DD` | Approved-row COUNT for the week + newest stamp — the tab's "ready to pull" indicator, fired ONLY by the manual Refresh button (no polling, no ping on tab open). Never returns rows. [route.ts](app/api/orphanage-pay/oms/route.ts) |
 | `GET /api/orphanage-pay/oms?mode=pull&week_start=YYYY-MM-DD` | The APPROVED rows for that Sunday's week, paged (`selectAllPaged`), capped at `OMS_MAX_ROWS` with a `truncated` flag. Fired ONLY by the Load Orphanage Hours button. `503 { configured:false, reason, missing }` when env is unset (names the variable, never a value); `502` when OMS is unreachable; `400` on a bad mode/week. |
 
 ### 3rd-Party Vendors (Orphanage)

@@ -233,8 +233,9 @@ through the paste tool's resolver (`resolveOrphanageHourRows`, passed in as `res
 shows matched rows with the HRIS's reg/OT split + amount, and skipped rows with reasons.
 TEST/LIVE `Switch` (state lives in the wizard: `omsTestMode`, default TEST every mount);
 LIVE shows an amber warning and locks in through `OrphanageOmsLiveConfirmDialog` →
-`onLockIn` (the wizard's `lockInOmsRows`). Indicator (`role="status"`) rides the count ping
-from `use-oms-hours.ts` (`useOmsHours`): idle/checking → ready (N approved, "prepared … ago")
+`onLockIn` (the wizard's `lockInOmsRows`). Indicator (`role="status"`) updates ONLY from the manual **Refresh**
+button (a count) or a Load — nothing polls (`use-oms-hours.ts`, `useOmsHours`, 15s
+timeouts): idle "Not checked yet" / checking → ready (N approved, "prepared … ago")
 / empty / unconfigured / error. Motion: `motion/react`, staggered rows (24ms, capped),
 crossfading indicator and footer, all gated on `useReducedMotion`. Doc:
 [orphanage-oms-pull.md](../features/orphanage-oms-pull.md).

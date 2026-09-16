@@ -6,8 +6,10 @@
  * Two fetches, deliberately different in weight and trigger:
  *
  *   checkStatus  — `?mode=status`: an approved-row COUNT for the week (+ the newest
- *                  stamp). Runs when the tab opens for a week and after every pull, so
- *                  the "ready to pull" indicator can speak. It never returns rows.
+ *                  stamp). MANUAL ONLY — the Refresh button (Kane, 2026-09-16: "its not
+ *                  a live polling just a manual polling button"). Nothing here runs on
+ *                  a timer or on tab open; a pull refreshes the status as a by-product.
+ *                  It never returns rows.
  *   load         — `?mode=pull`: the rows. Fires ONLY from the Load Orphanage Hours
  *                  button (Kane, 2026-09-16: "the querying should only load from the
  *                  button request not automatic").
@@ -20,6 +22,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { OrphanageHourRow } from '@/lib/payroll/orphanage-rows';
+
+/** How long one OMS round trip may take before the button is handed back. */
+const OMS_FETCH_TIMEOUT_MS = 15_000;
 
 export type OmsStatus =
   | { kind: 'idle' }
@@ -58,6 +63,19 @@ type StatusJson = {
   truncated?: boolean;
 };
 
+async function fetchWithTimeout(url: string): Promise<Response> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), OMS_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+  } catch (e) {
+    if (ctrl.signal.aborted) throw new Error(`OMS did not answer within ${OMS_FETCH_TIMEOUT_MS / 1000}s`);
+    throw e;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 async function readJson(res: Response): Promise<StatusJson> {
   const text = await res.text();
   try {
@@ -69,7 +87,7 @@ async function readJson(res: Response): Promise<StatusJson> {
   }
 }
 
-export function useOmsHours({ weekStart, active }: { weekStart: string | null; active: boolean }): OmsHoursState {
+export function useOmsHours({ weekStart }: { weekStart: string | null }): OmsHoursState {
   const [status, setStatus] = useState<OmsStatus>({ kind: 'idle' });
   const [pull, setPull] = useState<OmsPull | null>(null);
   const [pulling, setPulling] = useState(false);
@@ -89,9 +107,10 @@ export function useOmsHours({ weekStart, active }: { weekStart: string | null; a
   const checkStatus = useCallback(async () => {
     if (!weekStart) return;
     const reqId = ++statusReq.current;
-    setStatus((s) => (s.kind === 'idle' ? { kind: 'checking' } : s));
+    // Always visibly "checking": a manual refresh must show it did something.
+    setStatus({ kind: 'checking' });
     try {
-      const res = await fetch(`/api/orphanage-pay/oms?mode=status&week_start=${encodeURIComponent(weekStart)}`, { cache: 'no-store' });
+      const res = await fetchWithTimeout(`/api/orphanage-pay/oms?mode=status&week_start=${encodeURIComponent(weekStart)}`);
       const json = await readJson(res);
       if (reqId !== statusReq.current || weekRef.current !== weekStart) return;
       if (res.status === 503 || json.configured === false) {
@@ -114,19 +133,12 @@ export function useOmsHours({ weekStart, active }: { weekStart: string | null; a
     }
   }, [weekStart]);
 
-  // The count ping on tab open — once per week, never a row fetch.
-  useEffect(() => {
-    if (!active || !weekStart) return;
-    if (status.kind !== 'idle') return;
-    void checkStatus();
-  }, [active, weekStart, status.kind, checkStatus]);
-
   const load = useCallback(async () => {
     if (!weekStart || pulling) return;
     setPulling(true);
     setPullError(null);
     try {
-      const res = await fetch(`/api/orphanage-pay/oms?mode=pull&week_start=${encodeURIComponent(weekStart)}`, { cache: 'no-store' });
+      const res = await fetchWithTimeout(`/api/orphanage-pay/oms?mode=pull&week_start=${encodeURIComponent(weekStart)}`);
       const json = await readJson(res);
       if (weekRef.current !== weekStart) return;
       if (res.status === 503 || json.configured === false) {

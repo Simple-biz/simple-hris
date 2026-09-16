@@ -246,7 +246,7 @@ What closed, and what proves it:
 - Replay is view-only: no paste, no re-price, no remove.
 - **Paste data | Orphanage Management System** section strip (2026-09-16) in the step-4
   `Departments | HSL` shape; Paste is the default. The OMS tab pulls APPROVED rows for the
-  period on the Load button only, TEST mode (default, session-only) writes nothing, LIVE
+  period on the Load button only (a manual Refresh button checks the count; nothing polls), TEST mode (default, session-only) writes nothing, LIVE
   rides the paste's lock-in after a confirm dialog — [orphanage-oms-pull.md](./orphanage-oms-pull.md).
   The locked-in list and the reconciliation panels sit OUTSIDE the swap.
 - **Step heading is plain** (2026-09-16, Kane: *"delete this gradient AI Slop card"*): an

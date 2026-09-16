@@ -8565,11 +8565,8 @@ export default function PayrollWizard({
     return { ok: resolved.ok, errors: mergeOrphanageErrors(tokenized.errors, resolved.errors) };
   }, [orphanagePaste, orphanageResolveCtx]);
 
-  /** The OMS door. Status ping when the tab is open; rows ONLY on the Load button. */
-  const omsHours = useOmsHours({
-    weekStart: markerWeekStart,
-    active: currentStep === 3 && orphanageSection === 'oms',
-  });
+  /** The OMS door. Nothing polls: Refresh (count) and Load (rows) are both manual. */
+  const omsHours = useOmsHours({ weekStart: markerWeekStart });
   const omsResolved = useMemo<OrphanagePasteParse | null>(
     () => (omsHours.pull ? resolveOrphanageHourRows(omsHours.pull.rows, orphanageResolveCtx) : null),
     [omsHours.pull, orphanageResolveCtx],
@@ -17520,8 +17517,8 @@ export default function PayrollWizard({
                 mirrors step 4's Departments | HSL strip (ui-standards §11.1, underline
                 variant). The "Locked in this period" list and the reconciliation panels
                 stay OUTSIDE the swap — they are the period's money whichever door it
-                came through. The OMS tab badges the approved-row count the moment the
-                status ping knows it: the "data is ready" signal is visible from either tab. */}
+                came through. The OMS tab badges the approved-row count once a manual
+                Refresh or Load has asked OMS — nothing here polls on its own. */}
             <div role="tablist" aria-label="Orphanage hours source" className="flex items-center gap-1 border-b border-zinc-200 dark:border-zinc-800">
               {ORPHANAGE_SECTIONS.map((sec) => {
                 const isActive = orphanageSection === sec.key;

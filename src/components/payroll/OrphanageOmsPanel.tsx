@@ -10,7 +10,7 @@
  * are regular, which are overtime, and what they price to.
  *
  * Rules this panel keeps (docs/features/orphanage-oms-pull.md):
- *   - Rows are fetched ONLY by the Load button. The indicator rides a count ping.
+ *   - Nothing polls. Refresh (a count) and Load (the rows) are both manual buttons.
  *   - TEST mode is the default every session and writes NOTHING, anywhere.
  *   - LIVE mode warns, confirms in a dialog, and then rides the paste's lock-in —
  *     the same blob-CAS-then-record write, the same audit, the same money.
@@ -106,6 +106,7 @@ export default function OrphanageOmsPanel({
   const indicator = (() => {
     switch (status.kind) {
       case 'idle':
+        return { tone: 'zinc', dot: 'bg-zinc-400', label: 'Not checked yet', detail: 'Press Refresh to ask OMS what is approved for this week.' as string | null };
       case 'checking':
         return { tone: 'zinc', dot: 'animate-pulse bg-zinc-400', label: 'Checking OMS…', detail: null as string | null };
       case 'unconfigured':
@@ -244,27 +245,31 @@ export default function OrphanageOmsPanel({
                 {indicator.detail && <span className="truncate text-[12px] opacity-80">{indicator.detail}</span>}
               </motion.span>
             </AnimatePresence>
-            <button
-              type="button"
-              onClick={() => void oms.checkStatus()}
-              disabled={!weekStart || status.kind === 'checking' || pulling}
-              title="Re-check OMS"
-              aria-label="Re-check OMS"
-              className="ml-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 disabled:opacity-40"
-            >
-              <RefreshCw className={cn('h-3.5 w-3.5', status.kind === 'checking' && 'animate-spin')} />
-            </button>
           </div>
 
-          <Button
-            type="button"
-            onClick={() => void oms.load()}
-            disabled={!canLoad}
-            className="h-9 gap-2 bg-rose-600 px-4 text-white transition-colors hover:bg-rose-700 disabled:opacity-60"
-          >
-            {pulling ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudDownload className="h-4 w-4" />}
-            {pulling ? 'Pulling…' : pull ? 'Load again' : 'Load Orphanage Hours'}
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Manual poll. Nothing refreshes this pill on its own — not on tab open,
+                not on a timer. Kane: "not a live polling just a manual polling button". */}
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void oms.checkStatus()}
+              disabled={!weekStart || status.kind === 'checking' || pulling}
+              className="h-9 gap-2 px-3"
+            >
+              <RefreshCw className={cn('h-4 w-4', status.kind === 'checking' && 'animate-spin')} />
+              {status.kind === 'checking' ? 'Checking…' : 'Refresh'}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void oms.load()}
+              disabled={!canLoad}
+              className="h-9 gap-2 bg-rose-600 px-4 text-white transition-colors hover:bg-rose-700 disabled:opacity-60"
+            >
+              {pulling ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudDownload className="h-4 w-4" />}
+              {pulling ? 'Pulling…' : pull ? 'Load again' : 'Load Orphanage Hours'}
+            </Button>
+          </div>
         </div>
 
         {pullError && (

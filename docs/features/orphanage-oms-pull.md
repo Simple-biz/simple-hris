@@ -18,7 +18,7 @@ document adds one input surface and changes no rule about money.
 | OMS env config, identifier-checked | `src/lib/oms/oms-config.ts` (+ `.test.ts`) |
 | OMS read (status count · paged pull) | `src/lib/oms/oms-hours.ts` |
 | Route | `app/api/orphanage-pay/oms/route.ts` — `GET ?mode=status\|pull&week_start=` |
-| Client fetch state | `src/components/payroll/use-oms-hours.ts` |
+| Client fetch state (manual Refresh + Load, 15s timeouts) | `src/components/payroll/use-oms-hours.ts` |
 | The tab | `src/components/payroll/OrphanageOmsPanel.tsx` |
 | LIVE confirm | `src/components/payroll/OrphanageOmsLiveConfirmDialog.tsx` |
 | Section strip · lock-in wiring | `src/components/PayrollWizard.tsx` — `ORPHANAGE_SECTIONS`, `orphanageResolveCtx`, `lockInResolvedOrphanageRows`, `lockInOmsRows` |
@@ -46,11 +46,14 @@ exactly as the pasted one is: every matched row applies to the period being edit
 - **One week.** Filtered on the OMS week-start DATE column equal to the period's Sunday
   (`markerWeekStart`), the same Sun–Sat anchor the pay period uses (Kane, Q2: *"this week
   is 13-19"*). The client never chooses a different week than the one it is editing.
-- **Rows move only on the button.** `Load Orphanage Hours` is the only call that fetches
-  rows. The indicator rides `?mode=status`, a **count** ping (approved rows + newest
-  stamp) fired when the tab opens for a week and after every pull. It returns no rows.
-  Kane: *"the querying should only load from the button request not automatic"* — the
-  count is what lets the tab say "ready" without breaking that.
+- **Nothing polls. Two manual buttons.** `Refresh` calls `?mode=status`, a **count**
+  (approved rows + newest stamp, no rows) and is the ONLY thing that updates the
+  indicator besides a Load; `Load Orphanage Hours` calls `?mode=pull` and is the only
+  call that fetches rows. There is no ping on tab open and no timer (Kane, 2026-09-16:
+  *"the querying should only load from the button request not automatic"*, then *"its not
+  a live polling just a manual polling button for the refresh"*). Until the first Refresh
+  the pill reads "Not checked yet". Both fetches time out at 15s so a button is never
+  stuck in "Checking…".
 - **Paged, capped, loud.** The pull uses `selectAllPaged` (PostgREST caps a page at 1000
   even with `.range()`), a stable order, and `OMS_MAX_ROWS` (10,000) with an explicit
   `truncated` flag the panel shows in red. Never a silent tail drop.
@@ -94,8 +97,8 @@ above. If "which weeks came from OMS" ever needs to be queryable, that is a migr
 `Departments | HSL` shape ([ui-standards §11.1](../design/ui-standards.md), underline
 variant, shared `layoutId="orphanage-section-indicator"`, directional slide, reduced-motion
 gated). **Paste is the default** so the tutorial's `step3-paste-data` anchor is mounted on
-arrival. The OMS tab badges the approved-row count as soon as the status ping knows it —
-the "data is ready" signal is visible from either tab. The **Locked in this period** list
+arrival. The OMS tab badges the approved-row count once a Refresh or Load has asked OMS —
+after that the "data is ready" signal is visible from either tab. The **Locked in this period** list
 and the reconciliation panels sit **outside** the swap: they are the period's money
 whichever door it came through.
 
