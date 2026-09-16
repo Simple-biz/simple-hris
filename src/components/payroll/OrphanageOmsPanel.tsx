@@ -11,6 +11,8 @@
  *
  * Rules this panel keeps (docs/features/orphanage-oms-pull.md):
  *   - Nothing polls. Refresh (a count) and Load (the rows) are both manual buttons.
+ *   - Refresh DETECTS change (count / stamp moved since the last pull) and says "load
+ *     again"; a re-load then shows WHAT changed, person by person (oms-diff.ts).
  *   - TEST mode is the default every session and writes NOTHING, anywhere.
  *   - LIVE mode warns, confirms in a dialog, and then rides the paste's lock-in —
  *     the same blob-CAS-then-record write, the same audit, the same money.
@@ -41,6 +43,7 @@ import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { formatPHP } from '@/lib/format-php';
 import type { OrphanageResolveResult } from '@/lib/payroll/orphanage-rows';
+import { diffOmsPulls } from '@/lib/oms/oms-diff';
 
 import OrphanageOmsLiveConfirmDialog from './OrphanageOmsLiveConfirmDialog';
 import type { OmsHoursState } from './use-oms-hours';
@@ -99,7 +102,17 @@ export default function OrphanageOmsPanel({
   const total = useMemo(() => ok.reduce((s, r) => s + r.amount, 0), [ok]);
   const otPeople = useMemo(() => ok.filter((r) => r.otH > 0).length, [ok]);
 
-  const { status, pull, pulling, pullError } = oms;
+  const { status, pull, previousPull, changedSincePull, pulling, pullError } = oms;
+  /** What a re-load changed against the pull it replaced. Null until a second pull. */
+  const pullDiff = useMemo(
+    () => (pull && previousPull ? diffOmsPulls(previousPull.rows, pull.rows) : null),
+    [pull, previousPull],
+  );
+  const changedEmails = useMemo(() => {
+    const set = new Set<string>();
+    if (pullDiff) for (const c of [...pullDiff.added, ...pullDiff.changed]) set.add(c.email);
+    return set;
+  }, [pullDiff]);
   const canLoad = !!weekStart && !pulling && status.kind !== 'unconfigured' && status.kind !== 'checking';
 
   // ── the indicator ────────────────────────────────────────────────────────
@@ -114,6 +127,9 @@ export default function OrphanageOmsPanel({
       case 'error':
         return { tone: 'rose', dot: 'bg-rose-500', label: 'OMS is unreachable', detail: status.reason };
       case 'empty':
+        if (changedSincePull) {
+          return { tone: 'amber', dot: 'bg-amber-400', label: 'Changed since your last pull — nothing is approved now', detail: 'Load again to see the week as OMS has it.' as string | null };
+        }
         return {
           tone: 'amber',
           dot: 'bg-amber-400',
@@ -122,11 +138,23 @@ export default function OrphanageOmsPanel({
         };
       case 'ready': {
         const when = ago(status.latestUpdatedAt, now);
+        if (changedSincePull) {
+          const parts: string[] = [];
+          if (changedSincePull.countDelta > 0) parts.push(`${changedSincePull.countDelta} more approved`);
+          if (changedSincePull.countDelta < 0) parts.push(`${-changedSincePull.countDelta} fewer approved`);
+          if (changedSincePull.stampMoved) parts.push(when ? `edited ${when}` : 'rows edited');
+          return {
+            tone: 'amber',
+            dot: 'animate-pulse bg-amber-500',
+            label: 'Changed since your last pull',
+            detail: `${parts.join(' · ')} — load again to see what changed.` as string | null,
+          };
+        }
         return {
           tone: 'emerald',
           dot: 'bg-emerald-500',
           label: `${status.approvedCount} approved ${status.approvedCount === 1 ? 'row' : 'rows'} ready to pull`,
-          detail: when ? `Prepared ${when}` : null,
+          detail: (pull ? 'Same as your last pull' : null) ?? (when ? `Prepared ${when}` : null),
         };
       }
     }
@@ -264,7 +292,10 @@ export default function OrphanageOmsPanel({
               type="button"
               onClick={() => void oms.load()}
               disabled={!canLoad}
-              className="h-9 gap-2 bg-rose-600 px-4 text-white transition-colors hover:bg-rose-700 disabled:opacity-60"
+              className={cn(
+                'h-9 gap-2 bg-rose-600 px-4 text-white transition-all hover:bg-rose-700 disabled:opacity-60',
+                changedSincePull && !pulling && 'ring-2 ring-amber-400 ring-offset-2 ring-offset-white dark:ring-offset-zinc-950',
+              )}
             >
               {pulling ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudDownload className="h-4 w-4" />}
               {pulling ? 'Pulling…' : pull ? 'Load again' : 'Load Orphanage Hours'}
@@ -315,6 +346,58 @@ export default function OrphanageOmsPanel({
                 </span>
               </div>
 
+              {/* What this re-load changed against the pull it replaced. Person is the
+                  unit: added / removed / hours changed. Silent until a second pull. */}
+              {pullDiff && (
+                <motion.div
+                  key={`diff-${pull.pulledAt}`}
+                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: reduceMotion ? 0.1 : 0.2, ease: EASE }}
+                  className={cn(
+                    'rounded-lg border px-3 py-2.5 text-[12.5px]',
+                    pullDiff.total === 0
+                      ? 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400'
+                      : 'border-sky-200 bg-sky-50/70 text-sky-900 dark:border-sky-900/50 dark:bg-sky-950/30 dark:text-sky-200',
+                  )}
+                >
+                  {pullDiff.total === 0 ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> No changes since your previous pull — same people, same hours.
+                    </span>
+                  ) : (
+                    <>
+                      <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-semibold">
+                        <span>Changed since your previous pull</span>
+                        {pullDiff.added.length > 0 && <span className="text-emerald-700 dark:text-emerald-300">+{pullDiff.added.length} added</span>}
+                        {pullDiff.changed.length > 0 && <span className="text-amber-700 dark:text-amber-300">~{pullDiff.changed.length} hours changed</span>}
+                        {pullDiff.removed.length > 0 && <span className="text-rose-700 dark:text-rose-300">−{pullDiff.removed.length} removed</span>}
+                      </div>
+                      <ul className="flex flex-col gap-0.5">
+                        {[...pullDiff.added, ...pullDiff.changed, ...pullDiff.removed].map((c) => (
+                          <li key={`${c.kind}:${c.email}`} className="flex gap-2 font-mono text-[12px]">
+                            <span
+                              className={cn(
+                                'w-3 shrink-0 text-center font-bold',
+                                c.kind === 'added' && 'text-emerald-600 dark:text-emerald-400',
+                                c.kind === 'changed' && 'text-amber-600 dark:text-amber-400',
+                                c.kind === 'removed' && 'text-rose-600 dark:text-rose-400',
+                              )}
+                            >
+                              {c.kind === 'added' ? '+' : c.kind === 'removed' ? '−' : '~'}
+                            </span>
+                            <span className="min-w-0 truncate">{c.email}</span>
+                            <span className="ml-auto shrink-0 tabular-nums">
+                              {c.kind === 'changed' ? `${fmtH(c.before ?? 0)} → ${fmtH(c.after ?? 0)} h` : c.kind === 'added' ? `${fmtH(c.after ?? 0)} h` : `was ${fmtH(c.before ?? 0)} h`}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </motion.div>
+              )}
+
               {ok.length > 0 && (
                 <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
                   <table className="w-full text-[12.5px]">
@@ -339,7 +422,12 @@ export default function OrphanageOmsPanel({
                             ease: EASE,
                             delay: reduceMotion ? 0 : Math.min(i, 20) * 0.024,
                           }}
-                          className="border-t border-zinc-100 dark:border-zinc-800/80"
+                          className={cn(
+                            'border-t border-zinc-100 transition-colors dark:border-zinc-800/80',
+                            changedEmails.has(r.matchedEmail) || changedEmails.has(r.emailKey.toLowerCase())
+                              ? 'bg-sky-50/70 dark:bg-sky-950/20'
+                              : undefined,
+                          )}
                         >
                           <td className="px-3 py-2">
                             <div className="font-medium text-zinc-800 dark:text-zinc-100">{r.name}</div>

@@ -236,7 +236,9 @@ LIVE shows an amber warning and locks in through `OrphanageOmsLiveConfirmDialog`
 `onLockIn` (the wizard's `lockInOmsRows`). Indicator (`role="status"`) updates ONLY from the manual **Refresh**
 button (a count) or a Load — nothing polls (`use-oms-hours.ts`, `useOmsHours`, 15s
 timeouts): idle "Not checked yet" / checking → ready (N approved, "prepared … ago")
-/ empty / unconfigured / error. Motion: `motion/react`, staggered rows (24ms, capped),
+/ empty / unconfigured / error. Refresh after a pull DETECTS change (count/stamp moved ⇒
+amber "load again" + ringed Load button); a re-load shows a person-by-person diff against
+the previous pull (`oms-diff.ts`) and tints changed rows. Motion: `motion/react`, staggered rows (24ms, capped),
 crossfading indicator and footer, all gated on `useReducedMotion`. Doc:
 [orphanage-oms-pull.md](../features/orphanage-oms-pull.md).
 

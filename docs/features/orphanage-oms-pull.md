@@ -18,7 +18,8 @@ document adds one input surface and changes no rule about money.
 | OMS env config, identifier-checked | `src/lib/oms/oms-config.ts` (+ `.test.ts`) |
 | OMS read (status count · paged pull) | `src/lib/oms/oms-hours.ts` |
 | Route | `app/api/orphanage-pay/oms/route.ts` — `GET ?mode=status\|pull&week_start=` |
-| Client fetch state (manual Refresh + Load, 15s timeouts) | `src/components/payroll/use-oms-hours.ts` |
+| Client fetch state (manual Refresh + Load, 15s timeouts, previous pull) | `src/components/payroll/use-oms-hours.ts` |
+| Change detection (count/stamp since pull · row diff between pulls) | `src/lib/oms/oms-diff.ts` (+ `.test.ts`) |
 | The tab | `src/components/payroll/OrphanageOmsPanel.tsx` |
 | LIVE confirm | `src/components/payroll/OrphanageOmsLiveConfirmDialog.tsx` |
 | Section strip · lock-in wiring | `src/components/PayrollWizard.tsx` — `ORPHANAGE_SECTIONS`, `orphanageResolveCtx`, `lockInResolvedOrphanageRows`, `lockInOmsRows` |
@@ -60,6 +61,22 @@ exactly as the pasted one is: every matched row applies to the period being edit
 - **`count: 'exact'` without `head: true`.** A HEAD count against a missing table can
   come back as a clean zero; the indicator must fail loud ("OMS is unreachable"), not
   read "not ready". See [[postgrest-head-true-hides-missing-table]].
+
+## Detecting changes
+
+Kane, 2026-09-16: *"can we also have this detect changes?"* Two layers, both pure in
+`src/lib/oms/oms-diff.ts` (+ tests), neither automatic:
+
+| Layer | When | What it compares | What you see |
+| --- | --- | --- | --- |
+| **Refresh** — `omsChangedSincePull` | you press Refresh after a pull | the status count + newest stamp vs the ones the last pull carried | the pill turns amber: "Changed since your last pull — N more approved · edited 3 min ago — load again"; the Load button gains an amber ring. A Load replaces the pull's numbers, so the flag clears itself |
+| **Re-load** — `diffOmsPulls` | a second Load in the same week | the new rows vs the pull they replaced, keyed by normalized email, hours to 4dp | a "Changed since your previous pull" box: `+` added, `~` hours changed (before → after), `−` removed; changed rows are tinted in the table. Identical pulls say so in one line |
+
+Without a stamp column (`OMS_HOURS_COL_UPDATED_AT=""`) only the count can speak on
+Refresh — an edit that keeps the count invisible until the re-load. The previous pull
+lives in memory for the week only; a new source file or a LIVE lock-in clears both.
+This detects change in **OMS**, not drift against what is already locked in the
+period — that remains the reconciliation panels' job on the step.
 
 ## TEST and LIVE
 

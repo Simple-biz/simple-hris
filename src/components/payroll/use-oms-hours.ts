@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { OrphanageHourRow } from '@/lib/payroll/orphanage-rows';
+import { omsChangedSincePull } from '@/lib/oms/oms-diff';
 
 /** How long one OMS round trip may take before the button is handed back. */
 const OMS_FETCH_TIMEOUT_MS = 15_000;
@@ -46,6 +47,11 @@ export interface OmsPull {
 export interface OmsHoursState {
   status: OmsStatus;
   pull: OmsPull | null;
+  /** The pull before `pull`, same week — what a re-load is compared against. */
+  previousPull: OmsPull | null;
+  /** Refresh saw OMS move since `pull`: count delta and/or a newer stamp. Null = no
+   *  pull yet, or nothing moved. Cleared by the next Load. */
+  changedSincePull: { countDelta: number; stampMoved: boolean } | null;
   pulling: boolean;
   pullError: string | null;
   checkStatus: () => Promise<void>;
@@ -90,6 +96,7 @@ async function readJson(res: Response): Promise<StatusJson> {
 export function useOmsHours({ weekStart }: { weekStart: string | null }): OmsHoursState {
   const [status, setStatus] = useState<OmsStatus>({ kind: 'idle' });
   const [pull, setPull] = useState<OmsPull | null>(null);
+  const [previousPull, setPreviousPull] = useState<OmsPull | null>(null);
   const [pulling, setPulling] = useState(false);
   const [pullError, setPullError] = useState<string | null>(null);
   /** Which week the current status/pull belong to — a week change invalidates both. */
@@ -101,6 +108,7 @@ export function useOmsHours({ weekStart }: { weekStart: string | null }): OmsHou
     weekRef.current = weekStart;
     setStatus({ kind: 'idle' });
     setPull(null);
+    setPreviousPull(null);
     setPullError(null);
   }, [weekStart]);
 
@@ -154,14 +162,17 @@ export function useOmsHours({ weekStart }: { weekStart: string | null }): OmsHou
       }
       const rows = Array.isArray(json.rows) ? json.rows : [];
       const approvedCount = Number(json.approvedCount ?? rows.length);
-      setPull({
+      const next: OmsPull = {
         weekStart,
         rows,
         approvedCount,
         latestUpdatedAt: json.latestUpdatedAt ?? null,
         truncated: json.truncated === true,
         pulledAt: Date.now(),
-      });
+      };
+      // Keep the pull being replaced so the panel can say WHAT changed.
+      setPreviousPull(pull);
+      setPull(next);
       // The pull is the freshest status there is — no second round trip.
       setStatus(
         approvedCount > 0
@@ -173,12 +184,20 @@ export function useOmsHours({ weekStart }: { weekStart: string | null }): OmsHou
     } finally {
       setPulling(false);
     }
-  }, [weekStart, pulling]);
+  }, [weekStart, pulling, pull]);
 
   const clearPull = useCallback(() => {
     setPull(null);
+    setPreviousPull(null);
     setPullError(null);
   }, []);
 
-  return { status, pull, pulling, pullError, checkStatus, load, clearPull };
+  // Derived, never stored: a Refresh after a pull compares count + stamp. A Load
+  // replaces `pull` with the fresh numbers, so this clears itself.
+  const changedSincePull =
+    pull && (status.kind === 'ready' || status.kind === 'empty')
+      ? omsChangedSincePull(pull, status)
+      : null;
+
+  return { status, pull, previousPull, changedSincePull, pulling, pullError, checkStatus, load, clearPull };
 }
