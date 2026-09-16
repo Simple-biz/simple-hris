@@ -1,9 +1,12 @@
-# Employee Support — an employee-filed ticket, a staffed section on /tickets, and a live chat queue
+# Employee Support — an employee-filed ticket and a staffed section on /tickets
 
-**STATUS: AWAITING APPROVAL. Nothing under `src/` or `app/` has been written.**
-Blueprint brief posted 2026-09-14, session `d937b520`. **Q1–Q9 are open** — the task list
-below is written against the *recommended* answer to each, and every task that would change
-carries the Q that changes it. Do not start Task 1 until Kane has answered.
+**STATUS: APPROVED BY CARLA 2026-09-15 (signed, `Employee-Support-for-approval.pdf`).
+Three new questions opened by her answers. Nothing under `src/` or `app/` written yet.**
+
+**The live chat and the queue are OUT of v1.** Carla took Decision 2 — *tickets first, add
+live chat once we know the volume*. That is more than half of what was originally asked for,
+deferred by the approver, not dropped by us. Q3, Q4, Q5 and Q8 go with it and are not
+answered; do not treat them as settled when chat comes back.
 
 ---
 
@@ -80,19 +83,63 @@ then the row is written with **`authz.effectiveEmail`, never the body's value**
 
 ---
 
-## Decisions taken as recommendations (each is a Q — see the brief)
+## What Carla ruled — 2026-09-15, signed
 
-| # | Recommendation | Because |
+| Her decision | Ruling | What it settles |
 |---|---|---|
-| Q1 | **New tables**, not a discriminator on `tickets` | findings 1 + 2 above; own lifecycle, own numbering, RLS-on-no-policies, out of the realtime publication |
-| Q2 | Section lives on `/tickets` as asked, gated on a **new `employee_support` feature key** under the existing `tickets` view | keeps `/tickets` role-gated; lets a staffer hold `employee_support: edit` with `tickets: hidden` rather than re-opening the 2026-07-16 leak |
-| Q3 | **The chat IS the ticket** — one thread, escalated to real-time | a separate channel is a second inbox that will drift from the first |
-| Q4 | **One global queue**, claimed by a server-side compare-and-set | two agents cannot both take position 1; same shape as the dispatch 409 guard |
-| Q5 | Messages **persisted**; Realtime carries a *signal only*, content comes from a gated fetch | the only shipped chat filters recipients **client-side** (`CobrowseChatProvider.tsx` — every subscriber receives every payload and drops it in JS). That is an anti-precedent for a private HR thread |
-| Q6 | **Needs-reply first, newest first within it**, plus a "new since you last looked" marker | "latest" as a pure sort buries a 3-day-old unanswered ticket under a just-filed one |
-| Q7 | Short **category list + free-text concern** | category is the routing key later; free text is what the employee actually needs to say |
-| Q8 | ETA says **"No wait-time data yet"** until it has samples | there is zero handle-time data anywhere in the repo; day one every formula has an empty denominator |
-| Q9 | **No attachments in v1** | a screenshot of a wrong payslip is the obvious first ask, but Storage signing + retention is its own build |
+| 1 · Who answers | **Carla, Claire, Ainsley, Grace, Alivia** — named individuals, not a team | **Settles Q2.** None of the five holds the `tickets` role, and granting it would hand them the whole HRIS dev board ([[tickets-dedicated-role-only]]). The **new `employee_support` feature key is now required, not preferred** |
+| 2 · Chat now or tickets first | **Tickets first** | **Defers the chat, the queue and the counter entirely.** Q3, Q4, Q5, Q8 are *unanswered*, not resolved |
+| 3 · Support hours | **Mon–Fri, 9 AM – 5 PM EST** | Her words, and **EST, not Manila** — see the open question below |
+| 4 · Categories | The six proposed, **plus** Gmail / Hubstaff / Roboform issues, **minus** two routed away, **plus** language screening | **Expands Q7 well past a category list** — see below |
+| 5 · Reply promise | **Within one working day** | Shown to the employee on filing. Not an SLA anything enforces |
+| 6 · Daily cap | **No limit** | The fail-closed per-day counter comes out of the build |
+| 7 · Leavers | **No — access ends the day they leave** | **Overrules our suggestion of 30 days.** She read the final-pay argument and said no; recorded below as a consequence, not re-argued |
+| 8 · Attachments | **Not in v1** | **Settles Q9** |
+
+### What Decision 4 actually asked for
+
+Her write-in is four separate requirements, only one of which is a category list:
+
+1. **Add** Gmail issues · Hubstaff issues · Roboform issues.
+2. **Time adjustments are restricted** — an employee may ask *about an adjustment that has
+   already been approved*, and may **not request one** through support.
+3. **Schedules and time-off are a manager question** and do not belong here either.
+4. **Screen for hateful or hurtful language before it is submitted**, and **flag unprofessional
+   behaviour**.
+
+(2) and (3) are a routing rule: two subjects that must be steered somewhere else rather than
+silently accepted. (4) is **content moderation, which was never scoped** — it is the reason
+three questions below are open rather than assumed.
+
+### Still ours to answer, untouched by Carla
+
+| # | Standing recommendation |
+|---|---|
+| Q1 | **New tables**, not a discriminator on `tickets` — findings 1 + 2; own lifecycle, own numbering, RLS on with no policies, out of the realtime publication |
+| Q6 | **Needs-reply first, newest first within it**, plus a "new since you last looked" marker |
+
+### Three questions Carla's answers opened
+
+- **N1 · Moderation: block, warn, or flag after the fact?** "Prescreen" reads as *stop it before
+  it is sent*. That means refusing a submission, which means a false positive silences an
+  employee with a real complaint — on the one channel built for complaints. And "flag
+  unprofessional behaviour" needs a destination: who sees a flag, is the employee told, and does
+  the ticket still reach the queue? There is **no moderation anything in this repo today** — no
+  wordlist, no classifier, no review surface. Every option here is new build.
+- **N2 · 9–5 EST, or 9–5 Manila?** Every date, week and cutoff in this system is Manila
+  (`hsl.week_model_cutover`, `manilaDayIso`, the Sunday pay week). 9–5 EST is **9 PM – 5 AM
+  Manila**. For the US-facing floors that is exactly their shift; for everyone else support is
+  open only while they sleep. This may be precisely what she meant — it needs one confirmation,
+  not an assumption, because it is the difference between two disjoint windows.
+- **N3 · Is the time-adjustment restriction a guard or a sentence?** Copy that says *"ask your
+  manager"* is cheap. Refusing a ticket whose category is "time adjustment" and whose subject has
+  no approved adjustment on record is a real lookup and a real refusal path.
+
+### Recorded consequence of Decision 7
+
+Access ending on the last day means **a leaver still has no route to ask about final pay** —
+the case named in the proposal. Carla ruled on it with that in front of her. Recorded here so it
+is not rediscovered later as an oversight; reopening it is her call, not a defect to fix.
 
 ## Invariants — these do not move
 
@@ -120,81 +167,85 @@ then the row is written with **`authz.effectiveEmail`, never the body's value**
 - **Closing the modal does not leave the queue.** Leaving is an explicit action or an expiry.
 - **Nothing here touches pay.** No payroll, dispatch, paystub or rate path is read or written.
 
-## Tasks
+## Tasks — v1, tickets only
 
-- [ ] 1. `references/sql/create/2026-09-14_employee_support.sql` — `employee_support_tickets`
+Chat, queue and counter are **not here**. They return as their own plan when Carla asks for them.
+
+- [ ] 1. `references/sql/create/2026-09-16_employee_support.sql` — `employee_support_tickets`
       (own `ticket_no` identity series, `work_email`, `filed_by_email`, `category`, `concern`,
-      `status` open|claimed|answered|closed, `claimed_by`/`claimed_at`, `queue_joined_at`,
-      `first_response_at`, `closed_at`) + `employee_support_messages` (immutable, author side
-      employee|staff) + `employee_support_queue`. **RLS ON with no policies**, **not** added to
-      the `supabase_realtime` publication. No `BEGIN`/`COMMIT` inside the file — the apply script
-      owns the transaction.
+      `status` open|claimed|answered|closed, `claimed_by`/`claimed_at`, `first_response_at`,
+      `closed_at`, `flagged_at`/`flag_reason`) + `employee_support_messages` (immutable, author
+      side employee|staff). **RLS ON with no policies**, **not** in the `supabase_realtime`
+      publication. No queue table in v1. No `BEGIN`/`COMMIT` in the file — the apply script owns
+      the transaction. **Shape of the flag columns depends on N1.**
 - [ ] 2. `scripts/apply-employee-support-migration.mts` — `--apply` gate, dry run by default,
       `information_schema` read-back plus an independent PostgREST probe. **Kane runs it.**
-- [ ] 3. `references/sql/alter/2026-09-14_add_support_notification_types.sql` — restates the
-      **FULL** `employee_notifications` type CHECK list (42 values today) **plus**
-      `support.replied` / `support.answered`. Restating a subset silently breaks every other
-      type's INSERT.
-- [ ] 4. `src/lib/support/types.ts` — `SupportStatus`, `SupportCategory`, the ticket-number
-      formatter, `isStaffSide`. One vocabulary module, the `profile-tabs.ts` pattern.
-- [ ] 5. `src/lib/support/queue.ts` (+ `queue.test.ts`, `node:test`) — **pure**: position from an
-      ordered list, ETA from a sample set that **returns `null` on an empty denominator**, the
-      expiry predicate, and the claim precondition. Every branch tested, especially zero-sample.
-- [ ] 6. `src/lib/support/recipients.ts` (+ test) — who hears about a support event, mirroring
+- [ ] 3. `references/sql/alter/2026-09-16_add_support_notification_types.sql` — restates the
+      **FULL** `employee_notifications` type CHECK list plus `support.replied` /
+      `support.answered`. Restating a subset silently breaks every other type's INSERT. Re-read
+      the live list first — [[migration-pending-claims-are-folklore]].
+- [ ] 4. `src/lib/support/types.ts` — `SupportStatus`, `SupportCategory` (the nine Carla
+      approved), the ticket-number formatter. One vocabulary module, the `profile-tabs.ts`
+      pattern. **The two routed-away subjects are values in this module**, not strings in a
+      component, so the form and the guard cannot disagree.
+- [ ] 5. `src/lib/support/routing.ts` (+ test) — pure. Given a category, answer
+      *accept · steer to manager · ask only about an approved adjustment*. Decision 4 items
+      2 and 3. **Shape depends on N3.**
+- [ ] 6. `src/lib/support/screening.ts` (+ test) — pure. **Blocked on N1.** Whatever it does, it
+      returns a verdict; it never writes, never notifies, and the route decides what the verdict
+      means. Fails **open on an internal error** — a screening bug must not swallow a complaint.
+- [ ] 7. `src/lib/support/recipients.ts` (+ test) — who hears about a support event, mirroring
       `src/lib/tickets/recipients.ts`. Returns `null`, never `''`.
-- [ ] 7. `app/api/employee/support/route.ts` — GET (own tickets) + POST (file), gated exactly like
-      `app/api/employee/documents/route.ts` (session email) with the `authorizeEmailAccess` +
-      `effectiveEmail` write rule from `resignation-requests`. `selectAllPaged` on every read.
-      Fail-closed per-day cap modelled on the Penny ledger.
-- [ ] 8. `app/api/employee/support/[id]/messages/route.ts` — GET + POST, **scoped to the caller's
-      own ticket** (404, not 403, on someone else's id — a 403 confirms it exists).
-- [ ] 9. `app/api/employee/support/queue/route.ts` — join / poll / leave. Server clock only; the
-      client never sends a timestamp.
-- [ ] 10. `app/api/support/tickets/route.ts` (staff) — gated on the new `employee_support` feature
-      key. GET list + PATCH claim (compare-and-set → **409** on a lost race).
+- [ ] 8. `app/api/employee/support/route.ts` — GET (own tickets) + POST (file), gated like
+      `app/api/employee/documents/route.ts` with the `authorizeEmailAccess` + `effectiveEmail`
+      write rule from `resignation-requests`. `selectAllPaged` on every read. **No per-day cap —
+      Decision 6.**
+- [ ] 9. `app/api/employee/support/[id]/messages/route.ts` — GET + POST scoped to the caller's
+      own ticket (**404, not 403**, on someone else's id — a 403 confirms it exists).
+- [ ] 10. `app/api/support/tickets/route.ts` (staff) — gated on the new `employee_support`
+      feature key. GET list + PATCH claim (compare-and-set → **409** on a lost race).
 - [ ] 11. `app/api/support/tickets/[id]/reply/route.ts` — gated at **`view`**, not `edit`
-      (`app/api/tickets/[id]/comments/route.ts:43-46` — a view-only member must be able to
-      answer). Writes the message, the in-app notification and the n8n leg.
-- [ ] 12. `src/lib/audit/registry.ts` — one `employee_support.` family, surfaces
-      `['employee','tickets']`. Both members already exist on `AuditSurface`. Actor is
-      `auditFrom(request, authz)`, **never** the body.
-- [ ] 13. `src/lib/notifications/notification-views.ts` — map the two new types to `['employee']`
-      beside the existing `ticket.replied` / `.assigned` / `.moved`.
-- [ ] 14. `src/components/employee/EmployeeSupportDialog.tsx` — the modal: file + history + chat +
-      queue. Copies `TimeAdjustmentDialog`'s prop shape
-      (`{open, onOpenChange, employeeEmail, employeeName, onSubmitted}`) and
-      `RequestDocumentsTab`'s status-chip `Record` pair.
-- [ ] 15. `EmployeeDashboard.tsx` — the button beside FAQs in **both** clusters: mobile icon at
-      ~`:2700-2710`, desktop labelled at ~`:2753-2764`. Unread badge copies `GiftBellButton`
-      (`:4156-4202`), not a new idiom.
-- [ ] 16. `src/components/tickets/SupportSection.tsx` + `TicketsSidebar.tsx` — a **fourth view**
-      beside Overview / Board / Archived, a new branch in the `AnimatePresence mode="wait"` at
-      `TicketsBoard.tsx:665`. Must re-apply `tickets-theme dark` on every portaled surface.
-- [ ] 17. `src/hooks/useLiveRefresh.ts` wiring on both sides with `pollMs` as the **floor**.
-- [ ] 18. Docs: `docs/features/employee-support.md`, the `INDEX.md` row, `api-reference.md` +
+      (`app/api/tickets/[id]/comments/route.ts:43-46`). Writes the message, the in-app
+      notification and the n8n leg.
+- [ ] 12. `src/lib/rbac/feature-permissions.ts` — the `employee_support` feature key under the
+      `tickets` view, so the five named people can hold it with `tickets: hidden`. **Grant is an
+      admin action, no migration.**
+- [ ] 13. `src/lib/audit/registry.ts` — one `employee_support.` family, surfaces
+      `['employee','tickets']`. Actor is `auditFrom(request, authz)`, **never** the body. A
+      flag or a refusal is audited; so is a reply.
+- [ ] 14. `src/lib/notifications/notification-views.ts` — map the two new types to `['employee']`.
+- [ ] 15. `src/components/employee/EmployeeSupportDialog.tsx` — file + history, **two panes, not
+      three**. Copies `TimeAdjustmentDialog`'s prop shape and `RequestDocumentsTab`'s status-chip
+      `Record` pair. Shows the **one working day** promise (Decision 5) and the **support hours**
+      (Decision 3) on the form.
+- [ ] 16. `EmployeeDashboard.tsx` — the button beside FAQs in **both** clusters: mobile icon at
+      ~`:2700-2710`, desktop labelled at ~`:2753-2764`. Unread badge copies `GiftBellButton`.
+- [ ] 17. `src/components/tickets/SupportSection.tsx` + `TicketsSidebar.tsx` — a **fourth view**
+      beside Overview / Board / Archived; a new branch in the `AnimatePresence mode="wait"` at
+      `TicketsBoard.tsx:665`. Re-apply `tickets-theme dark` on every portaled surface.
+- [ ] 18. `src/hooks/useLiveRefresh.ts` on both sides with `pollMs` as the **floor**.
+- [ ] 19. Docs: `docs/features/employee-support.md`, the `INDEX.md` row, `api-reference.md` +
       `components.md` in the same commit ([[reference-docs-rot-silently]]), memory entry.
 
 ## Deploy notes
 
-- **MIGRATION PENDING — Kane runs it.** Two SQL files (Task 1, Task 3), both shipped as a Node
+- **MIGRATION PENDING — Kane runs it.** Two SQL files (Tasks 1 and 3), both shipped as a Node
   script with an `--apply` gate. `.env.local` is production service-role and this session is
-  read-only, so nothing is executed here. Until it runs the routes must report `migrated: false`
-  and the UI must say support cannot accept tickets yet — **not 500, and not silently pretend to
-  save** (the `manager-scheduling` precedent).
+  read-only, so nothing is executed here. Until it runs the routes report `migrated: false` and
+  the UI says support cannot accept tickets yet — **not 500, and not silently pretend to save**
+  (the `manager-scheduling` precedent).
 - **The `employee_notifications` CHECK widen is load-bearing**: until it runs, every `support.*`
   insert is rejected and the notification is dead.
-- **n8n: PENDING Kane.** Two new webhook slugs if the email leg ships — `support_filed`,
-  `support_replied`. Recipient is decided in code and handed over as `send_to`; the Gmail node
-  never picks one.
-- **No cron.** Both existing Vercel crons have never executed
-  ([[scheduled-deletion-cron-never-ran]]), so queue expiry is swept **lazily on read**, never on
-  a schedule.
-- **New RBAC feature key** `employee_support` under the `tickets` view — granting it is an admin
-  action in the existing grants UI, no migration.
+- **Five grants, by hand, after deploy**: `employee_support` to Carla, Claire, Ainsley, Grace and
+  Alivia. Until those exist the staff section is empty for everyone.
+- **n8n: PENDING Kane.** Two slugs if the email leg ships — `support_filed`, `support_replied`.
+  Recipient decided in code and handed over as `send_to`; the Gmail node never picks one.
+- **No cron.** Nothing here needs one in v1 — the queue that would have needed sweeping is gone.
 
 ## Out of scope — this is a contract
 
 Payroll · dispatch · paystubs · rates · the existing `tickets` table and its four Kanban columns ·
-`TICKET_BOARD_OWNER` · the five existing n8n ticket hooks · Penny · the ungated
-`PATCH /api/employee-notifications` (a pre-existing hole this feature sits beside — it is
-recorded, not fixed here, and fixing it is its own `hardening` pass).
+`TICKET_BOARD_OWNER` · the five existing n8n ticket hooks · Penny · attachments (Decision 8) ·
+per-day caps (Decision 6) · leaver access (Decision 7) · **the live chat, the queue and the
+served-by counter (Decision 2)** · the ungated `PATCH /api/employee-notifications` (a pre-existing
+hole this feature sits beside — recorded, not fixed here, and its own `hardening` pass).
