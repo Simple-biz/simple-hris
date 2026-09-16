@@ -233,23 +233,6 @@ export default function EmployeeSidebar({
                     <span className="relative">{bankInfoNudge ? '!' : (profileSetupCount || 1)}</span>
                   </span>
                 )}
-                {item.id === 'disputes' && payrollLocked && (
-                  <motion.span
-                    initial={{ opacity: 0, scale: 0.6 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ type: 'spring', stiffness: 320, damping: 20 }}
-                    className={cn(
-                      'ml-auto flex items-center gap-1 rounded-full border px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide',
-                      activeTab === item.id
-                        ? 'border-rose-300 bg-rose-100 text-rose-800 dark:border-rose-500/40 dark:bg-rose-500/20 dark:text-rose-200'
-                        : 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300',
-                    )}
-                    aria-label="Issues paused — payroll is being processed"
-                  >
-                    <Lock className="h-2.5 w-2.5" aria-hidden />
-                    Paused
-                  </motion.span>
-                )}
                 {item.id === 'notifications' && unreadNotifications > 0 && (
                   <span
                     className={cn(
@@ -274,7 +257,6 @@ export default function EmployeeSidebar({
                   </span>
                 )}
                 {activeTab === item.id
-                  && !(item.id === 'disputes' && payrollLocked)
                   && !(item.id === 'notifications' && unreadNotifications > 0)
                   && !(item.id === 'mesa' && mesaNewCount > 0) && (
                   <ChevronRight className="ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70 sb-collapse-fade" />
@@ -319,7 +301,11 @@ export default function EmployeeSidebar({
               {payrollLocked && (
                 <p className={cn('mb-2 flex items-center gap-1.5 rounded-md border border-amber-200/80 bg-amber-50/90 px-2.5 py-1.5 text-[10px] leading-tight text-amber-900 transition-opacity duration-[var(--sb-collapse-ms)] ease-[var(--sb-collapse-ease)] dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100/90', collapsed && 'md:opacity-0')}>
                   <Lock className="h-3 w-3 shrink-0" aria-hidden />
-                  Payroll is being processed. Some changes may be unavailable.
+                  {/* Names the ONE thing the lock actually does here. The old
+                      "Some changes may be unavailable" was true of nothing in
+                      particular, which readers resolved as "everything", and
+                      documents went unrequested for the length of a run. */}
+                  Payroll is being processed. Only your payment details are read-only.
                 </p>
               )}
               <ViewSwitcher email={employeeEmail} currentView="employee" collapsed={collapsed} />

@@ -10,14 +10,21 @@ interface PayrollLockBannerProps {
   state: PayrollDispatchLockState;
   /**
    * The one-line consequence for THIS surface, after "Payroll is being
-   * processed". Defaults to the employee shell's. The manager KPI calculators
-   * pass their own (Kane, 2026-09-02: their red bar should be *"the same from
-   * the Employee dashboard where there is a line running around"*) — same
-   * banner, same sweep, different sentence, because what the lock means differs
-   * per surface and a shared banner must not say something untrue on one of
-   * them.
+   * processed". The manager KPI calculators pass their own (Kane, 2026-09-02:
+   * their red bar should be *"the same from the Employee dashboard where there
+   * is a line running around"*) — same banner, same sweep, different sentence,
+   * because what the lock means differs per surface and a shared banner must
+   * not say something untrue on one of them.
+   *
+   * REQUIRED as of 2026-09-16. It used to default to *"Issues are temporarily
+   * paused."*, which outlived the Issues tab it named and left every employee
+   * — on every tab, Documents included — reading a red bar about a feature
+   * that was no longer there. A default is exactly how a sentence goes stale
+   * without anyone noticing, so there is no longer one: each mount states the
+   * consequence for its own surface, or it does not compile. The employee
+   * shell's sentences live in `src/lib/employee/payroll-lock-detail.ts`.
    */
-  detail?: string;
+  detail: string;
   /** The employee shell lets people dismiss the notice. Surfaces where the lock
    *  changes what the viewer can DO keep it up. */
   dismissible?: boolean;
@@ -44,7 +51,7 @@ function relativeTime(iso: string | null): string | null {
  */
 export default function PayrollLockBanner({
   state,
-  detail = 'Issues are temporarily paused.',
+  detail,
   dismissible = true,
 }: PayrollLockBannerProps) {
   const [collapsed, setCollapsed] = useState(false);

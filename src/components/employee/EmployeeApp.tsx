@@ -25,6 +25,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { Lock, Menu, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
+import { payrollLockDetailFor } from '@/lib/employee/payroll-lock-detail';
 import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotificationsUnread';
 import { useNotificationChime } from '@/hooks/useNotificationChime';
 import { useMesaNewDeposits } from '@/hooks/useMesaNewDeposits';
@@ -614,7 +615,7 @@ export default function EmployeeApp() {
             Employee
           </span>
         </header>
-        <PayrollLockBanner state={lockState} />
+        <PayrollLockBanner state={lockState} detail={payrollLockDetailFor(activeTab)} />
         <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {Array.from(mountedTabs).map((tab) => {
             const isActive = tab === activeTab;
