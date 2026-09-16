@@ -90,6 +90,33 @@ never disagree about what day something happened.
 A Realtime nudge or refresh that replaces the open row re-points the modal at the live copy; a row
 that disappears (deleted elsewhere) closes it.
 
+### Tab-switch cache — 2026-09-16
+
+The Accounting shell animates between tabs with a keyed `motion.div`, so leaving Documents
+**unmounts** it and returning mounts a fresh instance. Until now that meant the queue, the
+five KPI cards and the status pill you were on all reset behind a skeleton on every switch
+(Kane: *"it seems to disappear when I switch tabs"*).
+
+The tab now seeds from the shared Accounting store (`src/lib/accounting/tab-cache.ts`,
+[`accounting-dashboard-cache.md`](accounting-dashboard-cache.md) § *Documents joined*) under
+three keys — `documentsQueue`, `documentsSignature` and `documentsView` (the pill, the search
+box and the Queue ⇄ Termination Letters sub-tab).
+
+What did **not** change, and must not:
+
+- **The mount fetch always runs.** This is a shared approval queue; `hasFetchedThisSession`
+  is banned on it and the ban is grep-pinned in `tab-cache.test.ts`. A cache-seeded mount
+  revalidates *silently* — that is the only difference. Realtime and the 60s poll are
+  unchanged backstops.
+- **`signatureLoaded` is never seeded.** The saved signature itself is cached, but the
+  "has this rep got one" flag must be answered by the server, or a cached `null` would pop
+  the auto-capture dialog on every tab switch.
+- **Nothing server-side.** Every route keeps `cache: 'no-store'`, and `requireFeatureAccess`
+  / `requireFeatureEdit` gate exactly as before. This is a paint optimisation, not a
+  freshness change.
+- **`localStorage` is not used** — the store mirrors to `sessionStorage` only, with the
+  identity stamp, schema version and 12h ceiling the envelope enforces.
+
 ## Certificate of Engagement
 
 *Added 2026-07-31.* Every other type in this flow is a PDF the worker already has. A COE is the

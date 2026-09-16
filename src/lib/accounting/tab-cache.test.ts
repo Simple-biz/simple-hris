@@ -334,6 +334,7 @@ test('the skip flag is confined to lookup lists and aggregate snapshots', async 
     'overviewPayouts',
     'payrollReadiness',
     'payrollNotesOffboarded',
+    'documentsQueue',
   ];
 
   const offenders: string[] = [];

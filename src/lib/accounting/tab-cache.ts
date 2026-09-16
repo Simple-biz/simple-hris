@@ -442,4 +442,29 @@ export const TAB_CACHE_KEYS = {
    *  server's default week). Stamped shape: { people, weekLabel, degraded, at }. */
   payrollNotesOffboarded: (sourceFile: string | null) =>
     `payroll-notes:offboarded:${sourceFile ?? ''}`,
+  /**
+   * Accounting -> Documents signing queue (`AccountingDocuments`).
+   *
+   * A SHARED APPROVAL QUEUE: seed-and-always-revalidate, NEVER the skip flag.
+   * Two people hold `accounting/documents` edit, and a skipped refetch is how
+   * the second one signs a request the first one already rejected. Pinned in
+   * the banned list in `tab-cache.test.ts`.
+   */
+  documentsQueue: 'documents:queue',
+  /**
+   * The viewer's OWN saved signature row (or `null` when they have none).
+   *
+   * Not a queue and not a pay figure -- a per-viewer singleton that only the
+   * viewer changes, from this same tab. It is still seed-and-revalidate rather
+   * than skip-flagged, because `signatureLoaded` gates the auto-capture prompt
+   * and that gate must answer from the server, not from a stamp on disk.
+   */
+  documentsSignature: 'documents:signature',
+  /**
+   * Which status pill, search text and Queue/Termination sub-tab the viewer
+   * left the tab on. UI selection only -- no row data, no identity beyond the
+   * envelope's own stamp. Shape is re-validated on read: an unrecognised
+   * filter or sub-tab falls back to the default rather than being trusted.
+   */
+  documentsView: 'documents:view',
 } as const;

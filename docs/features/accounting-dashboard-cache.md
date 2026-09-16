@@ -19,7 +19,7 @@ Siblings: `employee-dashboard-cache.md`, `manager-dashboard-cache.md`, and
 
 ## One store, three dashboards
 
-Nine call sites across three shells read it, which is why it is neither the Accounting
+Ten call sites across three shells read it, which is why it is neither the Accounting
 store nor the CEO store but the shared one:
 
 | Consumer | Datasets |
@@ -27,6 +27,7 @@ store nor the CEO store but the shared one:
 | `components/Overview.tsx` | `overviewPayouts`, `overviewPabMetrics` |
 | `people/PeopleTab.tsx` | `peopleRoster` |
 | `accounting/AccountingTransfers.tsx` | `transfers` |
+| `accounting/AccountingDocuments.tsx` | `documentsQueue`, `documentsSignature`, `documentsView` |
 | `accounting/PayrollWizardNotesFab.tsx` | notes rows, workers, uploads, readiness, offboarded |
 | `payroll/AccountingMesa.tsx` | `mesaRequests`, `mesaNonMembers`, `mesaActiveMembers` |
 | `payroll/PabDisputeQueue.tsx` | `pabDisputes`, `pabReasonCodes`, `bankPreferredRequests` |
@@ -156,6 +157,43 @@ Its spinner is now derived rather than stored — `!settled && rows.length === 0
 repaints the skeleton over rows already on screen. An explicit **Refresh** keeps its own
 `refreshing` flag. Same recipe as `manager-dashboard-cache.md` § *Loading flags are part
 of the rule*.
+
+### Documents joined, with a UI selection (2026-09-16)
+
+`AccountingDocuments` was the last heavy Accounting tab with no cache at all: leaving
+the tab unmounted it, and returning re-ran the queue fetch behind a five-row skeleton
+with the KPI cards blank — Kane: *"it seems to disappear when I switch tabs."*
+
+It takes three keys, and they are three different categories:
+
+- **`documentsQueue`** — the signing queue. A **shared approval queue**, so it is in the
+  banned list above and in `tab-cache.test.ts`: seeded for the paint, but the mount
+  fetch **always** runs (silently when there are cached rows). Two people hold
+  `accounting/documents` edit, and a skipped refetch is how the second one signs a
+  request the first already rejected. The 60s `useLiveRefresh` poll is the same
+  backstop-not-substitute it is for Transfers.
+- **`documentsSignature`** — the viewer's own saved signature row. Not a queue and not a
+  pay figure: only the viewer changes it, from this same tab. It is still
+  seed-and-revalidate rather than skip-flagged, because `signatureLoaded` gates the
+  one-time auto-capture prompt and **that flag is never seeded** — "does this rep have a
+  signature" has to be answered by the server, or a cached `null` pops the capture
+  dialog on a tab switch.
+- **`documentsView`** — the first **UI selection** in this store: the status pill, the
+  search text and the Queue ⇄ Termination Letters sub-tab. No row data. The envelope
+  guarantees identity, version and age but not the shape inside, so `readCachedView`
+  re-validates every field against the same `FILTERS` / `DOC_TABS` lists the pills
+  render from; an unrecognised value falls back to the default rather than being
+  trusted into an unrenderable filter.
+
+Two render rules came with it, the same recipe as Transfers: the spinner is derived
+(`!settled && rows.length === 0`, `settled` never seeded and never reset) and the
+**Refresh** button keeps its own `refreshing` flag; and the full-height error card now
+only renders when there is nothing to paint (`error && rows.length === 0`) — a failed
+manual Refresh over a populated table raises a toast instead, because blanking the
+queue on a network blip is worse than the blip.
+
+This is a client paint only. No route changed, every fetch is still `cache: 'no-store'`,
+and no gate moved — `requireFeatureAccess` / `requireFeatureEdit` decide as before.
 
 ## Adding another dataset
 

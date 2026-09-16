@@ -58,8 +58,40 @@ import TerminationDocsTabRow from '@/components/accounting/termination-docs/Term
 import TerminationDocsPanel from '@/components/accounting/termination-docs/TerminationDocsPanel'; // [TERMINATION-DOCS]
 import GenerateCoeDialog from '@/components/accounting/GenerateCoeDialog';
 import { readJsonResponse } from '@/lib/documents/read-json-response';
+import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 
 type Filter = DocumentRequestStatus | 'all';
+
+const FILTERS: readonly Filter[] = ['pending', 'signed', 'rejected', 'all'];
+const DOC_TABS = ['queue', 'termination'] as const;
+type DocTab = (typeof DOC_TABS)[number];
+
+/** What `TAB_CACHE_KEYS.documentsView` remembers between tab switches. */
+interface CachedView {
+  filter: Filter;
+  query: string;
+  docTab: DocTab;
+}
+
+const DEFAULT_VIEW: CachedView = { filter: 'pending', query: '', docTab: 'queue' };
+
+/**
+ * Read the remembered view, re-validating every field.
+ *
+ * The cache envelope guarantees the identity, the schema version and the age --
+ * it does not guarantee the SHAPE inside. A pill removed by a future deploy
+ * must not come back out of a still-open tab as an unrenderable filter, so an
+ * unrecognised value falls back to the default rather than being trusted.
+ */
+function readCachedView(): CachedView {
+  const raw = getTabCache<Partial<CachedView>>(TAB_CACHE_KEYS.documentsView);
+  if (!raw || typeof raw !== 'object') return DEFAULT_VIEW;
+  return {
+    filter: FILTERS.includes(raw.filter as Filter) ? (raw.filter as Filter) : DEFAULT_VIEW.filter,
+    query: typeof raw.query === 'string' ? raw.query : DEFAULT_VIEW.query,
+    docTab: DOC_TABS.includes(raw.docTab as DocTab) ? (raw.docTab as DocTab) : DEFAULT_VIEW.docTab,
+  };
+}
 
 const STATUS_STYLE: Record<DocumentRequestStatus, string> = {
   pending: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300',
@@ -90,15 +122,39 @@ export default function AccountingDocuments({
   sessionEmail: string | null;
   canEdit: boolean;
 }) {
-  const [rows, setRows] = useState<DocumentRequestRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  // The Accounting shell animates between tabs with a keyed `motion.div`, so
+  // leaving Documents UNMOUNTS it entirely and coming back mounts a fresh
+  // instance -- which is why the queue, the KPI cards and the pill you were on
+  // all "disappear". Everything below seeds from the shared tab cache
+  // (`accounting-dashboard-cache.md`) so the tab repaints instantly, and then
+  // revalidates. See the mount effect for why the refetch is never skipped.
+  const [rows, setRows] = useState<DocumentRequestRow[]>(
+    () => getTabCache<DocumentRequestRow[]>(TAB_CACHE_KEYS.documentsQueue) ?? [],
+  );
+  // `settled` = the queue fetch has answered at least once in THIS page load.
+  // Never seeded from the cache (that would paint "settled" as a fact) and
+  // never reset, so a silent revalidation cannot put the skeleton back over
+  // rows already on screen -- `accounting-dashboard-cache.md` § Loading flags.
+  // `fetchRows` is a stable callback, so it reads the current rows through a
+  // ref rather than closing over a stale array.
+  const rowsRef = useRef<DocumentRequestRow[]>(rows);
+  rowsRef.current = rows;
+  const [settled, setSettled] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const loading = !settled && rows.length === 0;
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Filter>('pending');
-  const [query, setQuery] = useState('');
+  const [cachedView] = useState(() => readCachedView());
+  const [filter, setFilter] = useState<Filter>(() => cachedView.filter);
+  const [query, setQuery] = useState(() => cachedView.query);
   // [TERMINATION-DOCS]
-  const [docTab, setDocTab] = useState<'queue' | 'termination'>('queue'); // [TERMINATION-DOCS]
+  const [docTab, setDocTab] = useState<DocTab>(() => cachedView.docTab); // [TERMINATION-DOCS]
 
-  const [signature, setSignature] = useState<DocumentSignatureRow | null>(null);
+  const [signature, setSignature] = useState<DocumentSignatureRow | null>(
+    () => getTabCache<DocumentSignatureRow | null>(TAB_CACHE_KEYS.documentsSignature) ?? null,
+  );
+  // Deliberately NOT seeded: this gates the one-time auto-capture prompt below,
+  // and "does this rep have a signature" must be answered by the server, not by
+  // a stamp on disk -- a cached `null` would otherwise pop the capture dialog.
   const [signatureLoaded, setSignatureLoaded] = useState(false);
   const [sigDialogOpen, setSigDialogOpen] = useState(false);
   const [sigDraft, setSigDraft] = useState<string | null>(null);
@@ -122,16 +178,30 @@ export default function AccountingDocuments({
   const [previewingId, setPreviewingId] = useState<string | null>(null);
 
   const fetchRows = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
+    if (!opts?.silent) setRefreshing(true);
     setError(null);
     try {
       const res = await fetch('/api/accounting/documents', { cache: 'no-store' });
       const json = await readJsonResponse<{ rows?: DocumentRequestRow[]; error?: string }>(res, 'Loading the signing queue');
-      setRows(json.rows ?? []);
+      const next = json.rows ?? [];
+      setRows(next);
+      // The RAW payload, per the store's rule -- the mirror is JSON, so every
+      // render shape is derived from this with `useMemo` below and the seeded
+      // and fetched paths cannot diverge.
+      setTabCache(TAB_CACHE_KEYS.documentsQueue, next);
     } catch (e) {
-      if (!opts?.silent) setError(e instanceof Error ? e.message : 'Failed to load requests');
+      if (!opts?.silent) {
+        const message = e instanceof Error ? e.message : 'Failed to load requests';
+        setError(message);
+        // With rows already on screen the error card is suppressed (below), so
+        // the failure has to say so somewhere the rep will see it.
+        if (rowsRef.current.length > 0) toast.error(message);
+      }
     } finally {
-      if (!opts?.silent) setLoading(false);
+      // "Answered" either way -- a failed cold load must not leave the skeleton
+      // up forever when there is nothing cached to paint.
+      setSettled(true);
+      if (!opts?.silent) setRefreshing(false);
     }
   }, []);
 
@@ -140,6 +210,7 @@ export default function AccountingDocuments({
       const res = await fetch('/api/accounting/documents/signature', { cache: 'no-store' });
       const json = await readJsonResponse<{ row?: DocumentSignatureRow | null; error?: string }>(res, 'Loading your signature');
       setSignature(json.row ?? null);
+      setTabCache(TAB_CACHE_KEYS.documentsSignature, json.row ?? null);
     } catch {
       /* the queue still renders; signing surfaces its own error */
     } finally {
@@ -148,9 +219,22 @@ export default function AccountingDocuments({
   }, []);
 
   useEffect(() => {
-    void fetchRows();
+    // ALWAYS refetch on mount. The rows are seeded from the cache above so the
+    // table paints instantly, but this is a queue OTHER people act on -- the
+    // skip flag is BANNED here and pinned in `tab-cache.test.ts`, because a
+    // skipped refetch is how a second rep signs a request the first already
+    // rejected. `useLiveRefresh`'s 60s poll is a backstop, not a substitute:
+    // it starts counting from THIS mount. A cache-seeded mount revalidates
+    // SILENTLY, so neither the skeleton nor an error card replaces live rows.
+    void fetchRows({ silent: hasTabCache(TAB_CACHE_KEYS.documentsQueue) });
     void fetchSignature();
   }, [fetchRows, fetchSignature]);
+
+  // Remember which pill / search / sub-tab the rep left the tab on, so coming
+  // back lands where they were instead of snapping to Pending.
+  useEffect(() => {
+    setTabCache(TAB_CACHE_KEYS.documentsView, { filter, query, docTab });
+  }, [filter, query, docTab]);
 
   // New submissions float in live (table is in the Realtime publication); the
   // poll + focus refresh are the backstop if the socket drops.
@@ -591,7 +675,7 @@ export default function AccountingDocuments({
         {/* ── Toolbar ─────────────────────────────────────────────────────── */}
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex flex-wrap items-center gap-1.5">
-            {(['pending', 'signed', 'rejected', 'all'] as const).map((f) => (
+            {FILTERS.map((f) => (
               <button
                 key={f}
                 type="button"
@@ -636,10 +720,10 @@ export default function AccountingDocuments({
             variant="outline"
             size="sm"
             onClick={() => void fetchRows()}
-            disabled={loading}
+            disabled={loading || refreshing}
             className="h-9 gap-1.5 border-orange-200 text-orange-700 hover:bg-orange-50 dark:border-orange-800 dark:text-orange-300"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+            <RefreshCw className={cn('h-3.5 w-3.5', (loading || refreshing) && 'animate-spin')} />
             Refresh
           </Button>
           {canEdit && (
@@ -676,7 +760,10 @@ export default function AccountingDocuments({
                   <div key={i} className="h-10 w-full animate-pulse rounded-lg bg-zinc-100 motion-reduce:animate-none dark:bg-zinc-800" />
                 ))}
               </div>
-            ) : error ? (
+            ) : error && rows.length === 0 ? (
+              // Only when there is nothing to paint. A failed Refresh over a
+              // populated table is surfaced as a toast instead -- blanking the
+              // queue on a network blip is worse than the blip.
               <div className="flex flex-col items-center gap-2 py-14 text-center text-sm text-rose-600 dark:text-rose-400">
                 <AlertTriangle className="h-6 w-6" />
                 {error}
