@@ -16,13 +16,24 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   readCycleHoursSignal,
+  readCycleWeek,
   type TerminationHoursIndexView,
 } from './termination-cycle-hours';
 
-function index(over: Partial<{ emails: string[]; nameTokenKeys: string[]; error: string | null }> = {}): TerminationHoursIndexView {
+function index(
+  over: Partial<{
+    emails: string[];
+    nameTokenKeys: string[];
+    error: string | null;
+    sourceFile: string | null;
+  }> = {},
+): TerminationHoursIndexView {
   return {
     emails: new Set(over.emails ?? ['someone.else@simple.biz']),
     nameTokenKeys: new Set(over.nameTokenKeys ?? ['else someone']),
+    // Deliberately UNLABELLED by default, so every pre-existing assertion below
+    // keeps testing the match and nothing else.
+    sourceFile: 'sourceFile' in over ? over.sourceFile ?? null : null,
     error: over.error ?? null,
   };
 }
@@ -59,7 +70,7 @@ test('G3: a NON-EMPTY index that does not name this person is a real `ready` mis
   // The negative control for both tests above: without it, "never says worked"
   // could be satisfied by never answering at all.
   const signal = readCycleHoursSignal(index(), SUBJECT);
-  assert.deepEqual(signal, { state: 'ready', worked: false, matchedBy: null });
+  assert.deepEqual(signal, { state: 'ready', worked: false, matchedBy: null, week: null });
 });
 
 // ── The match, widened — every hit REFUSES, so wider is the safe direction ──
@@ -129,5 +140,69 @@ test('G3: ONE shared name token is not a person — the subset match has a floor
 
 test('G3: a blank identity cannot match a populated timesheet', () => {
   const signal = readCycleHoursSignal(index(), { emails: [null, undefined, ''], names: [null] });
-  assert.deepEqual(signal, { state: 'ready', worked: false, matchedBy: null });
+  assert.deepEqual(signal, { state: 'ready', worked: false, matchedBy: null, week: null });
+});
+
+// ── The WEEK the refusal names ───────────────────────────────────────────────
+// A refusal that cannot say WHICH timesheet caught the person is the dead end
+// this feature is forbidden to ship. These pin the label and, more importantly,
+// pin that an unreadable filename produces NO label rather than a guessed one.
+
+test('T4: the real filename yields the week it states', () => {
+  assert.deepEqual(readCycleWeek('simple-biz_daily_report_2026-09-06_to_2026-09-12.csv'), {
+    startIso: '2026-09-06',
+    endIso: '2026-09-12',
+    label: 'Sep 6 – 12, 2026',
+  });
+});
+
+test('T4: a week spanning a month boundary names both months', () => {
+  assert.equal(
+    readCycleWeek('simple-biz_daily_report_2026-09-27_to_2026-10-03.csv')?.label,
+    'Sep 27 – Oct 3, 2026',
+  );
+});
+
+test('T4: a week spanning a year boundary names both years', () => {
+  assert.equal(
+    readCycleWeek('simple-biz_daily_report_2026-12-27_to_2027-01-02.csv')?.label,
+    'Dec 27, 2026 – Jan 2, 2027',
+  );
+});
+
+test('T4: a filename with no range states NO week — never a guessed one', () => {
+  // G5's rule applied to the week: a range that failed to parse is a blank, so
+  // the message falls back to wording that does not name a week at all.
+  for (const f of [null, '', 'hubstaff.csv', 'report_2026-09-06.csv', 'daily_report_to_.csv']) {
+    assert.equal(readCycleWeek(f), null, `invented a week from ${JSON.stringify(f)}`);
+  }
+});
+
+test('T4: the junk-suffix filename still yields its real week', () => {
+  // `(1)` copies are a live shape — see memory
+  // `hubstaff-filename-junk-heuristic-hides-paid-week`.
+  assert.equal(
+    readCycleWeek('simple-biz_daily_report_2026-09-06_to_2026-09-12 (1).csv')?.startIso,
+    '2026-09-06',
+  );
+});
+
+test('T4: a HIT carries the week, so the refusal can name it', () => {
+  const signal = readCycleHoursSignal(
+    index({
+      emails: ['carlath@simple.biz'],
+      sourceFile: 'simple-biz_daily_report_2026-09-06_to_2026-09-12.csv',
+    }),
+    SUBJECT,
+  );
+  assert.equal(signal.state === 'ready' && signal.week?.label, 'Sep 6 – 12, 2026');
+});
+
+test('T4: a MISS carries the week too — the facts sheet says which week was asked', () => {
+  const signal = readCycleHoursSignal(
+    index({ sourceFile: 'simple-biz_daily_report_2026-09-06_to_2026-09-12.csv' }),
+    SUBJECT,
+  );
+  assert.equal(signal.state === 'ready' && signal.worked, false);
+  assert.equal(signal.state === 'ready' && signal.week?.endIso, '2026-09-12');
 });

@@ -992,11 +992,28 @@ export function arbitrateTerminationFacts(
   // widest reasonable one — a hit only ever REFUSES, so widening can only cost a
   // letter that is issued after a master-row repair, while narrowing it prints a
   // termination letter for someone who worked this week.
+  //
+  // TWO MESSAGES, ONE REFUSAL. The hit refuses either way — nothing below
+  // widens, narrows or date-scopes the guard, and the `blocked` return is the
+  // same in both arms. What differs is the DIAGNOSIS, because the old single
+  // message asserted a fact it had not checked: "this person is still on the
+  // clock". For someone off-boarded the week AFTER the newest timesheet closed
+  // (wilmarg@, 2026-09-16: 30h in the Sep 6-12 file, off-boarded Sep 14) that
+  // sentence is simply false, and a rep reading it goes looking for a roster bug
+  // that does not exist. The honest reading of that shape is "the newest
+  // timesheet still covers a week they worked", and it comes with an unblock
+  // condition the rep can act on instead of a contradiction they cannot.
   if (cycleHours.state === 'ready' && cycleHours.worked) {
     const via = cycleHours.matchedBy ? ` (matched on ${cycleHours.matchedBy})` : '';
+    const week = cycleHours.week;
+    // Named only when the filename STATED a week. An unlabelled file falls back
+    // to the original wording rather than inventing a range — same rule as G5.
+    const departureAfterWeek = week !== null && terminationDate !== null && terminationDate > week.endIso;
     return blocked({
       code: 'still_active',
-      message: `${workEmail} logged hours in the current pay cycle's timesheet${via}, so this person is WORKING whatever the off-board stamps say. A stale stamp cannot forge a timesheet row. Nothing is issued for someone who is still on the clock.`,
+      message: departureAfterWeek
+        ? `${workEmail} has hours in the most recent timesheet loaded, which covers ${week.label}${via}. The departure on file is ${terminationDate} — AFTER that week closed, so this is not a contradiction: they worked their last week and left. No letter is issued while the newest timesheet still contains them. It will generate once a newer Hubstaff file — one this person has no rows in — is ingested. Nothing on this record needs repairing.`
+        : `${workEmail} logged hours in the current pay cycle's timesheet${week ? ` (${week.label})` : ''}${via}, so this person is WORKING whatever the off-board stamps say. A stale stamp cannot forge a timesheet row. Nothing is issued for someone who is still on the clock.`,
     });
   }
 

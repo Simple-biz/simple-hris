@@ -42,11 +42,17 @@ import type { TerminationCycleHoursSignal } from './termination-cycle-hours';
  * DIFFERENT fact, and the round-2 blocker was that the old code could not tell
  * the two apart.
  */
-const HOURS_MISS: TerminationCycleHoursSignal = { state: 'ready', worked: false, matchedBy: null };
+const HOURS_MISS: TerminationCycleHoursSignal = {
+  state: 'ready',
+  worked: false,
+  matchedBy: null,
+  week: null,
+};
 const HOURS_HIT: TerminationCycleHoursSignal = {
   state: 'ready',
   worked: true,
   matchedBy: 'the address jane@simple.biz',
+  week: null,
 };
 const HOURS_UNREADABLE: TerminationCycleHoursSignal = {
   state: 'unreadable',
@@ -1261,7 +1267,12 @@ test('G3/T4: a READY timesheet that simply misses this person adds no such note'
 test('G3/T4: a hit REFUSES and names what it matched on', () => {
   const result = arbitrateTerminationFacts(
     arbInput({
-      cycleHours: { state: 'ready', worked: true, matchedBy: 'the timesheet address jane@other.com' },
+      cycleHours: {
+        state: 'ready',
+        worked: true,
+        matchedBy: 'the timesheet address jane@other.com',
+        week: null,
+      },
     }),
   );
   assert.equal(result.facts, null);
@@ -1317,4 +1328,121 @@ test('G3/T2: an unstamped duplicate row is NOT a refusal once a departure IS rec
   );
   assert.equal(result.blocked, null, result.blocked ? String(result.blocked.message) : '');
   assert.equal(result.facts?.terminationDate, '2026-06-03');
+});
+
+// ── T4's two diagnoses, ONE refusal ──────────────────────────────────────────
+// Carla, 2026-09-16, ruled the GUARD STANDS and only the message changes. The
+// first assertion in every test below is therefore the same one: still blocked.
+// If a future edit turns any of these into facts, the guard was loosened.
+
+const WEEK_SEP_6_12 = {
+  startIso: '2026-09-06',
+  endIso: '2026-09-12',
+  label: 'Sep 6 – 12, 2026',
+} as const;
+
+/** The shared `NOW` is 2026-09-01, and `sanitizeOffboardDay` nulls anything more
+ *  than a day in the future — so a September departure needs its own clock or it
+ *  silently becomes an UNDATED record and these tests stop testing the arm they
+ *  name. The date has to be on the MASTER ROW too: `latestDepartureRecord`
+ *  arbitrates over the rows AND the evidence, and the fixture row's 2026-06-03
+ *  otherwise competes with it. */
+const NOW_SEP_16 = new Date('2026-09-16T00:00:00.000Z');
+function leftSep14(cycleHours: TerminationCycleHoursSignal): TerminationArbitrationInput {
+  return arbInput({
+    now: NOW_SEP_16,
+    masterRows: [masterRow({ offBoardedAtRaw: '2026-09-14', offBoardedReason: 'performance' })],
+    evidence: { offDate: '2026-09-14', reason: 'performance' },
+    cycleHours,
+  });
+}
+
+test('T4: hours + a departure AFTER the week closed still REFUSE — only the wording changes', () => {
+  // wilmarg@ 2026-09-16, verbatim: 30h in the Sep 6-12 file, off-boarded Sep 14.
+  const result = arbitrateTerminationFacts(
+    leftSep14({
+      state: 'ready',
+      worked: true,
+      matchedBy: 'the address wilmarg@simple.biz',
+      week: WEEK_SEP_6_12,
+    }),
+  );
+  // THE GUARD. Not negotiable — a hit refuses whatever the dates say.
+  assert.equal(result.facts, null, 'a timesheet hit produced facts — T4 was loosened');
+  assert.equal(result.blocked?.code, 'still_active');
+
+  const msg = String(result.blocked?.message);
+  assert.match(msg, /Sep 6 – 12, 2026/, 'the refusal did not name the week it refused on');
+  assert.match(msg, /2026-09-14/, 'the refusal did not name the departure date');
+  // The false sentence this change exists to delete.
+  assert.doesNotMatch(msg, /still on the clock/i);
+  assert.doesNotMatch(msg, /WORKING whatever/);
+});
+
+test('T4: hours INSIDE or after the departure keep the "still on the clock" reading', () => {
+  // The stale-stamp case the guard was built for: the stamp says they left on
+  // the 1st, the timesheet says they worked to the 12th. That IS a contradiction
+  // and the message must keep saying so.
+  const result = arbitrateTerminationFacts(
+    arbInput({
+      now: NOW_SEP_16,
+      masterRows: [masterRow({ offBoardedAtRaw: '2026-09-01', offBoardedReason: 'performance' })],
+      evidence: { offDate: '2026-09-01', reason: 'performance' },
+      cycleHours: {
+        state: 'ready',
+        worked: true,
+        matchedBy: 'the address jane@simple.biz',
+        week: WEEK_SEP_6_12,
+      },
+    }),
+  );
+  assert.equal(result.facts, null);
+  assert.equal(result.blocked?.code, 'still_active');
+  assert.match(String(result.blocked?.message), /WORKING whatever the off-board stamps say/);
+});
+
+test('T4: an UNLABELLED timesheet refuses without inventing a week', () => {
+  const result = arbitrateTerminationFacts(
+    leftSep14({
+      state: 'ready',
+      worked: true,
+      matchedBy: 'the address jane@simple.biz',
+      week: null,
+    }),
+  );
+  assert.equal(result.facts, null);
+  assert.equal(result.blocked?.code, 'still_active');
+  const msg = String(result.blocked?.message);
+  assert.match(msg, /still on the clock/, 'an unlabelled file must fall back, not date-scope');
+  assert.doesNotMatch(msg, /\d{4}-\d{2}-\d{2} – /, 'a week was invented from a file with none');
+});
+
+test('T4: an UNDATED departure with a labelled week keeps the contradiction wording', () => {
+  // No `terminationDate` means nothing to compare the week against, so the
+  // "they worked their last week and left" reading cannot be claimed.
+  const result = arbitrateTerminationFacts(
+    arbInput({
+      now: NOW_SEP_16,
+      masterRows: [masterRow({ offBoardedAtRaw: 'n/a', offBoardedReason: 'performance' })],
+      evidence: { offDate: 'n/a', reason: 'performance' },
+      cycleHours: {
+        state: 'ready',
+        worked: true,
+        matchedBy: 'the address jane@simple.biz',
+        week: WEEK_SEP_6_12,
+      },
+    }),
+  );
+  assert.equal(result.facts, null);
+  assert.equal(result.blocked?.code, 'still_active');
+  assert.match(String(result.blocked?.message), /WORKING whatever the off-board stamps say/);
+});
+
+test('T4: the negative control — a MISS still produces facts', () => {
+  // Without this, every test above could pass by refusing everything.
+  const result = arbitrateTerminationFacts(
+    leftSep14({ state: 'ready', worked: false, matchedBy: null, week: WEEK_SEP_6_12 }),
+  );
+  assert.equal(result.blocked, null);
+  assert.ok(result.facts);
 });

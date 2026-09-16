@@ -47,12 +47,26 @@
 
 import { normEmail } from '@/lib/email/norm-email';
 import { nameTokens } from '@/lib/name/name-tokens';
+// The CANONICAL `YYYY-MM-DD_to_YYYY-MM-DD` reader. Imported rather than
+// re-regexed: the same pattern is already open-coded in `ceo-tools.ts:1286` and
+// `overview-kpis.ts:126`, and a FOURTH copy is how one of them silently stops
+// agreeing with the others. It is a pure module with zero imports, so it loads
+// under `node --test` like the rest of this file.
+import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
 
 /** The structural half of `CycleHoursIndex` this module needs. Declared here so
  *  a PURE module never imports the `server-only` loader, not even for a type. */
 export interface TerminationHoursIndexView {
   emails: ReadonlySet<string>;
   nameTokenKeys: ReadonlySet<string>;
+  /** The file the index was built from — `CycleHoursIndex.sourceFile`. Carried
+   *  so a REFUSAL can name the week it is refusing on. A refusal that cannot say
+   *  WHICH timesheet caught the person is the dead end this feature is forbidden
+   *  to ship (`TerminationDocsPanel.tsx:140-144`), and it was how the first
+   *  version told a rep "still on the clock" about someone who had left days
+   *  earlier: the hit was real, the week behind it was the PREVIOUS one, and the
+   *  message had no way to say so. */
+  sourceFile: string | null;
   error: string | null;
 }
 
@@ -69,7 +83,25 @@ export interface TerminationHoursIdentity {
 export type TerminationCycleHoursSignal =
   | { state: 'unreadable'; error: string }
   | { state: 'unavailable' }
-  | { state: 'ready'; worked: boolean; matchedBy: string | null };
+  | {
+      state: 'ready';
+      worked: boolean;
+      matchedBy: string | null;
+      /** The week the index covers, when the filename states one. `null` is an
+       *  UNLABELLED file, never a guessed range — same discipline as G5's dates:
+       *  a week that cannot be read is a week the message does not name. */
+      week: TerminationHoursWeek | null;
+    };
+
+/** A Hubstaff file's week, as ISO STRINGS. Strings, not `Date`s, because every
+ *  date in this feature is compared as `YYYY-MM-DD` text (G5) and the one thing
+ *  that reliably breaks that discipline is a `Date` round-trip. */
+export interface TerminationHoursWeek {
+  startIso: string;
+  endIso: string;
+  /** "Sep 6 – 12, 2026" — for the rep, never for a comparison. */
+  label: string;
+}
 
 /** Minimum shared tokens for a SUBSET name match. One token is a first name and
  *  first names repeat across a 1,300-person roster; two is a person. */
@@ -94,6 +126,48 @@ function isSubsetOrSuperset(a: string[], b: string[]): boolean {
   return shared.length === a.length || shared.length === b.length;
 }
 
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
+
+/** `Date` built by parts at LOCAL midnight → `YYYY-MM-DD`, by parts. Never
+ *  `toISOString()`, which shifts the day for every timezone west of UTC. */
+function isoFromLocalDate(d: Date): string {
+  const y = String(d.getFullYear()).padStart(4, '0');
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** "2026-09-06" + "2026-09-12" → "Sep 6 – 12, 2026". Built from the STRING
+ *  parts, so no locale and no timezone can reach it. */
+function weekLabel(startIso: string, endIso: string): string {
+  const [sy, sm, sd] = startIso.split('-');
+  const [ey, em, ed] = endIso.split('-');
+  const sMon = MONTHS[Number(sm) - 1] ?? sm;
+  const eMon = MONTHS[Number(em) - 1] ?? em;
+  if (sy !== ey) return `${sMon} ${Number(sd)}, ${sy} – ${eMon} ${Number(ed)}, ${ey}`;
+  if (sm !== em) return `${sMon} ${Number(sd)} – ${eMon} ${Number(ed)}, ${ey}`;
+  return `${sMon} ${Number(sd)} – ${Number(ed)}, ${ey}`;
+}
+
+/**
+ * The week a Hubstaff filename states — or `null` when it states none.
+ *
+ * `null` is NOT a fallback to "probably this week". An unlabelled file means the
+ * refusal message names the FILE instead of a week it cannot prove, which is the
+ * same rule G5 applies to every printed date: a value that failed to parse is a
+ * blank, never a guess.
+ */
+export function readCycleWeek(sourceFile: string | null): TerminationHoursWeek | null {
+  if (!sourceFile) return null;
+  const range = parseDateRangeFromFilename(sourceFile);
+  if (!range) return null;
+  const startIso = isoFromLocalDate(range.start);
+  const endIso = isoFromLocalDate(range.end);
+  if (endIso < startIso) return null;
+  return { startIso, endIso, label: weekLabel(startIso, endIso) };
+}
+
 /**
  * Read the cycle timesheet for ONE identity.
  *
@@ -107,6 +181,10 @@ export function readCycleHoursSignal(
   if (index.error) return { state: 'unreadable', error: index.error };
   if (index.emails.size === 0 && index.nameTokenKeys.size === 0) return { state: 'unavailable' };
 
+  // Read ONCE, attached to every `ready` return — including the miss, so the
+  // facts sheet can say which week was actually asked.
+  const week = readCycleWeek(index.sourceFile);
+
   const known = new Set<string>();
   for (const e of identity.emails) {
     const n = normEmail(e ?? '');
@@ -115,7 +193,7 @@ export function readCycleHoursSignal(
 
   // 1. The address, exactly.
   for (const e of known) {
-    if (index.emails.has(e)) return { state: 'ready', worked: true, matchedBy: `the address ${e}` };
+    if (index.emails.has(e)) return { state: 'ready', worked: true, matchedBy: `the address ${e}`, week };
   }
 
   // 2. The address's LOCAL PART on any domain — a Hubstaff login the master row
@@ -129,7 +207,7 @@ export function readCycleHoursSignal(
     for (const indexed of index.emails) {
       const l = localPart(indexed);
       if (l && locals.has(l)) {
-        return { state: 'ready', worked: true, matchedBy: `the timesheet address ${indexed}` };
+        return { state: 'ready', worked: true, matchedBy: `the timesheet address ${indexed}`, week };
       }
     }
   }
@@ -143,16 +221,16 @@ export function readCycleHoursSignal(
   for (const tokens of nameSets) {
     const key = tokens.join(' ');
     if (index.nameTokenKeys.has(key)) {
-      return { state: 'ready', worked: true, matchedBy: `the name "${key}"` };
+      return { state: 'ready', worked: true, matchedBy: `the name "${key}"`, week };
     }
   }
   for (const tokens of nameSets) {
     for (const indexed of index.nameTokenKeys) {
       if (isSubsetOrSuperset(tokens, indexed.split(' ').filter(Boolean))) {
-        return { state: 'ready', worked: true, matchedBy: `the timesheet name "${indexed}"` };
+        return { state: 'ready', worked: true, matchedBy: `the timesheet name "${indexed}"`, week };
       }
     }
   }
 
-  return { state: 'ready', worked: false, matchedBy: null };
+  return { state: 'ready', worked: false, matchedBy: null, week };
 }

@@ -184,7 +184,17 @@ const BLANK_REASON_COPY: Record<TerminationBlankReason, string> = {
   not_on_file: 'nothing usable was on file in any source',
   date_failed_sanity:
     'the stored date failed the sanity check — impossible, or far in the future — and an unchecked date must never print',
-  never_paid: 'there is no paid payroll week on record for this person',
+  // Carla, 2026-09-16. The old line read as a verdict — "never paid" — when what
+  // the resolver actually proved is narrower: no `payment_dispatches` row with a
+  // `cycle_source_file` is marked paid YET (termination-rates.ts:466). For a
+  // fresh leaver the final week routinely has not been through a cycle, so the
+  // honest word is UNAVAILABLE, not zero. The clause about the upcoming cycle is
+  // deliberately phrased as the ordinary reason this is empty and NOT as a claim
+  // about a specific cycle's state: nothing in this feature can read whether a
+  // cycle is open or closed, and a sentence the code cannot check does not go on
+  // a page a rep signs.
+  never_paid:
+    'no payroll week has been paid out to this person yet, so there is no ending rate to read. They may still have earnings in a cycle that has not been closed — this is unavailable, not zero. Type the ending rate if you have it',
   no_hire_record: 'there is no digital hire record — the hire predates the onboarding pipeline',
   zero_rate: 'the source held 0, and a zero rate is not a rate',
   non_php_payee:
