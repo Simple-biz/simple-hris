@@ -74,6 +74,15 @@
         ],
         "createdAt": "2026-09-13T01:06:05.193Z",
         "reason": "Claude: the only <img> here takes a runtime signed storage URL from component state (state.url, a required field); the detector cannot resolve a dynamic src and reads it as empty"
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/components/hr/HrFpuEnrollments.tsx"
+        ],
+        "createdAt": "2026-09-16T21:25:08.344Z",
+        "reason": "Claude, evidence: both hits are zinc text on bg-white with only a hover tint (hover:bg-teal-50/40, hover:bg-zinc-100); same pattern as AccountingMesa ViewTabButton and HrMesa SubTabButton"
       }
     ]
   }
