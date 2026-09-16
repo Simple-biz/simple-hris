@@ -239,6 +239,11 @@ What closed, and what proves it:
   (`orphanageConfirmedSettingKey`), audited as `wizard.orphanage_none_confirmed`, so a
   week with no visits is distinguishable from a week nobody got to.
 - Replay is view-only: no paste, no re-price, no remove.
+- **Step heading is plain** (2026-09-16, Kane: *"delete this gradient AI Slop card"*): an
+  `h2` + the pay-period line + the "No orphanage hours this week" button in one flat row.
+  The rose gradient banner card, its eyebrow and its column-format prose are gone — the
+  paste panel already states the format. The marker button and `orphPeriodLabel` were the
+  only facts the card owned and both survive; never drop the marker to "simplify" the header.
 
 ## The 2026-08-23 recurrence
 

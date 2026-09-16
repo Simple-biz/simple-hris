@@ -17441,73 +17441,67 @@ export default function PayrollWizard({
 
         return (
           <div className="flex min-w-0 flex-col gap-5">
-            {/* Header banner */}
-            <div className="flex flex-col gap-1.5 rounded-2xl border border-rose-200/70 bg-gradient-to-br from-rose-50 via-white to-pink-50/40 p-5 shadow-sm dark:border-rose-900/40 dark:from-rose-950/30 dark:via-zinc-950 dark:to-rose-950/15">
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-rose-700 dark:text-rose-300">
-                <Heart className="h-3.5 w-3.5" /> Orphanage pay
+            {/* Step heading — plain, no card. The paste panel below states the column format;
+                the period label and the "none this week" marker are the two facts this row owns. */}
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex min-w-0 flex-col gap-1">
+                <h2 className="flex items-center gap-2 text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
+                  <Heart className="h-4 w-4 text-rose-600 dark:text-rose-400" /> Orphanage pay
+                </h2>
+                <p className="flex flex-wrap items-center gap-x-2 text-[12px] text-zinc-600 dark:text-zinc-400">
+                  <span className="inline-flex items-center gap-1 font-medium text-zinc-800 dark:text-zinc-200">
+                    <CalendarDays className="h-3.5 w-3.5" /> Pay period · {orphPeriodLabel}
+                  </span>
+                  <span>Every matched row is applied to this period — the pay-week column is informational.</span>
+                </p>
               </div>
-              <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
-                Paste orphanage hours, lock in the pay
-              </h2>
-              <p className="max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
-                Paste three columns straight from your sheet — <span className="font-medium text-zinc-800 dark:text-zinc-200">Pay week</span>, <span className="font-medium text-zinc-800 dark:text-zinc-200">Work email</span>, and <span className="font-medium text-zinc-800 dark:text-zinc-200">Hours</span>. Each person is matched by work email. Hours <span className="font-medium text-zinc-800 dark:text-zinc-200">stack on their worked hours against the 40h/week cap</span>, so anything past 40 pays at the <span className="font-medium text-zinc-800 dark:text-zinc-200">OT rate</span>. Locking in writes the amount to the <span className="font-medium text-zinc-800 dark:text-zinc-200">Orphanage</span> column in the Additions tab.
-              </p>
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px]">
-                <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-white/70 px-2.5 py-1 font-medium text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
-                  <CalendarDays className="h-3.5 w-3.5" /> Pay period · {orphPeriodLabel}
-                </span>
-                <span className="text-zinc-500 dark:text-zinc-500">The pay-week column is informational — every matched row is applied to this period.</span>
-              </div>
-
               {!isReplay && orphLocked.length === 0 && (
-                <div className="mt-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={orphanageNoneConfirming}
-                    className={`h-8 px-3 text-xs font-semibold ${
-                      orphanageNoneConfirmed
-                        ? 'border-emerald-300 text-emerald-700 dark:border-emerald-700 dark:text-emerald-300'
-                        : 'border-rose-300 text-rose-700 dark:border-rose-700 dark:text-rose-300'
-                    }`}
-                    onClick={() => {
-                      setOrphanageNoneConfirming(true);
-                      void savePabSetting(
-                        orphanageConfirmedSettingKey(markerWeekStart),
-                        JSON.stringify({ none: true, by: sessionEmail ?? null, at: new Date().toISOString() }),
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={orphanageNoneConfirming}
+                  className={`h-8 px-3 text-xs font-semibold ${
+                    orphanageNoneConfirmed
+                      ? 'border-emerald-300 text-emerald-700 dark:border-emerald-700 dark:text-emerald-300'
+                      : 'border-rose-300 text-rose-700 dark:border-rose-700 dark:text-rose-300'
+                  }`}
+                  onClick={() => {
+                    setOrphanageNoneConfirming(true);
+                    void savePabSetting(
+                      orphanageConfirmedSettingKey(markerWeekStart),
+                      JSON.stringify({ none: true, by: sessionEmail ?? null, at: new Date().toISOString() }),
+                    )
+                      .then(() => {
+                        setOrphanageNoneConfirmed(true);
+                        toast.success('Confirmed: no orphanage hours this week');
+                        void logAudit({
+                          user_name: sessionEmail ?? 'anonymous',
+                          user_role: sessionRole ?? 'user',
+                          action: 'wizard.orphanage_none_confirmed',
+                          resource: orphanageConfirmedSettingKey(markerWeekStart),
+                          cycle: auditCycle,
+                          details: { week_start: markerWeekStart },
+                        });
+                      })
+                      .catch((err: unknown) =>
+                        toast.error(
+                          `Could not confirm: ${err instanceof Error ? err.message : 'Unknown error'}`,
+                        ),
                       )
-                        .then(() => {
-                          setOrphanageNoneConfirmed(true);
-                          toast.success('Confirmed: no orphanage hours this week');
-                          void logAudit({
-                            user_name: sessionEmail ?? 'anonymous',
-                            user_role: sessionRole ?? 'user',
-                            action: 'wizard.orphanage_none_confirmed',
-                            resource: orphanageConfirmedSettingKey(markerWeekStart),
-                            cycle: auditCycle,
-                            details: { week_start: markerWeekStart },
-                          });
-                        })
-                        .catch((err: unknown) =>
-                          toast.error(
-                            `Could not confirm: ${err instanceof Error ? err.message : 'Unknown error'}`,
-                          ),
-                        )
-                        .finally(() => setOrphanageNoneConfirming(false));
-                    }}
-                  >
-                    {orphanageNoneConfirming ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : orphanageNoneConfirmed ? (
-                      <>
-                        <CheckCircle2 className="mr-1 h-3 w-3" /> Confirmed — none this week
-                      </>
-                    ) : (
-                      'No orphanage hours this week'
-                    )}
-                  </Button>
-                </div>
+                      .finally(() => setOrphanageNoneConfirming(false));
+                  }}
+                >
+                  {orphanageNoneConfirming ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : orphanageNoneConfirmed ? (
+                    <>
+                      <CheckCircle2 className="mr-1 h-3 w-3" /> Confirmed — none this week
+                    </>
+                  ) : (
+                    'No orphanage hours this week'
+                  )}
+                </Button>
               )}
             </div>
 
