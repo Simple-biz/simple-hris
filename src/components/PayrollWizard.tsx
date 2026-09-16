@@ -19191,22 +19191,6 @@ export default function PayrollWizard({
                 The Dispatch office emails each paystub as it marks the person Paid.
               </p>
             </div>
-            <a
-              href="https://simpledotbiz.app.n8n.cloud/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 rounded-full border border-[#ea4b71]/30 bg-[#ea4b71]/10 px-3.5 py-1.5 text-xs font-medium text-[#ea4b71] transition hover:bg-[#ea4b71]/15 hover:shadow-[0_0_12px_rgba(234,75,113,0.25)]"
-              title="Paystub emails fire one-by-one as the Dispatch office marks each person Paid in Payment Dispatch"
-            >
-              <img
-                src="https://n8n.io/favicon.ico"
-                alt="n8n"
-                className="h-4 w-4"
-              />
-              <span>Paystubs send 1-by-1 from Payment Dispatch</span>
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-[#ea4b71]/80">· n8n on Mark Paid</span>
-            </a>
-
             {/* Rate-SOURCE disagreement. Every stub's arithmetic is correct — the
                 displayed rate is the one that paid it — but the rate sheet holds a
                 different number, which can mean the employee is owed the gap. Purely

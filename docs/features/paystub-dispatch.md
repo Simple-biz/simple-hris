@@ -1000,7 +1000,7 @@ any sent email.
 
 ## UI signals in the HRIS
 
-- **n8n pill** on the Dispatch step: small pink badge reading "Paystubs send 1-by-1 from Payment Dispatch · n8n on Mark Paid" with an n8n favicon, linking to the n8n Cloud workspace. Signals that emails fire per-person from Payment Dispatch (not in a batch here).
+- **The n8n pill is GONE (2026-09-16)** — the Dispatch step used to carry a pink badge reading "Paystubs send 1-by-1 from Payment Dispatch · n8n on Mark Paid", linking to the n8n Cloud workspace. Kane: *"remove the text as this is stale already, Payment Dispatch handles the sending now"* — naming the transport on a payroll screen told the clerk nothing she can act on, and "1-by-1" read as a caveat about a pipeline that has been the normal path since the per-employee send shipped. **The send itself is untouched**: `/api/payment-dispatches` still calls `forwardPaystubDispatch` per person on `status='paid'` (§ Per-employee send). The paragraph above the button still states the behaviour in plain terms — "The Dispatch office emails each paystub as it marks the person Paid" — and the green **"Locked in by ‹who› on ‹when›"** stamp stays.
 - **Running red-light animation**: while `isDispatching === true` the Dispatch panel gets a conic-gradient red light running around its edges (1.6s per rotation). Button disables and label changes to "Sending to Dispatch…". Controlled by the `dispatch-running-light` CSS class embedded alongside the JSX (inline `<style>` for scoped keyframes).
 
 ## Client-side lock-and-stage flow
