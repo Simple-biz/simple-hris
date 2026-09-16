@@ -126,11 +126,19 @@ three questions below are open rather than assumed.
   unprofessional behaviour" needs a destination: who sees a flag, is the employee told, and does
   the ticket still reach the queue? There is **no moderation anything in this repo today** — no
   wordlist, no classifier, no review surface. Every option here is new build.
-- **N2 · 9–5 EST, or 9–5 Manila?** Every date, week and cutoff in this system is Manila
-  (`hsl.week_model_cutover`, `manilaDayIso`, the Sunday pay week). 9–5 EST is **9 PM – 5 AM
-  Manila**. For the US-facing floors that is exactly their shift; for everyone else support is
-  open only while they sleep. This may be precisely what she meant — it needs one confirmation,
-  not an assumption, because it is the difference between two disjoint windows.
+- **~~N2 · 9–5 EST, or 9–5 Manila?~~ RULED 2026-09-16 by Kane: EST, as Carla wrote it.**
+  Support is open **Mon–Fri 9 AM – 5 PM Eastern = 9 PM – 5 AM Manila**. This is the first
+  surface in the HRIS whose operating window is **not** Manila — every date, week and cutoff
+  elsewhere is (`manilaDayIso`, the Sunday pay week, `hsl.week_model_cutover`), so this is a
+  deliberate exception and is written down as one. Two consequences, both load-bearing:
+  - **The hours are never displayed as a bare "9 AM – 5 PM".** A Manila-based employee reading
+    an unlabelled 9–5 is wrong by twelve hours. The form and the empty state show **both zones**
+    — e.g. *"Support is open 9 AM – 5 PM Eastern (9 PM – 5 AM Manila), Mon–Fri"* — and the
+    conversion is computed, never a hardcoded second string that drifts at a DST change.
+  - **Eastern observes DST and Manila does not.** EST → EDT moves the Manila window by an hour
+    twice a year, so the window is stored as an **IANA zone (`America/New_York`) plus local
+    clock times**, never as a fixed UTC offset. A stored `-05:00` is a bug that surfaces in
+    March.
 - **N3 · Is the time-adjustment restriction a guard or a sentence?** Copy that says *"ask your
   manager"* is cheap. Refusing a ticket whose category is "time adjustment" and whose subject has
   no approved adjustment on record is a real lookup and a real refusal path.
@@ -214,10 +222,15 @@ Chat, queue and counter are **not here**. They return as their own plan when Car
       `['employee','tickets']`. Actor is `auditFrom(request, authz)`, **never** the body. A
       flag or a refusal is audited; so is a reply.
 - [ ] 14. `src/lib/notifications/notification-views.ts` — map the two new types to `['employee']`.
+- [ ] 14b. `src/lib/support/hours.ts` (+ test) — the support window as an **IANA zone
+      (`America/New_York`) plus local clock times**, never a fixed offset; `isSupportOpen(at)`
+      and a formatter that renders **both zones**. Tested across a **US DST boundary**, because
+      Eastern shifts and Manila does not. This is the first non-Manila window in the system.
 - [ ] 15. `src/components/employee/EmployeeSupportDialog.tsx` — file + history, **two panes, not
       three**. Copies `TimeAdjustmentDialog`'s prop shape and `RequestDocumentsTab`'s status-chip
-      `Record` pair. Shows the **one working day** promise (Decision 5) and the **support hours**
-      (Decision 3) on the form.
+      `Record` pair. Shows the **one working day** promise (Decision 5) and the **support hours in
+      both zones** (Decision 3 + N2) — never a bare "9 AM – 5 PM", which a Manila reader is
+      twelve hours wrong about.
 - [ ] 16. `EmployeeDashboard.tsx` — the button beside FAQs in **both** clusters: mobile icon at
       ~`:2700-2710`, desktop labelled at ~`:2753-2764`. Unread badge copies `GiftBellButton`.
 - [ ] 17. `src/components/tickets/SupportSection.tsx` + `TicketsSidebar.tsx` — a **fourth view**
