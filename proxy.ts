@@ -232,6 +232,14 @@ export async function proxy(req: NextRequest) {
 
   if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
 
+  // Outside systems calling the external read API carry no NextAuth cookie
+  // either. That route authenticates them ITSELF — Bearer key → hash →
+  // external_api_clients, fail-closed, every denial logged — so the SSO gate
+  // steps aside for the whole prefix: a 302 to /login is HTML an API client
+  // cannot act on, while the handler's JSON 401 is. Nothing under
+  // /api/external/ may ever rely on a session.
+  if (pathname.startsWith('/api/external/')) return NextResponse.next();
+
   // Vercel-scheduled (or external) cron callers carry no NextAuth cookie. Let
   // them past the SSO gate only when they present the shared CRON_SECRET; the
   // route handler re-verifies it. No secret set -> no bypass, so a tokenless

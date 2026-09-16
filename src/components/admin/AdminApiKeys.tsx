@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Loader2, KeyRound, Check, Trash2, Eye, EyeOff, ShieldCheck, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import AdminExternalApiClients from './AdminExternalApiClients';
 
 interface KeyStatus {
   configured: boolean;
@@ -89,12 +90,14 @@ export default function AdminApiKeys() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-8">
+    <div className="mx-auto w-full max-w-5xl px-6 py-8">
       <header className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">API tokens</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Manage the third-party API keys this workspace uses. Keys are stored server-side, shown only as a
-          masked preview, and are never readable by non-admins.
+          Two directions. <span className="font-medium text-zinc-700 dark:text-zinc-300">Keys we use</span> — third-party
+          credentials this workspace calls out with, stored server-side and shown only masked.{' '}
+          <span className="font-medium text-zinc-700 dark:text-zinc-300">Keys we issue</span> — external access for outside
+          systems reading our data, further down.
         </p>
       </header>
 
@@ -217,6 +220,9 @@ export default function AdminApiKeys() {
           everywhere in the UI. Rotating it here takes effect immediately — no redeploy needed.
         </span>
       </div>
+
+      {/* Keys WE issue — outside systems reading the Global Master List */}
+      <AdminExternalApiClients />
     </div>
   );
 }
