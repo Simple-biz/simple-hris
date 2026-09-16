@@ -116,7 +116,7 @@ Audit actions: `fpu.enroll` (employee), `fpu.class.created | updated | deleted`,
 
 ## Deploy notes
 
-- **PENDING — Kane runs:** `node --import tsx scripts/apply-fpu-classes-migration.mts --apply`
+- **PENDING — Kane runs:** double-click `scripts/Apply FPU Classes migration.cmd` (rehearsal, then type `APPLY`), or `node --import tsx scripts/apply-fpu-classes-migration.mts --apply`
   (dry-run by default; `--verify` afterwards). Creates `fpu_classes` and adds `class_id`,
   `status`, `start_date_used`, `reviewed_by/at`, `review_notes`, `completed_on` plus the unique
   index to `fpu_enrollments`. Needs the session-pooler `DATABASE_URL`.
