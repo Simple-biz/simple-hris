@@ -238,7 +238,10 @@ button (a count) or a Load — nothing polls (`use-oms-hours.ts`, `useOmsHours`,
 timeouts): idle "Not checked yet" / checking → ready (N approved, "prepared … ago")
 / empty / unconfigured / error. Refresh after a pull DETECTS change (count/stamp moved ⇒
 amber "load again" + ringed Load button); a re-load shows a person-by-person diff against
-the previous pull (`oms-diff.ts`) and tints changed rows. Motion: `motion/react`, staggered rows (24ms, capped),
+the previous pull (`oms-diff.ts`) and tints changed rows. **Save to HRIS** writes the pull + resolution as one append-only
+snapshot into `orphanage_oms_hours` (NOT `orphanage_pay`; allowed in TEST); the line
+beside it shows the week's newest save and what saving now would change against it, and
+reads "Saving is not ready" with the apply command until the migration lands. Motion: `motion/react`, staggered rows (24ms, capped),
 crossfading indicator and footer, all gated on `useReducedMotion`. Doc:
 [orphanage-oms-pull.md](../features/orphanage-oms-pull.md).
 

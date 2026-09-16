@@ -17,12 +17,19 @@
  * The last pull is kept per week: switching to the Paste tab and back does not throw
  * it away, and a new source file resets everything — rows from one week must never
  * be previewed against another.
+ *
+ * Saves (`orphanage_oms_hours`, the HRIS's own append-only table — NOT money):
+ *   save            — POST the current pull + resolution as one snapshot. Manual.
+ *   loadLatestSave  — GET the week's newest save. Runs with Refresh, after a Load and
+ *                     after a Save — the same manual moments; nothing polls.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { OrphanageHourRow } from '@/lib/payroll/orphanage-rows';
 import { omsChangedSincePull } from '@/lib/oms/oms-diff';
+import type { OmsSavePayload } from '@/lib/oms/oms-save';
+import type { OmsSaveSummary } from '@/lib/supabase/orphanage-oms-hours-db';
 
 /** How long one OMS round trip may take before the button is handed back. */
 const OMS_FETCH_TIMEOUT_MS = 15_000;
@@ -44,8 +51,21 @@ export interface OmsPull {
   pulledAt: number;
 }
 
+export type OmsSavesState =
+  | { kind: 'unknown' }
+  | { kind: 'table_missing'; reason: string }
+  | { kind: 'error'; reason: string }
+  | { kind: 'ready'; latest: OmsSaveSummary | null };
+
 export interface OmsHoursState {
   status: OmsStatus;
+  saves: OmsSavesState;
+  saving: boolean;
+  saveError: string | null;
+  /** The save_id the last successful Save produced this session. */
+  lastSaveId: string | null;
+  loadLatestSave: () => Promise<void>;
+  save: (payload: OmsSavePayload) => Promise<boolean>;
   pull: OmsPull | null;
   /** The pull before `pull`, same week — what a re-load is compared against. */
   previousPull: OmsPull | null;
@@ -98,6 +118,10 @@ export function useOmsHours({ weekStart }: { weekStart: string | null }): OmsHou
   const [pull, setPull] = useState<OmsPull | null>(null);
   const [previousPull, setPreviousPull] = useState<OmsPull | null>(null);
   const [pulling, setPulling] = useState(false);
+  const [saves, setSaves] = useState<OmsSavesState>({ kind: 'unknown' });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [lastSaveId, setLastSaveId] = useState<string | null>(null);
   const [pullError, setPullError] = useState<string | null>(null);
   /** Which week the current status/pull belong to — a week change invalidates both. */
   const weekRef = useRef<string | null>(null);
@@ -110,6 +134,29 @@ export function useOmsHours({ weekStart }: { weekStart: string | null }): OmsHou
     setPull(null);
     setPreviousPull(null);
     setPullError(null);
+    setSaves({ kind: 'unknown' });
+    setSaveError(null);
+    setLastSaveId(null);
+  }, [weekStart]);
+
+  const loadLatestSave = useCallback(async () => {
+    if (!weekStart) return;
+    try {
+      const res = await fetchWithTimeout(`/api/orphanage-pay/oms/saves?week_start=${encodeURIComponent(weekStart)}`);
+      const json = (await readJson(res)) as StatusJson & { tableReady?: boolean; latest?: OmsSaveSummary | null };
+      if (weekRef.current !== weekStart) return;
+      if (res.status === 503 || json.tableReady === false) {
+        setSaves({ kind: 'table_missing', reason: json.reason ?? 'The orphanage_oms_hours table is not applied yet' });
+        return;
+      }
+      if (!res.ok) {
+        setSaves({ kind: 'error', reason: json.error ?? `HTTP ${res.status}` });
+        return;
+      }
+      setSaves({ kind: 'ready', latest: json.latest ?? null });
+    } catch (e) {
+      setSaves({ kind: 'error', reason: e instanceof Error ? e.message : 'Could not read saves' });
+    }
   }, [weekStart]);
 
   const checkStatus = useCallback(async () => {
@@ -117,6 +164,7 @@ export function useOmsHours({ weekStart }: { weekStart: string | null }): OmsHou
     const reqId = ++statusReq.current;
     // Always visibly "checking": a manual refresh must show it did something.
     setStatus({ kind: 'checking' });
+    void loadLatestSave();
     try {
       const res = await fetchWithTimeout(`/api/orphanage-pay/oms?mode=status&week_start=${encodeURIComponent(weekStart)}`);
       const json = await readJson(res);
@@ -139,12 +187,13 @@ export function useOmsHours({ weekStart }: { weekStart: string | null }): OmsHou
       if (reqId !== statusReq.current) return;
       setStatus({ kind: 'error', reason: e instanceof Error ? e.message : 'OMS is unreachable' });
     }
-  }, [weekStart]);
+  }, [weekStart, loadLatestSave]);
 
   const load = useCallback(async () => {
     if (!weekStart || pulling) return;
     setPulling(true);
     setPullError(null);
+    void loadLatestSave();
     try {
       const res = await fetchWithTimeout(`/api/orphanage-pay/oms?mode=pull&week_start=${encodeURIComponent(weekStart)}`);
       const json = await readJson(res);
@@ -184,7 +233,47 @@ export function useOmsHours({ weekStart }: { weekStart: string | null }): OmsHou
     } finally {
       setPulling(false);
     }
-  }, [weekStart, pulling, pull]);
+  }, [weekStart, pulling, pull, loadLatestSave]);
+
+  const save = useCallback(async (payload: OmsSavePayload): Promise<boolean> => {
+    if (!weekStart || saving) return false;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), OMS_FETCH_TIMEOUT_MS * 2);
+      let res: Response;
+      try {
+        res = await fetch('/api/orphanage-pay/oms/saves', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: ctrl.signal,
+        });
+      } finally {
+        clearTimeout(t);
+      }
+      const json = (await readJson(res)) as StatusJson & { tableReady?: boolean; saveId?: string; saved?: number };
+      if (res.status === 503 || json.tableReady === false) {
+        const reason = json.reason ?? 'The orphanage_oms_hours table is not applied yet';
+        setSaves({ kind: 'table_missing', reason });
+        setSaveError(reason);
+        return false;
+      }
+      if (!res.ok) {
+        setSaveError(json.error ?? `HTTP ${res.status}`);
+        return false;
+      }
+      setLastSaveId(json.saveId ?? null);
+      await loadLatestSave();
+      return true;
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Save failed');
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }, [weekStart, saving, loadLatestSave]);
 
   const clearPull = useCallback(() => {
     setPull(null);
@@ -199,5 +288,8 @@ export function useOmsHours({ weekStart }: { weekStart: string | null }): OmsHou
       ? omsChangedSincePull(pull, status)
       : null;
 
-  return { status, pull, previousPull, changedSincePull, pulling, pullError, checkStatus, load, clearPull };
+  return {
+    status, saves, saving, saveError, lastSaveId, loadLatestSave, save,
+    pull, previousPull, changedSincePull, pulling, pullError, checkStatus, load, clearPull,
+  };
 }

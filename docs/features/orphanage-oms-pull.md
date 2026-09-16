@@ -20,6 +20,10 @@ document adds one input surface and changes no rule about money.
 | Route | `app/api/orphanage-pay/oms/route.ts` — `GET ?mode=status\|pull&week_start=` |
 | Client fetch state (manual Refresh + Load, 15s timeouts, previous pull) | `src/components/payroll/use-oms-hours.ts` |
 | Change detection (count/stamp since pull · row diff between pulls) | `src/lib/oms/oms-diff.ts` (+ `.test.ts`) |
+| Save payload (raw + resolved per row) + route validation | `src/lib/oms/oms-save.ts` (+ `.test.ts`) |
+| Saves table (probe · append-only insert · latest per week, paged) | `src/lib/supabase/orphanage-oms-hours-db.ts` |
+| Saves route | `app/api/orphanage-pay/oms/saves/route.ts` — `GET ?week_start=` · `POST` |
+| Table DDL · apply script | `references/sql/create/2026-09-16_orphanage_oms_hours.sql` · `scripts/apply-orphanage-oms-hours-migration.mts` |
 | The tab | `src/components/payroll/OrphanageOmsPanel.tsx` |
 | LIVE confirm | `src/components/payroll/OrphanageOmsLiveConfirmDialog.tsx` |
 | Section strip · lock-in wiring | `src/components/PayrollWizard.tsx` — `ORPHANAGE_SECTIONS`, `orphanageResolveCtx`, `lockInResolvedOrphanageRows`, `lockInOmsRows` |
@@ -78,6 +82,29 @@ lives in memory for the week only; a new source file or a LIVE lock-in clears bo
 This detects change in **OMS**, not drift against what is already locked in the
 period — that remains the reconciliation panels' job on the step.
 
+## Saving — the HRIS's own record of a pull
+
+Kane, 2026-09-16: *"add a save button in here where the loaded data gets saved within the
+HRIS … a supabase table … let us not merge it with the current supabase table."*
+Approved: append-only snapshots; each row stores BOTH the raw OMS values and the HRIS
+resolution at save time.
+
+**Table:** `public.orphanage_oms_hours` (references/sql/create/2026-09-16_orphanage_oms_hours.sql).
+One row per OMS row per save; `save_id` groups a Save. **NOT MONEY** — nothing prices,
+dispatches or prints a paystub from it, and nothing on the step reads it back into the
+pay column. That is why **Save is allowed in TEST mode**: it touches neither carrier
+([orphanage-pay-step.md § Two carriers](./orphanage-pay-step.md)).
+
+| Rule | Why |
+| --- | --- |
+| **Append-only.** No UPDATE or DELETE path exists in the app or the DB layer. | A save is a snapshot; the next one is simply newer. No delete ⇒ no "nothing destroyed unsnapshotted" machinery to get wrong. |
+| Each row is **raw + resolved**: `oms_*` as OMS returned it, then `matched`, the Additions key, reg/OT split, rates, amount — or `skip_reason`. | A saved pull reads back without re-resolving, and an unmatched row is kept with the reason, never dropped. The `resolution_shape` CHECK makes the in-between unrepresentable. |
+| `mode` records the TEST/LIVE switch at save time. | So a reader can tell a rehearsal from a week that was also locked in. |
+| Actor = the session (`saved_by` NOT NULL, blank refused); audited as **one** `wizard.orphanage_oms_saved` row per Save (counts, total, save_id). | Every snapshot has an author and a trail. |
+| **Table not applied ⇒ the panel says so.** Both verbs probe first (`count:'exact'`, no `head`) and answer 503 `tableReady:false` with the script to run; Save is disabled with that reason. | A pending migration is folklore until measured; a 500 in a toast tells nobody what to do. |
+| RLS on, no policies; reads and writes go through the service-role route only. | Rows name workers and hours; the anon key ships in the bundle. |
+| The "Last saved" line and the "saving now changes N" diff refresh with **Refresh, Load and Save** — the same manual moments. | Nothing polls, consistent with the rest of the tab. |
+
 ## TEST and LIVE
 
 The Switch on the panel is **TEST on** by default, on **every** wizard mount, session-only,
@@ -121,7 +148,17 @@ whichever door it came through.
 
 ## Deploy notes
 
-**No migration.** No HRIS table changes; OMS is read only.
+**Migration — PENDING until Kane runs it:** `public.orphanage_oms_hours`
+(references/sql/create/2026-09-16_orphanage_oms_hours.sql). Dry run by default;
+DATABASE_URL = the SESSION POOLER on 5432 ([[migration-apply-needs-database-url]]):
+
+```
+node --import tsx scripts/apply-orphanage-oms-hours-migration.mts           # rehearse + roll back
+node --import tsx scripts/apply-orphanage-oms-hours-migration.mts --apply   # commit
+```
+
+Until applied, the OMS tab's Save button reads "Saving is not ready" with that command.
+Everything else on the tab works without it. OMS itself is read only.
 
 Env, server-only (`.env.example` carries the full block). **PENDING — Kane fills
 `.env.local`:**

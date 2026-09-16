@@ -17589,6 +17589,7 @@ export default function PayrollWizard({
             {orphanageSection === 'oms' ? (
               <OrphanageOmsPanel
                 weekStart={markerWeekStart}
+                sourceFile={calcSourceFile}
                 periodLabel={orphPeriodLabel}
                 isReplay={isReplay}
                 testMode={omsTestMode}

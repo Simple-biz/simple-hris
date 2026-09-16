@@ -13,6 +13,8 @@
  *   - Nothing polls. Refresh (a count) and Load (the rows) are both manual buttons.
  *   - Refresh DETECTS change (count / stamp moved since the last pull) and says "load
  *     again"; a re-load then shows WHAT changed, person by person (oms-diff.ts).
+ *   - Save writes the pull + resolution to the HRIS's OWN append-only table
+ *     (orphanage_oms_hours) — NOT orphanage_pay, NOT the blob. Allowed in TEST.
  *   - TEST mode is the default every session and writes NOTHING, anywhere.
  *   - LIVE mode warns, confirms in a dialog, and then rides the paste's lock-in —
  *     the same blob-CAS-then-record write, the same audit, the same money.
@@ -25,6 +27,7 @@
 
 import { useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { toast } from 'sonner';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -34,6 +37,7 @@ import {
   Loader2,
   Lock,
   RefreshCw,
+  Save,
   ShieldAlert,
 } from 'lucide-react';
 
@@ -44,6 +48,7 @@ import { cn } from '@/lib/utils';
 import { formatPHP } from '@/lib/format-php';
 import type { OrphanageResolveResult } from '@/lib/payroll/orphanage-rows';
 import { diffOmsPulls } from '@/lib/oms/oms-diff';
+import { buildOmsSavePayload } from '@/lib/oms/oms-save';
 
 import OrphanageOmsLiveConfirmDialog from './OrphanageOmsLiveConfirmDialog';
 import type { OmsHoursState } from './use-oms-hours';
@@ -51,6 +56,8 @@ import type { OmsHoursState } from './use-oms-hours';
 export interface OrphanageOmsPanelProps {
   /** ISO Sunday of the period being edited. Null = no parseable source file. */
   weekStart: string | null;
+  /** The wizard's Hubstaff upload, stamped onto a save for provenance. */
+  sourceFile: string | null;
   periodLabel: string;
   isReplay: boolean;
   /** TEST on = nothing is written. Lives in the wizard so a tab switch keeps it. */
@@ -83,6 +90,7 @@ const fmtH = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
 
 export default function OrphanageOmsPanel({
   weekStart,
+  sourceFile,
   periodLabel,
   isReplay,
   testMode,
@@ -102,7 +110,38 @@ export default function OrphanageOmsPanel({
   const total = useMemo(() => ok.reduce((s, r) => s + r.amount, 0), [ok]);
   const otPeople = useMemo(() => ok.filter((r) => r.otH > 0).length, [ok]);
 
-  const { status, pull, previousPull, changedSincePull, pulling, pullError } = oms;
+  const { status, pull, previousPull, changedSincePull, pulling, pullError, saves, saving, saveError, lastSaveId } = oms;
+  const latestSave = saves.kind === 'ready' ? saves.latest : null;
+  /** The current pull against the newest SAVE for the week — what saving now would change. */
+  const saveDiff = useMemo(() => {
+    if (!pull || !latestSave) return null;
+    return diffOmsPulls(
+      latestSave.rows.map((r, i) => ({ line: i + 1, payWeek: r.omsPayWeek ?? '', email: r.omsEmail, hours: r.omsHoursRaw })),
+      pull.rows,
+    );
+  }, [pull, latestSave]);
+  const canSave = !!pull && !!resolved && !!weekStart && !saving && !pulling && saves.kind !== 'table_missing' && pull.rows.length > 0;
+  const saveBlockedReason =
+    saves.kind === 'table_missing' ? saves.reason
+    : !pull ? 'Load hours first'
+    : pull.rows.length === 0 ? 'Nothing to save — OMS returned no rows'
+    : null;
+  const onSave = async () => {
+    if (!pull || !resolved || !weekStart) return;
+    const payload = buildOmsSavePayload({
+      weekStart,
+      sourceFile,
+      mode: testMode || isReplay ? 'test' : 'live',
+      pull,
+      resolved,
+    });
+    const landed = await oms.save(payload);
+    if (landed) {
+      toast.success(`Saved ${payload.rows.length} OMS ${payload.rows.length === 1 ? 'row' : 'rows'} to the HRIS`, {
+        description: 'A snapshot in orphanage_oms_hours — nothing on the Additions column changed.',
+      });
+    }
+  };
   /** What a re-load changed against the pull it replaced. Null until a second pull. */
   const pullDiff = useMemo(
     () => (pull && previousPull ? diffOmsPulls(previousPull.rows, pull.rows) : null),
@@ -345,6 +384,69 @@ export default function OrphanageOmsPanel({
                   {pull.rows.length} {pull.rows.length === 1 ? 'row' : 'rows'} pulled {ago(new Date(pull.pulledAt).toISOString(), now) ?? ''}
                 </span>
               </div>
+
+              {/* Save to the HRIS's own table. Append-only snapshot; allowed in TEST because
+                  it is not money. The line beneath says what the week's newest save is and
+                  what saving now would change against it. */}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-2.5 dark:border-indigo-900/50 dark:bg-indigo-950/20">
+                <div className="min-w-0 text-[12.5px] text-indigo-900 dark:text-indigo-200">
+                  {saves.kind === 'table_missing' ? (
+                    <span className="inline-flex items-start gap-1.5">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                      <span><span className="font-semibold">Saving is not ready.</span> {saves.reason}</span>
+                    </span>
+                  ) : saves.kind === 'error' ? (
+                    <span className="inline-flex items-start gap-1.5">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-600 dark:text-rose-400" />
+                      <span>Could not read saves — {saves.reason}</span>
+                    </span>
+                  ) : latestSave ? (
+                    <span className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="font-semibold">
+                        {lastSaveId && latestSave.saveId === lastSaveId ? 'Saved just now' : `Last saved ${ago(latestSave.savedAt, now) ?? ''}`}
+                      </span>
+                      <span className="opacity-80">
+                        by {latestSave.savedBy} · {latestSave.rows.length} {latestSave.rows.length === 1 ? 'row' : 'rows'} ({latestSave.matched} matched · {formatPHP(latestSave.totalPhp)}) · {latestSave.mode}
+                      </span>
+                      {saveDiff && (
+                        saveDiff.total === 0 ? (
+                          <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
+                            <CheckCircle2 className="h-3.5 w-3.5" /> this pull matches it
+                          </span>
+                        ) : (
+                          <span className="font-medium text-amber-700 dark:text-amber-300">
+                            saving now changes {saveDiff.total}:
+                            {saveDiff.added.length > 0 && ` +${saveDiff.added.length}`}
+                            {saveDiff.changed.length > 0 && ` ~${saveDiff.changed.length}`}
+                            {saveDiff.removed.length > 0 && ` −${saveDiff.removed.length}`}
+                          </span>
+                        )
+                      )}
+                    </span>
+                  ) : saves.kind === 'ready' ? (
+                    <span><span className="font-semibold">Never saved</span> for this week — Save keeps a copy of this pull in the HRIS.</span>
+                  ) : (
+                    <span className="opacity-80">Save keeps a copy of this pull in the HRIS&apos;s own table — not the pay column.</span>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void onSave()}
+                  disabled={!canSave}
+                  title={saveBlockedReason ?? undefined}
+                  className="h-8 gap-2 border-indigo-300 px-3 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-700 dark:text-indigo-300 dark:hover:bg-indigo-950/40"
+                >
+                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  {saving ? 'Saving…' : 'Save to HRIS'}
+                </Button>
+              </div>
+              {saveError && saves.kind !== 'table_missing' && (
+                <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50/70 px-3 py-2 text-[12.5px] text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>Save failed — {saveError}</span>
+                </div>
+              )}
 
               {/* What this re-load changed against the pull it replaced. Person is the
                   unit: added / removed / hours changed. Silent until a second pull. */}

@@ -64,3 +64,13 @@ client), `selectAllPaged`, `motion/react`, `node --import tsx --test`.
 - [ ] `docs/features/orphanage-oms-pull.md` · `orphanage-pay-step.md` cross-link ·
   INDEX row 39 · `docs/reference/api-reference.md` + `components.md` rows ·
   memory `orphanage-oms-pull` + `MEMORY.md` pointer.
+
+## Task 7 — Save to the HRIS (approved 2026-09-16, both recommendations: append-only · raw + resolved)
+
+- [x] `references/sql/create/2026-09-16_orphanage_oms_hours.sql` — RLS on, 4 CHECKs, normalising trigger
+- [x] `scripts/apply-orphanage-oms-hours-migration.mts` — dry/apply/verify, constraint controls
+- [x] `src/lib/oms/oms-save.ts` (+ test) — payload builder + route validation
+- [x] `src/lib/supabase/orphanage-oms-hours-db.ts` — probe · batched insert · latest per week (paged)
+- [x] `app/api/orphanage-pay/oms/saves/route.ts` — GET view · POST edit · audit `wizard.orphanage_oms_saved`
+- [x] panel Save button + "Last saved" + "saving now changes N" · hook `save` / `loadLatestSave`
+- [ ] **Kane runs** `--apply` (PENDING)
