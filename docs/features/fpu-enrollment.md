@@ -133,6 +133,8 @@ before a previous stint's `closed_on` is refused (400) and the toast names the p
 whose rate rows carry no `Work Email` match is reported under `noRateRow` — the FPU date had
 nowhere to land and HR has to chase it.
 
+**What happens after the class.** Once enrollment is closed, the seated enrollees are divided into groups, a leader marks weekly attendance, and closing the CLASS publishes the eligible/ineligible split and opens MESA for the eligible — [fpu-groups-attendance.md](fpu-groups-attendance.md). The bulk **Mark completed** action still exists and now carries the same attendance gate, so it cannot enrol a non-attender either.
+
 **What this retired.** The HR **Opt-in Requests** sub-tab is gone and the employee Request form
 **no longer offers Opt-in** (`REQUEST_TYPE_TABS` excludes it). `POST /api/mesa-requests` still
 accepts `opt_in` — the derived "Opt-in" history line and the type union are unchanged — but

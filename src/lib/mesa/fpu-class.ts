@@ -25,11 +25,20 @@ export interface FpuClass {
    *  governs. Set = closed from that day whatever the dates say. */
   enrollment_closed_on?: string | null;
   enrollment_closed_by?: string | null;
+  /** Manila date the CLASS was closed — its end date arrived, the eligible split
+   *  was published and the eligible were enrolled in MESA (2026-09-17). Distinct
+   *  from enrollment_closed_on, which only stops people signing up. */
+  class_closed_on?: string | null;
+  class_closed_by?: string | null;
 }
 
 export type FpuClassPhase = 'upcoming' | 'open' | 'closed';
 
-export const FPU_ENROLLMENT_STATUSES = ['pending', 'approved', 'denied', 'completed'] as const;
+// 'failed' (2026-09-17): the class ended and this person missed a session, so
+// they are not eligible for MESA THIS class. Terminal, but per-class — it
+// deliberately does NOT stamp mesa_fpu_completed_on, so a later batch is open
+// to them (Kane, Q2).
+export const FPU_ENROLLMENT_STATUSES = ['pending', 'approved', 'denied', 'completed', 'failed'] as const;
 export type FpuEnrollmentStatus = (typeof FPU_ENROLLMENT_STATUSES)[number];
 
 /** The generated code, always: "FPU 2026 · Batch 1". */

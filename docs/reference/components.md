@@ -1186,6 +1186,10 @@ The **MESA** tab (Medical Emergency Savings Account). Two sub-tabs: **MESA Eligi
 
 HR → MESA → **FPU Classes** (2026-09-16 rewrite). A **class strip** (one chip per class: `FPU 2026 · Batch 1`, phase pill Open / Upcoming / Closed, pending count; **+ New class**), the selected class's header (window · class dates · schedule · Edit · Delete when empty), status filter chips + search, and the enrollment table with **checkbox multi-select** (`src/components/mesa/bulk-selection.tsx`). Bulk bar: **Approve** / **Deny** / **Reset** (`PATCH /api/hr/fpu-enrollments`) and **Mark completed** (approved rows only → `POST /api/hr/fpu-enrollments/complete`, then `POST /api/toggle-mesa-member` per returned `toEnroll` row). Tenure column recomputes `start_date_used + 3 months` against the class start and flags amber if the class start moved. Off-GML rows are badged, not hidden. Doc: [fpu-enrollment.md](../features/fpu-enrollment.md).
 
+### `src/components/hr/FpuGroupsPanel.tsx`
+
+HR → MESA → FPU Classes, under the enrollment table, shown once a class's enrollment is closed. Three states in order: **not divided** ("N have a seat" + people-per-group input → preview → Shuffle again / Confirm), **divided** (per-group card with a leader dropdown and a sessions × members attendance grid HR can click), **closed** (the split, final). "Close the class" previews the eligible/ineligible lists before it writes, then opens MESA for the eligible via `toggle-mesa-member`. Doc: [fpu-groups-attendance.md](../features/fpu-groups-attendance.md).
+
 ### `src/components/hr/DeptFilter.tsx`
 
 Shared compact department-filter dropdown used across the Overview roster, Onboarding queue, and Offboarding tables. Generic over row type (takes `rows` + a `getDept` accessor) and **derives the unique sorted department list itself**. Empty-string value = "All departments". Built on raw Base-UI `Select` primitives (the shadcn wrapper's defaults fight an in-trigger icon).
@@ -1476,6 +1480,10 @@ The core employee components (EmployeeApp, EmployeeSidebar, EmployeeDashboard, E
 ### `src/components/employee/EmployeeFpu.tsx`
 
 Employee → MESA → **FPU Class** (2026-09-16 rewrite; the previous form had been mounted nowhere). One class card (`GET /api/fpu-enroll?email=`): label, phase, enrollment window, class dates, schedule. Below it ONE line — the server's verdict painted (`fpuVerdict`) — and, when eligible, a shift field + **Enroll** (`POST /api/fpu-enroll`). An existing enrollment shows Pending / Approved / Denied (+ note) / Completed. Past classes list underneath. Doc: [fpu-enrollment.md](../features/fpu-enrollment.md).
+
+### `src/components/employee/EmployeeFpuGroup.tsx`
+
+Employee → MESA → FPU Class → "My group". Renders **nothing** until HR has divided the class. A member sees the roster at directory parity (short name + work email). A **leader** additionally gets a sessions × members grid with present/absent buttons, disabled for future sessions and for their own row (HR marks leaders). Data: `GET|POST /api/fpu-attendance`. Doc: [fpu-groups-attendance.md](../features/fpu-groups-attendance.md).
 
 ### `src/components/employee/EmployeeMesa.tsx`
 

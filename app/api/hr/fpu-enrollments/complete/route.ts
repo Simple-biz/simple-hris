@@ -11,7 +11,10 @@ import { getEmployeeHourlyRateRowByEmail } from '@/lib/supabase/employee-hourly-
 import { getOpenMesaAccount } from '@/lib/supabase/mesa-accounts';
 import { mesaEmailAliasesFor } from '@/lib/mesa/email-aliases';
 import { isCalendarDate } from '@/lib/mesa/enrollment-date';
-import { FPU_ENROLLMENTS_TABLE, FPU_ENROLLMENT_SELECT, isFpuNotMigrated, type FpuEnrollmentRow } from '@/lib/mesa/fpu-server';
+import { FPU_CLASSES_TABLE, FPU_CLASS_SELECT, FPU_ENROLLMENTS_TABLE, FPU_ENROLLMENT_SELECT, isFpuNotMigrated, type FpuClassRow, type FpuEnrollmentRow } from '@/lib/mesa/fpu-server';
+import { indexAttendance, listClassAttendance } from '@/lib/mesa/fpu-groups-server';
+import { fpuSessions } from '@/lib/mesa/fpu-sessions';
+import { fpuAttendanceVerdict } from '@/lib/mesa/fpu-attendance';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -33,6 +36,8 @@ export interface FpuCompleteResult {
   noRateRow: { email: string; full_name: string }[];
   /** Not `approved`, so not completed. */
   skipped: { id: string; email: string; status: string }[];
+  /** Approved, but did not attend every session — never completed, never enrolled. */
+  missedSessions: { id: string; email: string; full_name: string; reason: string }[];
   error: string | null;
 }
 
@@ -83,13 +88,55 @@ export async function POST(req: NextRequest) {
   }
   const rows = (loaded.data ?? []) as FpuEnrollmentRow[];
 
-  const out: FpuCompleteResult = { completed: [], toEnroll: [], alreadyMembers: [], noRateRow: [], skipped: [], error: null };
+  const out: FpuCompleteResult = { completed: [], toEnroll: [], alreadyMembers: [], noRateRow: [], skipped: [], missedSessions: [], error: null };
+
+  // ── the attendance gate ───────────────────────────────────────────────────
+  // Kane, 2026-09-17: "if they miss even once they will no longer be eligible for
+  // MESA." Completion is normally done wholesale by Close class, which derives
+  // this same verdict; the gate lives HERE too because this route is what
+  // actually stamps the FPU date and hands the client a toEnroll list, and a
+  // money path must not depend on which button was pressed. Unmarked fails
+  // closed. A class with no group/attendance data at all (nothing was ever
+  // marked, e.g. a class that predates this feature) is left to HR: the verdict
+  // only bites once the class has sessions AND somebody has marks.
+  const classIds = Array.from(new Set(rows.map((r) => r.class_id).filter((c): c is string => !!c)));
+  const attendanceByEnrollment = new Map<string, Map<number, boolean>>();
+  const sessionCountByClass = new Map<string, number>();
+  const classHasMarks = new Set<string>();
+  for (const cid of classIds) {
+    const [clsRes, marks] = await Promise.all([
+      sb.from(FPU_CLASSES_TABLE).select(FPU_CLASS_SELECT).eq('id', cid).maybeSingle(),
+      listClassAttendance(sb, cid),
+    ]);
+    if (!clsRes.error && clsRes.data) {
+      const list = fpuSessions(clsRes.data as FpuClassRow);
+      sessionCountByClass.set(cid, list.ok ? list.sessions.length : 0);
+    }
+    if (!marks.error && marks.rows.length > 0) {
+      classHasMarks.add(cid);
+      for (const [k, v] of indexAttendance(marks.rows)) attendanceByEnrollment.set(k, v);
+    }
+  }
   const actor = await getSessionActor();
 
   for (const r of rows) {
     if (r.status !== 'approved') {
       out.skipped.push({ id: r.id, email: r.email, status: r.status });
       continue;
+    }
+
+    if (r.class_id && classHasMarks.has(r.class_id)) {
+      const verdict = fpuAttendanceVerdict({
+        sessionCount: sessionCountByClass.get(r.class_id) ?? 0,
+        marks: attendanceByEnrollment.get(r.id) ?? new Map<number, boolean>(),
+        override: r.attendance_override ?? null,
+      });
+      if (verdict.outcome !== 'eligible') {
+        // No FPU date, no membership, and the row stays `approved` so Close class
+        // can record the outcome properly.
+        out.missedSessions.push({ id: r.id, email: r.email, full_name: r.full_name, reason: verdict.reason });
+        continue;
+      }
     }
 
     // 1. FPU date onto every rate row for this work email.

@@ -554,6 +554,48 @@ The pipeline INTO MESA — see [fpu-enrollment.md](../features/fpu-enrollment.md
 
 ---
 
+## 17. `fpu_class_groups` + `fpu_group_members` + `fpu_session_attendance` *(added 2026-09-17)*
+
+FPU class groups, their weekly session attendance, and the eligible split that opens MESA — see [fpu-groups-attendance.md](../features/fpu-groups-attendance.md). DDL: `references/sql/create/2026-09-17_fpu_groups_attendance.sql`, applied by `scripts/apply-fpu-groups-migration.mts` / `scripts/Apply FPU Groups migration.cmd` (**PENDING**). All three are RLS-enabled with no policies: service-role only, through gated routes.
+
+**`fpu_class_groups`** — one row per group per class.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | |
+| `class_id` | uuid FK → `fpu_classes` **on delete restrict** | |
+| `group_no` | smallint NOT NULL | 1..200, **unique per class**. The number IS the identity |
+| `leader_enrollment_id` | uuid FK → `fpu_enrollments` **on delete set null** | The row-level capability behind marking attendance. NULL = not appointed. Must be a member of this group (enforced by the route) |
+| `created_by/at`, `updated_by/at` | | `updated_at` bumped by the shared `fpu_classes_touch` trigger |
+
+**`fpu_group_members`** — one row per enrollment, for the life of the class.
+
+| Column | Type | Notes |
+|---|---|---|
+| `group_id` | uuid FK **on delete cascade** | |
+| `enrollment_id` | uuid FK **on delete cascade** | **UNIQUE on its own** — one seat in one group per class; a move UPDATEs this row |
+| `email` | text NOT NULL | Lower-cased by trigger; non-blank CHECK |
+| `left_on` / `left_reason` | date / text | A leaver is stamped, **never deleted**, so their marks stay truthful. Both or neither (CHECK `fpu_group_members_left_pair`) |
+
+**`fpu_session_attendance`** — one deliberate mark per person per session.
+
+| Column | Type | Notes |
+|---|---|---|
+| `enrollment_id` | uuid FK **on delete cascade** | Keyed on the PERSON, not the group, so a move never orphans a mark |
+| `class_id` | uuid FK **on delete restrict** | |
+| `session_no` | smallint NOT NULL | 1..52, against the sessions DERIVED from the class dates. **No sessions table exists** |
+| `present` | boolean **NOT NULL, no default** | TRUE = attended, FALSE = deliberately absent. **The absence of the ROW is "unmarked"** — a third state that fails closed |
+| `marked_by` | text NOT NULL | Non-blank CHECK. The leader, or HR |
+| `marked_at` / `note` | timestamptz / text | |
+
+**Unique:** `(enrollment_id, session_no)` — re-marking corrects, never stacks.
+
+**Also added by the same migration:** `fpu_classes.class_closed_on` / `class_closed_by` (both or neither) — the CLASS close, distinct from `enrollment_closed_on`; and on `fpu_enrollments` the status value **`failed`** plus `attendance_override` (`pass` | `fail`), `attendance_override_by` (both or neither), `_reason`, `_at`.
+
+**Who reads / writes:** `POST /api/hr/fpu-classes/groups/{preview,confirm,list}`, `PATCH .../groups/leader`, `POST /api/hr/fpu-classes/class-close` (all `requireFeatureAccess('hr','mesa', view|edit)`); `GET|POST /api/fpu-attendance` (self, or the leader of the target's group, or elevated). Reads page with `selectAllPaged`.
+
+---
+
 ## `app_settings` keys (payroll)
 
 Beyond `auth.force_logout_map` (§9), the wizard/dispatch flow stores two per-pay-period JSON keys in `app_settings`:

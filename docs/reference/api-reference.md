@@ -2426,6 +2426,33 @@ Gate: `authorizeEmailAccess`. Body `{ email?, shift_schedule_est }`. **Re-derive
 
 ---
 
+## 21. FPU groups, attendance and class close *(added 2026-09-17)*
+
+Governing doc: [fpu-groups-attendance.md](../features/fpu-groups-attendance.md). Every route answers `migrated: false` (503 on writes) until `scripts/Apply FPU Groups migration.cmd` has run, and every write broadcasts on the FPU live topic.
+
+### `POST /api/hr/fpu-classes/groups/preview`
+Gate: HR · MESA · edit. Body `{ class_id, per_group, roll? }`. **Writes nothing.** Returns `{ groups, seed, roll, perGroup, population, sessionCount }`. 409 when the class has no `class_ends_on` (no sessions can be derived) or is already divided.
+
+### `POST /api/hr/fpu-classes/groups/confirm`
+Gate: `…edit`. Body `{ class_id, per_group, roll }` — **the membership is re-derived from the seed, never read from the request**. Inserts groups then members; a member-insert failure rolls the groups back so a retry is a clean deal. 409 `alreadyDivided` once groups exist. Audits `fpu.groups.divided` with the whole membership.
+
+### `POST /api/hr/fpu-classes/groups/list`
+Gate: HR · MESA · **view**. Body `{ class_id }`. A POST that only reads, deliberately — its sibling `preview` is a POST for safety and the panel's two calls must not disagree on verb. Returns groups, members and every mark.
+
+### `PATCH /api/hr/fpu-classes/groups/leader`
+Gate: `…edit`. Body `{ group_id, enrollment_id: string | null }`. The leader must be a member of that group and must not have left; `null` clears. Audits `fpu.groups.leader_set` / `_cleared`.
+
+### `GET /api/fpu-attendance?email=`
+Gate: `authorizeEmailAccess` (self or elevated). The viewer's group, its roster at directory parity, the derived sessions, which are markable today, and the marks they may see — own only, or the whole group if they lead it.
+
+### `POST /api/fpu-attendance`
+Gate: **elevated, or the leader of the target's group**, re-derived server-side every call. Body `{ enrollment_id, session_no, present, note? }`. Refuses: a leader marking themselves (403), a person outside their group (403), a session that has not happened or does not exist (409), a closed class (409). Idempotent per `(person, session)`. Audits `fpu.attendance.marked`.
+
+### `POST /api/hr/fpu-classes/class-close`
+Gate: `…edit`. Body `{ class_id, confirm }`. `confirm: false` returns the eligible/ineligible split and `unmarkedTotal` **without writing**. `confirm: true` stamps `mesa_fpu_completed_on` (= `class_ends_on`) for the eligible only, marks them `completed` and the rest `failed`, stamps `class_closed_on`, and returns `toEnroll` for the client to walk through `toggle-mesa-member`. Audits `fpu.class.closed` with the whole split.
+
+---
+
 ## Error Handling
 
 All endpoints follow a consistent error pattern:

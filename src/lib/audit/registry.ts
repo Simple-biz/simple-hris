@@ -352,7 +352,7 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     match: 'fpu.',
     surfaces: ['hr', 'employee'],
     label: 'FPU enrolment',
-    note: 'enroll (employee) · class.created/updated/deleted/enrollment_closed/enrollment_reopened · enrollment.approved/denied/reset/completed/deleted',
+    note: 'enroll (employee) · class.created/updated/deleted/enrollment_closed/enrollment_reopened/closed · enrollment.approved/denied/reset/completed/deleted · groups.divided/leader_set/leader_cleared · attendance.marked',
   },
 
   // ── Roster, departments & transfers ────────────────────────────────────────

@@ -24,7 +24,7 @@ const UNIQUE_VIOLATION = '23505';
 
 export type FpuClassCounts = Record<FpuEnrollmentStatus, number>;
 
-const zeroCounts = (): FpuClassCounts => ({ pending: 0, approved: 0, denied: 0, completed: 0 });
+const zeroCounts = (): FpuClassCounts => ({ pending: 0, approved: 0, denied: 0, completed: 0, failed: 0 });
 
 /**
  * GET /api/hr/fpu-classes — every class, newest first, with per-status

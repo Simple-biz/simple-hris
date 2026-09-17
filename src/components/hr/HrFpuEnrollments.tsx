@@ -55,6 +55,7 @@ import {
 } from '@/lib/mesa/fpu-class';
 import { fpuEligibleFrom } from '@/lib/mesa/fpu-eligibility';
 import { useFpuLive } from '@/hooks/useFpuLive';
+import FpuGroupsPanel from './FpuGroupsPanel';
 
 type Counts = Record<FpuEnrollmentStatus, number>;
 
@@ -90,6 +91,7 @@ const STATUS_LABEL: Record<FpuEnrollmentStatus, string> = {
   approved: 'Approved',
   denied: 'Denied',
   completed: 'Completed',
+  failed: 'Missed sessions',
 };
 
 async function readJson<T>(res: Response): Promise<T> {
@@ -457,7 +459,7 @@ export default function HrFpuEnrollments() {
           {/* Filters */}
           <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
             <div className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60">
-              {(['all', 'pending', 'approved', 'denied', 'completed'] as StatusFilter[]).map((s) => {
+              {(['all', 'pending', 'approved', 'denied', 'completed', 'failed'] as StatusFilter[]).map((s) => {
                 const n = s === 'all' ? rows.length : rows.filter((r) => r.status === s).length;
                 return (
                   <button
@@ -584,6 +586,14 @@ export default function HrFpuEnrollments() {
       )}
 
       <AnimatePresence>
+      {selected && fpuClassClosedEarly(selected) && (
+        <FpuGroupsPanel
+          cls={selected}
+          seats={rows.filter((r) => r.status === 'approved')}
+          onChanged={refreshAll}
+        />
+      )}
+
       {classDialog && (
         <ClassDialog
           key="class"
@@ -671,15 +681,20 @@ function PhasePill({ phase }: { phase: 'upcoming' | 'open' | 'closed' }) {
 }
 
 function StatusBadge({ status }: { status: FpuEnrollmentStatus }) {
-  const map = {
+  // Record<FpuEnrollmentStatus, …>, not a bare literal indexed by the status: a
+  // new status must fail to COMPILE here rather than render `undefined.cls` at
+  // someone's desk, which is exactly what adding 'failed' would have done.
+  const map: Record<FpuEnrollmentStatus, { cls: string; Icon: React.ComponentType<{ className?: string }> }> = {
     pending: { cls: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200', Icon: Clock },
     approved: { cls: 'border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-200', Icon: CheckCircle2 },
     denied: { cls: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/15 dark:text-rose-200', Icon: XCircle },
     completed: { cls: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-200', Icon: Award },
-  }[status];
+    failed: { cls: 'border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-500/50 dark:bg-amber-500/25 dark:text-amber-100', Icon: AlertTriangle },
+  };
+  const entry = map[status];
   return (
-    <Badge variant="outline" className={cn('text-[10.5px] font-semibold uppercase tracking-wide', map.cls)}>
-      <map.Icon className="mr-1 h-3 w-3" /> {STATUS_LABEL[status]}
+    <Badge variant="outline" className={cn('text-[10.5px] font-semibold uppercase tracking-wide', entry.cls)}>
+      <entry.Icon className="mr-1 h-3 w-3" /> {STATUS_LABEL[status]}
     </Badge>
   );
 }

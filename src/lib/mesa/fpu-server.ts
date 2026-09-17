@@ -52,13 +52,18 @@ export interface FpuEnrollmentRow {
   reviewed_at: string | null;
   review_notes: string | null;
   completed_on: string | null;
+  /** HR's explicit ruling over the computed attendance verdict (2026-09-17). */
+  attendance_override: 'pass' | 'fail' | null;
+  attendance_override_by: string | null;
+  attendance_override_reason: string | null;
+  attendance_override_at: string | null;
 }
 
 export const FPU_CLASS_SELECT =
-  'id, year, batch, opens_on, closes_on, class_starts_on, class_ends_on, schedule_note, name, enrollment_closed_on, enrollment_closed_by, created_by, created_at, updated_at';
+  'id, year, batch, opens_on, closes_on, class_starts_on, class_ends_on, schedule_note, name, enrollment_closed_on, enrollment_closed_by, class_closed_on, class_closed_by, created_by, created_at, updated_at';
 
 export const FPU_ENROLLMENT_SELECT =
-  'id, email, full_name, department, shift_schedule_est, created_at, class_id, status, start_date_used, reviewed_by, reviewed_at, review_notes, completed_on';
+  'id, email, full_name, department, shift_schedule_est, created_at, class_id, status, start_date_used, reviewed_by, reviewed_at, review_notes, completed_on, attendance_override, attendance_override_by, attendance_override_reason, attendance_override_at';
 
 type Sb = SupabaseClient;
 

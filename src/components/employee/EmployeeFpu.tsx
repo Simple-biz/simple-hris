@@ -17,6 +17,7 @@ import { formatDateOnly } from '@/lib/date-only';
 import { fpuClassCode, fpuClassLabel, fpuClassPhase, type FpuClass, type FpuEnrollmentStatus } from '@/lib/mesa/fpu-class';
 import type { FpuVerdict } from '@/lib/mesa/fpu-eligibility';
 import { useFpuLive } from '@/hooks/useFpuLive';
+import EmployeeFpuGroup from './EmployeeFpuGroup';
 
 interface Enrollment {
   id: string;
@@ -182,6 +183,9 @@ export default function EmployeeFpu({ employeeEmail }: Props) {
           )}
         </CardContent>
       </Card>
+
+      {/* My group — renders nothing until HR has divided the class. */}
+      <EmployeeFpuGroup employeeEmail={employeeEmail} />
 
       {past.length > 0 && (
         <Card className="border-zinc-200/80 dark:border-zinc-800">
