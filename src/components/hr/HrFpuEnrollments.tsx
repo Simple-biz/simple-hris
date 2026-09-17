@@ -30,6 +30,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DatePicker } from '@/components/ui/date-picker';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { formatDateOnly } from '@/lib/date-only';
@@ -540,8 +541,10 @@ export default function HrFpuEnrollments() {
         </Card>
       )}
 
+      <AnimatePresence>
       {classDialog && (
         <ClassDialog
+          key="class"
           mode={classDialog.mode}
           cls={classDialog.mode === 'edit' ? classDialog.cls : null}
           classes={classes}
@@ -557,6 +560,7 @@ export default function HrFpuEnrollments() {
 
       {completeOpen && selected && (
         <CompleteDialog
+          key="complete"
           count={sel.selectedRows.length}
           defaultDate={selected.class_ends_on ?? today}
           busy={busy}
@@ -566,7 +570,7 @@ export default function HrFpuEnrollments() {
       )}
 
       {confirmDeleteEntries && (
-        <Overlay onClose={() => setConfirmDeleteEntries(false)}>
+        <Overlay key="delete-entries" onClose={() => setConfirmDeleteEntries(false)}>
           <h3 className="text-base font-bold text-zinc-900 dark:text-white">Delete {sel.selectedRows.length} {sel.selectedRows.length === 1 ? 'entry' : 'entries'}?</h3>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
             Removes them from {selected ? fpuClassLabel(selected) : 'this class'}. Each person can enroll again while the window is open. Nothing else changes.
@@ -587,7 +591,7 @@ export default function HrFpuEnrollments() {
       )}
 
       {confirmDelete && (
-        <Overlay onClose={() => setConfirmDelete(null)}>
+        <Overlay key="delete-class" onClose={() => setConfirmDelete(null)}>
           <h3 className="text-base font-bold text-zinc-900 dark:text-white">Delete {fpuClassLabel(confirmDelete)}?</h3>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">It has no enrollments. This cannot be undone.</p>
           <div className="mt-4 flex justify-end gap-2">
@@ -596,6 +600,7 @@ export default function HrFpuEnrollments() {
           </div>
         </Overlay>
       )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -634,13 +639,54 @@ function Notice({ tone, children }: { tone: 'amber' | 'rose'; children: React.Re
   return <div className={cn('rounded-lg border px-4 py-2.5 text-xs leading-relaxed', cls)}>{children}</div>;
 }
 
+/**
+ * The dialogs' shared shell. One motion idea, carried by every dialog here: the
+ * page recedes (backdrop fades and blurs in) while the panel arrives from just
+ * below and settles — a confident exponential ease-out, no bounce — and leaves
+ * faster than it came, so a cancel never feels like waiting. Reduced motion
+ * keeps the fades (state still reads) and drops the travel.
+ */
+const OVERLAY_EASE = [0.16, 1, 0.3, 1] as const;
+const OVERLAY_ENTER_S = 0.28;
+const OVERLAY_EXIT_S = 0.16;
+
 function Overlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  const reduce = useReducedMotion();
+  // Escape closes, the same as a click on the backdrop.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950" onClick={(e) => e.stopPropagation()}>
+    <motion.div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      style={{ backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0, transition: { duration: OVERLAY_EXIT_S, ease: [0.4, 0, 1, 1] } }}
+      transition={{ duration: reduce ? 0.15 : OVERLAY_ENTER_S, ease: OVERLAY_EASE }}
+      onClick={onClose}
+    >
+      <motion.div
+        role="dialog"
+        aria-modal="true"
+        className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+        initial={reduce ? { opacity: 0 } : { opacity: 0, y: 14, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{
+          ...(reduce ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.985 }),
+          transition: { duration: OVERLAY_EXIT_S, ease: [0.4, 0, 1, 1] },
+        }}
+        transition={{ duration: reduce ? 0.15 : OVERLAY_ENTER_S, ease: OVERLAY_EASE }}
+        onClick={(e) => e.stopPropagation()}
+      >
         {children}
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
