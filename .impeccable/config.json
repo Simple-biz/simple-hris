@@ -83,6 +83,15 @@
         ],
         "createdAt": "2026-09-16T21:25:08.344Z",
         "reason": "Claude, evidence: both hits are zinc text on bg-white with only a hover tint (hover:bg-teal-50/40, hover:bg-zinc-100); same pattern as AccountingMesa ViewTabButton and HrMesa SubTabButton"
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/components/admin/AdminExternalApiClients.tsx"
+        ],
+        "createdAt": "2026-09-17T07:37:52.374Z",
+        "reason": "session 675a6e09: false positive — RowBtn danger tone pairs text-zinc-500 with hover:bg-rose-50 AND hover:text-rose-700, so gray never sits on the rose background"
       }
     ]
   }
