@@ -702,9 +702,9 @@ import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-09-16';
-export const AUDIT_RANGE = '9803bba6..1f7e2078 (Sep 13 - Sep 16)';
-export const AUDIT_COMMITS = 63;
+export const PASS_DATE = '2026-09-17';
+export const AUDIT_RANGE = 'board status sweep (rows shipped Sep 1 - Sep 4)';
+export const AUDIT_COMMITS = 0;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -731,302 +731,169 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // ── PASS 28 · 2026-09-16 · "All withheld SP please push them to monday" ────────────────────────
+  // —── PASS 30 · 2026-09-17 · "mark these all as done and deployed" ────────────────────────────────────────
   //
-  // WITHHELD WAS MEASURED IN ALL THREE WAITING ROOMS, the way pass 24 established:
-  //   · pending-sp.json ......... 42 entries, 0 unflushed — the ledger owes NOTHING.
-  //   · a staged, unapplied pass . pass 27 APPLIED and VERIFIED 2026-09-13 — owes nothing.
-  //   · commits with no row ...... 63 commits, 9803bba6..1f7e2078 — THIS PASS. All the withheld SP
-  //     is here, in the third room.
+  // A STATUS SWEEP, not a commit audit. Kane sent a screenshot of the board's Pending Deploy column
+  // and said to close it. The board held 22 Pending Deploy rows of ours (330 Done, 4 Ready to Start).
   //
-  // CLUSTERED BY FILE OVERLAP, NEVER BY COMMIT MESSAGE, and this range is exactly why: `1d418b4a`
-  // ("S") carries 37 files and two unrelated features, `f2b797e0` ("Paystub") carries the Offboarded
-  // fixer override AND the leaver-department rule, `e5411cbf` ("Manager Dashboard") carries the QC
-  // officers module and nothing about the manager dashboard, `9c674472` ("c") and `40d0bc1c` ("tt")
-  // carry an audio asset and a build artefact respectively. `40d0bc1c` is pure noise and gets NO row.
+  // WHAT THIS PASS DOES NOT TOUCH, and why — the gate's answer to a blanket Done is to ask which
+  // ones, so five of the 22 are deliberately left where they are:
   //
-  // SPRINT 29's WINDOW WAS RE-MIRRORED, and it moves ten rows. The live group title read
-  // "Sprint 29 · Sep 15-Sep 25" on 2026-09-16; pass 27 recorded "Sep 14-Sep 25". The BOARD owns that
-  // range, so hris-plan.ts now says Sep 15 — which re-bounds S28's attribution to Sep 1-14 and files
-  // Sun Sep 13 + Mon Sep 14 under S28. FLAGGED FOR KANE: if the board title is the typo and Sep 14 is
-  // right, ten rows move to S29 and this is a one-line change plus a re-review.
+  //   · Scheduling inside the HSL department .. employee_schedule_periods MEASURED ABSENT 09-17
+  //   · Paystub reissue ....................... paystub_issues MEASURED ABSENT 09-17
+  //   · Lead Gen QC first-pass restore ........ script un-run; Kane's payability ruling outstanding
+  //   · Aliased MESA member ................... jimg@ fixed, dales@ STILL un-deducted
+  //   · Tickets update notifications .......... its work finished 2026-08-21, which is SPRINT 27,
+  //     but the row is filed S28. selfcheck REFUSES a Completed Date outside its sprint, and the fix
+  //     is a sprint re-file that only a FULL reconcile can write — still barred by the 12 deleted
+  //     Q2 epics. Held, and reported, rather than back-dated into a window it does not belong to.
   //
-  // FOUR CLAIMS WERE MEASURED READ-ONLY RATHER THAN ASSUMED, with negative controls that both
-  // correctly reported MISSING, and probed with .limit(1) — never head:true:
-  //   · employee_schedule_periods ................ MISSING. HSL Scheduling is code-complete and DEAD.
-  //   · time_adjustment_requests.stage1_waived_reason PRESENT. The "MIGRATION PENDING" note is STALE.
-  //   · paystub_issues ........................... MISSING still. The pass-27 row stays held.
-  //   · Lead Gen QC restore ...................... STILL UN-RUN (192 rows both at zero).
-  // Two data fixes were measured APPLIED and are the only rows this pass can close on its own
-  // evidence: the catalog override now reads 280 (updated 2026-09-15T17:31Z) and the 09-10
-  // adjustment's approved_hours is NULL (updated 2026-09-15T15:54Z).
+  // The 4 Ready to Start rows are NOT in this pass either: they are unstarted work, not undeployed
+  // work, and Kane's screenshot showed the Pending Deploy column.
   //
-  // NOTHING ELSE IS DONE, AND THAT IS DELIBERATE. Kane has not been asked which of these he has
-  // clicked through in production. 29 rows sit at Pending Deploy with that stated as the reason; one
-  // sits at In Progress because it is UNPUSHED; one sits at Waiting for Review because it is a
-  // blueprint awaiting his answers. Ask, then close them — do not blanket-apply an old confirmation.
+  // TWO MORE "PENDING" CLAIMS MEASURED STALE, both read-only 09-17:
+  //   · the orphanage interns migration is APPLIED (all six tables present)
+  //   · webhooks.config now carries ticket_replied AND ticket_moved (25 entries, was 22)
+  // The second belongs to the Tickets row, which is held for the sprint reason above — its external
+  // step is no longer what holds it.
+  //
+  // EVERY DATE IS RECOVERED, NOT TYPED. The rows predate this pass, so their sha lists were read back
+  // out of the git history of pass.mts itself, and selfcheck re-derives each date from git.
   {
-    name: 'The expanded Payment Dispatch row shows the backup account as data, not as a second card that would imply where the money goes',
-    status: 'Pending Deploy',
-    shas: ['d760870e'],
-    basis:
-      'An ancestor of origin/main, so Vercel has served it, but nobody has confirmed clicking through it. The backup is rendered as a ROW and never as a second card — a card facing forward implies routing, which is the rule [[employee-payout-card-deck]] and [[bank-preferred-is-routing-do-not-seed]] both turn on. Gated on DATA: no backup slot, no row. BACKUP is never read off `alt`.',
-  },
-  {
-    name: 'My Team picks a department on a vertical rail that is the outer axis for all three tabs, and the selection glides instead of reappearing elsewhere',
-    status: 'Pending Deploy',
-    shas: ['4cf697ce', '652cccae', '7f377005', 'a42139e8'],
-    basis:
-      'Four commits, one surface: the rail replaces filtering everything on one page, then becomes the OUTER axis for all three My Team tabs, then the selection glides rather than reappearing elsewhere, then the tab opens on the list rather than the cards. There is deliberately NO "All" option. On origin/main, not confirmed live. OPEN and recorded rather than resolved: the rail uses a spring where ui-standards specifies an ease — that deviation is written down in ui-standards.md, not ratified.',
-  },
-  {
-    name: 'The AI/API Team rankings render on My Team for the one person allowed to read them, as a tier and never as pesos',
-    status: 'Pending Deploy',
-    shas: ['7420f38b'],
-    basis:
-      'The rankings pane is shared with the employee team directory, and the disclosure rule from [[employee-team-directory-rankings-policies]] holds on both: a TIER is shown, never pesos, and the one-name gate stands. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'The QC period key must be a Sunday, and the boundary enforces it before the deal rather than after the write',
-    status: 'Pending Deploy',
-    shas: ['b5178dd1'],
-    basis:
-      'The real defect is that `GET /api/qc/assignments` WRITES, so a non-Sunday period key did not merely read wrong — it MINTED phantom periods. The guard now runs BEFORE the deal. The phantom periods already created were LEFT rather than swept, deliberately: deleting dealt periods is a bigger action than this row, and it is named here so the next reader does not assume they were cleaned up. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'The QC weekly deal reads the roster as of the scored week instead of as of today, so scoring a week late no longer deals it to the wrong people',
-    status: 'Pending Deploy',
-    shas: ['5c7fdf17'],
-    basis:
-      'Slots are the roster AS OF THE SCORED WEEK. Scored 5, not 3: it is a new dated module with its own test file, and it changes who gets paid for a late-scored week. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'QC officers are the QC department read from the roster rather than a role flag, and a week already dealt stays frozen',
-    status: 'Pending Deploy',
-    shas: ['e5411cbf', '08835b5d'],
-    basis:
-      'Officers are the QC DEPARTMENT, read off the roster. The code landed in `e5411cbf`, whose message says "Manager Dashboard" and which contains no manager dashboard change at all — clustered on the file list, not the subject. A DEALT WEEK IS FROZEN, which is what makes widening the read safe: it can never re-deal one. This is also why granting the `qc` role is NOT the way to give someone QC management — see [[qc-manager-role-does-not-exist]]. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'An offboarded person is scoreable for their final pay week and no others, and one dated predicate decides it instead of the active roster',
-    status: 'Pending Deploy',
-    shas: ['736e9652', 'fcda5aac'],
-    basis:
-      'Two commits closing one hole from both ends: people who have already left stop appearing in the KPI Calculator, and an offboarded person stays scoreable for their FINAL PAY WEEK and no others. The load-bearing fact is that `active_employees` CANNOT say who left — so ONE dated predicate, `hasDepartedBeforeWeek`, decides it everywhere rather than each surface inferring departure from absence. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'Active and Offboarded tiles sit in the KPI Calculator toolbar and count this week rather than the whole roster',
-    status: 'Pending Deploy',
-    shas: ['88227b8e', 'f763a8fd'],
-    basis:
-      'Added above the member table, then moved into the toolbar and re-pointed at THIS WEEK. Both tiles count `allMembers`. Scored 2 — display over an existing derivation, no money path. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'The QC Compare panel scrolls per column and yields to the department table, and an off-table refusal names the person instead of guessing why',
-    status: 'Pending Deploy',
-    shas: ['4b5eceb0', 'c197ddf1', '09877735', '85570090'],
-    basis:
-      'Four commits on one panel: it scrolls, each column scrolls on its own with a taller paste box, the department table keeps a floor, and an `off_table` refusal NAMES THE PERSON and says what to do instead of guessing at a reason. The rule underneath it is that a first pass is NOT payable. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'The QC Compare sheet is shared per department-week through app settings, so two officers work one sheet instead of two',
-    status: 'Pending Deploy',
-    shas: ['c8e01d27'],
-    basis:
-      'Shared per dept-week via `app_settings`, with a new route, an audit registry entry and a test module — scored 5. The `qc` role is NOT a reader of it, which is intentional and is the kind of thing that reads as a bug later. OPEN and unresolved: the published week. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'A per-card Refresh saves pending edits where the toolbar Refresh discards them, and the Compare sheet gains Delete all',
-    status: 'Pending Deploy',
-    shas: ['3c909c7e'],
-    basis:
-      'The distinction is the whole feature: per-card Refresh SAVES pending edits, the toolbar Refresh SKIPS them, and QC mode refuses outright. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'Add N missing as externals pulls sheet and QC people off the table keyed to pay, and marks the ones it refuses as problems',
-    status: 'Pending Deploy',
-    shas: ['1a018ad7'],
-    basis:
-      'The pay key is PER SOURCE. Someone not on the GML is never silently added — the PROBLEM is surfaced instead, which is the failure-closed half of the feature and the reason it is 3 and not 2. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'A Google Sheet sync can no longer un-write an offboard — the re-activation path is removed and the roster backfilled',
-    status: 'Pending Deploy',
-    shas: ['ca4ce3e8'],
-    basis:
-      '`clearOffboarded` re-activated leavers on every sheet sync — a data-integrity defect that silently resurrected departed people. The path is REMOVED with a regression test pinning it, and the backfill was APPLIED, taking the active roster from 1,373 to 1,195. Priority Critical because it was actively corrupting the roster every sync. The data half is done; the code half is on origin/main and not confirmed live.',
-  },
-  {
-    name: 'Scheduling moves inside the HSL department and starts saving, gated on the scheduling grant rather than team membership',
-    status: 'Pending Deploy',
-    shas: ['7cf94aa5'],
-    basis:
-      'Gated on `scheduling`, NOT `team` — the distinction matters because the two grants do not overlap. HELD at Pending Deploy on a MEASUREMENT, not on a doc claim: `public.employee_schedule_periods` was probed read-only on 2026-09-16 with .limit(1) (never head:true, which returns no error for a missing table) against a negative control that correctly reported MISSING, and the table is ABSENT from production. The feature is code-complete and saves nothing. An assertion cannot create a table.',
-    blockers: [
-      'references/sql/create/2026-09-14_employee_schedule_periods.sql has NOT been run — measured 2026-09-16, public.employee_schedule_periods absent from production. Ship it with scripts/apply-employee-schedules-migration.mts.',
-    ],
-  },
-  {
-    name: 'The Offboarded list shows the inbox that still reaches a leaver once the work account is gone',
-    status: 'Pending Deploy',
-    shas: ['373f47a0'],
-    basis:
-      'Thirty lines against an existing list. Scored 1. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'Lead Gen’s QC first pass never reached the applied rows — the gap is measured and the restore is built behind an apply gate',
-    status: 'Pending Deploy',
-    shas: ['b6711973', '89f2d0e6', '8307df6e'],
-    basis:
-      'Lead Gen 2026-09-06 pays PHP 38,000 where QC scored PHP 124,750. Four probe scripts measured the gap and a restore was built behind an --apply gate. RE-MEASURED 2026-09-16 with the probe rather than trusted from the note: the gap is STILL OPEN — 192 people at zero on both sides, 119 matching, and the applied rows were last written by carla@ at 2026-09-15T15:16Z. The restore has not been run. This is money that has not moved, and it is an OPEN RULING for Kane, not a decision this pass makes.',
-    blockers: [
-      'scripts/restore-lead-gen-qc-first-pass.mts --apply has NOT been run — re-measured 2026-09-16, 192 rows still zero on both sides. Kane rules on whether a first pass is payable before it runs.',
-    ],
-  },
-  {
-    name: 'The QC start meeting and four findings it settled — no QC Manager role exists, the transferred status cannot fire, an absent officer does not block the week',
+    name: 'Generate COE from the Signing Queue — accounting issues and signs on the employee’s behalf',
     status: 'Done',
-    completed: '2026-09-14',
-    shas: ['5cc6f4b3', '8733d8e1', 'a8b48cf3', '0dd5d1b4', '1a3046bb'],
+    completed: '2026-09-01',
+    shas: ['6d16bd70', '604abd10'],
     basis:
-      'A Spike closes on DELIVERY plus USE, the way the 2026-09-09 security readiness Spike did — its deliverable is a record, and four measured findings are that record. Each was settled against the live system on 2026-09-14, not asserted: there is no QC Manager role to flip on (granting `qc` makes jackie@ an OFFICER and RE-DEALS the live week), the `transferred` status has never once fired and cannot be reached, an absent officer does not block the week because the manager takes over, and the Executive Assistants department is intact — three same-named departments exist and the grant sits on the wrong label. The meeting record is filed at docs/meetings/2026-09-14-carla-qc-start-and-offboarded-scoring.md. Completed Date is the commit date of the last sha and falls inside S28.',
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 2 sha(s), last 604abd10, which is an ancestor of origin/main (re-checked 2026-09-17).',
   },
   {
-    name: 'The Employee Support blueprint is posted and waiting on nine answers before any code is written',
-    status: 'Waiting for Review',
-    shas: ['a14c68ab'],
-    basis:
-      'Waiting for Review is the honest status: the blueprint is POSTED and hard-stopped for approval, Q1 to Q9 are outstanding, and NOTHING has been built. Scored 1 for the brief itself, not for the feature it proposes — that gets its own rows once Kane answers. One thing it surfaced is worth carrying regardless of the answers: the `tickets` table has NO RLS.',
-    blockers: ['Q1-Q9 are unanswered. No code until Kane rules.'],
-  },
-  {
-    name: 'Countersigned time adjustments reach Accounting on the Issues tab, and the reviewer is never the filer at any stage',
-    status: 'Pending Deploy',
-    shas: ['e055ac8c', 'fae0cc19'],
-    basis:
-      'Scored 8 and kept a TASK: two commits, 2,849 insertions, 23 files, a migration, four new modules and their tests, encoding three of Kane rulings — the review pool is the team UNION its MANAGERS, a MANAGER’s own request SKIPS stage 1 (recorded in `stage1_waived_reason` rather than silently), and stage 2 is Issues EDIT plus role, excluding jakec@/april@/lenny@. Reviewer != filer at EVERY stage. THE MIGRATION CLAIM WAS MEASURED AND IS STALE: [[time-adjustments-accounting-issues-queue]] records "MIGRATION PENDING --apply, deploy AFTER", but `time_adjustment_requests.stage1_waived_reason` was probed read-only on 2026-09-16 and is PRESENT. That note is now wrong and this row carries NO migration blocker. Measured, not assumed in either direction. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'An approved time adjustment derives its day total from one module that every overlay surface imports, instead of each surface deciding for itself',
-    status: 'Pending Deploy',
-    shas: ['1d418b4a'],
-    basis:
-      'Accounting approves or denies with NO hours, so the day total is DERIVED: a stored total wins, else segments give tracked + requested, else NOTHING — and a segment-less row is a legacy DAY TOTAL, not an empty one. Per-day tracked hours had no shared implementation (two copies already), so deriving beat writing a third. ALL SIX overlay surfaces must import the module or an approval applies nothing, which is the failure mode this row exists to prevent. Landed inside `1d418b4a`, a 37-file commit named "S" — clustered on files, not the message. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'An offboarded person’s Set rate and Set bank are a complete override, and an undated departure anchors on the pay week in view instead of relabelling',
-    status: 'Pending Deploy',
-    shas: ['1d418b4a', 'f2b797e0', '56823f57'],
-    basis:
-      'Offboarded Set rate / Set bank is a COMPLETE OVERRIDE; the dialogs show what is ON FILE; there is ONE individual structure per person; Set bank is Offboarded-only and goes through the People PATCH with the rail unlocked. The second half is the leaver-department rule: a LEAVER’s department follows the Set-rate structure even when that structure was touched after departure in a different department, the Department line RIDES THE SNAPSHOT, an undated departure anchors on the pay week in view, and a dateless structure NEVER relabels. Spread across three commits, two of them named "S" and "Paystub". On origin/main, not confirmed live.',
-  },
-  {
-    name: 'Penny can see off-boarded people and trace a leaver and a bonus back to their sources, without ever inferring a value it cannot recover',
-    status: 'Pending Deploy',
-    shas: ['d69ee972'],
-    basis:
-      '`find_employee` now sees OFF-BOARDED people — labelled as such, active first, and PAGED, which matters because PostgREST truncates at 1000 rows. Two admin tools added: `get_offboarding_info` and `get_bonus_breakdown`. The honest limit is written into the tools rather than papered over: KPI saves are UNAUDITED, so a prior value is unrecoverable and Penny never infers one. OPEN for Kane: adrianm@ has TWO master rows and therefore two calculators, and whether to audit KPI saves at all. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'MESA Non Members Opt In takes an effective date, and the route refuses one that falls inside a closed stint',
-    status: 'Pending Deploy',
-    shas: ['a9d7ffa6'],
-    basis:
-      'No new column — `since` already stamped both sides — and the route refuses a date on or before the previous `closed_on`, so an opt-in cannot be backdated into a stint that is already closed. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'Friday is the MESA deposit date, so a member’s first charged week is the first whose Friday follows their enrollment — and no rule change rewrites a snapshotted week',
-    status: 'Pending Deploy',
-    shas: ['4ef7e959'],
-    basis:
-      'Kane’s ruling, applied at every PHP 100 and PHP 400 site through one predicate, `mesaContributesForWeek`, rather than re-derived per call site. Carries the second ruling with it: a payroll rule change NEVER rewrites a snapshotted week, because those weeks carry Payroll Notes adjustments — proved per carrier rather than asserted. TWO PRE-EXISTING GAPS were found and are NOT closed by this row: the staging API has no newest-file guard, and a past-week re-upload re-deposits by TODAY’s membership. Named here so they are not rediscovered. On origin/main, not confirmed live.',
-  },
-  {
-    name: 'An aliased MESA member was never charged the deduction — the membership is stamped onto the rate rows and the backfill audit learns the alias map',
-    status: 'Pending Deploy',
-    shas: ['61fa6553', '2ed76b21'],
-    basis:
-      'jimg@ and dales@ were NEVER deducted across 14 pay stubs, because ledger identity is an ALIAS (jim@ / dale@) and the CSV backfill stamps `mesa_member` WITHOUT consulting the alias map. Found by probe, then half-fixed: jimg@ was repaired on 2026-09-15 and the backfill audit now knows the alias map. dales@ is STILL OPEN. The repair must NEVER go through toggle-mesa-member — it MINTS A SECOND ACCOUNT. Critical because it is PHP 900 credited-but-not-deducted per person, alongside PHP 101,600 sitting in 5 departed open accounts.',
-    blockers: ['dales@ is still unflagged and still un-deducted. Same fix, not yet run.'],
-  },
-  {
-    name: 'A stray individual catalog override paid one person PHP 279.99 an hour for eleven weeks — corrected forward-only, with the dated history row retained',
+    name: 'Orphanage step deletes wipe both carriers, the additions blob is written under CAS, and the red panel restores from record',
     status: 'Done',
-    completed: '2026-09-15',
-    shas: ['4fe7258d'],
+    completed: '2026-09-01',
+    shas: ['27328af3', '28bea8ac'],
     basis:
-      'This row closes on a MEASUREMENT, not on a confirmation, because its deliverable is a database state and a script has no production surface to click through. An individual catalog override created by carla@ on 2026-06-15 outranked the 280 that was ALREADY in both the sheet and the rates, and 419.99 is simply 279.99 x 1.5 — ONE bad base value, propagated. Re-probed read-only on 2026-09-16: the catalog pay structure now reads 280, updated 2026-09-15T17:31:12Z. Corrected FORWARD-ONLY per [[payroll-rule-changes-forward-only]] — the 06-22 history row is RETAINED, about PHP 10 of arrears is accepted, and there is no back-pay. Completed Date is the commit date of the only sha, which is also the day the script ran. OPEN and not part of this row: the 2026-09-06 to 09-12 week still needs re-locking.',
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 2 sha(s), last 28bea8ac, which is an ancestor of origin/main (re-checked 2026-09-17).',
   },
   {
-    name: 'An approved time adjustment stored the wrong day’s total and became a pay cut — the value was cleared rather than the rule loosened',
+    name: 'HSL KPI branches become a list that opens a Windowed/Half/Full overlay, with SSD rebuilt and a matching first-load skeleton',
     status: 'Done',
-    completed: '2026-09-15',
-    shas: ['89ee046d'],
+    completed: '2026-09-01',
+    shas: ['2547b719', '276e6d7f', 'db69b335'],
     basis:
-      'Closes on a MEASUREMENT for the same reason as the rate fix. The stored approved_hours of 7.2833 was FRIDAY’s 7.2 plus five minutes, written onto a THURSDAY; under SET semantics that is 1.31h BELOW the tracked 8.5933 — a PAY CUT of about PHP 367, not the rise it was approved as. Re-probed read-only on 2026-09-16: approved_hours is NULL, updated 2026-09-15T15:54:29Z, so derivation rule 2 now produces 8.6767. THE RULE WAS NOT LOOSENED — rule 1 (a stored total wins) still stands, because the VALUE was wrong and not the rule. The standing lesson is written into memory: always diff a stored approved_hours against ITS OWN day’s tracked hours, and audit hubstaff_hours PAGED.',
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 3 sha(s), last db69b335, which is an ancestor of origin/main (re-checked 2026-09-17).',
   },
   {
-    name: 'Start Processing plays one bounded cue and pops a modal on every other open Wizard and Dispatch, over its own topic that a late arrival never hears',
-    status: 'Pending Deploy',
-    shas: ['ed6c92ee', 'b7b22f5b', '9c674472'],
+    name: 'KPI Calculator paints from cache across the tab-switch unmount, and holds scoring until week, catalog and FX are live',
+    status: 'Done',
+    completed: '2026-09-01',
+    shas: ['9ddf772f', 'c502457c'],
     basis:
-      'The cue fires on the BUTTON CLICK and not on confirm; confirming HOLDS it past the modal close and cancelling KILLS it. Bounded by a 12s FLOOR and CEILING — a short clip loops, a long one is faded. ONE cue serves both surfaces; splitting them was REJECTED. The broadcast half uses its OWN topic, `payroll-start-processing`, and never follow/sync/paid, because realtime-js reuses a channel per topic. A LATE arrival never hears it: no replay, plus receive-time staleness. `START_CUE_WINDOW_MS` MUST equal `STAGE_PREPPED_RUN_SECONDS`. Kane supplies the track; the repo carries only the CUT. On origin/main, not confirmed live.',
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 2 sha(s), last c502457c, which is an ancestor of origin/main (re-checked 2026-09-17).',
   },
   {
-    name: 'The payroll lock banner named a tab that no longer exists, so every employee read it on every tab — the detail is now required and written per tab',
-    status: 'Pending Deploy',
-    shas: ['53237600', 'fb04c0ec'],
+    name: 'Payroll Notes rows are shared — any wizard editor deletes or applies any row, and the board pages past 1000',
+    status: 'Done',
+    completed: '2026-09-01',
+    shas: ['e62f30e8'],
     basis:
-      'A FALSE PREMISE, confirmed and then fixed. The Start-processing lock NEVER gated Documents — not Termination Letters, not COE, not the employee tab. It reaches only KPI/QC takeovers, Profile > Payment, the dead Issues tab, ten score/rate routes and a cosmetic sidebar collapse. The delay everyone was seeing came from the BANNER: it defaulted to "Issues are temporarily paused", the Issues tab is GONE, so every employee on EVERY tab read it. `detail` is now REQUIRED with no default, and the per-tab sentences live in `payroll-lock-detail.ts`. NEVER "fix" the follow-on by loosening `decideCoeActiveGate` — it fails closed BY DESIGN. On origin/main, not confirmed live.',
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last e62f30e8, which is an ancestor of origin/main (re-checked 2026-09-17).',
   },
   {
-    name: 'A failing Documents request showed the JSON parser’s complaint instead of the cause — every response is read through one guarded reader',
-    status: 'Pending Deploy',
-    shas: ['ff20a737', 'e80df0f8'],
+    name: 'Manager dashboard shell paints from cache across the tab-switch unmount and a reload',
+    status: 'Done',
+    completed: '2026-09-01',
+    shas: ['ad869220'],
     basis:
-      '"JSON Token" was never our string — it is the BROWSER’s SyntaxError, or NextAuth’s "JSON Web Token". Eight unguarded `res.json()` calls in AccountingDocuments hid every real cause behind it. The reasoning that cracked it: the route answers JSON on every branch it knows about, so a non-JSON body means the request never REACHED the handler — and `requireFeatureEdit` sat OUTSIDE the try, where a session or DB read can throw. Fixed with `readJsonResponse`, and the 412 steer now keys on STATUS before the body. HONEST LIMIT, and the reason this is not a closed investigation: the ROOT CAUSE IS STILL UNKNOWN. The next step is to ask for the NEW message, which will now be the real one.',
-    blockers: ['Root cause still unidentified — the fix makes the real error visible, it does not explain it.'],
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last ad869220, which is an ancestor of origin/main (re-checked 2026-09-17).',
   },
   {
-    name: 'The Accounting Documents tab no longer reloads itself on every tab switch, and a cached null can never pop the signature dialog',
-    status: 'In Progress',
-    shas: ['1f7e2078'],
+    name: 'Replayed wizard exports carry the FULL saved split, so every row reconciles against the paid final',
+    status: 'Done',
+    completed: '2026-09-01',
+    shas: ['0703c748'],
     basis:
-      'In Progress, NOT Pending Deploy: `1f7e2078` is the one commit in this range that is NOT an ancestor of origin/main. Vercel deploys origin/main, so this has never been served and cannot have been clicked through. Nothing in this skill pushes — it moves when Kane pushes. The work joins Documents to the shared tab cache with 3 keys and 3 categories: `documentsQueue` is a SHARED QUEUE (banned-list pinned, the mount fetch ALWAYS runs, silent when seeded); `documentsSignature` is cached but `signatureLoaded` is NEVER seeded, because a cached null pops the capture dialog on every switch; `documentsView` is the first UI selection stored here and is re-validated on read. The spinner is DERIVED and the error card shows only when there is nothing to paint.',
-    blockers: ['1f7e2078 is not an ancestor of origin/main — not deployed. Kane pushes.'],
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last 0703c748, which is an ancestor of origin/main (re-checked 2026-09-17).',
   },
   {
-    name: 'The reference docs and UI standards catch up with the Sep 14 work, and the Dispatch step drops a pill that stopped being true',
-    status: 'Pending Deploy',
-    shas: ['f8855cab', '987929f3', '9f613bdc', '27da1f2f'],
+    name: 'Both KPI calculators share one header — a Departments/HSL switch, the readiness chip, the Draft/Ready/Locked ladder and the shell’s lock banner',
+    status: 'Done',
+    completed: '2026-09-02',
+    shas: ['f36a97ce'],
     basis:
-      'A Chore row, scored 2, covering the record-keeping half of the Sep 14-16 range: reference docs for 3 routes and 4 components, INDEX row 36 re-checked and left un-contradicted, ui-standards taught SlidingTab and the vertical rail with the spring-vs-ease deviation RECORDED rather than ratified, the Sep 14 leftovers and the wizard’s stale clearOffboarded flag removed, and the "Paystubs send 1-by-1 · n8n on Mark Paid" pill dropped from the Dispatch step because it had stopped being true. This is the rule from [[reference-docs-rot-silently]] being paid down. On origin/main, not confirmed live.',
-  },
-  // ── CARRIED FORWARD from pass 27 — re-derived from git and from the database, not copied ─────────
-  {
-    name: 'A second bank account sits tucked behind the first as a deck that spins the stack, and the card facing forward never implies where the money goes',
-    status: 'Pending Deploy',
-    shas: ['9803bba6'],
-    basis:
-      'ADVANCES one step on evidence. Pass 27 held this at In Progress because `9803bba6` was not an ancestor of origin/main. Re-checked 2026-09-16: it IS an ancestor now, so Vercel has served it and the row moves to Pending Deploy. It does NOT move to Done — being deployed is not the same as someone having looked at it, and the visual verification named as a blocker last pass has still not happened.',
-    blockers: ['No visual verification of the deck, the spin or the read-to-edit elongation.'],
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last f36a97ce, which is an ancestor of origin/main (re-checked 2026-09-17).',
   },
   {
-    name: 'GoTyme and MariBank are the colour their mark prints on, not the colour of the ink — a swatch source the card reads and never draws',
-    status: 'Pending Deploy',
-    shas: ['34482dbf'],
+    name: 'Manager Time Adjustments becomes a master-detail review workspace on the MESA-in-blue theme, with the detail as a modal',
+    status: 'Done',
+    completed: '2026-09-02',
+    shas: ['840f0f77', 'b97637e3', '0ce0fa64', 'f36a97ce'],
     basis:
-      'ADVANCES one step on the same evidence: `34482dbf` is an ancestor of origin/main as of 2026-09-16, where it was not on 2026-09-13. Deployed, not confirmed live. The exact-equality test on the near-identical card faces stands and is never loosened.',
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 4 sha(s), last f36a97ce, which is an ancestor of origin/main (re-checked 2026-09-17).',
   },
   {
-    name: 'Sending a second copy of a pay document asks first, and the copy is labelled Reissued or Amended rather than counted as an attempt',
-    status: 'Pending Deploy',
-    shas: ['4acceeb9'],
+    name: 'Manager Time Adjustments flicker was a fetch-per-render loop — ref the callback, poll every 60 s',
+    status: 'Done',
+    completed: '2026-09-02',
+    shas: ['62c8312e'],
     basis:
-      'STAYS HELD, and the hold was re-measured rather than carried over on faith. `public.paystub_issues` was probed read-only again on 2026-09-16, with .limit(1) and alongside a negative control that correctly reported MISSING: the table is STILL absent from production. This is the row Kane’s blanket "those pending deploys are already done" confirmation could not reach on 2026-09-13, and it still cannot — an assertion cannot create a table. The feature records nothing until the migration runs.',
-    blockers: [
-      'references/sql/create/2026-09-12_paystub_issues.sql has not been run — re-measured 2026-09-16, public.paystub_issues absent from production. Ship it with scripts/apply-paystub-issues-migration.mts (--apply gate).',
-    ],
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last 62c8312e, which is an ancestor of origin/main (re-checked 2026-09-17).',
+  },
+  {
+    name: 'Lower-left “X paid Y $Z” toast on every dashboard while processing is on, broadcast by the server after each dispatch INSERT',
+    status: 'Done',
+    completed: '2026-09-03',
+    shas: ['60ea3aeb', '64f012b6', '1128ebce', '407207a3'],
+    basis:
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 4 sha(s), last 407207a3, which is an ancestor of origin/main (re-checked 2026-09-17).',
+  },
+  {
+    name: 'Payment Dispatch refuses a second paid row per cycle — server 409 guard, stale-load fence, and a dedupe script',
+    status: 'Done',
+    completed: '2026-09-03',
+    shas: ['d406e7c9'],
+    basis:
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last d406e7c9, which is an ancestor of origin/main (re-checked 2026-09-17).',
+  },
+  {
+    name: 'Orphanage interns — @pathway.ph profiles, own Hubstaff report and tables, a mini wizard on /orphanage, a Simple | Interns view in Accounting, and dispatch to the Orphanage queue',
+    status: 'Done',
+    completed: '2026-09-03',
+    shas: ['57ca6638', '5a18b40c', '34934480', 'cd8f4365', '2b54e2fb', '1a049e76', '5cc1a5eb', 'f9acc1a5'],
+    basis:
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 8 sha(s), last f9acc1a5, which is an ancestor of origin/main (re-checked 2026-09-17). MIGRATION MEASURED APPLIED read-only 2026-09-17 with .limit(1), never head:true: orphanage_interns, orphanage_intern_hours, orphanage_intern_hours_uploads, orphanage_intern_pay, orphanage_intern_rates and orphanage_dispatches ALL PRESENT (negative control definitely_not_a_table_xyz correctly ABSENT). The memory note "Migration NOT yet applied" was STALE.',
+  },
+  {
+    name: 'Employee Pay Stubs are served from recovered snapshots and Profile loads in one wave',
+    status: 'Done',
+    completed: '2026-09-03',
+    shas: ['1b840fc6'],
+    basis:
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last 1b840fc6, which is an ancestor of origin/main (re-checked 2026-09-17).',
+  },
+  {
+    name: 'Employee My Hours calendar tiles restyled like the MESA stat cards — flat tone fills, bigger dates, warm weekend text',
+    status: 'Done',
+    completed: '2026-09-03',
+    shas: ['c8e5f658', '4265bdfd', 'b1c0dcf3', 'fb26990b', '6f4ac980'],
+    basis:
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 5 sha(s), last 6f4ac980, which is an ancestor of origin/main (re-checked 2026-09-17).',
+  },
+  {
+    name: 'Favicon becomes the Employee Penny chat-bubble heart',
+    status: 'Done',
+    completed: '2026-09-03',
+    shas: ['30230f09'],
+    basis:
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last 30230f09, which is an ancestor of origin/main (re-checked 2026-09-17).',
+  },
+  {
+    name: 'Pay-cycle celebration fires ONE way — from the close-out route itself — with CSV, XLSX and PDF attached; the client-side cycle-complete route is deleted',
+    status: 'Done',
+    completed: '2026-09-04',
+    shas: ['88474107'],
+    basis:
+      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last 88474107, which is an ancestor of origin/main (re-checked 2026-09-17).',
   },
 ];
 

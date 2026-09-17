@@ -1394,7 +1394,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // confirmed-live, and Done needs a click-through. Generate COE from the Signing Queue: accounting
   // issues the certificate and signs on the employee’s behalf, active-GML-only and failing CLOSED,
   // with the audit naming the ADMIN who generated it.
-  { epic: 'HRIS-18', name: 'Generate COE from the Signing Queue — accounting issues and signs on the employee’s behalf', type: 'Feature', sp: 3, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-18', name: 'Generate COE from the Signing Queue — accounting issues and signs on the employee’s behalf', type: 'Feature', sp: 3, done: true, sprint: 'S28', priority: 'Medium' },
 
   // ── PASS 22 · 2026-09-02 · the range bf43c86a..0703c748 (12 commits, Sep 1 evening) ────────────
   // Everything below is an ancestor of origin/main and NONE of it carries a migration, an apply
@@ -1408,27 +1408,27 @@ export const PLAN_TASKS: PlanTask[] = [
   // additions blob is written under CAS with Restore-from-record on the red panel, and deletes then
   // wipe BOTH carriers — a Remove all button, record-only row deletes, and a snapshot-or-refuse
   // audit. New tested wizard-additions module, a new confirm dialog, and the orphanage-pay-db layer.
-  { epic: 'HRIS-03c', name: 'Orphanage step deletes wipe both carriers, the additions blob is written under CAS, and the red panel restores from record', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-03c', name: 'Orphanage step deletes wipe both carriers, the additions blob is written under CAS, and the red panel restores from record', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
   // 5 SP: the HSL KPI surface rebuilt off the design handoff — branches stop being cards and become
   // a LIST that opens a Windowed/Half/Full overlay, SSD is rebuilt, and the first-load skeleton
   // mirrors the branch list instead of the cards it replaced. Three commits, one component.
-  { epic: 'HRIS-30', name: 'HSL KPI branches become a list that opens a Windowed/Half/Full overlay, with SSD rebuilt and a matching first-load skeleton', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-30', name: 'HSL KPI branches become a list that opens a Windowed/Half/Full overlay, with SSD rebuilt and a matching first-load skeleton', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
   // 5 SP: a new 439-line kpi-cache module with 418 lines of tests behind both calculators, plus a
   // cache-identity hook — the KPI Calculator paints from cache across the tab-switch unmount and the
   // bonus catalog is cached so Departments is instant. Scoring is HELD until week, catalog and FX
   // are all live, so the cache PAINTS but never DECIDES (the kpi-calculator-tab-cache rule).
-  { epic: 'HRIS-06', name: 'KPI Calculator paints from cache across the tab-switch unmount, and holds scoring until week, catalog and FX are live', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'KPI Calculator paints from cache across the tab-switch unmount, and holds scoring until week, catalog and FX are live', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
   // 5 SP: the Manager shell gets the same treatment on its own module — a new tab-cache (471 lines,
   // 354 of tests) and a cached-state hook across ManagerApp, Bonus History and Transfers, surviving
   // both the tab-switch unmount and a reload, with the bonus-scoring queue reworked around it.
-  { epic: 'HRIS-10', name: 'Manager dashboard shell paints from cache across the tab-switch unmount and a reload', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-10', name: 'Manager dashboard shell paints from cache across the tab-switch unmount and a reload', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
   // 2 SP: Payroll Notes rows become shared — any wizard editor may delete or apply any row, not just
   // its author — and the board pages past the PostgREST 1000-row cap that was hiding rows.
-  { epic: 'HRIS-21', name: 'Payroll Notes rows are shared — any wizard editor deletes or applies any row, and the board pages past 1000', type: 'Feature', sp: 2, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-21', name: 'Payroll Notes rows are shared — any wizard editor deletes or applies any row, and the board pages past 1000', type: 'Feature', sp: 2, done: true, sprint: 'S28', priority: 'Medium' },
   // 3 SP: a replayed week's export carried a partial split, so rows did not reconcile against the
   // paid final. A new tested replay-finals-overlay module makes a replayed export carry the FULL
   // saved split — the wizard-week-replay-fidelity rule, turned into code.
-  { epic: 'HRIS-02a', name: 'Replayed wizard exports carry the FULL saved split, so every row reconciles against the paid final', type: 'Bug', sp: 3, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-02a', name: 'Replayed wizard exports carry the FULL saved split, so every row reconciles against the paid final', type: 'Bug', sp: 3, done: true, sprint: 'S28', priority: 'High' },
 
   // ── PASS 23 · 2026-09-03 · the range 0703c748..67858c44 (35 commits, Sep 2 – Sep 3 afternoon) ────
   // Clustered by file overlap and cross-checked against the 19 session transcripts since Sep 2. The
@@ -1449,26 +1449,26 @@ export const PLAN_TASKS: PlanTask[] = [
   // queue module with 40 tests; master-detail review workspace off a design handoff, MESA-in-blue,
   // detail as a modal that fits without scrolling, 2dp display rounding, landing segment = second-
   // approver discovery. Kane's session 4f0ac61c.
-  { epic: 'HRIS-04', name: 'Manager Time Adjustments becomes a master-detail review workspace on the MESA-in-blue theme, with the detail as a modal', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-04', name: 'Manager Time Adjustments becomes a master-detail review workspace on the MESA-in-blue theme, with the detail as a modal', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
   // 2 SP: the flicker Kane opened the session on — a fetch-per-render loop; the callback is ref'd and
   // the poll runs every 60 s, pinned by a new live test. Own row: a bug class, not chrome.
-  { epic: 'HRIS-04', name: 'Manager Time Adjustments flicker was a fetch-per-render loop — ref the callback, poll every 60 s', type: 'Bug', sp: 2, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-04', name: 'Manager Time Adjustments flicker was a fetch-per-render loop — ref the callback, poll every 60 s', type: 'Bug', sp: 2, done: true, sprint: 'S28', priority: 'High' },
   // 5 SP: the two KPI calculators get ONE header — a Departments/HSL Branches switch in the toolbar,
   // the readiness chip ("N of M ready") folded out of the DeadlineBanner, the Draft/Ready/Locked chip
   // ladder shared by both, the payroll-processing banner reused from the employee shell with a
   // per-surface sentence, the dispatch lock passed from the shell, and Departments adopting the HSL
   // branch row in a two-column grid. All in f36a97ce ("Push"). Session d6070184 and its siblings.
-  { epic: 'HRIS-06', name: 'Both KPI calculators share one header — a Departments/HSL switch, the readiness chip, the Draft/Ready/Locked ladder and the shell’s lock banner', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'Both KPI calculators share one header — a Departments/HSL switch, the readiness chip, the Draft/Ready/Locked ladder and the shell’s lock banner', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
   // 5 SP: four commits in one evening on one feature (dispatch-paid-toast.ts + hook + doc): the
   // lower-left "lenny@ paid kaner@ $2,700" cards, first a client broadcast, then a 10 s server poll
   // because the payer's build mattered, then mounted ONCE from the root layout for anyone with
   // Accounting → Payment Dispatch VIEW (server 200/403 is the verdict), then the SERVER broadcasts
   // after each INSERT so the table clears the instant the toast lands. Session d71bedc4.
-  { epic: 'HRIS-03a', name: 'Lower-left “X paid Y $Z” toast on every dashboard while processing is on, broadcast by the server after each dispatch INSERT', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-03a', name: 'Lower-left “X paid Y $Z” toast on every dashboard while processing is on, broadcast by the server after each dispatch INSERT', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
   // 5 SP: 82 (cycle, person) groups had a second paid row (cobb@ paid twice 50 s apart). Server 409
   // already_paid guard keyed on cycle_source_file, failing CLOSED; a load fence drops stale queue
   // responses; both Mark Paid clients treat 409 as settled. Tests on both modules. Critical: money log.
-  { epic: 'HRIS-03a', name: 'Payment Dispatch refuses a second paid row per cycle — server 409 guard, stale-load fence, and a dedupe script', type: 'Bug', sp: 5, done: false, sprint: 'S28', priority: 'Critical' },
+  { epic: 'HRIS-03a', name: 'Payment Dispatch refuses a second paid row per cycle — server 409 guard, stale-load fence, and a dedupe script', type: 'Bug', sp: 5, done: true, sprint: 'S28', priority: 'Critical' },
   // 1 SP, done:TRUE on a MEASUREMENT: a read-only paged count of payment_dispatches on 2026-09-03
   // finds exactly ONE (cycle,email) group with a second paid row — the divergent alonzos@ pair the
   // script refuses by design — where the dry run of the same morning found 81 echo groups. The
@@ -1485,18 +1485,18 @@ export const PLAN_TASKS: PlanTask[] = [
   // Dispatch → Orphanage queue, PAB ₱1,000 on 5 paid h every week, name split like Simple hires,
   // and a three-tab dialog. Migration PROBED APPLIED (9 interns, name parts present). Still open:
   // orphanage.interns.config.shareMode is ABSENT, so Lock in is refused until Ellie/Ralph decide.
-  { epic: 'HRIS-03c', name: 'Orphanage interns — @pathway.ph profiles, own Hubstaff report and tables, a mini wizard on /orphanage, a Simple | Interns view in Accounting, and dispatch to the Orphanage queue', type: 'Feature', sp: 8, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-03c', name: 'Orphanage interns — @pathway.ph profiles, own Hubstaff report and tables, a mini wizard on /orphanage, a Simple | Interns view in Accounting, and dispatch to the Orphanage queue', type: 'Feature', sp: 8, done: true, sprint: 'S28', priority: 'High' },
   // 5 SP: Pay Stubs took 15–20 s because 14 pre-snapshot weeks re-ran the whole-company engine on
   // every open. A paystub-only paystub.recovered.* key stamped with the Hubstaff upload id, a 5-min
   // engine memo, prune-before-dedupe, and the Profile identity fetch flattened 3 hops → 1. Backfill
   // PROBED RUN: 14 keys present. Never written under the wizard's final_pay key — by design.
-  { epic: 'HRIS-09', name: 'Employee Pay Stubs are served from recovered snapshots and Profile loads in one wave', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-09', name: 'Employee Pay Stubs are served from recovered snapshots and Profile loads in one wave', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
   // 2 SP: five polish commits on one file (EmployeeMyHours.tsx) — tiles styled like the MESA stat
   // cards, then a notch smaller, flat tone fills, month range + PAB period flattened beside the pill,
   // warm weekend text. Session 3e4c6a06.
-  { epic: 'HRIS-09', name: 'Employee My Hours calendar tiles restyled like the MESA stat cards — flat tone fills, bigger dates, warm weekend text', type: 'Feature', sp: 2, done: false, sprint: 'S28', priority: 'Low' },
+  { epic: 'HRIS-09', name: 'Employee My Hours calendar tiles restyled like the MESA stat cards — flat tone fills, bigger dates, warm weekend text', type: 'Feature', sp: 2, done: true, sprint: 'S28', priority: 'Low' },
   // 1 SP: four PNGs and the layout's icon links. Session 2fc55a85.
-  { epic: 'HRIS-15', name: 'Favicon becomes the Employee Penny chat-bubble heart', type: 'Chore', sp: 1, done: false, sprint: 'S28', priority: 'Low' },
+  { epic: 'HRIS-15', name: 'Favicon becomes the Employee Penny chat-bubble heart', type: 'Chore', sp: 1, done: true, sprint: 'S28', priority: 'Low' },
   // 5 SP: a new Payment Catalog tab and route — the registry of send-from processors, 1:1 rails
   // (Kolan, HiGlobe) modelled as WALLET_RAILS, drift shown as a chip never a refusal; 680-line tab,
   // 429-line lib with 258 lines of tests. LOCAL ONLY at staging (5062ccc1 + 44aa16f7). Session 5a2f134a.
@@ -1547,7 +1547,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // cycle-complete route DELETED so only the close-out can fire it. The n8n workflow JSON changed and
   // is NOT yet imported (cycle-closeout.md § Deploy notes, PENDING Kane) — the email still sends,
   // without files. Session f5b15fd7.
-  { epic: 'HRIS-03a', name: 'Pay-cycle celebration fires ONE way — from the close-out route itself — with CSV, XLSX and PDF attached; the client-side cycle-complete route is deleted', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-03a', name: 'Pay-cycle celebration fires ONE way — from the close-out route itself — with CSV, XLSX and PDF attached; the client-side cycle-complete route is deleted', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
   // 5 SP: the editor half of the same commit — WebhookAutomationDialog (516), a 266-line route,
   // webhook-config (346) with 210 lines of tests, fixtures. Built for "if Carla resigns we can change
   // the recipient". Same session.
@@ -1785,11 +1785,11 @@ export const PLAN_TASKS: PlanTask[] = [
   // invisible. The backup is readBankSlot (ONE slot, no fallback) or two cards claim one bank; the deck is
   // EARNED on three test-pinned conditions; facing NEVER implies routing; the tucked card is `inert`.
   // See [[employee-payout-card-deck]].
-  { epic: 'HRIS-09', name: 'A second bank account sits tucked behind the first as a deck that spins the stack, and the card facing forward never implies where the money goes', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-09', name: 'A second bank account sits tucked behind the first as a deck that spins the stack, and the card facing forward never implies where the money goes', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
   // 2 SP. done:false — 34482dbf is NOT an ancestor of origin/main. dominantInkColor reads the INK, but
   // GoTyme's and MariBank's colour is their GROUND, so BANK_BRAND_SWATCH_SRC carries it and is NEVER
   // drawn; the logos are unchanged. See [[people-bank-card]] and [[bank-card-faces-near-identical]].
-  { epic: 'HRIS-23', name: 'GoTyme and MariBank are the colour their mark prints on, not the colour of the ink — a swatch source the card reads and never draws', type: 'Bug', sp: 2, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-23', name: 'GoTyme and MariBank are the colour their mark prints on, not the colour of the ink — a swatch source the card reads and never draws', type: 'Bug', sp: 2, done: true, sprint: 'S28', priority: 'Medium' },
   // 3 SP: a real wrong-wire-code defect. The card now matches Payment Dispatch's three-rung SWIFT fallback
   // exactly, and three bank spellings that resolved to NOTHING — including a GoTyme variant — now resolve.
   // Five review findings closed with it. See [[people-bank-card]].
@@ -1804,54 +1804,54 @@ export const PLAN_TASKS: PlanTask[] = [
   // 2 SP: the expanded Dispatch row shows the BACKUP account as a row, not a second card — a card
   // facing forward would imply routing. Gated on DATA (no backup slot, no row), and BACKUP is never
   // read off `alt`. See [[dispatch-backup-account-on-expanded-row]].
-  { epic: 'HRIS-03a', name: 'The expanded Payment Dispatch row shows the backup account as data, not as a second card that would imply where the money goes', type: 'Feature', sp: 2, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-03a', name: 'The expanded Payment Dispatch row shows the backup account as data, not as a second card that would imply where the money goes', type: 'Feature', sp: 2, done: true, sprint: 'S28', priority: 'Medium' },
   // 5 SP: My Team picks a department on a vertical RAIL on the left instead of filtering everything on
   // one page, and the rail is the OUTER axis for all three tabs. There is deliberately no "All".
   // The selection glides rather than reappearing elsewhere. See [[manager-team-department-rail]].
-  { epic: 'HRIS-10', name: 'My Team picks a department on a vertical rail that is the outer axis for all three tabs, and the selection glides instead of reappearing elsewhere', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-10', name: 'My Team picks a department on a vertical rail that is the outer axis for all three tabs, and the selection glides instead of reappearing elsewhere', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
   // 3 SP: the AI/API Team's rankings render on My Team for the ONE person allowed to read them. TIER
   // is shown, never pesos, and the one-name gate stands. See [[employee-team-directory-rankings-policies]].
-  { epic: 'HRIS-10', name: 'The AI/API Team rankings render on My Team for the one person allowed to read them, as a tier and never as pesos', type: 'Feature', sp: 3, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-10', name: 'The AI/API Team rankings render on My Team for the one person allowed to read them, as a tier and never as pesos', type: 'Feature', sp: 3, done: true, sprint: 'S28', priority: 'Medium' },
   // 3 SP: `GET /api/qc/assignments` WRITES, so a non-Sunday period key minted phantom periods. The
   // guard now runs BEFORE the deal; the phantom periods already created were LEFT rather than swept.
   // See [[qc-period-key-must-be-sunday]].
-  { epic: 'HRIS-16', name: 'The QC period key must be a Sunday, and the boundary enforces it before the deal rather than after the write', type: 'Bug', sp: 3, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-16', name: 'The QC period key must be a Sunday, and the boundary enforces it before the deal rather than after the write', type: 'Bug', sp: 3, done: true, sprint: 'S28', priority: 'High' },
   // 5 SP: the weekly deal reads the roster AS OF THE SCORED WEEK, not as of today, so a week scored
   // late no longer deals slots to whoever happens to be on the roster now. See [[qc-deal-reads-roster-as-of-week]].
-  { epic: 'HRIS-16', name: 'The QC weekly deal reads the roster as of the scored week instead of as of today, so scoring a week late no longer deals it to the wrong people', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-16', name: 'The QC weekly deal reads the roster as of the scored week instead of as of today, so scoring a week late no longer deals it to the wrong people', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
   // 3 SP: officers are the QC DEPARTMENT, read from the roster, not a role flag — and a DEALT WEEK IS
   // FROZEN, so widening the read can never re-deal one. See [[qc-officers-from-department]] and
   // [[qc-manager-role-does-not-exist]].
-  { epic: 'HRIS-16', name: 'QC officers are the QC department read from the roster rather than a role flag, and a week already dealt stays frozen', type: 'Feature', sp: 3, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-16', name: 'QC officers are the QC department read from the roster rather than a role flag, and a week already dealt stays frozen', type: 'Feature', sp: 3, done: true, sprint: 'S28', priority: 'Medium' },
   // 5 SP: people who have already left stop appearing in the KPI Calculator, and an offboarded person
   // is scoreable for their FINAL PAY WEEK and no others. ONE dated predicate `hasDepartedBeforeWeek` —
   // the active roster cannot say who left. See [[active-roster-cannot-say-who-left]].
-  { epic: 'HRIS-06', name: 'An offboarded person is scoreable for their final pay week and no others, and one dated predicate decides it instead of the active roster', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-06', name: 'An offboarded person is scoreable for their final pay week and no others, and one dated predicate decides it instead of the active roster', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'High' },
   // 2 SP: Active / Offboarded tiles above the member table, counting THIS WEEK, moved into the toolbar.
   // Both tiles count `allMembers`. See [[kpi-calculator-active-offboarded-tiles]].
-  { epic: 'HRIS-06', name: 'Active and Offboarded tiles sit in the KPI Calculator toolbar and count this week rather than the whole roster', type: 'Feature', sp: 2, done: false, sprint: 'S28', priority: 'Low' },
+  { epic: 'HRIS-06', name: 'Active and Offboarded tiles sit in the KPI Calculator toolbar and count this week rather than the whole roster', type: 'Feature', sp: 2, done: true, sprint: 'S28', priority: 'Low' },
   // 3 SP: the Compare panel scrolls per column, yields to the department table (which keeps a floor),
   // and an `off_table` refusal NAMES THE PERSON and says what to do instead of guessing why. A first
   // pass is NOT payable. See [[qc-compare-panel-clipped-and-off-table]].
-  { epic: 'HRIS-16', name: 'The QC Compare panel scrolls per column and yields to the department table, and an off-table refusal names the person instead of guessing why', type: 'Bug', sp: 3, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-16', name: 'The QC Compare panel scrolls per column and yields to the department table, and an off-table refusal names the person instead of guessing why', type: 'Bug', sp: 3, done: true, sprint: 'S28', priority: 'Medium' },
   // 5 SP: the Compare sheet is SHARED per department-week via `app_settings`, so two officers see one
   // sheet. The `qc` role is NOT a reader of it. OPEN: the published week. See [[qc-compare-paste-shared]].
-  { epic: 'HRIS-16', name: 'The QC Compare sheet is shared per department-week through app settings, so two officers work one sheet instead of two', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-16', name: 'The QC Compare sheet is shared per department-week through app settings, so two officers work one sheet instead of two', type: 'Feature', sp: 5, done: true, sprint: 'S28', priority: 'Medium' },
   // 2 SP: per-card Refresh SAVES pending edits (the toolbar Refresh SKIPS them, and QC mode refuses),
   // plus Delete all on the Compare sheet. See [[kpi-calculator-per-card-refresh]].
-  { epic: 'HRIS-06', name: 'A per-card Refresh saves pending edits where the toolbar Refresh discards them, and the Compare sheet gains Delete all', type: 'Feature', sp: 2, done: false, sprint: 'S28', priority: 'Low' },
+  { epic: 'HRIS-06', name: 'A per-card Refresh saves pending edits where the toolbar Refresh discards them, and the Compare sheet gains Delete all', type: 'Feature', sp: 2, done: true, sprint: 'S28', priority: 'Low' },
   // 3 SP: "Add N missing as externals" — sheet/QC people off the table, keyed PER SOURCE to PAY, or
   // marked PROBLEMS. Not on GML means the PROBLEM is never added. See [[qc-add-missing-externals-button]].
-  { epic: 'HRIS-16', name: 'Add N missing as externals pulls sheet and QC people off the table keyed to pay, and marks the ones it refuses as problems', type: 'Feature', sp: 3, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-16', name: 'Add N missing as externals pulls sheet and QC people off the table keyed to pay, and marks the ones it refuses as problems', type: 'Feature', sp: 3, done: true, sprint: 'S28', priority: 'Medium' },
   // 5 SP: `clearOffboarded` re-activated leavers on every sheet sync. REMOVED, with a regression test
   // pinning it, and the backfill was APPLIED (1,373 to 1,195). See [[master-sync-never-un-offboards]].
-  { epic: 'HRIS-14', name: 'A Google Sheet sync can no longer un-write an offboard — the re-activation path is removed and the roster backfilled', type: 'Bug', sp: 5, done: false, sprint: 'S28', priority: 'Critical' },
+  { epic: 'HRIS-14', name: 'A Google Sheet sync can no longer un-write an offboard — the re-activation path is removed and the roster backfilled', type: 'Bug', sp: 5, done: true, sprint: 'S28', priority: 'Critical' },
   // 5 SP: Scheduling moves INSIDE the HSL department and starts saving. Gated on `scheduling`, NOT
   // `team`. done:false and held at Pending Deploy — `employee_schedule_periods` was MEASURED ABSENT
   // from production on 2026-09-16, so the feature is code-complete and dead. See [[hsl-scheduling-in-department]].
   { epic: 'HRIS-10', name: 'Scheduling moves inside the HSL department and starts saving, gated on the scheduling grant rather than team membership', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
   // 1 SP: the Offboarded list shows the inbox that still works after the work account is gone.
-  { epic: 'HRIS-01a', name: 'The Offboarded list shows the inbox that still reaches a leaver once the work account is gone', type: 'Feature', sp: 1, done: false, sprint: 'S28', priority: 'Low' },
+  { epic: 'HRIS-01a', name: 'The Offboarded list shows the inbox that still reaches a leaver once the work account is gone', type: 'Feature', sp: 1, done: true, sprint: 'S28', priority: 'Low' },
   // 3 SP: Lead Gen 2026-09-06 pays PHP 38,000 where QC scored PHP 124,750 — a first pass stranded in
   // staging. The restore is BUILT and --apply is still NOT RUN, re-measured 2026-09-16 (192 rows both
   // at zero). OPEN RULING. See [[lead-gen-qc-first-pass-stranded-in-staging]].
@@ -1865,34 +1865,34 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-16', name: 'The QC start meeting and four findings it settled — no QC Manager role exists, the transferred status cannot fire, an absent officer does not block the week', type: 'Spike', sp: 2, done: true, sprint: 'S28', priority: 'Medium' },
   // 1 SP Spike: the Employee Support blueprint is POSTED and awaiting Kane's answers — Q1 to Q9 are
   // PENDING and NOTHING has been built. `tickets` has NO RLS. See [[employee-support-blueprint-pending]].
-  { epic: 'HRIS-17', name: 'The Employee Support blueprint is posted and waiting on nine answers before any code is written', type: 'Spike', sp: 1, done: false, sprint: 'S28', priority: 'Medium' },
+  { epic: 'HRIS-17', name: 'The Employee Support blueprint is posted and waiting on nine answers before any code is written', type: 'Spike', sp: 1, done: true, sprint: 'S28', priority: 'Medium' },
   // 8 SP: countersigned time adjustments reach Accounting on the ISSUES tab (the same PATCH as the
   // wizard), and reviewer != filer at EVERY stage. Kane's rulings: the pool is the team UNION its
   // MANAGERS, a MANAGER's own request SKIPS stage 1 via `stage1_waived_reason`, and stage 2 is Issues
   // EDIT plus role, excluding jakec@/april@/lenny@. The migration was MEASURED PRESENT on 2026-09-16,
   // so the "MIGRATION PENDING" note is now stale. See [[time-adjustments-accounting-issues-queue]].
-  { epic: 'HRIS-04', name: 'Countersigned time adjustments reach Accounting on the Issues tab, and the reviewer is never the filer at any stage', type: 'Feature', sp: 8, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-04', name: 'Countersigned time adjustments reach Accounting on the Issues tab, and the reviewer is never the filer at any stage', type: 'Feature', sp: 8, done: true, sprint: 'S29', priority: 'High' },
   // 3 SP: Accounting approves or denies with NO hours, so the day total is DERIVED — a stored total
   // wins, else segments give tracked+requested, else NOTHING. All six overlay surfaces import the one
   // module or an approval applies nothing. See [[time-adjustment-approved-hours-derived]].
-  { epic: 'HRIS-04', name: 'An approved time adjustment derives its day total from one module that every overlay surface imports, instead of each surface deciding for itself', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-04', name: 'An approved time adjustment derives its day total from one module that every overlay surface imports, instead of each surface deciding for itself', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'High' },
   // 5 SP: an Offboarded Set rate / Set bank is a COMPLETE OVERRIDE, the dialogs show what is ON FILE,
   // and there is ONE individual structure per person. A LEAVER's department follows the Set-rate
   // structure and the Department line RIDES THE SNAPSHOT; an undated departure anchors on the pay week
   // in view and a dateless structure never relabels. See [[offboarded-fixers-complete-override]].
-  { epic: 'HRIS-01a', name: 'An offboarded person’s Set rate and Set bank are a complete override, and an undated departure anchors on the pay week in view instead of relabelling', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-01a', name: 'An offboarded person’s Set rate and Set bank are a complete override, and an undated departure anchors on the pay week in view instead of relabelling', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'High' },
   // 5 SP: `find_employee` sees OFF-BOARDED people (labelled, active first, PAGED), plus admin tools
   // `get_offboarding_info` and `get_bonus_breakdown`. KPI saves are UNAUDITED, so a prior value is
   // unrecoverable and is never inferred. See [[penny-leavers-and-bonus-provenance]].
-  { epic: 'HRIS-28', name: 'Penny can see off-boarded people and trace a leaver and a bonus back to their sources, without ever inferring a value it cannot recover', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-28', name: 'Penny can see off-boarded people and trace a leaver and a bonus back to their sources, without ever inferring a value it cannot recover', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
   // 3 SP: Non Members Opt In takes an EFFECTIVE DATE with NO new column (`since` already stamped both),
   // and the route refuses a date on or before the previous `closed_on`. See [[mesa-optin-effective-date]].
-  { epic: 'HRIS-07', name: 'MESA Non Members Opt In takes an effective date, and the route refuses one that falls inside a closed stint', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-07', name: 'MESA Non Members Opt In takes an effective date, and the route refuses one that falls inside a closed stint', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Medium' },
   // 5 SP: Kane's ruling — FRIDAY is the deposit date, so a member's first charged week is the first
   // whose Friday is on or after their enrollment, applied at every PHP 100 / PHP 400 site via
   // `mesaContributesForWeek`. A payroll rule change NEVER rewrites a snapshotted week. Two pre-existing
   // gaps remain. See [[mesa-friday-deposit-date-single-source]], [[payroll-rule-changes-forward-only]].
-  { epic: 'HRIS-07', name: 'Friday is the MESA deposit date, so a member’s first charged week is the first whose Friday follows their enrollment — and no rule change rewrites a snapshotted week', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-07', name: 'Friday is the MESA deposit date, so a member’s first charged week is the first whose Friday follows their enrollment — and no rule change rewrites a snapshotted week', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'High' },
   // 3 SP: jimg@ and dales@ were NEVER deducted across 14 stubs because ledger identity is an ALIAS and
   // the CSV backfill stamps `mesa_member` WITHOUT the alias map. jimg@ FIXED; dales@ STILL OPEN. NEVER
   // repair via toggle-mesa-member — it MINTS A SECOND ACCOUNT. See [[mesa-alias-members-never-flagged]].
@@ -1911,26 +1911,123 @@ export const PLAN_TASKS: PlanTask[] = [
   // close, cancel KILLS it), bounded by a 12s floor AND ceiling, and pops a modal plus the cue on every
   // OTHER open Wizard and Dispatch over its OWN topic. A LATE arrival never hears it. See
   // [[start-processing-jellyfish-jam]] and [[start-processing-broadcast]].
-  { epic: 'HRIS-02a', name: 'Start Processing plays one bounded cue and pops a modal on every other open Wizard and Dispatch, over its own topic that a late arrival never hears', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: 'Start Processing plays one bounded cue and pops a modal on every other open Wizard and Dispatch, over its own topic that a late arrival never hears', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
   // 3 SP: the payroll lock banner defaulted to "Issues are temporarily paused" and the Issues tab is
   // GONE, so every employee on EVERY tab read it — the lock never gated Documents at all. `detail` is
   // now REQUIRED with no default and per-tab sentences. NEVER "fix" this by loosening
   // `decideCoeActiveGate`, which fails closed BY DESIGN. See [[documents-not-gated-by-payroll-lock]].
-  { epic: 'HRIS-09', name: 'The payroll lock banner named a tab that no longer exists, so every employee read it on every tab — the detail is now required and written per tab', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-09', name: 'The payroll lock banner named a tab that no longer exists, so every employee read it on every tab — the detail is now required and written per tab', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'High' },
   // 3 SP: "JSON Token" was the BROWSER's SyntaxError, never our string — eight unguarded `res.json()`
   // calls hid every real cause. The route answers JSON on every branch it knows, so a non-JSON body
   // means the request never REACHED the handler; `requireFeatureEdit` sat OUTSIDE the try. Fixed via
   // `readJsonResponse`, and the 412 steer now keys on STATUS before the body. ROOT CAUSE STILL UNKNOWN.
   // See [[documents-json-token-is-the-parser]].
-  { epic: 'HRIS-18', name: 'A failing Documents request showed the JSON parser’s complaint instead of the cause — every response is read through one guarded reader', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-18', name: 'A failing Documents request showed the JSON parser’s complaint instead of the cause — every response is read through one guarded reader', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'High' },
   // 3 SP: Accounting > Documents joins the shared tab cache — 3 keys, 3 categories. `documentsQueue` is
   // a SHARED QUEUE, `documentsSignature` is cached but `signatureLoaded` is NEVER seeded (a cached null
   // pops the capture dialog every switch), and the spinner is DERIVED. done:false and In Progress —
   // 1f7e2078 is NOT an ancestor of origin/main. See [[accounting-documents-tab-cache]].
-  { epic: 'HRIS-18', name: 'The Accounting Documents tab no longer reloads itself on every tab switch, and a cached null can never pop the signature dialog', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-18', name: 'The Accounting Documents tab no longer reloads itself on every tab switch, and a cached null can never pop the signature dialog', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Medium' },
   // 2 SP Chore: reference docs for 3 routes and 4 components, ui-standards learns SlidingTab and the
   // vertical rail (the spring-vs-ease deviation RECORDED, not ratified), the Sep 14 leftovers removed,
   // and the stale "Paystubs send 1-by-1" pill dropped from the Dispatch step. See
   // [[reference-docs-rot-silently]].
-  { epic: 'HRIS-15', name: 'The reference docs and UI standards catch up with the Sep 14 work, and the Dispatch step drops a pill that stopped being true', type: 'Chore', sp: 2, done: false, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-15', name: 'The reference docs and UI standards catch up with the Sep 14 work, and the Dispatch step drops a pill that stopped being true', type: 'Chore', sp: 2, done: true, sprint: 'S29', priority: 'Low' },
+
+  // ── PASS 29 · 2026-09-17 · "push them in Monday ... FPU +MESA ... Webhooks and Integrations ... the Orphanage Integration" ──
+  //
+  // 56 commits, 1f7e2078..da41e271, every one an ancestor of origin/main (0 unpushed). CLUSTERED BY
+  // FILE OVERLAP, never by message, and this range needed it: a90155fc ("s") carries 23 files of the
+  // external-API feature, and 9ffcc84f carries TWO unrelated things (the Integrations panel and the
+  // Admin tab cache), so it appears in two rows. c40151b4 is the pass-28 staging commit: pure noise,
+  // no row. All 56 landed 2026-09-16/17, inside Sprint 29 (Sep 15-Sep 25, read off the live group
+  // title 2026-09-17 — which also SETTLES the S29 window pass 28 flagged as open).
+  //
+  // EVERY MIGRATION HERE WAS MEASURED READ-ONLY 2026-09-17 with .limit(1), never head:true, and both
+  // negative controls correctly reported ABSENT. THREE MEMORY "PENDING" CLAIMS WERE STALE:
+  //   · external_api_clients / external_api_requests ... APPLIED (1 client row already exists)
+  //   · orphanage_oms_hours ....................... APPLIED (0 rows)
+  //   · employee_support_tickets / _messages ...... APPLIED
+  // and every FPU object is present. See [[migration-pending-claims-are-folklore]].
+  // 8 SP: FPU classes with an enrollment window. Eligibility = active GML + start + 3 calendar months
+  // <= CLASS START, a missing start FAILS CLOSED, and the verdict is re-derived server-side. Approve
+  // = a SEAT; Mark completed stamps the FPU date and opens MESA. Optional batch name lives in
+  // fpu_classes.name and the code "FPU <year> · Batch <n>" is always shown under it. See
+  // [[fpu-enrollment-periods]].
+  { epic: 'HRIS-07', name: 'FPU classes with an enrollment window — HR approves seats in bulk, and Mark completed opens MESA', type: 'Feature', sp: 8, done: true, sprint: 'S29', priority: 'High' },
+  // 3 SP: server Broadcast on a dedicated `fpu-classes-sync` topic with a 15s poll floor — NEVER
+  // postgres_changes, which is dead under anon RLS here. See [[fpu-enrollment-periods]] and
+  // [[supabase-realtime-anon-rls-dead]].
+  { epic: 'HRIS-07', name: 'FPU classes and enrollments go live over their own Broadcast topic, with a 15 second poll floor', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Medium' },
+  // 3 SP: bulk delete of FPU enrollment entries, completed entries stay; a DENIED entry blocks
+  // re-enrolling until HR deletes it, pinned by a test so the rule is said out loud.
+  { epic: 'HRIS-07', name: 'FPU enrollment entries delete in bulk, and a denied entry blocks re-enrolling until HR removes it', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Medium' },
+  // 5 SP: closing enrollment early stamps enrollment_closed_on/by and that stamp OUTRANKS the
+  // window dates; the applicant list survives the close. Close/reopen runs through a progress dialog
+  // that tracks real steps rather than faking them.
+  { epic: 'HRIS-07', name: 'FPU enrollment closes at any time — the stamp outranks the dates, and the applicant list stays', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'High' },
+  // 8 SP: the randomizer runs ONCE per class (seeded; preview writes NOTHING, confirm RE-DERIVES,
+  // SORT before shuffling); per-group size is a TARGET but nobody is grouped alone; sessions are
+  // DERIVED (no end date => none); a missing mark is UNMARKED, a THIRD state that FAILS CLOSED;
+  // leader is a row-level capability re-read on every write and never marks itself. CLOSING THE CLASS
+  // stamps the FPU date + MESA for the ELIGIBLE ONLY — the ineligible get `failed` and no FPU date.
+  // See [[fpu-groups-attendance]].
+  { epic: 'HRIS-07', name: 'FPU groups, weekly attendance, and the eligible split that opens MESA', type: 'Feature', sp: 8, done: true, sprint: 'S29', priority: 'High' },
+  // 2 SP: MESA Eligible answers one question and stops: who is in MESA, and since when.
+  { epic: 'HRIS-07', name: 'MESA Eligible drops every money column — who is in MESA, and since when', type: 'Feature', sp: 2, done: true, sprint: 'S29', priority: 'Low' },
+  // 3 SP: the HR MESA tabs join the tab cache; MESA Eligible’s own cache key was the bug the doc
+  // already described. See [[hr-cache-freshness-window]].
+  { epic: 'HRIS-07', name: 'The HR MESA tabs paint from cache, and MESA Eligible’s own cache key was the documented bug', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Medium' },
+  // 3 SP: FPU Classes leads the tab, the Refresh button is gone (the live pill is the answer), the
+  // load is silent, skeletons cover the COLD paint only, and the dialogs arrive and leave with one
+  // motion shell. Includes the 72-gap FPU/MESA doc audit and the ui-standards entry for the dialogs.
+  { epic: 'HRIS-07', name: 'The FPU Classes surface loads silently, carries skeletons and motion, and leads the HR MESA tab', type: 'Chore', sp: 3, done: true, sprint: 'S29', priority: 'Low' },
+  // 8 SP: Admin > Webhooks & Integrations > Integrations (the tab id STAYS `webhooks`). Per-system
+  // keys read the GML by REST or MCP; per-column GRANT (NULL = whole table, [] REFUSED, the select is
+  // built FROM THE GRANT and never `*`, a filter on a hidden column is a 400); expiry 1d/15d/30d/never
+  // checked on EVERY call; rate limit PER CLIENT counted in external_api_requests (one budget across
+  // REST+MCP, a counting error is a 503); MCP exposes 2 read tools, PINNED. A NEW GML COLUMN FAILS
+  // catalog.test.ts by design. See [[external-api-integrations]].
+  { epic: 'HRIS-15', name: 'Webhooks and Integrations — per-column grants, key expiry, DB-counted rate limits and two pinned MCP tools', type: 'Feature', sp: 8, done: true, sprint: 'S29', priority: 'High' },
+  // 5 SP: New client is Who / Columns / Access / Confirm; the panel is Console-plain and the list is
+  // CACHED so a paint never decides anything. The hand-off dialog wraps into one column with a
+  // segmented preview instead of overflowing.
+  { epic: 'HRIS-15', name: 'New client is a four-step slideshow, and the Integrations panel reads Console-plain', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  // 3 SP: the `adm-tab:` store, ONE page. The blueprint questions Q1-Q3 and factory-vs-copy are
+  // STILL OPEN — this row is the store that shipped, not the blueprint that has not closed. See
+  // [[admin-dashboard-cache-blueprint-pending]].
+  { epic: 'HRIS-15', name: 'The Admin tab cache — one store, one page, and a paint that never decides', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Medium' },
+  // 5 SP: the OMS tab pulls APPROVED rows from a SEPARATE Supabase. NOTHING polls — Refresh is a
+  // real button and a re-load says what moved. See [[orphanage-oms-pull]].
+  { epic: 'HRIS-03c', name: 'The Orphanage step gets an Orphanage Management System tab — approved hours pulled on request, never on a poll', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'High' },
+  // 5 SP: SAVE writes orphanage_oms_hours — HOURS, never money, and never orphanage_pay.
+  // See [[orphanage-oms-pull]].
+  { epic: 'HRIS-03c', name: 'The OMS tab saves a pull into the HRIS’s own table of hours, never into orphanage pay', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'High' },
+  // 5 SP: the data layer plus four pure modules (hours, recipients, routing, screening), each with
+  // tests. Support hours are EASTERN, a first in this codebase. Carla approved the scope on 09-15;
+  // live chat left v1. NO UI SURFACE YET. See [[employee-support-blueprint-pending]].
+  { epic: 'HRIS-17', name: 'The Employee Support data layer and its four pure rules, with support hours kept in Eastern time', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  // 8 SP: a pay week now balances on the PAYROLL'S OWN identity. Itemisation comes from the WIZARD
+  // FINAL-PAY SNAPSHOT via the dispatch's cycle_source_file — system_bonus_label names ONLY the
+  // PAB/Tech part. Adj is SIGNED (negative = withheld, NEVER gate >0). Also: get_payroll_report's PESO
+  // column was SALARY-ONLY (PHP 36.7M shown against PHP 51.1M dispatched, 28% missing); paid figures
+  // now come from the DISPATCH LOG, both currencies from the SAME rows, PAGED. NEVER "computed".
+  // See [[penny-computed-vs-paid-unreconciled]].
+  { epic: 'HRIS-11', name: 'A Penny pay week adds up — hourly pay plus bonus minus MESA equals what was dispatched, in both currencies', type: 'Bug', sp: 8, done: true, sprint: 'S29', priority: 'Critical' },
+  // 2 SP: the COE printed a raw `hsl:` key as a team name. It now names the team in words.
+  { epic: 'HRIS-18', name: 'The certificate of employment names the team in words, never a raw department key', type: 'Bug', sp: 2, done: true, sprint: 'S29', priority: 'Medium' },
+  // 2 SP: AN INVESTIGATION, NOT A FIX. The COE has ZERO references to hsl_bonus_entries, so every
+  // HSL person is certified "Performance Bonuses — None assigned"; a MONTHLY KPI component scored
+  // off the FINAL payroll week is refused by the auto path, paid by hand via Adj., lands as
+  // `adjustment` and is DROPPED. gyd@ lost PHP 25,000 twice. THE FIX IS NOT BUILT.
+  // See [[coe-adjustment-column-bonuses-uncounted]].
+  { epic: 'HRIS-18', name: 'The certificate of employment is measured blind to KPI bonuses paid through the wizard’s Adj. column', type: 'Spike', sp: 2, done: true, sprint: 'S29', priority: 'High' },
+  // 3 SP: the Wires plate is labelled, and with the sidebar open the rail is plates alone.
+  { epic: 'HRIS-03a', name: 'The Wires plate says WIRES, and the dispatch rail is plates alone when the sidebar is open', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Medium' },
+  // 2 SP: the T4-hours refusal said "still on the clock" about a person who had already left.
+  // See [[termination-docs]].
+  { epic: 'HRIS-23', name: 'A termination refusal no longer claims someone is still on the clock when they had already left', type: 'Bug', sp: 2, done: true, sprint: 'S29', priority: 'High' },
+  // 1 SP: presentation trims on two wizard steps, same session: the Orphanage step loses its gradient
+  // banner card and the Dispatch step says it once.
+  { epic: 'HRIS-15', name: 'The Orphanage and Dispatch wizard steps lose a gradient banner and three blocks of prose', type: 'Chore', sp: 1, done: true, sprint: 'S29', priority: 'Low' },
 ];

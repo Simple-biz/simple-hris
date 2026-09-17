@@ -1936,3 +1936,150 @@ asserts a date range and a wrong one is the same class of falsehood as a wrong C
    off the shared Roadmap board on 2026-09-12 remain unresolved (Kane's standing ruling: *leave them,
    ask Abby*), so a full reconcile would mint twelve duplicate epics against a dead group id.
 6. Verify with `verify-one.mts` per row, never `verify.mts`, which pages all 3,133 items.
+
+## Pass 29 — 2026-09-17 — "pushhh": pass 28's withheld SP and 56 new commits, written in one apply
+
+Kane: *"we recently had big features added I want you to push them in Monday please they are done for
+the FPU +MESA its big and the other one is for the Webhooks and Integrations please its already
+deployed. Also the Orphanage Integration"*, then, when offered Pending Deploy: *"Dont pending deployed
+it. It has already been done please"*, then *"pushhh"*.
+
+**55 rows / 191 SP, approval hash `e4736853d17c`, applied via `--only-new`.** 52 rows created, 3
+existing rows corrected, 0 skipped. Audit range `9803bba6..da41e271` — 119 commits, the 63 pass 28
+staged plus 56 new.
+
+### What the budget did, for the fifth measured time
+
+Nothing. A cheap `boardGroups` probe passed at 16:03 UTC, `review.mts` ran **twice** (a full board
+page each — 4,597 task items and 256 epics), the 55-row apply ran, and `verify.mts` then paged the
+whole board **three more times**. No `DAILY_LIMIT_EXCEEDED`. That is not a licence to stop probing —
+pass 28 probed successfully and died on the very next call — but it is the first pass to record the
+budget comfortably absorbing a 55-row write plus a full verify on the same UTC day.
+
+### A blanket "it has already been done" is answered by asking which ones
+
+The gate's rule is to ask, not to apply. Every row carries Kane's words as its basis, and **four rows
+were held off Done anyway**, each on a measurement rather than an argument:
+
+| Held row | Measured 2026-09-17, `.limit(1)`, never `head:true` |
+|---|---|
+| Scheduling inside the HSL department | `employee_schedule_periods` **ABSENT** — code-complete and dead |
+| Paystub reissue | `paystub_issues` **ABSENT** — code-complete and dead |
+| Lead Gen QC first-pass restore | script un-run; Kane's ruling on payability outstanding |
+| Aliased MESA member | jimg@ fixed, **dales@ still unflagged and un-deducted** — split, not rounded up |
+
+Both negative controls (`definitely_not_a_table_xyz`, `fpu_classes.definitely_not_a_column_xyz`)
+correctly reported ABSENT, so the probe discriminates.
+
+### Three "MIGRATION PENDING" memory claims were STALE
+
+Measured, not assumed, in both directions — the rule from
+[[migration-pending-claims-are-folklore]] cutting the other way this time:
+
+- `external_api_clients` + `external_api_requests` — **APPLIED**, and already holding 1 client row,
+  so the Webhooks & Integrations tab is in use, not merely created.
+- `orphanage_oms_hours` — **APPLIED** (0 rows: applied and empty).
+- `employee_support_tickets` + `employee_support_messages` — **APPLIED**.
+
+Every FPU object is present too: `fpu_classes` (+`name`, +`class_closed_on/by`,
++`enrollment_closed_on/by`), `fpu_enrollments` (+`class_id`, +`attendance_override`,
++`completed_on`), `fpu_class_groups`, `fpu_group_members`, `fpu_session_attendance`.
+
+### Re-deriving the staged rows changed one of them
+
+Pass 28's staged prose is a snapshot, not a standing fact, and this is the second time that has paid:
+the Accounting Documents tab row was staged **In Progress** solely because `1f7e2078` was unpushed.
+It is an ancestor of `origin/main` now, so the row went **Done**. Carrying the staged status forward
+would have filed a true status as a stale one. The Employee Support blueprint row's blocker ("Q1-Q9
+unanswered") was likewise stale — Carla approved on 09-15 and the data layer shipped on 09-16, which
+is its own row in this pass.
+
+### The S29 window is settled
+
+Pass 28 flagged it as an open decision worth ten rows. The live group title, read off the board on
+2026-09-17, is **`Sprint 29 · Sep 15-Sep 25`** — exactly what `TASK_SPRINT_WINDOWS` already holds.
+No rows move. The board owns that range.
+
+### Clustering, again, could not have been done by message
+
+`a90155fc` — commit message **"s"** — carries 23 files of the external-API feature. `9ffcc84f`
+carries **two unrelated things**, the Integrations panel and the Admin tab cache, so it appears in
+two rows. `c40151b4` is the pass-28 staging commit and is pure noise: no row.
+
+### Verification, reported in two halves
+
+**This pass's own half is clean.** Re-read of 4,650 task items: **0** status mismatches, **0** wrong
+Completed Dates, **0** Done-without-Actual-SP, **0** phantom Actual SP on unshipped rows. Name parity
+**356/356**, 0 missing, 0 orphans. Rollup **1569 / 874**, both as wanted.
+
+**The 57 `VERIFY FAIL` lines are all the pre-existing structural gap**, none of them this pass's
+doing: `--only-new` writes no epic relation by design, the project Sprint Tasks relation covers
+284/356, and the **12 Q2 epics deleted off the shared board on 2026-09-12** are still missing. Kane's
+standing ruling holds — *leave them, ask Abby* — and a full reconcile remains barred, since it would
+mint twelve duplicate epics against a dead group id and overwrite the epic relation on all 356 rows.
+
+### Still open
+
+`OMS_SUPABASE_URL` / `OMS_SUPABASE_KEY` are filled in `.env.local` but **could not be verified in
+Vercel production** from this session. Raised with Kane before the apply; he said push with the
+question outstanding. If they are unset in prod, the Orphanage OMS tab is live but cannot pull, and
+those two rows should come off Done.
+
+## Pass 30 — 2026-09-17 — "mark these all as done and deployed" — the Pending Deploy sweep
+
+Kane sent a screenshot of the board's own Pending Deploy column with that sentence. This is a
+**status sweep, not a commit audit** — the rows already existed and already carried their evidence.
+
+**17 rows / 71 SP, approval hash `650120eef8f5`, `--only-new`.** 0 created, 17 corrected, 0 skipped.
+The board held 22 Pending Deploy rows of ours, against 330 Done and 4 Ready to Start.
+
+### Dates were RECOVERED, never typed
+
+These rows predate this pass, so their sha lists were not in the current `pass.mts`. They were read
+back out of the **git history of `pass.mts` itself** (`tmp-recover-shas.mts`: walk
+`git log --format=%H -- pass.mts`, `git show <rev>:<path>`, find the row block by name fragment,
+pull its `shas: [...]`). `selfcheck()` then re-derived every date from git independently, and each
+row's last sha was re-checked as an ancestor of `origin/main`. Nothing here rests on memory.
+
+That technique is worth keeping: **the evidence for a row is never lost, because the pass file is in
+git.** A row whose shas seem gone has simply been overwritten by a later pass.
+
+### Five rows were held, and one of them for a new reason
+
+| Held | Why |
+|---|---|
+| Scheduling inside the HSL department | `employee_schedule_periods` **ABSENT** (measured 09-17) |
+| Paystub reissue | `paystub_issues` **ABSENT** (measured 09-17) |
+| Lead Gen QC first-pass restore | script un-run; Kane's payability ruling outstanding |
+| Aliased MESA member | jimg@ fixed, **dales@ still un-deducted** |
+| **Tickets update notifications** | **a sprint problem, not a deploy problem** |
+
+The last one is the new lesson. Its work finished **2026-08-21** — that is **Sprint 27** — but the row
+is filed **S28**, and `selfcheck()` refuses a Completed Date outside its sprint's attribution window
+(S28 is Sep 1-14). The honest fix is to re-file it to S27, and **the group move is reconciler-owned**:
+only a full reconcile writes it, and the full path stays barred by the 12 deleted Q2 epics. So the row
+is held and reported rather than back-dated into a window it does not belong to. **A row can be fully
+deployed and still not be markable Done, because the board is asserting a date range as well as a
+state.**
+
+The 4 **Ready to Start** rows were deliberately left alone: unstarted work is not undeployed work, and
+the screenshot was of the Pending Deploy column.
+
+### Two more "PENDING" memory claims measured STALE
+
+- The **orphanage interns migration is APPLIED** — `orphanage_interns`, `orphanage_intern_hours`,
+  `orphanage_intern_hours_uploads`, `orphanage_intern_pay`, `orphanage_intern_rates` and
+  `orphanage_dispatches` all present, negative control correctly ABSENT. The memory said
+  "Migration NOT yet applied".
+- **`webhooks.config` now carries `ticket_replied` AND `ticket_moved`** — 25 entries, was 22 when
+  measured 2026-08-26. Both n8n workflows were imported and their URLs pasted. So the Tickets row's
+  recorded external step is closed; what holds that row now is the sprint window, nothing else.
+
+That is **five** stale PENDING claims corrected in one day across passes 29 and 30. The rule stands
+in both directions — pass 28 measured two of three TRUE — but the reflex to re-measure has now paid
+five times over.
+
+### Verified by re-read
+
+Spot-checked with `verify-one.mts` (1 call each): status **Done**, Actual SP present and equal to the
+plan's, Completed Date as written, group and Sprint label unchanged at Sprint 28.
