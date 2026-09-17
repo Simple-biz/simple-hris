@@ -9,21 +9,19 @@ import {
   RefreshCw,
   Mail,
   Building2,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { formatDateOnly } from '@/lib/date-only';
 import { AnimatePresence, motion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import HrFpuEnrollments from './HrFpuEnrollments';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { EmployeeRow } from '@/lib/supabase/employees';
-import type { MesaMemberSummary } from '@/lib/mesa/ledger';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 type MesaTab = 'fpu' | 'eligible';
@@ -34,23 +32,25 @@ type EligibleRow = {
   work_email: string | null;
   personal_email: string | null;
   department: string | null;
-  /** Contribution rollup from the MESA ledger, matched by email (null if no ledger history). */
-  ledger: MesaMemberSummary | null;
+  /**
+   * The day their MESA membership opened — `employee_hourly_rates.mesa_member_since`,
+   * taken verbatim. NOT derived here: the toggle route keeps it equal to the open
+   * account's `opened_on` and `verify-mesa-backfill.mjs` asserts that, so computing
+   * a start date from anything else would invent a second answer.
+   */
+  mesa_member_since: string | null;
 };
 
 const PAGE_SIZE = 15;
-
-/** Peso, two decimals — follows the app-wide money convention. */
-const formatPHP = (n: number) =>
-  `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // Module-level cache so flipping between MESA sub-tabs (or away and back to
 // the HR sidebar tab) doesn't re-fetch the rates + employees lists. Cleared
 // on Refresh and on full page reload.
 // Bump the suffix whenever the row-derivation logic changes — that way a
-// previously-cached snapshot of "—" names doesn't survive into a session that
-// would otherwise compute the email-derived fallback.
-let cachedEligible_v4: EligibleRow[] | null = null;
+// previously-cached snapshot doesn't survive into a session computing different
+// rows. v5 (2026-09-17): the money rollup left this tab, so a v4 snapshot carries
+// no `mesa_member_since` at all.
+let cachedEligible_v5: EligibleRow[] | null = null;
 
 export default function HrMesa() {
   // Lands on FPU Classes: it is the leftmost chip and the tab HR acts on
@@ -160,8 +160,8 @@ function SubTabButton({
 }
 
 function MesaEligibleList() {
-  const [rows, setRows] = useState<EligibleRow[]>(() => cachedEligible_v4 ?? []);
-  const [loading, setLoading] = useState(() => cachedEligible_v4 === null);
+  const [rows, setRows] = useState<EligibleRow[]>(() => cachedEligible_v5 ?? []);
+  const [loading, setLoading] = useState(() => cachedEligible_v5 === null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -172,25 +172,17 @@ function MesaEligibleList() {
     else setRefreshing(true);
     setError(null);
     try {
-      const [ratesRes, employeesRes, ledgerRes] = await Promise.all([
+      // No ledger call. This tab answers WHO is in MESA and WHEN they joined, and
+      // both come off the rates row; the money lives on Accounting -> MESA ->
+      // Active Members, which is the surface that owns balances.
+      const [ratesRes, employeesRes] = await Promise.all([
         fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
         fetch('/api/employees', { cache: 'no-store' }),
-        fetch('/api/mesa-ledger', { cache: 'no-store' }),
       ]);
       if (!ratesRes.ok) throw new Error(`rates HTTP ${ratesRes.status}`);
       if (!employeesRes.ok) throw new Error(`employees HTTP ${employeesRes.status}`);
       const ratesJson = (await ratesRes.json()) as { rows?: EmployeeHourlyRateRow[] };
       const employeesJson = (await employeesRes.json()) as { employees?: EmployeeRow[] };
-      // Ledger is best-effort — a failure here shouldn't blank out the eligible list.
-      const ledgerJson = ledgerRes.ok
-        ? ((await ledgerRes.json()) as { members?: MesaMemberSummary[] })
-        : { members: [] };
-
-      // Contribution rollups keyed by lowercased email (member's email in the ledger).
-      const ledgerByEmail = new Map<string, MesaMemberSummary>();
-      for (const m of ledgerJson.members ?? []) {
-        if (m.email) ledgerByEmail.set(m.email.toLowerCase(), m);
-      }
 
       // Build a lookup of MESA-eligible rates rows, keyed by both work_email
       // and personal_email. Only rows with mesa_member=true are indexed —
@@ -212,20 +204,19 @@ function MesaEligibleList() {
           const pe = e.personal_email?.toLowerCase().trim();
           const rate = (we && mesaByEmail.get(we)) || (pe && mesaByEmail.get(pe)) || null;
           if (!rate) return null;
-          const ledger = (we && ledgerByEmail.get(we)) || (pe && ledgerByEmail.get(pe)) || null;
           return {
             key: we || pe || (e.employee_id ?? e.name ?? Math.random().toString(36)),
             name: e.name ?? '—',
             work_email: e.work_email ?? null,
             personal_email: e.personal_email ?? null,
             department: e.department ?? rate.department ?? null,
-            ledger,
+            mesa_member_since: rate.mesa_member_since ?? null,
           } as EligibleRow;
         })
         .filter((r): r is EligibleRow => r !== null)
         .sort((a, b) => a.name.localeCompare(b.name));
 
-      cachedEligible_v4 = eligible;
+      cachedEligible_v5 = eligible;
       setRows(eligible);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load MESA-eligible employees');
@@ -238,7 +229,7 @@ function MesaEligibleList() {
   useEffect(() => {
     // Skip the network round trip if we already have a warm cache —
     // the module-level cache survives sub-tab switches in the current session.
-    if (cachedEligible_v4 !== null) return;
+    if (cachedEligible_v5 !== null) return;
     void load(true);
   }, []);
 
@@ -264,7 +255,7 @@ function MesaEligibleList() {
   const pageRows = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
   const handleRefresh = async () => {
-    cachedEligible_v4 = null;
+    cachedEligible_v5 = null;
     await load(false);
     toast.success('Refreshed MESA-eligible list');
   };
@@ -274,28 +265,12 @@ function MesaEligibleList() {
     [rows],
   );
 
-  // Program-wide contribution totals across everyone shown.
-  const totals = useMemo(() => {
-    let contributed = 0;
-    let matched = 0;
-    let balance = 0;
-    for (const r of rows) {
-      if (!r.ledger) continue;
-      contributed += r.ledger.contributed;
-      matched += r.ledger.matched;
-      balance += r.ledger.balance;
-    }
-    return { contributed, matched, balance };
-  }, [rows]);
-
   return (
     <div className="space-y-5">
       {/* Stat strip */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="MESA-eligible employees" value={rows.length} tone="teal" />
-        <MoneyStatCard label="Total contributed" value={formatPHP(totals.contributed)} tone="zinc" />
-        <MoneyStatCard label="Simple.biz matched" value={formatPHP(totals.matched)} tone="teal" />
-        <MoneyStatCard label="Total balance" value={formatPHP(totals.balance)} tone="teal" />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <StatCard label="MESA members" value={rows.length} tone="teal" />
+        <StatCard label="Departments" value={deptCount} tone="zinc" />
       </div>
 
       {error && (
@@ -334,7 +309,7 @@ function MesaEligibleList() {
           <CardTitle className="text-sm font-semibold text-zinc-900 dark:text-white">
             {loading
               ? 'Loading MESA members…'
-              : `${filtered.length} MESA-eligible ${filtered.length === 1 ? 'employee' : 'employees'}`}
+              : `${filtered.length} MESA ${filtered.length === 1 ? 'member' : 'members'}`}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -344,7 +319,7 @@ function MesaEligibleList() {
             <div className="flex flex-col items-center justify-center gap-2 px-5 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
               <Inbox className="h-6 w-6 text-zinc-400" />
               {rows.length === 0
-                ? 'No MESA-eligible employees yet — members are flagged via the Rates tab.'
+                ? 'Nobody is in MESA yet — members are enrolled by completing an FPU class.'
                 : 'No results match your search.'}
             </div>
           ) : (
@@ -355,10 +330,7 @@ function MesaEligibleList() {
                     <th className="px-4 py-2.5">Name</th>
                     <th className="px-4 py-2.5">Work email</th>
                     <th className="px-4 py-2.5">Department</th>
-                    <th className="px-4 py-2.5 text-right">Contributed</th>
-                    <th className="px-4 py-2.5 text-right">Simple.biz match</th>
-                    <th className="px-4 py-2.5 text-right">Balance</th>
-                    <th className="px-4 py-2.5 text-right">Status</th>
+                    <th className="px-4 py-2.5">In MESA since</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-teal-100/60 dark:divide-teal-900/40">
@@ -408,39 +380,18 @@ function MesaEligibleList() {
                         )}
                       </td>
                       <td
-                        data-label="Contributed"
-                        className="px-4 py-2.5 text-right font-mono tabular-nums text-zinc-700 dark:text-zinc-300"
+                        data-label="In MESA since"
+                        className="px-4 py-2.5 tabular-nums text-zinc-700 dark:text-zinc-300"
                       >
-                        {r.ledger ? formatPHP(r.ledger.contributed) : <span className="text-zinc-400">—</span>}
-                      </td>
-                      <td
-                        data-label="Simple.biz match"
-                        className="px-4 py-2.5 text-right font-mono tabular-nums text-teal-700 dark:text-teal-300"
-                      >
-                        {r.ledger ? formatPHP(r.ledger.matched) : <span className="text-zinc-400">—</span>}
-                      </td>
-                      <td
-                        data-label="Balance"
-                        className="px-4 py-2.5 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-white"
-                      >
-                        {r.ledger ? formatPHP(r.ledger.balance) : <span className="text-zinc-400">—</span>}
-                      </td>
-                      <td data-label="Status" className="px-4 py-2.5 text-right">
-                        {r.ledger && !r.ledger.isActive && r.ledger.status ? (
-                          <Badge
-                            variant="outline"
-                            className="border-zinc-300 bg-zinc-50 text-[10.5px] font-semibold uppercase tracking-wide text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-300"
-                          >
-                            {r.ledger.status}
-                          </Badge>
+                        {/* A member with no start date is a real finding, not a blank: it
+                            means the flag and the account row disagree, which is what
+                            verify-mesa-backfill exists to catch. Say so rather than dash it. */}
+                        {r.mesa_member_since ? (
+                          formatDateOnly(r.mesa_member_since)
                         ) : (
-                          <Badge
-                            variant="outline"
-                            className="border-teal-200 bg-teal-50 text-[10.5px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-200"
-                          >
-                            <CheckCircle2 className="mr-1 h-3 w-3" />
-                            {r.ledger?.depositCount ? `${r.ledger.depositCount} wks` : 'Enrolled'}
-                          </Badge>
+                          <span className="text-amber-600 dark:text-amber-400" title="Flagged as a member but no mesa_member_since on their rates row">
+                            not recorded
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -582,26 +533,3 @@ function StatCard({
   );
 }
 
-// Same visual language as StatCard but for a pre-formatted money string.
-function MoneyStatCard({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: 'teal' | 'zinc';
-}) {
-  const styles = {
-    teal:
-      'border-teal-200 bg-gradient-to-br from-teal-50 to-white text-teal-900 dark:border-teal-700/40 dark:from-teal-950/40 dark:to-zinc-950 dark:text-teal-100',
-    zinc:
-      'border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-100',
-  }[tone];
-  return (
-    <div className={`rounded-xl border p-4 shadow-sm ${styles}`}>
-      <p className="text-[11px] font-medium uppercase tracking-wide opacity-70">{label}</p>
-      <p className="mt-1 font-mono text-xl font-bold tabular-nums">{value}</p>
-    </div>
-  );
-}

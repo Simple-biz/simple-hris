@@ -1180,7 +1180,7 @@ The **Transfers** tab -- approve/reject manager-submitted department-transfer re
 
 ### `src/components/hr/HrMesa.tsx`
 
-The **MESA** tab (Medical Emergency Savings Account). Two sub-tabs: **MESA Eligible** and **FPU Classes** (`HrFpuEnrollments`). The **Opt-in Requests** sub-tab was retired 2026-09-16 — membership opens through the FPU class pipeline. `MesaEligibleList` fetches `GET /api/employee-hourly-rates` + `GET /api/employees` + `GET /api/mesa-ledger` (best-effort) in parallel, builds a `mesa_member` lookup keyed by work+personal email, and joins each member to their `mesa_ledger` rollup (Contributed / Matched / Balance).
+The **MESA** tab (Medical Emergency Savings Account). Two sub-tabs: **MESA Eligible** and **FPU Classes** (`HrFpuEnrollments`). The **Opt-in Requests** sub-tab was retired 2026-09-16 — membership opens through the FPU class pipeline. `MesaEligibleList` fetches `GET /api/employee-hourly-rates` + `GET /api/employees` in parallel and builds a `mesa_member` lookup keyed by work+personal email. **No money and no ledger call since 2026-09-17** — the columns are name, work email, department and **In MESA since** (`mesa_member_since`, verbatim; "not recorded" in amber when the flag and the account row disagree). Balances belong to Accounting → MESA → Active Members.
 
 ### `src/components/hr/HrFpuEnrollments.tsx`
 

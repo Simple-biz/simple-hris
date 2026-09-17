@@ -123,9 +123,15 @@ All three dashboards read the same ledger via `GET /api/mesa-ledger` and render 
 - **Requests** — the member's full `mesa_requests` history (`GET /api/mesa-requests?email=`), including `opt_in` (HR's, but shown here for the complete picture) and each request's review notes.
 - **Notes** — the ongoing `mesa_notes` log (`GET`/`POST /api/mesa-notes`), with a composer to add a new internal note on the spot.
 
-### HR — Eligible list
+### HR — MESA Eligible list
 
-`HrMesa.tsx` → Eligible sub-tab. Joins the roster to the ledger by email (`GET /api/mesa-ledger`), surfacing each employee's contribution rollup (`MesaMemberSummary`, `null` when there's no ledger history).
+`HrMesa.tsx` → MESA Eligible sub-tab. **No money, and no ledger call** (2026-09-17, Kane: *"lets remove the money value in here we should only have the data for each of the MESA People who were already eligible and when was their start date in MESA and that is it"*). It answers two questions only: who is in MESA, and when they joined — name, work email, department, and **In MESA since**.
+
+Both come off the rates row, so the tab makes two requests (`/api/employee-hourly-rates` + `/api/employees`) instead of three. Membership is still decided by the FLAG `employee_hourly_rates.mesa_member`, never the ledger, so exactly the same people appear as before — including the alias-drifted members this tab has always missed (see [[mesa-alias-members-never-flagged]]).
+
+**`mesa_member_since` is shown verbatim, never derived.** `POST /api/toggle-mesa-member` keeps it equal to the open account's `opened_on` and `scripts/verify-mesa-backfill.mjs` asserts the two match, so a second computation here would only be able to disagree. A member with no date renders **"not recorded"** in amber rather than a dash: it means the flag and the account row have drifted, which is a finding, not an empty cell.
+
+Balances live on **Accounting → MESA → Active Members**, which is the surface that owns them. Further columns (class dates and the rest) are Kane's to specify once the backfill lands.
 
 ### Employee — MESA History
 
