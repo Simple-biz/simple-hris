@@ -21,57 +21,68 @@ create SQL is amended in place · MCP is on for every key · the limiter counts 
 
 ## Task 1 — the data layer (SQL amended in place, never applied yet)
 
-- [ ] `references/sql/create/2026-09-16_external_api_clients.sql` — add `granted_columns text[]`
+- [x] `references/sql/create/2026-09-16_external_api_clients.sql` — add `granted_columns text[]`
   (NULL = whole table; non-null = only these, ≥1), `expires_at timestamptz` (NULL = never),
   `rate_limit_per_minute int not null default 60 check 1..600`. Requests: allow `POST` for the
   MCP route (CHECK widened to GET/POST), add denial reasons to the comment.
-- [ ] `scripts/apply-external-api-clients-migration.mts` — constraint names, positive controls
+- [x] `scripts/apply-external-api-clients-migration.mts` — constraint names, positive controls
   (a scoped client, an expiring client), negative controls (limit 0 / 601, empty granted list).
-- [ ] `scripts/Apply External API clients migration.cmd` — copy points at Admin → Webhooks &
+- [x] `scripts/Apply External API clients migration.cmd` — copy points at Admin → Webhooks &
   Integrations → Integrations.
 
 ## Task 2 — pure modules + tests
 
-- [ ] `src/lib/external-api/catalog.ts` — the GML column catalog: offerable columns, the
+- [x] `src/lib/external-api/catalog.ts` — the GML column catalog: offerable columns, the
   `sensitive` group, `ALWAYS_COLUMNS` (`id` — the cursor), `NEVER_COLUMNS` (import/deletion
   bookkeeping, off-boarding stamps). `.test.ts`: every real column classified exactly once.
-- [ ] `src/lib/external-api/grants.ts` — `normalizeGrant`, `selectFor`, `projectRow`,
+- [x] `src/lib/external-api/grants.ts` — `normalizeGrant`, `selectFor`, `projectRow`,
   `filterColumnsFor` (a filter on a hidden column is refused). `.test.ts`: a hidden column
   never appears; `select` never contains `*`; filters on hidden columns are named.
-- [ ] `src/lib/external-api/expiry.ts` — `EXPIRY_OPTIONS`, `expiresAtFor`, `isExpired`.
-- [ ] `src/lib/external-api/rate-limit.ts` — `clampRateLimit`, `decideFromCount` (DB-counted
+- [x] `src/lib/external-api/expiry.ts` — `EXPIRY_OPTIONS`, `expiresAtFor`, `isExpired`.
+- [x] `src/lib/external-api/rate-limit.ts` — `clampRateLimit`, `decideFromCount` (DB-counted
   window). Keep `SlidingWindowLimiter` for the tests that pin it.
-- [ ] `src/lib/external-api/mcp-server.ts` — `buildMcpServer(ctx)`: tools `describe_access` and
+- [x] `src/lib/external-api/mcp-server.ts` — `buildMcpServer(ctx)`: tools `describe_access` and
   `query_global_master_list`; the tool list is pinned by test; output is projected.
 
 ## Task 3 — server
 
-- [ ] `src/lib/supabase/external-api-db.ts` — new columns in types + PUBLIC_COLUMNS, create/patch
+- [x] `src/lib/supabase/external-api-db.ts` — new columns in types + PUBLIC_COLUMNS, create/patch
   fields, `readActiveGmlRows(select)`, `countRecentCalls(clientId, sinceIso)` (fail closed).
-- [ ] `src/lib/external-api/authenticate.ts` — `expired` denial (401, same sentence).
-- [ ] `src/lib/external-api/serve-gml.ts` — the shared auth → limit → query → project pipeline
+- [x] `src/lib/external-api/authenticate.ts` — `expired` denial (401, same sentence).
+- [x] `src/lib/external-api/serve-gml.ts` — the shared auth → limit → query → project pipeline
   both routes call, so a REST call spends the MCP budget and vice versa.
-- [ ] `app/api/external/v1/global-master-list/route.ts` — uses the pipeline.
-- [ ] `app/api/external/mcp/route.ts` — POST only; stateless transport per request.
-- [ ] `app/api/admin/external-api-clients/route.ts` + `[id]/route.ts` — grants, expiry, limit
+- [x] `app/api/external/v1/global-master-list/route.ts` — uses the pipeline.
+- [x] `app/api/external/mcp/route.ts` — POST only; stateless transport per request.
+- [x] `app/api/admin/external-api-clients/route.ts` + `[id]/route.ts` — grants, expiry, limit
   on POST and `update`; GET returns the catalog + `throttled_7d`.
-- [ ] `src/lib/audit/registry.ts` — note names the new home.
-- [ ] `package.json` — `@modelcontextprotocol/sdk` + `zod` promoted to direct deps, pinned.
+- [x] `src/lib/audit/registry.ts` — note names the new home.
+- [x] `package.json` — `@modelcontextprotocol/sdk` + `zod` promoted to direct deps, pinned.
 
 ## Task 4 — UI
 
-- [ ] `src/components/admin/AdminExternalApiClients.tsx` — column picker (whole table default,
+- [x] `src/components/admin/AdminExternalApiClients.tsx` — column picker (whole table default,
   sensitive group marked), expiry radio, limit field, Edit dialog, row shows Columns · Expires ·
   Limit · throttled; hand-off dialog with sample payload of only the granted columns + MCP config.
-- [ ] `src/components/admin/AdminWebhooks.tsx` — tab strip Webhooks · Integrations; header
+- [x] `src/components/admin/AdminWebhooks.tsx` — tab strip Webhooks · Integrations; header
   actions only on Webhooks.
-- [ ] `src/components/admin/AdminSidebar.tsx` — label "Webhooks & Integrations", id kept.
-- [ ] `src/components/admin/AdminApiKeys.tsx` — unmount; hand-off note.
+- [x] `src/components/admin/AdminSidebar.tsx` — label "Webhooks & Integrations", id kept.
+- [x] `src/components/admin/AdminApiKeys.tsx` — unmount; hand-off note.
 
 ## Task 5 — docs, same commit
 
-- [ ] `docs/features/external-api-integrations.md` (renamed from `external-api-global-master-list.md`)
-- [ ] `docs/features/INDEX.md` — NEW row "Webhooks & Integrations"
-- [ ] `docs/reference/api-reference.md` + `docs/reference/components.md` rows
-- [ ] memory `external-api-integrations.md` + `MEMORY.md` pointer
-- [ ] Open item 97 → shipped; Deploy notes mark the migration PENDING
+- [x] `docs/features/external-api-integrations.md` (renamed from `external-api-global-master-list.md`)
+- [x] `docs/features/INDEX.md` — NEW row "Webhooks & Integrations"
+- [x] `docs/reference/api-reference.md` + `docs/reference/components.md` rows
+- [x] memory `external-api-integrations.md` + `MEMORY.md` pointer
+- [x] Open item 97 → shipped; Deploy notes mark the migration PENDING
+
+## Shipped
+
+- `4ec186c0` — Tasks 1–5 as planned (grants · expiry · rate limit · MCP · the tab · docs).
+- `9ffcc84f` — follow-up (Kane, same day): Console-plain panel + the Admin tab cache
+  (`src/lib/admin/tab-cache.ts`, `docs/features/admin-dashboard-cache.md`).
+- `62930939` — New client as a four-step slideshow (Who → Columns → Access → Confirm).
+- `1a450758` — hand-off dialog as one wrapping column with a segmented preview (it overflowed sideways).
+
+Still PENDING on Kane: the migration (`scripts/Apply External API clients migration.cmd`) and, optionally,
+`EXTERNAL_API_KEY_PEPPER` on Vercel. Not exercised in a browser by the session.

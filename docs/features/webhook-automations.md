@@ -1,6 +1,7 @@
 # Webhook automations — the editable mimicry of what an n8n automation will send
 
-Admin → Webhooks carries an **Open automation** button on any webhook card whose slug has an
+Admin → Webhooks & Integrations → **Webhooks** (the sidebar entry was renamed 2026-09-17 when the Integrations tab
+arrived beside it; the id stays `webhooks`) carries an **Open automation** button on any webhook card whose slug has an
 automation descriptor. It opens the automation as it will fire: **who** it mails (the role's
 holders, as adjusted here), **what** it sends (the exact payload, attachments listed by name)
 and the **one thing that fires it**. Recipients and extra top-level payload keys are editable

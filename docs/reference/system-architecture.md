@@ -570,3 +570,13 @@ Two things referenced by older docs **never existed in this repo**: `references/
 - [../features/](../features/) — 86 per-feature docs; [INDEX.md](../features/INDEX.md) maps surface → docs → memory → the rule most likely to be violated, and is what the `hardening`/`blueprint` skills read first
 - [../audits/](../audits/) — dated session logs; the newest one's § Open items is the current status of every unfinished item
 - [../../SECURITY_AUDIT.md](../../SECURITY_AUDIT.md) — outstanding unauthenticated-route findings
+
+## External read API — the one prefix the SSO proxy lets through *(2026-09-16/17)*
+
+`proxy.ts` passes `/api/external/*` without a session check: outside systems carry no NextAuth cookie, and a `302`
+to `/login` is HTML an API client cannot act on. The handler IS the gate — `admitExternalCall`
+(`src/lib/external-api/serve.ts`): Bearer key → sha256(key · pepper) → `external_api_clients` row (revoked / expired /
+scope) → column grant → DB-counted rate limit → request-log row, fail-closed on every branch. Two routes live there:
+`GET /api/external/v1/global-master-list` (REST) and `POST /api/external/mcp` (a stateless Streamable HTTP MCP server
+with two read tools). **Nothing under `/api/external/` may ever rely on a session.** Admins manage keys at Admin →
+Webhooks & Integrations → Integrations. Governing doc: [external-api-integrations.md](../features/external-api-integrations.md).

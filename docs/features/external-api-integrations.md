@@ -8,7 +8,9 @@ long the key **lives** (1 day · 15 days · 30 days · does not expire) and how 
 per minute** it gets, hand over one ready-to-paste **hand-off** (key, endpoints, sample
 payload, MCP config), and can edit, revoke, restore or rotate at any time with effect on the
 next call. First shipped 2026-09-16 as "Admin → API tokens → External access" (commit
-`a90155fc`, GML only, all columns); widened and moved 2026-09-17 (this commit).
+`a90155fc`, GML only, all columns); widened and moved 2026-09-17 in `4ec186c0` (grants · expiry · rate limit · MCP · the
+tab), then `9ffcc84f` (Console-plain panel + the Admin tab cache), `62930939` (New client as a four-step slideshow) and
+`1a450758` (the hand-off dialog as one wrapping column).
 
 Kane's framing, 2026-09-17: *"they only need Global Master List — I can give them a whole
 table for the Global Master List or hide some of those columns to protect data so I can just
@@ -125,8 +127,10 @@ write tool is a feature decision, not a config.
 
 `external_api_clients.key_hash` holds `sha256(key · pepper)`, nothing else. The plaintext
 appears in exactly two responses: the `POST` that created the client and the `PATCH` that
-rotated it — rendered once in the **hand-off** dialog (key, curl, MCP config, sample payload
-of only the granted columns, and one "everything, ready to paste" block). **There is no "show
+rotated it — rendered once in the **hand-off** dialog: the key with *Copy key*, then ONE segmented
+preview (Hand-off · HTTP · MCP · Sample response) shown masked and copied real, wrapping and
+scrolling vertically so a long line can never widen the dialog (`1a450758` — two side-by-side
+code blocks had pushed it past the viewport). **There is no "show
 key again"**; if it is lost, Rotate.
 
 The pepper is `EXTERNAL_API_KEY_PEPPER`, falling back to `NEXTAUTH_SECRET`. `readPepper()`
@@ -234,7 +238,8 @@ the single primary action, an **endpoints strip** (REST · MCP · Auth, each wit
 toolbar (All / Live / Revoked / Expired counts, a text filter, an "Updated … ago" stamp and
 Refresh), and **one flat table** on a hairline surface. Status is a dot and a word, never a
 filled pill; the only accent is the app's orange on the primary action; row actions are ghost
-icon buttons that come to full strength on hover or focus. The dialogs (Edit, hand-off, Calls) keep the same vocabulary — hairline borders, zinc, one primary.
+icon buttons that come to full strength on hover or focus. The dialogs (Edit, hand-off, Calls) keep the same vocabulary — hairline borders, zinc, one primary;
+the hand-off is one column with a segmented preview (see *The key is never stored*).
 **New client is a four-step slideshow** (Kane: *"separate them by group with a confirm at the end"*):
 Who (name · system · contact) → Columns → Access (lifetime · limit) → **Confirm**, a read-back with
 an Edit link per row. Next is gated on the current step only, done steps are clickable, Enter

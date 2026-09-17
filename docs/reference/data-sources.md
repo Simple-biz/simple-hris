@@ -596,6 +596,27 @@ FPU class groups, their weekly session attendance, and the eligible split that o
 
 ---
 
+## 18. `external_api_clients` + `external_api_requests` *(SQL written 2026-09-16, amended 2026-09-17 — migration PENDING)*
+
+Governing doc: [external-api-integrations.md](../features/external-api-integrations.md). The per-system keys behind
+`/api/external/v1/*` and `/api/external/mcp` (Admin → Webhooks & Integrations → Integrations) and the per-call log.
+**Neither table exists in production yet** (measured 2026-09-17, PGRST205 on both) — Kane runs
+`scripts/Apply External API clients migration.cmd` (rehearsal, then `APPLY`; needs `DATABASE_URL`).
+
+`external_api_clients` — one row per outside system. `key_hash` = sha256(key · pepper), UNIQUE; the plaintext key is
+NEVER stored. `key_prefix` (`hris_live_xxxxxx`) is display/correlation only. `scopes` ⊆ {`global_master_list.read`}
+(CHECK). `granted_columns text[]` — NULL = whole table, else only those columns, `[]` refused (CHECK). `expires_at` —
+NULL = never. `rate_limit_per_minute` 1..600 default 60 (CHECK). `revoked_at/by` (paired by CHECK), `rotated_at/by`,
+`last_used_at`. RLS on, no policies (service role only). No DELETE path — requests reference it `ON DELETE RESTRICT`.
+
+`external_api_requests` — APPEND-ONLY, one row per call incl. denied ones: `client_id` (NULL when the key matched
+nothing), presented `key_prefix`, `method` GET|POST (CHECK), `path`, `query` jsonb (REST: the query string; MCP: the
+JSON-RPC method + tool + arguments), `status`, `row_count`, `denial` (missing / malformed / unknown / revoked / expired /
+scope / unconfigured / unavailable / rate_limited / bad_request / column_not_granted / read_failed), `ip`, `user_agent`,
+`duration_ms`. Outcome CHECK: a success has a client and no denial; a denial has a reason. **This table is also the
+rate-limit meter**: the route counts a client's rows with `status <> 429` over the last 60 s before answering
+(index `(client_id, created_at desc)`). Code: `src/lib/supabase/external-api-db.ts`.
+
 ## `app_settings` keys (payroll)
 
 Beyond `auth.force_logout_map` (§9), the wizard/dispatch flow stores two per-pay-period JSON keys in `app_settings`:
