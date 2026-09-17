@@ -840,9 +840,14 @@ function Notice({ tone, children }: { tone: 'amber' | 'rose'; children: React.Re
  * faster than it came, so a cancel never feels like waiting. Reduced motion
  * keeps the fades (state still reads) and drops the travel.
  */
-const OVERLAY_EASE = [0.16, 1, 0.3, 1] as const;
-const OVERLAY_ENTER_S = 0.28;
-const OVERLAY_EXIT_S = 0.16;
+// docs/design/ui-standards.md §10 and §14: dialogs open over 320ms on
+// cubic-bezier(0.22, 1, 0.36, 1) and close in 180ms, and §14.1 says outright
+// "use one of these two — do not introduce custom curves". The first cut of this
+// overlay used 280/160 on the other house curve with an invented ease-in for the
+// exit; all three are corrected here rather than the standard being widened.
+const OVERLAY_EASE = [0.22, 1, 0.36, 1] as const;
+const OVERLAY_ENTER_S = 0.32;
+const OVERLAY_EXIT_S = 0.18;
 
 function Overlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   const reduce = useReducedMotion();
@@ -857,11 +862,14 @@ function Overlay({ children, onClose }: { children: React.ReactNode; onClose: ()
 
   return (
     <motion.div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      // The branded backdrop from ui-standards.md §10 — "intentionally branded,
+      // don't override". A plain black scrim is what every ad-hoc overlay reaches
+      // for, and it is what makes one dialog look foreign next to the others.
+      className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-orange-950/40 to-blue-950/40 p-4"
       style={{ backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      exit={{ opacity: 0, transition: { duration: OVERLAY_EXIT_S, ease: [0.4, 0, 1, 1] } }}
+      exit={{ opacity: 0, transition: { duration: OVERLAY_EXIT_S, ease: OVERLAY_EASE } }}
       transition={{ duration: reduce ? 0.15 : OVERLAY_ENTER_S, ease: OVERLAY_EASE }}
       onClick={onClose}
     >
@@ -873,7 +881,7 @@ function Overlay({ children, onClose }: { children: React.ReactNode; onClose: ()
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{
           ...(reduce ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.985 }),
-          transition: { duration: OVERLAY_EXIT_S, ease: [0.4, 0, 1, 1] },
+          transition: { duration: OVERLAY_EXIT_S, ease: OVERLAY_EASE },
         }}
         transition={{ duration: reduce ? 0.15 : OVERLAY_ENTER_S, ease: OVERLAY_EASE }}
         onClick={(e) => e.stopPropagation()}

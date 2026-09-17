@@ -914,6 +914,23 @@ Confirmation dialogs always have:
 3. Two buttons: `<Button variant="outline">Cancel</Button>` and a
    variant-tinted confirm (emerald for go, rose for stop, red for delete).
 
+### 10.1 Confirm-then-progress (2026-09-17)
+
+For a confirm whose action has more than one real step, the dialog keeps the
+same shell and swaps its footer for a determinate bar
+(`EnrollmentGateDialog`, `HrFpuEnrollments.tsx`). Two rules:
+
+- **The bar tracks completed STEPS, never elapsed time.** It advances when the
+  write lands and again when the dependent reload finishes, and only reaches the
+  end when both are done. A bar that fills on a timer is a lie told to someone
+  mid-decision, and it is the reason this pattern is written down rather than
+  reinvented per screen.
+- **The backdrop stops dismissing while the write is in flight**, and a failure
+  keeps the dialog open carrying the server's own sentence plus *Try again* —
+  never a toast that disappears while the user is reading it (§12.4).
+
+A single-step confirm does NOT get a progress bar. It is a confirm.
+
 ---
 
 ## 11. Tabs (`components/ui/tabs.tsx`)
