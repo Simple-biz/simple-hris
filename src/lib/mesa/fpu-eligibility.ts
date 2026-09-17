@@ -106,7 +106,17 @@ export function fpuVerdict(input: FpuVerdictInput): FpuVerdict {
   const { today, cls } = input;
   if (!cls) return { ok: false, reason: 'no_class', detail: 'No FPU class is scheduled yet.' };
   if (input.existingStatus) {
-    return { ok: false, reason: 'already_enrolled', detail: 'You already enrolled in this class.' };
+    // ANY existing row blocks — denied included. Kane, 2026-09-17: a denied entry
+    // that HR has not deleted means "not yet"; only HR deleting the row (or the
+    // next class) opens the door again. The (class_id, lower(email)) unique
+    // index is the backstop for this rule.
+    const detail =
+      input.existingStatus === 'denied'
+        ? 'Your enrollment in this class was denied. HR can remove the entry if you may apply again.'
+        : input.existingStatus === 'completed'
+          ? 'You completed this class.'
+          : 'You already enrolled in this class.';
+    return { ok: false, reason: 'already_enrolled', detail };
   }
   if (input.alreadyCompletedFpu) {
     return { ok: false, reason: 'already_completed', detail: 'You have already completed FPU.' };

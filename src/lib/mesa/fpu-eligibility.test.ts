@@ -100,6 +100,23 @@ test('already completed FPU / already enrolled in this class are refused first',
   if (!dup.ok) assert.equal(dup.reason, 'already_enrolled');
 });
 
+test('a DENIED entry that still exists blocks re-enrolling; a deleted one (no row) frees it', () => {
+  // Kane, 2026-09-17: "when an entry is denied and deleted the Employee can apply
+  // again but if its not deleted then he cant apply yet."
+  const denied = fpuVerdict({ ...base, existingStatus: 'denied' });
+  assert.equal(denied.ok, false);
+  if (!denied.ok) {
+    assert.equal(denied.reason, 'already_enrolled');
+    assert.match(denied.detail, /denied/);
+    assert.match(denied.detail, /HR can remove/);
+  }
+  for (const st of ['pending', 'approved', 'completed']) {
+    assert.equal(fpuVerdict({ ...base, existingStatus: st }).ok, false, st);
+  }
+  // HR deleted the row → the server finds no enrollment → existingStatus null → eligible again.
+  assert.equal(fpuVerdict({ ...base, existingStatus: null }).ok, true);
+});
+
 test('the window is inclusive: open on opens_on and closes_on, not the day after', () => {
   assert.equal(fpuVerdict({ ...base, today: '2026-08-31' }).ok, false);
   assert.equal(fpuVerdict({ ...base, today: '2026-09-01' }).ok, true);

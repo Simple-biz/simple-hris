@@ -233,7 +233,11 @@ function EnrollmentLine({ e }: { e: Enrollment }) {
     case 'approved':
       return <Line icon={CheckCircle2} tone="teal">You have a seat. See you in class.</Line>;
     case 'denied':
-      return <Line icon={XCircle} tone="rose">Not this time{e.review_notes ? ` — ${e.review_notes}` : '.'}</Line>;
+      return (
+        <Line icon={XCircle} tone="rose">
+          Not this time{e.review_notes ? ` — ${e.review_notes}` : '.'} HR can remove this entry if you may apply again.
+        </Line>
+      );
     case 'completed':
       return <Line icon={Award} tone="emerald">Completed {fmt(e.completed_on)} — you are in MESA.</Line>;
   }

@@ -48,8 +48,12 @@ server's verdict is answered **409** with the same sentence the employee saw.
 In order, a person is refused when:
 
 1. no class exists;
-2. they already have an enrollment in **this** class (one per person per class — the
-   `(class_id, lower(email))` unique index is the backstop);
+2. they already have an enrollment in **this** class, **whatever its status — a DENIED entry that
+   HR has not deleted still blocks** (Kane, 2026-09-17: *"when an entry is denied and deleted the
+   Employee can apply again but if its not deleted then he cant apply yet"*). The employee reads
+   "Your enrollment in this class was denied. HR can remove the entry if you may apply again";
+   the moment HR deletes the row the card repaints (live) and Enroll returns. One per person per
+   class — the `(class_id, lower(email))` unique index is the backstop;
 3. they already completed FPU (`mesa_fpu_completed_on` set) or are already a MESA member;
 4. they are **not on the active Global Master List** (`active_employees` — Kane: *"Promoted to
    Global Master List and Active"*);
