@@ -168,6 +168,38 @@ same class of mistake as the null.
 
 ### `get_payroll_report`
 
+> **Its peso column was salary-only until 2026-09-17.** Kane: *"Are you really sure that the
+> Tech Bonus, PAB and KPI bonuses even the Adjustments are added when I pull the latest
+> report?"* They were not. `listDisbursementReports()` tallies
+> `paidUSD += paid_amount_usd || amount_usd` (what was **disbursed**) but
+> `paidPHP += amount_php` (**regular + OT only**) — so the two money columns of the same row
+> were different money and the peso one silently dropped every bonus and adjustment.
+> Measured over four weeks: **₱36,704,762.39 reported against ₱51,106,248.37 dispatched —
+> ₱14.4M, about 28%, missing**, ₱11.87M of it `system_bonus_php`. The PAB week (2026-08-23)
+> was understated by ₱6.43M alone. USD was right to within 0.05%, which is what made it hard
+> to see — the tell was the implied FX rate swinging between **38 and 49** across four rows
+> where it should sit near 62.
+>
+> `disbursement_records` has **no paid-PHP column**, so the figure cannot be repaired from the
+> records. `paid_count` / `paid_usd` / `paid_php` are now summed from the **live dispatch log**
+> (paid, non-contractor, paged past the 1000-row cap — one cycle is already ~1,050 payments),
+> and **both currencies come from the same rows**: a PHP from one population beside a USD from
+> another implies an FX rate that is nobody's. After the fix the implied rate is 61.7–62.8
+> across the same four weeks.
+>
+> **A cycle with no dispatch rows keeps its record figures** and carries `paid_php_warning`.
+> ~2,900 records across 2026-06-21…07-12 have no paid dispatch at all, and overwriting those
+> with a ₱0 sum would turn an understated week into one that reads as never paid — a worse lie
+> than the one being fixed.
+>
+> Still not included: **`outstanding_usd` and `total_owed_usd` are regular + OT only**, so a
+> bonus still to be paid is not in what the report says is owed. The field notes say so.
+>
+> This is the same disease the Accounting Overview hero had — salary-only figures presented as
+> a total, ₱9.52M shown against ₱12.29M real, fixed 2026-07-30 via `payout-extras.ts`
+> ([[overview-total-payout-salary-only]]). Worth assuming it exists anywhere a "total" is
+> summed from `disbursement_records`.
+
 Calls `listDisbursementReports()` and **drops synthesized "urgent" buckets** (MESA / orphanage budget cycles — `cycleId` contains `urgent` or `sourceFile` starts with `urgent`) so they don't muddy a payroll total. Takes the top `weeks` regular cycles. Per-week: `period`, `period_start`, `period_end`, `is_current_cycle`, `paid_count`, `paid_usd`, `paid_php`, `outstanding_count`, `outstanding_usd`, `total_owed_usd`. `totals` sums `total_paid_usd` / `total_paid_php` / `total_outstanding_usd`.
 
 ### Adding a tool

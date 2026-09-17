@@ -16,7 +16,9 @@ import {
   type RosterCandidate,
 } from '@/lib/penny/roster-match';
 import {
+  applyDispatchedTotals,
   buildReconciledPayWeeks,
+  rollUpDispatchedByCycle,
   totalsFor,
   type PayRecordInput,
   type WizardSnapshotInput,
@@ -618,6 +620,8 @@ async function getPayrollReport(weeksRaw: unknown): Promise<ToolResult> {
   const weeks = clampInt(weeksRaw, 1, 12, 4);
   const { reports, error } = await listDisbursementReports();
   if (error) return { error };
+  const supabaseForReport = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabaseForReport) return { error: 'Database is not reachable.' };
 
   // Drop synthesized "urgent" (MESA / orphanage budget) buckets — they have no
   // hours/rate snapshots and would muddy a payroll total.
@@ -639,9 +643,51 @@ async function getPayrollReport(weeksRaw: unknown): Promise<ToolResult> {
     total_owed_usd: round2(r.totals.totalOwedUSD),
   }));
 
+  // `listDisbursementReports()` tallies paidPHP from `disbursement_records.
+  // amount_php`, which is REGULAR + OT ONLY, while paidUSD comes from
+  // `paid_amount_usd` — what was actually disbursed. So the two money columns
+  // of the same row were different money and the peso one silently dropped
+  // every PAB, Tech, KPI and Accounting adjustment. Measured 2026-09-17 over
+  // four weeks: ₱36,704,762.39 reported against ₱51,106,248.37 dispatched —
+  // ₱14.4M, ~28%, missing. `disbursement_records` has no paid-PHP column, so
+  // the figure is taken from the dispatch log instead. Both currencies come
+  // from the same rows, or the implied FX rate is nobody's.
+  const starts = weeksOut.map((w) => String(w.period_start ?? '')).filter(Boolean);
+  if (starts.length > 0) {
+    // PostgREST caps at 1000 rows even with .range() and a single cycle is
+    // already ~1,050 payments — this MUST page (CLAUDE.md, selectAllPaged).
+    const { rows: dispatchRows, error: dispatchError } = await selectAllPaged<Record<string, unknown>>(
+      (from, to) =>
+        supabaseForReport
+          .from('payment_dispatches')
+          .select('cycle_period_start, amount_php, amount_usd, payee_type')
+          .eq('status', 'paid')
+          .in('cycle_period_start', starts)
+          .order('id', { ascending: true })
+          .range(from, to),
+    );
+    if (!dispatchError) {
+      const byCycle = rollUpDispatchedByCycle(
+        dispatchRows.map((d) => ({
+          period_start: (d.cycle_period_start as string | null) ?? null,
+          amount_php: numOrNull(d.amount_php),
+          amount_usd: numOrNull(d.amount_usd),
+          payee_type: (d.payee_type as string | null) ?? null,
+        })),
+      );
+      for (const w of weeksOut) applyDispatchedTotals(w, byCycle.get(String(w.period_start ?? '')));
+    }
+  }
+
   return {
     field_notes:
-      'paid_* = already disbursed this week. outstanding_* = recipients still owed (no payment sent yet). total_owed_usd = full cycle snapshot (paid + outstanding). Amounts in USD and PHP as labelled.',
+      'paid_count / paid_usd / paid_php = what this cycle ACTUALLY SENT, read from the live payment dispatch log, ' +
+      '**with PAB, Tech, KPI/department bonuses and Accounting adjustments included** — paid_source says so per week. ' +
+      'If a week carries paid_php_warning instead, no dispatch rows exist for that cycle and its paid_php is the weekly ' +
+      'records\' regular + OT total, which UNDERSTATES what was paid — quote it only with that caveat. ' +
+      'outstanding_* = recipients still owed (no payment sent yet); **outstanding_usd and total_owed_usd are regular + OT ' +
+      'only and do NOT include any bonus still to be paid**, so they understate what is owed. ' +
+      'total_owed_usd = full cycle snapshot (paid + outstanding). Amounts in USD and PHP as labelled.',
     weeks: weeksOut,
     totals: {
       weeks_returned: weeksOut.length,

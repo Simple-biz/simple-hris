@@ -90,7 +90,7 @@ theirs.
 | Tool | Ask it |
 |---|---|
 | `get_employee_pay` | One person's recent weekly pay, **reconciled on the payroll's own identity** (`payment-dispatch.md` §4.2.3): hours, **hourly pay** (regular + OT, never called "computed"), the bonus **itemised into PAB / Tech / Other / Adjustment**, Orphanage, the MESA deduction and disbursement, and what was actually paid in **both ₱ and $**. The itemization is read from the **Payroll Wizard final-pay snapshot** — the carrier that priced the payment — because `payment_dispatches.system_bonus_label` names only the PAB/Tech part (₱157,805 labelled "PAB ₱5,000" on a real row). Plus a summed total so "add up the last four weeks" answers directly. An unreconciled remainder comes back as `unexplained_php`, never attributed. |
-| `get_payroll_report` | Company-wide weekly totals: paid, to how many people, still outstanding. |
+| `get_payroll_report` | Company-wide weekly totals: paid, to how many people, still outstanding. **Since 2026-09-17 `paid_php` / `paid_usd` / `paid_count` come from the live dispatch log — what actually LEFT, bonuses and adjustments included.** Before that the peso column was `disbursement_records.amount_php`, regular + OT only, understating four weeks by **₱14.4M (~28%)** while the USD column beside it was right. A cycle with no dispatch rows keeps its record figures and carries `paid_php_warning`. `outstanding_usd` is still regular + OT only. |
 | `get_financial_summary` | A **calendar month**'s payroll financials with a per-week breakdown *and* the prior month's headline plus % change — enough to write a trend. Pass `YYYY-MM`. |
 | `get_overtime_leaders` | Rank people by overtime over recent pay weeks, with the exact period covered so a report can be labelled. |
 | `get_department_bonuses` | Rank departments by bonuses actually awarded, from the Payment Catalog. Cross-currency totals are approximate — the amounts are stored mostly in PHP. |
@@ -178,6 +178,12 @@ a gap waiting to be filled.
   components nobody computed. On a week that IS itemised the reverse holds — a
   ₱0 PAB is a real claim and is published, because "no PAB this week" and "we
   never checked" are different answers.
+- **What a report says is OUTSTANDING does not include bonuses.**
+  `outstanding_usd` and `total_owed_usd` are summed from
+  `disbursement_records.amount_usd`, which is regular + OT only, so a bonus
+  someone is still owed is not in the figure. Only the PAID columns were fixed
+  on 2026-09-17; the owed ones cannot be, because an unpaid week has no
+  dispatch row to read and the wizard snapshot is per-cycle, not per-status.
 - **`get_employee_pay` says WHAT a bonus was, never WHERE it came from.** It
   reads the wizard's computed figures; it cannot see which KPI row or department
   calculator produced them. `get_bonus_breakdown` is the tool for provenance,

@@ -7,6 +7,9 @@ import {
   mergeDispatchesByWeek,
   mesaDeductionForWeek,
   totalsFor,
+  applyDispatchedTotals,
+  rollUpDispatchedByCycle,
+  type ReportWeek,
   type DispatchInput,
   type MesaDepositInput,
   type PayRecordInput,
@@ -483,4 +486,49 @@ test("a MESA disbursement is money paid back OUT and adds to the payment", () =>
   });
   assert.equal(entries[0].mesa_disbursement_php, 6_000);
   assert.equal(entries[0].reconciles, true);
+});
+
+/* ── The company-wide report ─────────────────────────────────────────────── */
+
+test("the report's paid PHP comes from what was dispatched, bonuses included", () => {
+  const byCycle = rollUpDispatchedByCycle([
+    { period_start: "2026-08-23", amount_php: 16_000, amount_usd: 260, payee_type: "employee" },
+    { period_start: "2026-08-23", amount_php: 682.26, amount_usd: 7.31, payee_type: "employee" },
+    { period_start: "2026-08-16", amount_php: 12_543.41, amount_usd: 203.4, payee_type: "employee" },
+  ]);
+  const week: ReportWeek = { period_start: "2026-08-23", paid_count: 1051, paid_usd: 267429.31, paid_php: 10251075.11 };
+  applyDispatchedTotals(week, byCycle.get("2026-08-23"));
+  assert.equal(week.paid_php, 16_682.26, "the records' regular+OT total must not survive");
+  assert.equal(week.paid_usd, 267.31, "both currencies come from the SAME rows");
+  assert.equal(week.paid_count, 2);
+  assert.match(String(week.paid_source), /actually left/);
+});
+
+test("contractor invoices are not payroll and never enter a cycle total", () => {
+  const byCycle = rollUpDispatchedByCycle([
+    { period_start: "2026-08-23", amount_php: 1_000, amount_usd: 20, payee_type: "employee" },
+    { period_start: "2026-08-23", amount_php: 500_000, amount_usd: 9_000, payee_type: "contractor" },
+    { period_start: null, amount_php: 99_999, amount_usd: 1_000, payee_type: "employee" },
+  ]);
+  assert.equal(byCycle.get("2026-08-23")!.php, 1_000);
+  assert.equal(byCycle.get("2026-08-23")!.count, 1);
+  assert.equal(byCycle.size, 1, "a period-less urgent one-off is not a cycle");
+});
+
+test("a cycle with NO dispatch rows keeps its figures and is warned about", () => {
+  // ~2,900 records across 2026-06-21…07-12 have no paid dispatch at all.
+  // Overwriting those with ₱0 would read as "never paid" — worse than the bug.
+  const week: ReportWeek = { period_start: "2026-06-21", paid_count: 732, paid_usd: 12_000, paid_php: 700_000 };
+  applyDispatchedTotals(week, undefined);
+  assert.equal(week.paid_php, 700_000, "must NOT be zeroed");
+  assert.equal(week.paid_count, 732);
+  assert.match(String(week.paid_php_warning), /EXCLUDES every bonus/);
+  assert.match(String(week.paid_source), /pre-dates the dispatch log/);
+});
+
+test("an empty dispatch bucket is treated as no data, not as zero paid", () => {
+  const week: ReportWeek = { period_start: "2026-06-21", paid_count: 732, paid_usd: 12_000, paid_php: 700_000 };
+  applyDispatchedTotals(week, { php: 0, usd: 0, count: 0 });
+  assert.equal(week.paid_php, 700_000);
+  assert.ok(week.paid_php_warning);
 });

@@ -530,3 +530,91 @@ export function totalsFor(entries: PayWeekOutput[]): Record<string, number | boo
   }
   return out;
 }
+
+/* ── The company-wide report has the same disease ────────────────────────── */
+
+/**
+ * What one pay cycle actually sent, rolled up from the live dispatch log.
+ *
+ * Kane, 2026-09-17, on the org-wide report: *"Are you really sure that the Tech
+ * Bonus, PAB and KPI bonuses even the Adjustments are added when I pull the
+ * latest report?"* They were not. `listDisbursementReports()` tallies
+ *
+ *     paidUSD += paid_amount_usd || amount_usd   ← what was disbursed
+ *     paidPHP += amount_php                      ← regular + OT ONLY
+ *
+ * so the two money columns of the same table were different money, and the PHP
+ * one silently dropped every bonus. Measured against production the same day,
+ * over Carla's four weeks: **₱36,704,762.39 reported against ₱51,106,248.37
+ * actually dispatched — ₱14,401,485.98 missing, about 28%**, of which ₱11.87M
+ * is `system_bonus_php`. The PAB week (2026-08-23) was worst, understated by
+ * ₱6.43M. USD was right to within 0.05%, which is exactly what made it hard to
+ * see: the implied FX rate swung between 38 and 49 across four rows.
+ *
+ * `disbursement_records` has no paid-PHP column at all, so the figure cannot be
+ * repaired from the records — it has to come from the dispatch log.
+ */
+export type DispatchedCycleRow = {
+  period_start: string | null;
+  amount_php: number | null;
+  amount_usd: number | null;
+  payee_type: string | null;
+};
+
+export type DispatchedCycleTotals = { php: number; usd: number; count: number };
+
+/** Sum paid dispatches per cycle. Contractor invoices are not payroll. */
+export function rollUpDispatchedByCycle(rows: DispatchedCycleRow[]): Map<string, DispatchedCycleTotals> {
+  const out = new Map<string, DispatchedCycleTotals>();
+  for (const r of rows) {
+    if (r.payee_type === 'contractor') continue;
+    const start = (r.period_start ?? '').slice(0, 10);
+    if (!start) continue;
+    const acc = out.get(start) ?? { php: 0, usd: 0, count: 0 };
+    acc.php += r.amount_php ?? 0;
+    acc.usd += r.amount_usd ?? 0;
+    acc.count += 1;
+    out.set(start, acc);
+  }
+  for (const [k, v] of out) out.set(k, { php: round2(v.php), usd: round2(v.usd), count: v.count });
+  return out;
+}
+
+export type ReportWeek = {
+  period_start: string | null;
+  paid_count: number;
+  paid_usd: number;
+  paid_php: number;
+  paid_source?: string;
+  paid_php_warning?: string;
+};
+
+/**
+ * Replace a report week's paid figures with what the dispatch log actually
+ * sent — but ONLY when that log has rows for the cycle.
+ *
+ * **The guard is the whole point.** Cycles before the dispatch log was in use
+ * carry `disbursement_records` with no dispatches at all (~2,900 records across
+ * 2026-06-21…07-12 — see `pay-status.ts`). Overwriting those with a ₱0 sum
+ * would turn an understated week into a week that reads as never paid, which is
+ * a far worse lie than the one being fixed. Such a week keeps its record
+ * figures and carries an explicit warning that its PHP excludes bonuses.
+ *
+ * Both currencies are taken from the same source so the row stays internally
+ * consistent — a PHP from one population and a USD from another implies an FX
+ * rate that is nobody's.
+ */
+export function applyDispatchedTotals(week: ReportWeek, dispatched: DispatchedCycleTotals | undefined): void {
+  if (dispatched && dispatched.count > 0) {
+    week.paid_count = dispatched.count;
+    week.paid_php = dispatched.php;
+    week.paid_usd = dispatched.usd;
+    week.paid_source =
+      'live payment dispatch log — what actually left, with PAB, Tech, KPI/department bonuses and Accounting adjustments included.';
+    return;
+  }
+  week.paid_php_warning =
+    'No dispatch rows exist for this cycle, so paid_php is the weekly records\' REGULAR + OT total and ' +
+    'EXCLUDES every bonus and adjustment. It understates what was actually paid — say so rather than quoting it flat.';
+  week.paid_source = 'weekly records only (pre-dates the dispatch log)';
+}
