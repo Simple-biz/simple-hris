@@ -1744,8 +1744,8 @@ Per row: client · key prefix · **Columns** (whole table, or *N of M · k hidde
 +throttled) · actions Calls · **Edit** · Rotate · Revoke/Restore. Dialogs: **New client** — a 4-step slideshow Who → Columns → Access → Confirm (read-back with per-row Edit; Next gated per step; created only on Confirm) over (name, system, contact,
 `ColumnPicker` — whole table by default, sensitive columns badged, *Hide sensitive* shortcut — `ExpiryPicker` 1d/15d/30d/never,
 `RateLimitField` 1..600), **Edit** (same controls; expiry *Keep as is* or a new choice counted from now; sends only what
-changed), **Hand-off** (the key ONCE + curl + MCP client config + a sample payload of only the granted columns + one
-"everything, ready to paste" block), **Calls** (REST/MCP column, 429 = throttled). Imports the pure modules
+changed), **Hand-off** (the key ONCE with Copy key, then ONE segmented preview — Hand-off · HTTP · MCP · Sample response — shown masked,
+copied real; code wraps and scrolls vertically, never side by side, so a long line can never widen the dialog), **Calls** (REST/MCP column, 429 = throttled). Imports the pure modules
 (`catalog`, `grants`, `expiry`, `rate-limit`) directly — no server-only code. Governing doc:
 [external-api-integrations.md](../features/external-api-integrations.md).
 

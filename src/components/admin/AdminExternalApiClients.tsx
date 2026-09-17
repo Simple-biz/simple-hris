@@ -1230,8 +1230,12 @@ function HandOffDialog({
   mcpUrl: string;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
+  const [view, setView] = useState<HandOffView>('all');
   useEffect(() => {
-    if (issued) setCopied(null);
+    if (issued) {
+      setCopied(null);
+      setView('all');
+    }
   }, [issued]);
 
   if (!issued) return null;
@@ -1266,6 +1270,35 @@ function HandOffDialog({
     payload,
   ].join('\n');
 
+  // What each segment SHOWS (masked) and what its Copy copies (the real key).
+  const VIEWS: Record<HandOffView, { label: string; shown: string; copy: string; hint: string }> = {
+    all: {
+      label: 'Hand-off',
+      shown: handOff.split(apiKey).join(masked),
+      copy: handOff,
+      hint: 'Everything the system owner needs, in one paste.',
+    },
+    http: {
+      label: 'HTTP',
+      shown: `curl -H "Authorization: Bearer ${masked}" "${restUrl}?limit=100"`,
+      copy: curl,
+      hint: 'Filters: department · email · search · limit ≤ 500 · cursor. Walk pages with cursor until next_cursor is null.',
+    },
+    mcp: {
+      label: 'MCP',
+      shown: mcp.split(apiKey).join(masked),
+      copy: mcp,
+      hint: 'Paste into the MCP client’s server config. Tools: describe_access, query_global_master_list.',
+    },
+    sample: {
+      label: 'Sample response',
+      shown: payload,
+      copy: payload,
+      hint: `${cols.length} columns, exactly as this key will receive them.`,
+    },
+  };
+  const current = VIEWS[view];
+
   const copy = async (what: string, text: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -1276,56 +1309,80 @@ function HandOffDialog({
     }
   };
 
-  const CopyBtn = ({ what, text }: { what: string; text: string }) => (
-    <Button type="button" size="sm" variant="outline" onClick={() => void copy(what, text)} className="h-7 shrink-0 gap-1 px-2 text-xs">
-      {copied === what ? <Check className="h-3.5 w-3.5" /> : <CopyIcon className="h-3.5 w-3.5" />} Copy
-    </Button>
-  );
-
   return (
     <Dialog open={!!issued} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="flex max-h-[90vh] flex-col gap-4 overflow-hidden sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{issued.mode === 'rotated' ? 'New key issued' : 'Client created'}</DialogTitle>
           <DialogDescription>
-            This is the only time the key is shown. Send the hand-off to {client.contact_email ?? 'the owner'} over a private channel.
-            If it is lost, rotate.
+            This is the only time the key is shown. Send it to {client.contact_email ?? 'the owner'} over a private channel. If it
+            is lost, rotate.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-4">
-          <div className="rounded-md border border-zinc-200 dark:border-zinc-800">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
-              <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                {client.name} · {client.system}
-              </span>
-              <span>
-                {client.expires_at ? `expires ${describeExpiry(client.expires_at)}` : 'does not expire'} · {client.rate_limit_per_minute}/min ·{' '}
-                {hiddenCount(grant) === 0 ? 'whole table' : `${cols.length} columns`}
-              </span>
-            </div>
-            <div className="flex items-center gap-2 px-3 py-2.5">
-              <code className="min-w-0 flex-1 select-all break-all font-mono text-xs text-zinc-900 dark:text-zinc-100">{apiKey}</code>
-              <CopyBtn what="key" text={apiKey} />
-            </div>
+
+        {/* The key */}
+        <div className="min-w-0 rounded-md border border-zinc-200 dark:border-zinc-800">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-zinc-200 px-3 py-2 text-xs text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
+            <span className="min-w-0 truncate font-medium text-zinc-800 dark:text-zinc-200">
+              {client.name} · {client.system}
+            </span>
+            <span className="whitespace-nowrap">
+              {client.expires_at ? `expires ${describeExpiry(client.expires_at)}` : 'does not expire'} · {client.rate_limit_per_minute}/min ·{' '}
+              {hiddenCount(grant) === 0 ? 'whole table' : `${cols.length} columns`}
+            </span>
           </div>
-
-          <Block title="Everything, ready to paste" action={<CopyBtn what="all" text={handOff} />}>
-            <Pre>{handOff.replace(apiKey, masked)}</Pre>
-          </Block>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Block title="HTTP — try it" action={<CopyBtn what="curl" text={curl} />}>
-              <Pre>{`curl -H "Authorization: Bearer ${masked}" \\\n  "${restUrl}?limit=100"`}</Pre>
-            </Block>
-            <Block title="MCP — client config" action={<CopyBtn what="mcp" text={mcp} />}>
-              <Pre>{mcp.replace(apiKey, masked)}</Pre>
-            </Block>
+          <div className="flex items-center gap-3 px-3 py-2.5">
+            <code className="min-w-0 flex-1 select-all break-all font-mono text-xs leading-relaxed text-zinc-900 dark:text-zinc-100">{apiKey}</code>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void copy('key', apiKey)}
+              className="h-8 shrink-0 gap-1.5 bg-orange-600 text-white hover:bg-orange-700"
+            >
+              {copied === 'key' ? <Check className="h-3.5 w-3.5" /> : <CopyIcon className="h-3.5 w-3.5" />} Copy key
+            </Button>
           </div>
-
-          <Block title={`Sample response — ${cols.length} columns`} action={<CopyBtn what="payload" text={payload} />}>
-            <Pre className="max-h-48">{payload}</Pre>
-          </Block>
         </div>
+
+        {/* One preview at a time — no side-by-side code, so nothing can push the dialog wider */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div role="tablist" aria-label="Hand-off sections" className="flex flex-wrap gap-1">
+              {(Object.keys(VIEWS) as HandOffView[]).map((k) => {
+                const on = view === k;
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    role="tab"
+                    aria-selected={on}
+                    onClick={() => setView(k)}
+                    className={cn(
+                      'h-7 rounded-md px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400',
+                      on
+                        ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                        : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800',
+                    )}
+                  >
+                    {VIEWS[k].label}
+                  </button>
+                );
+              })}
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => void copy(view, current.copy)}
+              className="h-7 shrink-0 gap-1.5 px-2.5 text-xs"
+            >
+              {copied === view ? <Check className="h-3.5 w-3.5" /> : <CopyIcon className="h-3.5 w-3.5" />} Copy {current.label.toLowerCase()}
+            </Button>
+          </div>
+          <Pre className="min-h-0 flex-1">{current.shown}</Pre>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">{current.hint}</p>
+        </div>
+
         <DialogFooter>
           <Button type="button" className="bg-zinc-900 text-white hover:bg-zinc-800 dark:bg-white dark:text-zinc-900" onClick={onClose}>
             I have copied it
@@ -1336,23 +1393,14 @@ function HandOffDialog({
   );
 }
 
-function Block({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div>
-      <div className="mb-1.5 flex items-center justify-between gap-2">
-        <div className="text-xs font-medium text-zinc-600 dark:text-zinc-400">{title}</div>
-        {action}
-      </div>
-      {children}
-    </div>
-  );
-}
+type HandOffView = 'all' | 'http' | 'mcp' | 'sample';
 
+/** Wrapping, vertically scrolling code block — long lines fold, they never widen the dialog. */
 function Pre({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <pre
       className={cn(
-        'max-h-40 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-[11.5px] leading-relaxed text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200',
+        'max-h-[40vh] min-w-0 overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-zinc-200 bg-zinc-50 p-3 font-mono text-[11.5px] leading-relaxed text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200',
         className,
       )}
     >
