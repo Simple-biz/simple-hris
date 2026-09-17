@@ -287,3 +287,159 @@ test('Kolan.png is a horizontal lockup whose ink is DARK, not white', () => {
       `the transparent padding or it renders far smaller than the other wordmarks.`,
   );
 });
+
+/**
+ * A rail with no artwork falls back to a TEXT tile, and that text is its own
+ * silent-failure class — the mirror of the ones above.
+ *
+ * `ProcessorCard` derives the tile's text from the card label by cutting it to
+ * two initials. For a vendor that is a monogram and reads as one. For a rail
+ * that is OURS it is a truncation: "Wires" rendered as "WI", which is what
+ * shipped until 2026-09-17. Nothing errored — a two-letter tile is exactly what
+ * a rail with no logo is supposed to look like, so the bug was indistinguishable
+ * from the intended fallback, on the residual rail that catches everyone who has
+ * no wallet.
+ *
+ * The fix is the `wordmark` field, which spells the name out instead. This pins
+ * the two halves of that: a rail with neither artwork nor a wordmark is back to
+ * showing initials, and a wordmark wide enough to overrun the 80px plate is
+ * clipped by it. The width budget is MEASURED in Inter 700 on the real plate
+ * (see `monogramTypeClass` in ProcessorLogo.tsx) — the per-character figures
+ * below are that measurement, not an estimate.
+ *
+ * Read as text for the same reason as every test above: PayrollDispatch.tsx is
+ * the whole dispatch tree.
+ */
+
+/** Widest observed uppercase advance in Inter 700, in em ("M"). */
+const EM_PER_CHAR_WORST = 0.95;
+/** Average uppercase advance in Inter 700, in em — what real names run at. */
+const EM_PER_CHAR_TYPICAL = 0.67;
+/** ProcessorLogo's plate, minus the wordmark's own 12px of horizontal padding. */
+const PLATE_TEXT_BUDGET_PX = 80 - 12;
+
+/** Font size `monogramTypeClass` gives a wordmark of this length, in px. */
+function wordmarkFontPx(len: number): number {
+  return len <= 5 ? 17 : 12;
+}
+
+/**
+ * Rails retired from the dispatch tabs. They keep their PROCESSORS entry so old
+ * records still resolve a label, but no card is ever drawn for them, so there is
+ * no text tile to get wrong — and their initials are a VENDOR's, where two
+ * letters read as a monogram rather than a truncation.
+ */
+function retiredRailIds(): Set<string> {
+  const src = fs.readFileSync(
+    path.join(REPO_ROOT, 'src/components/payroll-clerk/mock-queue.ts'),
+    'utf8',
+  );
+  const decl = src.match(
+    /RETIRED_DISPATCH_PROCESSOR_IDS:\s*readonly ProcessorId\[\]\s*=\s*\[([^\]]*)\]/,
+  );
+  assert.ok(decl, 'could not read RETIRED_DISPATCH_PROCESSOR_IDS out of mock-queue.ts');
+  return new Set([...decl[1].matchAll(/'([a-z]+)'/g)].map((m) => m[1]));
+}
+
+/** processor id -> label, from PROCESSOR_VISUALS' sibling registry. */
+function railLabels(): Map<string, string> {
+  const src = fs.readFileSync(
+    path.join(REPO_ROOT, 'src/components/payroll-clerk/mock-queue.ts'),
+    'utf8',
+  );
+  const found = new Map<string, string>();
+  for (const m of src.matchAll(/id:\s*'([a-z]+)',\s*\n\s*label:\s*'([^']+)'/g)) {
+    found.set(m[1], m[2]);
+  }
+  return found;
+}
+
+/** processor id -> wordmark, read as text out of PROCESSOR_VISUALS. */
+function wordmarksIn(relPath: string): Map<string, string> {
+  const src = fs.readFileSync(path.join(REPO_ROOT, relPath), 'utf8');
+  const found = new Map<string, string>();
+  for (const m of src.matchAll(/^ {2}([a-z]+):\s*\{/gm)) {
+    const rest = src.slice(m.index ?? 0);
+    const block = rest.slice(0, rest.indexOf('\n  }') + 1);
+    const wordmark = block.match(/wordmark:\s*'([^']+)'/);
+    if (wordmark) found.set(m[1], wordmark[1]);
+  }
+  return found;
+}
+
+test('a rail with no logo spells its name out instead of showing two initials', () => {
+  const labels = railLabels();
+  assert.ok(labels.size > 0, 'could not read any rail labels out of mock-queue.ts');
+
+  const plated = logosByIdIn(PLATED_REGISTRY);
+  const wordmarks = wordmarksIn(PLATED_REGISTRY);
+
+  // 'wires' is the case this exists for: the residual rail, no vendor, no art.
+  assert.equal(
+    wordmarks.get('wires'),
+    'WIRES',
+    `the Wires card has no brand artwork, so its tile draws text. Without a ` +
+      `wordmark ProcessorCard cuts the label to "WI", which reads as a ` +
+      `truncation bug rather than a monogram (Kane 2026-09-17).`,
+  );
+
+  const retired = retiredRailIds();
+  const truncated: string[] = [];
+  for (const [id, label] of labels) {
+    if (plated.has(id)) continue; // real artwork — the text tile never shows
+    if (retired.has(id)) continue; // no card is drawn at all
+    if (wordmarks.has(id)) continue;
+    truncated.push(`${id} ("${label}" would render as "${label.slice(0, 2).toUpperCase()}")`);
+  }
+
+  assert.deepEqual(
+    truncated,
+    [],
+    `rail with neither artwork nor a wordmark — its card shows two initials, ` +
+      `which looks like an intended monogram and so never gets reported:\n  ` +
+      `${truncated.join('\n  ')}`,
+  );
+});
+
+test('every wordmark fits the 80px plate at the size it is given', () => {
+  const wordmarks = wordmarksIn(PLATED_REGISTRY);
+  assert.ok(wordmarks.size > 0, 'no wordmarks found — did PROCESSOR_VISUALS change shape?');
+
+  const tooWide: string[] = [];
+  for (const [id, wordmark] of wordmarks) {
+    assert.equal(
+      wordmark,
+      wordmark.toUpperCase(),
+      `${id}: wordmark ${JSON.stringify(wordmark)} must be uppercase — it stands in ` +
+        `for a logo beside real uppercase lockups.`,
+    );
+    const px = wordmarkFontPx(wordmark.length);
+    const typical = wordmark.length * EM_PER_CHAR_TYPICAL * px;
+    if (typical > PLATE_TEXT_BUDGET_PX) {
+      tooWide.push(
+        `${id} (${JSON.stringify(wordmark)}: ~${typical.toFixed(1)}px at ${px}px, ` +
+          `budget ${PLATE_TEXT_BUDGET_PX}px)`,
+      );
+    }
+  }
+
+  assert.deepEqual(
+    tooWide,
+    [],
+    `wordmark too wide for ProcessorLogo's plate at the size its length selects. ` +
+      `The plate clips, so the name renders cut off rather than overflowing — ` +
+      `visible but easy to miss. Shorten it, add artwork, or re-tier the size in ` +
+      `monogramTypeClass:\n  ${tooWide.join('\n  ')}`,
+  );
+
+  // The worst-case bound is deliberately NOT asserted: designing the tiers for an
+  // all-"M" name would force illegibly small type on every real one. This records
+  // the headroom a real name actually has, so the next wordmark is a judgement
+  // made with the number in hand rather than a guess.
+  const wires = wordmarks.get('wires') ?? '';
+  assert.ok(
+    wires.length * EM_PER_CHAR_WORST * wordmarkFontPx(wires.length) > PLATE_TEXT_BUDGET_PX,
+    `if an all-"M" string of this length now fits the plate, the tiers shrank — ` +
+      `re-measure before trusting the typical-case budget above.`,
+  );
+});

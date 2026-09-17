@@ -57,7 +57,7 @@ import { useManualValidations } from '@/components/payroll/useManualValidations'
 import { PayStubModal } from '@/components/paystub/PayStubModal';
 import ContractorInvoiceDialog from './ContractorInvoiceDialog';
 import LockToggleConfirmDialog, { deriveFirstName } from '@/components/payroll/LockToggleConfirmDialog';
-import ProcessorCard from './ProcessorCard';
+import ProcessorCard, { RAIL_COMPACT_TRANSITION } from './ProcessorCard';
 import UndoHistoryPanel from './UndoHistoryPanel';
 import AnimatedNumber from './AnimatedNumber';
 import DispatchLoader from './DispatchLoader';
@@ -80,6 +80,7 @@ import { useDispatchQueue } from './useDispatchQueue';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
+import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
 import { usePaymentsLivePublisher } from '@/hooks/usePaymentsLive';
 
 type TabId = 'all' | 'cop' | 'urgent' | 'done' | 'excluded' | 'orphanage' | 'notifications' | 'undo_history' | ProcessorId;
@@ -93,6 +94,11 @@ interface ProcessorVisual {
   blurb: string;
   /** Real brand logo (in /public) — shown on a white tile in place of the icon. */
   logoSrc?: string;
+  /**
+   * Name spelled out on the fallback tile for rails that are ours rather than a
+   * vendor's, where there is no logo to draw. Ignored when `logoSrc` is set.
+   */
+  wordmark?: string;
 }
 
 const PROCESSOR_VISUALS: Record<ProcessorId, ProcessorVisual> = {
@@ -144,6 +150,10 @@ const PROCESSOR_VISUALS: Record<ProcessorId, ProcessorVisual> = {
     accent: 'from-zinc-700 to-zinc-900 dark:from-zinc-500 dark:to-zinc-700',
     glow: 'from-zinc-100/80 via-zinc-50/60 to-white dark:from-zinc-900/60 dark:via-zinc-800/40 dark:to-zinc-900',
     blurb: 'Manual wire',
+    // Wires is the RESIDUAL rail, not a vendor — there is no brand artwork to
+    // draw and no initials that mean anything, so the name is the wordmark.
+    // Cut to two letters it rendered as "WI", which reads as a truncation bug.
+    wordmark: 'WIRES',
   },
 };
 
@@ -274,6 +284,20 @@ export default function PayrollDispatch() {
   // full width/height. The clerk is heads-down logging payments now, so the
   // filter rail and big hero stats are just chrome in the way.
   const focusMode = lockState.locked && isLgUp;
+  // The app sidebar and the processor rail compete for the same horizontal
+  // budget. With the sidebar EXPANDED there is no room for the rail to carry a
+  // name, a blurb and a count beside each plate, so the buckets squeeze down to
+  // the plate alone (Kane 2026-09-17) and the grid track narrows to match,
+  // handing the reclaimed width to the queue table. Collapse the sidebar and
+  // the full cards come back.
+  //
+  // lg-only: below it the rail is a horizontal scroll strip of fixed-width
+  // cards and the sidebar is a drawer, so there is nothing to trade. Note this
+  // reads the SAME global flag App.tsx collapses when processing starts — so
+  // focus mode expands the buckets rather than fighting them, which is the
+  // right way round: heads-down logging wants the labels.
+  const { collapsed: sidebarCollapsed } = useSidebarCollapsed();
+  const railCompact = isLgUp && !sidebarCollapsed;
   // Realtime "values locked" flag for this cycle — when the wizard locks/unlocks,
   // re-pull the queue so it appears/clears live (the queue's own `wizardReady`
   // mirrors this flag). The lock is owned by the wizard; here we only react.
@@ -375,6 +399,9 @@ export default function PayrollDispatch() {
   // so a week closed by mistake can be reopened while browsing it.
   const reopenVisible = cycleAlreadyClosed && canReopen && Boolean(period.sourceFile);
   const reduceMotion = useReducedMotion();
+  // The rail's squeeze rides ProcessorCard's own curve so the grid track and the
+  // plates inside it move as one thing; reduced motion cuts it to a hard swap.
+  const railTransition = reduceMotion ? { duration: 0 } : RAIL_COMPACT_TRANSITION;
   // Confetti when the pay cycle is CLOSED from the Stop dialog — the same single
   // trigger the server uses for the celebration email, so the in-app moment and
   // the email agree. Counter, not a boolean: each firing remounts the burst.
@@ -1772,8 +1799,13 @@ export default function PayrollDispatch() {
         // The rail/buckets stay visible during processing — focus mode shrinks
         // the KPI stats + retracts the app sidebar, but NOT the buckets.
         initial={false}
-        animate={{ gridTemplateColumns: '255px minmax(0,1fr)' }}
-        transition={FOCUS_TRANSITION}
+        // Compact = the card's 80px plate, plus its 12px padding AND its 1px
+        // border either side: 80 + 24 + 2. Measured, not derived — at 104px the
+        // plate overflows the content box by 2px and flex pushes it off centre
+        // (13/11); at 106px it sits 13/13. A pixel either way is visible on a
+        // rail of eight plates, so re-measure before changing it.
+        animate={{ gridTemplateColumns: railCompact ? '106px minmax(0,1fr)' : '255px minmax(0,1fr)' }}
+        transition={railTransition}
       >
         {/* RIGHT TOP — Dispatch progress strip + hero stats. Order 1 on mobile
             so they sit above everything else. lg: top-right cell. */}
@@ -1841,14 +1873,28 @@ export default function PayrollDispatch() {
           transition={FOCUS_TRANSITION}
           className="order-2 flex min-h-0 flex-col gap-2 lg:order-none lg:col-start-1 lg:row-span-2 lg:row-start-1 lg:overflow-hidden"
         >
-          <div className="flex shrink-0 items-center justify-between px-1">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+          {/* Compact drops the heading — "Filter by processor" cannot fit a 106px
+              column and the plates say what the rail is. The in-view count stays,
+              and the row's padding grows to 12px so it lands flush with the
+              plates' right edge below it instead of 8px adrift. */}
+          <motion.div
+            className="flex shrink-0 items-center gap-1.5"
+            initial={false}
+            animate={{ paddingLeft: railCompact ? 12 : 4, paddingRight: railCompact ? 12 : 4 }}
+            transition={railTransition}
+          >
+            <motion.h2
+              className="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400"
+              initial={false}
+              animate={{ opacity: railCompact ? 0 : 1, marginRight: railCompact ? -6 : 0 }}
+              transition={railTransition}
+            >
               Filter by processor
-            </h2>
-            <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+            </motion.h2>
+            <span className="shrink-0 whitespace-nowrap text-[11px] text-zinc-400 dark:text-zinc-500">
               <AnimatedNumber value={visibleRows.length} /> in view
             </span>
-          </div>
+          </motion.div>
           <motion.div
             variants={containerStagger}
             initial="hidden"
@@ -1876,6 +1922,7 @@ export default function PayrollDispatch() {
                 active={activeTab === 'all'}
                 onClick={() => setActiveTab('all')}
                 iconOnlyFallback
+                compact={railCompact}
               />
             </motion.div>
             {showUrgentCard && (
@@ -1891,6 +1938,7 @@ export default function PayrollDispatch() {
                   onClick={() => setActiveTab('urgent')}
                   iconOnlyFallback
                   glowBorder
+                  compact={railCompact}
                 />
               </motion.div>
             )}
@@ -1904,10 +1952,12 @@ export default function PayrollDispatch() {
                     count={counts[p.id] ?? 0}
                     Icon={v.Icon}
                     logoSrc={v.logoSrc}
+                    wordmark={v.wordmark}
                     accent={v.accent}
                     glow={v.glow}
                     active={activeTab === p.id}
                     onClick={() => setActiveTab(p.id)}
+                    compact={railCompact}
                   />
                 </motion.div>
               );
@@ -1924,6 +1974,7 @@ export default function PayrollDispatch() {
                   active={activeTab === 'cop'}
                   onClick={() => setActiveTab('cop')}
                   iconOnlyFallback
+                  compact={railCompact}
                 />
               </motion.div>
             )}
@@ -1938,6 +1989,7 @@ export default function PayrollDispatch() {
                 active={activeTab === 'done'}
                 onClick={() => setActiveTab('done')}
                 iconOnlyFallback
+                compact={railCompact}
               />
             </motion.div>
             <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
@@ -1950,6 +2002,7 @@ export default function PayrollDispatch() {
                 active={activeTab === 'orphanage'}
                 onClick={() => setActiveTab('orphanage')}
                 iconOnlyFallback
+                compact={railCompact}
               />
             </motion.div>
             <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
@@ -1962,6 +2015,7 @@ export default function PayrollDispatch() {
                 active={activeTab === 'undo_history'}
                 onClick={() => setActiveTab('undo_history')}
                 iconOnlyFallback
+                compact={railCompact}
               />
             </motion.div>
             <motion.div variants={itemPop} className="w-[176px] shrink-0 lg:w-auto">
@@ -1975,6 +2029,7 @@ export default function PayrollDispatch() {
                 active={activeTab === 'excluded'}
                 onClick={() => setActiveTab('excluded')}
                 iconOnlyFallback
+                compact={railCompact}
               />
             </motion.div>
           </motion.div>

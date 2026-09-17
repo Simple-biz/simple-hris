@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { motion } from 'motion/react';
+import { motion, useReducedMotion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import AnimatedNumber from './AnimatedNumber';
 import ProcessorLogo from './ProcessorLogo';
@@ -18,6 +18,14 @@ export interface ProcessorCardProps {
    * white box; otherwise it falls back to the gradient monogram/icon tile.
    */
   logoSrc?: string;
+  /**
+   * Spell the rail's name out on the fallback tile instead of cutting the label
+   * to two initials. For a rail that is OURS rather than a vendor's there is no
+   * brand PNG to draw and no vendor whose initials mean anything — "Wires" as
+   * "WI" reads like a truncation bug, so the name itself is the wordmark.
+   * ProcessorLogo sizes it to the plate. Ignored when `logoSrc` loads.
+   */
+  wordmark?: string;
   /** Tailwind classes to colour the icon and accent (e.g. "from-orange-500 to-rose-500"). */
   accent: string;
   /** Lighter accent for the active glow. */
@@ -36,7 +44,30 @@ export interface ProcessorCardProps {
    * opacity + scale, so the pulse stays GPU-composited and smooth at 60fps.
    */
   glowBorder?: boolean;
+  /**
+   * Squeeze the card down to its logo plate alone: the label, subtitle and
+   * inline count fade out and the plate slides into the middle. Used when the
+   * app sidebar is expanded and the rail's column is too narrow to carry text
+   * as well (PayrollDispatch animates the grid track to match). The text stays
+   * in the DOM at `opacity: 0` so the button keeps its accessible name, and the
+   * pending count reappears as a corner badge on the plate so nothing is lost.
+   *
+   * Only the lg+ vertical rail compacts — the mobile strip has its own fixed
+   * card width, so callers pass false below lg.
+   */
+  compact?: boolean;
 }
+
+/**
+ * Shared easing for the compact/expanded transition. Exported so the grid track
+ * that drives the card's width animates on exactly the same curve — two
+ * constants would drift and the plate would visibly lag the column.
+ */
+export const RAIL_COMPACT_TRANSITION = { duration: 0.7, ease: [0.22, 1, 0.36, 1] as const };
+
+/** Gap between the text column and the logo plate, in px. Cancelled by an
+ *  animated negative margin when compact so the plate centres exactly. */
+const TEXT_PLATE_GAP = 10;
 
 export default function ProcessorCard({
   label,
@@ -44,14 +75,18 @@ export default function ProcessorCard({
   subtitle,
   Icon,
   logoSrc,
+  wordmark,
   accent,
   glow,
   active,
   onClick,
   iconOnlyFallback,
   glowBorder,
+  compact = false,
 }: ProcessorCardProps) {
-  const monogram = label.slice(0, 2).toUpperCase();
+  const reduceMotion = useReducedMotion();
+  const transition = reduceMotion ? { duration: 0 } : RAIL_COMPACT_TRANSITION;
+  const monogram = wordmark ?? label.slice(0, 2).toUpperCase();
   const button = (
     <motion.button
       type="button"
@@ -69,6 +104,10 @@ export default function ProcessorCard({
         glowBorder && '!border-red-400 dark:!border-red-500/70',
       )}
       aria-pressed={active}
+      // Compact hides the label, and the icon-only cards (All pending, Done,
+      // Excluded, …) have no wordmark to read in its place — so the name comes
+      // back on hover. Redundant while the label is visible, hence compact-only.
+      title={compact ? label : undefined}
     >
       {/* Active layout-shared glow */}
       {active && (
@@ -93,8 +132,20 @@ export default function ProcessorCard({
       )}
 
       {/* Horizontal layout: text + count on the LEFT, logo tile on the RIGHT. */}
-      <div className="relative z-10 flex w-full items-center gap-2.5">
-        <div className="min-w-0 flex-1 leading-tight">
+      <div className="relative z-10 flex w-full items-center" style={{ gap: TEXT_PLATE_GAP }}>
+        {/* The text column is `flex-1 min-w-0` against a `shrink-0` plate, so it
+            gives up its width to the plate as the card narrows — the column
+            animation alone drives the squeeze and nothing here has to animate a
+            width. It only has to stop being readable on the way, hence the
+            opacity fade, and give back the gap it no longer separates anything
+            across, hence the negative margin. Both ride the same curve as the
+            grid track, so the plate glides instead of snapping at the end. */}
+        <motion.div
+          className="min-w-0 flex-1 leading-tight"
+          initial={false}
+          animate={{ opacity: compact ? 0 : 1, marginRight: compact ? -TEXT_PLATE_GAP : 0 }}
+          transition={transition}
+        >
           <div className="flex items-center gap-1.5">
             <div
               className={cn(
@@ -129,19 +180,42 @@ export default function ProcessorCard({
               {subtitle}
             </div>
           )}
+        </motion.div>
+        <div className="relative shrink-0">
+          <ProcessorLogo
+            monogram={monogram}
+            gradient={accent}
+            FallbackIcon={Icon}
+            logoSrc={logoSrc}
+            fallback={iconOnlyFallback ? 'icon' : 'monogram'}
+            // Every card uses the same wide plate on the right — real wordmark
+            // logos read at size, and the icon/monogram fallbacks match so the
+            // whole rail stays uniform.
+            className={cn('h-11 w-[80px]', glowBorder && 'shadow-[0_2px_10px_-2px_rgba(239,68,68,0.7)]')}
+            iconClassName={glowBorder ? 'urgent-zap' : undefined}
+          />
+          {/* Compact parks the count on the plate's corner so the squeeze costs
+              no information. Zero is left off on purpose — an empty bucket has
+              nothing to report, and a rail of "0" pills would bury the one
+              number that matters. The ring is the card's own surface colour, so
+              the pill reads as sitting above the plate rather than on it. */}
+          {count !== undefined && count > 0 && (
+            <motion.span
+              className={cn(
+                'pointer-events-none absolute -right-1.5 -top-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[10px] font-semibold leading-none tabular-nums ring-2',
+                glowBorder
+                  ? 'bg-red-600 text-white ring-white dark:bg-red-500 dark:ring-zinc-900'
+                  : 'bg-zinc-900 text-white ring-white dark:bg-white dark:text-zinc-900 dark:ring-zinc-900',
+              )}
+              initial={false}
+              animate={{ opacity: compact ? 1 : 0, scale: compact ? 1 : 0.6 }}
+              transition={transition}
+              aria-hidden
+            >
+              <AnimatedNumber value={count} />
+            </motion.span>
+          )}
         </div>
-        <ProcessorLogo
-          monogram={monogram}
-          gradient={accent}
-          FallbackIcon={Icon}
-          logoSrc={logoSrc}
-          fallback={iconOnlyFallback ? 'icon' : 'monogram'}
-          // Every card uses the same wide plate on the right — real wordmark
-          // logos read at size, and the icon/monogram fallbacks match so the
-          // whole rail stays uniform.
-          className={cn('h-11 w-[80px] shrink-0', glowBorder && 'shadow-[0_2px_10px_-2px_rgba(239,68,68,0.7)]')}
-          iconClassName={glowBorder ? 'urgent-zap' : undefined}
-        />
       </div>
 
       {/* Urgent: continuous energy sheen sweeping across the surface. Lives inside

@@ -4,7 +4,10 @@ import React from 'react';
 import { cn } from '@/lib/utils';
 
 interface ProcessorLogoProps {
-  /** Single-letter or two-letter monogram for the tile. */
+  /**
+   * Text for the fallback tile. One or two characters are a MONOGRAM; anything
+   * longer is a WORDMARK spelled out (see {@link monogramTypeClass}).
+   */
   monogram: string;
   /** Tailwind gradient classes for the tile (e.g. "from-violet-500 to-fuchsia-500"). */
   gradient: string;
@@ -26,6 +29,35 @@ interface ProcessorLogoProps {
   fallback?: 'monogram' | 'icon';
   /** Extra classes for the rendered fallback icon (e.g. an urgent pulse). */
   iconClassName?: string;
+}
+
+/**
+ * Type treatment for the fallback tile's text, chosen by length.
+ *
+ * One or two characters are a MARK: 16px bold, centred, deliberately small on
+ * the 80x44 plate. Anything longer is a WORDMARK — a rail that is ours rather
+ * than a vendor's, so its name IS the logo (e.g. "WIRES") and there is no PNG
+ * to draw. Left at monogram size a wordmark reads as a shy afterthought beside
+ * the real wordmarks on the neighbouring cards, so it is sized to the plate
+ * instead.
+ *
+ * The sizes are MEASURED in Inter 700 on the real 80px plate, not estimated:
+ * "WIRES" at 17px lands 68.7px wide including its 12px of padding, which is
+ * within a pixel of how Kolan.png and wise.png sit on the same plate — that
+ * parity is the whole point, so do not nudge these without re-measuring.
+ * "HIGLOBE" at 12px lands 66.0px, "PAYONEER" 77.8px.
+ *
+ * These fit real rail names, NOT every possible string: uppercase advances run
+ * ~0.67em per character on average but 0.95em for M, so a pathological
+ * "MMMMMMMM" still overruns the plate. The tile clips (`overflow-hidden`) so
+ * such a label is cut off inside its own plate rather than spilling across the
+ * card, and a name that long wants artwork or initials, not a wordmark.
+ */
+function monogramTypeClass(monogram: string): string {
+  const len = monogram.trim().length;
+  if (len <= 2) return 'text-base tracking-tight';
+  if (len <= 5) return 'px-1.5 text-[17px] tracking-[0.02em]';
+  return 'px-1.5 text-[12px] tracking-[0.02em]';
 }
 
 /**
@@ -117,13 +149,22 @@ export default function ProcessorLogo({
   return (
     <div
       className={cn(
-        'flex items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm',
+        // overflow-hidden is the backstop for an over-long wordmark: it gets cut
+        // off inside its own plate instead of spilling across the card.
+        'flex items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br text-white shadow-sm',
         gradient,
         className,
       )}
     >
       {fallback === 'monogram' ? (
-        <span className="text-base font-bold tracking-tight">{monogram}</span>
+        <span
+          className={cn(
+            'whitespace-nowrap text-center font-bold leading-none',
+            monogramTypeClass(monogram),
+          )}
+        >
+          {monogram}
+        </span>
       ) : (
         <FallbackIcon className={cn('h-5 w-5', iconClassName)} />
       )}

@@ -72,7 +72,7 @@ A row of 8 filter cards (All + Kolan + Wepay + HiGlobe + Wise + Jeeves + Wires +
 | HiGlobe | emerald → teal | Email + account holder name |
 | Wise | green → lime | Brand-matched green |
 | Jeeves | pink → rose | Phone + wire details |
-| Wires | zinc → zinc | Manual wire transfers (catches `x1xxx` suffix codes) |
+| Wires | zinc → zinc | Manual wire transfers (catches `x1xxx` suffix codes). The only rail with **no artwork**, so its plate draws the name — see §3.3.2 |
 
 Active card is highlighted via Framer Motion's **`layoutId`** glow that physically slides between cards on tab switch.
 
@@ -129,6 +129,92 @@ path was re-drawn). Being an *opaque* near-black tile with a white corona, it is
 asset that reads on the bare un-plated chips. It carries explicit `width`/`height` so
 `naturalWidth`/`naturalHeight` are non-zero — the aspect probe needs intrinsic dimensions, and
 an SVG without them measures 0 in some browsers and silently downgrades to wordmark treatment.
+
+#### 3.3.2 A rail with no artwork spells its name out (2026-09-17)
+
+`ProcessorCard` derives the fallback tile's text from the card label by cutting it to two
+initials. For a **vendor** that is a monogram and reads as one. For a rail that is **ours** it
+is a truncation — and Wires is the only such rail, so **"Wires" rendered as "WI"** on the
+residual card that catches everyone with no wallet. Kane, 2026-09-17: *"Wires Logo should be
+spelt out as WIRES not WI"*.
+
+Nothing errored and nothing could have. A two-letter tile is **exactly** what a rail with no
+logo is supposed to look like, so the bug was indistinguishable from the intended fallback —
+the same silent-degradation class as the missing `/kolan.png` above, arrived at from the
+opposite direction: there the asset was absent by accident, here it is absent **by design**
+and the text standing in for it was wrong.
+
+The fix is a `wordmark` field on `ProcessorVisual`, spelled out and uppercase, which
+`ProcessorCard` passes to `ProcessorLogo` in place of the initials. `ProcessorLogo`'s
+`monogramTypeClass()` then sizes the text by length:
+
+| Length | Treatment | Why |
+|---|---|---|
+| ≤ 2 | 16px, `tracking-tight` | A **mark**. Deliberately small and centred on the 80×44 plate — unchanged, and what every other fallback caller passes |
+| 3–5 | 17px, `tracking-[0.02em]` | A **wordmark**. "WIRES" measures **68.7px** wide including its 12px of padding |
+| 6+ | 12px, `tracking-[0.02em]` | "HIGLOBE" 66.0px, "PAYONEER" 77.8px |
+
+**Those sizes are measured, not estimated** — Inter 700 on the real plate, in Chromium. 68.7px
+is within a pixel of how `/Kolan.png` and `/wise.png` sit on the same plate (~69px), and that
+parity is the whole point: our own rail name must sit at the same scale as the vendors' real
+lockups, neither shouting nor apologising. **Re-measure before nudging them.** An earlier pass
+guessed 18px from a 0.61em-per-character estimate; the real figure is 0.67em average, which put
+it at 72.1px and 3px fuller than every neighbour.
+
+They fit **real rail names, not every possible string.** Uppercase advances run ~0.67em per
+character on average but **0.95em for M**, so a pathological `"MMMMMMMM"` still overruns the
+plate. Designing the tiers for that worst case would force 9px type on every real name, so
+instead the fallback tile is `overflow-hidden`: an over-long wordmark is cut off **inside its
+own plate** rather than spilling across the card. A name that long wants artwork or initials.
+
+Two tests in `processor-logo-assets.test.ts` pin this, both proven to fail when the `wordmark`
+line is removed:
+
+- **`a rail with no logo spells its name out…`** — `wires` must carry `wordmark: 'WIRES'`, and
+  any rail with neither artwork nor a wordmark fails by name. **Retired rails are excluded**
+  (`RETIRED_DISPATCH_PROCESSOR_IDS`, read as text): no card is ever drawn for them, and their
+  initials are a *vendor's*, where two letters are a legitimate monogram. `wepay` is the
+  present member of that set and the test found it on the first run.
+- **`every wordmark fits the 80px plate…`** — asserts uppercase, and checks the typical-case
+  width against the 68px text budget. It also asserts the **worst case still does *not* fit**,
+  so if the tiers are ever shrunk the recorded headroom stops being trusted silently.
+
+Both read the registry **as text**, for the same reason as every other test in that file:
+`PayrollDispatch.tsx` is the whole dispatch tree, and an asset check should not be hostage to
+unrelated runtime breakage.
+
+#### 3.3.3 The rail compacts to plates when the sidebar is open (2026-09-17)
+
+The app sidebar and the processor rail spend the same horizontal budget. Kane, 2026-09-17:
+*"When sidebar is on lets hide the text labels on it and compress the buckets making it so that
+the logo is the only one being shown"* — so with the sidebar **expanded** every bucket drops to
+its plate alone and the grid track narrows to match, handing the reclaimed width to the queue
+table. Collapse the sidebar and the full cards come back.
+
+- **Trigger** is `useSidebarCollapsed()` — the same global, `localStorage`-backed flag every
+  dashboard shares — ANDed with `useIsLgUp()`. **lg-only**: below it the rail is a horizontal
+  scroll strip of fixed 176px cards and the sidebar is a drawer, so there is nothing to trade.
+- **Note which way round this runs.** `App.tsx` collapses that same flag when processing
+  starts, so **focus mode expands the buckets** rather than fighting them. That is the right
+  way round — a clerk heads-down logging payments wants the labels.
+- **The track is 106px**, not 104: the card's 80px plate plus its 12px padding **and its 1px
+  border** either side. Measured — at 104px the plate overflows the content box by 2px and flex
+  pushes it off centre (13/11); at 106px it sits 13/13. Visible on a rail of eight plates.
+- **Nothing animates a width.** The text column is `flex-1 min-w-0` against a `shrink-0` plate,
+  so it surrenders its space to the plate as the track shrinks — the grid animation alone
+  drives the squeeze. The column only has to stop being readable on the way (opacity) and give
+  back the 10px gap it no longer separates anything across (an animated negative margin). Both
+  ride `RAIL_COMPACT_TRANSITION`, exported from `ProcessorCard.tsx` so the track and the plates
+  inside it cannot drift onto different curves. `useReducedMotion` cuts it to a hard swap.
+- **The count survives** as a small pill on the plate's corner, ringed in the card's own surface
+  colour so it reads as sitting above the plate. **Zero is omitted** — an empty bucket has
+  nothing to report and a rail of "0" pills would bury the one number that matters.
+- **The label stays in the DOM at `opacity: 0`**, so the button keeps its accessible name, and
+  a compact-only `title` gives the name back on hover — which the icon-only cards (All pending,
+  Done, Excluded, …) need, having no wordmark to read.
+- **The header compacts too**: "Filter by processor" cannot fit 106px, so it fades out and the
+  row's padding grows to 12px, landing the surviving in-view count flush with the plates' right
+  edge below it instead of 8px adrift.
 
 ### 3.4 The table
 
@@ -1263,6 +1349,15 @@ public/processors/
 - `src/components/employee/EmployeeApp.tsx` — mounts `useDispatchLock`, banner, transition toasts
 - `src/components/employee/EmployeeSidebar.tsx` — "Paused" pill on Disputes nav item
 - `src/components/employee/MyDisputes.tsx` — accepts `payrollLocked` prop, animated lock banner
+- `src/components/payroll-clerk/ProcessorLogo.tsx` — `monogramTypeClass()` sizes the fallback
+  tile's text by length so a rail with no artwork can spell its name out; the tile is
+  `overflow-hidden` so an over-long wordmark is clipped inside its own plate (§3.3.2)
+- `src/components/payroll-clerk/ProcessorCard.tsx` — `wordmark` (name in place of initials) and
+  `compact` (plate-only) props, the corner count badge, and the exported
+  `RAIL_COMPACT_TRANSITION` the grid track shares (§3.3.2, §3.3.3)
+- `src/components/payroll-clerk/PayrollDispatch.tsx` — `wordmark: 'WIRES'` on the Wires visual;
+  reads `useSidebarCollapsed()` and animates the rail's grid track 255px ↔ 106px (§3.3.3)
+- `src/lib/processor-logo-assets.test.ts` — two wordmark tests (§3.3.2)
 
 ---
 
