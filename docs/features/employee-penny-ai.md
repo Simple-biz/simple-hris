@@ -76,6 +76,18 @@ to price.** It points at the Pay Stubs tab instead of estimating. A Penny that q
 number the Pay Stubs tab disagrees with is worse than one that says "open your Pay
 Stubs tab" — the employee cannot tell which figure is wrong, and both come from us.
 
+**A pay week reaches the employee already reconciled *(2026-09-17)*.** `getMyPay` spreads
+the CEO tool's week through (`...rest`), so the itemisation added for the CEO — **hourly
+pay** (regular + OT, never called "computed"), `bonus_php` / `bonus_label`, `deduction_php`
+/ `deduction_label` (the employee's own MESA contribution), and `paid_php` beside `paid_usd`
+— arrives here too. That is deliberate rather than incidental: these are the same lines the
+employee's own pay stub already shows them, and a bubble that can show a total but not the
+₱100 that came out of it invites exactly the "why don't these match" question this change
+exists to end. Two guards ride along — an unreconciled remainder is `unexplained_php` and is
+**never attributed to a cause**, and an **absent** money field means *not recorded*, never
+₱0. The `status` translation below is unaffected: it still replaces Accounting's vocabulary
+with `payment_status` before anything reaches an employee.
+
 The same rule blocks the obvious feature request: Penny does **not** judge attendance
 eligibility. It states the PAB amount, the window, the earning rule and the pay week the
 bonus attaches to, then sends the employee to the PAB calendar on their Overview for

@@ -16,6 +16,11 @@ import {
   type RosterCandidate,
 } from '@/lib/penny/roster-match';
 import {
+  buildReconciledPayWeeks,
+  totalsFor,
+  type PayRecordInput,
+} from '@/lib/penny/pay-reconciliation';
+import {
   createSupabaseServiceRoleClient,
   createSupabaseServerClient,
 } from '@/lib/supabase/server';
@@ -422,7 +427,8 @@ async function getEmployeePay(workEmail: string, weeksRaw: unknown): Promise<Too
 
   // PostgREST or() values are NOT quoted (emails contain no reserved chars).
   const orFilter = [...aliases].map((a) => `recipient_email.ilike.${a}`).join(',');
-  const [disbRes, dispatchRes] = await Promise.all([
+  const mesaOrFilter = [...aliases].map((a) => `email.ilike.${a}`).join(',');
+  const [disbRes, dispatchRes, mesaRes] = await Promise.all([
     supabase
       .from('disbursement_records')
       .select(
@@ -435,102 +441,75 @@ async function getEmployeePay(workEmail: string, weeksRaw: unknown): Promise<Too
     // records: the NEWEST cycle's payments land here first and only mirror
     // into disbursement_records where that cycle was already seeded. Overlay
     // it so "was I paid this week?" is answered from the freshest data.
+    //
+    // `system_bonus_php` / `system_bonus_label` are selected because the bonus
+    // folded into a paid amount is HERE, on a row this query already fetched.
+    // Omitting them is why Penny once told the CEO a $79.88 gap was "almost
+    // certainly a bonus" — a guess, standing on a labelled figure it never read.
     supabase
       .from('payment_dispatches')
       .select(
-        'cycle_period_start, cycle_period_end, recipient_name, amount_usd, amount_php, amount_cop, status, sent_date, created_at, payee_type',
+        'cycle_period_start, cycle_period_end, recipient_name, amount_usd, amount_php, amount_cop, status, sent_date, created_at, payee_type, system_bonus_php, system_bonus_label',
       )
       .or(orFilter)
       .eq('status', 'paid')
       .order('cycle_period_start', { ascending: false })
       .limit(40),
+    // The third term in the payslip. A MESA member contributes ₱100 of their
+    // own money each week, so hourly + bonus alone never equals what landed.
+    // `simple_match_php` is Simple's ₱300 on top and is deliberately NOT read:
+    // it is not the employee's money and netting it understates take-home.
+    supabase
+      .from('mesa_ledger')
+      .select('deposit_date, worker_contribution_php')
+      .or(mesaOrFilter)
+      .not('deposit_date', 'is', null)
+      .order('deposit_date', { ascending: false })
+      .limit(120),
   ]);
 
   if (disbRes.error) return { error: disbRes.error.message };
 
   const rows = (disbRes.data ?? []) as Array<Record<string, unknown>>;
 
-  const entries = rows.map((r) => ({
-    period_start: r.cycle_period_start,
-    period_end: r.cycle_period_end,
+  const records: PayRecordInput[] = rows.map((r) => ({
+    period_start: String(r.cycle_period_start ?? ''),
+    period_end: (r.cycle_period_end as string | null) ?? null,
+    recipient_name: (r.recipient_name as string | null) ?? null,
     total_hours: num(r.total_hours),
     regular_hours: num(r.regular_hours),
     ot_hours: num(r.ot_hours),
-    amount_php: numOrNull(r.amount_php),
-    amount_usd: numOrNull(r.amount_usd),
-    status: r.status,
-    paid_amount_usd: numOrNull(r.paid_amount_usd),
-    paid_at: r.paid_at as string | null,
-    paid_amount_php: null as number | null,
-    source: 'weekly_records' as string,
+    // NOT "computed". `amount_php` / `amount_usd` are regular + OT pay and
+    // nothing else; calling a partial figure "computed" is what sent the CEO
+    // looking for an error that was never there.
+    hourly_pay_php: numOrNull(r.amount_php),
+    hourly_pay_usd: numOrNull(r.amount_usd),
+    status: (r.status as string | null) ?? null,
+    paid_usd: numOrNull(r.paid_amount_usd),
+    paid_at: (r.paid_at as string | null) ?? null,
   }));
 
-  // Aggregate paid dispatches per cycle (skip urgent one-offs, which carry no
-  // period, and contractor-invoice settlements).
-  const dispatched = new Map<
-    string,
-    { start: string; end: string | null; usd: number | null; php: number | null; at: string; name: string | null }
-  >();
-  for (const d of (dispatchRes.data ?? []) as Array<Record<string, unknown>>) {
-    if (d.payee_type === 'contractor') continue;
-    const start = (d.cycle_period_start as string | null) ?? '';
-    if (!start) continue;
-    const prev = dispatched.get(start);
-    const usd = numOrNull(d.amount_usd);
-    const php = numOrNull(d.amount_php);
-    const at = String(d.created_at ?? d.sent_date ?? '');
-    if (prev) {
-      prev.usd = usd == null && prev.usd == null ? null : (prev.usd ?? 0) + (usd ?? 0);
-      prev.php = php == null && prev.php == null ? null : (prev.php ?? 0) + (php ?? 0);
-      if (at > prev.at) prev.at = at;
-    } else {
-      dispatched.set(start, {
-        start,
-        end: (d.cycle_period_end as string | null) ?? null,
-        usd,
-        php,
-        at,
-        name: (d.recipient_name as string | null) ?? null,
-      });
-    }
-  }
+  const { entries, recipient_name } = buildReconciledPayWeeks({
+    records,
+    dispatches: ((dispatchRes.data ?? []) as Array<Record<string, unknown>>).map((d) => ({
+      period_start: (d.cycle_period_start as string | null) ?? null,
+      period_end: (d.cycle_period_end as string | null) ?? null,
+      recipient_name: (d.recipient_name as string | null) ?? null,
+      paid_usd: numOrNull(d.amount_usd),
+      paid_php: numOrNull(d.amount_php),
+      bonus_php: numOrNull(d.system_bonus_php),
+      bonus_label: (d.system_bonus_label as string | null) ?? null,
+      at: String(d.created_at ?? d.sent_date ?? ''),
+      payee_type: (d.payee_type as string | null) ?? null,
+    })),
+    mesaDeposits: ((mesaRes.data ?? []) as Array<Record<string, unknown>>).map((m) => ({
+      deposit_date: (m.deposit_date as string | null) ?? null,
+      worker_contribution_php: numOrNull(m.worker_contribution_php),
+    })),
+    weeks,
+  });
 
-  const byStart = new Map(entries.map((e) => [String(e.period_start ?? ''), e]));
-  let dispatchName: string | null = null;
-  for (const [start, d] of dispatched) {
-    dispatchName = dispatchName ?? d.name;
-    const existing = byStart.get(start);
-    if (existing) {
-      // The weekly record hasn't caught up to the dispatch — trust the dispatch.
-      if (existing.status !== 'paid') {
-        existing.status = 'paid';
-        existing.paid_amount_usd = existing.paid_amount_usd ?? d.usd;
-        existing.paid_amount_php = d.php;
-        existing.paid_at = existing.paid_at ?? d.at;
-        existing.source = 'weekly_records + live_dispatch_log';
-      }
-    } else {
-      entries.push({
-        period_start: start,
-        period_end: d.end,
-        total_hours: 0,
-        regular_hours: 0,
-        ot_hours: 0,
-        amount_php: null,
-        amount_usd: null,
-        status: 'paid',
-        paid_amount_usd: d.usd,
-        paid_amount_php: d.php,
-        paid_at: d.at,
-        source: 'live_dispatch_log',
-      });
-    }
-  }
-
-  entries.sort((a, b) => (String(a.period_start) < String(b.period_start) ? 1 : -1));
-  const shown = entries.slice(0, weeks);
-
-  if (shown.length === 0) {
+  if (entries.length === 0) {
     return {
       work_email: email,
       weeks: [],
@@ -540,17 +519,22 @@ async function getEmployeePay(workEmail: string, weeksRaw: unknown): Promise<Too
 
   return {
     work_email: email,
-    recipient_name: rows[0]?.recipient_name ?? dispatchName ?? null,
-    currency: 'amounts are in PHP (amount_php) and USD (amount_usd / paid_amount_usd)',
+    recipient_name: rows[0]?.recipient_name ?? recipient_name ?? null,
+    currency: 'PHP (₱) and USD ($) as each field is labelled',
     field_notes:
-      'amount_php / amount_usd = computed regular + OT pay for that week (does NOT include PAB/Tech bonuses). paid_amount_usd = the amount actually disbursed, set only when status="paid" (this is what was really sent, and includes any bonuses). status: paid = sent; pending = owed but not yet sent; not_paid/threshold/problem = held. source "live_dispatch_log" = this week\'s payment comes straight from the live payment log (freshest data; the weekly record isn\'t seeded yet, so hours/computed amounts may be missing — the paid amount is authoritative).',
-    weeks: shown,
-    totals: {
-      weeks_returned: shown.length,
-      sum_amount_php: round2(sumNullable(shown.map((e) => e.amount_php))),
-      sum_amount_usd: round2(sumNullable(shown.map((e) => e.amount_usd))),
-      sum_paid_usd: round2(sumNullable(shown.map((e) => e.paid_amount_usd))),
-    },
+      'EVERY WEEK ADDS UP: hourly_pay_php + bonus_php − deduction_php = paid_php. Present it that way. ' +
+      '**hourly_pay_php / hourly_pay_usd are REGULAR + OT PAY ONLY — hours × rate.** Call this "Hourly Pay", NEVER "computed", ' +
+      '"computed pay" or "total": it is one line of a payslip, and naming a partial figure like a total is what made a CEO ' +
+      'think the payroll was wrong. bonus_php = a bonus folded into the payment, named by bonus_label (e.g. "PAB ₱5,000"). ' +
+      'deduction_php = money withheld from this week, named by deduction_label (MESA is the employee\'s OWN savings ' +
+      'contribution, not a charge — say so if asked). paid_php / paid_usd = what actually left, bonuses and deductions already in it. ' +
+      'reconciles=true means the arithmetic closes exactly; if it is false, unexplained_php is the remainder — report it and DO NOT ' +
+      'guess what it was. A money field that is ABSENT is genuinely not on record — say "not recorded", never "₱0" and never ' +
+      '"the system does not store this". status: paid = sent; pending = owed but not yet sent; not_paid/threshold/problem = held. ' +
+      'source "live_dispatch_log" = straight from the live payment log (freshest; the weekly record is not seeded, so hours and ' +
+      'hourly pay are missing and the paid amount is authoritative).',
+    weeks: entries,
+    totals: totalsFor(entries),
   };
 }
 

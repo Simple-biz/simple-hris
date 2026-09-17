@@ -89,7 +89,7 @@ theirs.
 
 | Tool | Ask it |
 |---|---|
-| `get_employee_pay` | One person's recent weekly pay — hours, computed amount, actually-paid amount, status, plus a summed total so "add up the last four weeks" answers directly. |
+| `get_employee_pay` | One person's recent weekly pay, **reconciled**: hours, **hourly pay** (regular + OT, never called "computed"), the itemised bonus, the itemised MESA deduction, and what was actually paid in **both ₱ and $** — so `hourly + bonus − deduction = paid` is visible rather than a gap the reader has to guess at. Plus a summed total so "add up the last four weeks" answers directly. An unreconciled remainder comes back as `unexplained_php`, never attributed. |
 | `get_payroll_report` | Company-wide weekly totals: paid, to how many people, still outstanding. |
 | `get_financial_summary` | A **calendar month**'s payroll financials with a per-week breakdown *and* the prior month's headline plus % change — enough to write a trend. Pass `YYYY-MM`. |
 | `get_overtime_leaders` | Rank people by overtime over recent pay weeks, with the exact period covered so a report can be labelled. |
@@ -158,6 +158,21 @@ a gap waiting to be filled.
   add up to the wizard's figure it says so, compares the snapshot's save time
   with each source's, and stops — it does not infer the value that was
   overwritten.
+- **A missing money figure means "not recorded", never ₱0 — and never "we do
+  not store this".** `get_employee_pay` **omits** a money field it does not have
+  rather than returning `null`, because a null cannot be told apart from a
+  genuine zero or from a code path that never ran. That distinction is not
+  academic: on 2026-09-17 a `paid_amount_php: null` — emitted by an overlay that
+  skipped every *already-paid* week — was reported to the CEO as *"the system
+  stores the actual paid amount in USD only"*. It stores it in
+  `payment_dispatches.amount_php`, and always had.
+- **`get_employee_pay` still cannot see accounting adjustments or Payroll Notes
+  entries.** It reconciles `hourly + bonus − deduction = paid`; when that does
+  not close, the remainder is returned as `unexplained_php` and Penny is told to
+  report it as unexplained. **It must not name a cause.** Those two sources are
+  the usual culprits and neither is readable from this tool — use
+  `get_bonus_breakdown` (which reads the wizard's `bonusOverrides` and the notes
+  board) before offering anyone an explanation.
 
 ---
 
@@ -180,8 +195,10 @@ Two defects, one session:
   `getEmployeeMasterRecord`'s rule (never resolve a *login identity* to an
   off-boarded row — work emails are recycled) is untouched; a labelled search
   hit is not an identity resolution.
-- **No tool read a bonus source.** `get_employee_pay` excludes bonuses by
-  design and the audit log never sees a KPI save, so Penny had four tools that
+- **No tool read a bonus source.** `get_employee_pay` excluded bonuses (changed
+  2026-09-17 — it now itemises the dispatch's `system_bonus_php` / `_label`, which
+  names *what* the bonus was; `get_bonus_breakdown` remains the only tool that can
+  say *where it came from*) and the audit log never sees a KPI save, so Penny had four tools that
   could each honestly say "nothing" and none that could say where ₱250 came
   from. The data had it: one `hsl_bonus_entries` row (attestation, ₱250 =
   1 × SSA.Gov), one `bonus_catalog_applied` row (Lead Gen, ₱0), and a wizard
