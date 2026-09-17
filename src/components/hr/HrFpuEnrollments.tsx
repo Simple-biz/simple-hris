@@ -7,7 +7,7 @@
  * docs/features/fpu-enrollment.md.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   GraduationCap,
   Plus,
@@ -117,11 +117,14 @@ export default function HrFpuEnrollments() {
   const [migrated, setMigrated] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [rows, setRows] = useState<EnrollmentRow[]>([]);
-  const rowsRef = useRef<EnrollmentRow[]>([]);
-  rowsRef.current = rows;
   const [roster, setRoster] = useState<Map<string, RosterEmailStatus> | null>(null);
-  const [loadingClasses, setLoadingClasses] = useState(true);
-  const [loadingRows, setLoadingRows] = useState(false);
+  // Nothing on this surface announces that it is loading. Data lands when it
+  // lands (live broadcast, 15s floor, focus) and the table simply repaints —
+  // Kane, 2026-09-17: "lets just load the data when it arrives", "lets not put
+  // loading on the table". These two flags are readiness, NOT spinners: they
+  // gate an action and a wrong empty-state sentence, and render nothing.
+  const [classesLoaded, setClassesLoaded] = useState(false);
+  const [rowsLoadedFor, setRowsLoadedFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -134,7 +137,6 @@ export default function HrFpuEnrollments() {
   const today = useMemo(() => manilaTodayIso(), []);
 
   const loadClasses = useCallback(async (pickDefault: boolean) => {
-    setLoadingClasses(true);
     try {
       const [json, rosterMap] = await Promise.all([
         requestJson<{ classes: FpuClass[]; counts: Record<string, Counts>; migrated: boolean }>('/api/hr/fpu-classes'),
@@ -154,13 +156,11 @@ export default function HrFpuEnrollments() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load FPU classes');
     } finally {
-      setLoadingClasses(false);
+      setClassesLoaded(true);
     }
   }, [today]);
 
   const loadRows = useCallback(async (classId: string) => {
-    // Spinner only on a cold table; a live repaint over existing rows is silent.
-    setLoadingRows((prev) => prev || rowsRef.current.length === 0);
     try {
       const json = await requestJson<{ rows: EnrollmentRow[]; migrated: boolean }>(`/api/hr/fpu-enrollments?class_id=${encodeURIComponent(classId)}`);
       setRows(json.rows ?? []);
@@ -168,7 +168,7 @@ export default function HrFpuEnrollments() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load enrollments');
     } finally {
-      setLoadingRows(false);
+      setRowsLoadedFor(classId);
     }
   }, []);
 
@@ -177,8 +177,16 @@ export default function HrFpuEnrollments() {
   }, [loadClasses]);
 
   useEffect(() => {
-    if (selectedId) void loadRows(selectedId);
-    else setRows([]);
+    if (!selectedId) {
+      setRows([]);
+      setRowsLoadedFor(null);
+      return;
+    }
+    // Drop the previous class's rows immediately — showing them under a new
+    // class's header is worse than showing nothing for a moment.
+    if (rowsLoadedFor !== selectedId) setRows([]);
+    void loadRows(selectedId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, loadRows]);
 
   const selected = useMemo(() => classes.find((c) => c.id === selectedId) ?? null, [classes, selectedId]);
@@ -214,7 +222,7 @@ export default function HrFpuEnrollments() {
   // a tab-focus refresh cover a dropped socket. Quiet reloads — no spinner —
   // so a checkbox selection is never yanked mid-decision by a repaint.
   const liveStatus = useFpuLive({
-    enabled: migrated && !loadingClasses,
+    enabled: migrated && classesLoaded,
     onChange: () => {
       if (busy) return;
       void loadClasses(false);
@@ -336,10 +344,7 @@ export default function HrFpuEnrollments() {
 
       {/* Class strip */}
       <div className="flex flex-wrap items-center gap-2">
-        {loadingClasses && classes.length === 0 ? (
-          <span className="inline-flex items-center gap-1.5 text-xs text-zinc-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading classes…</span>
-        ) : (
-          classes.map((c) => {
+        {classes.map((c) => {
             const phase = fpuClassPhase(c, today);
             const k = counts[c.id];
             const active = c.id === selectedId;
@@ -366,27 +371,28 @@ export default function HrFpuEnrollments() {
                 )}
               </button>
             );
-          })
-        )}
-        <Button type="button" size="sm" variant="outline" disabled={!migrated || busy || loadingClasses} onClick={() => setClassDialog({ mode: 'create' })} className="h-8 gap-1 text-xs">
+          })}
+        <Button type="button" size="sm" variant="outline" disabled={!migrated || busy || !classesLoaded} onClick={() => setClassDialog({ mode: 'create' })} className="h-8 gap-1 text-xs">
           <Plus className="h-3.5 w-3.5" /> New class
         </Button>
         <span
           className={cn('ml-auto inline-flex items-center gap-1 text-[11px] font-medium', liveStatus === 'live' ? 'text-emerald-600 dark:text-emerald-300' : 'text-zinc-500 dark:text-zinc-400')}
           title={liveStatus === 'live' ? 'Updates arrive as they happen — no refresh needed' : 'Realtime unavailable — refreshing every 15s'}
         >
-          <Radio className={cn('h-3 w-3', liveStatus === 'live' && 'animate-pulse')} />
+          <Radio className="h-3 w-3" />
           {liveStatus === 'live' ? 'Live' : liveStatus === 'connecting' ? 'Connecting' : 'Polling'}
         </span>
       </div>
 
       {!selected ? (
+        classesLoaded ? (
         <Card className="border-dashed border-teal-200 dark:border-teal-900/60">
           <CardContent className="flex flex-col items-center gap-2 px-5 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
             <Inbox className="h-6 w-6 text-zinc-400" />
             {migrated ? 'No FPU class yet. Create one to open enrollment.' : 'Waiting for the migration.'}
           </CardContent>
         </Card>
+        ) : null
       ) : (
         <Card className="overflow-hidden border-teal-100/80 shadow-sm dark:border-teal-900/40">
           {/* Selected class header */}
@@ -463,13 +469,18 @@ export default function HrFpuEnrollments() {
           )}
 
           <CardContent className="p-0">
-            {loadingRows && rows.length === 0 ? (
-              <div className="flex items-center justify-center gap-2 px-5 py-10 text-sm text-zinc-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
-            ) : filtered.length === 0 ? (
-              <div className="flex flex-col items-center gap-2 px-5 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
-                <Inbox className="h-6 w-6 text-zinc-400" />
-                {rows.length === 0 ? 'No enrollments yet.' : 'Nothing matches.'}
-              </div>
+            {filtered.length === 0 ? (
+              // Nothing to say until the answer is in — an "empty" sentence over
+              // a class whose rows are still in flight is a lie with a spinner's
+              // job. Reserve the height so the card does not jump on arrival.
+              rowsLoadedFor !== selected.id ? (
+                <div className="px-5 py-10" aria-hidden />
+              ) : (
+                <div className="flex flex-col items-center gap-2 px-5 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                  <Inbox className="h-6 w-6 text-zinc-400" />
+                  {rows.length === 0 ? 'No enrollments yet.' : 'Nothing matches.'}
+                </div>
+              )
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
