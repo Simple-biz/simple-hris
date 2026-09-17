@@ -364,7 +364,11 @@ export default function HrFpuEnrollments() {
   return (
     <div className="space-y-4">
       {!migrated && (
-        <Notice tone="amber">FPU classes are not set up yet — run <code>scripts/apply-fpu-classes-migration.mts --apply</code>.</Notice>
+        <Notice tone="amber">
+          FPU classes need their latest database migration — double-click{' '}
+          <code>scripts/Apply FPU Classes migration.cmd</code>. It is safe to re-run: it adds only
+          what is missing, and it rehearses before it writes.
+        </Notice>
       )}
       {error && <Notice tone="rose">{error}</Notice>}
 
