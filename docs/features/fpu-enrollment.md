@@ -161,6 +161,13 @@ topics) because realtime-js keeps one channel per topic per client.
 socket degrades to "seconds late", never to stale. The HR toolbar shows the honest state — **Live**
 (subscribed) / **Connecting** / **Polling** (channel errored, poll carrying it).
 
+**Skeletons cover the COLD paint only** (2026-09-17). The class strip, the enrollment table and
+the whole card each have one, sized to the real thing so nothing reflows on reveal. They render at
+exactly two moments: the first load of the tab, and switching to a class whose rows have not been
+fetched yet — where the alternative is a blank rectangle or, worse, "No enrollments yet" printed
+over a class that has plenty. **A poll, a broadcast or a save never brings one back**: `classesLoaded`
+never returns to false and `rowsLoadedFor` only resets when the selected class changes.
+
 **There is no Refresh button** (removed 2026-09-17, Kane: *"this is live polling already"*). The
 pill IS the freshness answer; a manual reload beside it only invites the question of whether the
 view can be trusted without one. `refreshAll` stays for the surface's own writes, which reload

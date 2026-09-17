@@ -356,6 +356,7 @@ export default function HrFpuEnrollments() {
 
       {/* Class strip */}
       <div className="flex flex-wrap items-center gap-2">
+        {!classesLoaded && <ClassStripSkeleton />}
         {classes.map((c) => {
             const phase = fpuClassPhase(c, today);
             const k = counts[c.id];
@@ -397,14 +398,19 @@ export default function HrFpuEnrollments() {
       </div>
 
       {!selected ? (
-        classesLoaded ? (
-        <Card className="border-dashed border-teal-200 dark:border-teal-900/60">
-          <CardContent className="flex flex-col items-center gap-2 px-5 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
-            <Inbox className="h-6 w-6 text-zinc-400" />
-            {migrated ? 'No FPU class yet. Create one to open enrollment.' : 'Waiting for the migration.'}
-          </CardContent>
-        </Card>
-        ) : null
+        // Cold paint: a skeleton, NOT the "no class yet" card — that sentence is
+        // a claim, and claiming a class does not exist before the answer is in
+        // is worse than showing nothing.
+        !classesLoaded ? (
+          <TableSkeleton rows={4} />
+        ) : (
+          <Card className="border-dashed border-teal-200 dark:border-teal-900/60">
+            <CardContent className="flex flex-col items-center gap-2 px-5 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
+              <Inbox className="h-6 w-6 text-zinc-400" />
+              {migrated ? 'No FPU class yet. Create one to open enrollment.' : 'Waiting for the migration.'}
+            </CardContent>
+          </Card>
+        )
       ) : (
         <Card className="overflow-hidden border-teal-100/80 shadow-sm dark:border-teal-900/40">
           {/* Selected class header */}
@@ -508,7 +514,7 @@ export default function HrFpuEnrollments() {
               // a class whose rows are still in flight is a lie with a spinner's
               // job. Reserve the height so the card does not jump on arrival.
               rowsLoadedFor !== selected.id ? (
-                <div className="px-5 py-10" aria-hidden />
+                <SkeletonRows rows={5} />
               ) : (
                 <div className="flex flex-col items-center gap-2 px-5 py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
                   <Inbox className="h-6 w-6 text-zinc-400" />
@@ -669,6 +675,79 @@ export default function HrFpuEnrollments() {
 }
 
 // ── Pieces ───────────────────────────────────────────────────────────────────
+
+/**
+ * Skeletons here cover the COLD paint only.
+ *
+ * Kane, 2026-09-17: "lets just load the data when it arrives" / "lets not put
+ * loading on the table" — that was about the 15-second refresh and the live
+ * channel repainting under him, and it still holds: `classesLoaded` never goes
+ * back to false, and `rowsLoadedFor` only resets when the SELECTED CLASS changes.
+ * So a poll, a broadcast, or a save never brings a skeleton back. The only times
+ * these render are the first load of the tab and switching to a class whose rows
+ * have not been fetched yet — moments when the alternative is a blank rectangle
+ * or, worse, "No enrollments yet" over a class that has plenty.
+ *
+ * Each one is built to the real thing's dimensions so nothing reflows on reveal.
+ */
+const BAR = 'animate-pulse rounded bg-zinc-100 dark:bg-zinc-800';
+
+function ClassStripSkeleton() {
+  return (
+    <>
+      {[36, 30, 26].map((w, i) => (
+        <div
+          key={i}
+          aria-hidden
+          // Same box as a real class chip: border, px-3 py-1.5, text-xs.
+          className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-1.5 dark:border-zinc-800"
+        >
+          <div className={cn('h-3.5 w-3.5 rounded-sm', BAR)} />
+          <div className={cn('h-3', BAR)} style={{ width: `${w * 2}px` }} />
+          <div className={cn('h-3.5 w-12 rounded-full', BAR)} />
+        </div>
+      ))}
+      <span className="sr-only">Loading FPU classes</span>
+    </>
+  );
+}
+
+function SkeletonRows({ rows }: { rows: number }) {
+  return (
+    <div className="divide-y divide-zinc-100 dark:divide-zinc-800" aria-hidden>
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="flex items-center gap-4 px-4 py-3">
+          <div className={cn('h-3.5 w-3.5 shrink-0 rounded-sm', BAR)} />
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <div className={cn('h-3.5 w-40 max-w-full', BAR)} />
+            <div className={cn('h-2.5 w-56 max-w-full', BAR)} />
+          </div>
+          <div className={cn('hidden h-3 w-28 sm:block', BAR)} />
+          <div className={cn('hidden h-3 w-24 md:block', BAR)} />
+          <div className={cn('hidden h-3 w-20 lg:block', BAR)} />
+          <div className={cn('h-5 w-20 shrink-0 rounded-full', BAR)} />
+        </div>
+      ))}
+      <span className="sr-only">Loading enrollments</span>
+    </div>
+  );
+}
+
+/** The whole card, for the first paint before any class is even known. */
+function TableSkeleton({ rows }: { rows: number }) {
+  return (
+    <Card className="overflow-hidden border-teal-100/80 shadow-sm dark:border-teal-900/40">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-teal-100/80 bg-teal-50/30 px-5 py-3 dark:border-teal-900/40 dark:bg-teal-950/20">
+        <div className="space-y-1.5">
+          <div className={cn('h-4 w-44', BAR)} />
+          <div className={cn('h-2.5 w-72 max-w-full', BAR)} />
+        </div>
+        <div className={cn('h-7 w-20 rounded-md', BAR)} />
+      </div>
+      <SkeletonRows rows={rows} />
+    </Card>
+  );
+}
 
 function PhasePill({ phase }: { phase: 'upcoming' | 'open' | 'closed' }) {
   const cls = {
