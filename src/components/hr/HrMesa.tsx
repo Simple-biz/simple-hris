@@ -26,7 +26,7 @@ import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { MesaMemberSummary } from '@/lib/mesa/ledger';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
-type MesaTab = 'eligible' | 'fpu';
+type MesaTab = 'fpu' | 'eligible';
 
 type EligibleRow = {
   key: string;
@@ -53,7 +53,9 @@ const formatPHP = (n: number) =>
 let cachedEligible_v4: EligibleRow[] | null = null;
 
 export default function HrMesa() {
-  const [tab, setTab] = useState<MesaTab>('eligible');
+  // Lands on FPU Classes: it is the leftmost chip and the tab HR acts on
+  // (create a class, approve seats); MESA Eligible is a read-only roll-up.
+  const [tab, setTab] = useState<MesaTab>('fpu');
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-gradient-to-br from-white via-teal-50/30 to-emerald-50/20 p-4 sm:p-6 dark:bg-none dark:bg-[#0d1117]">
@@ -83,18 +85,18 @@ export default function HrMesa() {
           className="relative inline-flex items-center gap-1 self-start rounded-lg border border-teal-100/80 bg-white/70 p-1 shadow-sm backdrop-blur dark:border-teal-900/40 dark:bg-zinc-900/60"
         >
           <SubTabButton
-            active={tab === 'eligible'}
-            onClick={() => setTab('eligible')}
-            icon={HeartHandshake}
-            label="MESA Eligible"
-            tabKey="eligible"
-          />
-          <SubTabButton
             active={tab === 'fpu'}
             onClick={() => setTab('fpu')}
             icon={GraduationCap}
             label="FPU Classes"
             tabKey="fpu"
+          />
+          <SubTabButton
+            active={tab === 'eligible'}
+            onClick={() => setTab('eligible')}
+            icon={HeartHandshake}
+            label="MESA Eligible"
+            tabKey="eligible"
           />
         </div>
 
