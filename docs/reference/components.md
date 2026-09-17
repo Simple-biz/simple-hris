@@ -1741,7 +1741,7 @@ ghost row actions. The list is seeded from the Admin tab cache (`useAdminCachedS
 and the fetch still runs on every mount; skeleton only when nothing is cached.
 Per row: client · key prefix · **Columns** (whole table, or *N of M · k hidden* with the hidden names in the title) ·
 **Expires** (`describeExpiry`) · **Limit** (`/min`) · Status (Live / Revoked / **Expired**) · last used · 7d calls (+denied,
-+throttled) · actions Calls · **Edit** · Rotate · Revoke/Restore. Dialogs: **New client** (name, system, contact,
++throttled) · actions Calls · **Edit** · Rotate · Revoke/Restore. Dialogs: **New client** — a 4-step slideshow Who → Columns → Access → Confirm (read-back with per-row Edit; Next gated per step; created only on Confirm) over (name, system, contact,
 `ColumnPicker` — whole table by default, sensitive columns badged, *Hide sensitive* shortcut — `ExpiryPicker` 1d/15d/30d/never,
 `RateLimitField` 1..600), **Edit** (same controls; expiry *Keep as is* or a new choice counted from now; sends only what
 changed), **Hand-off** (the key ONCE + curl + MCP client config + a sample payload of only the granted columns + one

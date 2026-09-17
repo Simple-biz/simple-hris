@@ -15,6 +15,7 @@ import {
   Search,
   Info,
   AlertTriangle,
+  ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -818,6 +819,7 @@ function CreateClientDialog({
   const [expiry, setExpiry] = useState<ExpiryOption | 'keep'>(DEFAULT_EXPIRY);
   const [limit, setLimit] = useState(String(RATE_LIMIT_DEFAULT));
   const [saving, setSaving] = useState(false);
+  const [step, setStep] = useState<CreateStep>('who');
 
   useEffect(() => {
     if (open) {
@@ -827,6 +829,7 @@ function CreateClientDialog({
       setTicked([...OFFERABLE_COLUMNS]);
       setExpiry(DEFAULT_EXPIRY);
       setLimit(String(RATE_LIMIT_DEFAULT));
+      setStep('who');
     }
   }, [open]);
 
@@ -863,52 +866,202 @@ function CreateClientDialog({
     }
   };
 
+  // The slideshow (Kane, 2026-09-17: "separate them by group with a confirm at
+  // the end"): one group per step, Next is gated on that step alone, and the
+  // last step is a read-back — nothing is created until it is confirmed.
+  const STEPS: Array<{ id: CreateStep; label: string }> = [
+    { id: 'who', label: 'Who' },
+    { id: 'columns', label: 'Columns' },
+    { id: 'access', label: 'Access' },
+    { id: 'confirm', label: 'Confirm' },
+  ];
+  const stepIndex = STEPS.findIndex((s) => s.id === step);
+  const stepOk: Record<CreateStep, boolean> = {
+    who: !!name.trim() && !!system.trim() && (!contact.trim() || contact.includes('@')),
+    columns: columnsOk,
+    access: limitOk && expiry !== 'keep',
+    confirm: canSubmit,
+  };
+  const goNext = () => {
+    if (!stepOk[step]) return;
+    const next = STEPS[stepIndex + 1];
+    if (next) setStep(next.id);
+  };
+  const goBack = () => {
+    const prev = STEPS[stepIndex - 1];
+    if (prev) setStep(prev.id);
+  };
+  const hidden = OFFERABLE_COLUMNS.length - ticked.length;
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent
+        className="max-h-[90vh] overflow-y-auto sm:max-w-2xl"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey && (e.target as HTMLElement).tagName === 'INPUT') {
+            e.preventDefault();
+            if (step === 'confirm') void submit();
+            else goNext();
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle>New external client</DialogTitle>
-          <DialogDescription>
-            One client per system. Everything except the key can be changed later.
-          </DialogDescription>
+          <DialogDescription>One client per system. Everything except the key can be changed later.</DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-5">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Client name" hint="Who it is for, e.g. Ops team roster mirror">
-              <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoFocus />
+
+        {/* Step rail */}
+        <ol className="flex items-center gap-2 text-xs" aria-label="Steps">
+          {STEPS.map((s, i) => {
+            const state = i < stepIndex ? 'done' : i === stepIndex ? 'current' : 'todo';
+            const reachable = i <= stepIndex;
+            return (
+              <li key={s.id} className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!reachable}
+                  onClick={() => reachable && setStep(s.id)}
+                  aria-current={state === 'current' ? 'step' : undefined}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-2 transition-colors disabled:cursor-default',
+                    reachable && 'hover:bg-zinc-100 dark:hover:bg-zinc-800',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-medium tabular-nums',
+                      state === 'current' && 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900',
+                      state === 'done' && 'bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-100',
+                      state === 'todo' && 'border border-zinc-300 text-zinc-400 dark:border-zinc-700 dark:text-zinc-500',
+                    )}
+                  >
+                    {state === 'done' ? <Check className="h-3 w-3" /> : i + 1}
+                  </span>
+                  <span className={cn('font-medium', state === 'current' ? 'text-zinc-900 dark:text-zinc-100' : 'text-zinc-500 dark:text-zinc-400')}>
+                    {s.label}
+                  </span>
+                </button>
+                {i < STEPS.length - 1 && <span className="h-px w-6 bg-zinc-200 dark:bg-zinc-700" aria-hidden />}
+              </li>
+            );
+          })}
+        </ol>
+
+        {/* One group per slide */}
+        <div key={step} className="min-h-[220px] animate-in fade-in slide-in-from-right-2 duration-200 ease-out motion-reduce:animate-none">
+          {step === 'who' && (
+            <div className="flex flex-col gap-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Client name" hint="Who it is for, e.g. Ops team roster mirror">
+                  <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoFocus />
+                </Field>
+                <Field label="System" hint="What will call us, e.g. n8n · Sheets script · Claude Desktop">
+                  <Input value={system} onChange={(e) => setSystem(e.target.value)} maxLength={80} />
+                </Field>
+              </div>
+              <Field label="Contact email (optional)" hint="Whom to reach when it misbehaves">
+                <Input type="email" value={contact} onChange={(e) => setContact(e.target.value)} placeholder="name@simple.biz" />
+              </Field>
+            </div>
+          )}
+
+          {step === 'columns' && (
+            <Field label="Columns they may read" hint="Whole table by default. Untick a column to hide it from this key.">
+              <ColumnPicker ticked={ticked} onChange={setTicked} />
             </Field>
-            <Field label="System" hint="What will call us, e.g. n8n · Sheets script · Claude Desktop">
-              <Input value={system} onChange={(e) => setSystem(e.target.value)} maxLength={80} />
-            </Field>
-          </div>
-          <Field label="Contact email (optional)" hint="Whom to reach when it misbehaves">
-            <Input type="email" value={contact} onChange={(e) => setContact(e.target.value)} placeholder="name@simple.biz" />
-          </Field>
-          <Field label="Columns they may read">
-            <ColumnPicker ticked={ticked} onChange={setTicked} />
-          </Field>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Key lives for" hint="Counted from now. It can always be revoked before then.">
-              <ExpiryPicker value={expiry} onChange={setExpiry} />
-            </Field>
-            <RateLimitField value={limit} onChange={setLimit} />
-          </div>
+          )}
+
+          {step === 'access' && (
+            <div className="grid gap-5 sm:grid-cols-2">
+              <Field label="Key lives for" hint="Counted from now. It can always be revoked before then.">
+                <ExpiryPicker value={expiry} onChange={setExpiry} />
+              </Field>
+              <RateLimitField value={limit} onChange={setLimit} />
+            </div>
+          )}
+
+          {step === 'confirm' && (
+            <div className="flex flex-col gap-3">
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                Check the summary. Creating issues the key and shows it once.
+              </p>
+              <dl className="divide-y divide-zinc-200 rounded-md border border-zinc-200 text-sm dark:divide-zinc-800 dark:border-zinc-800">
+                <SummaryRow label="Client" onEdit={() => setStep('who')}>
+                  <span className="font-medium">{name.trim()}</span>
+                  <span className="text-zinc-500 dark:text-zinc-400">
+                    {' '}
+                    · {system.trim()}
+                    {contact.trim() ? ` · ${contact.trim()}` : ''}
+                  </span>
+                </SummaryRow>
+                <SummaryRow label="Columns" onEdit={() => setStep('columns')}>
+                  {hidden === 0 ? (
+                    'Whole table'
+                  ) : (
+                    <>
+                      {ticked.length} of {OFFERABLE_COLUMNS.length}
+                      <span className="text-zinc-500 dark:text-zinc-400"> · hidden: </span>
+                      <span className="font-mono text-xs">{OFFERABLE_COLUMNS.filter((c) => !ticked.includes(c)).join(', ')}</span>
+                    </>
+                  )}
+                </SummaryRow>
+                <SummaryRow label="Key lives for" onEdit={() => setStep('access')}>
+                  {expiry === 'keep' ? '—' : EXPIRY_LABELS[expiry]}
+                </SummaryRow>
+                <SummaryRow label="Rate limit" onEdit={() => setStep('access')}>
+                  {parseRateLimit(limit) ?? '—'} calls per minute, HTTP and MCP together
+                </SummaryRow>
+              </dl>
+            </div>
+          )}
         </div>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
+
+        <DialogFooter className="sm:justify-between">
+          <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button
-            type="button"
-            className="gap-1.5 bg-orange-600 text-white hover:bg-orange-700"
-            onClick={() => void submit()}
-            disabled={saving || !canSubmit}
-          >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Create and show key
-          </Button>
+          <div className="flex gap-2">
+            {stepIndex > 0 && (
+              <Button type="button" variant="outline" onClick={goBack} disabled={saving}>
+                Back
+              </Button>
+            )}
+            {step !== 'confirm' ? (
+              <Button type="button" onClick={goNext} disabled={!stepOk[step]} className="gap-1.5">
+                Next <ChevronRight className="h-4 w-4" />
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                className="gap-1.5 bg-orange-600 text-white hover:bg-orange-700"
+                onClick={() => void submit()}
+                disabled={saving || !canSubmit}
+              >
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Create and show key
+              </Button>
+            )}
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+type CreateStep = 'who' | 'columns' | 'access' | 'confirm';
+
+function SummaryRow({ label, onEdit, children }: { label: string; onEdit: () => void; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-3 px-3 py-2.5">
+      <dt className="w-28 shrink-0 text-xs font-medium text-zinc-500 dark:text-zinc-400">{label}</dt>
+      <dd className="min-w-0 flex-1 break-words">{children}</dd>
+      <button
+        type="button"
+        onClick={onEdit}
+        className="shrink-0 text-xs font-medium text-zinc-600 underline-offset-2 hover:underline dark:text-zinc-300"
+      >
+        Edit
+      </button>
+    </div>
   );
 }
 

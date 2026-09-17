@@ -234,8 +234,11 @@ the single primary action, an **endpoints strip** (REST · MCP · Auth, each wit
 toolbar (All / Live / Revoked / Expired counts, a text filter, an "Updated … ago" stamp and
 Refresh), and **one flat table** on a hairline surface. Status is a dot and a word, never a
 filled pill; the only accent is the app's orange on the primary action; row actions are ghost
-icon buttons that come to full strength on hover or focus. The dialogs (New client, Edit,
-hand-off, Calls) keep the same vocabulary — hairline borders, zinc, one primary.
+icon buttons that come to full strength on hover or focus. The dialogs (Edit, hand-off, Calls) keep the same vocabulary — hairline borders, zinc, one primary.
+**New client is a four-step slideshow** (Kane: *"separate them by group with a confirm at the end"*):
+Who (name · system · contact) → Columns → Access (lifetime · limit) → **Confirm**, a read-back with
+an Edit link per row. Next is gated on the current step only, done steps are clickable, Enter
+advances, and nothing is created until Confirm — the key is issued on that click and shown once.
 
 The client list lives in the **Admin tab cache** (`ADMIN_CACHE_KEYS.integrationsClients`,
 `docs/features/admin-dashboard-cache.md`): a tab switch or reload paints the last list at once,
