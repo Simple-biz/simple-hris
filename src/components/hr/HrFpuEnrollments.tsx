@@ -56,6 +56,14 @@ import {
 import { fpuEligibleFrom } from '@/lib/mesa/fpu-eligibility';
 import { useFpuLive } from '@/hooks/useFpuLive';
 import FpuGroupsPanel from './FpuGroupsPanel';
+import {
+  getHrTabCache,
+  hasHrTabCache,
+  hrFpuEnrollmentsKey,
+  HR_TAB_CACHE_KEYS,
+  isHrTabCacheFresh,
+  setHrTabCache,
+} from '@/lib/hr/tab-cache';
 
 type Counts = Record<FpuEnrollmentStatus, number>;
 
@@ -85,6 +93,23 @@ interface CompleteResult {
 }
 
 type StatusFilter = 'all' | FpuEnrollmentStatus;
+
+/**
+ * What a warm tab paints before any request answers.
+ *
+ * `migrated` is deliberately NOT in here. A cached value paints, it never
+ * decides, and `migrated` decides: it gates the New class button and the amber
+ * banner. It stays at its live default until the real answer lands.
+ *
+ * The `:v1` suffix is a schema stamp — bump it whenever this shape changes, or a
+ * snapshot from the previous build paints into a component expecting other fields.
+ */
+interface CachedClasses {
+  classes: FpuClass[];
+  counts: Record<string, Counts>;
+  roster: [string, RosterEmailStatus][];
+}
+const CLASSES_KEY = `${HR_TAB_CACHE_KEYS.fpuClasses}:v1`;
 
 const STATUS_LABEL: Record<FpuEnrollmentStatus, string> = {
   pending: 'Pending',
@@ -118,18 +143,21 @@ const fmtStamp = (iso: string | null) => {
 };
 
 export default function HrFpuEnrollments() {
-  const [classes, setClasses] = useState<FpuClass[]>([]);
-  const [counts, setCounts] = useState<Record<string, Counts>>({});
+  const seed = getHrTabCache<CachedClasses>(CLASSES_KEY);
+  const [classes, setClasses] = useState<FpuClass[]>(() => seed?.classes ?? []);
+  const [counts, setCounts] = useState<Record<string, Counts>>(() => seed?.counts ?? {});
   const [migrated, setMigrated] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [rows, setRows] = useState<EnrollmentRow[]>([]);
-  const [roster, setRoster] = useState<Map<string, RosterEmailStatus> | null>(null);
+  const [roster, setRoster] = useState<Map<string, RosterEmailStatus> | null>(() => (seed ? new Map(seed.roster) : null));
   // Nothing on this surface announces that it is loading. Data lands when it
   // lands (live broadcast, 15s floor, focus) and the table simply repaints —
   // Kane, 2026-09-17: "lets just load the data when it arrives", "lets not put
   // loading on the table". These two flags are readiness, NOT spinners: they
   // gate an action and a wrong empty-state sentence, and render nothing.
-  const [classesLoaded, setClassesLoaded] = useState(false);
+  // Seeded counts as loaded: there are rows to paint, so no skeleton — the PAINT
+  // question. The fetch below still runs unless the entry is inside the window.
+  const [classesLoaded, setClassesLoaded] = useState(() => hasHrTabCache(CLASSES_KEY));
   const [rowsLoadedFor, setRowsLoadedFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -156,6 +184,12 @@ export default function HrFpuEnrollments() {
       setMigrated(json.migrated !== false);
       setRoster(rosterMap);
       setError(null);
+      // Re-stamps on every write, so a mutation's refresh re-opens the window.
+      setHrTabCache<CachedClasses>(CLASSES_KEY, {
+        classes: sorted,
+        counts: json.counts ?? {},
+        roster: rosterMap ? [...rosterMap.entries()] : [],
+      });
       if (pickDefault) {
         // Default to the class that needs attention: open now, else the newest.
         const open = sorted.find((c) => fpuClassPhase(c, today) === 'open');
@@ -173,6 +207,7 @@ export default function HrFpuEnrollments() {
       const json = await requestJson<{ rows: EnrollmentRow[]; migrated: boolean }>(`/api/hr/fpu-enrollments?class_id=${encodeURIComponent(classId)}`);
       setRows(json.rows ?? []);
       setError(null);
+      setHrTabCache(hrFpuEnrollmentsKey(classId), json.rows ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load enrollments');
     } finally {
@@ -181,6 +216,9 @@ export default function HrFpuEnrollments() {
   }, []);
 
   useEffect(() => {
+    // Fresh entry ⇒ skip the round trip entirely. Stale or cold ⇒ load; either
+    // way the load itself is silent (this tab raises no loading flags).
+    if (isHrTabCacheFresh(CLASSES_KEY)) return;
     void loadClasses(true);
   }, [loadClasses]);
 
@@ -190,9 +228,18 @@ export default function HrFpuEnrollments() {
       setRowsLoadedFor(null);
       return;
     }
-    // Drop the previous class's rows immediately — showing them under a new
-    // class's header is worse than showing nothing for a moment.
-    if (rowsLoadedFor !== selectedId) setRows([]);
+    // A warm entry for THIS class paints at once — no skeleton on the way back.
+    // Otherwise drop the previous class's rows: showing them under a new class's
+    // header is worse than showing nothing.
+    const key = hrFpuEnrollmentsKey(selectedId);
+    const cached = getHrTabCache<EnrollmentRow[]>(key);
+    if (cached) {
+      setRows(cached);
+      setRowsLoadedFor(selectedId);
+    } else if (rowsLoadedFor !== selectedId) {
+      setRows([]);
+    }
+    if (isHrTabCacheFresh(key)) return;
     void loadRows(selectedId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, loadRows]);

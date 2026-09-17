@@ -161,6 +161,13 @@ topics) because realtime-js keeps one channel per topic per client.
 socket degrades to "seconds late", never to stale. The HR toolbar shows the honest state — **Live**
 (subscribed) / **Connecting** / **Polling** (channel errored, poll carrying it).
 
+**The tab is cached** (2026-09-17). Classes, per-class enrollments and the groups panel all sit
+in the shared HR tab store (`src/lib/hr/tab-cache.ts`), so switching sub-tabs repaints from memory
+instead of hitting the database. A warm entry PAINTS and anything past the 30-second window
+revalidates silently behind it; `migrated` is never cached because it decides rather than paints.
+Every write path already calls the refresh, which re-stamps the entry. Full rules:
+[hr-dashboard-cache.md](hr-dashboard-cache.md).
+
 **Skeletons cover the COLD paint only** (2026-09-17). The class strip, the enrollment table and
 the whole card each have one, sized to the real thing so nothing reflows on reveal. They render at
 exactly two moments: the first load of the tab, and switching to a class whose rows have not been

@@ -22,6 +22,7 @@ import { formatDateOnly } from '@/lib/date-only';
 import { fpuSessions } from '@/lib/mesa/fpu-sessions';
 import { fpuAttendanceVerdict } from '@/lib/mesa/fpu-attendance';
 import type { FpuClass } from '@/lib/mesa/fpu-class';
+import { getHrTabCache, hrFpuGroupsKey, isHrTabCacheFresh, setHrTabCache } from '@/lib/hr/tab-cache';
 
 interface Props {
   cls: FpuClass & { class_closed_on?: string | null; class_closed_by?: string | null };
@@ -62,7 +63,10 @@ async function post<T>(url: string, body: unknown, method: 'POST' | 'PATCH' = 'P
 const short = (email: string) => email.split('@')[0] ?? email;
 
 export default function FpuGroupsPanel({ cls, seats, onChanged }: Props) {
-  const [state, setState] = useState<GroupsState | null>(null);
+  // Seeded for PAINT so returning to the tab does not re-flash an empty panel.
+  // `migrated` rides along because it is part of the payload, but the mount
+  // fetch below still runs unless the entry is inside the 30s window.
+  const [state, setState] = useState<GroupsState | null>(() => getHrTabCache<GroupsState>(hrFpuGroupsKey(cls.id)) ?? null);
   const [perGroup, setPerGroup] = useState('5');
   const [roll, setRoll] = useState(0);
   const [preview, setPreview] = useState<PreviewGroup[] | null>(null);
@@ -83,14 +87,18 @@ export default function FpuGroupsPanel({ cls, seats, onChanged }: Props) {
       const json = await post<GroupsState>('/api/hr/fpu-classes/groups/list', { class_id: cls.id });
       setState(json);
       setError(null);
+      // Every write path calls refreshAll -> load(), so a division, a leader
+      // change or a mark re-stamps this entry rather than leaving a stale copy.
+      setHrTabCache(hrFpuGroupsKey(cls.id), json);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load groups');
     }
   }, [cls.id]);
 
   useEffect(() => {
+    if (isHrTabCacheFresh(hrFpuGroupsKey(cls.id))) return;
     void load();
-  }, [load]);
+  }, [load, cls.id]);
 
   const divided = (state?.groups.length ?? 0) > 0;
 

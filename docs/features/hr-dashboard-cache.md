@@ -15,6 +15,37 @@ Key files:
   `HrNewHireChecklist.tsx`, `src/hooks/useHrOrientationAttendance.ts`.
 - Tests: `src/lib/hr/tab-cache.test.ts`.
 
+### MESA and FPU joined the store on 2026-09-17
+
+Kane: *"make sure to add Caching so I dont have to hit database I switch tabs."* Three datasets
+were converted or added:
+
+| Key | Surface |
+| --- | --- |
+| `hr:mesa-eligible:v5` | HR → MESA → MESA Eligible |
+| `hr:fpu-classes:v1` | the FPU class strip, its per-status counts and the roster map |
+| `hr:fpu-enrollments:<classId>` | one entry per class (`hrFpuEnrollmentsKey`) |
+| `hr:fpu-groups:<classId>` | groups, members and marks (`hrFpuGroupsKey`) |
+
+**MESA Eligible was the bug this file describes, still live.** It held its rows in a module
+variable behind `if (cached !== null) return;` — no stamp, so an HR session left open all day
+never re-pulled the member list at all. It now takes the window like everything else, and its
+revalidate is silent: a blip leaves the painted rows and raises no error card.
+
+**The FPU keys are PER CLASS** because switching between two classes is the common move; one
+shared key would make the second class evict the first and re-fetch on the way back, which is
+what this store exists to stop. Pinned by a test.
+
+**`migrated` is never cached.** It gates the New class button and the amber migration banner —
+it DECIDES, so it stays at its live default until the real answer lands. Only rows, counts and
+the roster map are seeded.
+
+**A live channel is still not a licence to skip.** HR → MESA → FPU Classes holds a working
+Realtime channel, unlike every tab this store was built for — but it is Broadcast
+(`fpu-classes-sync`) and it is **torn down on unmount**, which is exactly when the cache is in
+force. Everything announced while the tab was away is missed, so the 30s window governs there
+too. Do not "optimise" that into an unconditional skip because the tab is live.
+
 ## The bug was the justification
 
 The store's own docstring said freshness "within a session is maintained by each tab's

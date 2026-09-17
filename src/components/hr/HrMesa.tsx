@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { formatDateOnly } from '@/lib/date-only';
+import { getHrTabCache, hasHrTabCache, HR_TAB_CACHE_KEYS, isHrTabCacheFresh, setHrTabCache } from '@/lib/hr/tab-cache';
 import { AnimatePresence, motion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -46,11 +47,21 @@ const PAGE_SIZE = 15;
 // Module-level cache so flipping between MESA sub-tabs (or away and back to
 // the HR sidebar tab) doesn't re-fetch the rates + employees lists. Cleared
 // on Refresh and on full page reload.
-// Bump the suffix whenever the row-derivation logic changes — that way a
-// previously-cached snapshot doesn't survive into a session computing different
-// rows. v5 (2026-09-17): the money rollup left this tab, so a v4 snapshot carries
-// no `mesa_member_since` at all.
-let cachedEligible_v5: EligibleRow[] | null = null;
+/**
+ * The rows live in the shared HR tab store now (2026-09-17), not in a module
+ * variable with an unconditional skip.
+ *
+ * `if (cached !== null) return;` is the exact bug `docs/features/hr-dashboard-cache.md`
+ * was written to kill: no stamp, so an HR session left open all day never
+ * re-pulled this list at all — only F5 or Refresh moved it. Now a warm entry
+ * PAINTS (no skeleton on the way back) and anything past the 30s window
+ * revalidates silently behind the rows already on screen.
+ *
+ * The key carries a schema suffix: bump it whenever the ROW SHAPE changes, or a
+ * snapshot written by the previous build paints into a component expecting
+ * different fields. v5 = the money rollup left this tab.
+ */
+const ELIGIBLE_KEY = `${HR_TAB_CACHE_KEYS.mesaEligible}:v5`;
 
 export default function HrMesa() {
   // Lands on FPU Classes: it is the leftmost chip and the tab HR acts on
@@ -160,17 +171,24 @@ function SubTabButton({
 }
 
 function MesaEligibleList() {
-  const [rows, setRows] = useState<EligibleRow[]>(() => cachedEligible_v5 ?? []);
-  const [loading, setLoading] = useState(() => cachedEligible_v5 === null);
+  const [rows, setRows] = useState<EligibleRow[]>(() => getHrTabCache<EligibleRow[]>(ELIGIBLE_KEY) ?? []);
+  const [loading, setLoading] = useState(() => !hasHrTabCache(ELIGIBLE_KEY));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(0);
 
-  const load = async (showSpinner = true) => {
-    if (showSpinner) setLoading(true);
-    else setRefreshing(true);
-    setError(null);
+  /**
+   * `silent` is the revalidate path: no spinner, and on failure it leaves the
+   * painted rows and the previous error state alone. A background refresh must
+   * never undo the thing the cache is for.
+   */
+  const load = async (showSpinner = true, silent = false) => {
+    if (!silent) {
+      if (showSpinner) setLoading(true);
+      else setRefreshing(true);
+      setError(null);
+    }
     try {
       // No ledger call. This tab answers WHO is in MESA and WHEN they joined, and
       // both come off the rates row; the money lives on Accounting -> MESA ->
@@ -216,21 +234,29 @@ function MesaEligibleList() {
         .filter((r): r is EligibleRow => r !== null)
         .sort((a, b) => a.name.localeCompare(b.name));
 
-      cachedEligible_v5 = eligible;
+      setHrTabCache(ELIGIBLE_KEY, eligible);
       setRows(eligible);
+      setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load MESA-eligible employees');
+      // A blip during a background revalidate must not blank rows or raise an
+      // error card over data the user is reading.
+      if (!silent) setError(e instanceof Error ? e.message : 'Failed to load MESA-eligible employees');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (!silent) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
-    // Skip the network round trip if we already have a warm cache —
-    // the module-level cache survives sub-tab switches in the current session.
-    if (cachedEligible_v5 !== null) return;
-    void load(true);
+    // PAINT and SKIP are different questions (hr-dashboard-cache.md). A fresh
+    // entry skips the round trip; a stale one still paints and revalidates
+    // behind it; a cold one loads in the foreground.
+    if (isHrTabCacheFresh(ELIGIBLE_KEY)) return;
+    const warm = hasHrTabCache(ELIGIBLE_KEY);
+    void load(!warm, warm);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filtered = useMemo(() => {
@@ -255,7 +281,7 @@ function MesaEligibleList() {
   const pageRows = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
   const handleRefresh = async () => {
-    cachedEligible_v5 = null;
+    // A re-write restamps the entry, which re-opens the freshness window.
     await load(false);
     toast.success('Refreshed MESA-eligible list');
   };

@@ -133,4 +133,30 @@ export const HR_TAB_CACHE_KEYS = {
   offboardQueue: 'hr:offboard-queue',
   globalMasterList: 'hr:global-master-list',
   screening: 'hr:screening',
+  /** HR -> MESA -> MESA Eligible: the flagged members and their start dates. */
+  mesaEligible: 'hr:mesa-eligible',
+  /** HR -> MESA -> FPU Classes: the class strip, its counts and the roster map. */
+  fpuClasses: 'hr:fpu-classes',
 } as const;
+
+/**
+ * Per-class keys for the FPU tab.
+ *
+ * Keyed by class because switching between two classes is the common move and
+ * each carries its own rows; one shared key would make the second class evict
+ * the first and re-fetch on the way back — the thing this store exists to stop.
+ *
+ * Note for the next person: HR -> MESA -> FPU Classes DOES hold a live Realtime
+ * channel, unlike the tabs this store was built for. That is not a reason to skip
+ * the fetch unconditionally. The channel is Broadcast (`fpu-classes-sync`) and it
+ * is TORN DOWN on unmount — which is precisely when the cache is in force — so
+ * everything announced while the tab was away is missed. The 30s window governs,
+ * exactly as it does for the tabs with no channel at all.
+ */
+export function hrFpuEnrollmentsKey(classId: string): string {
+  return `hr:fpu-enrollments:${classId}`;
+}
+
+export function hrFpuGroupsKey(classId: string): string {
+  return `hr:fpu-groups:${classId}`;
+}

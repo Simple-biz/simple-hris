@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   FRESH_WINDOW_MS,
   HR_TAB_CACHE_KEYS,
+  hrFpuEnrollmentsKey,
+  hrFpuGroupsKey,
   __resetHrTabCache,
   clearHrTabCache,
   getHrTabCache,
@@ -122,4 +124,42 @@ test('the fresh window matches the documented Payroll Notes precedent', () => {
 test('every key is uniquely spelled', () => {
   const all = Object.values(HR_TAB_CACHE_KEYS);
   assert.equal(new Set(all).size, all.length, `duplicate cache key: ${all.join(', ')}`);
+});
+
+// ── the FPU per-class keys (2026-09-17) ─────────────────────────────────────
+
+test('each FPU class gets its own key, so switching classes does not evict the other', () => {
+  const a = hrFpuEnrollmentsKey('class-a');
+  const b = hrFpuEnrollmentsKey('class-b');
+  assert.notEqual(a, b);
+  __resetHrTabCache();
+  setHrTabCache(a, ['rowA']);
+  setHrTabCache(b, ['rowB']);
+  assert.deepEqual(getHrTabCache(a), ['rowA']);
+  assert.deepEqual(getHrTabCache(b), ['rowB'], 'the second class evicted the first');
+});
+
+test('enrollments and groups for the SAME class never collide', () => {
+  assert.notEqual(hrFpuEnrollmentsKey('c1'), hrFpuGroupsKey('c1'));
+});
+
+test('the FPU keys are namespaced under hr:, like every other entry', () => {
+  for (const k of [hrFpuEnrollmentsKey('c1'), hrFpuGroupsKey('c1'), HR_TAB_CACHE_KEYS.fpuClasses, HR_TAB_CACHE_KEYS.mesaEligible]) {
+    assert.match(k, /^hr:/);
+  }
+});
+
+test('a per-class key obeys the same freshness window as a fixed one', () => {
+  __resetHrTabCache();
+  const k = hrFpuGroupsKey('c1');
+  assert.equal(hasHrTabCache(k), false);
+  assert.equal(isHrTabCacheFresh(k), false, 'a cold entry must never skip the fetch');
+  setHrTabCache(k, { groups: [] });
+  assert.equal(hasHrTabCache(k), true);
+  assert.equal(isHrTabCacheFresh(k), true);
+  // Past the window it still PAINTS but no longer SKIPS — the distinction this
+  // store exists to keep.
+  const past = (readHrTabCacheStamp(k) ?? 0) + FRESH_WINDOW_MS + 1;
+  assert.equal(isHrTabCacheFresh(k, past), false);
+  assert.equal(hasHrTabCache(k), true, 'a stale entry must still paint');
 });

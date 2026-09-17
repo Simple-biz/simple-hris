@@ -131,6 +131,8 @@ Both come off the rates row, so the tab makes two requests (`/api/employee-hourl
 
 **`mesa_member_since` is shown verbatim, never derived.** `POST /api/toggle-mesa-member` keeps it equal to the open account's `opened_on` and `scripts/verify-mesa-backfill.mjs` asserts the two match, so a second computation here would only be able to disagree. A member with no date renders **"not recorded"** in amber rather than a dash: it means the flag and the account row have drifted, which is a finding, not an empty cell.
 
+The rows are cached in the shared HR tab store (`hr:mesa-eligible:v5`), so a sub-tab switch repaints from memory; past 30 seconds it revalidates silently behind the rows. This replaced an unconditional module-level skip that meant a session left open all day never re-pulled the list — see [hr-dashboard-cache.md](hr-dashboard-cache.md).
+
 Balances live on **Accounting → MESA → Active Members**, which is the surface that owns them. Further columns (class dates and the rest) are Kane's to specify once the backfill lands.
 
 ### Employee — MESA History
