@@ -32,6 +32,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+import { clearAllAdminCache } from '@/lib/admin/tab-cache';
 import { normEmail } from '@/lib/email/norm-email';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
@@ -330,6 +331,9 @@ export default function AdminSidebar({
             try {
               sessionStorage.removeItem(SESSION_EMAIL_KEY);
             } catch { /* ignore */ }
+            // signOut is a same-tab navigation and sessionStorage survives it:
+            // drop the cached Admin tabs so the next person on this tab starts cold.
+            clearAllAdminCache();
             void signOut({ callbackUrl: '/login' });
           }}
         >

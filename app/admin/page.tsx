@@ -27,6 +27,7 @@ import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { cn } from '@/lib/utils';
 import AppFooter from '@/components/AppFooter';
 import DashboardSwitchLoader from '@/components/common/DashboardSwitchLoader';
+import { useAdminCacheIdentity } from '@/hooks/useAdminCachedState';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -72,6 +73,9 @@ function AdminPageInner() {
   useTabDocumentTitle(humanizeTabId(activeTab));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [adminEmail, setAdminEmail] = useState<string | null>(null);
+  // Bind the Admin tab cache to the viewer BEFORE any tab renders — the tabs
+  // below unmount on every switch and reseed from it (src/lib/admin/tab-cache.ts).
+  useAdminCacheIdentity(adminEmail);
   const [navCounts, setNavCounts] = useState({
     roles: 0,
     employees: 0,

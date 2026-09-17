@@ -38,6 +38,8 @@ import {
 } from '@/lib/webhooks/webhook-config';
 import WebhookAutomationDialog from './WebhookAutomationDialog';
 import AdminExternalApiClients from './AdminExternalApiClients';
+import { useAdminCachedState } from '@/hooks/useAdminCachedState';
+import { ADMIN_CACHE_KEYS, getAdminCache, setAdminCache } from '@/lib/admin/tab-cache';
 
 /**
  * Two tabs since 2026-09-17 (Kane: "Webhooks and Integrations … a new tab called
@@ -246,14 +248,19 @@ function makeDefault(): WebhookEntry[] {
 }
 
 export default function AdminWebhooks() {
-  const [entries, setEntries] = useState<WebhookEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seeded from the Admin tab cache so a tab switch or reload paints the last
+  // LOADED/SAVED list at once; the fetch below still runs and overwrites it.
+  // Edits never reach the cache (a draft must not survive a reload as "Saved").
+  const [entries, setEntries] = useState<WebhookEntry[]>(
+    () => getAdminCache<WebhookEntry[]>(ADMIN_CACHE_KEYS.webhooksEntries) ?? [],
+  );
+  const [loading, setLoading] = useState(() => entries.length === 0);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [section, setSection] = useState<Section>('webhooks');
+  const [section, setSection] = useAdminCachedState<Section>(ADMIN_CACHE_KEYS.webhooksSection, 'webhooks');
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [automationId, setAutomationId] = useState<string | null>(null);
 
@@ -286,9 +293,11 @@ export default function AdminWebhooks() {
             active: false,
           })),
         ];
-        setEntries(merged.length ? merged : makeDefault());
+        const next = merged.length ? merged : makeDefault();
+        setEntries(next);
+        setAdminCache(ADMIN_CACHE_KEYS.webhooksEntries, next);
       } catch {
-        if (!cancelled) setEntries(makeDefault());
+        if (!cancelled) setEntries((prev) => (prev.length ? prev : makeDefault()));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -371,6 +380,8 @@ export default function AdminWebhooks() {
     if (json.error) throw new Error(json.error);
     if (!opts?.silent) toast.success('Webhooks saved.');
     setDirty(false);
+    // Saved = the server's truth now; safe to seed the next mount from it.
+    setAdminCache(ADMIN_CACHE_KEYS.webhooksEntries, list);
   };
 
   const save = async () => {

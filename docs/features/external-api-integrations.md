@@ -226,6 +226,25 @@ GET   /api/admin/external-api-clients/{id}/requests   the newest calls, up to 50
 
 All `requireAdminSession()`. No DELETE.
 
+## The panel — Console-plain, and cached (2026-09-17 PM)
+
+Kane: *"make this beautiful … simple like Google Console … add cache practices as well where it
+doesn't go away after switching tabs or reload."* The Integrations panel is one title row with
+the single primary action, an **endpoints strip** (REST · MCP · Auth, each with copy), a filter
+toolbar (All / Live / Revoked / Expired counts, a text filter, an "Updated … ago" stamp and
+Refresh), and **one flat table** on a hairline surface. Status is a dot and a word, never a
+filled pill; the only accent is the app's orange on the primary action; row actions are ghost
+icon buttons that come to full strength on hover or focus. The dialogs (New client, Edit,
+hand-off, Calls) keep the same vocabulary — hairline borders, zinc, one primary.
+
+The client list lives in the **Admin tab cache** (`ADMIN_CACHE_KEYS.integrationsClients`,
+`docs/features/admin-dashboard-cache.md`): a tab switch or reload paints the last list at once,
+the fetch still runs on every mount and overwrites it, and the skeleton shows only when there is
+nothing to paint. **A cached value paints, never decides** — nothing skips the fetch, because a
+key revoked from another tab must not read as live. The plaintext key is never list state and so
+is never cached. The Webhooks tab caches its open section and its entries as loaded/saved, never
+as edited.
+
 ## Deploy notes
 
 - **Migration PENDING** — `scripts/Apply External API clients migration.cmd` (rehearsal, then
