@@ -535,6 +535,7 @@ The pipeline INTO MESA — see [fpu-enrollment.md](../features/fpu-enrollment.md
 | `class_ends_on` | date | NULL = not announced. Default completion date for Mark completed. `>= class_starts_on` |
 | `schedule_note` | text | Free text shown to the employee |
 | `name` *(2026-09-16, later)* | text | Optional cohort name, 1–80 chars after trim (CHECK `fpu_classes_name_len`; blank is refused, NULL = no name). `fpuClassLabel` = name else code; the code `FPU <year> · Batch <batch>` is always shown too. `references/sql/alter/2026-09-16_fpu_classes_name.sql` |
+| `enrollment_closed_on` / `enrollment_closed_by` *(2026-09-17)* | date / text | Early close. NULL = the window governs; a date means **closed from that day whatever `opens_on`/`closes_on` say**, and `closes_on` is never rewritten. Both move together (CHECK `fpu_classes_closed_pair`). Cleared by Reopen. `references/sql/alter/2026-09-17_fpu_classes_closed_early.sql` |
 | `created_by/at`, `updated_by/at` | | `updated_at` bumped by trigger |
 
 **`fpu_enrollments`** — pre-existing sign-up table (`references/sql/create/add_fpu_enrollments.sql`: `email`, `full_name`, `department`, `shift_schedule_est`, `created_at`) plus, since 2026-09-16:

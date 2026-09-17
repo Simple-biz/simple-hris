@@ -17,12 +17,13 @@ attendees **completed**, which stamps their FPU date and opens their MESA member
 | Classes CRUD | `app/api/hr/fpu-classes/route.ts` |
 | Enrollments list + bulk decision | `app/api/hr/fpu-enrollments/route.ts` |
 | Mark completed | `app/api/hr/fpu-enrollments/complete/route.ts` |
+| Close / reopen enrollment | `app/api/hr/fpu-classes/close/route.ts` |
 | Employee self state + enroll | `app/api/fpu-enroll/route.ts` |
 | HR surface | `src/components/hr/HrFpuEnrollments.tsx` (inside `HrMesa.tsx`) |
 | Employee surface | `src/components/employee/EmployeeFpu.tsx` (inside `EmployeeMesa.tsx`, sub-tab `fpu`) |
 | Shared bulk select | `src/components/mesa/bulk-selection.tsx` (lifted from `AccountingMesa.tsx`) |
 | Live channel | `src/lib/mesa/fpu-live.ts` (topic + payload, tested) · `src/hooks/useFpuLive.ts` (subscribe + poll floor + focus refresh) |
-| DDL | `references/sql/create/2026-09-16_fpu_classes.sql` · `references/sql/alter/2026-09-16_fpu_classes_name.sql` (the `name` column; folded into the CREATE too) |
+| DDL | `references/sql/create/2026-09-16_fpu_classes.sql` · `references/sql/alter/2026-09-16_fpu_classes_name.sql` (the `name` column) · `references/sql/alter/2026-09-17_fpu_classes_closed_early.sql` (early close) — both folded into the CREATE too |
 | Migration script | `scripts/apply-fpu-classes-migration.mts` — applies both files, idempotent · `scripts/Apply FPU Classes migration.cmd` (double-click) |
 
 ## A class is (year, batch) with an inclusive window
@@ -33,7 +34,24 @@ the employee sees, plus an optional **`name`** (≤80 chars, Kane's follow-up th
 
 The window is **`opens_on ≤ today ≤ closes_on`**, compared as **Manila** calendar dates
 (`manilaTodayIso`). Kane: *"if they miss it they miss it."* There is no late-enroll path; HR
-edits the class's `closes_on` if it wants one. `fpuClassPhase()` is the one definition of
+edits the class's `closes_on` if it wants one.
+
+**Close enrollment** (2026-09-17, Kane: *"a button where we can close the enrollment period at any
+time we want — this would prohibit the Employees from enrolling"*) shuts a class mid-window from
+the selected class's header. It stamps `enrollment_closed_on` (today in Manila) and
+`enrollment_closed_by`, and **that alone decides the phase** — `fpuClassPhase` returns `closed`
+before it looks at a single date, so no day inside the window reopens it. The planned `closes_on`
+is deliberately **not** rewritten: the window records what HR announced, an early close records a
+decision someone made on a day, and moving the first to express the second would both destroy the
+record and tell the employee "closed Sep 16" on the 17th. **Reopen enrollment** clears both columns
+and the class returns to its planned window. The two columns are constrained to move together
+(`fpu_classes_closed_pair`) — "closed by nobody" is a half-written state. Audited as
+`fpu.class.enrollment_closed` / `…_reopened`, which record the untouched window alongside.
+
+**Closing hides nobody.** The enrollment table is the same table before and after; once closed it
+is simply final — the complete list of people who applied to that class — and HR goes on approving
+seats and marking the class completed from it. The header says so: *"Enrollment closed Sep 17 by
+kaner · 12 people applied — this list is final."* `fpuClassPhase()` is the one definition of
 upcoming / open / closed, and `pickCurrentFpuClass()` is the one rule for which class the
 employee page shows: the open one (closing soonest if two overlap), else the nearest upcoming,
 else the most recently closed.
@@ -148,12 +166,12 @@ HR route here is `requireFeatureAccess('hr', 'mesa', 'view' | 'edit')`; `fpu-enr
 `authorizeEmailAccess` (self or elevated), and identity, name and department are taken from the
 **roster row**, never the body. All roster reads page (`selectAllPaged` / `getEmployees`).
 
-Audit actions: `fpu.enroll` (employee), `fpu.class.created | updated | deleted`,
+Audit actions: `fpu.enroll` (employee), `fpu.class.created | updated | deleted | enrollment_closed | enrollment_reopened`,
 `fpu.enrollment.approved | denied | reset | completed | deleted`. Registry prefix `fpu.`.
 
 ## Deploy notes
 
-- **First cut APPLIED 2026-09-16 by Kane** via `scripts/Apply FPU Classes migration.cmd`, verified. **The `name` column landed on Kane's second `.cmd` run, verified 2026-09-17 — nothing pending.** The first real class, `FPU 2026 · Batch 1`, was created 2026-09-17 07:06 UTC and took its first enrollment three minutes later. The script applies both SQL files and is `IF NOT EXISTS` throughout, so re-running is a no-op for everything already there. Until the column exists the classes select fails with `42703` and both surfaces read `migrated: false`. For the record: double-click the `.cmd` (rehearsal, then type `APPLY`), or the `--apply` flag
+- **First cut APPLIED 2026-09-16 by Kane** via `scripts/Apply FPU Classes migration.cmd`, verified. **The `name` column landed on Kane's second `.cmd` run, verified 2026-09-17. The early-close columns need the `.cmd` run ONCE MORE — PENDING until Kane confirms; until then Close enrollment answers 503 and says so.** The first real class, `FPU 2026 · Batch 1`, was created 2026-09-17 07:06 UTC and took its first enrollment three minutes later. The script applies both SQL files and is `IF NOT EXISTS` throughout, so re-running is a no-op for everything already there. Until the column exists the classes select fails with `42703` and both surfaces read `migrated: false`. For the record: double-click the `.cmd` (rehearsal, then type `APPLY`), or the `--apply` flag
   (dry-run by default; `--verify` afterwards). Creates `fpu_classes` and adds `class_id`,
   `status`, `start_date_used`, `reviewed_by/at`, `review_notes`, `completed_on` plus the unique
   index to `fpu_enrollments`. Needs the session-pooler `DATABASE_URL`.

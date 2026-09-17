@@ -109,6 +109,7 @@ function publicClass(c: FpuClass): FpuClass {
     class_ends_on: c.class_ends_on,
     schedule_note: c.schedule_note,
     name: c.name ?? null,
+    enrollment_closed_on: c.enrollment_closed_on ?? null,
   };
 }
 

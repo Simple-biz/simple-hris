@@ -2400,6 +2400,9 @@ Gate: `…'edit'`. Body `{ year, batch?, opens_on, closes_on, class_starts_on, c
 ### `PATCH /api/hr/fpu-classes`
 Gate: `…'edit'`. Body = the full form plus `id`. Same validation. Audits `fpu.class.updated` with before/after.
 
+### `POST /api/hr/fpu-classes/close`
+Gate: `…'edit'`. Body `{ id, closed: boolean }`. `closed: true` stamps `enrollment_closed_on` = today (Manila) + `enrollment_closed_by`, which makes `fpuClassPhase` report `closed` whatever the dates say, so `POST /api/fpu-enroll` refuses; `false` clears both and the planned window governs again. **`closes_on` is never touched.** 503 with `migrated: false` until the 2026-09-17 ALTER has run. Audits `fpu.class.enrollment_closed` / `…_reopened`; broadcasts.
+
 ### `DELETE /api/hr/fpu-classes?id=`
 Gate: `…'edit'`. Refuses (409) a class with any enrollment; the FK is `on delete restrict` as the backstop. Audits `fpu.class.deleted`.
 

@@ -78,7 +78,7 @@ export type FpuVerdict =
 export interface FpuVerdictInput {
   /** Today in Manila, YYYY-MM-DD. */
   today: string;
-  cls: Pick<FpuClass, 'opens_on' | 'closes_on' | 'class_starts_on'> | null;
+  cls: (Pick<FpuClass, 'opens_on' | 'closes_on' | 'class_starts_on'> & { enrollment_closed_on?: string | null }) | null;
   /** Active on the Global Master List (not offboarded). */
   onActiveRoster: boolean;
   /** Raw roster Start Date cell. */
@@ -146,7 +146,10 @@ export function fpuVerdict(input: FpuVerdictInput): FpuVerdict {
     return { ok: false, reason: 'not_open_yet', eligibleFrom, detail: `Enrollment opens ${longDate(cls.opens_on)}.` };
   }
   if (phase === 'closed') {
-    return { ok: false, reason: 'closed', eligibleFrom, detail: `Enrollment closed ${longDate(cls.closes_on)}.` };
+    // An early close names ITS OWN day — telling someone enrollment closed on a
+    // date still in the future is the kind of sentence nobody can act on.
+    const closedOn = cls.enrollment_closed_on ?? cls.closes_on;
+    return { ok: false, reason: 'closed', eligibleFrom, detail: `Enrollment closed ${longDate(closedOn)}.` };
   }
   return { ok: true, startDate: startIso, eligibleFrom };
 }

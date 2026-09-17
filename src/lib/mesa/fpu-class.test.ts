@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  fpuClassClosedEarly,
   fpuClassCode,
   fpuClassLabel,
   fpuClassKey,
@@ -44,6 +45,28 @@ test('the window is inclusive on both ends', () => {
   assert.equal(fpuClassPhase(c, '2026-09-01'), 'open');
   assert.equal(fpuClassPhase(c, '2026-09-30'), 'open');
   assert.equal(fpuClassPhase(c, '2026-10-01'), 'closed');
+});
+
+test('an early close outranks the dates — and reopening restores the window', () => {
+  // Kane, 2026-09-17: a button that closes enrollment at any time.
+  const open = cls();
+  assert.equal(fpuClassPhase(open, '2026-09-15'), 'open');
+  const shut = cls({ enrollment_closed_on: '2026-09-15', enrollment_closed_by: 'kaner@simple.biz' });
+  assert.equal(fpuClassPhase(shut, '2026-09-15'), 'closed');
+  // Not even a day inside the window, or before it opens, reopens it.
+  for (const today of ['2026-09-01', '2026-09-15', '2026-08-01']) {
+    assert.equal(fpuClassPhase(shut, today), 'closed', today);
+  }
+  assert.equal(fpuClassClosedEarly(shut), true);
+  // Reopening clears the stamp; the planned window governs again.
+  assert.equal(fpuClassClosedEarly(open), false);
+  assert.equal(fpuClassPhase({ ...shut, enrollment_closed_on: null, enrollment_closed_by: null }, '2026-09-15'), 'open');
+});
+
+test('an early close never rewrites the planned window', () => {
+  const shut = cls({ enrollment_closed_on: '2026-09-15', enrollment_closed_by: 'kaner@simple.biz' });
+  assert.equal(shut.opens_on, '2026-09-01');
+  assert.equal(shut.closes_on, '2026-09-30');
 });
 
 test('next batch is one past the highest in THAT year, starting at 1', () => {

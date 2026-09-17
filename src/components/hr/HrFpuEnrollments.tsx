@@ -23,6 +23,8 @@ import {
   RotateCcw,
   AlertTriangle,
   Radio,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -41,6 +43,7 @@ import { offboardReasonLabel } from '@/lib/hr/offboard-reasons';
 import { BulkBar, reportBulk, runBulk, SelectCheckbox, useRowSelection } from '@/components/mesa/bulk-selection';
 import {
   FPU_CLASS_NAME_MAX,
+  fpuClassClosedEarly,
   fpuClassCode,
   fpuClassLabel,
   fpuClassPhase,
@@ -250,6 +253,29 @@ export default function HrFpuEnrollments() {
     }
   };
 
+  /** Shut enrollment now, or reopen it. The planned window is never rewritten —
+   *  the route stamps a separate early-close date that outranks the dates. */
+  const setEnrollmentClosed = async (cls: FpuClass, closed: boolean) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await requestJson<{ class: FpuClass }>('/api/hr/fpu-classes/close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: cls.id, closed }),
+      });
+      toast.success(
+        closed ? `Enrollment closed for ${fpuClassLabel(cls)}` : `Enrollment reopened for ${fpuClassLabel(cls)}`,
+        { description: closed ? 'Employees can no longer enroll. Everyone who applied stays on the list.' : 'The class is back on its planned window.' },
+      );
+      await refreshAll();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not change enrollment');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const deleteEntries = async () => {
     if (!canDecide || busy) return;
     setBusy(true);
@@ -409,8 +435,30 @@ export default function HrFpuEnrollments() {
                 {selected.schedule_note ? ` · ${selected.schedule_note}` : ''}
                 {' · '}eligible if 3 months in by {fmtShort(selected.class_starts_on)}
               </p>
+              {fpuClassClosedEarly(selected) && (
+                // Closing does not hide anyone — the list below IS the final set
+                // of applicants for this class, and HR still works it.
+                <p className="mt-1 inline-flex flex-wrap items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+                  <Lock className="h-3 w-3" />
+                  Enrollment closed {fmtShort(selected.enrollment_closed_on)}
+                  {selected.enrollment_closed_by ? ` by ${selected.enrollment_closed_by.split('@')[0]}` : ''}
+                  {' · '}
+                  <span className="text-zinc-600 dark:text-zinc-400">
+                    {rows.length} {rows.length === 1 ? 'person' : 'people'} applied — this list is final
+                  </span>
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-1.5">
+              {fpuClassClosedEarly(selected) ? (
+                <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-[11px]" disabled={busy} onClick={() => void setEnrollmentClosed(selected, false)} title="Put the class back on its planned enrollment window">
+                  <Unlock className="h-3 w-3" /> Reopen enrollment
+                </Button>
+              ) : (
+                <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-[11px] text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950/40" disabled={busy} onClick={() => void setEnrollmentClosed(selected, true)} title="Stop employees enrolling now, whatever the close date says">
+                  <Lock className="h-3 w-3" /> Close enrollment
+                </Button>
+              )}
               <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-[11px]" disabled={busy} onClick={() => setClassDialog({ mode: 'edit', cls: selected })}>
                 <Pencil className="h-3 w-3" /> Edit
               </Button>

@@ -21,6 +21,10 @@ export interface FpuClass {
   schedule_note: string | null;
   /** Optional cohort name HR gives the class (2026-09-16). */
   name?: string | null;
+  /** Manila date HR closed enrollment EARLY (2026-09-17). NULL = the window
+   *  governs. Set = closed from that day whatever the dates say. */
+  enrollment_closed_on?: string | null;
+  enrollment_closed_by?: string | null;
 }
 
 export type FpuClassPhase = 'upcoming' | 'open' | 'closed';
@@ -47,8 +51,23 @@ export function fpuClassKey(cls: Pick<FpuClass, 'year' | 'batch'>): string {
   return `${cls.year}-${cls.batch}`;
 }
 
-/** Where `today` (Manila ISO) sits relative to the enrollment window. */
-export function fpuClassPhase(cls: Pick<FpuClass, 'opens_on' | 'closes_on'>, today: string): FpuClassPhase {
+/** Has HR shut this class's enrollment ahead of its planned close date? */
+export function fpuClassClosedEarly(cls: { enrollment_closed_on?: string | null }): boolean {
+  return !!(cls.enrollment_closed_on ?? null);
+}
+
+/**
+ * Where `today` (Manila ISO) sits relative to the enrollment window.
+ *
+ * An EARLY CLOSE outranks the dates entirely (2026-09-17): HR can shut a class
+ * mid-window, and until they reopen it no date makes it open again. The planned
+ * `closes_on` is left alone so the record still shows what was announced.
+ */
+export function fpuClassPhase(
+  cls: Pick<FpuClass, 'opens_on' | 'closes_on'> & { enrollment_closed_on?: string | null; enrollment_closed_by?: string | null },
+  today: string,
+): FpuClassPhase {
+  if (fpuClassClosedEarly(cls)) return 'closed';
   if (today < cls.opens_on) return 'upcoming';
   if (today > cls.closes_on) return 'closed';
   return 'open';

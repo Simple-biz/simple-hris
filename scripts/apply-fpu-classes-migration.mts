@@ -39,7 +39,10 @@ const SQL_PATH = path.join(REPO_ROOT, ...SQL_RELATIVE.split('/'));
  *  from the CREATE and this is a no-op. Both files are IF NOT EXISTS throughout. */
 const ALTER_RELATIVE = 'references/sql/alter/2026-09-16_fpu_classes_name.sql';
 const ALTER_PATH = path.join(REPO_ROOT, ...ALTER_RELATIVE.split('/'));
-for (const f of [SQL_PATH, ALTER_PATH]) {
+/** The 2026-09-17 follow-up: close enrollment early without moving `closes_on`. */
+const CLOSE_RELATIVE = 'references/sql/alter/2026-09-17_fpu_classes_closed_early.sql';
+const CLOSE_PATH = path.join(REPO_ROOT, ...CLOSE_RELATIVE.split('/'));
+for (const f of [SQL_PATH, ALTER_PATH, CLOSE_PATH]) {
   if (!existsSync(f)) {
     console.error(`Migration SQL not found at ${f}`);
     process.exit(1);
@@ -48,6 +51,7 @@ for (const f of [SQL_PATH, ALTER_PATH]) {
 const applySql = async () => {
   await client.query(readFileSync(SQL_PATH, 'utf8'));
   await client.query(readFileSync(ALTER_PATH, 'utf8'));
+  await client.query(readFileSync(CLOSE_PATH, 'utf8'));
 };
 const CLASSES = 'public.fpu_classes';
 const ENROLLMENTS = 'public.fpu_enrollments';
@@ -84,6 +88,7 @@ const CLASS_CONSTRAINTS = [
   'fpu_classes_window_ordered',
   'fpu_classes_class_ordered',
   'fpu_classes_name_len',
+  'fpu_classes_closed_pair',
 ];
 
 const CHECKS: Array<[string, string]> = [
@@ -92,6 +97,13 @@ const CHECKS: Array<[string, string]> = [
     (col): [string, string] => [
       `fpu_classes.${col} is NOT NULL`,
       `SELECT COALESCE((SELECT is_nullable = 'NO' FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='fpu_classes' AND column_name='${col}'), false) AS ok`,
+    ],
+  ),
+  ...['enrollment_closed_on', 'enrollment_closed_by'].map(
+    (col): [string, string] => [
+      `fpu_classes.${col} exists and is NULLABLE (the 2026-09-17 early-close follow-up)`,
+      `SELECT COALESCE((SELECT is_nullable = 'YES' FROM information_schema.columns
          WHERE table_schema='public' AND table_name='fpu_classes' AND column_name='${col}'), false) AS ok`,
     ],
   ),
@@ -178,7 +190,14 @@ const NO_END_CONTROL: [string, string] = [
 
 const NAMED_CONTROL: [string, string] = ['a class with a NAME is ACCEPTED', insertClass({ name: "'Summer Cohort'" })];
 
+const CLOSED_CONTROL: [string, string] = [
+  'an early-closed class (date + actor) is ACCEPTED',
+  insertClass({ enrollment_closed_on: "date '2099-01-01'", enrollment_closed_by: "'kaner@simple.biz'" }),
+];
+
 const NEGATIVE_CLASS_CONTROLS: Array<[string, string]> = [
+  ['a close date with no actor is rejected', insertClass({ enrollment_closed_on: "date '2099-01-01'" })],
+  ['an actor with no close date is rejected', insertClass({ enrollment_closed_by: "'kaner@simple.biz'" })],
   ['a blank name is rejected (NULL is how "no name" is stored)', insertClass({ name: "'   '" })],
   ['a name over 80 characters is rejected', insertClass({ name: `'${'x'.repeat(81)}'` })],
   ['a window that closes before it opens is rejected', insertClass({ closes_on: "date '2026-08-31'" })],
@@ -253,8 +272,9 @@ async function main() {
       '',
       `  SQL      : ${SQL_PATH}`,
       `  ALTER    : ${ALTER_PATH}`,
+      `  ALTER    : ${CLOSE_PATH}`,
       `  Tables   : ${CLASSES}, ${ENROLLMENTS} (ALTER)`,
-      `  Controls : 3 positive, ${NEGATIVE_CLASS_CONTROLS.length + 3} negative`,
+      `  Controls : 4 positive, ${NEGATIVE_CLASS_CONTROLS.length + 3} negative`,
       '',
       verifyOnly
         ? '  Nothing is written; the objects are only re-checked.'
@@ -299,6 +319,7 @@ async function main() {
   }
   if (!(await runControl(NO_END_CONTROL[0], NO_END_CONTROL[1], 'accept'))) failed++;
   if (!(await runControl(NAMED_CONTROL[0], NAMED_CONTROL[1], 'accept'))) failed++;
+  if (!(await runControl(CLOSED_CONTROL[0], CLOSED_CONTROL[1], 'accept'))) failed++;
   for (const [label, sql] of NEGATIVE_CLASS_CONTROLS) {
     if (!(await runControl(label, sql, 'reject'))) failed++;
   }

@@ -35,6 +35,10 @@ create table if not exists public.fpu_classes (
   -- Optional cohort name HR gives the class (2026-09-16 follow-up). The label is
   -- the name when set, else "FPU <year> - Batch <batch>"; the code always shows.
   name            text,
+  -- Early close (2026-09-17 follow-up): NULL = the window governs; a date means
+  -- CLOSED from that day whatever opens_on/closes_on say. Reopening clears both.
+  enrollment_closed_on date,
+  enrollment_closed_by text,
   created_by      text,
   created_at      timestamptz not null default now(),
   updated_by      text,
@@ -45,7 +49,9 @@ create table if not exists public.fpu_classes (
   constraint fpu_classes_batch_sane  check (batch between 1 and 12),
   constraint fpu_classes_window_ordered check (closes_on >= opens_on),
   constraint fpu_classes_class_ordered  check (class_ends_on is null or class_ends_on >= class_starts_on),
-  constraint fpu_classes_name_len       check (name is null or (length(btrim(name)) between 1 and 80))
+  constraint fpu_classes_name_len       check (name is null or (length(btrim(name)) between 1 and 80)),
+  constraint fpu_classes_closed_pair
+    check ((enrollment_closed_on is null) = (enrollment_closed_by is null))
 );
 
 comment on table public.fpu_classes is

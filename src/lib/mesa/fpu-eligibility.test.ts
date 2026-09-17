@@ -128,6 +128,17 @@ test('the window is inclusive: open on opens_on and closes_on, not the day after
   if (!early.ok) assert.equal(early.reason, 'not_open_yet');
 });
 
+test('an early close refuses mid-window, and says the day it was closed', () => {
+  const shut = { ...CLASS, enrollment_closed_on: '2026-09-10' };
+  const v = fpuVerdict({ ...base, cls: shut, today: '2026-09-15' });
+  assert.equal(v.ok, false);
+  if (!v.ok) {
+    assert.equal(v.reason, 'closed');
+    assert.match(v.detail, /Sep 10, 2026/);
+    assert.doesNotMatch(v.detail, /Sep 30/);
+  }
+});
+
 test('no class at all', () => {
   const v = fpuVerdict({ ...base, cls: null });
   assert.equal(v.ok, false);
