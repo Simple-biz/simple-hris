@@ -12,7 +12,9 @@ Key files:
 - `src/lib/hr/tab-cache.ts` — the store (in-memory Map, deliberately not persisted).
 - Consumers: `HrApp.tsx` (Overview), `HrGlobalMasterList.tsx`, `HrOnboarding.tsx`,
   `HrOnboardingForm.tsx`, `HrOffboarding.tsx`, `HrTransfers.tsx`, `HrScreening.tsx`,
-  `HrNewHireChecklist.tsx`, `src/hooks/useHrOrientationAttendance.ts`.
+  `HrNewHireChecklist.tsx`, `src/hooks/useHrOrientationAttendance.ts`, and since 2026-09-17
+  `HrMesa.tsx` (MESA Eligible), `HrFpuEnrollments.tsx` (classes + per-class enrollments) and
+  `FpuGroupsPanel.tsx` (groups + marks).
 - Tests: `src/lib/hr/tab-cache.test.ts`.
 
 ### MESA and FPU joined the store on 2026-09-17
@@ -36,9 +38,11 @@ revalidate is silent: a blip leaves the painted rows and raises no error card.
 shared key would make the second class evict the first and re-fetch on the way back, which is
 what this store exists to stop. Pinned by a test.
 
-**`migrated` is never cached.** It gates the New class button and the amber migration banner —
-it DECIDES, so it stays at its live default until the real answer lands. Only rows, counts and
-the roster map are seeded.
+**`migrated` is never cached — and one consumer had to be corrected to keep that true.** It gates
+the New class button and the amber migration banner, so it DECIDES. `hr:fpu-classes:v1` seeds only
+rows, counts and the roster map. `hr:fpu-groups:<classId>` stores the whole `groups/list` payload,
+which *includes* `migrated`, so `FpuGroupsPanel` forces it back to `true` on the seed and lets only
+the live answer raise that notice.
 
 **A live channel is still not a licence to skip.** HR → MESA → FPU Classes holds a working
 Realtime channel, unlike every tab this store was built for — but it is Broadcast

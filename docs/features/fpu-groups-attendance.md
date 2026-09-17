@@ -22,6 +22,8 @@ owns the classes and the enrollment window themselves.
 | Employee surface | `src/components/employee/EmployeeFpuGroup.tsx` |
 | DDL | `references/sql/create/2026-09-17_fpu_groups_attendance.sql` |
 | Migration | `scripts/apply-fpu-groups-migration.mts` · `scripts/Apply FPU Groups migration.cmd` |
+| Mark completed (the narrower gate) | `app/api/hr/fpu-enrollments/complete/route.ts` |
+| Tab cache (`hr:fpu-groups:<classId>`) | `src/lib/hr/tab-cache.ts` (`hrFpuGroupsKey`) |
 
 ## The randomizer runs once per class, ever
 
@@ -40,9 +42,13 @@ unsorted read would deal differently on the next call from the same seed.
 
 Once confirmed, membership is read from the rows and **the randomizer never runs again for this
 class** — both `preview` and `confirm` answer 409 `alreadyDivided`. A re-deal would move people who
-already have attendance marked against them. A latecomer is **balance-filled** into the least
-loaded group (`leastLoadedGroupNo`); a leaver is stamped `left_on`, never deleted, so the marks they
-already have stay truthful.
+already have attendance marked against them.
+
+**Not built yet, despite the columns and helpers being there.** `leastLoadedGroupNo`
+(`fpu-groups.ts`) is imported by nothing but its own test, and no code writes `left_on` /
+`left_reason` — the one-shot deal in `confirm/route.ts` is the only writer of `fpu_group_members`.
+So today a person approved AFTER the division has no group, no marks, and is `failed` at close as
+fully unmarked; a leaver stays an active member row. Wiring both is an open item.
 
 **The number is a target, not a cap** (Kane, 2026-09-17). 13 people at 4 per group is 4/3/3/3, never
 4/4/4/1. One floor overrides the target: **nobody is grouped alone.** Five people at two-per-group
@@ -83,8 +89,10 @@ approve their own hours". HR records the leaders. Leadership is read from `fpu_c
 the power on their next request. The leader must be a member of the group they lead; the route
 refuses anything else.
 
-Groupmates see **short name and work email only** — directory parity, the standing ruling. A member
-sees their own marks; a leader sees the group's, because marking is what they are there for.
+Groupmates see **short name and work email only** — directory parity, the standing ruling. The payload carries a
+member their own marks and a leader the whole group's, but the employee card only RENDERS the grid
+for a leader — a member sees the roster and no marks. Showing a member their own record is an open
+item.
 
 ## Unmarked is a third state, and it fails closed
 
@@ -102,11 +110,21 @@ together), and once set the marks stop deciding — so a later edit by a leader 
 the ruling. The record is still reported truthfully; the override changes the verdict, not the
 history.
 
+**The READ side ships; the WRITE side does not.** Every consumer honours the column
+(`fpu-attendance.ts`, class-close, complete, the HR panel's verdict cell), but no route accepts it
+and no control sets it, so an override can only be applied in the database today. Building it is an
+open item.
+
 ## Closing the class is the completion event
 
-Closing means the class's end date has arrived. `POST /api/hr/fpu-classes/class-close` with
-`confirm: false` computes the split and **writes nothing** — HR reads both lists first. With
-`confirm: true` it:
+Closing is meant for the day the class's end date has arrived — **but nothing enforces that.** The
+route refuses only an already-closed class and one whose sessions cannot be derived; it never
+compares `class_ends_on` to today. Closing early leaves every future session unmarked, so everyone
+is `failed`, and **there is no reopen** — no route clears `class_closed_on`. The `unmarkedTotal`
+warning on the preview is the only guard. Both are open items.
+
+`POST /api/hr/fpu-classes/class-close` with `confirm: false` computes the split and **writes
+nothing** — HR reads both lists first. With `confirm: true` it:
 
 1. stamps `mesa_fpu_completed_on` on every rate row of the **eligible only**, dated
    `class_ends_on` (not "today", which could be weeks later) — that date is what MESA membership
@@ -135,11 +153,14 @@ predates this feature) is left alone rather than failing everyone.
 
 ## Deploy notes
 
-- **PENDING — Kane runs:** double-click `scripts/Apply FPU Groups migration.cmd`. It rehearses
-  inside a rolled-back transaction, proves every constraint bites, then asks for `APPLY`. This is a
-  **different** migration from *Apply FPU Classes*, which is already done and is not re-run.
-- Until it lands every route here reports `migrated: false`, the HR panel says which file to
-  double-click, and the employee card renders nothing. Nothing 500s.
+- **APPLIED AND VERIFIED 2026-09-17**, with the script's own read-only `--verify`: all three tables,
+  `present` NOT NULL with no default, `fpu_classes.class_closed_on`/`_by`, the four
+  `attendance_override*` columns, the status check admitting `failed`, every constraint, both
+  triggers and RLS. `scripts/Apply FPU Groups migration.cmd` is its own launcher and is safe to
+  re-run.
+- Before it landed, every route here reported `migrated: false`, the HR panel named the file to
+  double-click and the employee card rendered nothing. Nothing 500s — that path still holds for the
+  next column added here.
 - Audit actions: `fpu.groups.divided`, `fpu.groups.leader_set` / `_cleared`,
   `fpu.attendance.marked`, `fpu.class.closed`. Registry prefix `fpu.`.
 - No env vars, no n8n, no notification type.

@@ -43,7 +43,7 @@ Aggregation is centralized in **`src/lib/mesa/ledger.ts`** (imported by both the
 
 ## The request flow (`mesa_requests`)
 
-Employees submit from the **Employee → MESA → Request** tab (`src/components/employee/EmployeeMesa.tsx`, `POST /api/mesa-requests`). Four request types, each with its own form section:
+Employees submit from the **Employee → MESA → Request** tab (`src/components/employee/EmployeeMesa.tsx`, `POST /api/mesa-requests`). Three request types are offered on the form, each with its own section. A fourth, `opt_in`, is retired but still accepted by the route:
 
 | Type | What it does | Reviewed by |
 |---|---|---|
@@ -56,7 +56,7 @@ Employees submit from the **Employee → MESA → Request** tab (`src/components
 
 ### Global Master List is the source of truth
 
-Every MESA tab is gated on the active roster (`GET /api/employees` = `active_employees`, the Global Master List minus offboarded people). The Non Members / Active Members / Eligible lists are built *from* the roster; the request queues (Accounting Requests, HR Opt-In) and the FPU sign-ups list are raw `mesa_requests` / form rows filtered against the roster's email set — work, personal, and both alternate work emails (`src/lib/roster/roster-emails.ts`). Rows for people who fall off the roster are **hidden, not deleted**: they reappear if the person is restored (relevant given the master-list sync race — see `memory/master-list-sync-race.md`). Each gated list shows an amber **"N hidden — not on the Global Master List"** note whenever the gate dropped rows, so a silent disappearance (offboard, sync race, or a mistyped FPU form email) is always visible to the reviewer. Payment flows (Urgent Payments queue, Payroll Wizard, dispatch) are deliberately *not* roster-gated so an approved payout can't silently vanish mid-flight.
+Every MESA tab is gated on the active roster (`GET /api/employees` = `active_employees`, the Global Master List minus offboarded people). The Non Members / Active Members / Eligible lists are built *from* the roster; the request queue (Accounting Requests) and the FPU enrollment list are raw `mesa_requests` / form rows filtered against the roster's email set — work, personal, and both alternate work emails (`src/lib/roster/roster-emails.ts`). Rows for people who fall off the roster are **hidden, not deleted**: they reappear if the person is restored (relevant given the master-list sync race — see `memory/master-list-sync-race.md`). Each gated list shows an amber **"N hidden — not on the Global Master List"** note whenever the gate dropped rows, so a silent disappearance (offboard, sync race, or a mistyped FPU form email) is always visible to the reviewer. Payment flows (Urgent Payments queue, Payroll Wizard, dispatch) are deliberately *not* roster-gated so an approved payout can't silently vanish mid-flight.
 
 ### Accounting tab — `AccountingMesa.tsx`
 
@@ -107,13 +107,13 @@ Apply `references/sql/migrate/2026-07-29_mesa_request_receipts.sql` (`node scrip
 
 ### HR tab — `HrMesa.tsx`
 
-`src/components/hr/HrMesa.tsx` (HR → MESA) has two sub-tabs: **MESA Eligible** and **FPU Classes** (`HrFpuEnrollments.tsx`). The **Opt-in Requests** sub-tab was retired 2026-09-16: membership now opens when HR marks an FPU class **completed**, which stamps `mesa_fpu_completed_on` and calls `POST /api/toggle-mesa-member` with `since` = the completion date, per person, skipping anyone already a member or holding an open account under an alias. Full rules: [fpu-enrollment.md](fpu-enrollment.md).
+`src/components/hr/HrMesa.tsx` (HR → MESA) has two sub-tabs, in order: **FPU Classes** (`HrFpuEnrollments.tsx`) — the leftmost chip and the landing tab, the one HR acts on — then **MESA Eligible**, a read-only roll-up. The **Opt-in Requests** sub-tab was retired 2026-09-16: membership now opens when HR marks an FPU class **completed**, which stamps `mesa_fpu_completed_on` and calls `POST /api/toggle-mesa-member` with `since` = the completion date, per person, skipping anyone already a member or holding an open account under an alias. Full rules: [fpu-enrollment.md](fpu-enrollment.md).
 
 ---
 
 ## How contributions surface
 
-All three dashboards read the same ledger via `GET /api/mesa-ledger` and render with `src/lib/mesa/ledger.ts` types.
+Accounting and the Employee dashboard read the ledger via `GET /api/mesa-ledger` and render with `src/lib/mesa/ledger.ts` types. **HR does not** — its MESA Eligible tab reads the rates row only (below, 2026-09-17).
 
 ### Accounting — MESA Active Members
 

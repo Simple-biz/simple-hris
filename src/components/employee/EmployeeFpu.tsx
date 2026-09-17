@@ -7,7 +7,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { GraduationCap, Loader2, CheckCircle2, XCircle, Clock, Award, Ban } from 'lucide-react';
+import { GraduationCap, Loader2, CheckCircle2, XCircle, Clock, Award, Ban, AlertTriangle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -244,6 +244,14 @@ function EnrollmentLine({ e }: { e: Enrollment }) {
       );
     case 'completed':
       return <Line icon={Award} tone="emerald">Completed {fmt(e.completed_on)} — you are in MESA.</Line>;
+    case 'failed':
+      // The class ended and they missed at least one session. Per-class, not
+      // permanent — say the second half, or the sentence reads as a ban.
+      return (
+        <Line icon={AlertTriangle} tone="amber">
+          {e.review_notes ?? 'You missed a session, so this class does not qualify you for MESA.'} You can enroll in a later class.
+        </Line>
+      );
   }
 }
 
@@ -256,12 +264,24 @@ function VerdictLine({ verdict, fpuCompletedOn }: { verdict: FpuVerdict; fpuComp
   return <Line icon={verdict.reason === 'closed' ? Ban : Clock} tone={tone}>{verdict.detail}</Line>;
 }
 
+const BADGE_LABEL: Record<FpuEnrollmentStatus, string> = {
+  pending: 'pending',
+  approved: 'approved',
+  denied: 'denied',
+  completed: 'completed',
+  failed: 'missed sessions',
+};
+
 function EnrollmentBadge({ status }: { status: FpuEnrollmentStatus }) {
-  const cls = {
+  // Record<FpuEnrollmentStatus, string>, not a bare literal indexed by status: a
+  // new status must fail to COMPILE here rather than render an unstyled pill at
+  // someone's desk. `failed` did exactly that until 2026-09-17.
+  const cls: Record<FpuEnrollmentStatus, string> = {
     pending: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200',
     approved: 'border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-200',
     denied: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/15 dark:text-rose-200',
     completed: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-200',
-  }[status];
-  return <span className={cn('rounded-full border px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide', cls)}>{status}</span>;
+    failed: 'border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-500/50 dark:bg-amber-500/25 dark:text-amber-100',
+  };
+  return <span className={cn('rounded-full border px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide', cls[status])}>{BADGE_LABEL[status]}</span>;
 }

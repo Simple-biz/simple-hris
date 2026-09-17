@@ -63,10 +63,14 @@ async function post<T>(url: string, body: unknown, method: 'POST' | 'PATCH' = 'P
 const short = (email: string) => email.split('@')[0] ?? email;
 
 export default function FpuGroupsPanel({ cls, seats, onChanged }: Props) {
-  // Seeded for PAINT so returning to the tab does not re-flash an empty panel.
-  // `migrated` rides along because it is part of the payload, but the mount
-  // fetch below still runs unless the entry is inside the 30s window.
-  const [state, setState] = useState<GroupsState | null>(() => getHrTabCache<GroupsState>(hrFpuGroupsKey(cls.id)) ?? null);
+  // Seeded for PAINT so returning to the tab does not re-flash an empty panel —
+  // but `migrated` is FORCED BACK TO TRUE on the seed. It gates the amber "run
+  // the migration" notice below, so a cached copy of it would DECIDE, which is
+  // the one thing this store forbids. Only the live answer may raise that notice.
+  const [state, setState] = useState<GroupsState | null>(() => {
+    const cached = getHrTabCache<GroupsState>(hrFpuGroupsKey(cls.id));
+    return cached ? { ...cached, migrated: true } : null;
+  });
   const [perGroup, setPerGroup] = useState('5');
   const [roll, setRoll] = useState(0);
   const [preview, setPreview] = useState<PreviewGroup[] | null>(null);

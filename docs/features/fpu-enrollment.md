@@ -24,7 +24,7 @@ attendees **completed**, which stamps their FPU date and opens their MESA member
 | Shared bulk select | `src/components/mesa/bulk-selection.tsx` (lifted from `AccountingMesa.tsx`) |
 | Live channel | `src/lib/mesa/fpu-live.ts` (topic + payload, tested) · `src/hooks/useFpuLive.ts` (subscribe + poll floor + focus refresh) |
 | DDL | `references/sql/create/2026-09-16_fpu_classes.sql` · `references/sql/alter/2026-09-16_fpu_classes_name.sql` (the `name` column) · `references/sql/alter/2026-09-17_fpu_classes_closed_early.sql` (early close) — both folded into the CREATE too |
-| Migration script | `scripts/apply-fpu-classes-migration.mts` — applies both files, idempotent · `scripts/Apply FPU Classes migration.cmd` (double-click) |
+| Migration script | `scripts/apply-fpu-classes-migration.mts` — applies the CREATE plus BOTH ALTERs · `scripts/Apply FPU Classes migration.cmd` (double-click) |
 
 ## A class is (year, batch) with an inclusive window
 
@@ -99,13 +99,13 @@ cutoff from it and flags a row amber if the class start date was moved after the
 
 ## Approve is a seat. Mark completed is the money event.
 
-`fpu_enrollments.status`: `pending → approved | denied → completed`. `PATCH /api/hr/fpu-enrollments`
+`fpu_enrollments.status`: `pending → approved | denied → completed | failed`. `failed` is written only by Close class, for someone who missed a session; it is terminal for THIS class and deliberately stamps NO `mesa_fpu_completed_on`, so a later batch stays open to them — see [fpu-groups-attendance.md](fpu-groups-attendance.md). `PATCH /api/hr/fpu-enrollments`
 takes `{ ids, status, review_notes? }` for up to 200 rows and **touches only that table** —
 Approve reserves a seat, Deny refuses it, `pending` resets a decision. A `completed` row is never
 changed by this route (skipped and counted).
 
 **Delete** (`DELETE /api/hr/fpu-enrollments`, `{ ids }`, 2026-09-17, Kane: *"lets add a delete entry"*)
-removes pending / approved / denied entries — a mistaken sign-up, a duplicate, a test — after a
+removes any entry that is not `completed` — pending, approved, denied **and `failed`** — after a
 confirm that lists the names. The person can enroll again while the window is open. A
 **`completed` entry is refused** (skipped and counted, the toast says why): it is the record that
 the FPU date was stamped and the membership opened, and deleting it would reverse neither. Every
@@ -133,7 +133,7 @@ before a previous stint's `closed_on` is refused (400) and the toast names the p
 whose rate rows carry no `Work Email` match is reported under `noRateRow` — the FPU date had
 nowhere to land and HR has to chase it.
 
-**What happens after the class.** Once enrollment is closed, the seated enrollees are divided into groups, a leader marks weekly attendance, and closing the CLASS publishes the eligible/ineligible split and opens MESA for the eligible — [fpu-groups-attendance.md](fpu-groups-attendance.md). The bulk **Mark completed** action still exists and now carries the same attendance gate, so it cannot enrol a non-attender either.
+**What happens after the class.** Once enrollment is closed, the seated enrollees are divided into groups, a leader marks weekly attendance, and closing the CLASS publishes the eligible/ineligible split and opens MESA for the eligible — [fpu-groups-attendance.md](fpu-groups-attendance.md). The bulk **Mark completed** action still exists and carries an attendance gate, but a NARROWER one: it only bites once somebody has marked at least one cell in that class (`classHasMarks`, `complete/route.ts:115`). A class where nothing was ever marked is completed wholesale — unlike **Close class**, where an unmarked seat fails closed. Blocked rows come back under `missedSessions`, which the HR table does not yet render. Whether the two should be brought to parity is an open ruling.
 
 **What this retired.** The HR **Opt-in Requests** sub-tab is gone and the employee Request form
 **no longer offers Opt-in** (`REQUEST_TYPE_TABS` excludes it). `POST /api/mesa-requests` still
@@ -193,7 +193,9 @@ Audit actions: `fpu.enroll` (employee), `fpu.class.created | updated | deleted |
 
 ## Deploy notes
 
-- **First cut APPLIED 2026-09-16 by Kane** via `scripts/Apply FPU Classes migration.cmd`, verified. **The `name` column landed on Kane's second `.cmd` run, verified 2026-09-17. The early-close columns need the `.cmd` run ONCE MORE — PENDING until Kane confirms; until then Close enrollment answers 503 and says so.** The first real class, `FPU 2026 · Batch 1`, was created 2026-09-17 07:06 UTC and took its first enrollment three minutes later. The script applies both SQL files and is `IF NOT EXISTS` throughout, so re-running is a no-op for everything already there. Until the column exists the classes select fails with `42703` and both surfaces read `migrated: false`. For the record: double-click the `.cmd` (rehearsal, then type `APPLY`), or the `--apply` flag
+- **APPLIED AND VERIFIED.** First cut 2026-09-16, the `name` column and the early-close pair 2026-09-17, each confirmed with the script's read-only `--verify`. Nothing is pending. The first real class, `FPU 2026 · Batch 1`, was created 2026-09-17 07:06 UTC and took its first enrollment three minutes later.
+- The script applies **three** SQL files (the CREATE plus the `name` and `closed_early` ALTERs). It is idempotent, and since 2026-09-17 that includes `fpu_enrollments_status_check`: the CREATE re-adds that constraint unconditionally, so it now lists all FIVE statuses including `failed`. Before that fix, running this `.cmd` AFTER the Groups one would have stripped `failed` and broken Close class.
+- **This surface also needs the FPU Groups migration** (`scripts/Apply FPU Groups migration.cmd`, see [fpu-groups-attendance.md](fpu-groups-attendance.md)). `FPU_CLASS_SELECT` names `class_closed_on` / `class_closed_by` and `FPU_ENROLLMENT_SELECT` names the four `attendance_override*` columns, so without it EVERY read here fails `42703` and both the HR tab and the employee card read `migrated: false` — not just the groups panel. It is applied; this is why a column added to either select list takes the whole tab down until its own migration runs.
   (dry-run by default; `--verify` afterwards). Creates `fpu_classes` and adds `class_id`,
   `status`, `start_date_used`, `reviewed_by/at`, `review_notes`, `completed_on` plus the unique
   index to `fpu_enrollments`. Needs the session-pooler `DATABASE_URL`.

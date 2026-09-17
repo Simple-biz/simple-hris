@@ -94,8 +94,15 @@ alter table public.fpu_enrollments
 alter table public.fpu_enrollments
   drop constraint if exists fpu_enrollments_status_check;
 alter table public.fpu_enrollments
+  -- 'failed' belongs here even though the GROUPS migration is what introduced it
+  -- (2026-09-17). This statement DROPS and re-adds the constraint unconditionally,
+  -- so if this file is ever re-run after the groups migration a four-value list
+  -- would either abort on an existing `failed` row or silently strip the value —
+  -- and `POST /api/hr/fpu-classes/class-close` writes exactly that status for
+  -- every ineligible person. Listing all five makes the two scripts safe to run
+  -- in either order, any number of times.
   add constraint fpu_enrollments_status_check
-    check (status in ('pending', 'approved', 'denied', 'completed'));
+    check (status in ('pending', 'approved', 'denied', 'completed', 'failed'));
 
 -- One enrollment per person per class. Case-insensitive on the email.
 create unique index if not exists fpu_enrollments_class_email_uniq
