@@ -327,7 +327,7 @@ export default function HrFpuEnrollments() {
             );
           })
         )}
-        <Button type="button" size="sm" variant="outline" disabled={!migrated || busy} onClick={() => setClassDialog({ mode: 'create' })} className="h-8 gap-1 text-xs">
+        <Button type="button" size="sm" variant="outline" disabled={!migrated || busy || loadingClasses} onClick={() => setClassDialog({ mode: 'create' })} className="h-8 gap-1 text-xs">
           <Plus className="h-3.5 w-3.5" /> New class
         </Button>
         <Button type="button" size="sm" variant="ghost" onClick={() => void refreshAll()} disabled={loadingClasses || loadingRows} className="ml-auto h-8 gap-1 text-xs text-zinc-500">
