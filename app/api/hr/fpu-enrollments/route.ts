@@ -112,3 +112,64 @@ export async function PATCH(req: NextRequest) {
 
   return NextResponse.json({ updated: updated.length, skipped: ids.length - updated.length, rows: updated, error: null });
 }
+
+/**
+ * DELETE /api/hr/fpu-enrollments — remove entries. Body: { ids: string[] }
+ *
+ * Pending, approved and denied rows may go — a mistaken sign-up, a duplicate
+ * from an old address, a test. A `completed` row is REFUSED (skipped and
+ * counted): it is the record that the FPU date was stamped and the MESA
+ * membership opened, and deleting it reverses neither. The person can enroll
+ * again while the window is open. Gate: HR · MESA · edit.
+ */
+export async function DELETE(req: NextRequest) {
+  const authz = await requireFeatureAccess('hr', 'mesa', 'edit');
+  if (!authz.ok) return deniedResponse(authz);
+  const sb = createSupabaseServiceRoleClient();
+  if (!sb) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
+
+  let body: { ids?: unknown };
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
+  const ids = Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map((x) => x.trim()) : [];
+  if (ids.length === 0) return NextResponse.json({ error: 'ids is required' }, { status: 400 });
+  if (ids.length > MAX_BULK) return NextResponse.json({ error: `At most ${MAX_BULK} entries per delete.` }, { status: 400 });
+
+  const res = await sb
+    .from(FPU_ENROLLMENTS_TABLE)
+    .delete()
+    .in('id', ids)
+    .neq('status', 'completed')
+    .select(FPU_ENROLLMENT_SELECT);
+  if (res.error) {
+    if (isFpuNotMigrated(res.error)) return NextResponse.json({ error: 'FPU classes are not set up yet — run the migration first.', migrated: false }, { status: 503 });
+    return NextResponse.json({ error: res.error.message }, { status: 500 });
+  }
+  const deleted = (res.data ?? []) as FpuEnrollmentRow[];
+
+  const actor = await getSessionActor();
+  void insertAuditLogs(
+    deleted.map((r) => ({
+      user_name: actor.user_name,
+      user_role: actor.user_role,
+      action: 'fpu.enrollment.deleted',
+      resource: FPU_ENROLLMENTS_TABLE,
+      resource_id: r.id,
+      details: { email: r.email, full_name: r.full_name, class_id: r.class_id, status_at_delete: r.status, deleted_row: r },
+    })),
+  );
+
+  if (deleted.length) {
+    void broadcastFromServer(FPU_LIVE_TOPIC, FPU_LIVE_EVENT, {
+      kind: 'enrollment',
+      classId: deleted[0]?.class_id ?? null,
+      emails: Array.from(new Set(deleted.map((r) => r.email.toLowerCase()))),
+      ts: Date.now(),
+    });
+  }
+
+  return NextResponse.json({ deleted: deleted.length, skipped: ids.length - deleted.length, error: null });
+}

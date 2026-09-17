@@ -2409,6 +2409,9 @@ Gate: `requireFeatureAccess('hr','mesa','view')` — **this route was ungated un
 ### `PATCH /api/hr/fpu-enrollments`
 Gate: `…'edit'`. Body `{ ids: string[] (≤200), status: 'approved' | 'denied' | 'pending', review_notes? }`. Touches only `fpu_enrollments`; `completed` rows are skipped and counted. `{ updated, skipped, rows }`. Audits `fpu.enrollment.approved|denied|reset` per row.
 
+### `DELETE /api/hr/fpu-enrollments`
+Gate: `…'edit'`. Body `{ ids: string[] (≤200) }`. Deletes pending / approved / denied entries; `completed` rows are skipped and counted (they record the FPU date + MESA enrollment). `{ deleted, skipped }`. Audits `fpu.enrollment.deleted` with the whole row. Broadcasts.
+
 ### `POST /api/hr/fpu-enrollments/complete`
 Gate: `…'edit'`. Body `{ ids (≤200), completed_on: 'YYYY-MM-DD' }`. For each **approved** row: stamps `employee_hourly_rates.mesa_fpu_completed_on` on every rate row for the work email, marks the enrollment `completed`, then sorts the person into `toEnroll` (not a member, no open account under any alias — the client calls `POST /api/toggle-mesa-member` with `since = completed_on`), `alreadyMembers` (never sent to toggle), or `noRateRow`. Non-approved rows → `skipped`. Audits `fpu.enrollment.completed`.
 

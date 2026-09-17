@@ -76,6 +76,13 @@ takes `{ ids, status, review_notes? }` for up to 200 rows and **touches only tha
 Approve reserves a seat, Deny refuses it, `pending` resets a decision. A `completed` row is never
 changed by this route (skipped and counted).
 
+**Delete** (`DELETE /api/hr/fpu-enrollments`, `{ ids }`, 2026-09-17, Kane: *"lets add a delete entry"*)
+removes pending / approved / denied entries — a mistaken sign-up, a duplicate, a test — after a
+confirm that lists the names. The person can enroll again while the window is open. A
+**`completed` entry is refused** (skipped and counted, the toast says why): it is the record that
+the FPU date was stamped and the membership opened, and deleting it would reverse neither. Every
+deleted row is written whole into the `fpu.enrollment.deleted` audit event.
+
 **Mark completed** (`POST /api/hr/fpu-enrollments/complete`, `{ ids, completed_on }`) is what the
 old HR opt-in approval used to be. For each **approved** row it:
 
@@ -133,7 +140,7 @@ HR route here is `requireFeatureAccess('hr', 'mesa', 'view' | 'edit')`; `fpu-enr
 **roster row**, never the body. All roster reads page (`selectAllPaged` / `getEmployees`).
 
 Audit actions: `fpu.enroll` (employee), `fpu.class.created | updated | deleted`,
-`fpu.enrollment.approved | denied | reset | completed`. Registry prefix `fpu.`.
+`fpu.enrollment.approved | denied | reset | completed | deleted`. Registry prefix `fpu.`.
 
 ## Deploy notes
 

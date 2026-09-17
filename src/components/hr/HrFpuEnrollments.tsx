@@ -129,6 +129,7 @@ export default function HrFpuEnrollments() {
   const [classDialog, setClassDialog] = useState<{ mode: 'create' } | { mode: 'edit'; cls: FpuClass } | null>(null);
   const [completeOpen, setCompleteOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<FpuClass | null>(null);
+  const [confirmDeleteEntries, setConfirmDeleteEntries] = useState(false);
 
   const today = useMemo(() => manilaTodayIso(), []);
 
@@ -233,6 +234,26 @@ export default function HrFpuEnrollments() {
       await refreshAll();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Decision failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteEntries = async () => {
+    if (!canDecide || busy) return;
+    setBusy(true);
+    try {
+      const json = await requestJson<{ deleted: number; skipped: number }>('/api/hr/fpu-enrollments', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: sel.selectedRows.map((r) => r.id) }),
+      });
+      reportBulk('Deleted', json.deleted, json.skipped, json.skipped ? 'Completed entries are kept — they record the FPU date and MESA enrollment.' : null);
+      setConfirmDeleteEntries(false);
+      sel.clear();
+      await refreshAll();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Delete failed');
     } finally {
       setBusy(false);
     }
@@ -435,6 +456,9 @@ export default function HrFpuEnrollments() {
               <Button type="button" size="sm" variant="ghost" disabled={!canDecide || busy} onClick={() => void decide('pending')} className="h-7 gap-1 text-[11px] text-zinc-600 dark:text-zinc-300">
                 <RotateCcw className="h-3 w-3" /> Reset
               </Button>
+              <Button type="button" size="sm" variant="ghost" disabled={!canDecide || busy} onClick={() => setConfirmDeleteEntries(true)} title={canDecide ? 'Remove the selected entries' : 'Completed entries cannot be deleted'} className="h-7 gap-1 text-[11px] text-rose-700 hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-950/40">
+                <Trash2 className="h-3 w-3" /> Delete
+              </Button>
             </BulkBar>
           )}
 
@@ -539,6 +563,27 @@ export default function HrFpuEnrollments() {
           onClose={() => setCompleteOpen(false)}
           onConfirm={(d) => void complete(d)}
         />
+      )}
+
+      {confirmDeleteEntries && (
+        <Overlay onClose={() => setConfirmDeleteEntries(false)}>
+          <h3 className="text-base font-bold text-zinc-900 dark:text-white">Delete {sel.selectedRows.length} {sel.selectedRows.length === 1 ? 'entry' : 'entries'}?</h3>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            Removes them from {selected ? fpuClassLabel(selected) : 'this class'}. Each person can enroll again while the window is open. Nothing else changes.
+          </p>
+          <ul className="mt-3 max-h-40 overflow-y-auto text-xs text-zinc-600 dark:text-zinc-400">
+            {sel.selectedRows.map((r) => (
+              <li key={r.id} className="truncate">{r.full_name} <span className="font-mono text-zinc-400">{r.email}</span></li>
+            ))}
+          </ul>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button type="button" size="sm" variant="outline" onClick={() => setConfirmDeleteEntries(false)} disabled={busy}>Cancel</Button>
+            <Button type="button" size="sm" className="bg-rose-600 text-white hover:bg-rose-700" disabled={busy} onClick={() => void deleteEntries()}>
+              {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Trash2 className="mr-1.5 h-3.5 w-3.5" />}
+              Delete
+            </Button>
+          </div>
+        </Overlay>
       )}
 
       {confirmDelete && (
