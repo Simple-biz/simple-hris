@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { formatDateOnly } from '@/lib/date-only';
 import { fpuClassCode, fpuClassLabel, fpuClassPhase, type FpuClass, type FpuEnrollmentStatus } from '@/lib/mesa/fpu-class';
 import type { FpuVerdict } from '@/lib/mesa/fpu-eligibility';
+import { useFpuLive } from '@/hooks/useFpuLive';
 
 interface Enrollment {
   id: string;
@@ -52,8 +53,10 @@ export default function EmployeeFpu({ employeeEmail }: Props) {
   const [shift, setShift] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (quiet = false) => {
+    // A live repaint over an already-painted card is silent; only the first
+    // load (or a retry after an error) shows the spinner.
+    if (!quiet) setLoading(true);
     try {
       const res = await fetch(`/api/fpu-enroll?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' });
       const text = await res.text();
@@ -76,6 +79,10 @@ export default function EmployeeFpu({ employeeEmail }: Props) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Live: a class opening, or HR deciding this person's seat, repaints without
+  // a reload. Server-side broadcast + 15s poll floor + tab-focus refresh.
+  useFpuLive({ enabled: !!state, emails: [employeeEmail], onChange: () => void load(true) });
 
   const enroll = async () => {
     if (!shift.trim() || submitting) return;

@@ -4,6 +4,8 @@ import { requireFeatureAccess } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { broadcastFromServer } from '@/lib/supabase/realtime-broadcast';
+import { FPU_LIVE_EVENT, FPU_LIVE_TOPIC } from '@/lib/mesa/fpu-live';
 import { fpuClassLabel, nextFpuBatch, validateFpuClassInput, type FpuEnrollmentStatus } from '@/lib/mesa/fpu-class';
 import {
   FPU_CLASSES_TABLE,
@@ -103,6 +105,7 @@ export async function POST(req: NextRequest) {
     resource_id: cls.id,
     details: { label: fpuClassLabel(cls), ...v.value },
   });
+  void broadcastFromServer(FPU_LIVE_TOPIC, FPU_LIVE_EVENT, { kind: 'class', classId: cls.id, ts: Date.now() });
 
   return NextResponse.json({ class: cls, error: null });
 }
@@ -153,6 +156,7 @@ export async function PATCH(req: NextRequest) {
     resource_id: cls.id,
     details: { label: fpuClassLabel(cls), before: before.data, after: v.value },
   });
+  void broadcastFromServer(FPU_LIVE_TOPIC, FPU_LIVE_EVENT, { kind: 'class', classId: cls.id, ts: Date.now() });
 
   return NextResponse.json({ class: cls, error: null });
 }
@@ -197,6 +201,7 @@ export async function DELETE(req: NextRequest) {
     resource_id: id,
     details: { label: fpuClassLabel(cls.data as FpuClassRow), deleted: cls.data },
   });
+  void broadcastFromServer(FPU_LIVE_TOPIC, FPU_LIVE_EVENT, { kind: 'class', classId: id, ts: Date.now() });
 
   return NextResponse.json({ success: true, error: null });
 }

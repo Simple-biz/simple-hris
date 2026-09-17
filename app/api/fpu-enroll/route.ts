@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { authorizeEmailAccess, deniedResponse } from '@/lib/auth/authorize-email';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { broadcastFromServer } from '@/lib/supabase/realtime-broadcast';
+import { FPU_LIVE_EVENT, FPU_LIVE_TOPIC } from '@/lib/mesa/fpu-live';
 import { getEmployees } from '@/lib/supabase/employees';
 import { getEmployeeHourlyRateRowByEmail } from '@/lib/supabase/employee-hourly-rates';
 import { manilaTodayIso } from '@/lib/payroll/manila-week';
@@ -208,6 +210,7 @@ export async function POST(req: NextRequest) {
     },
     ip_address: clientIp(req),
   });
+  void broadcastFromServer(FPU_LIVE_TOPIC, FPU_LIVE_EVENT, { kind: 'enrollment', classId: state.class.id, emails: [email], ts: Date.now() });
 
   return NextResponse.json({ success: true, enrollment, error: null });
 }

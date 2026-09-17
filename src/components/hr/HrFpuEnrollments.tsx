@@ -7,7 +7,7 @@
  * docs/features/fpu-enrollment.md.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   GraduationCap,
   Plus,
@@ -23,6 +23,7 @@ import {
   Award,
   RotateCcw,
   AlertTriangle,
+  Radio,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -49,6 +50,7 @@ import {
   type FpuEnrollmentStatus,
 } from '@/lib/mesa/fpu-class';
 import { fpuEligibleFrom } from '@/lib/mesa/fpu-eligibility';
+import { useFpuLive } from '@/hooks/useFpuLive';
 
 type Counts = Record<FpuEnrollmentStatus, number>;
 
@@ -115,6 +117,8 @@ export default function HrFpuEnrollments() {
   const [migrated, setMigrated] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [rows, setRows] = useState<EnrollmentRow[]>([]);
+  const rowsRef = useRef<EnrollmentRow[]>([]);
+  rowsRef.current = rows;
   const [roster, setRoster] = useState<Map<string, RosterEmailStatus> | null>(null);
   const [loadingClasses, setLoadingClasses] = useState(true);
   const [loadingRows, setLoadingRows] = useState(false);
@@ -154,7 +158,8 @@ export default function HrFpuEnrollments() {
   }, [today]);
 
   const loadRows = useCallback(async (classId: string) => {
-    setLoadingRows(true);
+    // Spinner only on a cold table; a live repaint over existing rows is silent.
+    setLoadingRows((prev) => prev || rowsRef.current.length === 0);
     try {
       const json = await requestJson<{ rows: EnrollmentRow[]; migrated: boolean }>(`/api/hr/fpu-enrollments?class_id=${encodeURIComponent(classId)}`);
       setRows(json.rows ?? []);
@@ -200,6 +205,18 @@ export default function HrFpuEnrollments() {
     await loadClasses(false);
     if (selectedId) await loadRows(selectedId);
   };
+
+  // Live: the routes that write broadcast on the FPU topic; a 15s poll floor and
+  // a tab-focus refresh cover a dropped socket. Quiet reloads — no spinner —
+  // so a checkbox selection is never yanked mid-decision by a repaint.
+  const liveStatus = useFpuLive({
+    enabled: migrated && !loadingClasses,
+    onChange: () => {
+      if (busy) return;
+      void loadClasses(false);
+      if (selectedId) void loadRows(selectedId);
+    },
+  });
 
   const decide = async (status: 'approved' | 'denied' | 'pending') => {
     if (!canDecide || busy) return;
@@ -330,7 +347,14 @@ export default function HrFpuEnrollments() {
         <Button type="button" size="sm" variant="outline" disabled={!migrated || busy || loadingClasses} onClick={() => setClassDialog({ mode: 'create' })} className="h-8 gap-1 text-xs">
           <Plus className="h-3.5 w-3.5" /> New class
         </Button>
-        <Button type="button" size="sm" variant="ghost" onClick={() => void refreshAll()} disabled={loadingClasses || loadingRows} className="ml-auto h-8 gap-1 text-xs text-zinc-500">
+        <span
+          className={cn('ml-auto inline-flex items-center gap-1 text-[11px] font-medium', liveStatus === 'live' ? 'text-emerald-600 dark:text-emerald-300' : 'text-zinc-500 dark:text-zinc-400')}
+          title={liveStatus === 'live' ? 'Updates arrive as they happen' : 'Realtime unavailable — refreshing every 15s'}
+        >
+          <Radio className={cn('h-3 w-3', liveStatus === 'live' && 'animate-pulse')} />
+          {liveStatus === 'live' ? 'Live' : liveStatus === 'connecting' ? 'Connecting' : 'Polling'}
+        </span>
+        <Button type="button" size="sm" variant="ghost" onClick={() => void refreshAll()} disabled={loadingClasses || loadingRows} className="h-8 gap-1 text-xs text-zinc-500">
           <RefreshCw className={cn('h-3.5 w-3.5', (loadingClasses || loadingRows) && 'animate-spin')} /> Refresh
         </Button>
       </div>

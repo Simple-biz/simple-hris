@@ -4,6 +4,8 @@ import { requireFeatureAccess } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { insertAuditLogs } from '@/lib/supabase/audit-log';
+import { broadcastFromServer } from '@/lib/supabase/realtime-broadcast';
+import { FPU_LIVE_EVENT, FPU_LIVE_TOPIC } from '@/lib/mesa/fpu-live';
 import {
   FPU_ENROLLMENTS_TABLE,
   FPU_ENROLLMENT_SELECT,
@@ -98,6 +100,15 @@ export async function PATCH(req: NextRequest) {
       details: { email: r.email, full_name: r.full_name, class_id: r.class_id, status, review_notes: notes },
     })),
   );
+
+  if (updated.length) {
+    void broadcastFromServer(FPU_LIVE_TOPIC, FPU_LIVE_EVENT, {
+      kind: 'enrollment',
+      classId: updated[0]?.class_id ?? null,
+      emails: Array.from(new Set(updated.map((r) => r.email.toLowerCase()))),
+      ts: Date.now(),
+    });
+  }
 
   return NextResponse.json({ updated: updated.length, skipped: ids.length - updated.length, rows: updated, error: null });
 }

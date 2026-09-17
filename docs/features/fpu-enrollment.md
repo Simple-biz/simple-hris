@@ -21,6 +21,7 @@ attendees **completed**, which stamps their FPU date and opens their MESA member
 | HR surface | `src/components/hr/HrFpuEnrollments.tsx` (inside `HrMesa.tsx`) |
 | Employee surface | `src/components/employee/EmployeeFpu.tsx` (inside `EmployeeMesa.tsx`, sub-tab `fpu`) |
 | Shared bulk select | `src/components/mesa/bulk-selection.tsx` (lifted from `AccountingMesa.tsx`) |
+| Live channel | `src/lib/mesa/fpu-live.ts` (topic + payload, tested) · `src/hooks/useFpuLive.ts` (subscribe + poll floor + focus refresh) |
 | DDL | `references/sql/create/2026-09-16_fpu_classes.sql` · `references/sql/alter/2026-09-16_fpu_classes_name.sql` (the `name` column; folded into the CREATE too) |
 | Migration script | `scripts/apply-fpu-classes-migration.mts` — applies both files, idempotent · `scripts/Apply FPU Classes migration.cmd` (double-click) |
 
@@ -101,6 +102,27 @@ nowhere to land and HR has to chase it.
 **no longer offers Opt-in** (`REQUEST_TYPE_TABS` excludes it). `POST /api/mesa-requests` still
 accepts `opt_in` — the derived "Opt-in" history line and the type union are unchanged — but
 nothing in the UI files one. Accounting's **Non Members → Opt In** bridge is untouched.
+
+## Both views are live — by Broadcast, never `postgres_changes`
+
+Kane, 2026-09-17: *"make sure this is live polling please real time Supabase."* Every route that
+writes — class create / edit / delete, the bulk decision, Mark completed, the employee's Enroll —
+fires `broadcastFromServer(FPU_LIVE_TOPIC, 'changed', { kind, classId, emails, ts })` after the
+write (fire-and-forget, never awaited on the request path). `useFpuLive` subscribes both surfaces:
+HR reloads classes + the selected class's rows; the employee card reloads only when the payload
+names their email or names none. Reloads are **quiet** — no spinner over painted rows, so a
+half-made checkbox selection is never yanked — and HR skips a repaint while a decision is in
+flight (`busy`).
+
+Why not `postgres_changes` on the two tables: the browser is `anon` and both tables have RLS on
+with zero policies, so a row event can never be delivered (`memory/supabase-realtime-anon-rls-dead`).
+Do not "fix" a stale view by adding the tables to the publication. The topic is its own
+(`fpu-classes-sync`, pinned by `fpu-live.test.ts` against the dispatch / paid / start-processing
+topics) because realtime-js keeps one channel per topic per client.
+
+**Floor:** a 15-second poll while the tab is visible plus a refresh on tab focus, so a dropped
+socket degrades to "seconds late", never to stale. The HR toolbar shows the honest state — **Live**
+(subscribed) / **Connecting** / **Polling** (channel errored, poll carrying it).
 
 ## The routes are gated; the old list route was not
 

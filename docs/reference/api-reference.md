@@ -2389,7 +2389,7 @@ Gate: `requireFeatureEdit('hr','offboarding')`. Fills the blank Location / Conta
 
 ## 20. FPU classes & enrollment *(added 2026-09-16)*
 
-Governing doc: [fpu-enrollment.md](../features/fpu-enrollment.md). Every HR route answers `migrated: false` (503 on writes) until `scripts/apply-fpu-classes-migration.mts --apply` has run.
+Governing doc: [fpu-enrollment.md](../features/fpu-enrollment.md). **Every write below broadcasts `fpu-classes-sync` / `changed` `{ kind, classId, emails?, ts }` from the server** (`broadcastFromServer`, fire-and-forget) — the two views subscribe via `useFpuLive` with a 15s poll floor. Every HR route answers `migrated: false` (503 on writes) until `scripts/apply-fpu-classes-migration.mts --apply` has run.
 
 ### `GET /api/hr/fpu-classes`
 Gate: `requireFeatureAccess('hr','mesa','view')`. `{ classes: FpuClass[] (newest first), counts: { [classId]: { pending, approved, denied, completed } }, migrated }`.

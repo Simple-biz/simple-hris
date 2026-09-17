@@ -4,6 +4,8 @@ import { requireFeatureAccess } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { broadcastFromServer } from '@/lib/supabase/realtime-broadcast';
+import { FPU_LIVE_EVENT, FPU_LIVE_TOPIC } from '@/lib/mesa/fpu-live';
 import { invalidateRateProfilesCache } from '@/lib/supabase/employee-rate-profiles';
 import { getEmployeeHourlyRateRowByEmail } from '@/lib/supabase/employee-hourly-rates';
 import { getOpenMesaAccount } from '@/lib/supabase/mesa-accounts';
@@ -145,7 +147,15 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  if (out.completed.length) invalidateRateProfilesCache();
+  if (out.completed.length) {
+    invalidateRateProfilesCache();
+    void broadcastFromServer(FPU_LIVE_TOPIC, FPU_LIVE_EVENT, {
+      kind: 'enrollment',
+      classId: rows.find((r) => r.status === 'approved')?.class_id ?? rows[0]?.class_id ?? null,
+      emails: out.completed.map((c) => c.email.toLowerCase()),
+      ts: Date.now(),
+    });
+  }
 
   return NextResponse.json(out);
 }
