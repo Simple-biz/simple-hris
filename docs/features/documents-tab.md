@@ -206,6 +206,27 @@ Everything is printed in the worker's **own currency**: `variantForDept` supplie
 bonus allowlist excludes gets **no line at all** — the certificate never promises money the
 engine won't pay.
 
+**The team is named through `formatDeptLabel`, always** (2026-09-17). `hsl-subdepartments.md`
+§12 has said since 2026-08-10 that a raw `hsl:<key>` may never reach a human, and the
+certificate is the most public surface in the product — but `resolveCoeFacts` read
+`master.department` straight onto the page, so a certificate said *"as part of our
+**hsl:hsl_managers**"* while the Generate COE picker **beside it** already formatted the same
+value (`coe-admin.ts:109`). One feature, two answers. The formatter is a **no-op on non-HSL
+labels** (`AI/API Team`, `Lead Gen`, `USEE` pass through byte-for-byte), so the call is
+**unconditional — never write a condition around it**. The `no_department` refusal is
+unchanged: an empty cell still formats to `''` and still refuses.
+
+Why the app-wide guard missed it: `dept-label-render.test.ts` source-scans
+`src/components/**/*.tsx`, and this is a PDF renderer under `src/lib/`. `coe-facts.test.ts` now
+carries the equivalent assertion for this surface — a behavioural check that no `hsl:*` value
+formats to something still containing a colon, plus a source-scan that `team` is never assigned
+from `master.department` directly.
+
+**OPEN — the label the formatter produces for `hsl:hsl_managers` is `HSL — Managers Weekly`**,
+because `HSL_DEPTS.hsl_managers.name` is the KPI *calculator card's* name and carries its
+cadence. Kane asked for *"as part of our **HSL Managers**"*. Renaming the sub-team would move
+the calculator card too, so the wording is his call and is **not** decided here.
+
 ### Role and recent bonuses — 2026-09-10
 
 Kane: *"Add role to the COE Request — if only they put the role in their profile we can pull it

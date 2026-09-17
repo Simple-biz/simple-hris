@@ -16,6 +16,7 @@
 import { getEmployeeMasterRecord } from '@/lib/supabase/employees';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { listPayStructures } from '@/lib/supabase/pay-structures-db';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { listSystemBonuses } from '@/lib/supabase/system-bonuses-db';
 import { listBonusCatalog } from '@/lib/supabase/bonus-catalog-db';
 import { getDepartmentRegistry } from '@/lib/departments/registry-db';
@@ -442,7 +443,13 @@ export async function resolveCoeFacts(
   const workerName = coeWorkerName(master.name);
   const startDateRaw = master.start_date?.trim() || '';
   const startDateLabel = startDateRaw ? formatCoeStartDate(startDateRaw) : null;
-  const team = master.department?.trim() || '';
+  // `hsl:<key>` must never reach a human — the certificate is the most public
+  // surface there is (`hsl-subdepartments.md` §12, [[dept-label-display-sweep]]).
+  // The Generate COE picker already formats (`coe-admin.ts:109`), so an unwrapped
+  // value here made the picker and the certificate it produces disagree. The
+  // formatter is a NO-OP on non-HSL labels, so this is unconditional — never
+  // write a condition around it.
+  const team = formatDeptLabel(master.department);
 
   if (!workerName) {
     return {

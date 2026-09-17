@@ -6,6 +6,9 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import {
   COE_RECENT_BONUS_CYCLES,
   COE_RECENT_BONUS_LOOKBACK_DAYS,
@@ -161,4 +164,54 @@ test('the role is trimmed and whitespace-collapsed; blank is null (clause omitte
   assert.equal(coeRoleTitle('   '), null);
   assert.equal(coeRoleTitle(null), null);
   assert.equal(coeRoleTitle(undefined), null);
+});
+
+// ── The team the certificate names ──────────────────────────────────────────
+//
+// Kane, 2026-09-17: *"hsl:hsl_managers looks ugly AF"* — and the rule predates
+// the complaint by a month (`hsl-subdepartments.md` §12,
+// [[dept-label-display-sweep]]): a raw `hsl:<key>` must never reach a human.
+// The certificate is the most public surface in the product, and it was reading
+// `master.department` straight onto the page while the Generate COE picker
+// beside it formatted the same value — so the picker said "HSL — Case Managers"
+// and the PDF it produced said `hsl:case_managers`.
+//
+// The app-wide guard (`dept-label-render.test.ts`) source-scans
+// `src/components/**/*.tsx` only, so a PDF renderer under `src/lib/` was never
+// covered. This is that guard for this surface.
+
+test('a raw hsl: key never reaches the certificate', () => {
+  for (const raw of [
+    'hsl:hsl_managers',
+    'hsl:case_managers',
+    'hsl:post_hearing_prep',
+    'hsl:ssd_medical_records',
+    'hsl:some_future_subteam_nobody_has_added_yet',
+  ]) {
+    const label = formatDeptLabel(raw);
+    assert.ok(label.length > 0, `${raw} formatted to nothing`);
+    assert.ok(!label.includes(':'), `${raw} still renders a raw key: "${label}"`);
+  }
+});
+
+test('formatDeptLabel is a no-op on the non-HSL departments a certificate can carry', () => {
+  for (const raw of ['AI/API Team', 'Lead Gen', 'Edit Team', 'Accounting Team', 'USEE']) {
+    assert.equal(formatDeptLabel(raw), raw);
+  }
+});
+
+test('resolveCoeFacts routes the master department through the formatter', () => {
+  const src = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/lib/documents/coe-facts.ts'),
+    'utf8',
+  );
+  assert.match(
+    src,
+    /const team = formatDeptLabel\(/,
+    'the certificate must name the team through formatDeptLabel',
+  );
+  assert.ok(
+    !/const team = master\.department/.test(src),
+    'the raw master department cell must never be assigned to `team` directly',
+  );
 });
