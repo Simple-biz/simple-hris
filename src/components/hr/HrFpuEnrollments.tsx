@@ -25,6 +25,7 @@ import {
   Radio,
   Lock,
   Unlock,
+  Check,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -136,6 +137,8 @@ export default function HrFpuEnrollments() {
   const [completeOpen, setCompleteOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<FpuClass | null>(null);
   const [confirmDeleteEntries, setConfirmDeleteEntries] = useState(false);
+  /** The class whose enrollment gate is being moved, and which way. */
+  const [gate, setGate] = useState<{ cls: FpuClass; closing: boolean } | null>(null);
 
   const today = useMemo(() => manilaTodayIso(), []);
 
@@ -248,29 +251,6 @@ export default function HrFpuEnrollments() {
       await refreshAll();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Decision failed');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /** Shut enrollment now, or reopen it. The planned window is never rewritten —
-   *  the route stamps a separate early-close date that outranks the dates. */
-  const setEnrollmentClosed = async (cls: FpuClass, closed: boolean) => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      await requestJson<{ class: FpuClass }>('/api/hr/fpu-classes/close', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: cls.id, closed }),
-      });
-      toast.success(
-        closed ? `Enrollment closed for ${fpuClassLabel(cls)}` : `Enrollment reopened for ${fpuClassLabel(cls)}`,
-        { description: closed ? 'Employees can no longer enroll. Everyone who applied stays on the list.' : 'The class is back on its planned window.' },
-      );
-      await refreshAll();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not change enrollment');
     } finally {
       setBusy(false);
     }
@@ -455,11 +435,11 @@ export default function HrFpuEnrollments() {
             </div>
             <div className="flex items-center gap-1.5">
               {fpuClassClosedEarly(selected) ? (
-                <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-[11px]" disabled={busy} onClick={() => void setEnrollmentClosed(selected, false)} title="Put the class back on its planned enrollment window">
+                <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-[11px]" disabled={busy} onClick={() => setGate({ cls: selected, closing: false })} title="Put the class back on its planned enrollment window">
                   <Unlock className="h-3 w-3" /> Reopen enrollment
                 </Button>
               ) : (
-                <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-[11px] text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950/40" disabled={busy} onClick={() => void setEnrollmentClosed(selected, true)} title="Stop employees enrolling now, whatever the close date says">
+                <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-[11px] text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950/40" disabled={busy} onClick={() => setGate({ cls: selected, closing: true })} title="Stop employees enrolling now, whatever the close date says">
                   <Lock className="h-3 w-3" /> Close enrollment
                 </Button>
               )}
@@ -628,6 +608,17 @@ export default function HrFpuEnrollments() {
           busy={busy}
           onClose={() => setCompleteOpen(false)}
           onConfirm={(d) => void complete(d)}
+        />
+      )}
+
+      {gate && (
+        <EnrollmentGateDialog
+          key="gate"
+          cls={gate.cls}
+          closing={gate.closing}
+          applicants={rows.length}
+          onRefresh={refreshAll}
+          onClose={() => setGate(null)}
         />
       )}
 
@@ -854,6 +845,131 @@ function ClassDialog({
           {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
           {mode === 'create' ? 'Create' : 'Save'}
         </Button>
+      </div>
+    </Overlay>
+  );
+}
+
+/**
+ * Close / reopen enrollment, with a progress bar that tracks REAL steps.
+ *
+ * The bar is not a timer pretending to be work. It advances on the two things
+ * that actually happen — the write lands, then every open board is brought back
+ * in line — and only reaches the end when both are done. A bar that fills on a
+ * schedule would be a lie told to someone who is about to stop their colleagues
+ * enrolling.
+ */
+function EnrollmentGateDialog({
+  cls,
+  closing,
+  applicants,
+  onRefresh,
+  onClose,
+}: {
+  cls: FpuClass;
+  closing: boolean;
+  applicants: number;
+  onRefresh: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const reduce = useReducedMotion();
+  const [phase, setPhase] = useState<'confirm' | 'working' | 'done' | 'error'>('confirm');
+  const [step, setStep] = useState(0);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  const STEPS = closing
+    ? ['Closing enrollment…', 'Bringing every open board in line…', 'Enrollment closed']
+    : ['Reopening enrollment…', 'Bringing every open board in line…', 'Enrollment reopened'];
+
+  // Each stop is a completed step, not an elapsed second.
+  const pct = phase === 'confirm' ? 0 : phase === 'done' ? 100 : step === 0 ? 40 : 78;
+
+  const run = async () => {
+    setPhase('working');
+    setStep(0);
+    try {
+      await requestJson<{ class: FpuClass }>('/api/hr/fpu-classes/close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: cls.id, closed: closing }),
+      });
+      setStep(1);
+      await onRefresh();
+      setStep(2);
+      setPhase('done');
+      // Long enough to read the outcome, short enough not to be a wait.
+      window.setTimeout(onClose, 1100);
+    } catch (e) {
+      setFailure(e instanceof Error ? e.message : 'Could not change enrollment');
+      setPhase('error');
+    }
+  };
+
+  const busy = phase === 'working';
+  const accent = closing
+    ? { bar: 'bg-amber-500', text: 'text-amber-700 dark:text-amber-300', btn: 'bg-amber-600 hover:bg-amber-700' }
+    : { bar: 'bg-teal-500', text: 'text-teal-700 dark:text-teal-300', btn: 'bg-teal-600 hover:bg-teal-700' };
+
+  return (
+    <Overlay onClose={busy ? () => {} : onClose}>
+      <div className="flex items-start gap-3">
+        <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-xl', closing ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300' : 'bg-teal-100 text-teal-700 dark:bg-teal-950/50 dark:text-teal-300')}>
+          {phase === 'done' ? <Check className="h-4 w-4" /> : closing ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-base font-bold text-zinc-900 dark:text-white">
+            {closing ? 'Close enrollment' : 'Reopen enrollment'} · {fpuClassLabel(cls)}
+          </h3>
+          <p className="mt-1 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+            {closing ? (
+              <>
+                Employees can no longer enroll, whatever the close date says. The{' '}
+                <span className="font-medium text-zinc-800 dark:text-zinc-200">{applicants}</span>{' '}
+                {applicants === 1 ? 'person' : 'people'} who applied stay on the list — it simply becomes final.
+                You can reopen it at any time.
+              </>
+            ) : (
+              <>
+                The class goes back on its planned window and closes on {fmtShort(cls.closes_on)} as originally
+                announced. Eligible employees can enroll again.
+              </>
+            )}
+          </p>
+        </div>
+      </div>
+
+      {phase !== 'confirm' && (
+        <div className="mt-5">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+            <motion.div
+              className={cn('h-full rounded-full', phase === 'error' ? 'bg-rose-500' : accent.bar)}
+              initial={{ width: '0%' }}
+              animate={{ width: phase === 'error' ? '100%' : `${pct}%` }}
+              transition={{ duration: reduce ? 0 : 0.5, ease: [0.16, 1, 0.3, 1] }}
+            />
+          </div>
+          <p className={cn('mt-2 text-xs font-medium', phase === 'error' ? 'text-rose-700 dark:text-rose-300' : phase === 'done' ? accent.text : 'text-zinc-600 dark:text-zinc-400')}>
+            {phase === 'error' ? failure : STEPS[step]}
+          </p>
+        </div>
+      )}
+
+      <div className="mt-5 flex justify-end gap-2">
+        {phase === 'confirm' && (
+          <>
+            <Button type="button" size="sm" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="button" size="sm" className={cn('text-white', accent.btn)} onClick={() => void run()}>
+              {closing ? <Lock className="mr-1.5 h-3.5 w-3.5" /> : <Unlock className="mr-1.5 h-3.5 w-3.5" />}
+              {closing ? 'Close enrollment' : 'Reopen enrollment'}
+            </Button>
+          </>
+        )}
+        {phase === 'error' && (
+          <>
+            <Button type="button" size="sm" variant="outline" onClick={onClose}>Close</Button>
+            <Button type="button" size="sm" className={cn('text-white', accent.btn)} onClick={() => void run()}>Try again</Button>
+          </>
+        )}
       </div>
     </Overlay>
   );

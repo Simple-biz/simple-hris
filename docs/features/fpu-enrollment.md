@@ -48,6 +48,12 @@ and the class returns to its planned window. The two columns are constrained to 
 (`fpu_classes_closed_pair`) — "closed by nobody" is a half-written state. Audited as
 `fpu.class.enrollment_closed` / `…_reopened`, which record the untouched window alongside.
 
+Both directions go through **one confirm-then-progress dialog** (`EnrollmentGateDialog`, 2026-09-17).
+Its progress bar advances on the two things that actually happen — the write lands, then every open
+board is brought back in line — and only completes when both are done. It is deliberately **not** a
+timer: a bar that fills on a schedule would be a lie told to someone about to stop their colleagues
+enrolling. A failure keeps the dialog open with the server's reason and a Try again.
+
 **Closing hides nobody.** The enrollment table is the same table before and after; once closed it
 is simply final — the complete list of people who applied to that class — and HR goes on approving
 seats and marking the class completed from it. The header says so: *"Enrollment closed Sep 17 by
