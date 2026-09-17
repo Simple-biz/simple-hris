@@ -78,14 +78,16 @@ Stubs tab" — the employee cannot tell which figure is wrong, and both come fro
 
 **A pay week reaches the employee already reconciled *(2026-09-17)*.** `getMyPay` spreads
 the CEO tool's week through (`...rest`), so the itemisation added for the CEO — **hourly
-pay** (regular + OT, never called "computed"), `bonus_php` / `bonus_label`, `deduction_php`
-/ `deduction_label` (the employee's own MESA contribution), and `paid_php` beside `paid_usd`
-— arrives here too. That is deliberate rather than incidental: these are the same lines the
+pay** (regular + OT, never called "computed"), the bonus split into `bonus_pab_php` /
+`bonus_tech_php` / `bonus_other_php` / `bonus_adjustment_php`, `orphanage_php`,
+`deduction_php` (the employee's own MESA contribution), `mesa_disbursement_php`, and
+`paid_php` beside `paid_usd` — arrives here too. That is deliberate rather than incidental: these are the same lines the
 employee's own pay stub already shows them, and a bubble that can show a total but not the
 ₱100 that came out of it invites exactly the "why don't these match" question this change
-exists to end. Two guards ride along — an unreconciled remainder is `unexplained_php` and is
-**never attributed to a cause**, and an **absent** money field means *not recorded*, never
-₱0. The `status` translation below is unaffected: it still replaces Accounting's vocabulary
+exists to end. Three guards ride along — an unreconciled remainder is `unexplained_php` and is
+**never attributed to a cause**; an **absent** money field means *not recorded*, never ₱0
+(though on an itemised week a published ₱0 IS a real claim); and `bonus_adjustment_php` is
+**signed**, so a negative one is money withheld and is shown rather than quietly dropped. The `status` translation below is unaffected: it still replaces Accounting's vocabulary
 with `payment_status` before anything reaches an employee.
 
 The same rule blocks the obvious feature request: Penny does **not** judge attendance

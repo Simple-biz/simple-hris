@@ -69,7 +69,7 @@ check(
 
 const serialized = JSON.stringify(rows);
 check(
-  !/"(paid_php|hourly_pay_php|bonus_php|deduction_php|paid_usd)":null/.test(serialized),
+  !/"(paid_php|hourly_pay_php|bonus_total_php|deduction_php|paid_usd|orphanage_php)":null/.test(serialized),
   "no money field is serialized as an explicit null",
   "a null reads as \"we do not hold this\" — absent is the contract",
 );
@@ -80,14 +80,36 @@ check(
 // production, and inventing a name to fill that hole is the guessing this
 // change exists to stop. So the amount is asserted and a missing label is
 // reported as the data observation it is.
-const withBonus = rows.filter((w) => w.bonus_php != null);
+const withBonus = rows.filter((w) => w.bonus_total_php != null);
 check(
-  withBonus.every((w) => Number.isFinite(Number(w.bonus_php))),
+  withBonus.every((w) => Number.isFinite(Number(w.bonus_total_php))),
   "every itemised bonus carries a real amount",
   withBonus.length
-    ? withBonus.map((w) => `${w.period_start}: ${peso(Number(w.bonus_php))}${w.bonus_label ? ` (${w.bonus_label})` : ""}`).join("; ")
+    ? withBonus.map((w) => `${w.period_start}: ${peso(Number(w.bonus_total_php))}${w.bonus_label ? ` (${w.bonus_label})` : ""}`).join("; ")
     : "no bonus weeks in range",
 );
+// The label names only the PAB/Tech part. Where it understates the total the
+// result MUST carry bonus_label_note, or a reader quoting the label reports
+// ₱5,000 against a ₱157,805 bonus — measured on kaner@ 2026-08-23.
+const understated = rows.filter(
+  (w) => w.bonus_label != null && !w.breakdown_unavailable &&
+    Math.abs(Number(w.bonus_pab_php ?? 0) + Number(w.bonus_tech_php ?? 0) - Number(w.bonus_total_php ?? 0)) > 0.011,
+);
+check(
+  understated.every((w) => typeof w.bonus_label_note === "string"),
+  "a bonus_label that understates the total is flagged as partial",
+  understated.length
+    ? understated.map((w) => `${w.period_start}: label "${w.bonus_label}" vs total ${peso(Number(w.bonus_total_php))}`).join("; ")
+    : "no understated labels in range",
+);
+
+const itemised = rows.filter((w) => !w.breakdown_unavailable && w.paid_php != null);
+check(
+  itemised.length > 0,
+  "at least one week is itemised from the wizard snapshot",
+  `${itemised.length} of ${rows.length} week(s) carry a breakdown`,
+);
+
 const unlabelled = withBonus.filter((w) => !w.bonus_label);
 if (unlabelled.length > 0) {
   console.log(
@@ -103,17 +125,33 @@ for (const w of rows) {
     continue;
   }
   const hourly = Number(w.hourly_pay_php);
-  const bonus = Number(w.bonus_php ?? 0);
+  const bonus = Number(w.bonus_total_php ?? 0);
+  const orph = Number(w.orphanage_php ?? 0);
   const ded = Number(w.deduction_php ?? 0);
+  const disb = Number(w.mesa_disbursement_php ?? 0);
   const paid = Number(w.paid_php);
-  const expected = Math.round((hourly + bonus - ded) * 100) / 100;
+  // payment-dispatch.md §4.2.3, identity 1.
+  const expected = Math.round((hourly + bonus + orph - ded + disb) * 100) / 100;
   const ok = w.reconciles === true && Math.abs(expected - paid) <= 0.011;
   observe(
     ok,
     `${w.period_start} reconciles`,
-    `${peso(hourly)} + ${peso(bonus)} − ${peso(ded)} = ${peso(expected)} vs paid ${peso(paid)}` +
+    `${peso(hourly)} + ${peso(bonus)} + ${peso(orph)} − ${peso(ded)} + ${peso(disb)} = ${peso(expected)} vs paid ${peso(paid)}` +
       (w.unexplained_php != null ? ` — unexplained ${peso(Number(w.unexplained_php))}` : ""),
   );
+
+  // payment-dispatch.md §4.2.3, identity 2 — only asserted where the week is
+  // itemised; an un-itemised week has no components to add up, by design.
+  if (!w.breakdown_unavailable) {
+    const parts =
+      Number(w.bonus_pab_php ?? 0) + Number(w.bonus_tech_php ?? 0) +
+      Number(w.bonus_other_php ?? 0) + Number(w.bonus_adjustment_php ?? 0);
+    check(
+      Math.abs(Math.round(parts * 100) / 100 - bonus) <= 0.011,
+      `${w.period_start} bonus components add to the bonus total`,
+      `PAB ${peso(Number(w.bonus_pab_php ?? 0))} + Tech ${peso(Number(w.bonus_tech_php ?? 0))} + Other ${peso(Number(w.bonus_other_php ?? 0))} + Adj ${peso(Number(w.bonus_adjustment_php ?? 0))} = ${peso(parts)} vs ${peso(bonus)}`,
+    );
+  }
 }
 
 /* ── The totals the CEO was actually asking for ──────────────────────────── */
@@ -123,9 +161,12 @@ for (const w of rows) {
 // the result must SAY so rather than let a reader find the gap themselves.
 if (typeof totals.sum_hourly_pay_php === "number" && typeof totals.sum_paid_php === "number") {
   const expected =
-    Math.round(((totals.sum_hourly_pay_php as number) + Number(totals.sum_bonus_php ?? 0) - Number(totals.sum_deduction_php ?? 0)) * 100) / 100;
+    Math.round(((totals.sum_hourly_pay_php as number) + Number(totals.sum_bonus_total_php ?? 0) + Number(totals.sum_orphanage_php ?? 0) - Number(totals.sum_deduction_php ?? 0) + Number(totals.sum_mesa_disbursement_php ?? 0)) * 100) / 100;
   const closes = Math.abs(expected - (totals.sum_paid_php as number)) <= 0.011;
-  const detail = `${peso(totals.sum_hourly_pay_php as number)} + ${peso(Number(totals.sum_bonus_php ?? 0))} − ${peso(Number(totals.sum_deduction_php ?? 0))} = ${peso(expected)} vs ${peso(totals.sum_paid_php as number)}`;
+  const detail =
+    `${peso(totals.sum_hourly_pay_php as number)} + ${peso(Number(totals.sum_bonus_total_php ?? 0))} + ` +
+    `${peso(Number(totals.sum_orphanage_php ?? 0))} − ${peso(Number(totals.sum_deduction_php ?? 0))} + ` +
+    `${peso(Number(totals.sum_mesa_disbursement_php ?? 0))} = ${peso(expected)} vs ${peso(totals.sum_paid_php as number)}`;
   const unchecked = Number(totals.weeks_unchecked ?? 0);
   if (unchecked > 0) {
     check(

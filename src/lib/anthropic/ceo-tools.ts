@@ -19,7 +19,10 @@ import {
   buildReconciledPayWeeks,
   totalsFor,
   type PayRecordInput,
+  type WizardSnapshotInput,
 } from '@/lib/penny/pay-reconciliation';
+import { getAppSettingsWithMeta } from '@/lib/supabase/app-settings';
+import { finalPaySnapshotKey } from '@/lib/payroll/paystub-fresh';
 import {
   createSupabaseServiceRoleClient,
   createSupabaseServerClient,
@@ -432,7 +435,7 @@ async function getEmployeePay(workEmail: string, weeksRaw: unknown): Promise<Too
     supabase
       .from('disbursement_records')
       .select(
-        'cycle_period_start, cycle_period_end, recipient_name, total_hours, regular_hours, ot_hours, amount_php, amount_usd, status, paid_amount_usd, paid_at',
+        'cycle_period_start, cycle_period_end, recipient_name, total_hours, regular_hours, ot_hours, amount_php, amount_usd, status, paid_amount_usd, paid_at, source_file',
       )
       .or(orFilter)
       .order('cycle_period_start', { ascending: false })
@@ -489,8 +492,71 @@ async function getEmployeePay(workEmail: string, weeksRaw: unknown): Promise<Too
     paid_at: (r.paid_at as string | null) ?? null,
   }));
 
+  // The bonus ITEMIZATION lives in the Payroll Wizard's final-pay snapshot,
+  // reached by the cycle's own source file — `payment_dispatches` freezes only
+  // a bonus TOTAL plus a label that names its PAB/Tech part, so quoting that
+  // label as the bonus understates it (measured: ₱157,805 labelled "PAB ₱5,000").
+  // The dispatch row's file is preferred because it is the row that paid.
+  const fileByStart = new Map<string, string>();
+  for (const r of rows) {
+    const start = String(r.cycle_period_start ?? '');
+    const file = String(r.source_file ?? '');
+    if (start && file) fileByStart.set(start, file);
+  }
+  for (const d of (dispatchRes.data ?? []) as Array<Record<string, unknown>>) {
+    const start = String(d.cycle_period_start ?? '');
+    const file = String(d.cycle_source_file ?? '');
+    if (start && file) fileByStart.set(start, file);
+  }
+  const snapshots = new Map<string, WizardSnapshotInput>();
+  if (fileByStart.size > 0) {
+    const keys = [...new Set([...fileByStart.values()].map(finalPaySnapshotKey))];
+    const settings = await getAppSettingsWithMeta(keys).catch(() => ({}));
+    for (const [start, file] of fileByStart) {
+      const meta = (settings as Record<string, { value: string } | undefined>)[finalPaySnapshotKey(file)];
+      if (!meta) continue;
+      let entry: Record<string, unknown> | null = null;
+      try {
+        const parsed = JSON.parse(meta.value) as unknown;
+        const finals =
+          parsed && typeof parsed === 'object' && 'finals' in parsed
+            ? ((parsed as { finals?: unknown }).finals as Record<string, unknown> | undefined)
+            : undefined;
+        if (!finals) continue;
+        // `finals` keys the SAME entry under work and personal email.
+        for (const a of aliases) {
+          const hit = finals[a];
+          if (hit && typeof hit === 'object') {
+            entry = hit as Record<string, unknown>;
+            break;
+          }
+        }
+      } catch {
+        // An unreadable snapshot leaves the week un-itemised, which the builder
+        // reports as breakdown_unavailable rather than as a ₱0 breakdown.
+        continue;
+      }
+      if (!entry) continue;
+      snapshots.set(start, {
+        source_file: file,
+        regular_pay_php: numOrNull(entry.regularPay),
+        ot_pay_php: numOrNull(entry.otPay),
+        pab_php: numOrNull(entry.perfectAttendanceBonus),
+        tech_php: numOrNull(entry.techBonus),
+        other_bonuses_php: numOrNull(entry.otherBonuses),
+        adjustment_php: numOrNull(entry.adjustment),
+        adjustment_note: typeof entry.adjustmentNote === 'string' ? entry.adjustmentNote : null,
+        orphanage_php: numOrNull(entry.orphanagePay),
+        mesa_deduction_php: numOrNull(entry.mesaDeduction),
+        mesa_disbursement_php: numOrNull(entry.mesaDisbursement),
+        final_php: numOrNull(entry.final),
+      });
+    }
+  }
+
   const { entries, recipient_name } = buildReconciledPayWeeks({
     records,
+    snapshots,
     dispatches: ((dispatchRes.data ?? []) as Array<Record<string, unknown>>).map((d) => ({
       period_start: (d.cycle_period_start as string | null) ?? null,
       period_end: (d.cycle_period_end as string | null) ?? null,
@@ -522,15 +588,25 @@ async function getEmployeePay(workEmail: string, weeksRaw: unknown): Promise<Too
     recipient_name: rows[0]?.recipient_name ?? recipient_name ?? null,
     currency: 'PHP (₱) and USD ($) as each field is labelled',
     field_notes:
-      'EVERY WEEK ADDS UP: hourly_pay_php + bonus_php − deduction_php = paid_php. Present it that way. ' +
+      'EVERY WEEK ADDS UP, and this is the payroll\'s own identity — show the workings, not just the endpoints: ' +
+      'hourly_pay_php + bonus_total_php + orphanage_php − deduction_php + mesa_disbursement_php = paid_php, and ' +
+      'bonus_pab_php + bonus_tech_php + bonus_other_php + bonus_adjustment_php = bonus_total_php. ' +
       '**hourly_pay_php / hourly_pay_usd are REGULAR + OT PAY ONLY — hours × rate.** Call this "Hourly Pay", NEVER "computed", ' +
       '"computed pay" or "total": it is one line of a payslip, and naming a partial figure like a total is what made a CEO ' +
-      'think the payroll was wrong. bonus_php = a bonus folded into the payment, named by bonus_label (e.g. "PAB ₱5,000"). ' +
-      'deduction_php = money withheld from this week, named by deduction_label (MESA is the employee\'s OWN savings ' +
-      'contribution, not a charge — say so if asked). paid_php / paid_usd = what actually left, bonuses and deductions already in it. ' +
-      'reconciles=true means the arithmetic closes exactly; if it is false, unexplained_php is the remainder — report it and DO NOT ' +
-      'guess what it was. A money field that is ABSENT is genuinely not on record — say "not recorded", never "₱0" and never ' +
-      '"the system does not store this". status: paid = sent; pending = owed but not yet sent; not_paid/threshold/problem = held. ' +
+      'think the payroll was wrong. BONUSES: itemise them — bonus_pab_php (Perfect Attendance), bonus_tech_php, ' +
+      'bonus_other_php (every earned KPI / department bonus) and bonus_adjustment_php (Accounting\'s SIGNED adjustment; ' +
+      'NEGATIVE means money withheld — report it, never hide it or treat it as a bonus). ' +
+      '**bonus_label is frozen from the dispatch and names only the PAB/Tech part — it is NOT the bonus.** When ' +
+      'bonus_label_note is present the label understates the total; use the itemised fields and ignore the label. ' +
+      'deduction_php = the MESA contribution withheld (the employee\'s OWN savings, not a charge — say so if asked); ' +
+      'mesa_disbursement_php = MESA money paid back OUT to them; orphanage_php = orphanage pay added. ' +
+      'paid_php / paid_usd = what actually left. reconciles=true means the identity closes exactly; if false, ' +
+      'unexplained_php is the remainder — report it and DO NOT guess what it was. ' +
+      'breakdown_unavailable=true means no wizard snapshot exists for that cycle, so the bonus could not be itemised — ' +
+      'say the breakdown is unavailable rather than presenting ₱0 for a component nobody computed. ' +
+      'A money field that is ABSENT is genuinely not on record — say "not recorded", never "₱0" and never ' +
+      '"the system does not store this". A ZERO on an itemised week IS a real computed claim. ' +
+      'status: paid = sent; pending = owed but not yet sent; not_paid/threshold/problem = held. ' +
       'source "live_dispatch_log" = straight from the live payment log (freshest; the weekly record is not seeded, so hours and ' +
       'hourly pay are missing and the paid amount is authoritative).',
     weeks: entries,

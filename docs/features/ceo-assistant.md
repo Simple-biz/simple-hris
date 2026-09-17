@@ -72,7 +72,7 @@ Defined in `src/lib/anthropic/ceo-tools.ts`. The model **never writes SQL** — 
 | Tool | Input | What it returns |
 |---|---|---|
 | `find_employee` | `query` *(string, required)* — name, partial name, or email | `{ match_count, active_matches, offboarded_matches, matches[≤8], truncated, lookup_errors?, note? }`. Each match: `{ name, work_email, department, employee_id, status }`, plus `off_boarded_at / off_boarded_reason / off_boarded_by / departments` when `status = 'offboarded'`. The model is told to call this **first** whenever a person is named, and to disambiguate (not guess) on multiple matches. |
-| `get_employee_pay` | `work_email` *(string, required)*, `weeks` *(int 1–26, default 1)* | One entry per pay week (most recent first) + a summed `totals`. Each week **reconciles**: hourly pay + bonus − deduction = paid, in both ₱ and $. |
+| `get_employee_pay` | `work_email` *(string, required)*, `weeks` *(int 1–26, default 1)* | One entry per pay week (most recent first) + a summed `totals`. Each week **reconciles** on the payroll's own identity, in both ₱ and $, with the bonus **itemised** into PAB / Tech / Other / Adjustment. |
 | `get_payroll_report` | `weeks` *(int 1–12, default 4)* | Company-wide weekly totals (paid / outstanding / owed) + a combined `totals`. |
 
 ### `find_employee`
@@ -84,14 +84,21 @@ Loads the active roster via `getEmployeesForAuthorizedServerRoute()` **and every
 - Normalizes the input email (`normEmail`) and **shape-guards** it with `isSafeEmail()` — rejects commas/parens/quotes/whitespace because the value flows into a PostgREST `or()` filter unquoted.
 - Expands to an **alias set**: looks up the master record (`getEmployeeMasterRecord`) and adds `work_email`, `personal_email`, `alternate_work_email`, `alternate_work_email_2` (each shape-guarded), since a disbursement row may be keyed on any of the person's addresses.
 - Queries `disbursement_records` (service-role client, falls back to server client) with `.or(recipient_email.ilike.<alias>,…)`, ordered by `cycle_period_start` desc, limited to `weeks`.
-- Per-week entry: `period_start`, `period_end`, `total_hours`, `regular_hours`, `ot_hours`, `hourly_pay_php`, `hourly_pay_usd`, `bonus_php`, `bonus_label`, `deduction_php`, `deduction_label`, `paid_php`, `paid_usd`, `status`, `paid_at`, `source`, `reconciles`.
-- `totals`: `weeks_returned`, `sum_hourly_pay_php`, `sum_hourly_pay_usd`, `sum_bonus_php`, `sum_deduction_php`, `sum_paid_php`, `sum_paid_usd`, `all_weeks_reconcile` (rounded to 2 dp).
+- Per-week entry: `period_start`, `period_end`, `total_hours`, `regular_hours`, `ot_hours`, `hourly_pay_php`, `hourly_pay_usd`, `bonus_pab_php`, `bonus_tech_php`, `bonus_other_php`, `bonus_adjustment_php`, `bonus_total_php`, `bonus_label`, `orphanage_php`, `deduction_php`, `mesa_disbursement_php`, `paid_php`, `paid_usd`, `status`, `paid_at`, `source`, `breakdown_source`, `reconciles`.
+- `totals`: `weeks_returned`, `sum_hourly_pay_php`, `sum_hourly_pay_usd`, `sum_bonus_pab_php`, `sum_bonus_tech_php`, `sum_bonus_other_php`, `sum_bonus_adjustment_php`, `sum_bonus_total_php`, `sum_orphanage_php`, `sum_deduction_php`, `sum_mesa_disbursement_php`, `sum_paid_php`, `sum_paid_usd`, `weeks_reconciled`, `all_checked_weeks_reconcile` (rounded to 2 dp).
 - Empty result returns a `note` ("new hire / non-payroll / paid outside this system") rather than a bare empty array.
 
 #### Every week adds up *(2026-09-17)*
 
-**`hourly_pay + bonus − deduction = paid`**, published per week and checked in the result
-(`reconciles`, and `unexplained_php` when it does not close). Carla, pulling four cycles for
+The payroll's **own two identities**, taken verbatim from
+[payment-dispatch.md §4.2.3](./payment-dispatch.md#423-what-the-exports-must-carry), published
+per week and checked in the result (`reconciles`, and `unexplained_php` when one does not close):
+
+```
+Regular+OT + Bonus Total + Orphanage − MESA Deduction + MESA Disbursement = Amount (PHP)
+PAB + Tech + Other Bonuses + Adjustment                                   = Bonus Total
+```
+ Carla, pulling four cycles for
 an employee: *"Why is the paid USD different from the computed USD? Wouldn't they be the
 same, if not WHY?"* — then, on the answer: *"it should give me **EVERYTHING** … if it wants
 to give a number like that it should be called **Hourly Pay**, not computed, computed sounds
@@ -121,6 +128,27 @@ Two rules the pure module enforces, both tested:
 - **Two records of the same payment that disagree are both reported.** When the weekly
   record's `paid_amount_usd` and the dispatch log's `amount_usd` differ by more than a cent,
   `paid_usd_disagreement` names both figures instead of silently preferring one.
+
+**The itemization comes from the Payroll Wizard's final-pay snapshot, not from the dispatch
+row.** `payment_dispatches` freezes only a bonus **total** plus `system_bonus_label`, and that
+label names only its PAB/Tech part — measured 2026-09-17, `kaner@`'s 2026-08-23 row reads
+`system_bonus_php: 157805` labelled **"PAB ₱5,000"**, hiding ₱152,805 of Other Bonuses.
+Describing the bonus from the label understates it by two orders of magnitude, so the week is
+itemised from `app_settings["payroll.wizard.final_pay.<sourceFile>"].finals[email]` —
+**the carrier that priced the payment** — reached through the dispatch row's own
+`cycle_source_file` (falling back to `disbursement_records.source_file`). Where the label still
+understates the total the result carries `bonus_label_note` telling the model to ignore it.
+
+That snapshot is also the authority on **Regular + OT**: `adrianm@`'s 2026-09-06 week reads
+₱9,616.00 in `disbursement_records.amount_php` but ₱9,615.03 in the snapshot, and only the
+snapshot closes the identity. A week with no snapshot is marked `breakdown_unavailable` with
+`breakdown_source` saying why — never a ₱0 breakdown nobody computed
+([payment-dispatch.md §4.2.2](./payment-dispatch.md)). On an itemised week a **zero is
+published**, because there a zero is a real computed claim.
+
+**`bonus_adjustment_php` is SIGNED and is never gated on `> 0`** — a negative Adjustment is
+Accounting withholding money, and hiding it is the one thing `payment-dispatch.md:644` forbids
+outright. It is an adjustment, not a bonus, and the field notes say so.
 
 Pure assembly + reconciliation: `src/lib/penny/pay-reconciliation.ts` (23 tests, pinned
 against the four real weeks measured in production on 2026-09-17). Live check:

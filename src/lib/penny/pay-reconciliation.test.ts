@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   applyReconciliation,
+  applySnapshotItemization,
   buildReconciledPayWeeks,
   mergeDispatchesByWeek,
   mesaDeductionForWeek,
@@ -10,6 +11,7 @@ import {
   type MesaDepositInput,
   type PayRecordInput,
   type PayWeekOutput,
+  type WizardSnapshotInput,
 } from "./pay-reconciliation";
 
 /**
@@ -92,7 +94,7 @@ test("an unknown money figure is OMITTED, never emitted as null", () => {
   });
   const json = JSON.parse(JSON.stringify(entries[0])) as Record<string, unknown>;
   assert.equal("paid_php" in json, false, "a null paid_php is exactly the bug");
-  assert.equal("bonus_php" in json, false);
+  assert.equal("bonus_total_php" in json, false);
   assert.match(String(json.paid_php_note), /not paid yet/i);
 });
 
@@ -100,7 +102,7 @@ test("the bonus is named, not guessed", () => {
   // "almost certainly reflects a bonus" was a guess against a row that said so.
   const { entries } = build();
   const pab = entries.find((e) => e.period_start === "2026-08-23")!;
-  assert.equal(pab.bonus_php, 5000);
+  assert.equal(pab.bonus_total_php, 5000);
   assert.equal(pab.bonus_label, "PAB ₱5,000");
   const tech = entries.find((e) => e.period_start === "2026-09-06")!;
   assert.equal(tech.bonus_label, "Tech ₱1,850");
@@ -127,7 +129,7 @@ test("hourly + bonus − deduction = paid, to the peso, on all four weeks", () =
 test("the four-week totals are the ones the CEO was asking for", () => {
   const t = totalsFor(build().entries);
   assert.equal(t.sum_hourly_pay_php, 62396.59);
-  assert.equal(t.sum_bonus_php, 6850);
+  assert.equal(t.sum_bonus_total_php, 6850);
   assert.equal(t.sum_deduction_php, 400);
   assert.equal(t.sum_paid_php, 68846.59);
   assert.equal(t.sum_paid_usd, 1102.77);
@@ -137,7 +139,7 @@ test("the four-week totals are the ones the CEO was asking for", () => {
   assert.equal("totals_note" in t, false);
   // The identity itself, not just the four numbers.
   assert.equal(
-    Math.round(((t.sum_hourly_pay_php as number) + (t.sum_bonus_php as number) - (t.sum_deduction_php as number)) * 100) / 100,
+    Math.round(((t.sum_hourly_pay_php as number) + (t.sum_bonus_total_php as number) - (t.sum_deduction_php as number)) * 100) / 100,
     t.sum_paid_php,
   );
 });
@@ -178,7 +180,7 @@ test("a week with no end stamp still closes at Sunday + 6", () => {
 test("an unexplained remainder is reported, never absorbed", () => {
   const e: PayWeekOutput = {
     period_start: "2026-09-06", period_end: "2026-09-12", total_hours: 44.1, regular_hours: 40, ot_hours: 4.1,
-    hourly_pay_php: 16383.25, bonus_php: 1850, deduction_php: 100, paid_php: 18633.25,
+    hourly_pay_php: 16383.25, bonus_total_php: 1850, deduction_php: 100, paid_php: 18633.25,
     status: "paid", paid_at: "2026-09-15", source: "weekly_records",
   };
   applyReconciliation(e);
@@ -298,7 +300,7 @@ test("totals say so when they are NOT a closed sum", () => {
   assert.match(String(t.totals_note), /NOT a closed sum/);
   // And the sums genuinely do not close — which is why the note has to exist.
   const closed =
-    Math.round(((t.sum_hourly_pay_php as number) + (t.sum_bonus_php as number) - (t.sum_deduction_php as number)) * 100) / 100;
+    Math.round(((t.sum_hourly_pay_php as number) + (t.sum_bonus_total_php as number) - (t.sum_deduction_php as number)) * 100) / 100;
   assert.notEqual(closed, t.sum_paid_php);
 });
 
@@ -311,7 +313,7 @@ test("a bonus amount with no label in the data is still reported as a bonus", ()
     mesaDeposits: [{ deposit_date: "2026-08-21", worker_contribution_php: 100 }],
     weeks: 1,
   });
-  assert.equal(entries[0].bonus_php, 3935);
+  assert.equal(entries[0].bonus_total_php, 3935);
   assert.equal(entries[0].bonus_label, undefined);
   assert.equal(entries[0].reconciles, true);
 });
@@ -332,4 +334,153 @@ test("no note or label ever calls hourly pay \"computed\"", () => {
   });
   const payload = JSON.stringify([unpaid.entries, mixed.entries, totalsFor(mixed.entries)]);
   assert.equal(/computed/i.test(payload), false, payload);
+});
+
+/* ── The wizard snapshot is the authority on HOW a payment was composed ──── */
+
+const SNAP = (o: Partial<WizardSnapshotInput> = {}): WizardSnapshotInput => ({
+  source_file: "simple-biz_daily_report_2026-09-06_to_2026-09-12.csv",
+  regular_pay_php: 0, ot_pay_php: 0, pab_php: 0, tech_php: 0, other_bonuses_php: 0,
+  adjustment_php: 0, adjustment_note: null, orphanage_php: 0,
+  mesa_deduction_php: 0, mesa_disbursement_php: 0, final_php: null,
+  ...o,
+});
+
+test("the full documented identity is the one that is checked", () => {
+  // payment-dispatch.md §4.2.3:
+  //   Regular+OT + Bonus Total + Orphanage − MESA Deduction + MESA Disbursement = Amount
+  const { entries } = buildReconciledPayWeeks({
+    records: [REC({ period_start: "2026-09-06", period_end: "2026-09-12", hourly_pay_php: 999, status: "paid" })],
+    dispatches: [DISP({ period_start: "2026-09-06", paid_php: 24_000, paid_usd: 400 })],
+    mesaDeposits: [],
+    snapshots: new Map([["2026-09-06", SNAP({
+      regular_pay_php: 14_000, ot_pay_php: 500, pab_php: 5_000, tech_php: 1_850,
+      other_bonuses_php: 2_000, adjustment_php: 250, orphanage_php: 500,
+      mesa_deduction_php: 100, mesa_disbursement_php: 0, final_php: 24_000,
+    })]]),
+    weeks: 1,
+  });
+  const e = entries[0];
+  assert.equal(e.hourly_pay_php, 14_500, "snapshot regular+OT overrides the disbursement figure");
+  assert.equal(e.bonus_total_php, 9_100); // 5000 + 1850 + 2000 + 250
+  assert.equal(e.orphanage_php, 500);
+  assert.equal(e.deduction_php, 100);
+  assert.equal(e.reconciles, true);
+});
+
+test("kaner's ₱157,805 bonus is itemised, and the label that hid it is flagged", () => {
+  // Measured 2026-09-17: system_bonus_php 157,805 labelled "PAB ₱5,000" —
+  // ₱152,805 of Other Bonuses invisible behind the label.
+  const { entries } = buildReconciledPayWeeks({
+    records: [REC({ period_start: "2026-08-23", period_end: "2026-08-29", hourly_pay_php: 12405.98, status: "paid" })],
+    dispatches: [DISP({ period_start: "2026-08-23", paid_php: 170110.98, bonus_php: 157805, bonus_label: "PAB ₱5,000" })],
+    mesaDeposits: [],
+    snapshots: new Map([["2026-08-23", SNAP({
+      source_file: "simple-biz_daily_report_2026-08-23_to_2026-08-29.csv",
+      regular_pay_php: 12405.98, ot_pay_php: 0, pab_php: 5000, other_bonuses_php: 152805,
+      mesa_deduction_php: 100, final_php: 170110.98,
+    })]]),
+    weeks: 1,
+  });
+  const e = entries[0];
+  assert.equal(e.bonus_pab_php, 5000);
+  assert.equal(e.bonus_other_php, 152805);
+  assert.equal(e.bonus_total_php, 157805);
+  assert.match(String(e.bonus_label_note), /names only part/);
+  assert.match(String(e.bonus_label_note), /157805|157,805\.00/);
+  assert.equal(e.reconciles, true);
+});
+
+test("a NEGATIVE adjustment is money withheld and is never hidden", () => {
+  // payment-dispatch.md:644 — nothing may gate the display on `> 0`.
+  const { entries } = buildReconciledPayWeeks({
+    records: [REC({ period_start: "2026-09-06", hourly_pay_php: 14_000, status: "paid" })],
+    dispatches: [DISP({ period_start: "2026-09-06", paid_php: 11_000 })],
+    mesaDeposits: [],
+    snapshots: new Map([["2026-09-06", SNAP({
+      regular_pay_php: 14_000, adjustment_php: -3_000, adjustment_note: "overpayment recovery",
+      final_php: 11_000,
+    })]]),
+    weeks: 1,
+  });
+  const e = entries[0];
+  const json = JSON.parse(JSON.stringify(e)) as Record<string, unknown>;
+  assert.equal("bonus_adjustment_php" in json, true, "a withholding must never be dropped");
+  assert.equal(e.bonus_adjustment_php, -3_000);
+  assert.equal(e.bonus_total_php, -3_000);
+  assert.equal(e.bonus_adjustment_note, "overpayment recovery");
+  assert.equal(e.reconciles, true);
+});
+
+test("a zero component on an ITEMISED week is a real claim and is published", () => {
+  // The omit rule covers figures nobody has — not figures the wizard computed
+  // to be nothing. Otherwise "no PAB this week" reads as "we never checked".
+  const { entries } = buildReconciledPayWeeks({
+    records: [REC({ period_start: "2026-08-30", hourly_pay_php: 15547.23, status: "paid" })],
+    dispatches: [DISP({ period_start: "2026-08-30", paid_php: 15447.23 })],
+    mesaDeposits: [],
+    snapshots: new Map([["2026-08-30", SNAP({ regular_pay_php: 15547.23, mesa_deduction_php: 100, final_php: 15447.23 })]]),
+    weeks: 1,
+  });
+  const json = JSON.parse(JSON.stringify(entries[0])) as Record<string, unknown>;
+  for (const k of ["bonus_pab_php", "bonus_tech_php", "bonus_other_php", "bonus_adjustment_php", "orphanage_php"]) {
+    assert.equal(k in json, true, `${k} must be published as a computed zero`);
+  }
+  assert.equal(entries[0].breakdown_unavailable, undefined);
+});
+
+test("no snapshot means breakdown_unavailable — never a ₱0 breakdown nobody computed", () => {
+  const { entries } = buildReconciledPayWeeks({
+    records: [REC({ period_start: "2026-08-23", hourly_pay_php: 12405.98, status: "paid" })],
+    dispatches: [DISP({ period_start: "2026-08-23", paid_php: 170110.98, bonus_php: 157805, bonus_label: "PAB ₱5,000" })],
+    mesaDeposits: [],
+    snapshots: new Map(),
+    weeks: 1,
+  });
+  const e = entries[0];
+  const json = JSON.parse(JSON.stringify(e)) as Record<string, unknown>;
+  assert.equal(e.breakdown_unavailable, true);
+  assert.equal("bonus_pab_php" in json, false);
+  assert.equal("bonus_other_php" in json, false);
+  assert.match(String(e.breakdown_source), /not itemised/);
+  assert.match(String(e.breakdown_source), /names only its PAB\/Tech part/);
+});
+
+test("the wizard's Final disagreeing with what was dispatched is reported, not resolved", () => {
+  const { entries } = buildReconciledPayWeeks({
+    records: [REC({ period_start: "2026-09-06", hourly_pay_php: 14_000, status: "paid" })],
+    dispatches: [DISP({ period_start: "2026-09-06", paid_php: 14_000 })],
+    mesaDeposits: [],
+    snapshots: new Map([["2026-09-06", SNAP({ regular_pay_php: 14_000, final_php: 13_000 })]]),
+    weeks: 1,
+  });
+  assert.match(String(entries[0].wizard_final_disagreement), /13,?000\.00/);
+  assert.match(String(entries[0].wizard_final_disagreement), /14,?000\.00/);
+  assert.match(String(entries[0].wizard_final_disagreement), /do not pick one/i);
+});
+
+test("the snapshot's MESA figure wins over the ledger's — it is what was applied", () => {
+  const { entries } = buildReconciledPayWeeks({
+    records: [REC({ period_start: "2026-09-06", period_end: "2026-09-12", hourly_pay_php: 14_000, status: "paid" })],
+    dispatches: [DISP({ period_start: "2026-09-06", paid_php: 14_000 })],
+    mesaDeposits: [{ deposit_date: "2026-09-11", worker_contribution_php: 100 }],
+    snapshots: new Map([["2026-09-06", SNAP({ regular_pay_php: 14_000, mesa_deduction_php: 0, final_php: 14_000 })]]),
+    weeks: 1,
+  });
+  assert.equal(entries[0].deduction_php, 0, "the payment deducted nothing, whatever the ledger says");
+  assert.equal(entries[0].reconciles, true);
+});
+
+test("a MESA disbursement is money paid back OUT and adds to the payment", () => {
+  const { entries } = buildReconciledPayWeeks({
+    records: [REC({ period_start: "2026-09-06", hourly_pay_php: 14_000, status: "paid" })],
+    dispatches: [DISP({ period_start: "2026-09-06", paid_php: 19_900 })],
+    mesaDeposits: [],
+    snapshots: new Map([["2026-09-06", SNAP({
+      regular_pay_php: 14_000, mesa_deduction_php: 100, mesa_disbursement_php: 6_000, final_php: 19_900,
+    })]]),
+    weeks: 1,
+  });
+  assert.equal(entries[0].mesa_disbursement_php, 6_000);
+  assert.equal(entries[0].reconciles, true);
 });

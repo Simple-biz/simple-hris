@@ -89,7 +89,7 @@ theirs.
 
 | Tool | Ask it |
 |---|---|
-| `get_employee_pay` | One person's recent weekly pay, **reconciled**: hours, **hourly pay** (regular + OT, never called "computed"), the itemised bonus, the itemised MESA deduction, and what was actually paid in **both ₱ and $** — so `hourly + bonus − deduction = paid` is visible rather than a gap the reader has to guess at. Plus a summed total so "add up the last four weeks" answers directly. An unreconciled remainder comes back as `unexplained_php`, never attributed. |
+| `get_employee_pay` | One person's recent weekly pay, **reconciled on the payroll's own identity** (`payment-dispatch.md` §4.2.3): hours, **hourly pay** (regular + OT, never called "computed"), the bonus **itemised into PAB / Tech / Other / Adjustment**, Orphanage, the MESA deduction and disbursement, and what was actually paid in **both ₱ and $**. The itemization is read from the **Payroll Wizard final-pay snapshot** — the carrier that priced the payment — because `payment_dispatches.system_bonus_label` names only the PAB/Tech part (₱157,805 labelled "PAB ₱5,000" on a real row). Plus a summed total so "add up the last four weeks" answers directly. An unreconciled remainder comes back as `unexplained_php`, never attributed. |
 | `get_payroll_report` | Company-wide weekly totals: paid, to how many people, still outstanding. |
 | `get_financial_summary` | A **calendar month**'s payroll financials with a per-week breakdown *and* the prior month's headline plus % change — enough to write a trend. Pass `YYYY-MM`. |
 | `get_overtime_leaders` | Rank people by overtime over recent pay weeks, with the exact period covered so a report can be labelled. |
@@ -166,13 +166,24 @@ a gap waiting to be filled.
   skipped every *already-paid* week — was reported to the CEO as *"the system
   stores the actual paid amount in USD only"*. It stores it in
   `payment_dispatches.amount_php`, and always had.
-- **`get_employee_pay` still cannot see accounting adjustments or Payroll Notes
-  entries.** It reconciles `hourly + bonus − deduction = paid`; when that does
-  not close, the remainder is returned as `unexplained_php` and Penny is told to
-  report it as unexplained. **It must not name a cause.** Those two sources are
-  the usual culprits and neither is readable from this tool — use
-  `get_bonus_breakdown` (which reads the wizard's `bonusOverrides` and the notes
-  board) before offering anyone an explanation.
+- **`system_bonus_label` is NOT the bonus.** It is frozen from the dispatch and
+  names only the PAB/Tech part of a total that may be far larger — measured
+  2026-09-17, `kaner@`'s 2026-08-23 row is `system_bonus_php: 157805` labelled
+  **"PAB ₱5,000"**, with ₱152,805 of Other Bonuses invisible behind it. Penny
+  itemises from the wizard's final-pay snapshot instead, and where the label
+  still understates the total the result carries `bonus_label_note` telling it
+  to ignore the label.
+- **A week with no wizard snapshot is `breakdown_unavailable`, not a ₱0
+  breakdown.** Penny says the itemization is unavailable rather than printing
+  components nobody computed. On a week that IS itemised the reverse holds — a
+  ₱0 PAB is a real claim and is published, because "no PAB this week" and "we
+  never checked" are different answers.
+- **`get_employee_pay` says WHAT a bonus was, never WHERE it came from.** It
+  reads the wizard's computed figures; it cannot see which KPI row or department
+  calculator produced them. `get_bonus_breakdown` is the tool for provenance,
+  and it is **Admin-only** — the CEO surface deliberately does not have it.
+  When the identity does not close, the remainder is `unexplained_php` and Penny
+  **must not name a cause**.
 
 ---
 

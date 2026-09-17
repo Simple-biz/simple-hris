@@ -95,6 +95,36 @@ export type MesaDepositInput = {
   worker_contribution_php: number | null;
 };
 
+/**
+ * One person's entry in the Payroll Wizard's final-pay snapshot for a cycle
+ * (`app_settings["payroll.wizard.final_pay.<sourceFile>"].finals[email]`),
+ * reached from the dispatch row's own `cycle_source_file`.
+ *
+ * **This is the carrier that priced the payment**, so it is the authority on
+ * how the payment was composed. `payment_dispatches.system_bonus_php` is a
+ * frozen *total* with a label that names only its PAB/Tech part — measured
+ * 2026-09-17, `kaner@`'s 2026-08-23 row reads `system_bonus_php: 157805`
+ * labelled **"PAB ₱5,000"**, hiding ₱152,805 of Other Bonuses. Quoting that
+ * label as the bonus misstates it by two orders of magnitude, which is why the
+ * itemization is read from here instead.
+ */
+export type WizardSnapshotInput = {
+  source_file: string;
+  regular_pay_php: number | null;
+  ot_pay_php: number | null;
+  pab_php: number | null;
+  tech_php: number | null;
+  other_bonuses_php: number | null;
+  /** SIGNED. Accounting's delta — negative is money being withheld. */
+  adjustment_php: number | null;
+  adjustment_note: string | null;
+  orphanage_php: number | null;
+  mesa_deduction_php: number | null;
+  mesa_disbursement_php: number | null;
+  /** The wizard's own Final for the week. */
+  final_php: number | null;
+};
+
 export type PayWeekOutput = {
   period_start: string;
   period_end: string | null;
@@ -103,20 +133,35 @@ export type PayWeekOutput = {
   ot_hours: number;
   hourly_pay_php?: number;
   hourly_pay_usd?: number;
-  bonus_php?: number;
+  /** PAB + Tech + Other Bonuses + Adjustment. **SIGNED** — can be negative. */
+  bonus_total_php?: number;
+  bonus_pab_php?: number;
+  bonus_tech_php?: number;
+  bonus_other_php?: number;
+  /** SIGNED accounting delta. Never gated on `> 0` — that hides a withholding. */
+  bonus_adjustment_php?: number;
+  bonus_adjustment_note?: string;
+  /** The dispatch's frozen label. Names only PAB/Tech — NEVER the whole bonus. */
   bonus_label?: string;
+  bonus_label_note?: string;
+  orphanage_php?: number;
   deduction_php?: number;
   deduction_label?: string;
+  mesa_disbursement_php?: number;
   paid_php?: number;
   paid_usd?: number;
   paid_php_note?: string;
   status: string | null;
   paid_at: string | null;
   source: string;
+  /** Where the itemization came from, or why there is none. */
+  breakdown_source?: string;
+  breakdown_unavailable?: true;
   reconciles?: boolean;
   unexplained_php?: number;
   reconciliation_note?: string;
   paid_usd_disagreement?: string;
+  wizard_final_disagreement?: string;
 };
 
 /** Cent-level tolerance. Money is stored to 2dp; anything larger is real. */
@@ -220,9 +265,11 @@ export function buildReconciledPayWeeks(args: {
   records: PayRecordInput[];
   dispatches: DispatchInput[];
   mesaDeposits: MesaDepositInput[];
+  /** Keyed by `period_start`. The authority on how a payment was composed. */
+  snapshots?: Map<string, WizardSnapshotInput>;
   weeks: number;
 }): { entries: PayWeekOutput[]; recipient_name: string | null } {
-  const { records, dispatches, mesaDeposits, weeks } = args;
+  const { records, dispatches, mesaDeposits, snapshots, weeks } = args;
   const dispatched = mergeDispatchesByWeek(dispatches);
 
   const byStart = new Map<string, PayWeekOutput>();
@@ -266,7 +313,7 @@ export function buildReconciledPayWeeks(args: {
       };
       if (d.paid_usd != null) entry.paid_usd = round2(d.paid_usd);
       if (d.paid_php != null) entry.paid_php = round2(d.paid_php);
-      if (d.bonus_php != null) entry.bonus_php = round2(d.bonus_php);
+      if (d.bonus_php != null) entry.bonus_total_php = round2(d.bonus_php);
       if (d.bonus_label) entry.bonus_label = d.bonus_label;
       byStart.set(start, entry);
       order.push(start);
@@ -278,7 +325,7 @@ export function buildReconciledPayWeeks(args: {
     // on `status !== 'paid'` is what made the tool report `paid_amount_php:
     // null` for every historical week and tell the CEO it was not stored.
     if (d.paid_php != null) existing.paid_php = round2(d.paid_php);
-    if (d.bonus_php != null) existing.bonus_php = round2(d.bonus_php);
+    if (d.bonus_php != null) existing.bonus_total_php = round2(d.bonus_php);
     if (d.bonus_label) existing.bonus_label = d.bonus_label;
 
     if (existing.status !== 'paid') {
@@ -309,15 +356,82 @@ export function buildReconciledPayWeeks(args: {
     .slice(0, weeks);
 
   for (const e of entries) {
-    const mesa = mesaDeductionForWeek(mesaDeposits, e.period_start, e.period_end);
-    if (mesa != null && mesa !== 0) {
-      e.deduction_php = mesa;
-      e.deduction_label = 'MESA contribution (the employee\'s own savings contribution)';
+    const snap = snapshots?.get(e.period_start);
+    if (snap) {
+      applySnapshotItemization(e, snap);
+    } else {
+      // No carrier holds the breakdown for this week. Say so rather than print
+      // a ₱0 nobody computed (payment-dispatch.md §4.2.2, `breakdownUnavailable`).
+      const mesa = mesaDeductionForWeek(mesaDeposits, e.period_start, e.period_end);
+      if (mesa != null && mesa !== 0) {
+        e.deduction_php = mesa;
+        e.deduction_label = "MESA contribution (the employee's own savings contribution)";
+      }
+      e.breakdown_unavailable = true;
+      e.breakdown_source =
+        'No Payroll Wizard final-pay snapshot for this cycle, so the bonus is not itemised. ' +
+        (e.bonus_total_php != null
+          ? 'bonus_total_php is the dispatch\'s frozen TOTAL — do not describe it using bonus_label, which names only its PAB/Tech part. '
+          : '') +
+        (mesa != null ? 'The MESA figure is the ledger\'s, not the payment\'s.' : '');
     }
     applyReconciliation(e);
   }
 
   return { entries, recipient_name: recipientName };
+}
+
+/**
+ * Lay the wizard's itemization over a week, replacing the coarse figures.
+ *
+ * The two identities this publishes are `payment-dispatch.md` §4.2.3 verbatim:
+ *
+ *     Regular+OT + Bonus Total + Orphanage − MESA Deduction + MESA Disbursement = Amount
+ *     PAB + Tech + Other Bonuses + Adjustment                                   = Bonus Total
+ *
+ * Every term is emitted even at zero once the snapshot exists, because here a
+ * zero IS a computed claim — the "omit it" rule covers figures nobody has, not
+ * figures the wizard worked out to be nothing. **Nothing is gated on `> 0`**: a
+ * negative Adjustment is Accounting withholding money, and hiding it would be
+ * the one thing `payment-dispatch.md:644` forbids outright.
+ */
+export function applySnapshotItemization(e: PayWeekOutput, snap: WizardSnapshotInput): void {
+  const hourly = sumKeepingUnknown(snap.regular_pay_php, snap.ot_pay_php);
+  if (hourly != null) e.hourly_pay_php = round2(hourly);
+
+  const pab = snap.pab_php ?? 0;
+  const tech = snap.tech_php ?? 0;
+  const other = snap.other_bonuses_php ?? 0;
+  const adj = snap.adjustment_php ?? 0;
+  e.bonus_pab_php = round2(pab);
+  e.bonus_tech_php = round2(tech);
+  e.bonus_other_php = round2(other);
+  e.bonus_adjustment_php = round2(adj);
+  e.bonus_total_php = round2(pab + tech + other + adj);
+  if (snap.adjustment_note) e.bonus_adjustment_note = snap.adjustment_note;
+
+  e.orphanage_php = round2(snap.orphanage_php ?? 0);
+  e.mesa_disbursement_php = round2(snap.mesa_disbursement_php ?? 0);
+  e.deduction_php = round2(snap.mesa_deduction_php ?? 0);
+  e.deduction_label = "MESA contribution (the employee's own savings contribution)";
+
+  // The label is frozen from the dispatch and names only the PAB/Tech part, so
+  // it must never be read as the bonus. Measured: ₱157,805 labelled "PAB ₱5,000".
+  if (e.bonus_label != null && round2(pab + tech) !== e.bonus_total_php) {
+    e.bonus_label_note =
+      `bonus_label ("${e.bonus_label}") names only part of this bonus. The bonus TOTAL is ` +
+      `₱${e.bonus_total_php.toFixed(2)}; use the itemised fields, never the label, to describe it.`;
+  }
+
+  e.breakdown_source = `Payroll Wizard final-pay snapshot for ${snap.source_file} — the carrier that priced this payment.`;
+
+  // The wizard's own Final should equal what was sent. If it does not, two
+  // records of the same payment disagree, and both get reported.
+  if (snap.final_php != null && e.paid_php != null && Math.abs(snap.final_php - e.paid_php) > EPSILON) {
+    e.wizard_final_disagreement =
+      `The Payroll Wizard's Final for this week is ₱${round2(snap.final_php).toFixed(2)} but ₱${e.paid_php.toFixed(2)} ` +
+      'was dispatched. These should match. Report BOTH and flag the discrepancy — do not pick one.';
+  }
 }
 
 /**
@@ -340,15 +454,26 @@ export function applyReconciliation(e: PayWeekOutput): void {
       'The weekly hours record for this week is not seeded, so there is no hourly-pay figure to reconcile the paid amount against.';
     return;
   }
-  const expected = round2(e.hourly_pay_php + (e.bonus_php ?? 0) - (e.deduction_php ?? 0));
+  // payment-dispatch.md §4.2.3, verbatim:
+  //   Regular+OT + Bonus Total + Orphanage − MESA Deduction + MESA Disbursement = Amount
+  const expected = round2(
+    e.hourly_pay_php +
+      (e.bonus_total_php ?? 0) +
+      (e.orphanage_php ?? 0) -
+      (e.deduction_php ?? 0) +
+      (e.mesa_disbursement_php ?? 0),
+  );
   const unexplained = round2(e.paid_php - expected);
   e.reconciles = Math.abs(unexplained) <= EPSILON;
   if (!e.reconciles) {
     e.unexplained_php = unexplained;
     e.reconciliation_note =
-      `hourly_pay + bonus − deduction = ₱${expected.toFixed(2)}, but ₱${e.paid_php.toFixed(2)} was paid — ` +
-      `₱${unexplained.toFixed(2)} is unaccounted for. Say so plainly and do NOT guess what it was; ` +
-      'an accounting adjustment or a Payroll Notes entry is the usual cause and neither is readable here.';
+      'hourly_pay + bonus_total + orphanage − MESA deduction + MESA disbursement = ' +
+      `₱${expected.toFixed(2)}, but ₱${e.paid_php.toFixed(2)} was paid — ₱${unexplained.toFixed(2)} is ` +
+      'unaccounted for. Say so plainly and do NOT guess what it was.' +
+      (e.breakdown_unavailable
+        ? ' This week has no wizard snapshot, so the figures above are the coarse ones and the gap is very likely an un-itemised bonus rather than an error.'
+        : ' The wizard snapshot for this week IS itemised, so a gap here is a real discrepancy worth raising with Accounting.');
   }
 }
 
@@ -379,8 +504,14 @@ export function totalsFor(entries: PayWeekOutput[]): Record<string, number | boo
   };
   put('sum_hourly_pay_php', sum((e) => e.hourly_pay_php));
   put('sum_hourly_pay_usd', sum((e) => e.hourly_pay_usd));
-  put('sum_bonus_php', sum((e) => e.bonus_php));
+  put('sum_bonus_pab_php', sum((e) => e.bonus_pab_php));
+  put('sum_bonus_tech_php', sum((e) => e.bonus_tech_php));
+  put('sum_bonus_other_php', sum((e) => e.bonus_other_php));
+  put('sum_bonus_adjustment_php', sum((e) => e.bonus_adjustment_php));
+  put('sum_bonus_total_php', sum((e) => e.bonus_total_php));
+  put('sum_orphanage_php', sum((e) => e.orphanage_php));
   put('sum_deduction_php', sum((e) => e.deduction_php));
+  put('sum_mesa_disbursement_php', sum((e) => e.mesa_disbursement_php));
   put('sum_paid_php', sum((e) => e.paid_php));
   put('sum_paid_usd', sum((e) => e.paid_usd));
 
