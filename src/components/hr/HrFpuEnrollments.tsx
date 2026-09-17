@@ -13,7 +13,6 @@ import {
   Plus,
   Pencil,
   Trash2,
-  RefreshCw,
   Search,
   Loader2,
   Inbox,
@@ -203,6 +202,9 @@ export default function HrFpuEnrollments() {
   const canDecide = sel.selectedRows.length > 0 && !selStatuses.has('completed');
   const canComplete = sel.selectedRows.length > 0 && selStatuses.size === 1 && selStatuses.has('approved');
 
+  /** Reload after our OWN write. There is no Refresh button — the live channel
+   *  and its 15s poll floor keep the view fresh — but a mutation reloads at once
+   *  rather than waiting for its own broadcast to come back around. */
   const refreshAll = async () => {
     await loadClasses(false);
     if (selectedId) await loadRows(selectedId);
@@ -371,14 +373,11 @@ export default function HrFpuEnrollments() {
         </Button>
         <span
           className={cn('ml-auto inline-flex items-center gap-1 text-[11px] font-medium', liveStatus === 'live' ? 'text-emerald-600 dark:text-emerald-300' : 'text-zinc-500 dark:text-zinc-400')}
-          title={liveStatus === 'live' ? 'Updates arrive as they happen' : 'Realtime unavailable — refreshing every 15s'}
+          title={liveStatus === 'live' ? 'Updates arrive as they happen — no refresh needed' : 'Realtime unavailable — refreshing every 15s'}
         >
           <Radio className={cn('h-3 w-3', liveStatus === 'live' && 'animate-pulse')} />
           {liveStatus === 'live' ? 'Live' : liveStatus === 'connecting' ? 'Connecting' : 'Polling'}
         </span>
-        <Button type="button" size="sm" variant="ghost" onClick={() => void refreshAll()} disabled={loadingClasses || loadingRows} className="h-8 gap-1 text-xs text-zinc-500">
-          <RefreshCw className={cn('h-3.5 w-3.5', (loadingClasses || loadingRows) && 'animate-spin')} /> Refresh
-        </Button>
       </div>
 
       {!selected ? (

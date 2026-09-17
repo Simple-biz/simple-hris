@@ -135,6 +135,11 @@ topics) because realtime-js keeps one channel per topic per client.
 socket degrades to "seconds late", never to stale. The HR toolbar shows the honest state — **Live**
 (subscribed) / **Connecting** / **Polling** (channel errored, poll carrying it).
 
+**There is no Refresh button** (removed 2026-09-17, Kane: *"this is live polling already"*). The
+pill IS the freshness answer; a manual reload beside it only invites the question of whether the
+view can be trusted without one. `refreshAll` stays for the surface's own writes, which reload
+immediately rather than waiting for their broadcast to come back around.
+
 ## The routes are gated; the old list route was not
 
 `GET /api/hr/fpu-enrollments` was one of the four ungated routes in
