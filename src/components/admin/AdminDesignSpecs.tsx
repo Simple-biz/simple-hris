@@ -753,12 +753,12 @@ function TicketDevelopersSection({ onNavigate }: { onNavigate?: (tab: string) =>
                     onClick={() => onNavigate('webhooks')}
                     className="underline decoration-zinc-300 underline-offset-2 hover:text-zinc-600 dark:decoration-zinc-600 dark:hover:text-zinc-300"
                   >
-                    Admin → Webhooks
+                    Admin → Webhooks &amp; Integrations
                   </button>
                   .
                 </>
               ) : (
-                ' in Admin → Webhooks.'
+                ' in Admin → Webhooks & Integrations.'
               )}
             </p>
           </div>
