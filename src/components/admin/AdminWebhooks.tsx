@@ -18,6 +18,7 @@ import {
   X,
   Eye,
   Workflow,
+  Plug,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -36,6 +37,19 @@ import {
   type WebhookRecipientOverride,
 } from '@/lib/webhooks/webhook-config';
 import WebhookAutomationDialog from './WebhookAutomationDialog';
+import AdminExternalApiClients from './AdminExternalApiClients';
+
+/**
+ * Two tabs since 2026-09-17 (Kane: "Webhooks and Integrations … a new tab called
+ * Integrations"): Webhooks = everything below, untouched; Integrations = the External
+ * access registry (keys we ISSUE to outside systems), moved here from Admin → API
+ * tokens. The sidebar id stays `webhooks`.
+ */
+type Section = 'webhooks' | 'integrations';
+const SECTIONS: Array<{ id: Section; label: string; Icon: typeof Webhook }> = [
+  { id: 'webhooks', label: 'Webhooks', Icon: Webhook },
+  { id: 'integrations', label: 'Integrations', Icon: Plug },
+];
 
 const SETTINGS_KEY = 'webhooks.config';
 
@@ -239,6 +253,7 @@ export default function AdminWebhooks() {
   const [testing, setTesting] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [section, setSection] = useState<Section>('webhooks');
   const [viewingId, setViewingId] = useState<string | null>(null);
   const [automationId, setAutomationId] = useState<string | null>(null);
 
@@ -431,27 +446,76 @@ export default function AdminWebhooks() {
             <Webhook className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Webhooks &amp; Automations</h2>
+            <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Webhooks &amp; Integrations</h2>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Each automation finds its endpoint by <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">slug</code>. Toggle <strong>Active</strong> to make this URL win over the code default.
+              {section === 'webhooks' ? (
+                <>
+                  Each automation finds its endpoint by <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">slug</code>. Toggle <strong>Active</strong> to make this URL win over the code default.
+                </>
+              ) : (
+                <>Keys we issue to outside systems that read our data — which columns, for how long, how often.</>
+              )}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="hidden items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs font-medium text-zinc-600 sm:inline-flex dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
-            <span className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            {activeCount} of {entries.length} active
-          </span>
-          <Button variant="outline" onClick={add} className="gap-1.5">
-            <Plus className="h-4 w-4" /> Add webhook
-          </Button>
-          <Button onClick={save} disabled={!dirty || saving} className="gap-1.5">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            {dirty ? 'Save changes' : 'Saved'}
-          </Button>
-        </div>
+        {section === 'webhooks' && (
+          <div className="flex items-center gap-2">
+            <span className="hidden items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs font-medium text-zinc-600 sm:inline-flex dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+              <span className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              {activeCount} of {entries.length} active
+            </span>
+            <Button variant="outline" onClick={add} className="gap-1.5">
+              <Plus className="h-4 w-4" /> Add webhook
+            </Button>
+            <Button onClick={save} disabled={!dirty || saving} className="gap-1.5">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {dirty ? 'Save changes' : 'Saved'}
+            </Button>
+          </div>
+        )}
       </header>
 
+      {/* Section tabs — the Webhooks tab is everything this page always was. */}
+      <div className="flex items-end gap-1 border-b border-zinc-200 px-6 dark:border-zinc-800" role="tablist">
+        {SECTIONS.map(({ id, label, Icon }) => {
+          const active = section === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setSection(id)}
+              className={cn(
+                'relative flex items-center gap-2 px-3.5 py-2.5 text-[13.5px] font-medium transition-colors',
+                active
+                  ? 'text-zinc-900 dark:text-zinc-100'
+                  : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+              {id === 'webhooks' && dirty && (
+                <span className="rounded-full bg-amber-100 px-1.5 text-[10px] font-semibold leading-[16px] text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                  unsaved
+                </span>
+              )}
+              {active && <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-zinc-900 dark:bg-zinc-100" />}
+            </button>
+          );
+        })}
+      </div>
+
+      {section === 'integrations' && (
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="mx-auto w-full max-w-6xl">
+            <AdminExternalApiClients />
+          </div>
+        </div>
+      )}
+
+      {section === 'webhooks' && (
+      <>
       <div className="border-b border-zinc-200 px-6 py-3 dark:border-zinc-800">
         <div className="relative max-w-md">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
@@ -701,6 +765,8 @@ export default function AdminWebhooks() {
           </p>
         </div>
       </div>
+      </>
+      )}
 
       <Dialog open={!!viewingEntry} onOpenChange={(o) => !o && setViewingId(null)}>
         <DialogContent className="overflow-hidden p-0 sm:max-w-2xl">

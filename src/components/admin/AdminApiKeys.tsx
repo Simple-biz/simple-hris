@@ -2,10 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, KeyRound, Check, Trash2, Eye, EyeOff, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Loader2, KeyRound, Check, Trash2, Eye, EyeOff, ShieldCheck, AlertCircle, Plug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import AdminExternalApiClients from './AdminExternalApiClients';
 
 interface KeyStatus {
   configured: boolean;
@@ -94,10 +93,13 @@ export default function AdminApiKeys() {
       <header className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">API tokens</h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Two directions. <span className="font-medium text-zinc-700 dark:text-zinc-300">Keys we use</span> — third-party
-          credentials this workspace calls out with, stored server-side and shown only masked.{' '}
-          <span className="font-medium text-zinc-700 dark:text-zinc-300">Keys we issue</span> — external access for outside
-          systems reading our data, further down.
+          <span className="font-medium text-zinc-700 dark:text-zinc-300">Keys we use</span> — third-party credentials this
+          workspace calls out with, stored server-side and shown only masked. Keys we <em>issue</em> to outside systems live
+          under{' '}
+          <a href="/admin?tab=webhooks" className="inline-flex items-center gap-1 font-medium text-orange-600 hover:underline dark:text-orange-400">
+            <Plug className="h-3.5 w-3.5" /> Webhooks &amp; Integrations → Integrations
+          </a>
+          .
         </p>
       </header>
 
@@ -220,9 +222,6 @@ export default function AdminApiKeys() {
           everywhere in the UI. Rotating it here takes effect immediately — no redeploy needed.
         </span>
       </div>
-
-      {/* Keys WE issue — outside systems reading the Global Master List */}
-      <AdminExternalApiClients />
     </div>
   );
 }

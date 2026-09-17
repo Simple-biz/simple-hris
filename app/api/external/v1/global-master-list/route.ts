@@ -1,37 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authenticateExternalRequest, messageForDenial } from '@/lib/external-api/authenticate';
-import { applyGmlQuery, MAX_LIMIT, parseGmlQuery } from '@/lib/external-api/gml-query';
-import { SlidingWindowLimiter, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS } from '@/lib/external-api/rate-limit';
-import { insertExternalApiRequest, readActiveGmlRows, touchLastUsed } from '@/lib/supabase/external-api-db';
-import { clientIp } from '@/lib/audit/context';
+import { parseGmlQuery } from '@/lib/external-api/gml-query';
+import { executeGmlRead } from '@/lib/external-api/gml-read';
+import { admitExternalCall } from '@/lib/external-api/serve';
+import { readActiveGmlRows } from '@/lib/supabase/external-api-db';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * GET /api/external/v1/global-master-list — the one endpoint outside systems get.
+ * GET /api/external/v1/global-master-list — the REST face of the external read API.
  *
  *   Authorization: Bearer hris_live_…
- *   ?department=  exact, case-insensitive
- *   ?email=       matches any of the four email columns
- *   ?search=      substring over Name + emails
+ *   ?department=  exact, case-insensitive          (only if the key can see Department)
+ *   ?email=       matches any VISIBLE email column
+ *   ?search=      substring over Name + visible email columns
  *   ?limit=       1–500 (default 100)
  *   ?cursor=      the previous page's `page.next_cursor`
  *
  * Read-only by construction: this file exports GET and nothing else, so every
  * other method is a framework 405. Off-boarded people are unreachable — filtered
- * in SQL and again in `applyGmlQuery`; no parameter widens it. All columns of
- * the active row are returned (Kane, 2026-09-16).
+ * in SQL and again in `applyGmlQuery`; no parameter widens it.
  *
- * Every call writes ONE `external_api_requests` row — success, 400, 401, 403,
- * 429, 500, 503 alike — carrying the presented key prefix, ip, user-agent and
- * duration. That table is the answer to "what system is using this and when".
+ * Since 2026-09-17 the row carries ONLY the columns the client was granted
+ * (`grants.ts`; `meta.columns` lists them), the key can expire, the rate limit
+ * is the client's own and is shared with the MCP route, and a filter on a hidden
+ * column is a 400 `column_not_granted`. Every call writes ONE
+ * `external_api_requests` row — success, 400, 401, 403, 429, 500, 503 alike.
  *
- * The SSO proxy lets `/api/external/*` through untouched; THIS is the gate.
+ * The SSO proxy lets `/api/external/*` through untouched; `admitExternalCall` is
+ * the gate.
  */
-
-const limiter = new SlidingWindowLimiter(RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS);
-let sweepCounter = 0;
 
 const PATH = '/api/external/v1/global-master-list';
 
@@ -42,92 +40,40 @@ function queryRecord(params: URLSearchParams): Record<string, unknown> | null {
 }
 
 export async function GET(req: NextRequest) {
-  const started = Date.now();
   const params = req.nextUrl.searchParams;
-  const ip = clientIp(req);
-  const userAgent = req.headers.get('user-agent')?.slice(0, 300) ?? null;
-  const query = queryRecord(params);
 
-  const log = async (args: {
-    clientId: string | null;
-    keyPrefix: string | null;
-    status: number;
-    rowCount: number | null;
-    denial: string | null;
-  }) => {
-    await insertExternalApiRequest({
-      client_id: args.clientId,
-      key_prefix: args.keyPrefix,
-      method: 'GET',
-      path: PATH,
-      query,
-      status: args.status,
-      row_count: args.rowCount,
-      denial: args.denial,
-      ip,
-      user_agent: userAgent,
-      duration_ms: Date.now() - started,
-    });
-  };
+  const admitted = await admitExternalCall(req, { method: 'GET', path: PATH, query: queryRecord(params) });
+  if (!admitted.ok) return NextResponse.json(admitted.body, { status: admitted.status, headers: admitted.headers });
+  const { client, grant, rateHeaders, log, touch } = admitted;
 
-  // 1. Who is calling.
-  const auth = await authenticateExternalRequest(req);
-  if (!auth.ok) {
-    await log({ clientId: null, keyPrefix: auth.keyPrefix, status: auth.status, rowCount: null, denial: auth.denial });
-    return NextResponse.json(
-      { error: messageForDenial(auth.denial) },
-      { status: auth.status, headers: { 'WWW-Authenticate': 'Bearer realm="simple-hris-external"' } },
-    );
-  }
-  const client = auth.client;
-
-  // 2. How often.
-  if (++sweepCounter % 500 === 0) limiter.sweep();
-  const rate = limiter.hit(client.id);
-  const rateHeaders = {
-    'X-RateLimit-Limit': String(rate.limit),
-    'X-RateLimit-Remaining': String(rate.remaining),
-  };
-  if (!rate.allowed) {
-    await log({ clientId: client.id, keyPrefix: auth.keyPrefix, status: 429, rowCount: null, denial: 'rate_limited' });
-    return NextResponse.json(
-      { error: `Rate limit exceeded: ${rate.limit} requests per minute per key. Retry after ${rate.retryAfterSeconds}s.` },
-      { status: 429, headers: { ...rateHeaders, 'Retry-After': String(rate.retryAfterSeconds) } },
-    );
-  }
-
-  // 3. What they asked for.
   const parsed = parseGmlQuery(params);
   if (!parsed.ok) {
-    await log({ clientId: client.id, keyPrefix: auth.keyPrefix, status: 400, rowCount: null, denial: 'bad_request' });
+    await log({ status: 400, rowCount: null, denial: 'bad_request' });
     return NextResponse.json({ error: 'Invalid query', details: parsed.errors }, { status: 400, headers: rateHeaders });
   }
 
-  // 4. The read. Active rows only, paged past the PostgREST cap.
-  const { rows, error } = await readActiveGmlRows();
-  if (error) {
-    await log({ clientId: client.id, keyPrefix: auth.keyPrefix, status: 500, rowCount: null, denial: 'read_failed' });
-    return NextResponse.json({ error: 'Could not read the master list' }, { status: 500, headers: rateHeaders });
+  const outcome = await executeGmlRead(readActiveGmlRows, parsed.query, grant);
+  if (!outcome.ok) {
+    await log({ status: outcome.status, rowCount: null, denial: outcome.denial });
+    return NextResponse.json(
+      { error: outcome.error, ...(outcome.details ? { details: outcome.details } : {}) },
+      { status: outcome.status, headers: rateHeaders },
+    );
   }
 
-  const page = applyGmlQuery(rows, parsed.query);
-  await log({ clientId: client.id, keyPrefix: auth.keyPrefix, status: 200, rowCount: page.rows.length, denial: null });
-  void touchLastUsed(client.id);
+  await log({ status: 200, rowCount: outcome.data.length, denial: null });
+  touch();
 
   return NextResponse.json(
     {
-      data: page.rows,
-      page: {
-        limit: parsed.query.limit,
-        max_limit: MAX_LIMIT,
-        returned: page.rows.length,
-        total: page.total,
-        next_cursor: page.nextCursor,
-      },
+      data: outcome.data,
+      page: outcome.page,
       meta: {
         as_of: new Date().toISOString(),
         active_only: true,
         client: client.name,
+        columns: outcome.columns,
+        expires_at: client.expires_at,
       },
     },
     { status: 200, headers: { ...rateHeaders, 'Cache-Control': 'no-store' } },

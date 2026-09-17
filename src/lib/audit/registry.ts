@@ -515,7 +515,7 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     match: 'external_api.',
     surfaces: ['admin'],
     label: 'External API clients',
-    note: 'client.created / revoked / restored / rotated / updated — the per-system keys behind /api/external/v1/* (Admin → API tokens → External access). The CALLS themselves are in external_api_requests, not here',
+    note: 'client.created / revoked / restored / rotated / updated — the per-system keys behind /api/external/v1/* and /api/external/mcp (Admin → Webhooks & Integrations → Integrations); updated carries the column-grant / expiry / rate-limit changes. The CALLS themselves are in external_api_requests, not here',
   },
 ] as const;
 

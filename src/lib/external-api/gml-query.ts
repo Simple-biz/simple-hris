@@ -9,7 +9,9 @@
  *    drops any row with `off_boarded_at` set BEFORE any filter runs, so even if
  *    the SQL filter were ever removed a leaver could not be reached by email,
  *    department or search. There is no parameter that turns this off.
- *  - **All columns** (Kane, 2026-09-16 — Q1). The row goes out as stored.
+ *  - **Columns are the client's GRANT** (2026-09-17, superseding "all columns" of
+ *    2026-09-16): the route selects and projects by `grants.ts`; this module only
+ *    filters, and only on columns the grant makes visible (`FilterVisibility`).
  *  - **`limit` <= 500**, below the PostgREST 1000-row cap by construction; the
  *    read itself is paged anyway. Paging is keyset on `id` (stable, no shear
  *    when a sync inserts mid-walk); the cursor is exclusive.
@@ -113,6 +115,23 @@ function isOffBoarded(row: GmlRow): boolean {
   return v != null && String(v).trim() !== '';
 }
 
+/**
+ * Which columns a filter may look at — derived from the client's column grant
+ * (`grants.ts`). A key that cannot SEE Personal Email must not be able to match on
+ * it either, or `?email=` would confirm that a private address belongs to an
+ * active person. The default is everything, for callers with a whole-table grant.
+ */
+export type FilterVisibility = {
+  /** Email columns `?email=` and `?search=` may match against. */
+  emailColumns: readonly string[];
+  /** May `?search=` look at Name? */
+  name: boolean;
+  /** May `?department=` be used? (The route refuses it before this runs; here it is just honoured.) */
+  department: boolean;
+};
+
+export const ALL_VISIBLE: FilterVisibility = { emailColumns: GML_EMAIL_COLUMNS, name: true, department: true };
+
 export type GmlPage = {
   rows: GmlRow[];
   /** `id` of the last row returned, or null when this was the final page. */
@@ -121,25 +140,25 @@ export type GmlPage = {
   total: number;
 };
 
-export function applyGmlQuery(rows: readonly GmlRow[], q: GmlQuery): GmlPage {
+export function applyGmlQuery(rows: readonly GmlRow[], q: GmlQuery, visible: FilterVisibility = ALL_VISIBLE): GmlPage {
   // 1. Leavers out first, unconditionally. Nothing below can see them.
   let out = rows.filter((r) => !isOffBoarded(r));
 
-  // 2. Filters.
+  // 2. Filters — each one looks only at columns the caller may see.
   if (q.department) {
     const dept = q.department.toLowerCase();
-    out = out.filter((r) => text(r['Department']).trim().toLowerCase() === dept);
+    out = visible.department ? out.filter((r) => text(r['Department']).trim().toLowerCase() === dept) : [];
   }
   if (q.email) {
     const em = q.email;
-    out = out.filter((r) => GML_EMAIL_COLUMNS.some((c) => text(r[c]).trim().toLowerCase() === em));
+    out = out.filter((r) => visible.emailColumns.some((c) => text(r[c]).trim().toLowerCase() === em));
   }
   if (q.search) {
     const needle = q.search.toLowerCase();
     out = out.filter(
       (r) =>
-        text(r['Name']).toLowerCase().includes(needle) ||
-        GML_EMAIL_COLUMNS.some((c) => text(r[c]).toLowerCase().includes(needle)),
+        (visible.name && text(r['Name']).toLowerCase().includes(needle)) ||
+        visible.emailColumns.some((c) => text(r[c]).toLowerCase().includes(needle)),
     );
   }
 

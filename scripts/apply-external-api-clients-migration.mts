@@ -1,8 +1,8 @@
 /**
  * [EXTERNAL-API-CLIENTS]
  * Applies references/sql/create/2026-09-16_external_api_clients.sql — the per-client
- * key registry and the per-call request log behind /api/external/v1/* (Admin → API
- * tokens → External access) — then verifies both tables, their comments, indexes,
+ * key registry and the per-call request log behind /api/external/v1/* and /api/external/mcp
+ * (Admin → Webhooks & Integrations → Integrations) — then verifies both tables, their comments, indexes,
  * CHECK constraints and row-level security landed, AND that each constraint actually
  * rejects what it exists to reject.
  *
@@ -22,8 +22,12 @@
  *   postgresql://postgres.<ref>:<pw>@aws-1-us-east-2.pooler.supabase.com:5432/postgres
  *
  * The SQL is idempotent and touches no row data, so a re-run is a no-op. Run it BEFORE
- * an admin creates the first client; until then the External access panel reads
- * "table not applied yet" and /api/external/v1/* answers 503.
+ * an admin creates the first client; until then the Integrations tab reads
+ * "table not applied yet" and /api/external/v1/* + /api/external/mcp answer 503.
+ *
+ * 2026-09-17: the SQL was amended IN PLACE before it was ever applied — per-client
+ * granted_columns (NULL = whole table), expires_at (NULL = never) and rate_limit_per_minute
+ * (1..600, default 60); the request log admits POST (the MCP route).
  */
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -78,9 +82,11 @@ const CONSTRAINTS = [
   'external_api_clients_key_hash_unique',
   'external_api_clients_prefix_shape',
   'external_api_clients_scopes_known',
+  'external_api_clients_granted_columns_nonempty',
+  'external_api_clients_rate_limit_range',
   'external_api_clients_revoked_shape',
   'external_api_requests_status_range',
-  'external_api_requests_method_get',
+  'external_api_requests_method_known',
   'external_api_requests_outcome_shape',
 ];
 const INDEXES = [
@@ -122,6 +128,21 @@ const CHECKS: Array<[string, string]> = [
        (SELECT data_type = 'uuid' AND column_default IS NOT NULL
           FROM information_schema.columns
          WHERE table_schema='public' AND table_name='external_api_clients' AND column_name='id'), false) AS ok`,
+  ],
+  [
+    'clients.rate_limit_per_minute defaults to 60',
+    `SELECT COALESCE(
+       (SELECT column_default LIKE '60%'
+          FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='external_api_clients' AND column_name='rate_limit_per_minute'), false) AS ok`,
+  ],
+  [
+    'clients.granted_columns and expires_at are NULLABLE (NULL = whole table / never expires)',
+    `SELECT COALESCE(
+       (SELECT bool_and(is_nullable = 'YES')
+          FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='external_api_clients'
+           AND column_name IN ('granted_columns', 'expires_at')), false) AS ok`,
   ],
   [
     'requests.client_id references clients with ON DELETE RESTRICT (history is kept)',
@@ -187,6 +208,15 @@ const POSITIVE_CONTROLS: Array<[string, string]> = [
     'a legal REVOKED client (revoked_at + revoked_by) is ACCEPTED',
     insertClient({ revoked_at: 'now()', revoked_by: "'admin@simple.biz'" }),
   ],
+  [
+    'a client scoped to some columns, expiring, with a custom limit is ACCEPTED',
+    insertClient({
+      granted_columns: "array['Name','Work Email','Department']",
+      expires_at: "now() + interval '15 days'",
+      rate_limit_per_minute: '120',
+    }),
+  ],
+  ['a POST (MCP) request row is ACCEPTED', `${insertClient()}; ${insertRequest({ method: "'POST'", path: "'/api/external/mcp'" })}`],
   ['a legal SUCCESS request row is ACCEPTED', `${insertClient()}; ${insertRequest()}`],
   [
     'a legal DENIED request row (no client, a reason) is ACCEPTED',
@@ -213,7 +243,10 @@ const NEGATIVE_CONTROLS: Array<[string, string]> = [
   ],
   ['an empty scope list is rejected', insertClient({ scopes: 'array[]::text[]' })],
   ['revoked_at WITHOUT revoked_by is rejected', insertClient({ revoked_at: 'now()' })],
-  ['a request with a non-GET method is rejected', `${insertClient()}; ${insertRequest({ method: "'POST'" })}`],
+  ['an EMPTY granted_columns list is rejected (NULL means whole table; [] means nothing to anyone)', insertClient({ granted_columns: 'array[]::text[]' })],
+  ['a rate limit of 0 is rejected', insertClient({ rate_limit_per_minute: '0' })],
+  ['a rate limit above 600 is rejected', insertClient({ rate_limit_per_minute: '601' })],
+  ['a request with a method other than GET/POST is rejected', `${insertClient()}; ${insertRequest({ method: "'DELETE'" })}`],
   ['a request status outside 100-599 is rejected', `${insertClient()}; ${insertRequest({ status: '42' })}`],
   ['a SUCCESS request with no client_id is rejected', insertRequest({ client_id: 'NULL' })],
   ['a SUCCESS request carrying a denial is rejected', `${insertClient()}; ${insertRequest({ denial: "'unknown'" })}`],

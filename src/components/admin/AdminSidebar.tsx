@@ -68,7 +68,9 @@ const systemNav: Array<{
   { id: 'roles', label: 'Roles & permissions', icon: UserCog, badge: 'count' },
   { id: 'global-master-list', label: 'Global Master List', icon: Sheet, badge: 'count' },
   { id: 'workspace', label: 'Google Workspace', icon: Settings },
-  { id: 'webhooks', label: 'Webhooks', icon: Webhook, badge: 'alert' },
+  // The id stays `webhooks` — deep links (?tab=webhooks), the alert badge and the
+  // page's `known` set all key on it. Only the label changed (2026-09-17).
+  { id: 'webhooks', label: 'Webhooks & Integrations', icon: Webhook, badge: 'alert' },
   { id: 'pages', label: 'Pages', icon: LayoutTemplate },
   { id: 'design-specs', label: 'Design & Specifications', icon: PencilRuler },
   { id: 'notifications', label: 'Notifications', icon: Bell },

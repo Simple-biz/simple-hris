@@ -13,6 +13,11 @@ import type { GmlRow } from '@/lib/external-api/gml-query';
  * `security_invoker` view goes silently empty under RLS
  * (memory/security-invoker-view-silent-empty.md). The base table is read
  * directly with `off_boarded_at IS NULL` — the same rule `gml-status.ts` uses.
+ *
+ * 2026-09-17: a client row also carries `granted_columns` (NULL = whole table),
+ * `expires_at` (NULL = never) and `rate_limit_per_minute`; the GML read takes the
+ * `select` string the grant builds (never `*`); and `countRecentCalls` is the
+ * rate-limit meter — the request log counted over the last 60 s.
  */
 
 export const EXTERNAL_API_CLIENTS_TABLE = 'external_api_clients';
@@ -27,6 +32,12 @@ export type ExternalApiClientRow = {
   key_prefix: string;
   key_hash: string;
   scopes: string[];
+  /** NULL = every offerable column; otherwise ONLY these (validated by grants.ts on write). */
+  granted_columns: string[] | null;
+  /** NULL = never expires. */
+  expires_at: string | null;
+  /** 1..600; REST + MCP share it. */
+  rate_limit_per_minute: number;
   created_by: string;
   created_at: string;
   revoked_at: string | null;
@@ -43,6 +54,7 @@ export type ExternalApiRequestRow = {
   id: number;
   client_id: string | null;
   key_prefix: string | null;
+  /** GET = the REST route; POST = the MCP route. */
   method: string;
   path: string;
   query: Record<string, unknown> | null;
@@ -58,7 +70,7 @@ export type ExternalApiRequestRow = {
 export type NewExternalApiRequest = Omit<ExternalApiRequestRow, 'id' | 'created_at'>;
 
 const PUBLIC_COLUMNS =
-  'id,name,system,contact_email,key_prefix,scopes,created_by,created_at,revoked_at,revoked_by,rotated_at,rotated_by,last_used_at';
+  'id,name,system,contact_email,key_prefix,scopes,granted_columns,expires_at,rate_limit_per_minute,created_by,created_at,revoked_at,revoked_by,rotated_at,rotated_by,last_used_at';
 
 export type DbResult<T> = { data: T; error: null; missingTable: false } | { data: null; error: string; missingTable: boolean };
 
@@ -134,6 +146,9 @@ export type NewExternalApiClient = {
   contact_email: string | null;
   key_prefix: string;
   key_hash: string;
+  granted_columns: string[] | null;
+  expires_at: string | null;
+  rate_limit_per_minute: number;
   created_by: string;
 };
 
@@ -157,6 +172,9 @@ export type ExternalApiClientPatch = Partial<
     | 'contact_email'
     | 'key_prefix'
     | 'key_hash'
+    | 'granted_columns'
+    | 'expires_at'
+    | 'rate_limit_per_minute'
     | 'revoked_at'
     | 'revoked_by'
     | 'rotated_at'
@@ -195,7 +213,8 @@ export async function touchLastUsed(id: string): Promise<void> {
 
 /**
  * One row per call, success or denial. Awaited by the route so a lost row is at
- * least shouted about — this table IS the "what system is calling us" record.
+ * least shouted about — this table IS the "what system is calling us" record,
+ * and since 2026-09-17 the rate-limit meter too.
  */
 export async function insertExternalApiRequest(entry: NewExternalApiRequest): Promise<{ error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
@@ -210,6 +229,31 @@ export async function insertExternalApiRequest(entry: NewExternalApiRequest): Pr
     return { error: error.message };
   }
   return { error: null };
+}
+
+export type RecentCalls = { count: number; oldestIso: string | null };
+
+/**
+ * The rate-limit meter: how many calls this client has made since `sinceIso`
+ * that were NOT themselves refused for rate (status ≠ 429 — a refused call must
+ * not extend the window, or a throttled caller could never recover), and when
+ * the oldest of them happened (for Retry-After). One indexed query on
+ * (client_id, created_at). An error here is the caller's cue to REFUSE (503).
+ */
+export async function countRecentCalls(clientId: string, sinceIso: string): Promise<DbResult<RecentCalls>> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return fail(NO_CLIENT);
+  const { data, error, count } = await supabase
+    .from(EXTERNAL_API_REQUESTS_TABLE)
+    .select('created_at', { count: 'exact' })
+    .eq('client_id', clientId)
+    .gte('created_at', sinceIso)
+    .neq('status', 429)
+    .order('created_at', { ascending: true })
+    .limit(1);
+  if (error) return fail(error);
+  const oldest = (data as Array<{ created_at: string }> | null)?.[0]?.created_at ?? null;
+  return { data: { count: count ?? 0, oldestIso: oldest }, error: null, missingTable: false };
 }
 
 export async function listExternalApiRequests(
@@ -242,7 +286,7 @@ export async function listUnattributedRequests(limit: number): Promise<DbResult<
   return { data: (data ?? []) as ExternalApiRequestRow[], error: null, missingTable: false };
 }
 
-export type RequestCounts = { total: number; denied: number };
+export type RequestCounts = { total: number; denied: number; throttled: number };
 
 /** Per-client call counts since `sinceIso`, plus the unattributed bucket under the key `''`. Paged. */
 export async function countRequestsSince(sinceIso: string): Promise<DbResult<Map<string, RequestCounts>>> {
@@ -261,9 +305,10 @@ export async function countRequestsSince(sinceIso: string): Promise<DbResult<Map
   const map = new Map<string, RequestCounts>();
   for (const r of rows) {
     const k = r.client_id ?? '';
-    const cur = map.get(k) ?? { total: 0, denied: 0 };
+    const cur = map.get(k) ?? { total: 0, denied: 0, throttled: 0 };
     cur.total += 1;
     if (r.status >= 400) cur.denied += 1;
+    if (r.status === 429) cur.throttled += 1;
     map.set(k, cur);
   }
   return { data: map, error: null, missingTable: false };
@@ -272,15 +317,26 @@ export async function countRequestsSince(sinceIso: string): Promise<DbResult<Map
 // ─── The one permitted read ───────────────────────────────────────────────────
 
 /**
- * Every ACTIVE row of `global_master_list`, all columns, ordered by id.
- * `off_boarded_at IS NULL` here AND again in `applyGmlQuery` — the leaver filter
- * is enforced twice on purpose. Paged: the table is ~3.8k rows and PostgREST
- * truncates at 1000 even with `.range()` (memory/postgrest-1000-cap-sweep.md).
+ * Every ACTIVE row of `global_master_list`, the columns in `select` (built by
+ * `grants.selectFor` — never `*`), ordered by id. `off_boarded_at IS NULL` here
+ * AND again in `applyGmlQuery` — the leaver filter is enforced twice on purpose,
+ * which is why `select` always carries `off_boarded_at`. Paged: the table is
+ * ~3.8k rows and PostgREST truncates at 1000 even with `.range()`
+ * (memory/postgrest-1000-cap-sweep.md).
  */
-export async function readActiveGmlRows(): Promise<{ rows: GmlRow[]; error: string | null }> {
+export async function readActiveGmlRows(select: string): Promise<{ rows: GmlRow[]; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { rows: [], error: 'Supabase not configured' };
-  return selectAllPaged<GmlRow>((from, to) =>
-    supabase.from(GML_TABLE).select('*').is('off_boarded_at', null).order('id', { ascending: true }).range(from, to),
+  if (!select || select.includes('*')) return { rows: [], error: 'Refusing an unscoped select' };
+  // A dynamic select string defeats supabase-js's column typing (it infers a
+  // GenericStringError row); the grant already guarantees the shape.
+  return selectAllPaged<GmlRow>(
+    (from, to) =>
+      supabase
+        .from(GML_TABLE)
+        .select(select)
+        .is('off_boarded_at', null)
+        .order('id', { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{ data: GmlRow[] | null; error: { message: string } | null }>,
   );
 }

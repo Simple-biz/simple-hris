@@ -2,6 +2,7 @@ import 'server-only';
 
 import { findClientByKeyHash, type ExternalApiClientRow } from '@/lib/supabase/external-api-db';
 import { bearerToken, constantTimeEqualHex, hashApiKey, keyPrefix, looksLikeApiKey, readPepper } from './keys';
+import { isExpired } from './expiry';
 
 /**
  * Turn `Authorization: Bearer <key>` into a live client row, or a typed denial.
@@ -13,7 +14,10 @@ import { bearerToken, constantTimeEqualHex, hashApiKey, keyPrefix, looksLikeApiK
  *
  * FAILS CLOSED on every "we cannot tell" branch: no pepper, DB unreachable,
  * table not applied → 503, never a pass. The only 200 path is a hash match on
- * a row whose `revoked_at` is null and whose scopes include the read.
+ * a row whose `revoked_at` is null, whose `expires_at` is null or in the future
+ * (2026-09-17 — an unparseable stamp counts as expired), and whose scopes include
+ * the read. Expiry is checked on every call against the row, so shortening it in
+ * the admin panel takes effect on the next call, like a revoke.
  */
 
 export const REQUIRED_SCOPE = 'global_master_list.read';
@@ -23,6 +27,7 @@ export type ExternalDenial =
   | 'malformed'
   | 'unknown'
   | 'revoked'
+  | 'expired'
   | 'scope'
   | 'unconfigured'
   | 'unavailable';
@@ -52,6 +57,7 @@ export async function authenticateExternalRequest(request: Request): Promise<Ext
   // The lookup was by equality already; this is the belt to that brace.
   if (!constantTimeEqualHex(client.key_hash, hash)) return { ok: false, denial: 'unknown', status: 401, keyPrefix: prefix };
   if (client.revoked_at) return { ok: false, denial: 'revoked', status: 401, keyPrefix: prefix };
+  if (isExpired(client.expires_at)) return { ok: false, denial: 'expired', status: 401, keyPrefix: prefix };
   if (!Array.isArray(client.scopes) || !client.scopes.includes(REQUIRED_SCOPE)) {
     return { ok: false, denial: 'scope', status: 403, keyPrefix: prefix };
   }

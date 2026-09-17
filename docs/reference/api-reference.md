@@ -2748,3 +2748,38 @@ the read as well as at the deal (`departedEmails`), because slots are sticky and
 **Response `200`**: `{ periodStart, officers, officerCount, deptTotals, assignments, locks, review, mine: { memberEmails,
 byDept, members }, error: null, degraded }` — `degraded` is non-null when the departed-member evidence was unreadable,
 meaning the list **may still contain** people who have left, never the reverse. `500` only when the deal itself fails.
+
+## 20. External read API — REST + MCP, per-client keys *(added 2026-09-16, widened 2026-09-17)*
+
+Governing doc: [external-api-integrations.md](../features/external-api-integrations.md). Admin home: **Admin → Webhooks &
+Integrations → Integrations**. The SSO proxy lets the whole `/api/external/` prefix through; `admitExternalCall`
+(`src/lib/external-api/serve.ts`) is the gate — Bearer key → hash → row (revoked / expired / scope) → column grant →
+DB-counted rate limit → request-log row. Fail-closed on every branch.
+
+### `GET /api/external/v1/global-master-list`
+
+`Authorization: Bearer hris_live_…`. Query: `department` (exact, needs Department visible), `email` (matches the VISIBLE
+email columns), `search` (Name + visible emails), `limit` 1–500 (default 100), `cursor` (keyset on `id`, exclusive).
+Returns `{ data: [rows — granted columns only], page: { limit, max_limit, returned, total, next_cursor }, meta: { as_of,
+active_only: true, client, columns, expires_at } }`. Off-boarded people are unreachable. Errors: `400` invalid query /
+`column_not_granted` (a filter on a hidden column, named), `401`/`403` one sentence (`Invalid or revoked API key` — also
+for EXPIRED), `429` + `Retry-After`, `503` unconfigured / unavailable. Every call, denied ones included, writes one
+`external_api_requests` row.
+
+### `POST /api/external/mcp`
+
+Streamable HTTP MCP server, stateless, JSON responses; same Bearer key. Tools: `describe_access`,
+`query_global_master_list({ department?, email?, search?, limit?, cursor? })`. Every POST is one call against the same
+per-client rate limit. `GET` / `DELETE` are `405`.
+
+### Admin — `requireAdminSession()`
+
+| Route | Body → result |
+| --- | --- |
+| `GET /api/admin/external-api-clients` | `{ clients: [+ calls_7d, denied_7d, throttled_7d], unattributed, unattributed_7d, configured, migration_applied, rest_path, mcp_path }` |
+| `POST /api/admin/external-api-clients` | `{ name, system, contact_email?, granted_columns?: null \| string[], expiry: '1d' \| '15d' \| '30d' \| 'never', rate_limit_per_minute? (1..600, default 60) }` → `{ client, api_key }` — the plaintext key, ONCE |
+| `PATCH /api/admin/external-api-clients/{id}` | `{ action: 'revoke' \| 'restore' \| 'rotate' \| 'update', name?, system?, contact_email?, granted_columns?, expiry?, rate_limit_per_minute? }` — rotate returns `api_key` ONCE; update audits before/after |
+| `GET /api/admin/external-api-clients/{id}/requests?limit=` | the newest calls (≤500) |
+
+No DELETE — `external_api_requests.client_id` is `ON DELETE RESTRICT`. Audit family `external_api.` (created / revoked /
+restored / rotated / updated), actor from `auditFrom`.

@@ -9,10 +9,11 @@ echo  ===============================================================
 echo   EXTERNAL API CLIENTS - DATABASE MIGRATION
 echo  ===============================================================
 echo.
-echo   This creates two tables behind Admin -^> API tokens -^>
-echo   External access: external_api_clients (the per-system keys,
-echo   stored only as a hash) and external_api_requests (one row per
-echo   call to /api/external/v1/*, including denied ones).
+echo   This creates two tables behind Admin -^> Webhooks ^& Integrations
+echo   -^> Integrations: external_api_clients (the per-system keys,
+echo   stored only as a hash, with their column grants, expiry and
+echo   rate limit) and external_api_requests (one row per call to
+echo   /api/external/v1/* or /api/external/mcp, including denied ones).
 echo.
 echo   It does NOT touch the Global Master List, payroll, dispatch,
 echo   paystubs, rates or any existing table.
@@ -81,9 +82,10 @@ if "%APPLIED%"=="0" (
   echo  ===============================================================
   echo   DONE. External access is live.
   echo.
-  echo   Open Admin -^> API tokens -^> External access and click
-  echo   "New client". The key is shown ONCE - copy it to your coworker
-  echo   over a private channel. Revoke it from the same table any time.
+  echo   Open Admin -^> Webhooks ^& Integrations -^> Integrations and
+  echo   click "New client". Pick the columns, the expiry and the limit;
+  echo   the key is shown ONCE - copy it to your coworker over a private
+  echo   channel. Revoke it from the same table any time.
   echo  ===============================================================
 ) else (
   echo  ===============================================================
