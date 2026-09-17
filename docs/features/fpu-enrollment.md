@@ -148,7 +148,7 @@ Audit actions: `fpu.enroll` (employee), `fpu.class.created | updated | deleted`,
 
 ## Deploy notes
 
-- **First cut APPLIED 2026-09-16 by Kane** via `scripts/Apply FPU Classes migration.cmd`, verified. **The `name` column (same day, later) needs the `.cmd` run ONCE MORE — PENDING until Kane confirms.** The script applies both SQL files and is `IF NOT EXISTS` throughout, so re-running is a no-op for everything already there. Until the column exists the classes select fails with `42703` and both surfaces read `migrated: false`. For the record: double-click the `.cmd` (rehearsal, then type `APPLY`), or the `--apply` flag
+- **First cut APPLIED 2026-09-16 by Kane** via `scripts/Apply FPU Classes migration.cmd`, verified. **The `name` column landed on Kane's second `.cmd` run, verified 2026-09-17 — nothing pending.** The first real class, `FPU 2026 · Batch 1`, was created 2026-09-17 07:06 UTC and took its first enrollment three minutes later. The script applies both SQL files and is `IF NOT EXISTS` throughout, so re-running is a no-op for everything already there. Until the column exists the classes select fails with `42703` and both surfaces read `migrated: false`. For the record: double-click the `.cmd` (rehearsal, then type `APPLY`), or the `--apply` flag
   (dry-run by default; `--verify` afterwards). Creates `fpu_classes` and adds `class_id`,
   `status`, `start_date_used`, `reviewed_by/at`, `review_notes`, `completed_on` plus the unique
   index to `fpu_enrollments`. Needs the session-pooler `DATABASE_URL`.

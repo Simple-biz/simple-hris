@@ -150,9 +150,13 @@ const CHECKS: Array<[string, string]> = [
   ],
 ];
 
+// Year 2099 / batch 12: the top of both CHECK ranges, so a control can never
+// collide with a REAL class. (With 2026/1 the positive control failed on the
+// first --verify after HR created FPU 2026 · Batch 1 — a unique violation on
+// real data, not a broken constraint.)
 const LEGAL_CLASS: Record<string, string> = {
-  year: '2026',
-  batch: '1',
+  year: '2099',
+  batch: '12',
   opens_on: "date '2026-09-01'",
   closes_on: "date '2026-09-30'",
   class_starts_on: "date '2026-10-08'",
@@ -182,6 +186,7 @@ const NEGATIVE_CLASS_CONTROLS: Array<[string, string]> = [
   ['batch 0 is rejected', insertClass({ batch: '0' })],
   ['batch 13 is rejected', insertClass({ batch: '13' })],
   ['year 1999 is rejected', insertClass({ year: '1999' })],
+  ['year 2101 is rejected', insertClass({ year: '2101' })],
   ['a duplicate (year, batch) is rejected', `${insertClass()}; ${insertClass({ opens_on: "date '2026-10-01'", closes_on: "date '2026-10-31'" })}`],
 ];
 
