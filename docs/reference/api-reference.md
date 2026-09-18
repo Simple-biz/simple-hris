@@ -1493,7 +1493,15 @@ Audit log: `leave.admin_deleted` with `details.scope = 'unrestricted' | 'departm
 
 Live health probe powering the Admin → Diagnostics tab. Runs server-side probes against Supabase, the pg pool (when `DATABASE_URL` is set), the audit log, and the data tables that the Service Map cares about. Returns a `DiagnosticsHealthResponse` the client renders directly — same shape as the local mock so the UI is unchanged whether it's live or fallback.
 
-**Authorization**: NextAuth session must hold the `'admin'` role. Returns 401 if not signed in, 403 if role check fails. Belt-and-suspenders alongside the client-side `'diagnostics'` tab gate so non-admin sessions can never read probe results.
+> **One endpoint, three maps (since 2026-09-18).** Admin → Diagnostics renders this *single*
+> response as three dashboard-scoped service maps (System / HR / Accounting) plus two performance
+> tabs. There are **no scoped endpoints** — the client filters by node id, and the tab shell owns
+> **one** 30s poller shared by every mounted map. Do not add a per-map fetch: with the
+> mount-once-then-hide panes, three pollers would be 3 × 24 service-role probes against
+> production every 30 seconds, forever. If a map needs data this response does not carry, add it
+> to this response. See [diagnostics-service-maps.md](../features/diagnostics-service-maps.md).
+
+**Authorization**: NextAuth session must hold the `'admin'` role. Returns 401 if not signed in, 403 if role check fails. Belt-and-suspenders alongside the client-side `'diagnostics'` tab gate so non-admin sessions can never read probe results. **Nothing outside the Admin shell reads this route** — asked directly on 2026-09-18 whether HR and Accounting should see their own pipeline health on their own dashboards, Kane ruled *"Admin should bypass everything and should monitor everything that should be the absolute rule"*, and the proposed HR-shell / Accounting-shell widgets were dropped rather than this gate widened.
 
 **Response** `200`:
 ```json
@@ -1512,7 +1520,7 @@ Live health probe powering the Admin → Diagnostics tab. Runs server-side probe
       "suggestedChecks": ["Periodically verify service-role usage list."],
       "lastChecked": "2026-05-02T14:32:01.234Z"
     }
-    // … 11 more nodes
+    // … 23 more nodes — 24 total as of 2026-09-18
   ],
   "alerts": [
     {
@@ -1523,27 +1531,56 @@ Live health probe powering the Admin → Diagnostics tab. Runs server-side probe
       "nodeId": "hubstaff-csv",
       "timestamp": "2026-05-02T14:32:01.234Z"
     }
-  ]
+  ],
+  "metrics": {
+    "hrisAdoption": { "onboarded": 812, "total": 1343 }
+  }
 }
 ```
 
-**Probes** (run in parallel via `Promise.all`, each capped at 4s via `withProbeTimeout`):
+`alerts` is derived, not separately probed: **one entry per non-healthy node**, `nodeId` pointing
+back at it. `metrics.hrisAdoption` is present only on a live response (`computeHrisAdoption`) and
+is a **whole-roster** figure — the client shows it on the System map only, because on a scoped map
+a company-wide ratio would read as a claim about that pipeline.
 
-| Probe helper | What it does | Status mapping |
+**Probes** — 21 helpers producing 24 nodes, all run in parallel via `Promise.all`, each capped at
+4s via `withProbeTimeout` (a probe that overruns returns `critical` / "Probe timed out." rather
+than stalling the response). Total wall-clock is the slowest probe.
+
+| Probe helper | What it reads | Status mapping |
 |---|---|---|
-| `probeSupabase` | `select head` on `app_settings`, latency | <500ms healthy, 500–2000ms warning, errors/timeouts critical |
-| `probePgPool` | `SELECT 1` over a `pg.Pool` if `DATABASE_URL` set | unknown when env missing, healthy <1.5s, critical on connection error |
-| `probeHubstaffCsv` | Latest `hubstaff_uploads` row + age | <7d healthy, 7–14d warning, >14d warning |
+| `probeSupabase` | `select head` on `app_settings`, latency (anon client) | <500ms healthy, 500–2000ms warning, errors/timeouts critical |
+| `probePgPool` | `SELECT 1` over a `pg.Pool` if `DATABASE_URL` set | unknown when env missing, healthy <1.5s, warning slower, critical on connection error |
+| `probeHubstaffCsv` | Latest `hubstaff_uploads` row + age | <7d healthy, 7–14d warning, >14d warning, unknown if empty |
 | `probeMasterList` | `count(*)` from `active_employees` view | 0 critical, <50 warning, else healthy |
-| `probeAuditLog` | Latest `audit_log` row, age | <7d healthy, >7d warning, empty warning |
+| `probeAuditLog` | Latest `audit_log` row, age | <7d healthy, >7d or empty warning |
 | `probeDisbursementRecords` | `count(*)` from `disbursement_records` | healthy if reads, warning on error |
-| `probeAuth` | Recent login events from `audit_log` (24h window) | always warning until admin gate is enforced server-side |
+| `probeAuth` | Recent login events from `audit_log` (24h window) | always warning until the admin gate is enforced server-side |
 | `probeDailyReport` | Latest `daily_reports.*` audit entry, age | <48h healthy, >48h warning, never warning |
 | `probeRates` | `count(*)` from `employee_hourly_rates` | 0 warning, else healthy |
+| `probeAppSettings` | Key count on `app_settings` + `auth.force_logout_map` parses as a JSON object | critical if unreadable, warning if the map is malformed, else healthy |
+| `probeGoogleSheetsSync` | Recency of `csv.master.sync` / `csv.rates.sync` in `audit_log` | >7d warning, >30d critical |
+| `probeRateHistory` | `employee_rate_history` — the authority for per-day rate resolution | healthy if the table reads |
+| `probeNewHireChecklist` | `hr_new_hire_checklist` count + newest `period_start` + that week's `hr_new_hire_checklist_periods` lock row | warning **only** if the newest week has hires, is still `open`, and its Sunday is >7d past |
+| `probeHrOnboarding` | Pending `hr_onboarding_submissions` + `hr_pending_employees` in `pending_work_email`/`ready`, hires stuck >7d | warning if any hire is stuck >7d or a table is missing |
+| `probeHrOffboarding` | `hr.employee.offboarded` count (30d) + last 20 `hr.employee.webhook_fired.%` rows + total off-boarded | warning if any recent fire recorded `webhook_fired: false` |
+| `probeTickets` | Active vs done counts on `tickets` (archived excluded) | healthy if reads, warning if missing / no SELECT |
+| `probeTimeAdjustments` | Pending / manager-approved counts on `time_adjustment_requests`, plus stale >14d | warning if any request is pending >14d or the table is missing |
+| `probePayrollWizardNotes` | Open (`done = false`) vs total on `payroll_wizard_notes` | healthy if reads, warning if missing / no SELECT |
+| `probeMesa` | Event count on `mesa_ledger` + open-account count on `mesa_accounts` (best-effort) | warning if the ledger is empty / missing, else healthy |
+| `probePaymentDispatch` | Total + paid counts on `payment_dispatches`, age of the newest row | warning if the newest dispatch is >14d old |
+| `probeCycleCloseout` | Count of live `dispatch.cycle_closeout.%` keys + newest `updated_at` | healthy if the keys read — **no staleness threshold**, see below |
 
-**Composite statuses**: `payroll-wizard` is derived from `hubstaff-csv` + `master-list` + `disbursement-records` worst-case, with a warning floor (CSV mismatches stay subtle even when probes look green). `admin-shell` is always healthy (you can read this response, the shell rendered). `supabase-client` and `supabase-postgres` share one probe.
+**Composite and constant nodes**: `payroll-wizard` is derived from `hubstaff-csv` + `master-list` + `disbursement-records` worst-case, with a **warning floor** (CSV mismatches stay subtle even when probes look green). `admin-shell` is always healthy — you can read this response, so the shell rendered. `supabase-client` and `supabase-postgres` share one probe. **The warning floor is specific to `payroll-wizard` and is not a pattern to copy**: a new node that reads healthy when it is healthy is the requirement, because a permanently amber node adds an alert nobody can clear and an alerts list that is never empty gets ignored.
 
-**Security**: probe outputs never include raw stack traces, SQL text, secrets, or employee PII. Errors are trimmed via `trimError()` (one-line, capped at 120 chars). PostgREST error codes pass through (useful for diagnosis, not sensitive).
+**Two deliberate non-rules**, both of which look like omissions:
+
+- **`payment-dispatch` reports counts and never a rate.** `payment_dispatches` structurally cannot see a payable person who was never dispatched, so any percentage over it sits at 97–99% by construction and flatters every week. Rates live on the Payroll Cycles tab, over a close-out's payable denominator, and nowhere else.
+- **`cycle-closeout` has no age threshold.** Closing a week is a human cadence (22 of 27 cycles pre-date the feature existing), so a staleness rule would sit permanently amber. *Which* weeks are unclosed is already the Payroll Cycles tab's answer; a second implementation could only disagree with it.
+
+**Row-cap safety**: every probe returns aggregates — counts via `head: true, count: 'exact'` and recency via `order(...).limit(1)`. **No probe fetches rows**, so the 1000-row PostgREST cap is unreachable by construction. This matters because `hr_new_hire_checklist` is already past it (1,479 rows live).
+
+**Security**: probe outputs never include raw stack traces, SQL text, secrets, or employee PII. Errors are trimmed via `trimError()` (one-line, capped at 120 chars). PostgREST error codes pass through (useful for diagnosis, not sensitive). Aggregate counts, latencies and ages only.
 
 **Error Response**:
 - `401` — not signed in
@@ -1552,10 +1589,12 @@ Live health probe powering the Admin → Diagnostics tab. Runs server-side probe
 
 `Cache-Control: no-store, max-age=0` on the response to prevent any CDN caching.
 
-**Tables**: `app_settings`, `hubstaff_uploads`, `active_employees` (view), `audit_log`, `disbursement_records`, `employee_hourly_rates`
+**Tables**: `app_settings` (incl. the `dispatch.cycle_closeout.%` keys), `hubstaff_uploads`, `active_employees` (view), `global_master_list`, `audit_log`, `disbursement_records`, `payment_dispatches`, `employee_hourly_rates`, `employee_rate_history`, `hr_new_hire_checklist`, `hr_new_hire_checklist_periods`, `hr_onboarding_submissions`, `hr_pending_employees`, `tickets`, `time_adjustment_requests`, `payroll_wizard_notes`, `mesa_ledger`, `mesa_accounts`
 **Service Role**: Required (for read-through past RLS on operational tables)
 
-See [docs/system-diagnostics.md](../features/system-diagnostics.md) for the architecture, edge animation system, and how to extend with new probes.
+**Adding a probe is a five-place change**, three of them enforced by source-scan tests because every way of forgetting fails *silently* — see [diagnostics-service-maps.md § Adding a node](../features/diagnostics-service-maps.md). Briefly: the helper here, the `node(...)` row in the route, the position + mock node in `SystemDiagnostics.tsx`, the id in `ALL_DIAGNOSTIC_NODE_IDS` (`src/lib/admin/diagnostics-scopes.ts`) with its scope, and the row in `system-diagnostics.md` § Probes.
+
+See [features/system-diagnostics.md](../features/system-diagnostics.md) for per-node meanings, the edge animation system and the security contract; [features/diagnostics-service-maps.md](../features/diagnostics-service-maps.md) for the scoping rules and the single-poller constraint.
 
 ---
 

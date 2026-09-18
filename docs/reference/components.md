@@ -856,18 +856,36 @@ Shared module for PAB (Perfect Attendance Bonus) date logic, used by both Payrol
 
 ---
 
-## `src/components/SystemDiagnostics.tsx` *(added 2026-05-02)*
+## `src/components/SystemDiagnostics.tsx` *(added 2026-05-02; tab strip 2026-09-04; scoped maps 2026-09-18)*
 
-**Admin → Diagnostics.** Admin-only health map for the Simple HRIS stack. Renders a Supabase-Schema-Visualiser-style React Flow diagram with relationship-aware edge animations, an alerts list, and per-node detail panels. Mounted exclusively in the Admin shell (`app/admin/page.tsx`); not present in any other dashboard.
+**Admin → Diagnostics.** Admin-only health surface for the Simple HRIS stack. Mounted exclusively in the Admin shell (`app/admin/page.tsx`); not present in any other dashboard.
 
-**Layout:**
-- **Header** — orange `Radar` icon + title + Live/Mock chip + "Updated HH:MM:SS" + Refresh button
-- **Summary cards** — 4-up grid with Healthy / Warnings / Critical / Unknown counts
-- **Service Map** (left, xl+) — React Flow diagram, draggable cards, status-tinted edges, edge legend pinned bottom-right
-- **Right panel** (top) — node details (label, category, status, summary, details, suggested checks, last-checked timestamp) when a card is clicked
-- **Alerts list** (right panel, bottom) — clicking an alert focuses the related node
+The **default export is a tab shell**, not the map. It owns the tab strip, the shared diagnostics feed, and five panes:
 
-**Live data flow**: on mount, fetches `GET /api/admin/diagnostics` and replaces the mock baseline. Fetch errors fall back to mock with an amber banner explaining why ("HTTP 403", "Probe failed", etc.). The Live/Mock chip (`dataSource` state) is the source of truth — green when the last fetch succeeded, grey when it didn't.
+| Dashboard group | Tab | Pane |
+|---|---|---|
+| **System** | Service Map | `ServiceMapView` scoped to every node (24) |
+| **HR** | Service Map | `ServiceMapView` scoped to the hire path (5 nodes) |
+| **HR** | HR Pipeline | `HrPipelinePerformance` — listed → staged → promoted |
+| **Accounting** | Service Map | `ServiceMapView` scoped to the money path (7 nodes) |
+| **Accounting** | Payroll Cycles | `PayrollCyclePerformance` — paid vs payable |
+
+Grouping by dashboard is Kane's instruction (2026-09-18, *"Group them by Dashboards"*), and the group→tab table lives in `src/lib/admin/diagnostics-scopes.ts` (`DIAGNOSTICS_TAB_GROUPS`), not in this file. Three tabs render the visible label "Service Map", so each button carries a disambiguating `aria-label` ("HR service map"); the group headings are `aria-hidden` because a `role="tablist"` may contain only tabs.
+
+**Panes are mounted once, then hidden** with `hidden` (never unmounted, never `opacity-0`): unmounting would throw away React Flow's whole canvas and each pane's fetched data, so every switch back would re-skeleton and re-layout. Deferring the *first* mount until a tab is opened is what stops arrival firing every request at once.
+
+**ServiceMapView** renders one scope: React Flow diagram, draggable cards, status-tinted edges, an edge legend pinned bottom-right, a per-node detail panel and a scoped alerts list.
+
+**Layout (per map):**
+- **Header** — orange `Radar` icon + the scope's own title/blurb + Live/Mock chip + "Updated HH:MM:SS" + Refresh
+- **Summary cards** — Healthy / Warnings / Critical / Unknown **over the scoped nodes**; the System map adds a 5th "Employees Onboarded" card (`metrics.hrisAdoption`), which is a whole-roster ratio and therefore deliberately absent from the scoped maps
+- **Service Map** (left, xl+) — the diagram
+- **Right panel** (top) — node details (label, category, status, summary, details, suggested checks, last-checked) when a card is clicked
+- **Alerts list** (right panel, bottom) — scoped; clicking an alert focuses its node
+
+**A scoped map reports only on what it draws.** `ServiceMapView` reads `scopedNodes` / `scopedAlerts` / `scopedEdgeList`, **never `data.nodes` directly**, so the nodes, edges, alerts, the four counts and the "Overall" badge are all over the subset. An HR map wearing a `critical` earned by `pg-pool` would send someone to tell HR their pipeline is down.
+
+**Live data flow**: the fetch lives in the **shell**, not in the map (moved 2026-09-18). One `GET /api/admin/diagnostics` on mount plus a **30s interval**, shared by every mounted map; each map's Refresh drives that same loader. Fetch errors fall back to the *unknown* baseline with an amber banner explaining why ("HTTP 403", "Probe failed"), so no node ever shows a health it does not have. The Live/Mock chip (`dataSource`) is the source of truth — green when the last fetch succeeded, grey when it didn't. **Do not give a map its own fetch**: with mount-once panes, three pollers would be 3 × 24 service-role probes against production every 30s, forever. The shell *is* the Diagnostics tab, so navigating away still unmounts it and stops the timer — there is no background polling.
 
 **Node design** (`DiagFlowNode`): 280px-wide cards mimicking Supabase column rows. Status-tinted header (icon + label + status pill); body has 4 rows (`category/enum`, `status/status`, `summary/text`, `checked_at/timestamp`) with mono labels and right-aligned values. Left/right `Handle` anchors for stable edge connections.
 
@@ -882,17 +900,33 @@ Shared module for PAB (Perfect Attendance Bonus) date logic, used by both Payrol
 
 Edge stroke colour = max-of-endpoint-statuses; markers tinted to match.
 
-**Drag and layout persistence**:
-- Cards draggable; positions written to `localStorage["system-diagnostics-positions-v1"]` on drag-end
-- Reset Layout button restores `NODE_POSITIONS` template and clears localStorage; disabled at template position
+**Drag and layout persistence** — **per scope**:
+- Cards draggable; positions written on drag-end to that scope's own key: `system-diagnostics-positions-v2` (System) · `…-hr-v1` · `…-accounting-v1`. Sharing one key would make dragging the HR map rewrite the System map's saved arrangement; a test pins that the three are distinct. **The System key stays `-v2`** — renaming it silently resets every admin's saved layout, so a test pins the literal too. (It was `-v1` until the template moved to the collision-free grid and stale overlapping positions had to be dropped.)
+- Each scope has its own curated template in `SCOPE_POSITIONS` (`system` reuses `NODE_POSITIONS`). Scoped maps do **not** inherit the system coordinates: the HR nodes sit in four different columns of the big grid, so reusing them would strand five cards across 1,400px of empty canvas. Same 360×280 spacing, so a 284px card still cannot overlap its neighbour.
+- Reset Layout restores that scope's template and clears **only that scope's** key; disabled at template position
 - **Twitch fix**: dash animations live on CSS classes (`.sd-edge-mount`, `.sd-edge-query`) instead of inline `style.animation` so they don't restart when the style object reference changes per render. Particles (`<animateMotion>`) unmount during drag and remount cleanly on drag-stop, avoiding SVG motion resets when the path string changes 60×/sec
 - `.sd-paused` class freezes dash flow while any node drags
 
 **Reduced motion**: `@media (prefers-reduced-motion: reduce)` disables all edge animations, particles, and dash flow.
 
-**Admin gate**: visible only when the AdminSidebar's `securityNav` includes `'diagnostics'` AND the page mounts via `app/admin/page.tsx`. The Accounting / Manager / Employee / Orphanage shells have no reference to `SystemDiagnostics`. The probe endpoint additionally enforces `roles.includes('admin')` server-side so probe data is unreachable from non-admin sessions.
+**Admin gate**: visible only when the AdminSidebar's `securityNav` includes `'diagnostics'` AND the page mounts via `app/admin/page.tsx`. The Accounting / Manager / Employee / Orphanage shells have no reference to `SystemDiagnostics`. The probe endpoint additionally enforces `roles.includes('admin')` server-side so probe data is unreachable from non-admin sessions. **This stayed true through the 2026-09-18 change on purpose**: the brief proposed pipeline-health widgets on the HR and Accounting dashboards, and Kane's ruling (*"Admin should bypass everything and should monitor everything"*) deleted them rather than widening the gate. No HR or Accounting session gained read access to anything.
 
-See [docs/system-diagnostics.md](../features/system-diagnostics.md) for the architecture, probe definitions, and extension guide. See [API_REFERENCE.md](./api-reference.md#127-admin-diagnostics) for the live endpoint shape.
+See [features/system-diagnostics.md](../features/system-diagnostics.md) for per-node meanings, probe definitions and the extension guide; [features/diagnostics-service-maps.md](../features/diagnostics-service-maps.md) for the scoping rules, the single-poller constraint and the four places a new node must be registered; [API_REFERENCE.md](./api-reference.md#127-admin-diagnostics) for the live endpoint shape.
+
+---
+
+## `src/lib/admin/diagnostics-scopes.ts` *(added 2026-09-18)*
+
+Pure module — **no imports**, so its test needs no env, no Supabase client and no React. It is the single place that says which node belongs to which map, so the tab strip, the node filter, the edge filter and the summary counts cannot disagree about what a map contains.
+
+**Exports**: `ALL_DIAGNOSTIC_NODE_IDS` (the canonical 24) · `SERVICE_MAP_SCOPES` (`system` / `hr` / `accounting` — each with its dashboard group, tab label, aria-label, title, blurb, node id list and `localStorage` key) · `DIAGNOSTICS_TAB_GROUPS` (the grouped tab strip) · `filterNodesToScope` / `filterEdgesToScope` / `filterAlertsToScope` · `overallStatusOf` / `countsByStatus`.
+
+- **`SERVICE_MAP_SCOPES.system.nodeIds` is `null` and must stay null.** `filterNodesToScope` returns the array unchanged (same reference) for it. A curated list there would mean a node added to the route silently vanishing from the one map that promises to show everything.
+- **`filterEdgesToScope` requires BOTH endpoints in scope.** An edge kept because only its source survived points at a node that was never drawn; React Flow drops it silently and the map quietly loses a relationship.
+- **`overallStatusOf` is the one implementation of the verdict precedence** (worst wins; `healthy` needs unanimity; `unknown` never renders as fine; an empty set is `unknown`). The route and the mock builder each carried their own copy before.
+- Layout templates are deliberately **not** here — they live beside `NODE_POSITIONS` in the component, so layout has one home.
+
+`diagnostics-scopes.test.ts` (19 tests) includes **source scans** that parse the `const nodes: DiagnosticNode[] = [ … ]` block out of both the route and the component and assert both sets equal `ALL_DIAGNOSTIC_NODE_IDS` — because a scope id matching no node renders one fewer card with no error, an unclassified node is absent from every pipeline map while the System map still looks right, and a node missing from the mock is missing at first paint and **pops** when data lands.
 
 ---
 
@@ -900,7 +934,11 @@ See [docs/system-diagnostics.md](../features/system-diagnostics.md) for the arch
 
 Server-side probe helpers consumed by `app/api/admin/diagnostics/route.ts`. Each helper returns a `ProbeResult` (`status` + `summary` + `details` + `suggestedChecks`) and runs through `withProbeTimeout()` (4-second cap) so a hung Supabase doesn't stall the route.
 
-**Helpers**: `probeSupabase`, `probePgPool`, `probeHubstaffCsv`, `probeMasterList`, `probeAuditLog`, `probeDisbursementRecords`, `probeAuth`, `probeDailyReport`, `probeRates`. See `docs/system-diagnostics.md` for the per-probe status mapping.
+**Helpers (21)**: `probeSupabase`, `probePgPool`, `probeHubstaffCsv`, `probeMasterList`, `probeAuditLog`, `probeDisbursementRecords`, `probeAuth`, `probeDailyReport`, `probeRates`, `probeAppSettings`, `probeGoogleSheetsSync`, `probeRateHistory`, `probeNewHireChecklist`, `probeHrOnboarding`, `probeHrOffboarding`, `probeTickets`, `probeTimeAdjustments`, `probePayrollWizardNotes`, `probeMesa`, `probePaymentDispatch`, `probeCycleCloseout` — plus `computeHrisAdoption` (a metric, not a node). See [features/system-diagnostics.md § Probes](../features/system-diagnostics.md) for the per-probe status mapping, or [API_REFERENCE.md](./api-reference.md#127-admin-diagnostics) for the same table keyed by helper.
+
+**`probeNewHireChecklist` is not `probeHrOnboarding`.** The latter reads the *staging* tables (`hr_onboarding_submissions`, `hr_pending_employees`) that a listed hire still has to reach; it never touched `hr_new_hire_checklist`. Live those are 1,049 staged against 1,479 listed, and the ~430-person gap is the largest single loss in the hiring funnel — so they are separate nodes and the edge between them is that hand-off.
+
+**Aggregates only**: counts via `head: true, count: 'exact'`, recency via `order(...).limit(1)`. **No probe fetches rows**, which is what makes the 1000-row PostgREST cap unreachable here by construction (`hr_new_hire_checklist` is already at 1,479).
 
 **Security policy**: every probe sanitizes errors via `trimError()` (one-line, 120-char cap) — no stack traces, no SQL text, no env secrets, no PII. PostgREST error codes (e.g. `42703`) pass through because they're useful for admin diagnosis.
 

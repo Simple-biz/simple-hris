@@ -25,6 +25,58 @@ governing doc's Probes table never listed them. Ship commit: see `git log` for
 | What each node means, and the security contract every probe inherits | [system-diagnostics.md](./system-diagnostics.md) |
 | The performance tabs beside these maps | [diagnostics-performance-tabs.md](./diagnostics-performance-tabs.md) |
 
+## What each map draws
+
+The scope tables live in [`src/lib/admin/diagnostics-scopes.ts`](../../src/lib/admin/diagnostics-scopes.ts).
+All 24 nodes are on the **System** map (`nodeIds: null` — see below). The two pipeline maps draw
+these subsets:
+
+### HR — the hire path (5 nodes)
+
+| Node | Probe reads | Goes amber when |
+|---|---|---|
+| `new-hire-checklist` | `hr_new_hire_checklist` count · newest `period_start` · that week's `hr_new_hire_checklist_periods` lock row | the newest week has hires, is still `open`, and its Sunday is >7d past — nobody on it was emailed |
+| `hr-onboarding` | pending `hr_onboarding_submissions` · `hr_pending_employees` in `pending_work_email`/`ready` · hires stuck >7d | a hire is stuck awaiting a work email >7d, or a table is missing |
+| `hr-offboarding` | `hr.employee.offboarded` count (30d) · last 20 `hr.employee.webhook_fired.%` rows · total off-boarded on `global_master_list` | any recent webhook fire recorded `webhook_fired: false` |
+| `master-list` | `count(*)` on the `active_employees` view | `critical` at 0, `warning` under 50 |
+| `google-sheet-sync` | recency of `csv.master.sync` / `csv.rates.sync` in `audit_log` | `warning` past 7d, `critical` past 30d |
+
+### Accounting — the money path (7 nodes)
+
+| Node | Probe reads | Goes amber when |
+|---|---|---|
+| `rates` | `count(*)` on `employee_hourly_rates` | count is 0 |
+| `mesa` | `mesa_ledger` event count · open `mesa_accounts` (best-effort) | the ledger is empty or missing |
+| `payroll-wizard` | *composite* — worst of `hubstaff-csv`, `master-list`, `disbursement-records` | **always at least `warning`** (documented floor — CSV/date-column mismatches stay subtle) |
+| `hubstaff-csv` | latest `hubstaff_uploads` row + age | past 7d (and still `warning` past 14d) |
+| `disbursement-records` | `count(*)` on `disbursement_records` | the read errors |
+| `payment-dispatch` | total + paid counts on `payment_dispatches` · age of the newest row | the newest dispatch is >14d old |
+| `cycle-closeout` | count of live `dispatch.cycle_closeout.%` keys · newest `updated_at` | **never** — no staleness threshold, by design |
+
+**Excluded from the Accounting map on purpose**, and still on the System map: `payroll-notes`,
+`time-adjust`, `tickets`, `rate-history`. They are side surfaces — a stall in one does not mean
+money stopped moving, and putting them here would make "is the money path healthy?" unanswerable
+at a glance, which is the only question this map is for (Kane: *"core stuff like if everything is
+working fine"*).
+
+**No separate orientation node.** The orientation email *is* the checklist Lock-in, so its health
+belongs on `new-hire-checklist`; attendance measurement is the HR Pipeline tab's job.
+
+## The edges each map keeps
+
+`filterEdgesToScope` keeps an edge only when **both** endpoints are in scope, so each map's graph
+is a closed subgraph of the full `EDGES` list:
+
+| Map | Edges drawn |
+|---|---|
+| **HR** | `new-hire-checklist → hr-onboarding` · `hr-onboarding → master-list` · `hr-offboarding → master-list` · `hr-offboarding → google-sheet-sync` · `google-sheet-sync → master-list` |
+| **Accounting** | `rates → payroll-wizard` · `mesa → payroll-wizard` · `payroll-wizard → hubstaff-csv` · `payroll-wizard → disbursement-records` · `payroll-wizard → payment-dispatch` · `payment-dispatch → cycle-closeout` · `disbursement-records → cycle-closeout` |
+
+Edges to `admin-shell`, `supabase-client`, `audit-log` and the rest are dropped on the pipeline
+maps because those nodes are not drawn there — that is the filter working, not an omission. The
+`relationshipFor()` classifier is unchanged and needed no new category: the new edges all classify
+as `flow` (data moving), except `admin-shell → new-hire-checklist`, which is a `mount`.
+
 ## A scoped map reports only on what it draws
 
 This is the load-bearing rule, and every other rule here serves it. `ServiceMapView` reads
@@ -204,6 +256,95 @@ Kane, 2026-09-18: *"Group them by Dashboards."* Three groups, five tabs:
   accessible names carry the whole meaning. A test asserts the three aria-labels are distinct.
 - The strip is the single source of tab identity: `DIAGNOSTICS_TAB_GROUPS` in
   `diagnostics-scopes.ts`.
+
+## Adding a new scope (a CEO or Manager map, say)
+
+The shape is deliberately cheap to extend, and nothing about it requires a new endpoint:
+
+1. Add the id to `ServiceMapScopeId` and an entry to `SERVICE_MAP_SCOPES` — dashboard group, tab
+   label, `ariaLabel`, title, blurb, the node id list, and **a fresh `storageKey`** (never reuse
+   another scope's).
+2. Add a curated grid to `SCOPE_POSITIONS` in the component.
+3. Add the tab to `DIAGNOSTICS_TAB_GROUPS`, in its dashboard's group.
+4. Add the tab id to the `DiagnosticsTab` union and a pane in the shell —
+   `<ServiceMapView scope={SERVICE_MAP_SCOPES.yours} {...feed} />`.
+
+The existing tests then cover it for free: subset-of-canonical, distinct storage keys, unique tab
+ids, distinct aria-labels for same-labelled tabs, one group per dashboard. **Do not add a fetch**
+— pass `{...feed}` like the others.
+
+Two constraints worth knowing before you draw a new map:
+
+- **Every node you list must already be probed.** A scope cannot invent a node; if the pipeline
+  you want to draw has no probe, that is the real work (and `system-diagnostics.md` § Extending
+  plus § "Adding a node" above is the checklist).
+- **A scope with one node is a card, not a map.** The value is in the edges — if the nodes you
+  want have no relationships between them in `EDGES`, the map will render as a row of loose cards
+  and a KPI strip would serve better.
+
+## Failure modes, and what each one looks like on screen
+
+Every entry here is something that produces **no error** — which is why they are tested rather
+than left to review:
+
+| What went wrong | What you see | Caught by |
+|---|---|---|
+| Scope lists an id no node has | one fewer card; no console error, no banner | `every scope is a subset of the canonical node list` |
+| Node added to the route, not to a scope | absent from every pipeline map; System map looks correct | `the canonical list is exactly what the route emits` (source scan) |
+| Node missing from `buildMockDiagnostics` | map is short a card at first paint and on probe failure, then **pops** when the fetch lands | `the component mock covers every node the route emits` (source scan) |
+| System scope given a hand-maintained list | a new node silently missing from the map that promises everything | `the system scope is not a hand-maintained list` |
+| Counts computed over `data.nodes` | HR map claims a `critical` that is really `pg-pool` | `a scoped verdict ignores failures the map does not draw` |
+| Edge kept with one endpoint out of scope | React Flow drops it; the map quietly loses a relationship | `filterEdgesToScope needs BOTH endpoints in scope` |
+| Two scopes sharing a storage key | dragging one map rearranges another; Reset Layout wipes both | `each scope persists its layout under its own key` |
+| System storage key renamed | every admin's saved layout silently resets | `the system map keeps the key its drag positions already live under` |
+| A map given its own poller | 3 × 24 service-role probes per 30s against production, forever | **not** test-covered — see the note below |
+| `unknown` treated as healthy | "we could not read it" renders as "it is fine" | `overallStatusOf: worst wins, and healthy needs unanimity` |
+
+**The poller is the one rule here with no test.** It is a structural property of where the fetch
+lives, and a unit test cannot see a component's network behaviour. It is enforced by review and
+by `ServiceMapView` having **no fetch code at all** — it takes `data` as a prop. If you find
+yourself adding `useEffect(() => fetch(...))` to a map, that is the mistake.
+
+## The tests, and what each is for
+
+`src/lib/admin/diagnostics-scopes.test.ts` — 19 tests, `npx tsx --test src/lib/admin/diagnostics-scopes.test.ts`.
+
+Grouped by what they protect:
+
+- **Registration parity (3)** — the two source scans plus the subset check. These are the ones
+  that fail when someone adds a node and forgets a step.
+- **Scope shape (4)** — system stays `null`; the pipeline maps are non-empty and genuinely
+  smaller than the whole; HR keeps listed and staged separate; Accounting holds the money path
+  and excludes the four side surfaces.
+- **Storage keys (2)** — all distinct, and the system key is pinned to its exact literal.
+- **Tab strip (3)** — unique ids, three distinct aria-labels behind the three identical "Service
+  Map" labels, the 2026-09-04 ids preserved, one group per dashboard in order.
+- **Status maths (3)** — the precedence, the scoped-verdict property, and that counts account for
+  every node exactly once.
+- **Filters (4)** — null-scope identity (same reference back), both-endpoints edges, alert
+  scoping.
+
+The source scans parse the `const nodes: DiagnosticNode[] = [ … ]` block out of the route and the
+component and assert **exact set equality** with `ALL_DIAGNOSTIC_NODE_IDS`. They will also fail
+loudly if either file stops declaring that array in that shape — the assertion message says so,
+because a blind scan that silently matches nothing is worse than no scan.
+
+## Out of scope (parked)
+
+- **Pipeline health on the HR and Accounting dashboards themselves.** Proposed in the first draft
+  of this brief as widgets on those shells' Overview tabs. Kane's ruling (*"Admin should bypass
+  everything and should monitor everything that should be the absolute rule"*) **deleted them**
+  rather than widening any permission, so HR and Accounting still cannot see their own pipeline
+  health. Reopening this means re-answering the RBAC question — these probes' `details` and
+  `suggestedChecks` name tables, audit actions and n8n slugs, and are written for an admin
+  audience. Do not resurrect the widgets without asking.
+- **A CEO or Manager map.** No probes exist for those pipelines; see § "Adding a new scope".
+- **Historical health.** Still a snapshot, still no time-series store — inherited from
+  `system-diagnostics.md` § Out of scope. A scoped map would make per-pipeline trends genuinely
+  useful, but it needs a `diagnostic_snapshots` table and a worker.
+- **Supabase Realtime push.** Unchanged: the anon client cannot receive `postgres_changes` under
+  RLS, and the 30s poll is deliberately on a different path from the subscription an outage would
+  take down.
 
 ## Aggregates only — this route family still returns no PII
 

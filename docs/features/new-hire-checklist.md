@@ -239,6 +239,14 @@ Labor Day`) would close it — `resolveOrientationDate` already returns the date
 shift flag and the holiday names, and the grid already holds the holiday map — but it is **not
 built**. Do not describe it as shipped.
 
+> **The 2026-09-18 Diagnostics node does NOT close this gap.** Admin → Diagnostics → HR → Service
+> Map gained a `new-hire-checklist` node ([diagnostics-service-maps.md](./diagnostics-service-maps.md))
+> which reads this table's row count, the newest `period_start` and that week's lock row, and goes
+> amber when a week that has hires is still `open` more than 7 days past its Sunday — i.e. *"that
+> week's Lock-in never ran, so nobody on it was emailed."* Two reasons that is a different thing:
+> it is **admin-only** (HR cannot see it at all), and it reports **lock state**, never the resolved
+> orientation date. The gap above is still open and still HR-facing.
+
 ### Lead Gen only — who is left out, and why
 
 This email **is** the Lead Gen orientation invite: it carries the orientation Zoom link, meeting ID
@@ -279,4 +287,18 @@ link. Teal caught it and told her to disregard it.
 - **HR Overview** — the checklist's `source` / `hired_by` / referral data powers the hiring-sources
   pie, recruiter scorecard, and referrals table (`listHrNewHireChecklistSourceCounts`,
   `…RecruiterCounts`, `…Referrals`).
+  > ⚠ **All three of those readers are silently truncated** (found 2026-09-18, **not fixed**):
+  > `hr-new-hire-checklist.ts:532`, `:570` and `:744` each fetch in one query with
+  > `.range(0, 9999)` and no paging loop. PostgREST caps at **1,000 rows even with `.range()`**
+  > and this table is **1,479**, so those three surfaces are computed over the first 1,000 rows
+  > with no error shown. The correctly-paged loop already exists in the same file at `:683`.
+  > Truncation is *ordered*, so the missing 479 are not a random sample — a recruiter whose hires
+  > land in the tail simply scores lower and the scorecard still looks plausible. Open item 110 in
+  > [audit-2026-09-16-session-log.md](../audits/audit-2026-09-16-session-log.md). **Do not "fix" it
+  > by raising the range ceiling — the cap is server-side and ignores it.**
 - **Offboarding automation** — the mirror pipeline for taking someone off the roster.
+- **Health coverage** — Admin → Diagnostics → HR → Service Map: the `new-hire-checklist` node
+  (this table + its week locks) and the edge `new-hire-checklist → hr-onboarding`, which is the
+  listed→staged hand-off. Note that **`hr-onboarding` never covered this table** — it reads the
+  staging tables a listed hire still has to *reach*.
+  See [diagnostics-service-maps.md](./diagnostics-service-maps.md).

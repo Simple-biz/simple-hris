@@ -15,6 +15,17 @@ re-download path).
 Built because Accounting needs to end a week that isn't perfect. The Pay Cycle Reports publish
 button (retired 2026-08-12, see `documents-tab.md`) refused exactly that case, on purpose.
 
+> **Health coverage (2026-09-18):** Admin → Diagnostics → Accounting → Service Map carries a
+> `cycle-closeout` node — it counts the live `dispatch.cycle_closeout.%` keys and reports the
+> newest `updated_at`. Two things about it are deliberate and should not be "improved":
+> it reads the prefix by **importing `CYCLE_CLOSEOUT_PREFIX` from `cycle-closeout.ts`**, never a
+> retyped literal, because a reopen archives under `dispatch.cycle_reopened.` — a *different*
+> prefix — and a drifted copy would start counting archived declarations as live ones; and it has
+> **no staleness threshold**, because closing a week is a human cadence (22 of 27 cycles pre-date
+> this feature) so an age rule would sit permanently amber, and *which* weeks are unclosed is
+> already the Payroll Cycles tab's answer. See
+> [diagnostics-service-maps.md](./diagnostics-service-maps.md).
+
 ## Key files
 
 | Piece | File |

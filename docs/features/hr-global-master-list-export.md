@@ -33,6 +33,19 @@ alternate emails, start date, tenure, phone, location. Field list matches the
 Admin "Master list information" pane. There is intentionally no shared
 employee-detail modal to reuse (verified before building).
 
+## Health coverage (2026-09-18)
+
+Both halves of this tab's data path are nodes on **Admin → Diagnostics → HR → Service Map**:
+`master-list` (the `active_employees` view count — `critical` at 0, `warning` under 50) and
+`google-sheet-sync` (recency of `csv.master.sync` / `csv.rates.sync` in `audit_log` — `warning`
+past 7 days, `critical` past 30). The edges `hr-onboarding → master-list`,
+`hr-offboarding → master-list` and `google-sheet-sync → master-list` are the three writers.
+
+That map is the surface to check first when the roster looks wrong, because the sheet-sync race
+described below (overlapping syncs once collapsed the active roster 1109 → 390) shows up there as
+a `master-list` count falling through the `< 50` / `0` thresholds while `google-sheet-sync` reports
+a recent run. Admin-only. See [diagnostics-service-maps.md](./diagnostics-service-maps.md).
+
 ## Sync deprecation warning
 
 Clicking the hero **Sync** button now opens a warning dialog (AlertTriangle,

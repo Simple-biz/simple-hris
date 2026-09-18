@@ -13,6 +13,23 @@ Each tab owns its KPI cards, its accent (Accounting orange, HR teal) and its own
 
 Ship commit: see `git log` for `feat(diagnostics)` on 2026-09-04.
 
+> **Since 2026-09-18 these two tabs are no longer alone in their groups.** Diagnostics now holds
+> **five** tabs in three dashboard groups — each of System / HR / Accounting has a scoped
+> **Service Map** alongside the rate tab here (HR Pipeline sits under HR, Payroll Cycles under
+> Accounting). See [diagnostics-service-maps.md](./diagnostics-service-maps.md). Three things
+> that matter to *this* doc:
+>
+> - **Tab ids and labels here were deliberately NOT renamed** (`hr`, `cycles`, "HR Pipeline",
+>   "Payroll Cycles") so every reference in this file stays true. The strip is now built from
+>   `DIAGNOSTICS_TAB_GROUPS` in `src/lib/admin/diagnostics-scopes.ts`.
+> - **The rate rules below are unchanged and still exclusive.** The new `payment-dispatch` health
+>   node reports counts and ages only and carries **no percentage**, precisely because
+>   § "The payroll rate has exactly one source" forbids it; the new `cycle-closeout` node
+>   deliberately has no staleness threshold because *which* weeks are unclosed is **this tab's**
+>   answer, and a second implementation could only disagree with it.
+> - The **120s** poll here is still deliberately slower than the maps' 30s, and the maps now
+>   share **one** poller between them.
+
 ## Key files
 
 | Piece | File |
