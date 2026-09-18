@@ -16,6 +16,10 @@ import {
 } from '@/lib/supabase/server';
 import { normEmail } from '@/lib/email/norm-email';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
+// Imported, never retyped: a reopen archives the record under the DIFFERENT
+// prefix `dispatch.cycle_reopened.`, so a literal here that drifted would start
+// counting archived declarations as live ones.
+import { CYCLE_CLOSEOUT_PREFIX } from '@/lib/payroll/cycle-closeout';
 
 export type ProbeStatus = 'healthy' | 'warning' | 'critical' | 'unknown';
 
@@ -767,6 +771,140 @@ export async function probeRateHistory(): Promise<ProbeResult> {
   }
 }
 
+/**
+ * New Hire Checklist — HR's weekly intake grid and its Lock-in, the event that
+ * actually mails the Lead Gen orientation invite.
+ *
+ * Deliberately NOT folded into `probeHrOnboarding`: that probe reads the
+ * STAGING tables (`hr_onboarding_submissions`, `hr_pending_employees`) a listed
+ * hire still has to reach. Live those are different populations — 1,479 listed
+ * against 1,049 staged — and the gap is the largest single loss in the hiring
+ * funnel. One node covering both would hide it.
+ *
+ * Counts come back via `head: true` and the newest week via `limit(1)`, so this
+ * probe never fetches rows and the 1,000-row PostgREST cap is unreachable —
+ * `hr_new_hire_checklist` is already past it.
+ */
+export async function probeNewHireChecklist(): Promise<ProbeResult> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { status: 'unknown', summary: 'No Supabase client.', details: [], suggestedChecks: [] };
+  }
+  try {
+    const [listedRes, latestRes] = await Promise.all([
+      supabase.from('hr_new_hire_checklist').select('*', { head: true, count: 'exact' }),
+      supabase
+        .from('hr_new_hire_checklist')
+        .select('period_start')
+        .order('period_start', { ascending: false })
+        .limit(1),
+    ]);
+
+    if (listedRes.error) {
+      return {
+        status: 'warning',
+        summary: 'Could not read hr_new_hire_checklist.',
+        details: [trimError(listedRes.error)],
+        suggestedChecks: ['Verify table exists and service role has SELECT.'],
+      };
+    }
+    // A failed read of the newest week is NOT an empty table. Reporting "no
+    // hiring weeks on file" because a query errored would be a lie about HR's
+    // record, which is the exact failure class this map exists to catch.
+    if (latestRes.error) {
+      return {
+        status: 'warning',
+        summary: 'Checklist readable, newest week unreadable.',
+        details: [trimError(latestRes.error), `${listedRes.count ?? 0} hire(s) listed across all weeks.`],
+        suggestedChecks: ['Confirm period_start is still indexed and selectable.'],
+      };
+    }
+
+    const listed = listedRes.count ?? 0;
+    const latestWeek =
+      (latestRes.data?.[0] as { period_start?: string | null } | undefined)?.period_start ?? null;
+
+    if (!latestWeek) {
+      return {
+        status: 'unknown',
+        summary: listed === 0 ? 'No hiring weeks on file.' : 'No week could be resolved.',
+        details: [
+          listed === 0
+            ? 'hr_new_hire_checklist is empty — no recruits listed yet.'
+            : `${listed} row(s) present but none carry a period_start.`,
+        ],
+        suggestedChecks: ['List a week of hires in HR → New Hire Checklist.'],
+      };
+    }
+
+    const [weekRowsRes, periodRes] = await Promise.all([
+      supabase
+        .from('hr_new_hire_checklist')
+        .select('*', { head: true, count: 'exact' })
+        .eq('period_start', latestWeek),
+      supabase
+        .from('hr_new_hire_checklist_periods')
+        .select('status, locked_at')
+        .eq('period_start', latestWeek)
+        .maybeSingle(),
+    ]);
+
+    const weekRows = weekRowsRes.count ?? 0;
+    const period = periodRes.data as { status?: string | null } | null;
+    // A week with no lock row is `open` by definition (getHrChecklistPeriod
+    // returns that default), so absence is a state here, never an error.
+    const lockUnreadable = !!periodRes.error;
+    const locked = period?.status === 'locked';
+    const ageDays = Math.max(
+      0,
+      Math.floor((Date.now() - new Date(`${latestWeek}T00:00:00Z`).getTime()) / 86_400_000),
+    );
+
+    const details = [
+      `${listed} hire(s) listed across all weeks.`,
+      `Newest week ${latestWeek}: ${weekRows} hire(s), ${
+        lockUnreadable ? 'lock state unreadable' : locked ? 'locked' : 'open'
+      }.`,
+      'Lock-in mails the Lead Gen orientation invite from DB truth; a week left open sends nothing.',
+      'Listed is not staged — a listed hire still has to reach hr_pending_employees.',
+    ];
+    if (lockUnreadable) details.push(trimError(periodRes.error));
+
+    // The one condition worth amber: the week is over, it has hires, and it was
+    // never locked — so nobody on it was emailed. Not a floor; a pipeline that
+    // is working reads healthy, or the alerts list grows an entry nobody can
+    // clear and the whole map stops meaning anything.
+    if (!lockUnreadable && !locked && weekRows > 0 && ageDays > 7) {
+      return {
+        status: 'warning',
+        summary: `Week ${latestWeek} still open ${ageDays}d on, with ${weekRows} hire(s).`,
+        details,
+        suggestedChecks: [
+          'HR → New Hire Checklist → that week → Lock in (the dialog shows the date it will send).',
+          'A hiring week that passed without a Lock-in never sent its orientation email.',
+        ],
+      };
+    }
+
+    return {
+      status: 'healthy',
+      summary: `${listed} listed; newest week ${latestWeek} ${locked ? 'locked' : 'open'}, ${weekRows} hire(s).`,
+      details,
+      suggestedChecks: [
+        'Listed vs staged is the Never-staged card on Diagnostics → HR → HR Pipeline.',
+        'Orientation shifts off an enabled US holiday — the Lock-in dialog shows the resolved date.',
+      ],
+    };
+  } catch (e) {
+    return {
+      status: 'unknown',
+      summary: 'New Hire Checklist probe error.',
+      details: [trimError(e)],
+      suggestedChecks: [],
+    };
+  }
+}
+
 /** HR Onboarding pipeline — form submissions + pending employee staging table. */
 export async function probeHrOnboarding(): Promise<ProbeResult> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
@@ -1184,5 +1322,189 @@ export async function probeMesa(): Promise<ProbeResult> {
     };
   } catch (e) {
     return { status: 'unknown', summary: 'MESA probe error.', details: [trimError(e)], suggestedChecks: [] };
+  }
+}
+
+/**
+ * Payment Dispatch — `payment_dispatches`, the live dispatch log every money
+ * surface reads its PAID figures from (Penny's pay breakdown, the CEO payments
+ * feed, the close-out's frozen totals).
+ *
+ * Staleness is the real signal here: payroll runs weekly, so a newest dispatch
+ * older than two weeks means two pay weeks went out somewhere other than this
+ * system — which has happened, for four consecutive weeks in Jun–Jul 2026
+ * (`diagnostics-performance-tabs.md` § `not_run`), and no screen announced it
+ * at the time.
+ *
+ * It reports counts, never a rate. `payment_dispatches` cannot see a payable
+ * person who was never dispatched, so any percentage over it sits at 97–99% by
+ * construction and flatters every week — the Payroll Cycles tab owns rates, and
+ * only over a close-out's payable denominator.
+ */
+export async function probePaymentDispatch(): Promise<ProbeResult> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { status: 'unknown', summary: 'No Supabase client.', details: [], suggestedChecks: [] };
+  }
+  try {
+    const [totalRes, paidRes, latestRes] = await Promise.all([
+      supabase.from('payment_dispatches').select('*', { head: true, count: 'exact' }),
+      supabase
+        .from('payment_dispatches')
+        .select('*', { head: true, count: 'exact' })
+        .eq('status', 'paid'),
+      supabase
+        .from('payment_dispatches')
+        .select('created_at')
+        .order('created_at', { ascending: false })
+        .limit(1),
+    ]);
+
+    if (totalRes.error) {
+      return {
+        status: 'warning',
+        summary: 'Could not read payment_dispatches.',
+        details: [trimError(totalRes.error)],
+        suggestedChecks: ['Verify table exists and service role has SELECT.'],
+      };
+    }
+
+    const total = totalRes.count ?? 0;
+    const paid = paidRes.error ? null : paidRes.count ?? 0;
+    const latest = (latestRes.data?.[0] as { created_at?: string | null } | undefined)?.created_at ?? null;
+
+    if (total === 0) {
+      return {
+        status: 'unknown',
+        summary: 'No dispatch rows on file.',
+        details: ['payment_dispatches is empty — no pay has been staged through this system.'],
+        suggestedChecks: ['Stage a cycle in Accounting → Payment Dispatch.'],
+      };
+    }
+
+    const details = [
+      `${total} dispatch row(s) on file${paid === null ? '' : `; ${paid} marked paid`}.`,
+      latest ? `Newest dispatch logged ${latest.slice(0, 10)}.` : 'Newest dispatch timestamp unreadable.',
+      'The live source for paid figures on Pay Stubs, Penny and the CEO payments feed.',
+      'Counts only — a rate over this table cannot see a payable person who was never dispatched.',
+    ];
+    if (paidRes.error) details.push(`Paid count unreadable: ${trimError(paidRes.error)}`);
+
+    if (latest) {
+      const ageDays = Math.max(0, Math.floor((Date.now() - new Date(latest).getTime()) / 86_400_000));
+      if (ageDays > 14) {
+        return {
+          status: 'warning',
+          summary: `Newest dispatch is ${ageDays}d old.`,
+          details,
+          suggestedChecks: [
+            'Payroll is weekly — two missed weeks means pay ran outside HRIS or stalled.',
+            'Check Accounting → Payment Dispatch for an unstaged cycle.',
+          ],
+        };
+      }
+      return {
+        status: 'healthy',
+        summary: `${total} dispatch row(s); newest ${ageDays}d ago.`,
+        details,
+        suggestedChecks: [
+          'Cross-check a week against Diagnostics → Accounting → Payroll Cycles.',
+        ],
+      };
+    }
+
+    return {
+      status: 'healthy',
+      summary: `${total} dispatch row(s) on file.`,
+      details,
+      suggestedChecks: ['Confirm created_at is populated so staleness can be measured.'],
+    };
+  } catch (e) {
+    return {
+      status: 'unknown',
+      summary: 'Payment Dispatch probe error.',
+      details: [trimError(e)],
+      suggestedChecks: [],
+    };
+  }
+}
+
+/**
+ * Cycle close-out — the per-week declarations Accounting files from Payment
+ * Dispatch, one `app_settings` row per cycle under `dispatch.cycle_closeout.`.
+ * This is the only artifact in the system carrying a PAYABLE denominator, which
+ * is why the Payroll Cycles tab can compute a rate at all.
+ *
+ * **There is deliberately no staleness warning.** Closing a week is a human
+ * cadence, not a system function — live, 22 of 27 cycles pre-date the feature
+ * existing — so an age threshold here would sit permanently amber and train
+ * admins to ignore the map. Which cycles are still unclosed is a question the
+ * Payroll Cycles tab already answers, over data this probe does not re-derive;
+ * a second implementation of "is this week declared?" could only disagree with
+ * the first.
+ */
+export async function probeCycleCloseout(): Promise<ProbeResult> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { status: 'unknown', summary: 'No Supabase client.', details: [], suggestedChecks: [] };
+  }
+  try {
+    const pattern = `${CYCLE_CLOSEOUT_PREFIX}%`;
+    const [countRes, latestRes] = await Promise.all([
+      supabase.from('app_settings').select('*', { head: true, count: 'exact' }).like('key', pattern),
+      supabase
+        .from('app_settings')
+        .select('updated_at')
+        .like('key', pattern)
+        .order('updated_at', { ascending: false })
+        .limit(1),
+    ]);
+
+    if (countRes.error) {
+      return {
+        status: 'warning',
+        summary: 'Could not read close-out records.',
+        details: [trimError(countRes.error)],
+        suggestedChecks: ['Verify app_settings is readable by the service role.'],
+      };
+    }
+
+    const declared = countRes.count ?? 0;
+    const latest = (latestRes.data?.[0] as { updated_at?: string | null } | undefined)?.updated_at ?? null;
+
+    const details = [
+      `${declared} cycle(s) declared closed.`,
+      latest ? `Newest declaration written ${latest.slice(0, 10)}.` : 'No declaration timestamp available.',
+      'The only artifact carrying a payable denominator — every pay-cycle rate reads it.',
+      'A reopen archives the record under dispatch.cycle_reopened.* and frees this key.',
+    ];
+
+    if (declared === 0) {
+      return {
+        status: 'unknown',
+        summary: 'No cycle close-outs on file.',
+        details: [
+          'No pay week has been declared closed yet, so no cycle carries a payable denominator.',
+          'Pre-close-out weeks are not failures — the feature post-dates most cycles.',
+        ],
+        suggestedChecks: ['Close a week from Accounting → Payment Dispatch.'],
+      };
+    }
+
+    return {
+      status: 'healthy',
+      summary: `${declared} cycle(s) declared closed.`,
+      details,
+      suggestedChecks: [
+        'Unclosed and pre-close-out weeks are listed on Diagnostics → Accounting → Payroll Cycles.',
+      ],
+    };
+  } catch (e) {
+    return {
+      status: 'unknown',
+      summary: 'Cycle close-out probe error.',
+      details: [trimError(e)],
+      suggestedChecks: [],
+    };
   }
 }

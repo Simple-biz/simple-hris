@@ -24,6 +24,7 @@ import {
   probeAppSettings,
   probeAuditLog,
   probeAuth,
+  probeCycleCloseout,
   probeDailyReport,
   probeDisbursementRecords,
   probeGoogleSheetsSync,
@@ -32,6 +33,8 @@ import {
   probeHubstaffCsv,
   probeMasterList,
   probeMesa,
+  probeNewHireChecklist,
+  probePaymentDispatch,
   probePayrollWizardNotes,
   probePgPool,
   probeRateHistory,
@@ -61,12 +64,15 @@ type DiagnosticCategory =
   | 'config'
   | 'integration'
   | 'manager'
+  | 'new-hire-checklist'
   | 'hr-onboarding'
   | 'hr-offboarding'
   | 'tickets'
   | 'time-adjust'
   | 'payroll-notes'
-  | 'mesa';
+  | 'mesa'
+  | 'payment-dispatch'
+  | 'cycle-closeout';
 
 type DiagnosticNode = {
   id: string;
@@ -157,12 +163,15 @@ export async function GET() {
     appSettingsProbe,
     sheetsSyncProbe,
     rateHistoryProbe,
+    newHireChecklistProbe,
     hrOnboardingProbe,
     hrOffboardingProbe,
     ticketsProbe,
     timeAdjustProbe,
     payrollNotesProbe,
     mesaProbe,
+    paymentDispatchProbe,
+    cycleCloseoutProbe,
   ] = await Promise.all([
     withProbeTimeout(probeSupabase(), fallback),
     withProbeTimeout(probePgPool(), fallback),
@@ -176,12 +185,15 @@ export async function GET() {
     withProbeTimeout(probeAppSettings(), fallback),
     withProbeTimeout(probeGoogleSheetsSync(), fallback),
     withProbeTimeout(probeRateHistory(), fallback),
+    withProbeTimeout(probeNewHireChecklist(), fallback),
     withProbeTimeout(probeHrOnboarding(), fallback),
     withProbeTimeout(probeHrOffboarding(), fallback),
     withProbeTimeout(probeTickets(), fallback),
     withProbeTimeout(probeTimeAdjustments(), fallback),
     withProbeTimeout(probePayrollWizardNotes(), fallback),
     withProbeTimeout(probeMesa(), fallback),
+    withProbeTimeout(probePaymentDispatch(), fallback),
+    withProbeTimeout(probeCycleCloseout(), fallback),
   ]);
 
   // Compose nodes — service-map identifiers must match the client's NODE_POSITIONS.
@@ -260,12 +272,15 @@ export async function GET() {
     node('app-settings', 'App Settings (config bag)', 'config', appSettingsProbe),
     node('google-sheet-sync', 'Google Sheet Sync', 'integration', sheetsSyncProbe),
     node('rate-history', 'Rate History', 'rates', rateHistoryProbe),
+    node('new-hire-checklist', 'New Hire Checklist', 'new-hire-checklist', newHireChecklistProbe),
     node('hr-onboarding', 'HR Onboarding Pipeline', 'hr-onboarding', hrOnboardingProbe),
     node('hr-offboarding', 'HR Offboarding Pipeline', 'hr-offboarding', hrOffboardingProbe),
     node('tickets', 'Tickets Board', 'tickets', ticketsProbe),
     node('time-adjust', 'Time Adjustment Requests', 'time-adjust', timeAdjustProbe),
     node('payroll-notes', 'Payroll Wizard Notes', 'payroll-notes', payrollNotesProbe),
     node('mesa', 'MESA Program', 'mesa', mesaProbe),
+    node('payment-dispatch', 'Payment Dispatch', 'payment-dispatch', paymentDispatchProbe),
+    node('cycle-closeout', 'Cycle Close-outs', 'cycle-closeout', cycleCloseoutProbe),
   ];
 
   // Generate alerts from any non-healthy node.
