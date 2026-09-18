@@ -27,6 +27,72 @@
 > DPA compliance), #53 (cron fail-open), #54 (security headers), #55/#56
 > (XSS / file upload).
 
+> ## ⚠ SECOND RE-VERIFICATION — 2026-09-17 (all 80 rows read against current source)
+>
+> **A NEW critical hole supersedes everything below it: a shared-password
+> impersonation backdoor.** `SUPER_ADMIN_PASSWORD` defaults to the literal
+> `"super-admin"` when unset, is shipped **uncommented** in `.env.example`, is
+> **on by default** (`SUPER_ADMIN_IMPERSONATION` unset), is reachable at the
+> public `/login` page with **zero rate limiting**, and signs the caller in as
+> **any** `@simple.biz` account inheriting that account's full roles — a
+> complete bypass of Google SSO, not merely an authorization gap. This is not
+> one of the 80 numbered findings below (it surfaced 2026-09-08 in a later
+> session); full detail and remediation status live in
+> [`docs/features/pre-release-security-readiness.md`](docs/features/pre-release-security-readiness.md)
+> §1. Kane ruled 2026-09-09 the password goes away entirely in favor of an
+> admin-session-launched impersonation action; a `blueprint` brief is posted
+> and **blocked on Q1–Q3, still unanswered**. Confirmed still live in
+> `src/lib/auth/auth-options.ts:44-45` and `.env.example:75` today. **This is
+> the single highest-severity live gap in the app right now.**
+>
+> **Newly RESOLVED since 2026-08-10:** #15, #20, #25 (catch-grants-access —
+> fixed, though the redirect string has a `\employee` backslash typo in all
+> three files — cosmetic, not a re-opening), #33, #34 (the privilege-escalation
+> half — any elevated role could grant admin — not just the force-logout
+> timing fixed in June), #35, #36 (routes restructured), #40 (`next` resolves
+> to 16.2.2), #43 (route restructured, no raw bank data in the export), #53
+> (fail-closed in code now; `CRON_SECRET` still undocumented in
+> `.env.example`), #59, #62, #73, #78.
+>
+> **PARTIALLY resolved — auth added to some verbs or branches, not all —
+> treat as still exploitable:** #14 (POST gated, GET wide open), #21 (POST
+> gated but `admin_name` still taken from the request body; GET has zero
+> auth), #28 (DELETE gated; GET and PATCH still unauthenticated), #37
+> (mutating routes gated; every GET across `hsl-bonus/*` — period-status,
+> entries, period-summary — is open), #32/#38 (`member-rate-history` fixed;
+> `member-monthly-pay` is fully unauthenticated — also independently tracked
+> in `pre-release-security-readiness.md` §2), #49 (a 60s role-refresh plus
+> force-logout-on-grant now exist; session `maxAge` is still unset, 30-day
+> default), #52 (a real DB-backed rate limiter now exists for
+> `/api/external/*` tokens but was never reused for `proxy.ts`'s own
+> in-memory limiter), #61 (`EmployeeApp` is session-exclusive now; `CeoApp`
+> still trusts the `?email=` query param client-side, though the server-side
+> authorization backstops it), #45/#69 (webhook URLs are now
+> admin-configurable; still no HMAC signature, Hubstaff org ID still
+> hardcoded), #72 (`fetchRolesForEmail` now uses `.eq`; `persistGooglePhoto`
+> still uses `.ilike`).
+>
+> **Confirmed STILL OPEN, unchanged:** #1 (no `.env*` file exists in this
+> checkout, but the underlying risk is an accepted-by-design tradeoff per this
+> repo's `CLAUDE.md` — production creds still land in `.env.local` on disk
+> when populated), #24 (worse than measured: 228 files now call the
+> service-role client, up from "48+"; an anon-key client exists and is used
+> in ~83 files but was never made the default for employee-facing routes),
+> #27, #39, #41 (protobufjs still resolves to 7.5.4, no override added), #42,
+> #44, #46, #47, #48, #50, #51, #54, #55 (narrower in practice today — URLs
+> only ever come from the app's own upload endpoint — but the https-only
+> guard was never added), #56, #57, #58, #63, #64, #65 (`GET /api/employees`
+> with no `email` param still returns the full roster, home addresses
+> included, to any signed-in user — the "`requireElevatedSession()` for the
+> full-list path" half of the original recommendation was never done), #66,
+> #67, #68, #70, #71/#79 (masking still absent at the checked call sites;
+> `DispatchReports.tsx` no longer exists in the tree), #74, #76.
+>
+> **Next fix pass should start with the impersonation backdoor, then #32 and
+> #65** — the three broadest full-roster / full-impersonation exposures
+> reachable by any signed-in (or, for the backdoor, unauthenticated) caller
+> today.
+
 ---
 
 ## Security Findings Table
