@@ -1,12 +1,23 @@
 # Employee Support — an employee-filed ticket and a staffed section on /tickets
 
 **STATUS: APPROVED BY CARLA 2026-09-15 (signed, `Employee-Support-for-approval.pdf`).
-Three new questions opened by her answers. Nothing under `src/` or `app/` written yet.**
+THE DATA LAYER SHIPPED 2026-09-16 in `99716520` — the header below said "nothing written yet" for
+three days after it landed. Built: the two tables, the `--apply` script, and the four pure modules
+(`hours`, `routing`, `screening`, `recipients`) with 31 tests. NOT built: every route, every
+component, the `employee_support` feature key, the `employee_notifications` CHECK widen (task 3 has
+no file at all), and the feature doc. Migration state UNKNOWN — it has never been verified, and
+`.env.local` currently holds only `.env.example` placeholders.**
 
-**The live chat and the queue are OUT of v1.** Carla took Decision 2 — *tickets first, add
-live chat once we know the volume*. That is more than half of what was originally asked for,
-deferred by the approver, not dropped by us. Q3, Q4, Q5 and Q8 go with it and are not
-answered; do not treat them as settled when chat comes back.
+**~~The live chat and the queue are OUT of v1.~~ SUPERSEDED 2026-09-19 — chat is being built
+FIRST.** Carla took Decision 2 — *tickets first, add live chat once we know the volume* — and
+**Kane overrode it on 2026-09-18** (*"lets implement the chat support first"*), reaffirmed after
+the contradiction was put to him in full. **Carla has not been told; she is the approver of record
+and she signed the opposite.** Her pending meeting with Kane carries it, along with the support
+hours. The chat work has its own plan at
+`docs/superpowers/plans/2026-09-19-employee-support-chat.md`, where **Q3, Q4, Q5 and Q8 are now
+answered** — Q4 one global queue with every agent qualified for everything, Q8 position and never a
+countdown, Q3 an unanswered chat BECOMES a ticket, Q5 the queue entry and the full transcript both
+persist. Do not read the Q-lines below as open; read that plan.
 
 ---
 
@@ -90,7 +101,7 @@ then the row is written with **`authz.effectiveEmail`, never the body's value**
 | 1 · Who answers | **Carla, Claire, Ainsley, Grace, Alivia** — named individuals, not a team | **Settles Q2.** None of the five holds the `tickets` role, and granting it would hand them the whole HRIS dev board ([[tickets-dedicated-role-only]]). The **new `employee_support` feature key is now required, not preferred** |
 | 2 · Chat now or tickets first | **Tickets first** | **Defers the chat, the queue and the counter entirely.** Q3, Q4, Q5, Q8 are *unanswered*, not resolved |
 | 3 · Support hours | **Mon–Fri, 9 AM – 5 PM EST** | Her words, and **EST, not Manila** — see the open question below |
-| 4 · Categories | The six proposed, **plus** Gmail / Hubstaff / Roboform issues, **minus** two routed away, **plus** language screening | **Expands Q7 well past a category list** — see below |
+| 4 · Categories | **CORRECTED 2026-09-19.** The six proposed, **plus** Gmail / Hubstaff / Roboform issues, **plus** language screening. There is **no "minus"** — both printed category lines were ticked and **nothing was crossed out**, so the instruction *"Cross out anything you don't want"* was answered by addition only. Time adjustments stayed a category and were **restricted**, not removed; schedules and time-off were **never on the list** to remove. Nine categories, which is what `src/lib/support/types.ts:27-37` shipped | **Expands Q7 well past a category list** — see below |
 | 5 · Reply promise | **Within one working day** | Shown to the employee on filing. Not an SLA anything enforces |
 | 6 · Daily cap | **No limit** | The fail-closed per-day counter comes out of the build |
 | 7 · Leavers | **No — access ends the day they leave** | **Overrules our suggestion of 30 days.** She read the final-pay argument and said no; recorded below as a consequence, not re-argued |
@@ -116,7 +127,7 @@ three questions below are open rather than assumed.
 | # | Standing recommendation |
 |---|---|
 | Q1 | **New tables**, not a discriminator on `tickets` — findings 1 + 2; own lifecycle, own numbering, RLS on with no policies, out of the realtime publication |
-| Q6 | **Needs-reply first, newest first within it**, plus a "new since you last looked" marker |
+| Q6 | ~~**Needs-reply first, newest first within it**~~ — **CORRECTED 2026-09-19: Q6 was never ours to answer, and the standing recommendation inverted the half Carla had already ruled.** Page 1 of the signed proposal says *"Sorted so the longest-waiting unanswered question is at the top, **not the newest**."* "Needs-reply first" agrees with her and is already encoded as `needsStaffReply` (`src/lib/support/types.ts:115-123`); the **tiebreaker** was the inversion. The rule is **needs-reply first, then LONGEST-WAITING first within it, dated from filing**. Kane's 2026-09-18 urgency ranking sits above it: urgency DESC, then longest-waiting within each band |
 
 ### Three questions Carla's answers opened
 
@@ -179,30 +190,30 @@ is not rediscovered later as an oversight; reopening it is her call, not a defec
 
 Chat, queue and counter are **not here**. They return as their own plan when Carla asks for them.
 
-- [ ] 1. `references/sql/create/2026-09-16_employee_support.sql` — `employee_support_tickets`
+- [x] 1. `references/sql/create/2026-09-16_employee_support.sql` — `employee_support_tickets`
       (own `ticket_no` identity series, `work_email`, `filed_by_email`, `category`, `concern`,
       `status` open|claimed|answered|closed, `claimed_by`/`claimed_at`, `first_response_at`,
       `closed_at`, `flagged_at`/`flag_reason`) + `employee_support_messages` (immutable, author
       side employee|staff). **RLS ON with no policies**, **not** in the `supabase_realtime`
       publication. No queue table in v1. No `BEGIN`/`COMMIT` in the file — the apply script owns
       the transaction. **Shape of the flag columns depends on N1.**
-- [ ] 2. `scripts/apply-employee-support-migration.mts` — `--apply` gate, dry run by default,
+- [x] 2. `scripts/apply-employee-support-migration.mts` — `--apply` gate, dry run by default,
       `information_schema` read-back plus an independent PostgREST probe. **Kane runs it.**
 - [ ] 3. `references/sql/alter/2026-09-16_add_support_notification_types.sql` — restates the
       **FULL** `employee_notifications` type CHECK list plus `support.replied` /
       `support.answered`. Restating a subset silently breaks every other type's INSERT. Re-read
       the live list first — [[migration-pending-claims-are-folklore]].
-- [ ] 4. `src/lib/support/types.ts` — `SupportStatus`, `SupportCategory` (the nine Carla
+- [x] 4. `src/lib/support/types.ts` — `SupportStatus`, `SupportCategory` (the nine Carla
       approved), the ticket-number formatter. One vocabulary module, the `profile-tabs.ts`
       pattern. **The two routed-away subjects are values in this module**, not strings in a
       component, so the form and the guard cannot disagree.
-- [ ] 5. `src/lib/support/routing.ts` (+ test) — pure. Given a category, answer
+- [x] 5. `src/lib/support/routing.ts` (+ test) — pure. Given a category, answer
       *accept · steer to manager · ask only about an approved adjustment*. Decision 4 items
       2 and 3. **Shape depends on N3.**
-- [ ] 6. `src/lib/support/screening.ts` (+ test) — pure. **Blocked on N1.** Whatever it does, it
+- [x] 6. `src/lib/support/screening.ts` (+ test) — pure. **Blocked on N1.** Whatever it does, it
       returns a verdict; it never writes, never notifies, and the route decides what the verdict
       means. Fails **open on an internal error** — a screening bug must not swallow a complaint.
-- [ ] 7. `src/lib/support/recipients.ts` (+ test) — who hears about a support event, mirroring
+- [x] 7. `src/lib/support/recipients.ts` (+ test) — who hears about a support event, mirroring
       `src/lib/tickets/recipients.ts`. Returns `null`, never `''`.
 - [ ] 8. `app/api/employee/support/route.ts` — GET (own tickets) + POST (file), gated like
       `app/api/employee/documents/route.ts` with the `authorizeEmailAccess` + `effectiveEmail`
@@ -222,7 +233,7 @@ Chat, queue and counter are **not here**. They return as their own plan when Car
       `['employee','tickets']`. Actor is `auditFrom(request, authz)`, **never** the body. A
       flag or a refusal is audited; so is a reply.
 - [ ] 14. `src/lib/notifications/notification-views.ts` — map the two new types to `['employee']`.
-- [ ] 14b. `src/lib/support/hours.ts` (+ test) — the support window as an **IANA zone
+- [x] 14b. `src/lib/support/hours.ts` (+ test) — the support window as an **IANA zone
       (`America/New_York`) plus local clock times**, never a fixed offset; `isSupportOpen(at)`
       and a formatter that renders **both zones**. Tested across a **US DST boundary**, because
       Eastern shifts and Manila does not. This is the first non-Manila window in the system.
@@ -239,6 +250,71 @@ Chat, queue and counter are **not here**. They return as their own plan when Car
 - [ ] 18. `src/hooks/useLiveRefresh.ts` on both sides with `pollMs` as the **floor**.
 - [ ] 19. Docs: `docs/features/employee-support.md`, the `INDEX.md` row, `api-reference.md` +
       `components.md` in the same commit ([[reference-docs-rot-silently]]), memory entry.
+
+## Tasks added 2026-09-18 — Kane's rulings in a live session
+
+Seven additions and two corrections, all ruled by Kane on 2026-09-18. None of them contradicts
+anything Carla ticked; **all of them grow v1 past what she signed**, and she has not been shown
+them. They belong in the same meeting as Decision 2.
+
+- [ ] 21. **Close a ticket.** Kane: *"We should have the ability to close a ticket."* The schema
+      already has `closed_by` / `closed_at` and a CHECK admitting `closed` — **no route ever sets
+      them**, so the closed state is currently unreachable. Who may close (assignee, any answerer,
+      admin) and what a reply on a closed ticket does (reopen, or refuse with a sentence) are part
+      of this task. Carla signed *"Nothing is deleted — closed questions stay readable by both."*
+- [ ] 22. **Urgency ranking.** Kane: *"the people who can access the tickets tab can designate a
+      ticket to its urgency … they can rank it."* Mirror `TICKET_PRIORITIES`
+      (`src/lib/tickets/types.ts:33`) for the vocabulary, but the support column is **nullable**
+      and the dev board's is `not null default 'medium'` — the four VALUES are shared, the column
+      is not. **Do not widen `TICKET_PRIORITY_LABELS` or add a fifth value to `TICKET_PRIORITIES`**;
+      the support side carries its own nullability.
+- [ ] 23. **The queueing line and the board.** Kane: *"There should be a queing line then they rank
+      it by urgency which goes up to the board."* `priority IS NULL` = still in the line; ranked =
+      on the board. Three columns moving as a set under a both-or-neither CHECK
+      (`priority` / `triaged_at` / `triaged_by`). **Starvation is the risk**: an unranked ticket
+      that nobody triages never reaches the board, so the line is the default landing view, never a
+      drawer. Carla signed *"One screen listing every question"* — a line plus a board is two
+      lists, so **the counts span both or the split hides work**.
+- [ ] 24. **Auto-claim on first touch, with handoff.** Kane: *"Whoever touches the ticket first
+      should automatically be assigned to that ticket unless they pass it off to another person."*
+      A "touch" is the first **action** (rank, reply, explicit claim), never a read — otherwise
+      browsing the line claims everything scrolled past. *Assumed, reversible, not ruled.* The claim
+      is a CAS on NULL; the handoff is a CAS on the **current holder**. Both audited with both
+      names. This is the **reverse** of the dev board's owner-only rule, deliberately.
+- [ ] 25. **The employee track map.** Kane: *"in the employee side they can have a track map on what
+      is the status of their tickets depending on the status in Kanban."* The vocabulary already
+      ships and is already employee-facing: `SUPPORT_STATUS_LABELS` = Waiting / Being looked at /
+      Answered / Closed (`src/lib/support/types.ts:58-63`). Those are the track stops.
+- [ ] 26. **Filing from inside Penny, with the conversation as context.** Kane: *"if they have ran
+      out of 10 prompts for Penny they should be able to file a ticket within Penny also Penny would
+      record their previous Chats in there … so the People responding would get proper context."*
+      **There is no Penny transcript anywhere today** — `penny_employee_usage`
+      (`references/sql/create/2026-08-19_penny_employee_usage.sql:41-64`) is a METER with no question
+      text and no answer text, and the live conversation sits in `sessionStorage` and dies with the
+      tab. So: **capture at file time** from the live in-memory conversation, NOT server-side
+      persistence of every Penny chat — that would build a permanent record of every employee's pay
+      questions, which runs straight into the privacy paragraph Carla signed. The transcript must be
+      unmistakably labelled as Penny's output: *"Automatic answers"* is in her NOT-included table,
+      and Penny's computed-vs-paid reconciliation was wrong until the 2026-09-17 fix.
+- [ ] 27. **The at-a-glance counts.** *"Counts at a glance: how many need a reply, how many were
+      answered today"* is one of the four bullets Carla approved for the answerers and it had **no
+      task**. `needsStaffReply` and `first_response_at` already exist. State which day "today" means.
+- [ ] 28. **The staff-only trial gate.** *"You and the support team try it before any employee sees
+      it"* is step 2 of what she approved, and it appears **nowhere in this repo** — task 16 puts the
+      button on every employee dashboard on deploy. Land task 16 as its **own commit**, after the
+      five have used it for real.
+
+**Response-time / KPI records are explicitly DEFERRED** — Kane: *"lets not implement it now but
+sooner we would have a ticket Response time and KPI Records."* It costs nothing to wait:
+`claimed_at`, `first_response_at` and `closed_at` are already columns, so the history accrues from
+the first ticket whether or not anything reads it.
+
+**Two open questions were resolved in code rather than by an approver, and Carla has not been told:**
+**N1** — she wrote *"prescreen"*, and `screening.ts` flags without ever blocking (defensible: a
+blocking filter turns a false positive into an employee who cannot report harassment on the channel
+built for it). **N3** — she wrote *"shouldn't be able to request an adjustment through the support
+channels"*, and `routing.ts` shows a notice and accepts the ticket anyway. N3 is the weaker of the
+two and should go back to her.
 
 ## Deploy notes
 
@@ -259,6 +335,13 @@ Chat, queue and counter are **not here**. They return as their own plan when Car
 
 Payroll · dispatch · paystubs · rates · the existing `tickets` table and its four Kanban columns ·
 `TICKET_BOARD_OWNER` · the five existing n8n ticket hooks · Penny · attachments (Decision 8) ·
-per-day caps (Decision 6) · leaver access (Decision 7) · **the live chat, the queue and the
-served-by counter (Decision 2)** · the ungated `PATCH /api/employee-notifications` (a pre-existing
+per-day caps (Decision 6) · leaver access (Decision 7) · ~~**the live chat, the queue and the
+served-by counter (Decision 2)**~~ · the ungated `PATCH /api/employee-notifications` (a pre-existing
 hole this feature sits beside — recorded, not fixed here, and its own `hardening` pass).
+
+**AMENDED 2026-09-19.** The live chat, the queue and the served-by counter are **no longer excluded
+here** — Kane's 2026-09-18 override moved them to their own plan,
+`docs/superpowers/plans/2026-09-19-employee-support-chat.md`, which is being built first. This
+clause is amended rather than deleted because it was a stated contract and the amendment is the
+record of who changed it and when. **The rest of this list still binds**, and the chat plan carries
+its own out-of-scope contract which excludes this plan's tasks 8–19 in turn.
