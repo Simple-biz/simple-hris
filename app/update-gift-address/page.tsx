@@ -22,6 +22,11 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { APPAREL_SIZES, HEARTS_FLOAT } from '@/lib/gift-tracker/milestone-copy';
+import {
+  describeAlternateRecipient,
+  GIFT_RECIPIENT_RELATIONSHIPS,
+  validateAlternateRecipient,
+} from '@/lib/gift-tracker/alternate-recipient';
 
 /**
  * PUBLIC tenure-gift address page. No login.
@@ -134,6 +139,18 @@ export default function UpdateGiftAddressPage() {
   const [contact, setContact] = useState('');
   const [size, setSize] = useState('');
   const [notes, setNotes] = useState('');
+  /** Somebody else receiving the gift — in practice a spouse. */
+  const [recipientName, setRecipientName] = useState('');
+  const [recipientRelationship, setRecipientRelationship] = useState('');
+  const [recipientContact, setRecipientContact] = useState('');
+  /**
+   * True when the arrangement came from a PREVIOUS submission rather than from
+   * this visit. It changes the presentation, not the data: a carried-over
+   * recipient is announced as a named block with a Remove control, so somebody
+   * re-confirming an address from two years ago cannot ship a parcel to a person
+   * they forgot they had named.
+   */
+  const [carriedRecipient, setCarriedRecipient] = useState(false);
   const [savedCount, setSavedCount] = useState(0);
 
   const requestCode = async () => {
@@ -175,7 +192,15 @@ export default function UpdateGiftAddressPage() {
       pendingCount?: number;
       receivedCount?: number;
       blocked?: 'missing' | 'shared' | null;
-      prefill?: { location: string; contact: string; size: string; notes: string };
+      prefill?: {
+        location: string;
+        contact: string;
+        size: string;
+        notes: string;
+        recipientName: string;
+        recipientRelationship: string;
+        recipientContact: string;
+      };
       error?: string;
     };
     if (!res.ok || json.error) throw new Error(json.error ?? 'Could not load your gifts.');
@@ -189,6 +214,14 @@ export default function UpdateGiftAddressPage() {
       setContact(json.prefill.contact);
       setSize(json.prefill.size);
       setNotes(json.prefill.notes);
+      // Kane's Q3 ruling: an alternate recipient CARRIES to the next gift. What
+      // keeps that honest is that it arrives as a named block the person has to
+      // look at (with a Remove button), not as a quietly pre-filled input — an
+      // arrangement made two years ago must not ride along unnoticed.
+      setRecipientName(json.prefill.recipientName);
+      setRecipientRelationship(json.prefill.recipientRelationship);
+      setRecipientContact(json.prefill.recipientContact);
+      setCarriedRecipient(Boolean(json.prefill.recipientName.trim()));
     }
   }, []);
 
@@ -228,12 +261,32 @@ export default function UpdateGiftAddressPage() {
       toast.error('Enter a contact number.');
       return;
     }
+    // Mirrors the server's refusal so it costs a click, not a round trip. The
+    // server still checks — this is a courtesy, not the gate.
+    const recipient = validateAlternateRecipient({
+      recipient_name: recipientName,
+      recipient_relationship: recipientRelationship,
+      recipient_contact: recipientContact,
+    });
+    if (!recipient.ok) {
+      toast.error(recipient.error);
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch('/api/gift-address/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionToken, location, contact, size, notes }),
+        body: JSON.stringify({
+          sessionToken,
+          location,
+          contact,
+          size,
+          notes,
+          recipientName: recipient.value.name,
+          recipientRelationship: recipient.value.relationship,
+          recipientContact: recipient.value.contact,
+        }),
       });
       const json = (await res.json()) as { saved?: number[]; error?: string };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Could not save.');
@@ -577,6 +630,141 @@ export default function UpdateGiftAddressPage() {
                           })}
                         </div>
                       </div>
+
+                      {/* Somebody else receiving it. Two presentations of one
+                          state: a CARRIED-OVER arrangement announces itself as a
+                          named block (it was decided on a previous visit, so it
+                          must be looked at, not discovered on the doorstep); a
+                          fresh one is an ordinary opt-in. */}
+                      {carriedRecipient && recipientName.trim() ? (
+                        <div className="rounded-xl border border-amber-300/70 bg-amber-50/70 p-3 dark:border-amber-900/50 dark:bg-amber-950/25">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-[11px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+                                Still going to someone else
+                              </div>
+                              <div className="mt-1 text-sm font-semibold text-amber-900 dark:text-amber-100">
+                                {describeAlternateRecipient({
+                                  recipient_name: recipientName,
+                                  recipient_relationship: recipientRelationship,
+                                })}
+                              </div>
+                              {recipientContact.trim() && (
+                                <div className="mt-0.5 text-xs text-amber-800/80 dark:text-amber-200/70">
+                                  {recipientContact}
+                                </div>
+                              )}
+                              <p className="mt-1.5 text-[11px] text-amber-800/80 dark:text-amber-200/70">
+                                You told us this last time. We will still call{' '}
+                                <strong>you</strong> on the number above.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRecipientName('');
+                                setRecipientRelationship('');
+                                setRecipientContact('');
+                                setCarriedRecipient(false);
+                              }}
+                              className="shrink-0 rounded-full border border-amber-300 bg-white px-3 py-1 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-900/60 dark:bg-zinc-950 dark:text-amber-200 dark:hover:bg-amber-950/50"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-pink-100 bg-white/60 p-3 dark:border-pink-900/40 dark:bg-zinc-950/30">
+                          <label className="flex cursor-pointer items-start gap-2.5">
+                            <input
+                              type="checkbox"
+                              checked={recipientName.trim() !== '' || carriedRecipient}
+                              onChange={(e) => {
+                                setCarriedRecipient(e.target.checked);
+                                // Unticking CLEARS rather than hides: a hidden
+                                // field that still submits is how somebody
+                                // removes their spouse and it silently stays.
+                                if (!e.target.checked) {
+                                  setRecipientName('');
+                                  setRecipientRelationship('');
+                                  setRecipientContact('');
+                                }
+                              }}
+                              className="mt-0.5 h-4 w-4 shrink-0 accent-pink-600"
+                            />
+                            <span>
+                              <span className="block text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+                                Someone else will receive this for me
+                              </span>
+                              <span className="mt-0.5 block text-[11px] text-zinc-500 dark:text-zinc-400">
+                                e.g. your spouse accepts the delivery while you are at work.
+                              </span>
+                            </span>
+                          </label>
+
+                          {carriedRecipient && (
+                            <div className="mt-3 grid gap-2.5">
+                              <div>
+                                <Label htmlFor="gift-recipient" className="text-xs text-zinc-600 dark:text-zinc-400">
+                                  Their full name
+                                </Label>
+                                <Input
+                                  id="gift-recipient"
+                                  value={recipientName}
+                                  onChange={(e) => setRecipientName(e.target.value)}
+                                  maxLength={120}
+                                  placeholder="e.g. Maria Dela Cruz"
+                                  className="mt-1 border-pink-200 focus-visible:ring-pink-400 dark:border-pink-900/60"
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-xs text-zinc-600 dark:text-zinc-400">
+                                  How are they related to you?
+                                </Label>
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  {GIFT_RECIPIENT_RELATIONSHIPS.map((rel) => {
+                                    const active = recipientRelationship === rel;
+                                    return (
+                                      <button
+                                        key={rel}
+                                        type="button"
+                                        onClick={() => setRecipientRelationship(active ? '' : rel)}
+                                        aria-pressed={active}
+                                        className={cn(
+                                          'rounded-full border px-3 py-1 text-xs font-semibold transition-colors',
+                                          active
+                                            ? 'border-pink-600 bg-pink-600 text-white shadow-sm'
+                                            : 'border-pink-200 text-pink-700 hover:bg-pink-50 hover:text-pink-900 dark:border-pink-900/60 dark:text-pink-300 dark:hover:bg-pink-950/40 dark:hover:text-pink-100',
+                                        )}
+                                      >
+                                        {rel}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                              <div>
+                                <Label htmlFor="gift-recipient-phone" className="text-xs text-zinc-600 dark:text-zinc-400">
+                                  Their contact number{' '}
+                                  <span className="font-normal text-zinc-400">— optional</span>
+                                </Label>
+                                <Input
+                                  id="gift-recipient-phone"
+                                  value={recipientContact}
+                                  onChange={(e) => setRecipientContact(e.target.value)}
+                                  maxLength={60}
+                                  placeholder="09XX XXX XXXX"
+                                  className="mt-1 border-pink-200 focus-visible:ring-pink-400 dark:border-pink-900/60"
+                                />
+                                <p className="mt-1 text-[11px] text-zinc-400">
+                                  We will still call <strong>you</strong> on the number above when
+                                  it is on its way — this one is just a backup.
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       <div>
                         <Label htmlFor="gift-notes" className="text-xs text-zinc-600 dark:text-zinc-400">

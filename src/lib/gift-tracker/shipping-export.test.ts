@@ -49,6 +49,9 @@ function sub(over: Partial<GiftRosterSubmissionInput> = {}): GiftRosterSubmissio
     preferred_delivery_location: '12 Rizal St, Barangay Uno, Cebu City',
     active_contact_number: '09171234567',
     apparel_size: 'L',
+    recipient_name: '',
+    recipient_relationship: '',
+    recipient_contact: '',
     notes: '',
     status: 'approved',
     decided_by: 'kaner@simple.biz',
@@ -526,4 +529,136 @@ test('a genuinely duplicated master row still collapses', () => {
   ]);
   assert.equal(model.rows.length, 1);
   assert.equal(model.rows[0].name, 'First wins');
+});
+
+// ---------------------------------------------------------------------------
+// Somebody else receiving the gift (2026-09-18)
+//
+// Kane's Q1 ruling is the load-bearing one here: "The Employees as they will
+// contact their spouse." The courier calls the EMPLOYEE, so `Contact Number`
+// must keep meaning the employee's number no matter who is at the door.
+// ---------------------------------------------------------------------------
+
+const SPOUSE_SUB = {
+  recipient_name: 'Maria Dela Cruz',
+  recipient_relationship: 'Spouse',
+  recipient_contact: '09181111111',
+};
+
+test('CONTACT NUMBER STAYS THE EMPLOYEE\u2019S even when a spouse receives the gift', () => {
+  // The single most damaging "helpful" edit available to this file would be to
+  // prefer the recipient's number in this column. It would point the whole ship
+  // list at the wrong person, and nothing on the file would say so.
+  const model = build(
+    [emp({ name: 'Cruz, Ana', work_email: 'ana@simple.biz', personal_email: 'ana.cruz@gmail.com' })],
+    [sub({ active_contact_number: '09170000000', ...SPOUSE_SUB })],
+  );
+  const row = model.rows[0];
+  assert.equal(row.contactNumber, '09170000000');
+  assert.equal(row.recipientContact, '09181111111');
+  assert.notEqual(row.contactNumber, row.recipientContact);
+});
+
+/**
+ * Read one CSV column by header name.
+ *
+ * Through the real parser, never `split(',')`: Philippine addresses are full of
+ * commas and RFC-4180-quoted, so a naive split shears every column after the
+ * address and the assertions would compare the wrong cells.
+ */
+function csvCell(csv: string, header: string, rowIndex = 0): string {
+  const rows = parseCsv(csv);
+  const headerRow = rows.findIndex((r) => r.includes('Contact Number'));
+  const col = rows[headerRow].indexOf(header);
+  assert.notEqual(col, -1, `column ${header} is missing from the CSV`);
+  return rows[headerRow + 1 + rowIndex][col];
+}
+
+test('the CSV prints the employee number under Contact Number and the spouse under Recipient Contact', () => {
+  const model = build(
+    [emp({ name: 'Cruz, Ana', work_email: 'ana@simple.biz', personal_email: 'ana.cruz@gmail.com' })],
+    [sub({ active_contact_number: '09170000000', ...SPOUSE_SUB })],
+  );
+  const csv = giftRosterToCsv(model);
+  assert.equal(csvCell(csv, 'Contact Number'), '09170000000');
+  assert.equal(csvCell(csv, 'Alternate Recipient'), 'Maria Dela Cruz');
+  assert.equal(csvCell(csv, 'Recipient Relationship'), 'Spouse');
+  assert.equal(csvCell(csv, 'Recipient Contact'), '09181111111');
+});
+
+test('no alternate recipient reads as a dash, never as a blank cell', () => {
+  // A blank would be indistinguishable from a missing value. A dash is an
+  // answer: this person receives their own gift.
+  const model = build(
+    [emp({ name: 'Cruz, Ana', work_email: 'ana@simple.biz', personal_email: 'ana.cruz@gmail.com' })],
+    [sub()],
+  );
+  assert.equal(model.rows[0].alternateRecipient, '');
+  assert.equal(csvCell(giftRosterToCsv(model), 'Alternate Recipient'), '-');
+});
+
+test('a relationship with no name is NOT reported as an alternate recipient', () => {
+  // The database refuses this shape, but a legacy row or a hand edit can hold
+  // it. One predicate decides, and it keys on the name.
+  const model = build(
+    [emp({ name: 'Cruz, Ana', work_email: 'ana@simple.biz', personal_email: 'ana.cruz@gmail.com' })],
+    [sub({ recipient_name: '   ', recipient_relationship: 'Spouse', recipient_contact: '0918' })],
+  );
+  assert.equal(model.rows[0].alternateRecipient, '');
+  assert.equal(model.rows[0].recipientRelationship, '');
+  assert.equal(model.rows[0].recipientContact, '');
+  assert.equal(model.summary.altRecipient, 0);
+});
+
+test('the summary counts parcels going to somebody else', () => {
+  const model = build(
+    [
+      emp({ name: 'A', work_email: 'a@simple.biz', personal_email: 'a@x.com' }),
+      emp({ name: 'B', work_email: 'b@simple.biz', personal_email: 'b@x.com' }),
+      emp({ name: 'C', work_email: 'c@simple.biz', personal_email: 'c@x.com' }),
+    ],
+    [
+      sub({ personal_email: 'a@x.com', ...SPOUSE_SUB }),
+      sub({ personal_email: 'b@x.com' }),
+    ],
+  );
+  assert.equal(model.summary.altRecipient, 1);
+});
+
+test('an OFF-ROSTER submitter keeps their alternate recipient', () => {
+  // They are the likeliest person to be mis-shipped, so dropping the field that
+  // says who is actually at the door would be exactly backwards.
+  const model = build(
+    [emp({ name: 'On roster', work_email: 'on@simple.biz', personal_email: 'on@x.com' })],
+    [
+      sub({ personal_email: 'on@x.com' }),
+      sub({ personal_email: 'ghost@x.com', ...SPOUSE_SUB }),
+    ],
+  );
+  const ghost = model.rows.find((r) => r.department === 'Off-roster')!;
+  assert.equal(ghost.alternateRecipient, 'Maria Dela Cruz');
+  assert.equal(ghost.recipientRelationship, 'Spouse');
+});
+
+test('the XLSX submissions sheet carries the recipient columns', () => {
+  const model = build(
+    [emp({ name: 'Cruz, Ana', work_email: 'ana@simple.biz', personal_email: 'ana.cruz@gmail.com' })],
+    [sub({ ...SPOUSE_SUB })],
+  );
+  assert.equal(model.submissions[0].alternateRecipient, 'Maria Dela Cruz');
+  assert.equal(model.submissions[0].recipientRelationship, 'Spouse');
+  // The history sheet exists so the detail the roster grain flattens survives;
+  // an arrangement that appeared on one milestone and not the next is exactly
+  // the kind of thing it is there to preserve.
+  assert.doesNotThrow(() => buildGiftRosterWorkbook(model));
+});
+
+test('the recipient columns carry NO price, like every other column here', () => {
+  const model = build(
+    [emp({ name: 'Cruz, Ana', work_email: 'ana@simple.biz', personal_email: 'ana.cruz@gmail.com' })],
+    [sub({ ...SPOUSE_SUB })],
+  );
+  const csv = giftRosterToCsv(model);
+  const header = csv.split('\n').find((l) => l.includes('Alternate Recipient'))!;
+  assert.equal(/price|cost|amount|php|catalog/i.test(header), false);
 });

@@ -36,6 +36,10 @@ import {
   giftMilestoneMessage as getMilestoneMessage,
   tenureLabel,
 } from '@/lib/gift-tracker/milestone-copy';
+import {
+  GIFT_RECIPIENT_RELATIONSHIPS,
+  validateAlternateRecipient,
+} from '@/lib/gift-tracker/alternate-recipient';
 import { receiptStateFor, type GiftReceiptState } from '@/lib/gift-tracker/receipts';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
@@ -125,6 +129,17 @@ export default function GiftShippingCard({
   const [contact, setContact] = useState('');
   const [size, setSize] = useState('');
   const [notes, setNotes] = useState('');
+  /** Somebody else receiving this gift — in practice a spouse. */
+  const [recipientName, setRecipientName] = useState('');
+  const [recipientRelationship, setRecipientRelationship] = useState('');
+  const [recipientContact, setRecipientContact] = useState('');
+  /**
+   * Whether the alternate-recipient block is open. Derived from the loaded row
+   * rather than defaulted to false, so an arrangement already on file shows
+   * itself instead of hiding behind an unticked box — a hidden arrangement that
+   * still ships is exactly the surprise this feature exists to remove.
+   */
+  const [showRecipient, setShowRecipient] = useState(false);
   const [saving, setSaving] = useState(false);
   /** Switches the dialog to the celebration screen for ~2.4s after a successful save. */
   const [celebrating, setCelebrating] = useState(false);
@@ -158,11 +173,19 @@ export default function GiftShippingCard({
         setLocation(match.preferred_delivery_location);
         setContact(match.active_contact_number);
         setSize(match.apparel_size ?? '');
+        setRecipientName(match.recipient_name ?? '');
+        setRecipientRelationship(match.recipient_relationship ?? '');
+        setRecipientContact(match.recipient_contact ?? '');
+        setShowRecipient(Boolean((match.recipient_name ?? '').trim()));
         setNotes(match.notes);
       } else {
         setLocation('');
         setContact('');
         setSize('');
+        setRecipientName('');
+        setRecipientRelationship('');
+        setRecipientContact('');
+        setShowRecipient(false);
         setNotes('');
       }
     } catch (e) {
@@ -288,6 +311,17 @@ export default function GiftShippingCard({
       toast.error('Delivery location and contact number are required.');
       return;
     }
+    // The same refusal the server gives, said here so it costs a click instead
+    // of a round trip. The server still checks — this is a courtesy, not the gate.
+    const recipient = validateAlternateRecipient({
+      recipient_name: recipientName,
+      recipient_relationship: recipientRelationship,
+      recipient_contact: recipientContact,
+    });
+    if (!recipient.ok) {
+      toast.error(recipient.error);
+      return;
+    }
     setSaving(true);
     try {
       const res = await fetch('/api/employee-gift-shipping', {
@@ -300,6 +334,11 @@ export default function GiftShippingCard({
           preferred_delivery_location: location.trim(),
           active_contact_number: contact.trim(),
           apparel_size: size,
+          // Always all three — clearing the name clears the arrangement, which
+          // is how somebody stops their spouse receiving it.
+          recipient_name: recipientName.trim(),
+          recipient_relationship: recipientRelationship,
+          recipient_contact: recipientContact.trim(),
           notes: notes.trim(),
         }),
       });
@@ -878,6 +917,104 @@ export default function GiftShippingCard({
                     Tap your size for shirts, hoodies, jackets or polos. Leave blank for
                     non-apparel gifts (mug, tumbler, speaker…).
                   </p>
+                </div>
+
+                {/* Somebody else receiving it — a spouse, most often. Collapsed by
+                    default: it is the exception, and an always-open block of three
+                    more fields makes the common case feel like paperwork. */}
+                <div className="grid gap-2 rounded-lg border border-amber-200/70 bg-amber-50/50 p-3 dark:border-amber-900/40 dark:bg-amber-950/20">
+                  <label className="flex cursor-pointer items-start gap-2.5">
+                    <input
+                      type="checkbox"
+                      checked={showRecipient}
+                      disabled={isLocked || saving}
+                      onChange={(e) => {
+                        setShowRecipient(e.target.checked);
+                        // Unticking CLEARS the fields rather than merely hiding
+                        // them — hidden-but-still-sent is how somebody removes
+                        // their spouse from the delivery and it silently stays.
+                        if (!e.target.checked) {
+                          setRecipientName('');
+                          setRecipientRelationship('');
+                          setRecipientContact('');
+                        }
+                      }}
+                      className="mt-0.5 h-4 w-4 shrink-0 accent-amber-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                    <span>
+                      <span className="block text-xs font-semibold text-amber-800 dark:text-amber-200">
+                        Someone else is receiving this for me
+                      </span>
+                      <span className="mt-0.5 block text-[11px] text-amber-700/80 dark:text-amber-300/70">
+                        e.g. your spouse accepts the delivery while you are at work.
+                      </span>
+                    </span>
+                  </label>
+
+                  {showRecipient && (
+                    <div className="grid gap-2.5 pt-0.5">
+                      <div className="grid gap-1.5">
+                        <Label htmlFor="ship-recipient" className="text-xs font-medium">
+                          Their full name <span className="text-rose-500">*</span>
+                        </Label>
+                        <Input
+                          id="ship-recipient"
+                          value={recipientName}
+                          onChange={(e) => setRecipientName(e.target.value)}
+                          placeholder="e.g. Maria Dela Cruz"
+                          disabled={isLocked || saving}
+                          className="border-amber-200/80 bg-white focus-visible:ring-amber-400 dark:border-amber-900/50 dark:bg-zinc-950"
+                        />
+                      </div>
+                      <div className="grid gap-1.5">
+                        <Label className="text-xs font-medium">
+                          How are they related to you? <span className="text-rose-500">*</span>
+                        </Label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {GIFT_RECIPIENT_RELATIONSHIPS.map((rel) => {
+                            const active = recipientRelationship === rel;
+                            return (
+                              <button
+                                key={rel}
+                                type="button"
+                                disabled={isLocked || saving}
+                                onClick={() => setRecipientRelationship(active ? '' : rel)}
+                                aria-pressed={active}
+                                className={cn(
+                                  'rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors [@media(pointer:coarse)]:min-h-[40px] disabled:cursor-not-allowed disabled:opacity-60',
+                                  active
+                                    ? 'border-amber-500 bg-amber-600 text-white shadow-sm shadow-amber-600/25'
+                                    : 'border-amber-200/80 bg-white text-zinc-600 hover:border-amber-300 hover:bg-amber-50 dark:border-amber-900/50 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-amber-950/30',
+                                )}
+                              >
+                                {rel}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="grid gap-1.5">
+                        <Label htmlFor="ship-recipient-phone" className="text-xs font-medium">
+                          Their contact number{' '}
+                          <span className="font-normal text-zinc-400">· optional</span>
+                        </Label>
+                        <Input
+                          id="ship-recipient-phone"
+                          value={recipientContact}
+                          onChange={(e) => setRecipientContact(e.target.value)}
+                          placeholder="e.g. +63 918 123 4567"
+                          disabled={isLocked || saving}
+                          className="border-amber-200/80 bg-white focus-visible:ring-amber-400 dark:border-amber-900/50 dark:bg-zinc-950"
+                        />
+                        {/* Kane's ruling, said plainly to the person filling the
+                            form so the optional field does not read as ignored. */}
+                        <p className="text-[11px] text-zinc-400">
+                          We will still call <strong>you</strong> on the number above when the
+                          gift is on its way — this one is just a backup.
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="grid gap-1.5">
                   <Label htmlFor="ship-notes" className="text-xs font-medium">

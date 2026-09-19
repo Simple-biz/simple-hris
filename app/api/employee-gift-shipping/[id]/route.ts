@@ -7,6 +7,10 @@ import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { auditFrom } from '@/lib/audit/context';
+import {
+  alternateRecipientColumns,
+  validateAlternateRecipient,
+} from '@/lib/gift-tracker/alternate-recipient';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -18,6 +22,10 @@ interface EditBody {
   preferred_delivery_location?: string;
   active_contact_number?: string;
   apparel_size?: string;
+  /** Moves as a SET — see `editShippingDetailFields`. */
+  recipient_name?: string;
+  recipient_relationship?: string;
+  recipient_contact?: string;
   notes?: string;
 }
 
@@ -39,11 +47,25 @@ export async function PATCH(
     return NextResponse.json({ row: null, error: 'Invalid JSON body' }, { status: 400 });
   }
 
+  // Validated, not repaired — a manager fixing a typo must not be able to store
+  // a relationship the rest of the app cannot read, and the same refusal the
+  // employee's own form gives applies here.
+  const recipient = validateAlternateRecipient(body);
+  if (!recipient.ok) {
+    return NextResponse.json({ row: null, error: recipient.error }, { status: 400 });
+  }
+
   const { row, error } = await editShippingDetailFields({
     id,
     preferred_delivery_location: body.preferred_delivery_location,
     active_contact_number: body.active_contact_number,
     apparel_size: body.apparel_size,
+    // Keyed on the name being PRESENT in the body: an edit that does not mention
+    // the recipient at all leaves the stored arrangement alone, while one that
+    // sends a blank name clears it.
+    ...(body.recipient_name === undefined
+      ? {}
+      : alternateRecipientColumns(recipient.value)),
     notes: body.notes,
   });
   if (error || !row) {

@@ -41,6 +41,10 @@ import {
   parseStartDate,
 } from '@/lib/gift-milestones';
 import { buildPersonReceiptSummary } from './receipts';
+import {
+  describeAlternateRecipient,
+  hasAlternateRecipient,
+} from './alternate-recipient';
 
 // ---------------------------------------------------------------------------
 // Input + structured model
@@ -78,6 +82,9 @@ export interface GiftRosterSubmissionInput {
   preferred_delivery_location: string;
   active_contact_number: string;
   apparel_size: string;
+  recipient_name: string;
+  recipient_relationship: string;
+  recipient_contact: string;
   notes: string;
   status: 'pending' | 'approved' | 'rejected';
   decided_by: string | null;
@@ -108,8 +115,21 @@ export interface GiftRosterRecord {
   status: string;
   shippingAddress: string;
   addressSource: AddressSource;
+  /**
+   * THE EMPLOYEE'S OWN NUMBER — the one the courier calls. It does NOT change
+   * when somebody else is receiving the parcel. Kane's ruling, 2026-09-18:
+   * "The Employees as they will contact their spouse." A test pins this, because
+   * the obvious "helpful" edit is to prefer the recipient's number here, and that
+   * silently points the ship list at the wrong person.
+   */
   contactNumber: string;
   apparelSize: string;
+  /** Somebody receiving this gift for the employee. '' when they receive it themself. */
+  alternateRecipient: string;
+  /** How that person relates to the employee. '' when there is no alternate. */
+  recipientRelationship: string;
+  /** The alternate recipient's own number. A FALLBACK — never printed as `contactNumber`. */
+  recipientContact: string;
   employeeNotes: string;
   decidedBy: string;
   decidedAt: string;
@@ -139,6 +159,9 @@ export interface GiftSubmissionRecord {
   shippingAddress: string;
   contactNumber: string;
   apparelSize: string;
+  alternateRecipient: string;
+  recipientRelationship: string;
+  recipientContact: string;
   status: string;
   employeeNotes: string;
   decidedBy: string;
@@ -168,6 +191,8 @@ export interface GiftRosterExportModel {
     peopleOwed: number;
     /** People with a due milestone nobody has assessed — NOT part of `peopleOwed`. */
     peopleNotRecorded: number;
+    /** Parcels going to somebody other than the employee — spouses, mostly. */
+    altRecipient: number;
   };
   /** Describes the filter the rows came from, e.g. 'All employees'. */
   scopeLabel: string;
@@ -400,8 +425,16 @@ export function buildGiftRosterExport(input: BuildGiftRosterInput): GiftRosterEx
       status: statusLabel(sub?.status ?? null),
       shippingAddress: shippingAddress || DASH,
       addressSource,
+      // The EMPLOYEE'S number, unchanged by any alternate recipient. Falling back
+      // to the recipient's number here would be the single most damaging edit
+      // available to this file — see the field's doc comment.
       contactNumber: clean(sub?.active_contact_number) || clean(e.phone_number) || DASH,
       apparelSize: clean(sub?.apparel_size) || DASH,
+      alternateRecipient: hasAlternateRecipient(sub) ? clean(sub?.recipient_name) : '',
+      recipientRelationship: hasAlternateRecipient(sub)
+        ? clean(sub?.recipient_relationship)
+        : '',
+      recipientContact: hasAlternateRecipient(sub) ? clean(sub?.recipient_contact) : '',
       employeeNotes: clean(sub?.notes),
       decidedBy: clean(sub?.decided_by),
       decidedAt: formatDateTime(sub?.decided_at),
@@ -445,6 +478,14 @@ export function buildGiftRosterExport(input: BuildGiftRosterInput): GiftRosterEx
       addressSource: address ? 'Submitted' : 'None on file',
       contactNumber: clean(sub.active_contact_number) || DASH,
       apparelSize: clean(sub.apparel_size) || DASH,
+      // An off-roster submitter's alternate recipient carries too. They are the
+      // likeliest person to be mis-shipped, so dropping the one field that says
+      // who is actually at the door would be exactly backwards.
+      alternateRecipient: hasAlternateRecipient(sub) ? clean(sub.recipient_name) : '',
+      recipientRelationship: hasAlternateRecipient(sub)
+        ? clean(sub.recipient_relationship)
+        : '',
+      recipientContact: hasAlternateRecipient(sub) ? clean(sub.recipient_contact) : '',
       employeeNotes: clean(sub.notes),
       decidedBy: clean(sub.decided_by),
       decidedAt: formatDateTime(sub.decided_at),
@@ -465,6 +506,7 @@ export function buildGiftRosterExport(input: BuildGiftRosterInput): GiftRosterEx
     giftsOwed: rows.reduce((n, r) => n + r.giftsOwed, 0),
     peopleOwed: rows.filter((r) => r.giftsOwed > 0).length,
     peopleNotRecorded: rows.filter((r) => r.giftsNotRecorded > 0).length,
+    altRecipient: rows.filter((r) => r.alternateRecipient !== '').length,
   };
 
   return {
@@ -493,6 +535,9 @@ function submissionRecord(
     shippingAddress: clean(s.preferred_delivery_location) || DASH,
     contactNumber: clean(s.active_contact_number) || DASH,
     apparelSize: clean(s.apparel_size) || DASH,
+    alternateRecipient: hasAlternateRecipient(s) ? clean(s.recipient_name) : '',
+    recipientRelationship: hasAlternateRecipient(s) ? clean(s.recipient_relationship) : '',
+    recipientContact: hasAlternateRecipient(s) ? clean(s.recipient_contact) : '',
     status: statusLabel(s.status),
     employeeNotes: clean(s.notes),
     decidedBy: clean(s.decided_by),
@@ -533,8 +578,14 @@ export const GIFT_ROSTER_COLUMNS: {
   { header: 'Status', get: (r) => r.status },
   { header: 'Shipping Address', get: (r) => r.shippingAddress },
   { header: 'Address Source', get: (r) => r.addressSource },
+  // `Contact Number` is and stays the EMPLOYEE'S. The three recipient columns sit
+  // BESIDE it rather than replacing it, so the file never has to be read twice to
+  // work out whose number it printed.
   { header: 'Contact Number', get: (r) => r.contactNumber },
   { header: 'Apparel Size', get: (r) => r.apparelSize },
+  { header: 'Alternate Recipient', get: (r) => r.alternateRecipient || DASH },
+  { header: 'Recipient Relationship', get: (r) => r.recipientRelationship || DASH },
+  { header: 'Recipient Contact', get: (r) => r.recipientContact || DASH },
   { header: 'Employee Notes', get: (r) => r.employeeNotes || DASH },
   { header: 'Decided By', get: (r) => r.decidedBy || DASH },
   { header: 'Decided At', get: (r) => r.decidedAt || DASH },
@@ -554,6 +605,9 @@ const SUBMISSION_COLUMNS: {
   { header: 'Shipping Address', get: (r) => r.shippingAddress },
   { header: 'Contact Number', get: (r) => r.contactNumber },
   { header: 'Apparel Size', get: (r) => r.apparelSize },
+  { header: 'Alternate Recipient', get: (r) => r.alternateRecipient || DASH },
+  { header: 'Recipient Relationship', get: (r) => r.recipientRelationship || DASH },
+  { header: 'Recipient Contact', get: (r) => r.recipientContact || DASH },
   { header: 'Status', get: (r) => r.status },
   { header: 'Employee Notes', get: (r) => r.employeeNotes || DASH },
   { header: 'Decided By', get: (r) => r.decidedBy || DASH },
@@ -586,7 +640,8 @@ function summaryLine(model: GiftRosterExportModel): string {
     ` · ${s.dueNoSubmission.toLocaleString()} due with no submission` +
     ` · ${s.giftsOwed.toLocaleString()} gift(s) owed to ${s.peopleOwed.toLocaleString()} person/people` +
     ` · ${s.peopleNotRecorded.toLocaleString()} with nothing recorded` +
-    ` · ${s.offRoster.toLocaleString()} off-roster · ${s.noAddress.toLocaleString()} with no address`
+    ` · ${s.offRoster.toLocaleString()} off-roster · ${s.noAddress.toLocaleString()} with no address` +
+    ` · ${s.altRecipient.toLocaleString()} received by someone else`
   );
 }
 
@@ -862,6 +917,7 @@ export async function generateGiftRosterPdf(
       { label: 'Not recorded', value: s.peopleNotRecorded.toLocaleString() },
       { label: 'Off-roster', value: s.offRoster.toLocaleString() },
       { label: 'No address', value: s.noAddress.toLocaleString() },
+      { label: 'Alt recipient', value: s.altRecipient.toLocaleString() },
     ];
     const gap = 9;
     const boxW = (CONTENT_W - gap * (items.length - 1)) / items.length;
@@ -884,17 +940,29 @@ export async function generateGiftRosterPdf(
   const PAD_X = 5;
   const PAD_Y = 4;
 
+  // `Received By` is worth the width it costs: this is the printed ship list, and
+  // "hand it to somebody else" is the one fact on it that changes what the person
+  // at the door does. The width comes out of Name / Work Email / Shipping Address,
+  // and `wrapText` wraps rather than truncates, so narrower columns cost lines on
+  // the page, never characters out of a name.
+  //
+  // The employee's contact number is deliberately still ABSENT from the PDF, as
+  // it always has been — this column does not change who the courier calls.
   const columns: Col[] = [
     { header: '#', width: 22, align: 'right' },
-    { header: 'Name', width: 96 },
-    { header: 'Work Email', width: 128 },
-    { header: 'Department', width: 66 },
-    { header: 'Milestone', width: 52 },
-    { header: 'Milestone Date', width: 62 },
-    { header: 'Sub?', width: 28 },
-    { header: 'Status', width: 50 },
-    { header: 'Shipping Address', width: 152 },
-    { header: 'Source', width: CONTENT_W - 22 - 96 - 128 - 66 - 52 - 62 - 28 - 50 - 152 },
+    { header: 'Name', width: 90 },
+    { header: 'Work Email', width: 112 },
+    { header: 'Department', width: 60 },
+    { header: 'Milestone', width: 50 },
+    { header: 'Milestone Date', width: 60 },
+    { header: 'Sub?', width: 26 },
+    { header: 'Status', width: 48 },
+    { header: 'Shipping Address', width: 140 },
+    { header: 'Received By', width: 74 },
+    {
+      header: 'Source',
+      width: CONTENT_W - 22 - 90 - 112 - 60 - 50 - 60 - 26 - 48 - 140 - 74,
+    },
   ];
   const tableRows = model.rows.map((r, i) => [
     String(i + 1),
@@ -906,6 +974,15 @@ export async function generateGiftRosterPdf(
     r.submitted,
     r.status,
     r.shippingAddress,
+    // Through the module, not spelled out here — "Maria (Spouse)" has exactly one
+    // implementation, shared with the Gift Tracker and both forms.
+    //
+    // Blank reads as DASH, never as an empty cell that could be mistaken for a
+    // missing value: a dash says "the employee receives it", which is an answer.
+    describeAlternateRecipient({
+      recipient_name: r.alternateRecipient,
+      recipient_relationship: r.recipientRelationship,
+    }) || DASH,
     r.addressSource,
   ]);
 

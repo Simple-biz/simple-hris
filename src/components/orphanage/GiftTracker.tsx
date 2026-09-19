@@ -27,6 +27,11 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { GiftTrackerNote } from '@/lib/supabase/gift-tracker-notes';
+import {
+  describeAlternateRecipient,
+  GIFT_RECIPIENT_RELATIONSHIPS,
+  hasAlternateRecipient,
+} from '@/lib/gift-tracker/alternate-recipient';
 import type { EmployeeGiftShippingRow } from '@/lib/supabase/employee-gift-shipping';
 import type { EmployeeGiftReceiptRow } from '@/lib/supabase/employee-gift-receipts';
 import {
@@ -421,6 +426,9 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
     location: string;
     contact: string;
     size: string;
+    recipientName: string;
+    recipientRelationship: string;
+    recipientContact: string;
     notes: string;
     saving: boolean;
   } | null>(null);
@@ -1018,6 +1026,9 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         location: row.preferred_delivery_location,
         contact: row.active_contact_number,
         size: row.apparel_size ?? '',
+        recipientName: row.recipient_name ?? '',
+        recipientRelationship: row.recipient_relationship ?? '',
+        recipientContact: row.recipient_contact ?? '',
         notes: row.notes,
         saving: false,
       });
@@ -1037,6 +1048,12 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
           preferred_delivery_location: editDraft.location.trim(),
           active_contact_number: editDraft.contact.trim(),
           apparel_size: editDraft.size,
+          // Sent as a SET — clearing the name clears the relationship and the
+          // number with it, so a manager can never leave a spouse's name
+          // attached to a stranger's phone number.
+          recipient_name: editDraft.recipientName.trim(),
+          recipient_relationship: editDraft.recipientRelationship,
+          recipient_contact: editDraft.recipientContact.trim(),
           notes: editDraft.notes.trim(),
         }),
       });
@@ -1538,6 +1555,65 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                   })}
                 </div>
               </div>
+              {/* Somebody else receiving it. Clearing the NAME clears the whole
+                  set on save, which is how a stale arrangement is removed. */}
+              <div className="grid gap-1.5 rounded-lg border border-amber-200/70 bg-amber-50/40 p-2.5 dark:border-amber-900/40 dark:bg-amber-950/15">
+                <Label htmlFor="edit-recipient" className="text-xs font-medium">
+                  Received by someone else{' '}
+                  <span className="font-normal text-zinc-400">· leave blank if the employee receives it</span>
+                </Label>
+                <Input
+                  id="edit-recipient"
+                  value={editDraft.recipientName}
+                  placeholder="Full name of the person receiving it"
+                  onChange={(e) =>
+                    setEditDraft((d) => (d ? { ...d, recipientName: e.target.value } : d))
+                  }
+                  disabled={editDraft.saving}
+                />
+                {editDraft.recipientName.trim() && (
+                  <>
+                    <div className="flex flex-wrap gap-1.5">
+                      {GIFT_RECIPIENT_RELATIONSHIPS.map((rel) => {
+                        const active = editDraft.recipientRelationship === rel;
+                        return (
+                          <button
+                            key={rel}
+                            type="button"
+                            disabled={editDraft.saving}
+                            aria-pressed={active}
+                            onClick={() =>
+                              setEditDraft((d) =>
+                                d ? { ...d, recipientRelationship: active ? '' : rel } : d,
+                              )
+                            }
+                            className={cn(
+                              'rounded-full border px-3 py-1 text-xs font-semibold transition-colors disabled:opacity-60',
+                              active
+                                ? 'border-amber-500 bg-amber-600 text-white'
+                                : 'border-zinc-200 bg-white text-zinc-600 hover:bg-amber-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-amber-950/30',
+                            )}
+                          >
+                            {rel}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <Input
+                      value={editDraft.recipientContact}
+                      placeholder="Their contact number (optional)"
+                      onChange={(e) =>
+                        setEditDraft((d) => (d ? { ...d, recipientContact: e.target.value } : d))
+                      }
+                      disabled={editDraft.saving}
+                    />
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                      The courier still calls the employee on the number above — this one is a
+                      fallback.
+                    </p>
+                  </>
+                )}
+              </div>
               <div className="grid gap-1.5">
                 <Label htmlFor="edit-notes" className="text-xs font-medium">
                   Notes
@@ -1873,6 +1949,26 @@ function RowItem({
                                     <span className="italic text-zinc-400">—</span>
                                   )}
                                 </div>
+                                {/* Only when somebody OTHER than the employee is
+                                    receiving it — the same rule the paid-records
+                                    panel uses for an account holder who differs
+                                    from the payee. A "Received by: <the employee>"
+                                    line on every row would be noise, and noise is
+                                    what gets skimmed past on the one line that
+                                    changes what happens at the door. */}
+                                {hasAlternateRecipient(s) && (
+                                  <div>
+                                    <span className="font-semibold text-amber-700 dark:text-amber-300">Received by:</span>{' '}
+                                    <span className="font-semibold text-amber-700 dark:text-amber-300">
+                                      {describeAlternateRecipient(s)}
+                                    </span>
+                                    {s.recipient_contact && (
+                                      <span className="text-zinc-500 dark:text-zinc-500">
+                                        {' '}· {s.recipient_contact}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                                 {s.notes && (
                                   <div>
                                     <span className="font-semibold text-zinc-700 dark:text-zinc-300">Notes:</span>{' '}
@@ -2351,6 +2447,10 @@ function SubmissionsPanel({
         item.department ?? '',
         item.sub.preferred_delivery_location,
         item.sub.active_contact_number,
+        // Searchable by the person at the door: "who was the parcel for Maria?"
+        // is a question the shipping team actually asks, and without this the
+        // only way to answer it is to open every row.
+        item.sub.recipient_name ?? '',
         item.sub.notes,
       ]
         .join(' ')
@@ -2506,6 +2606,21 @@ function SubmissionsPanel({
                             <span className="italic text-zinc-400">—</span>
                           )}
                         </div>
+                        {/* Shown only when it differs from the employee — see the
+                            roster block above for why. */}
+                        {hasAlternateRecipient(sub) && (
+                          <div>
+                            <span className="font-semibold text-amber-700 dark:text-amber-300">Received by:</span>{' '}
+                            <span className="font-semibold text-amber-700 dark:text-amber-300">
+                              {describeAlternateRecipient(sub)}
+                            </span>
+                            {sub.recipient_contact && (
+                              <span className="text-zinc-500 dark:text-zinc-500">
+                                {' '}· {sub.recipient_contact}
+                              </span>
+                            )}
+                          </div>
+                        )}
                         {sub.notes && (
                           <div>
                             <span className="font-semibold text-zinc-700 dark:text-zinc-300">Notes:</span>{' '}
