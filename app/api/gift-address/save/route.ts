@@ -9,6 +9,11 @@ import {
 } from '@/lib/supabase/employee-gift-shipping';
 import { parseStartDate } from '@/lib/gift-milestones';
 import { APPAREL_SIZES } from '@/lib/gift-tracker/milestone-copy';
+import {
+  alternateRecipientColumns,
+  hasAlternateRecipient,
+  validateAlternateRecipient,
+} from '@/lib/gift-tracker/alternate-recipient';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 
 export const dynamic = 'force-dynamic';
@@ -49,6 +54,9 @@ export async function POST(req: Request) {
     contact?: string;
     size?: string;
     notes?: string;
+    recipientName?: string;
+    recipientRelationship?: string;
+    recipientContact?: string;
   };
 
   const person = await resolveGiftAddressSession(String(body.sessionToken ?? ''));
@@ -77,6 +85,24 @@ export async function POST(req: Request) {
   // size means somebody receives the wrong shirt and never finds out why.
   if (size && !(APPAREL_SIZES as readonly string[]).includes(size)) {
     return NextResponse.json({ error: 'Pick a size from the list.' }, { status: 400 });
+  }
+
+  // Somebody else receiving the gift — in practice a spouse. Refused rather than
+  // repaired, exactly like the size above and for the same reason: a half-filled
+  // arrangement that the server quietly tidied away would leave the employee
+  // believing their spouse was on the delivery.
+  //
+  // Note what this does NOT do: the recipient's number never replaces `contact`.
+  // Kane's Q1 ruling — "The Employees as they will contact their spouse" — so
+  // `active_contact_number` stays the employee's and the recipient's is a
+  // fallback stored beside it.
+  const recipient = validateAlternateRecipient({
+    recipient_name: body.recipientName,
+    recipient_relationship: body.recipientRelationship,
+    recipient_contact: body.recipientContact,
+  });
+  if (!recipient.ok) {
+    return NextResponse.json({ error: recipient.error }, { status: 400 });
   }
 
   const keyVerdict = await checkSubmissionKey(person.personalEmail);
@@ -127,6 +153,7 @@ export async function POST(req: Request) {
       preferred_delivery_location: location,
       active_contact_number: contact,
       apparel_size: size,
+      ...alternateRecipientColumns(recipient.value),
       notes,
     });
     // An already-APPROVED row refuses by design (the details are locked). That
@@ -149,6 +176,12 @@ export async function POST(req: Request) {
       milestones_saved: saved,
       milestones_refused: refused.map((r) => r.milestoneIndex),
       has_size: Boolean(size),
+      // A BOOLEAN, never the name or the number. The named person does not work
+      // here and never agreed to appear in our audit log; that a redirection was
+      // arranged is auditable, who they are is not. Same rule as the address.
+      has_alternate_recipient: hasAlternateRecipient(
+        alternateRecipientColumns(recipient.value),
+      ),
     },
     ip_address: clientIp(req),
   });

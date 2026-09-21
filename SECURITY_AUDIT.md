@@ -27,6 +27,166 @@
 > DPA compliance), #53 (cron fail-open), #54 (security headers), #55/#56
 > (XSS / file upload).
 
+> ## ⚠ SECOND RE-VERIFICATION — 2026-09-17 (all 80 rows read against current source)
+>
+> **A NEW critical hole supersedes everything below it: a shared-password
+> impersonation backdoor.** `SUPER_ADMIN_PASSWORD` defaults to the literal
+> `"super-admin"` when unset, is shipped **uncommented** in `.env.example`, is
+> **on by default** (`SUPER_ADMIN_IMPERSONATION` unset), is reachable at the
+> public `/login` page with **zero rate limiting**, and signs the caller in as
+> **any** `@simple.biz` account inheriting that account's full roles — a
+> complete bypass of Google SSO, not merely an authorization gap. This is not
+> one of the 80 numbered findings below (it surfaced 2026-09-08 in a later
+> session); full detail and remediation status live in
+> [`docs/features/pre-release-security-readiness.md`](docs/features/pre-release-security-readiness.md)
+> §1. Kane ruled 2026-09-09 the password goes away entirely in favor of an
+> admin-session-launched impersonation action; a `blueprint` brief is posted
+> and **blocked on Q1–Q3, still unanswered**. Confirmed still live in
+> `src/lib/auth/auth-options.ts:44-45` and `.env.example:75` today. **This is
+> the single highest-severity live gap in the app right now.**
+>
+> **Newly RESOLVED since 2026-08-10:** #15, #20, #25 (catch-grants-access —
+> fixed, though the redirect string has a `\employee` backslash typo in all
+> three files — cosmetic, not a re-opening), #33, #34 (the privilege-escalation
+> half — any elevated role could grant admin — not just the force-logout
+> timing fixed in June), #35, #36 (routes restructured), #40 (`next` resolves
+> to 16.2.2), #43 (route restructured, no raw bank data in the export), #53
+> (fail-closed in code now; `CRON_SECRET` still undocumented in
+> `.env.example`), #59, #62, #73, #78.
+>
+> **PARTIALLY resolved — auth added to some verbs or branches, not all —
+> treat as still exploitable:** #14 (POST gated, GET wide open), #21 (POST
+> gated but `admin_name` still taken from the request body; GET has zero
+> auth), #28 (DELETE gated; GET and PATCH still unauthenticated), #37
+> (mutating routes gated; every GET across `hsl-bonus/*` — period-status,
+> entries, period-summary — is open), #32/#38 (`member-rate-history` fixed;
+> `member-monthly-pay` is fully unauthenticated — also independently tracked
+> in `pre-release-security-readiness.md` §2), #49 (a 60s role-refresh plus
+> force-logout-on-grant now exist; session `maxAge` is still unset, 30-day
+> default), #52 (a real DB-backed rate limiter now exists for
+> `/api/external/*` tokens but was never reused for `proxy.ts`'s own
+> in-memory limiter), #61 (`EmployeeApp` is session-exclusive now; `CeoApp`
+> still trusts the `?email=` query param client-side, though the server-side
+> authorization backstops it), #45/#69 (webhook URLs are now
+> admin-configurable; still no HMAC signature, Hubstaff org ID still
+> hardcoded), #72 (`fetchRolesForEmail` now uses `.eq`; `persistGooglePhoto`
+> still uses `.ilike`).
+>
+> **Confirmed STILL OPEN, unchanged:** #1 (no `.env*` file exists in this
+> checkout, but the underlying risk is an accepted-by-design tradeoff per this
+> repo's `CLAUDE.md` — production creds still land in `.env.local` on disk
+> when populated), #24 (worse than measured: 228 files now call the
+> service-role client, up from "48+"; an anon-key client exists and is used
+> in ~83 files but was never made the default for employee-facing routes),
+> #27, #39, #41 (protobufjs still resolves to 7.5.4, no override added), #42,
+> #44, #46, #47, #48, #50, #51, #54, #55 (narrower in practice today — URLs
+> only ever come from the app's own upload endpoint — but the https-only
+> guard was never added), #56, #57, #58, #63, #64, #65 (`GET /api/employees`
+> with no `email` param still returns the full roster, home addresses
+> included, to any signed-in user — the "`requireElevatedSession()` for the
+> full-list path" half of the original recommendation was never done), #66,
+> #67, #68, #70, #71/#79 (masking still absent at the checked call sites;
+> `DispatchReports.tsx` no longer exists in the tree), #74, #76.
+>
+> **Next fix pass should start with the impersonation backdoor, then #32 and
+> #65** — the three broadest full-roster / full-impersonation exposures
+> reachable by any signed-in (or, for the backdoor, unauthenticated) caller
+> today.
+
+---
+
+## Status Checklist — 2026-09-17
+
+Per-row status from the second re-verification, so the table below can be scanned without
+reading the prose block above. **RESOLVED** = the described vulnerability is closed in current
+source. **PARTIAL** = auth/fix landed on some verbs or branches, not all — treat as still
+exploitable. **OPEN** = unchanged, still exploitable as originally described. Rows not
+individually re-verified this pass keep their 2026-08-10 status.
+
+| # | Sev | Status | Note |
+|---|-----|--------|------|
+| **BD** | **Critical** | **OPEN — blocking** | Shared-password super-admin impersonation backdoor. Not one of the 80 rows below — see the callout above and `pre-release-security-readiness.md` §1. Blocked on Kane's Q1–Q3. |
+| 1 | Critical | OPEN | No `.env*` in this checkout; risk is an accepted-by-design tradeoff per `CLAUDE.md` when the file is populated. |
+| 2 | Critical | RESOLVED | Auth added; residual peer-over-exposure on the full-roster GET is tracked at #65. |
+| 3 | Critical | RESOLVED | |
+| 4 | Critical | RESOLVED | |
+| 5 | Critical | RESOLVED | DELETE is admin-gated. |
+| 6 | Critical | RESOLVED | |
+| 7 | Critical | RESOLVED | |
+| 8 | Critical | RESOLVED | |
+| 9 | Critical | RESOLVED | |
+| 10 | Critical | RESOLVED | |
+| 11 | Critical | RESOLVED | |
+| 12 | Critical | RESOLVED | |
+| 13 | Critical | RESOLVED | |
+| 14 | Critical | PARTIAL | POST gated (`requireFeatureEdit`); GET still has zero auth. |
+| 15 | Critical | RESOLVED | `requireElevatedSession()` first line of POST + audit log added. |
+| 16 | Critical | RESOLVED | |
+| 17 | Critical | RESOLVED | |
+| 18 | Critical | RESOLVED | |
+| 19 | Critical | RESOLVED | |
+| 20 | Critical | RESOLVED | `decided_by` now derived from session, self-approval blocked. |
+| 21 | Critical | PARTIAL | POST gated; `admin_name` still body-sourced; GET still open. |
+| 22 | Critical | RESOLVED | |
+| 23 | Critical | RESOLVED | |
+| 24 | Critical | OPEN — worse | Service-role client now in 228 files (was "48+"). Anon client exists, used in ~83 files, never made the default. |
+| 25 | Critical | RESOLVED | Catch blocks now redirect instead of granting access (cosmetic `\employee` typo only). |
+| 26 | Critical | RESOLVED | Not re-verified this pass; retained from 2026-08-10. |
+| 27 | High | OPEN | No rate limiting on login/forgot-password flows. |
+| 28 | High | PARTIAL | DELETE gated; GET and PATCH still unauthenticated. |
+| 29 | High | RESOLVED | |
+| 30 | High | RESOLVED | |
+| 31 | High | RESOLVED | |
+| 32 | High | OPEN | `member-monthly-pay` still fully unauthenticated. Also tracked in `pre-release-security-readiness.md` §2. |
+| 33 | High | RESOLVED | Now `requireRateVisibilitySession()` — stricter than recommended. |
+| 34 | High | RESOLVED | Privilege-escalation half closed (admin-only grant), on top of the June force-logout timing fix. |
+| 35 | High | RESOLVED | |
+| 36 | High | RESOLVED | Routes restructured under `payment-dispatches/*`. |
+| 37 | High | PARTIAL | Mutating routes gated; every `hsl-bonus/*` GET (period-status, entries, period-summary) still open. |
+| 38 | High | PARTIAL | IDOR closed on `member-rate-history`; still open on `member-monthly-pay`. |
+| 39 | High | OPEN | `xlsx` still `^0.18.5`. |
+| 40 | High | RESOLVED | `next` resolves to 16.2.2. |
+| 41 | High | OPEN | `protobufjs` still resolves to 7.5.4; no override added. |
+| 42 | High | OPEN | No column-level encryption on bank fields. |
+| 43 | High | RESOLVED | Route restructured; no raw bank data in the export. |
+| 44 | High | OPEN | No RLS/policies on the five named tables. |
+| 45 | High | PARTIAL | Same evidence as #69 — URLs now admin-configurable, still no HMAC signature. |
+| 46 | High | OPEN | No audit log entries on sensitive reads. |
+| 47 | High | OPEN | No anonymization/purge job for bank details of off-boarded employees. |
+| 48 | High | OPEN | No privacy notice, DPO, or breach-notification runbook found. |
+| 49 | Medium | PARTIAL | 60s role-refresh + force-logout-on-grant added; session `maxAge` still unset (30-day default). |
+| 50 | Medium | OPEN | Presence heartbeat/last-seen still spoofable, no session check. |
+| 51 | Medium | OPEN | Force-logout cache TTL still 30s, in-memory per isolate. |
+| 52 | Medium | PARTIAL | A DB-backed limiter now exists for `/api/external/*` tokens; `proxy.ts`'s own limiter is still in-memory. |
+| 53 | Medium | RESOLVED | `isAuthorized()` now fails closed; `CRON_SECRET` still undocumented in `.env.example`. |
+| 54 | Medium | OPEN | No `headers()` block in `next.config.ts` — no CSP/HSTS/X-Frame-Options. |
+| 55 | Medium | OPEN | No https-only URL guard, though today's URLs only ever come from the app's own upload endpoint. |
+| 56 | Medium | OPEN | No magic-byte check; SVG uploads still accepted. |
+| 57 | Medium | OPEN | X-Forwarded-For still trusted with no proxy-origin validation. |
+| 58 | Medium | OPEN | Forgot-password still no rate limit/lockout/CAPTCHA. |
+| 59 | Medium | RESOLVED | `decided_by` on PAB disputes now session-derived. |
+| 60 | Medium | OPEN | `PayrollWizard.tsx` still has unconditional `console.log` of column names/hours data. |
+| 61 | Medium | PARTIAL | `EmployeeApp` is session-exclusive; `CeoApp` still trusts `?email=` client-side (server backstops it). |
+| 62 | Medium | RESOLVED | Ownership check added to contractor profile POST. |
+| 63 | Medium | OPEN | `orClause` still string-interpolated, not parameterized. |
+| 64 | Medium | OPEN | Still `.ilike()` with leading/trailing wildcards. |
+| 65 | Medium | OPEN | `GET /api/employees` with no `email` still returns the full roster incl. home addresses to any signed-in user. |
+| 66 | Medium | OPEN | `start_mmddyy_provided` still logged in plaintext. |
+| 67 | Medium | OPEN | Session `maxAge` still unset — 30-day default. |
+| 68 | Medium | OPEN | Delete still doesn't touch `employee_ids` bank fields. |
+| 69 | Medium | PARTIAL | Webhook URLs now admin-configurable; still no HMAC signature; Hubstaff org ID still hardcoded. |
+| 70 | Medium | OPEN | `approver_email` still taken from the request body. |
+| 71 | Medium | OPEN | Bank account numbers still rendered unmasked in `SentPaymentsHistory.tsx`, `HrOnboardingForm.tsx`. |
+| 72 | Low | PARTIAL | `fetchRolesForEmail` now `.eq`; `persistGooglePhoto` still `.ilike`. |
+| 73 | Low | RESOLVED | Default branch now returns no tabs instead of all tabs. |
+| 74 | Low | OPEN | Cron routes' GET and POST both still mutate. |
+| 75 | Low | PARTIAL | Same pattern as #59/#70 — fixed on pab-disputes, not on leave-requests. |
+| 76 | Low | OPEN | `SystemDiagnostics.tsx` gate still client-side only. |
+| 77 | Low | PARTIAL | Same evidence as #69 — Hubstaff org ID still hardcoded in source. |
+| 78 | Low | RESOLVED | Offboard flow now auto-calls `bumpForceLogoutFor()`. |
+| 79 | Low | OPEN | Same as #71. |
+| 80 | Informational | N/A | Original report already states no action required. |
+
 ---
 
 ## Security Findings Table

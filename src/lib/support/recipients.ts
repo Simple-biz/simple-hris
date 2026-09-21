@@ -15,6 +15,28 @@
  *
  * Employee-filed tickets are the likeliest source of a null: a filer whose
  * master row is missing, an alternate address, or a ticket nobody has claimed.
+ *
+ * THE TICKET SIDE, EVENT BY EVENT
+ * ---------------------------------------------------------------------------
+ * Kane, 2026-09-21: the Employee dashboard's Help button opens on "Chat
+ * Support or a Ticket". The chat already resolves its recipients here
+ * (app/api/support/chat/[id]/messages/route.ts:261 and :532 both call
+ * staffReplyRecipient); the ticket routes get the same answers from the same
+ * functions, so the two doors cannot disagree about who is told:
+ *
+ *   filed            ticketFiledRecipient     the configured inbox, or nobody
+ *   staff reply      staffReplyRecipient      the employee, always — for the
+ *                                             in-app row (support.replied /
+ *                                             support.answered) and the email
+ *   employee reply   employeeReplyRecipient   the holder, or nobody — and the
+ *   (incl. reopen)                            reply that REOPENS a closed
+ *                                             ticket is no exception
+ *
+ * No function here fans out. There is no in-app type for the staff side and no
+ * broadcast to the five: an employee's reply reaches the answerers through the
+ * queueing line and the board they already watch. The two in-app types map to
+ * ['employee'] in src/lib/notifications/notification-views.ts and are admitted
+ * by references/sql/alter/2026-09-21_support_notification_types.sql.
  */
 
 const norm = (email: string | null | undefined): string | null => {
@@ -22,8 +44,19 @@ const norm = (email: string | null | undefined): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+/**
+ * The two people a ticket can have. A full `employee_support_tickets` row is a
+ * superset and passes as-is; that is the contract, and recipients.test.ts runs
+ * every rule against one.
+ *
+ * What is NOT here is as deliberate as what is: `filed_by_email` (the address
+ * the session carried, possibly a personal alias — the DDL keeps it to answer
+ * "how did they get here", never "who to tell") and `closed_by` (the closer
+ * may be an admin who never held the ticket, and is never a recipient — see
+ * employeeReplyRecipient).
+ */
 export type SupportTicketParties = {
-  /** The employee who filed it — the master work email on the row. */
+  /** The employee who filed it — the MASTER work email on the row, never the session alias. */
   work_email: string | null;
   /** The staffer who picked it up, if anyone has. */
   claimed_by: string | null;
@@ -51,6 +84,16 @@ export function staffReplyRecipient(ticket: SupportTicketParties): string | null
  * inboxes is the expensive one. This is the same asymmetry the tickets board
  * settled on — a panel row is cheap, an inbox is not — and it is not a bug to
  * be fixed by widening the email.
+ *
+ * THE REPLY THAT REOPENS A CLOSED TICKET IS NOT A SPECIAL CASE. An employee
+ * replying to a closed ticket reopens it (lifecycle.ts:174-177 — they are
+ * telling us it was not actually resolved). The recipient is the same: the
+ * holder, who did the work and should hear that the employee disagrees, or
+ * nobody, because the reopened ticket lands back in the line. Never
+ * `closed_by`: an unheld ticket can be closed by anyone with the key
+ * (lifecycle.ts:126) and an admin can close over the holder's head, and
+ * mailing that admin about support work would put Kane in a loop he is
+ * explicitly not in (lifecycle.ts:139-141).
  */
 export function employeeReplyRecipient(ticket: SupportTicketParties): string | null {
   return norm(ticket.claimed_by);

@@ -5,6 +5,11 @@ import {
   type UpsertShippingInput,
 } from '@/lib/supabase/employee-gift-shipping';
 import { requireFeatureAccess } from '@/lib/auth/authorize-feature';
+import {
+  alternateRecipientColumns,
+  hasAlternateRecipient,
+  validateAlternateRecipient,
+} from '@/lib/gift-tracker/alternate-recipient';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { getEmployeeMasterRecord } from '@/lib/supabase/employees';
 import { normEmail } from '@/lib/email/norm-email';
@@ -125,12 +130,25 @@ export async function PUT(req: NextRequest) {
     }
   }
 
+  // Somebody else receiving the gift is REFUSED rather than repaired: an unknown
+  // relationship, a name with no relationship, a relationship with no name. The
+  // data layer's normaliser would silently drop the last two, and a form that
+  // quietly discards what somebody typed leaves them believing the arrangement
+  // was recorded. Same trade the apparel size makes one field over.
+  const recipient = validateAlternateRecipient(body);
+  if (!recipient.ok) {
+    return NextResponse.json({ row: null, error: recipient.error }, { status: 400 });
+  }
+
   const authz = await authorizeShippingAccess(String(body.personal_email));
   if (!authz.ok) {
     return NextResponse.json({ row: null, error: authz.message }, { status: authz.status });
   }
 
-  const { row, error } = await upsertShippingDetail(body);
+  const { row, error } = await upsertShippingDetail({
+    ...body,
+    ...alternateRecipientColumns(recipient.value),
+  });
   if (error || !row) {
     return NextResponse.json(
       { row: null, error: error ?? 'Insert failed' },
@@ -141,7 +159,10 @@ export async function PUT(req: NextRequest) {
   // `channel` is the whole point of auditing this: a staff-entered address and
   // the employee's own submission are otherwise indistinguishable afterwards.
   // The address itself is NOT copied into the trail — it lives on the row, and
-  // the audit log is read by more people than the Gift Tracker is.
+  // the audit log is read by more people than the Gift Tracker is. The alternate
+  // recipient is recorded as a BOOLEAN for exactly that reason and more so: the
+  // named person does not work here and never agreed to appear in our audit log.
+  // That a redirection was arranged is auditable; who they are is not.
   void insertAuditLog({
     ...authz.actor,
     ip_address: clientIp(req),
@@ -154,6 +175,7 @@ export async function PUT(req: NextRequest) {
       milestone_date: body.milestone_date,
       status: row.status,
       fields: required.map(String),
+      has_alternate_recipient: hasAlternateRecipient(row),
     },
   });
 

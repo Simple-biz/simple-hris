@@ -25,7 +25,18 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Archive, ArrowLeft, Eye, Menu, Plus, RefreshCw, Search, SquareKanban } from 'lucide-react';
+import { useSession } from 'next-auth/react';
+import {
+  Archive,
+  ArrowLeft,
+  Eye,
+  Menu,
+  MessageCircle,
+  Plus,
+  RefreshCw,
+  Search,
+  SquareKanban,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,6 +49,8 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
+import { ticketsHostAccess } from '@/lib/rbac/view-tabs';
 import { cn } from '@/lib/utils';
 import {
   TICKET_BOARD_MOVERS,
@@ -53,6 +66,7 @@ import { PRIORITY_STYLES, STATUS_STYLES, TicketCard, initialsFor, relativeTime }
 import TicketDialog, { type TicketDraft } from './TicketDialog';
 import TicketsOverview from './TicketsOverview';
 import TicketsSidebar, { type TicketsView } from './TicketsSidebar';
+import SupportChatTab from './SupportChatTab';
 
 const byPosition = (a: TicketRow, b: TicketRow) =>
   a.position - b.position || a.created_at.localeCompare(b.created_at);
@@ -91,9 +105,59 @@ export default function TicketsBoard() {
   const [liveStatus, setLiveStatus] = useState<'live' | 'degraded'>('live');
   // Below `md` the sidebar is a drawer toggled by the header hamburger.
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  // Which tickets surface is showing: the Kanban board or the stats Overview.
-  // Overview is the default landing view on load/refresh.
+  // Overview is the default landing view on load/refresh — EXACTLY as it was
+  // before Employee Support was hosted here. Kane, 2026-09-21: "put back the
+  // BOARD SECTION … undo your shit". The dev Kanban's behaviour is not gated on
+  // a client-side roles fetch: /tickets' route gate (route-access.ts) and the
+  // `tickets` feature key on /api/tickets already guard it server-side. The
+  // only thing this component decides is whether a SUPPORT-ONLY holder gets
+  // steered onto their tab instead — see the effect below.
   const [activeView, setActiveView] = useState<TicketsView>('overview');
+
+  // ── Who is allowed on which of the two surfaces this route hosts ──────────
+  // Since 2026-09-19 /tickets carries the HRIS dev Kanban AND Employee Support
+  // (Kane's Q3). `ticketsHostAccess` is the one decision function; the rail,
+  // the landing below and the fetch gate all read THIS answer so they cannot
+  // disagree (view-tabs.ts:272-287).
+  const { data: authSession } = useSession();
+  const hostEmail = authSession?.user?.email?.trim().toLowerCase() ?? null;
+  const { roles, perms, canEditTab } = useFeaturePermissions(hostEmail);
+  // Read `host` DIRECTLY, not behind `ready`. The hook paints optimistically
+  // from the JWT roles (useFeaturePermissions.ts:59-63), so an admin or a
+  // `tickets` holder has `board: true` on the very first render and the Board
+  // is never hidden behind a fetch. Gating on `ready` was what made the Board
+  // vanish into "Nothing here is granted to you yet" whenever that round-trip
+  // was slow — the defect Kane hit on 2026-09-21. A support-only holder's JWT
+  // seeds `employee_support`, so their `board` is false from the first frame
+  // too; nobody flickers.
+  const host = useMemo(() => ticketsHostAccess(roles, perms), [roles, perms]);
+
+  // The ONE thing decided here: a SUPPORT-ONLY holder sitting on a board view
+  // is steered onto their first support tab. Everyone else keeps the original
+  // 'overview' landing untouched. Fires whenever the answer says so, but it can
+  // only move someone OFF the board — it never yanks an agent off a support tab
+  // they navigated to.
+  useEffect(() => {
+    const onBoardView =
+      activeView === 'overview' || activeView === 'board' || activeView === 'archived';
+    if (!host.board && onBoardView && host.supportTabs.length > 0) {
+      setActiveView(host.supportTabs[0] as TicketsView);
+    }
+  }, [activeView, host.board, host.supportTabs]);
+
+  // A SUPPORT grant revoked mid-session closes the support tab it was holding
+  // open — the rail entry vanishes on its own (drawn from the same answer), but
+  // the OPEN view is component state and would otherwise sit there fetching
+  // 403s. It falls back to the board if they hold it, else the first support
+  // tab still granted, else 'overview' — the original default, whose fetches
+  // the server refuses on its own. Never `null`: the Kanban's own views are
+  // not gated here, per Kane.
+  useEffect(() => {
+    const onSupportView = activeView === 'support-chat' || activeView === 'support-tickets';
+    if (onSupportView && !host.supportTabs.includes(activeView)) {
+      setActiveView(host.board ? 'overview' : ((host.supportTabs[0] as TicketsView) ?? 'overview'));
+    }
+  }, [activeView, host.board, host.supportTabs]);
 
   const [search, setSearch] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<'all' | TicketPriority>('all');
@@ -175,9 +239,15 @@ export default function TicketsBoard() {
   }, []);
 
   useEffect(() => {
+    // Fetch on mount, as the board always did — the JWT-seeded `host.board` is
+    // true on the first render for anyone who could open this route before
+    // Employee Support was hosted here. The only viewer skipped is a confirmed
+    // support-only holder, for whom /api/tickets is a 403 (it is gated on the
+    // `tickets` FEATURE key, route.ts:28) and the fetch would just be noise.
+    if (!host.board) return;
     void fetchBoard();
     void fetchMembers();
-  }, [fetchBoard, fetchMembers]);
+  }, [host.board, fetchBoard, fetchMembers]);
 
   useEffect(() => {
     if (activeView === 'archived') void fetchArchived();
@@ -491,6 +561,11 @@ export default function TicketsBoard() {
     canEdit &&
     (isAdmin || dialogTicket.created_by.toLowerCase() === viewer.toLowerCase());
 
+  /** Are we on one of the dev Kanban's three views? `null` (not landed) is not
+   *  one of them, so the board's header controls stay off until it is. */
+  const onBoardSurface =
+    activeView === 'overview' || activeView === 'board' || activeView === 'archived';
+
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
     // `dark` is forced here (and on every portaled surface below): /tickets is a
@@ -510,6 +585,7 @@ export default function TicketsBoard() {
         mobileOpen={mobileNavOpen}
         viewerEmail={viewer || null}
         active={activeView}
+        access={host}
         onNavigate={(v) => {
           setActiveView(v);
           setMobileNavOpen(false);
@@ -540,23 +616,44 @@ export default function TicketsBoard() {
             <ArrowLeft />
           </Button>
           <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <SquareKanban className="size-4.5" />
+            {onBoardSurface ? (
+              <SquareKanban className="size-4.5" />
+            ) : (
+              <MessageCircle className="size-4.5" />
+            )}
           </span>
+          {/* The two surfaces name themselves. A support agent reading "HRIS
+              Updates · 0 tickets" would be told about a board they cannot
+              open, and the ticket COUNT in particular must not follow them
+              there — it is a number from a fetch that never ran. */}
           <div className="leading-tight">
-            <h1 className="text-[15px] font-semibold">HRIS Updates</h1>
+            <h1 className="text-[15px] font-semibold">
+              {onBoardSurface ? 'HRIS Updates' : 'Employee Support'}
+            </h1>
             <p className="text-xs text-muted-foreground">
-              {activeView === 'overview'
-                ? 'Overview'
-                : activeView === 'archived'
-                  ? 'Archive'
-                  : 'Request board'}{' '}
-              · {tickets.length} ticket{tickets.length === 1 ? '' : 's'}
+              {onBoardSurface ? (
+                <>
+                  {activeView === 'overview'
+                    ? 'Overview'
+                    : activeView === 'archived'
+                      ? 'Archive'
+                      : 'Request board'}{' '}
+                  · {tickets.length} ticket{tickets.length === 1 ? '' : 's'}
+                </>
+              ) : (
+                'Live chat'
+              )}
             </p>
           </div>
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {loaded && !loadError && (
+          {/* Every control below belongs to the Kanban: the live pill reports
+              the BOARD's socket, the refresh button refetches the BOARD, and
+              "View only" is the board's own grant. On the support surface they
+              would each be a statement about something else — the chat tab
+              carries its own pill, its own refresh and its own grant note. */}
+          {onBoardSurface && loaded && !loadError && (
             <span
               className="mr-1 hidden items-center gap-1.5 text-xs text-muted-foreground sm:flex"
               title={
@@ -579,21 +676,23 @@ export default function TicketsBoard() {
               {liveStatus === 'live' ? 'Live' : 'Auto-refresh'}
             </span>
           )}
-          <Button
-            variant="outline"
-            size="icon"
-            aria-label="Refresh board"
-            title="Refresh board"
-            disabled={!loaded}
-            onClick={() => {
-              void fetchBoard();
-              void fetchMembers();
-              if (activeView === 'archived') void fetchArchived();
-            }}
-          >
-            <RefreshCw className={cn(refreshing && 'animate-spin')} />
-          </Button>
-          {loaded && !canEdit && (
+          {onBoardSurface && (
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Refresh board"
+              title="Refresh board"
+              disabled={!loaded}
+              onClick={() => {
+                void fetchBoard();
+                void fetchMembers();
+                if (activeView === 'archived') void fetchArchived();
+              }}
+            >
+              <RefreshCw className={cn(refreshing && 'animate-spin')} />
+            </Button>
+          )}
+          {onBoardSurface && loaded && !canEdit && (
             <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-border px-2.5 text-xs font-medium text-muted-foreground">
               <Eye className="size-3.5" />
               View only
@@ -643,7 +742,7 @@ export default function TicketsBoard() {
           </Select>
           </>
           )}
-          {canEdit && (
+          {onBoardSurface && canEdit && (
             <Button
               onClick={() => {
                 setDialogTicket(null);
@@ -667,7 +766,21 @@ export default function TicketsBoard() {
           lets the leaving surface clear before the next one lands; distances
           collapse under prefers-reduced-motion. */}
       <AnimatePresence mode="wait" initial={false}>
-      {activeView === 'overview' ? (
+      {activeView === 'support-chat' ? (
+        <motion.main
+          key="support-chat"
+          initial={{ opacity: 0, y: reduceMotion ? 0 : 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: reduceMotion ? 0 : -6 }}
+          transition={{ duration: reduceMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
+          className="min-h-0 flex-1 overflow-hidden"
+        >
+          {/* Employee Support (Kane's Q3), hosted here. It owns its own reads,
+              its own live channel and its own Live/Connecting/Polling pill —
+              nothing on this board's `tickets` fetch reaches it. */}
+          <SupportChatTab canEdit={canEditTab('employee_support', 'support-chat')} />
+        </motion.main>
+      ) : activeView === 'overview' ? (
         <motion.main
           key="overview"
           initial={{ opacity: 0, y: reduceMotion ? 0 : 10 }}

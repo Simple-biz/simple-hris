@@ -666,6 +666,26 @@ The roster crossed 1,000 during July (**1,296** on Jul 30) and several tables ar
 
 All sixteen now drain pages through `selectAllPaged` (commit `2829a6d`).
 
+> ⚠ **The sweep was not complete — three readers were missed, found 2026-09-18 and NOT yet
+> fixed.** `src/lib/supabase/hr-new-hire-checklist.ts:532` (`…SourceCounts` → the HR Overview
+> hiring-sources pie), `:570` (`…RecruiterCounts` → the recruiter scorecard) and `:744`
+> (`…Referrals` → the referrals table) each still do a single `.range(0, 9999)` read with no
+> paging loop. `hr_new_hire_checklist` is **1,479 rows**, so all three are computed over the
+> first 1,000 — a ~32% undercount with no error on screen. The correctly-paged loop already
+> exists **in the same file** at `:683`.
+>
+> This is the same file family as the 2026-07-09 discovery below (the "Referred By" picker), so
+> treat "this reader was fixed" as a per-function fact, never a per-file one. The truncation is
+> also **ordered**, which makes it worse than an obviously-broken number: the missing 479 are not
+> a random sample, so a recruiter whose hires land in the tail simply scores lower and the
+> scorecard still looks plausible. Open item 110 in
+> [audit-2026-09-16-session-log.md](../audits/audit-2026-09-16-session-log.md). **Do not "fix" it
+> by raising the range ceiling — the cap is server-side and ignores it.**
+>
+> Unrelated but adjacent: the three probes added to `diagnostics-probes.ts` on 2026-09-18 return
+> aggregates only (`head: true` counts, `order().limit(1)` for recency), so that file stays clear
+> of this class by construction rather than by paging.
+
 ### Original 2026-07-09 discovery
 
 The active roster was **1075** then, so this bit the master-list readers first. `listActiveMasterListPeople` / `listActiveMasterListNames` (in [global-master-list-db.ts](src/lib/supabase/global-master-list-db.ts)) each did one `.range(0, 9999)` read of `active_employees` and silently dropped ~75 people — `jamesc@simple.biz` among them — off the **Department Transfers "Request transfer in" person picker** and the **New Hire Checklist "Referred By" picker**. The person simply wasn't in the list; no error hinted why.

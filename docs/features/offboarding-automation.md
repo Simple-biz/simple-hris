@@ -457,3 +457,14 @@ section only. (It was Queue/HRIS/Offboarded until the 2026-08-28 merge above.)
 - **System Diagnostics** — the `probeHrOffboarding` probe (`diagnostics-probes.ts`) surfaces this
   pipeline's health: recent `hr.employee.offboarded` audit count (30d), `hr.employee.webhook_fired.%`
   webhook history, and the total off-boarded count on `global_master_list`.
+  **Since 2026-09-18 it has a dedicated home**: Admin → Diagnostics → **HR → Service Map**, where
+  `hr-offboarding` sits beside `new-hire-checklist`, `hr-onboarding`, `master-list` and
+  `google-sheet-sync` — the whole hire-and-leave path on one canvas instead of two cards among
+  twenty-one. Its amber condition is unchanged (any of the last 20 webhook fires recorded
+  `webhook_fired: false`), and the edges `hr-offboarding → master-list` and
+  `hr-offboarding → google-sheet-sync` are the teardown routes this doc describes.
+  See [diagnostics-service-maps.md](./diagnostics-service-maps.md).
+  > Worth knowing if you went looking for this and could not find it: the node is **not new** —
+  > `probeHrOffboarding` and `probeHrOnboarding` have been live for a while, but
+  > `system-diagnostics.md` § Probes never listed them (16 documented rows against a 21-node
+  > route until 2026-09-18), so the offboarding webhook health genuinely was unfindable.

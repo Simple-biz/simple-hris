@@ -3,6 +3,15 @@
 import { useEffect, useState } from 'react';
 import { readCachedRoles, writeRbacCache } from '@/lib/rbac/rbac-cache';
 
+/**
+ * An AppView is a SWITCHER DESTINATION — one row in the rail, one route. It is
+ * NOT the same axis as a `FeatureViewKey`, which is a permission catalog
+ * (src/lib/rbac/feature-permissions.ts). Employee Support is deliberately a new
+ * FeatureViewKey and NOT a new AppView: Kane's Q3 hosts it AT /tickets, so it
+ * shares that destination with the HRIS dev board and splits from it one level
+ * down, at the tabs. A second row pointing at the same URL would be two rows
+ * that go to the same place.
+ */
 export type AppView = 'employee' | 'admin' | 'accounting' | 'manager' | 'orphanage' | 'ceo' | 'hr' | 'contractor' | 'qc' | 'tickets';
 export type Role =
   | 'hr_coordinator'
@@ -13,7 +22,10 @@ export type Role =
   | 'ceo'
   | 'contractor'
   | 'qc'
-  | 'tickets';
+  | 'tickets'
+  // Employee Support's five answerers. Unlocks the /tickets DESTINATION and
+  // nothing on the dev board — see viewsForRoles below.
+  | 'employee_support';
 
 // Roles that unlock the Accounting dashboard. `accounting` is the dedicated
 // dashboard role (renamed from the old `finance`). `hr_coordinator` was
@@ -86,7 +98,15 @@ export function viewsForRoles(roles: Role[]): AppView[] {
   // branch above). Holding a dashboard role no longer surfaces the board — an
   // admin must explicitly assign `tickets` in Roles & Permissions. Mirrors
   // ROUTE_REQUIRED_ROLES in route-access.ts.
-  if (roles.includes('tickets')) {
+  //
+  // `employee_support` unlocks the same DESTINATION because Employee Support's
+  // live chat is hosted at /tickets (Kane's Q3) — and only the destination. It
+  // grants nothing on the dev board: the two surfaces split at the tabs, via
+  // separate FeatureViewKeys, and `ticketsHostAccess()` (view-tabs.ts) gives a
+  // support-only holder no Overview / Board / Archived. Adding the role here is
+  // a parallel key on an existing row, not a change to what a `tickets` holder
+  // sees.
+  if (roles.includes('tickets') || roles.includes('employee_support')) {
     set.add('tickets');
   }
   return VIEW_PRIORITY.filter((v) => set.has(v));

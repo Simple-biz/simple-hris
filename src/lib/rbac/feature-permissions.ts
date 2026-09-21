@@ -4,8 +4,12 @@ import { expandWorkEmailAliases } from "@/lib/email/work-email-aliases";
 export const FEATURE_ACCESS_LEVELS = ["hidden", "view", "edit"] as const;
 export type FeatureAccess = (typeof FEATURE_ACCESS_LEVELS)[number];
 
-/** Every view that supports per-tab gating. */
-export type FeatureViewKey = "accounting" | "manager" | "hr" | "orphanage" | "ceo" | "contractor" | "qc" | "tickets";
+/** Every view that supports per-tab gating.
+ *
+ *  A FeatureViewKey is a PERMISSION CATALOG, not a URL. `tickets` and
+ *  `employee_support` are two catalogs sharing one route (/tickets) and nothing
+ *  else — see the note on the `employee_support` catalog below. */
+export type FeatureViewKey = "accounting" | "manager" | "hr" | "orphanage" | "ceo" | "contractor" | "qc" | "tickets" | "employee_support";
 
 /** Catalog of features per view — single source of truth for the admin grid
  *  and the runtime lookups. Adding a tab? Append it here and the AdminRoles
@@ -89,6 +93,49 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
   tickets: [
     { key: "tickets", label: "Ticket Board" },
   ],
+  // Employee Support — the live-chat queue the five answerers work (Carla,
+  // Claire, Ainsley, Grace, Alivia). Hosted at /tickets beside the dev Kanban
+  // and sharing NOTHING with it.
+  //
+  // Kane's Q3, 2026-09-19 (docs/superpowers/plans/2026-09-19-employee-support-chat.md:26):
+  // "a new employee_support role + FeatureViewKey ... Not a feature key under
+  // the tickets view." The reason is mechanical, not stylistic: granting a role
+  // auto-provisions `edit` on EVERY feature in that role's view
+  // (provisionDashboardTabs, app/api/employee-roles/route.ts:41-85), so a
+  // support key parked in the `tickets` catalog would have handed the five
+  // answerers the HRIS dev board on the day they were granted. Carla signed
+  // "the support team only sees support questions."
+  //
+  // THE KEYS HERE MUST NEVER COLLIDE WITH THE `tickets` CATALOG'S. That
+  // disjointness IS the gate in both directions: requireFeatureAccessAnyView()
+  // maps each of the caller's roles to ITS view and looks the feature up only
+  // there (authorize-feature.ts:119-128), so an `employee_support` holder
+  // resolves `tickets` to hidden (→ /api/tickets 403s them) and a `tickets`
+  // holder resolves `support_chat` to hidden. Pinned by
+  // src/lib/rbac/view-tabs.test.ts.
+  //
+  // TWO tabs since 2026-09-21. Kane: "there should be two tabs in ticket for
+  // employee support one for chat and one for ticket" — so the ES- ticket queue
+  // that was out of scope for the chat build now has its key, appended into the
+  // SAME catalog rather than given a view of its own. That is the whole gate
+  // change: `ticketsHostAccess` already returns every granted support tab and
+  // lands on the first (view-tabs.ts:272-287), so a second tab is a catalog
+  // entry plus a nav row — no new role, no new FeatureViewKey, no new guard.
+  //
+  // ORDER IS THE LANDING. `VIEW_TAB_IDS.employee_support` mirrors this list and
+  // the host opens on its first granted id, so `support_chat` stays first: chat
+  // is the intake channel and it is where the five answerers landed yesterday.
+  //
+  // ⚠ DEPLOY: the five answerers were granted `employee_support` BEFORE this key
+  // existed. `provisionDashboardTabs` writes the catalog only at grant time
+  // (app/api/employee-roles/route.ts:41-85), so their overlay has
+  // `support_chat: edit` and NO `support_tickets` row — which resolves to
+  // `hidden` and correctly hides the tab until an admin grants it in the grid.
+  // Anyone granted the role after this ships gets both.
+  employee_support: [
+    { key: "support_chat",    label: "Support Chat" },
+    { key: "support_tickets", label: "Support Tickets" },
+  ],
 };
 
 /** Maps each assignable role to the view its feature-permission catalog
@@ -103,6 +150,13 @@ export const ROLE_TO_FEATURE_VIEW: Record<string, FeatureViewKey> = {
   contractor:         "contractor",
   qc:                 "qc",
   tickets:            "tickets",
+  // A role with no entry here is INERT for every feature gate: the loop in
+  // requireFeatureAccessAnyView (authorize-feature.ts:119-128) skips it and the
+  // caller falls through to the default 403 — the grant would exist in
+  // employee_roles and buy nothing. `employee_support` must be here for the
+  // support routes to be reachable at all, and it must map to its OWN view so
+  // it can never resolve a `tickets` feature.
+  employee_support:   "employee_support",
 };
 
 export type FeaturePermissionsMap = Partial<Record<FeatureViewKey, Record<string, FeatureAccess>>>;

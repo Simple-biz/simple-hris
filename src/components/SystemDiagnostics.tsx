@@ -53,9 +53,11 @@ import {
   CalendarClock,
   CheckCircle2,
   CircleDashed,
+  ClipboardList,
   Clock,
   Database,
   DollarSign,
+  FileCheck2,
   FileSpreadsheet,
   FileText,
   Image as ImageIcon,
@@ -64,6 +66,7 @@ import {
   NotebookPen,
   PiggyBank,
   Plug,
+  Send,
   Settings,
   RefreshCw,
   Radar as RadarIcon,
@@ -88,6 +91,17 @@ import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import PayrollCyclePerformance from '@/components/admin/PayrollCyclePerformance';
 import HrPipelinePerformance from '@/components/admin/HrPipelinePerformance';
+import {
+  DIAGNOSTICS_TAB_GROUPS,
+  SERVICE_MAP_SCOPES,
+  countsByStatus,
+  filterAlertsToScope,
+  filterEdgesToScope,
+  filterNodesToScope,
+  overallStatusOf,
+  type ServiceMapScope,
+  type ServiceMapScopeId,
+} from '@/lib/admin/diagnostics-scopes';
 
 /* ────────────────── Types ────────────────── */
 
@@ -107,12 +121,15 @@ export type DiagnosticCategory =
   | 'config'
   | 'integration'
   | 'manager'
+  | 'new-hire-checklist'
   | 'hr-onboarding'
   | 'hr-offboarding'
   | 'tickets'
   | 'time-adjust'
   | 'payroll-notes'
-  | 'mesa';
+  | 'mesa'
+  | 'payment-dispatch'
+  | 'cycle-closeout';
 
 /** A concrete remediation step. `kind` lets the UI hint at the type of action:
  *  config = settings/env tweak, code = source change, db = SQL/migration,
@@ -248,12 +265,15 @@ const CATEGORY_LABEL: Record<DiagnosticCategory, string> = {
   config: 'config',
   integration: 'integration',
   manager: 'manager',
+  'new-hire-checklist': 'new_hire_checklist',
   'hr-onboarding': 'hr_onboarding',
   'hr-offboarding': 'hr_offboarding',
   tickets: 'tickets',
   'time-adjust': 'time_adjust',
   'payroll-notes': 'payroll_notes',
   mesa: 'mesa',
+  'payment-dispatch': 'payment_dispatch',
+  'cycle-closeout': 'cycle_closeout',
 };
 
 /** Category-specific glyph for the node header — gives each card a visual
@@ -273,12 +293,15 @@ const CATEGORY_ICON: Record<DiagnosticCategory, React.ComponentType<{ className?
   config: Settings,
   integration: Plug,
   manager: ImageIcon,
+  'new-hire-checklist': ClipboardList,
   'hr-onboarding': UserPlus,
   'hr-offboarding': UserMinus,
   tickets: Ticket,
   'time-adjust': CalendarClock,
   'payroll-notes': NotebookPen,
   mesa: PiggyBank,
+  'payment-dispatch': Send,
+  'cycle-closeout': FileCheck2,
 };
 
 const FIX_KIND_LABEL: Record<NonNullable<DiagnosticFix['kind']>, string> = {
@@ -621,6 +644,23 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
       lastChecked: iso,
     },
     {
+      id: 'new-hire-checklist',
+      label: 'New Hire Checklist',
+      category: 'new-hire-checklist',
+      status: 'healthy',
+      summary: '0 listed; no hiring weeks on file.',
+      details: [
+        '0 hire(s) listed across all weeks.',
+        'Lock-in mails the Lead Gen orientation invite from DB truth; a week left open sends nothing.',
+        'Listed is not staged — a listed hire still has to reach hr_pending_employees.',
+      ],
+      suggestedChecks: [
+        'Listed vs staged is the Never-staged card on Diagnostics → HR → HR Pipeline.',
+        'Orientation shifts off an enabled US holiday — the Lock-in dialog shows the resolved date.',
+      ],
+      lastChecked: iso,
+    },
+    {
       id: 'hr-onboarding',
       label: 'HR Onboarding Pipeline',
       category: 'hr-onboarding',
@@ -720,6 +760,34 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
       ],
       lastChecked: iso,
     },
+    {
+      id: 'payment-dispatch',
+      label: 'Payment Dispatch',
+      category: 'payment-dispatch',
+      status: 'healthy',
+      summary: 'Dispatch log reachable.',
+      details: [
+        'The live source for paid figures on Pay Stubs, Penny and the CEO payments feed.',
+        'Counts only — a rate over this table cannot see a payable person who was never dispatched.',
+      ],
+      suggestedChecks: ['Cross-check a week against Diagnostics → Accounting → Payroll Cycles.'],
+      lastChecked: iso,
+    },
+    {
+      id: 'cycle-closeout',
+      label: 'Cycle Close-outs',
+      category: 'cycle-closeout',
+      status: 'healthy',
+      summary: 'Close-out declarations reachable.',
+      details: [
+        'The only artifact carrying a payable denominator — every pay-cycle rate reads it.',
+        'A reopen archives the record under dispatch.cycle_reopened.* and frees the live key.',
+      ],
+      suggestedChecks: [
+        'Unclosed and pre-close-out weeks are listed on Diagnostics → Accounting → Payroll Cycles.',
+      ],
+      lastChecked: iso,
+    },
   ];
 
   const alerts: DiagnosticAlert[] = [
@@ -789,6 +857,7 @@ const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
   'hr-offboarding':        { x: COL.ui,      y: 560  },
   'google-sheet-sync':     { x: COL.ui,      y: 840  },
   'auth-login':            { x: COL.ui,      y: 1120 },
+  'new-hire-checklist':    { x: COL.ui,      y: 1400 },
   // Col 1 — feature workflows
   'payroll-wizard':        { x: COL.feature, y: 0    },
   rates:                   { x: COL.feature, y: 280  },
@@ -803,6 +872,8 @@ const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
   'disbursement-records':  { x: COL.data,    y: 560  },
   'daily-report':          { x: COL.data,    y: 840  },
   'rate-history':          { x: COL.data,    y: 1120 },
+  'payment-dispatch':      { x: COL.data,    y: 1400 },
+  'cycle-closeout':        { x: COL.data,    y: 1680 },
   // Col 3 — client / pooler / audit
   'supabase-client':       { x: COL.client,  y: 0    },
   'pg-pool':               { x: COL.client,  y: 280  },
@@ -846,17 +917,68 @@ const EDGES: { source: string; target: string }[] = [
   { source: 'time-adjust', target: 'audit-log' },
   { source: 'payroll-notes', target: 'supabase-client' },
   { source: 'mesa', target: 'supabase-client' },
+  // 2026-09-18 — the hire path and the money path, so the two scoped maps are
+  // connected graphs rather than rows of loose cards. Every one of these is a
+  // real dependency, not decoration:
+  { source: 'admin-shell', target: 'new-hire-checklist' },
+  // Listed → staged. The hand-off the HR funnel measures, and where 430 people
+  // are currently lost.
+  { source: 'new-hire-checklist', target: 'hr-onboarding' },
+  // The wizard prices hours at the rate and folds MESA into final pay (the
+  // payroll's own identity: … − MESA Deduction + MESA Disbursement = Amount).
+  { source: 'rates', target: 'payroll-wizard' },
+  { source: 'mesa', target: 'payroll-wizard' },
+  // Money out, then the week declared over it.
+  { source: 'payroll-wizard', target: 'payment-dispatch' },
+  { source: 'payment-dispatch', target: 'cycle-closeout' },
+  // The close-out's records_outstanding cross-check reads the ledger.
+  { source: 'disbursement-records', target: 'cycle-closeout' },
 ];
 
-// v2: bumped when the template moved to the collision-free grid so any stale
-// v1 drag positions (which could overlap) are dropped and everyone gets the
-// clean layout. New drags persist under this key.
-const POSITIONS_STORAGE_KEY = 'system-diagnostics-positions-v2';
+/**
+ * Per-scope layout templates. Layout lives here rather than in
+ * `diagnostics-scopes.ts` so there is ONE home for it, next to the template the
+ * system map has always used.
+ *
+ * Scoped maps get their OWN curated grid rather than inheriting the system
+ * template: the HR nodes sit in four different columns of the big map, so
+ * reusing those coordinates would strand five cards across 1,400px of empty
+ * canvas. Same 360×280 spacing, so a 284px-wide card still cannot overlap its
+ * neighbour.
+ */
+const SCOPE_POSITIONS: Record<ServiceMapScopeId, Record<string, { x: number; y: number }>> = {
+  system: NODE_POSITIONS,
+  // listed → staged → roster, with the teardown routes underneath.
+  hr: {
+    'new-hire-checklist': { x: 0,    y: 0   },
+    'hr-onboarding':      { x: 360,  y: 0   },
+    'hr-offboarding':     { x: 360,  y: 280 },
+    'google-sheet-sync':  { x: 720,  y: 280 },
+    'master-list':        { x: 1080, y: 140 },
+  },
+  // hours + rates in → wizard → staged/dispatched → declared closed.
+  accounting: {
+    rates:                  { x: 0,    y: 0   },
+    mesa:                   { x: 0,    y: 560 },
+    'payroll-wizard':       { x: 360,  y: 140 },
+    'hubstaff-csv':         { x: 720,  y: 0   },
+    'disbursement-records': { x: 720,  y: 280 },
+    'payment-dispatch':     { x: 720,  y: 560 },
+    'cycle-closeout':       { x: 1080, y: 420 },
+  },
+};
 
-function loadStoredPositions(): Record<string, { x: number; y: number }> {
+// The system map's key is `system-diagnostics-positions-v2` — v2 because the
+// template once moved to the collision-free grid and stale v1 positions had to
+// be dropped. It is NOT renamed here: changing it would silently reset every
+// admin's saved layout. Each scope carries its own key
+// (`SERVICE_MAP_SCOPES[*].storageKey`) so dragging the HR map cannot rewrite the
+// system map's arrangement; a test pins that the keys are distinct.
+
+function loadStoredPositions(storageKey: string): Record<string, { x: number; y: number }> {
   if (typeof window === 'undefined') return {};
   try {
-    const raw = window.localStorage.getItem(POSITIONS_STORAGE_KEY);
+    const raw = window.localStorage.getItem(storageKey);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, { x: number; y: number }>;
     return parsed && typeof parsed === 'object' ? parsed : {};
@@ -865,10 +987,13 @@ function loadStoredPositions(): Record<string, { x: number; y: number }> {
   }
 }
 
-function persistPositions(positions: Record<string, { x: number; y: number }>) {
+function persistPositions(
+  storageKey: string,
+  positions: Record<string, { x: number; y: number }>,
+) {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(POSITIONS_STORAGE_KEY, JSON.stringify(positions));
+    window.localStorage.setItem(storageKey, JSON.stringify(positions));
   } catch {
     /* ignore storage quota / privacy mode */
   }
@@ -1532,26 +1657,66 @@ function buildUnknownBaseline(now = new Date()): DiagnosticsHealthResponse {
 }
 
 /**
- * The service map — everything this file did before the tab strip existed.
+ * The service map — rendered once per scope (system / HR / Accounting).
  *
- * It is now ONE tab of three (see the default export at the bottom). Nothing in
- * here changed: same probes, same 30s live poll, same live/mock trust contract.
- * The only edit was moving the page's background and padding up to the shell so
- * the three tabs sit inside one frame instead of three stacked ones.
+ * Same probes, same 30s live feed, same live/mock trust contract as the single
+ * map that shipped 2026-05-02. Two things changed on 2026-09-18:
+ *
+ *  - **The feed moved up to the shell.** Every mounted map shares ONE poller.
+ *    Three maps fetching independently would have been 3 × 24 service-role
+ *    probes against production every 30 seconds, and the panes stay mounted
+ *    once visited, so all three would poll forever.
+ *  - **It takes a scope.** Nodes, edges, alerts, the summary counts and the
+ *    overall badge are all computed over the scoped subset, so a map only ever
+ *    reports on what it actually draws.
  */
-function ServiceMapView() {
-  const [data, setData] = useState<DiagnosticsHealthResponse>(() => buildUnknownBaseline());
+function ServiceMapView({
+  scope,
+  data,
+  dataSource,
+  probeError,
+  refreshing,
+  onRefresh,
+}: {
+  scope: ServiceMapScope;
+  data: DiagnosticsHealthResponse;
+  dataSource: 'live' | 'mock';
+  probeError: string | null;
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+
+  /** This scope's layout template, and the key its drags persist under. */
+  const template = SCOPE_POSITIONS[scope.id];
+  const storageKey = scope.storageKey;
+
+  /** The nodes/edges/alerts this map draws. Everything downstream — counts, the
+   *  overall badge, the alerts list, the detail panel — reads these, never
+   *  `data.*`, so a scoped map cannot report an off-map failure. */
+  const scopedNodes = useMemo(
+    () => filterNodesToScope(data.nodes, scope.nodeIds),
+    [data.nodes, scope.nodeIds],
+  );
+  const scopedAlerts = useMemo(
+    () => filterAlertsToScope(data.alerts, scope.nodeIds),
+    [data.alerts, scope.nodeIds],
+  );
+  const scopedEdgeList = useMemo(
+    () => filterEdgesToScope(EDGES, scope.nodeIds),
+    [scope.nodeIds],
+  );
+  const scopedOverall = useMemo(() => overallStatusOf(scopedNodes), [scopedNodes]);
+
   // Initial positions snapshot — used at first paint and as the "template" we can
   // restore via Reset Layout. Live positions live inside the React Flow node state
   // (see `flowNodes` below) so position changes don't trigger top-level rerenders.
   const initialPositions = useMemo<Record<string, { x: number; y: number }>>(
-    () => ({ ...NODE_POSITIONS, ...loadStoredPositions() }),
-    [],
+    () => ({ ...template, ...loadStoredPositions(storageKey) }),
+    [template, storageKey],
   );
   const [hasCustomLayout, setHasCustomLayout] = useState(() => {
-    const stored = loadStoredPositions();
+    const stored = loadStoredPositions(storageKey);
     return Object.keys(stored).length > 0;
   });
   /** True from `onNodeDragStart` to `onNodeDragStop`. Edge components conditionally
@@ -1559,50 +1724,8 @@ function ServiceMapView() {
    *  pauses the dash flow on edge paths so the geometry can recompute without
    *  visual stutter. */
   const [dragging, setDragging] = useState(false);
-  /** 'live' once the /api/admin/diagnostics fetch succeeds. 'mock' on first paint
-   *  and any time the live probe fails — surfaced as a small chip so admins know
-   *  whether they're looking at real data. */
-  const [dataSource, setDataSource] = useState<'live' | 'mock'>('mock');
-  const [probeError, setProbeError] = useState<string | null>(null);
 
   const lastRefreshed = useMemo(() => formatTimestamp(new Date().toISOString()), [data]);
-
-  const loadDiagnostics = useCallback(async () => {
-    setRefreshing(true);
-    setProbeError(null);
-    try {
-      const res = await fetch('/api/admin/diagnostics', { cache: 'no-store' });
-      if (!res.ok) {
-        // 401/403 → admin gate; 5xx → server problem. Either way, fall back to mock
-        // so the UI keeps functioning, and surface the reason in the chip.
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setDataSource('mock');
-        setProbeError(body.error ?? `Probe failed (HTTP ${res.status})`);
-        setData(buildUnknownBaseline());
-        return;
-      }
-      const json = (await res.json()) as DiagnosticsHealthResponse & { source?: 'live' | 'mock' };
-      setData(json);
-      setDataSource(json.source ?? 'live');
-    } catch (e) {
-      setDataSource('mock');
-      setProbeError(e instanceof Error ? e.message : 'Probe failed');
-      setData(buildUnknownBaseline());
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
-
-  // Keep the latest loadDiagnostics in a ref so the auto-refresh interval can run
-  // on stable [] deps — it never tears down / re-creates the timer, and the deps
-  // array size never changes across renders (avoids React's "deps changed size").
-  const loadDiagnosticsRef = useRef(loadDiagnostics);
-  loadDiagnosticsRef.current = loadDiagnostics;
-
-  // Fetch live data on mount.
-  useEffect(() => {
-    void loadDiagnostics();
-  }, [loadDiagnostics]);
 
   // React Flow-managed node state. `useNodesState` exposes a change handler that
   // applies position updates in-place and only mutates the moving node's reference,
@@ -1610,23 +1733,23 @@ function ServiceMapView() {
   // drag. This is the single biggest drag-perf win versus rebuilding the array
   // through useMemo on every position event.
   const [flowNodes, setFlowNodes, onNodesChangeRf] = useNodesState<Node<DiagNodeData>>(
-    data.nodes.map((diag) => ({
+    scopedNodes.map((diag) => ({
       id: diag.id,
       type: 'diag',
-      position: initialPositions[diag.id] ?? NODE_POSITIONS[diag.id] ?? { x: 0, y: 0 },
+      position: initialPositions[diag.id] ?? template[diag.id] ?? { x: 0, y: 0 },
       data: { diag, selected: diag.id === selectedNodeId },
       draggable: true,
       selectable: true,
     })),
   );
 
-  // Sync data refreshes (every 60s) into nodes without disturbing positions or
-  // re-creating data objects unless the underlying diag actually changed.
+  // Sync poll results into nodes without disturbing positions or re-creating
+  // data objects unless the underlying diag actually changed.
   useEffect(() => {
     setFlowNodes((prev) => {
       const prevById = new Map(prev.map((n) => [n.id, n]));
       let changed = false;
-      const next = data.nodes.map((diag) => {
+      const next = scopedNodes.map((diag) => {
         const existing = prevById.get(diag.id);
         if (existing && existing.data.diag === diag) return existing;
         changed = true;
@@ -1636,7 +1759,7 @@ function ServiceMapView() {
           position:
             existing?.position ??
             initialPositions[diag.id] ??
-            NODE_POSITIONS[diag.id] ?? { x: 0, y: 0 },
+            template[diag.id] ?? { x: 0, y: 0 },
           data: { diag, selected: diag.id === selectedNodeId },
           draggable: true,
           selectable: true,
@@ -1644,7 +1767,7 @@ function ServiceMapView() {
       });
       return changed || next.length !== prev.length ? next : prev;
     });
-  }, [data.nodes, initialPositions, selectedNodeId, setFlowNodes]);
+  }, [scopedNodes, initialPositions, template, selectedNodeId, setFlowNodes]);
 
   // Selection-only updates: flip `data.selected` on just the two nodes whose
   // selection state changed. Preserves reference identity for everyone else so
@@ -1662,7 +1785,7 @@ function ServiceMapView() {
   const resetLayout = useCallback(() => {
     setFlowNodes((prev) =>
       prev.map((n) => {
-        const tpl = NODE_POSITIONS[n.id];
+        const tpl = template[n.id];
         if (!tpl || (n.position.x === tpl.x && n.position.y === tpl.y)) return n;
         return { ...n, position: { ...tpl } };
       }),
@@ -1670,17 +1793,19 @@ function ServiceMapView() {
     setHasCustomLayout(false);
     if (typeof window !== 'undefined') {
       try {
-        window.localStorage.removeItem(POSITIONS_STORAGE_KEY);
+        // Only THIS scope's key — resetting the HR map must not throw away the
+        // arrangement an admin curated on the system map.
+        window.localStorage.removeItem(storageKey);
       } catch {
         /* ignore */
       }
     }
-  }, [setFlowNodes]);
+  }, [setFlowNodes, template, storageKey]);
 
   const flowEdges: Edge<DiagEdgeData>[] = useMemo(() => {
-    const byId = new Map(data.nodes.map((n) => [n.id, n]));
+    const byId = new Map(scopedNodes.map((n) => [n.id, n]));
     const order: DiagnosticStatus[] = ['healthy', 'unknown', 'warning', 'critical'];
-    return EDGES.map((e) => {
+    return scopedEdgeList.map((e) => {
       const a = byId.get(e.source)?.status ?? 'unknown';
       const b = byId.get(e.target)?.status ?? 'unknown';
       const worst = order[Math.max(order.indexOf(a), order.indexOf(b))];
@@ -1715,7 +1840,7 @@ function ServiceMapView() {
         },
       };
     });
-  }, [data.nodes, dragging]);
+  }, [scopedNodes, scopedEdgeList, dragging]);
 
   // Defer to React Flow's built-in change applier (cheap — only the moving node's
   // ref is replaced). On drag end, snapshot all positions and persist to
@@ -1731,39 +1856,30 @@ function ServiceMapView() {
         setFlowNodes((prev) => {
           const snap: Record<string, { x: number; y: number }> = {};
           for (const n of prev) snap[n.id] = { x: n.position.x, y: n.position.y };
-          persistPositions(snap);
+          persistPositions(storageKey, snap);
           return prev;
         });
         setHasCustomLayout(true);
       }
     },
-    [onNodesChangeRf, setFlowNodes],
+    [onNodesChangeRf, setFlowNodes, storageKey],
   );
 
   const selectedNode = useMemo(
-    () => (selectedNodeId ? data.nodes.find((n) => n.id === selectedNodeId) ?? null : null),
-    [selectedNodeId, data.nodes],
+    () => (selectedNodeId ? scopedNodes.find((n) => n.id === selectedNodeId) ?? null : null),
+    [selectedNodeId, scopedNodes],
   );
 
-  const counts = useMemo(() => {
-    const c: Record<DiagnosticStatus, number> = { healthy: 0, warning: 0, critical: 0, unknown: 0 };
-    for (const n of data.nodes) c[n.status] += 1;
-    return c;
-  }, [data.nodes]);
+  const counts = useMemo(() => countsByStatus(scopedNodes), [scopedNodes]);
 
   // HRIS adoption is only present on a live probe response; null on the mock
   // baseline / probe failure, in which case the card degrades to "—".
+  //
+  // It is a WHOLE-ROSTER metric, so it rides the system map only. A scoped map
+  // shows figures about what it draws — putting a company-wide ratio on the HR
+  // map would read as a claim about the hire path.
   const hrisAdoption = data.metrics?.hrisAdoption ?? null;
-
-  // Auto re-probe on an interval so the map is a genuine live feed: it flips to
-  // red on its own the moment Supabase starts failing, no manual Refresh needed.
-  // (Previously this was a no-op timestamp bump — it never re-hit the probe, so a
-  // mid-session outage wouldn't surface until you clicked Refresh.) The tab
-  // unmounts when you navigate away, so this only polls while it's on screen.
-  useEffect(() => {
-    const t = setInterval(() => void loadDiagnosticsRef.current(), 30_000);
-    return () => clearInterval(t);
-  }, []);
+  const showAdoption = scope.id === 'system';
 
   return (
     <div className="flex flex-col gap-4 lg:min-h-0 lg:flex-1 lg:overflow-hidden">
@@ -1775,10 +1891,10 @@ function ServiceMapView() {
           </div>
           <div className="min-w-0">
             <h2 className="text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
-              System Diagnostics
+              {scope.title}
             </h2>
             <p className="mt-0.5 max-w-2xl text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-              Admin-only health map for payroll, data, database, and security signals.
+              {scope.blurb}
             </p>
           </div>
         </div>
@@ -1816,7 +1932,7 @@ function ServiceMapView() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void loadDiagnostics()}
+            onClick={onRefresh}
             disabled={refreshing}
             className="h-8 gap-1.5 text-[12px]"
           >
@@ -1835,21 +1951,29 @@ function ServiceMapView() {
         </div>
       )}
 
-      {/* ── Summary cards ── */}
-      <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-5">
+      {/* ── Summary cards. Counts are over THIS map's nodes. ── */}
+      <div
+        className={cn(
+          'grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3',
+          showAdoption ? 'lg:grid-cols-5' : 'lg:grid-cols-4',
+        )}
+      >
         <SummaryCard status="healthy" label="Healthy" value={counts.healthy} icon={<CheckCircle2 className="h-3.5 w-3.5" />} />
         <SummaryCard status="warning" label="Warnings" value={counts.warning} icon={<AlertTriangle className="h-3.5 w-3.5" />} />
         <SummaryCard status="critical" label="Critical" value={counts.critical} icon={<XCircle className="h-3.5 w-3.5" />} />
         <SummaryCard status="unknown" label="Unknown" value={counts.unknown} icon={<CircleDashed className="h-3.5 w-3.5" />} />
-        {/* HRIS adoption: roster members who have used the HRIS, over total roster. */}
-        <SummaryCard
-          tone="info"
-          status="healthy"
-          label="Employees Onboarded"
-          value={hrisAdoption ? hrisAdoption.onboarded : '—'}
-          over={hrisAdoption?.total ?? null}
-          icon={<Users className="h-3.5 w-3.5" />}
-        />
+        {/* HRIS adoption: roster members who have used the HRIS, over total roster.
+            System map only — see `showAdoption`. */}
+        {showAdoption && (
+          <SummaryCard
+            tone="info"
+            status="healthy"
+            label="Employees Onboarded"
+            value={hrisAdoption ? hrisAdoption.onboarded : '—'}
+            over={hrisAdoption?.total ?? null}
+            icon={<Users className="h-3.5 w-3.5" />}
+          />
+        )}
       </div>
 
       {/* ── Main: diagram + side panel ── */}
@@ -1860,17 +1984,19 @@ function ServiceMapView() {
             <div className="flex min-w-0 items-center gap-2">
               <Activity className="h-3.5 w-3.5 shrink-0 text-orange-500 dark:text-orange-400" />
               <span className="text-[12px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
-                Service Map
+                {scope.ariaLabel}
               </span>
+              {/* Scoped verdict: the HR map must never wear a critical badge
+                  earned by a node it does not draw. */}
               <Badge
                 variant="outline"
                 className={cn(
                   'gap-1 font-mono text-[10px] uppercase tracking-wider',
-                  STATUS_CLASSES[data.overallStatus].badge,
+                  STATUS_CLASSES[scopedOverall].badge,
                 )}
               >
-                <span className={cn('inline-block h-1.5 w-1.5 rounded-full', STATUS_CLASSES[data.overallStatus].accentDot)} />
-                Overall {STATUS_LABEL[data.overallStatus]}
+                <span className={cn('inline-block h-1.5 w-1.5 rounded-full', STATUS_CLASSES[scopedOverall].accentDot)} />
+                Overall {STATUS_LABEL[scopedOverall]}
               </Badge>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -2094,19 +2220,21 @@ function ServiceMapView() {
                 </span>
               </div>
               <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
-                {data.alerts.length}
+                {scopedAlerts.length}
               </span>
             </div>
             <div className="sd-scroll-wrap min-h-0 flex-1">
             <ScrollArea className="sd-scroll h-full min-h-0">
               <div className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
-                {data.alerts.length === 0 ? (
+                {scopedAlerts.length === 0 ? (
                   <div className="flex flex-col items-center gap-1.5 py-8 text-center">
                     <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                    <p className="text-[12px] text-zinc-500 dark:text-zinc-400">No active alerts.</p>
+                    <p className="text-[12px] text-zinc-500 dark:text-zinc-400">
+                      {scope.nodeIds ? 'No active alerts on this pipeline.' : 'No active alerts.'}
+                    </p>
                   </div>
                 ) : (
-                  data.alerts.map((alert) => {
+                  scopedAlerts.map((alert) => {
                     const palette = STATUS_CLASSES[alert.severity];
                     return (
                       <button
@@ -2356,35 +2484,46 @@ function SummaryCard({
 
 /* ────────────────── Tab shell ────────────────── */
 
-type DiagnosticsTab = 'map' | 'cycles' | 'hr';
-
-const DIAG_TABS: ReadonlyArray<{ id: DiagnosticsTab; label: string; hint: string }> = [
-  { id: 'map', label: 'Service Map', hint: 'Live health of the stack' },
-  { id: 'cycles', label: 'Payroll Cycles', hint: 'Accounting — pay cycle success rate' },
-  { id: 'hr', label: 'HR Pipeline', hint: 'HR — hires that reached the master list' },
-];
+type DiagnosticsTab = 'map' | 'hr-map' | 'acct-map' | 'cycles' | 'hr';
 
 /**
  * Admin → Diagnostics.
  *
- * Three tabs, deliberately three SEPARATE surfaces:
+ * Five tabs in three **dashboard groups** (Kane, 2026-09-18: *"Group them by
+ * Dashboards"*):
  *
- *   Service Map      the live health probe map (unchanged)
- *   Payroll Cycles   Accounting's score — paid vs payable per closed cycle
- *   HR Pipeline      HR's score — listed → staged → promoted per hiring week
+ *   System      · Service Map     every node — admin monitors everything
+ *   HR          · Service Map     live health of the hire path
+ *               · HR Pipeline     listed → staged → promoted per hiring week
+ *   Accounting  · Service Map     live health of the money path
+ *               · Payroll Cycles  paid vs payable per closed cycle
  *
- * **Accounting and HR never share a scoreboard** (Kane, 2026-09-04). They answer
- * different questions over different denominators, and one blended "company
- * performance" number would be meaningless in both directions. Each tab owns its
- * own KPI cards, its own accent, and its own caveats.
+ * **Accounting and HR never share a scoreboard** (Kane, 2026-09-04) — different
+ * questions over different denominators; one blended "company performance"
+ * number would be meaningless in both directions. The 2026-09-18 maps extend
+ * that same split to live health: a pipeline map answers "is this working?" for
+ * ONE dashboard's chain, and a failure it does not draw is never its verdict.
+ *
+ * Three tabs read "Service Map" — the group above carries the difference
+ * visually, so each button also takes a full `aria-label`. The group headings
+ * are `aria-hidden`: a `role="tablist"` may only contain tabs, so the grouping
+ * is presentational and the accessible names carry the whole meaning.
+ *
+ * ── One poller, however many maps ──────────────────────────────────────────
+ * The diagnostics feed lives HERE, not in the map. Panes stay mounted once
+ * visited (below), so three maps owning their own 30s interval would mean 3 × 24
+ * service-role probes against production every half minute, forever. One fetch
+ * feeds every mounted map; every map's Refresh button drives that same fetch.
+ * This shell IS the Diagnostics tab, so the "only polls while on screen"
+ * property is unchanged — navigating away unmounts it and the timer stops.
  *
  * ── Mount-once, then hide (the smoothness rule) ────────────────────────────
  * A tab is mounted the first time it is opened and then STAYS mounted, hidden
- * with a class. Unmounting would throw away fetched data and React Flow's whole
- * canvas, so every switch back would re-fetch, re-skeleton and re-layout — the
- * exact repaint the Manager shell suffers from (see the manager-dashboard-shell
- * cache note). Deferring the first mount until the tab is opened is what keeps
- * the initial page from firing three requests at once.
+ * with a class. Unmounting would throw away React Flow's whole canvas and each
+ * tab's fetched data, so every switch back would re-skeleton and re-layout —
+ * the exact repaint the Manager shell suffers from (see the
+ * manager-dashboard-shell cache note). Deferring the first mount until a tab is
+ * opened is what keeps arrival from firing every request at once.
  *
  * The panes are hidden with `hidden`, not unmounted and not `opacity-0`: an
  * `opacity-0` pane still takes layout and still animates, and a display:none
@@ -2392,8 +2531,8 @@ const DIAG_TABS: ReadonlyArray<{ id: DiagnosticsTab; label: string; hint: string
  */
 export default function SystemDiagnostics() {
   const [tab, setTab] = useState<DiagnosticsTab>('map');
-  // Which tabs have ever been opened. The map is open on arrival, so it starts
-  // in the set; the other two mount lazily and then persist.
+  // Which tabs have ever been opened. The system map is open on arrival, so it
+  // starts in the set; the rest mount lazily and then persist.
   const [visited, setVisited] = useState<Set<DiagnosticsTab>>(() => new Set<DiagnosticsTab>(['map']));
 
   const openTab = useCallback((next: DiagnosticsTab) => {
@@ -2406,46 +2545,144 @@ export default function SystemDiagnostics() {
     });
   }, []);
 
+  /* ── The shared diagnostics feed ── */
+  const [data, setData] = useState<DiagnosticsHealthResponse>(() => buildUnknownBaseline());
+  /** 'live' once the /api/admin/diagnostics fetch succeeds. 'mock' on first paint
+   *  and any time the live probe fails — surfaced as a chip on every map so an
+   *  admin knows whether they are looking at real data. */
+  const [dataSource, setDataSource] = useState<'live' | 'mock'>('mock');
+  const [probeError, setProbeError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadDiagnostics = useCallback(async () => {
+    setRefreshing(true);
+    setProbeError(null);
+    try {
+      const res = await fetch('/api/admin/diagnostics', { cache: 'no-store' });
+      if (!res.ok) {
+        // 401/403 → admin gate; 5xx → server problem. Either way, fall back to
+        // the unknown baseline so no node shows a health it does not have, and
+        // surface the reason in the chip.
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setDataSource('mock');
+        setProbeError(body.error ?? `Probe failed (HTTP ${res.status})`);
+        setData(buildUnknownBaseline());
+        return;
+      }
+      const json = (await res.json()) as DiagnosticsHealthResponse & { source?: 'live' | 'mock' };
+      setData(json);
+      setDataSource(json.source ?? 'live');
+    } catch (e) {
+      setDataSource('mock');
+      setProbeError(e instanceof Error ? e.message : 'Probe failed');
+      setData(buildUnknownBaseline());
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  // Keep the latest loader in a ref so the interval runs on stable [] deps — it
+  // never tears down / re-creates the timer, and the deps array size never
+  // changes across renders (avoids React's "deps changed size").
+  const loadDiagnosticsRef = useRef(loadDiagnostics);
+  loadDiagnosticsRef.current = loadDiagnostics;
+
+  useEffect(() => {
+    void loadDiagnostics();
+  }, [loadDiagnostics]);
+
+  // Auto re-probe so the maps are a genuine live feed: they flip to red on their
+  // own the moment Supabase starts failing, with no manual Refresh. 30s, matching
+  // the cadence the single map has run at since 2026-05-02 — deliberately faster
+  // than the performance tabs' 120s, because a health feed must surface a
+  // mid-session outage while the records tabs move once a week.
+  useEffect(() => {
+    const t = setInterval(() => void loadDiagnosticsRef.current(), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const feed = {
+    data,
+    dataSource,
+    probeError,
+    refreshing,
+    onRefresh: () => void loadDiagnostics(),
+  };
+
   return (
     <div className="flex flex-col gap-3 bg-gradient-to-br from-white via-orange-50/20 to-blue-50/20 p-4 sm:p-5 lg:h-full lg:min-h-0 lg:overflow-hidden dark:bg-none dark:bg-[#0d1117]">
-      {/* ── Tab strip ── */}
+      {/* ── Tab strip, grouped by dashboard ── */}
       <div
         role="tablist"
         aria-label="Diagnostics view"
-        className="inline-flex shrink-0 items-center gap-0.5 self-start rounded-lg border border-zinc-200 bg-white/80 p-0.5 shadow-sm backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/70"
+        className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 self-start"
       >
-        {DIAG_TABS.map((t) => {
-          const active = tab === t.id;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              title={t.hint}
-              onClick={() => openTab(t.id)}
-              className={cn(
-                'inline-flex items-center rounded-md px-3 py-1.5 text-[12px] font-medium',
-                'transition-colors duration-150 motion-reduce:transition-none',
-                active
-                  ? 'bg-zinc-900 text-white shadow-sm dark:bg-zinc-100 dark:text-zinc-900'
-                  : 'text-zinc-600 hover:bg-zinc-100/70 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-100',
-              )}
+        {DIAGNOSTICS_TAB_GROUPS.map((group) => (
+          <div
+            key={group.dashboard}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white/80 py-0.5 pl-2 pr-0.5 shadow-sm backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/70"
+          >
+            {/* Presentational: a role="tablist" may only contain tabs, so the
+                accessible name lives on each button instead. */}
+            <span
+              aria-hidden
+              className="font-mono text-[9.5px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500"
             >
-              {t.label}
-            </button>
-          );
-        })}
+              {group.dashboard}
+            </span>
+            {group.tabs.map((t) => {
+              const active = tab === (t.id as DiagnosticsTab);
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  aria-label={t.ariaLabel}
+                  title={t.hint}
+                  onClick={() => openTab(t.id as DiagnosticsTab)}
+                  className={cn(
+                    'inline-flex items-center rounded-md px-3 py-1.5 text-[12px] font-medium',
+                    'transition-colors duration-150 motion-reduce:transition-none',
+                    active
+                      ? 'bg-zinc-900 text-white shadow-sm dark:bg-zinc-100 dark:text-zinc-900'
+                      : 'text-zinc-600 hover:bg-zinc-100/70 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-100',
+                  )}
+                >
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </div>
 
       {/* ── Panes. Mounted once visited, then hidden — never unmounted. ── */}
       {visited.has('map') && (
         <div
           role="tabpanel"
-          aria-label="Service Map"
+          aria-label="System service map"
           className={cn('flex-col gap-4 lg:min-h-0 lg:flex-1 lg:overflow-hidden', tab === 'map' ? 'flex' : 'hidden')}
         >
-          <ServiceMapView />
+          <ServiceMapView scope={SERVICE_MAP_SCOPES.system} {...feed} />
+        </div>
+      )}
+      {visited.has('hr-map') && (
+        <div
+          role="tabpanel"
+          aria-label="HR service map"
+          className={cn('flex-col gap-4 lg:min-h-0 lg:flex-1 lg:overflow-hidden', tab === 'hr-map' ? 'flex' : 'hidden')}
+        >
+          <ServiceMapView scope={SERVICE_MAP_SCOPES.hr} {...feed} />
+        </div>
+      )}
+      {visited.has('acct-map') && (
+        <div
+          role="tabpanel"
+          aria-label="Accounting service map"
+          className={cn('flex-col gap-4 lg:min-h-0 lg:flex-1 lg:overflow-hidden', tab === 'acct-map' ? 'flex' : 'hidden')}
+        >
+          <ServiceMapView scope={SERVICE_MAP_SCOPES.accounting} {...feed} />
         </div>
       )}
       {visited.has('cycles') && (

@@ -108,6 +108,13 @@ import {
 import { parseUsHolidaysList, getEnabledHolidayMap } from '@/lib/us-holidays';
 import HiddenValue from './HiddenValue';
 import GiftShippingCard, { type GiftShippingState } from './GiftShippingCard';
+import EmployeeSupportChat, { type SupportChatState } from './EmployeeSupportChat';
+import EmployeeSupportTickets from './EmployeeSupportTickets';
+import {
+  EmployeeHelpMenu,
+  IDLE_TICKETS_BADGE,
+  type SupportTicketsBadgeState,
+} from './EmployeeHelpMenu';
 import { Bell, Eye, EyeOff, Gift, Hourglass } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -897,6 +904,27 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     milestoneMonths: null,
     needsAction: false,
   });
+
+  /** Live-chat dialog control — reached through the HELP chooser in BOTH
+   *  header clusters (Kane, 2026-09-21: "Instead of Chat change that to Help
+   *  where they can choose between a Chat Support or a Ticket"), the same
+   *  split the gift bell uses. There is deliberately no floating launcher:
+   *  Penny owns the one fixed bottom-right control on the employee side
+   *  (docs/features/employee-penny-ai.md:143-146). */
+  const [supportChatOpen, setSupportChatOpen] = useState(false);
+  /** State summary emitted by EmployeeSupportChat so the Help button can badge. */
+  const [supportChatState, setSupportChatState] = useState<SupportChatState>({
+    status: 'none',
+    position: null,
+    queueResolved: false,
+    migrated: null,
+    needsAttention: false,
+  });
+  /** Ticket dialog control — the second door behind Help. */
+  const [supportTicketsOpen, setSupportTicketsOpen] = useState(false);
+  /** The two facts the tickets dialog hands the Help badge; see EmployeeHelpMenu. */
+  const [supportTicketsState, setSupportTicketsState] =
+    useState<SupportTicketsBadgeState>(IDLE_TICKETS_BADGE);
 
   // Fetch the employee's master row once to get their start_date
   // (used to gate Tech Bonus on the 30-day-of-service requirement).
@@ -2695,6 +2723,18 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                   onClick={onNavigateToNotifications}
                 />
               )}
+              {/* HELP, beside FAQs — the two help controls travel together.
+                  Inserted BEFORE FAQs here and before FAQs in the desktop
+                  cluster below, which is the same relative position in both
+                  even though the two clusters order Refresh and FAQs
+                  differently. Edit the pair together or they drift. */}
+              <EmployeeHelpMenu
+                chatState={supportChatState}
+                ticketsState={supportTicketsState}
+                variant="icon"
+                onOpenChat={() => setSupportChatOpen(true)}
+                onOpenTickets={() => setSupportTicketsOpen(true)}
+              />
               <Button
                 type="button"
                 variant="outline"
@@ -2749,6 +2789,14 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                 )}
                 Refresh
               </Button>
+              {/* HELP, beside FAQs — mirrors the mobile cluster above. */}
+              <EmployeeHelpMenu
+                chatState={supportChatState}
+                ticketsState={supportTicketsState}
+                variant="labelled"
+                onOpenChat={() => setSupportChatOpen(true)}
+                onOpenTickets={() => setSupportTicketsOpen(true)}
+              />
               <Button
                 type="button"
                 variant="outline"
@@ -3046,6 +3094,24 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         dialogOpen={giftDialogOpen}
         onDialogOpenChange={setGiftDialogOpen}
         onStateChange={setGiftState}
+      />
+
+      {/* Employee Support — the two doors behind HELP. The ENTRY POINT is the
+          Help chooser in the two header clusters above; only the dialogs are
+          mounted here, next to the gift card for the same reason — a modal
+          belongs at the root of the shell, not nested inside a header row.
+          Never a floating launcher. */}
+      <EmployeeSupportChat
+        email={email}
+        dialogOpen={supportChatOpen}
+        onDialogOpenChange={setSupportChatOpen}
+        onStateChange={setSupportChatState}
+      />
+      <EmployeeSupportTickets
+        email={email}
+        dialogOpen={supportTicketsOpen}
+        onDialogOpenChange={setSupportTicketsOpen}
+        onStateChange={setSupportTicketsState}
       />
 
       <div className="flex min-w-0 flex-col gap-2 overflow-x-clip pb-2 lg:min-h-0 lg:grow lg:gap-3">

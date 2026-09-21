@@ -64,13 +64,29 @@ export async function POST(req: Request) {
     receivedCount: ask.receivedCount,
     pendingCount: ask.pendingCount,
     blocked: keyVerdict.ok ? null : keyVerdict.reason,
+    // The alternate recipient rides the prefill like every other field — Kane's
+    // Q3 ruling, 2026-09-18: a spouse arrangement carries to the next gift. The
+    // PAGE is what keeps that honest: it renders a carried-over recipient as a
+    // named block with a Remove control, never as a quietly populated input, so
+    // an arrangement made two years ago cannot ride along unnoticed.
     prefill: newest
       ? {
           location: newest.preferred_delivery_location ?? '',
           contact: newest.active_contact_number ?? '',
           size: newest.apparel_size ?? '',
           notes: newest.notes ?? '',
+          recipientName: newest.recipient_name ?? '',
+          recipientRelationship: newest.recipient_relationship ?? '',
+          recipientContact: newest.recipient_contact ?? '',
         }
-      : { location: '', contact: '', size: '', notes: '' },
+      : {
+          location: '',
+          contact: '',
+          size: '',
+          notes: '',
+          recipientName: '',
+          recipientRelationship: '',
+          recipientContact: '',
+        },
   });
 }

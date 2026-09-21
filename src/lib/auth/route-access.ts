@@ -44,7 +44,16 @@ export const ROUTE_REQUIRED_ROLES: ReadonlyArray<{ prefix: string; roles: readon
   // entry. Only the standalone `tickets` role (or admin) may open it — dashboard
   // roles no longer confer access. The per-user `tickets` feature grant then
   // decides view-vs-create inside it (see /api/tickets).
-  { prefix: '/tickets',       roles: ['tickets', 'admin'] },
+  //
+  // `employee_support` (added 2026-09-19, Kane's Q3) is a PARALLEL key on the
+  // same route, not a widening of the tickets gate: Employee Support's live-chat
+  // tabs are hosted here. It opens the ROUTE only. It confers nothing on the
+  // board, which stays behind the `tickets` feature key under the `tickets`
+  // view — a support holder's roles map to the `employee_support` view, where
+  // that key does not exist, so /api/tickets still 403s them
+  // (authorize-feature.ts:119-128). Which rail each holder actually sees inside
+  // is `ticketsHostAccess()` in src/lib/rbac/view-tabs.ts.
+  { prefix: '/tickets',       roles: ['tickets', 'employee_support', 'admin'] },
 ];
 
 /**

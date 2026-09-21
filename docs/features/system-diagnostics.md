@@ -4,6 +4,14 @@
 
 A Supabase-schema-visualiser-style service map that probes the live system and surfaces failure modes (Supabase outage, stale Hubstaff imports, missing master-list data, audit-log starvation, etc.). Renders as a draggable React Flow diagram with relationship-aware edge animations, an alerts list, and per-node detail panels.
 
+> **Since 2026-09-18 this map is rendered three times** — once per dashboard (System / HR /
+> Accounting), from one probe response and one poller. This doc stays the authority on *what each
+> node and probe means* and on the security contract every probe inherits.
+> [diagnostics-service-maps.md](./diagnostics-service-maps.md) owns the scoping rules, the per-scope
+> layouts and drag keys, the grouped tab strip, and **the fourth place a new node must be
+> registered** (`ALL_DIAGNOSTIC_NODE_IDS`) — read it before adding a node, because the § Extending
+> steps below are no longer complete on their own.
+
 ---
 
 ## Where it lives
@@ -63,7 +71,8 @@ Diagnostics open and *watch* the stack during a Supabase incident and see it fli
 own — no manual clicking. It is implemented as **polling, not Supabase Realtime**.
 
 ```ts
-// SystemDiagnostics.tsx (~line 1649)
+// SystemDiagnostics.tsx — in the TAB SHELL (the default export) since 2026-09-18,
+// so all three maps share one poller instead of one each.
 useEffect(() => {
   const t = setInterval(() => void loadDiagnosticsRef.current(), 30_000);
   return () => clearInterval(t);
@@ -115,8 +124,30 @@ either returns fresh probe data or fails loudly and drops the map to `Unknown`.
 | `time-adjust` | pending / manager_approved counts on `time_adjustment_requests`, plus stale > 14d | Supabase service-role | `warning` if any request pending > 14d or table missing, else `healthy` |
 | `payroll-notes` | open (`done = false`) vs total count on `payroll_wizard_notes` | Supabase service-role | `healthy` if table reads, `warning` if missing/no SELECT |
 | `mesa` | event count on `mesa_ledger` + open-account count on `mesa_accounts` (best-effort) | Supabase service-role | `warning` if ledger empty/missing, else `healthy` |
+| `app-settings` | key count on `app_settings` + `auth.force_logout_map` parses as a JSON object | Supabase service-role | `critical` if unreadable, `warning` if the map is malformed, else `healthy` |
+| `google-sheet-sync` | recency of `csv.master.sync` / `csv.rates.sync` in `audit_log` | Supabase service-role | `warning` > 7d, `critical` > 30d |
+| `rate-history` | `employee_rate_history` — the authority for per-day rate resolution | Supabase service-role | `healthy` if the table reads |
+| `hr-onboarding` | pending `hr_onboarding_submissions` + `hr_pending_employees` in `pending_work_email`/`ready`, plus hires stuck > 7d | Supabase service-role | `warning` if any hire is stuck > 7d or a table is missing, else `healthy` |
+| `hr-offboarding` | `hr.employee.offboarded` count (30d) + the last 20 `hr.employee.webhook_fired.%` rows, plus total off-boarded | Supabase service-role | `warning` if any recent webhook fire recorded `webhook_fired: false` |
+| `new-hire-checklist` | `hr_new_hire_checklist` row count + the newest `period_start` and its `hr_new_hire_checklist_periods` lock row | Supabase service-role | `warning` only if the newest week has hires, is still `open`, and its Sunday is > 7d past |
+| `payment-dispatch` | total + paid counts on `payment_dispatches`, age of the newest row | Supabase service-role | `warning` if the newest dispatch is > 14d old |
+| `cycle-closeout` | count of live `dispatch.cycle_closeout.%` keys + the newest `updated_at` | Supabase service-role | `healthy` if the keys read; **no staleness threshold** — see below |
 
-> These four cards were added 2026-07-17 so the newer subsystems (Tickets, Time Adjustments, Payroll Wizard Notes, MESA) surface on the health map. The MESA/GML **exports** are pure browser-side formatters, so they have no server node to probe.
+> **This table was 16 rows against a 21-node route until 2026-09-18.** `app-settings`,
+> `google-sheet-sync`, `rate-history`, `hr-onboarding` and `hr-offboarding` had all been live and
+> undocumented — which is why the onboarding/offboarding webhook nodes read as missing when Kane
+> went looking for them. If you add a probe, add its row here; a node the doc does not mention is
+> a node nobody knows to look at.
+
+> Tickets, Time Adjustments, Payroll Wizard Notes and MESA were added 2026-07-17 so those newer
+> subsystems surface on the health map. The MESA/GML **exports** are pure browser-side
+> formatters, so they have no server node to probe.
+
+> `new-hire-checklist`, `payment-dispatch` and `cycle-closeout` were added 2026-09-18 with the
+> per-dashboard maps — see [diagnostics-service-maps.md](./diagnostics-service-maps.md), which
+> also carries the reasoning behind each one's threshold (and why the close-out node deliberately
+> has none). **`hr-onboarding` does not cover the New Hire Checklist**: it reads the staging
+> tables a listed hire still has to reach, which is a different population by ~430 people.
 
 Each probe runs with a **4-second timeout** via `withProbeTimeout()`. If a probe doesn't complete, it returns `critical` with `"Probe timed out."` so a hung Supabase doesn't stall the entire response.
 
@@ -223,6 +254,14 @@ The route handler enforces admin role server-side via `requireElevatedSession() 
 1. Add an entry to `NODE_POSITIONS` in `SystemDiagnostics.tsx` with `{ x, y }` coordinates.
 2. (Optional) Add edges to/from it in the `EDGES` array. The `relationshipFor()` classifier will assign an animation; tweak the classifier if your new relationship doesn't fit the existing 4 categories.
 3. In the route handler (`app/api/admin/diagnostics/route.ts`), add a probe call and a node entry in the `nodes` array. Match the node `id` to your `NODE_POSITIONS` key.
+4. Add the node to `buildMockDiagnostics` in the same component — `buildUnknownBaseline()` derives
+   from it, and that is what paints before the first fetch and after a failed one. Omit it and the
+   map renders short a card, then pops when data lands.
+5. Add the id to **`ALL_DIAGNOSTIC_NODE_IDS`** in `src/lib/admin/diagnostics-scopes.ts` and to
+   whichever scope it belongs to. Steps 3, 4 and 5 are enforced by source-scan tests, because all
+   three failure modes are silent — see
+   [diagnostics-service-maps.md](./diagnostics-service-maps.md) § "Adding a node".
+6. Add its row to the § Probes table above.
 
 ### Add a new probe
 

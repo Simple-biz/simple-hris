@@ -39,6 +39,19 @@ Both views render the same content via **`PayrollDispatch.tsx`** (used inside Ac
 
 The Accounting sidebar entry is registered in `src/components/Sidebar.tsx` (`payment-dispatch` tab id, `Send` icon).
 
+> **Health coverage (2026-09-18):** `payment_dispatches` finally has a node — Admin →
+> Diagnostics → Accounting → Service Map, `payment-dispatch`, sitting on the money path between
+> `payroll-wizard` and `cycle-closeout`. It reports total rows, paid rows and the **age of the
+> newest row**, going amber past **14 days**: payroll is weekly, so two missed weeks means pay
+> ran somewhere other than this system — which really happened for four consecutive weeks in
+> Jun–Jul 2026 and no screen announced it at the time.
+>
+> **That node must never grow a percentage.** This table cannot see a payable person who was
+> never dispatched, so any rate over it sits at 97–99% by construction and flatters every week —
+> the same reason `diagnostics-performance-tabs.md` rules it out as a rate source. Rates belong
+> to the Payroll Cycles tab, over a close-out's payable denominator.
+> See [diagnostics-service-maps.md](./diagnostics-service-maps.md).
+
 ---
 
 ## 3. UI structure
