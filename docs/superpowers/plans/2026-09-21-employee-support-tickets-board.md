@@ -11,6 +11,46 @@ made to employees a promise the company can keep.
 they are next — and they carry the staff-only trial gate question with them, because that gate is
 about the employee's button, which does not exist yet.
 
+> **RULED 2026-09-21, and it shapes the NEXT build rather than this one.** Kane: *"Instead of Chat
+> change that to **Help** where they can choose between a Chat Support or a Ticket."* So the
+> employee entry point beside FAQs becomes **Help**, opening a chooser with two doors — *Chat
+> Support* and *Raise a ticket*.
+>
+> **It cannot ship before the ticket door exists.** There is no filing form, no employee route and
+> no history today, so a chooser built now would offer a door that leads nowhere. It is therefore
+> the shape of the employee-side build that follows this one, not a rename of
+> `EmployeeSupportChat` to be done in passing.
+>
+> Two consequences to carry forward. The chooser is the natural home for the **track map** (his
+> 2026-09-18 ruling) — one place that answers "what did I ask, and where has it got to", across
+> both doors. And it is where the **staff-only trial gate** Carla signed finally has something to
+> gate: *"You and the support team try it before any employee sees it"* applies to the Help button,
+> which is the single thing an employee sees.
+
+> **ALSO RULED 2026-09-21.** Kane: *"The chat support option should ask the Employees what issue is
+> it about if it is about salary or COE or anything related to Accounting and HR."*
+>
+> **Ask the category when they enter the chat queue.** The vocabulary already exists —
+> `SUPPORT_CATEGORIES` (`src/lib/support/types.ts:27-37`) ships the nine Carla approved, and his
+> examples land on them: salary → `pay_payslip`, COE → `documents_certificates`. Reusing it means
+> chat and tickets speak one language rather than two.
+>
+> **It closes a real loss.** A converted chat is currently filed as `CHAT_TICKET_CATEGORY = 'other'`
+> (`abandonment.ts`) because the session never knew its subject. With a category on the session the
+> ticket **inherits the real one**, which is also what makes it sortable and routable on the board.
+>
+> **SEPARATE THE TWO THINGS IN HIS SENTENCE.** *What it is about* is a category and is in scope.
+> *"Anything related to Accounting and HR"* is **who answers it** — agent specialisation, which he
+> deferred himself on 2026-09-18 (*"another topic and meeting I have for Carla so standby"*) and
+> which Q4 currently answers as ONE GLOBAL QUEUE, every agent qualified for everything. So: capture
+> the category, group it by team in the COPY, and do not route on it until that meeting happens.
+> Capturing it now is what makes the routing cheap later.
+>
+> **Mechanically:** `employee_support_chat_sessions` has no `category` column. Nothing has been
+> applied yet, so this is a clean additive ALTER beside the triage one — same launcher, same
+> transaction. It must be NULLABLE or default to `other`: every session that exists before it ships
+> has no category, and a NOT NULL with no default would fail the migration.
+
 ---
 
 ## What is already decided
