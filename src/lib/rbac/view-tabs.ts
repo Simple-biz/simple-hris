@@ -123,7 +123,19 @@ export const VIEW_TAB_IDS: Record<FeatureViewKey, readonly string[]> = {
   // list, an `employee_support` holder whose overlay grants nothing gets [] —
   // an empty support surface — instead of being landed somewhere nobody granted
   // them. Plan task 8.
-  employee_support: ['support-chat'],
+  //
+  // TWO tabs since 2026-09-21 (Kane: "two tabs in ticket for employee support
+  // one for chat and one for ticket"). They are siblings in one catalog, NOT
+  // two sections of one tab — an earlier proposal said sections and he
+  // corrected it.
+  //
+  // ORDER IS THE LANDING: ticketsHostAccess opens on the first GRANTED id, so
+  // `support-chat` stays first and today's five answerers land exactly where
+  // they landed yesterday. Each id must mirror a key in
+  // FEATURE_CATALOG.employee_support (id with dashes → underscores, see
+  // tabFeatureKey) or it is un-grantable and renders for admins only; the test
+  // file pins that both ways, and pins that the /tickets rail can draw each one.
+  employee_support: ['support-chat', 'support-tickets'],
 };
 
 /** Roles that bypass the per-tab overlay and always see/edit every tab. */

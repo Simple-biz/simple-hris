@@ -82,15 +82,18 @@ describe('/tickets gate matrix — two surfaces, one route', () => {
     const host = ticketsHostAccess(roles, perms);
 
     assert.equal(host.board, false, 'a support holder must not see Overview / Board / Archived');
-    assert.deepEqual(host.supportTabs, ['support-chat']);
+    assert.deepEqual(host.supportTabs, ['support-chat', 'support-tickets']);
     // The landing is the typed-URL story: /tickets is the only URL into this
     // surface (the board's three views are component state, TicketsBoard.tsx:96),
-    // so "what opens on arrival" IS the typed-URL answer.
+    // so "what opens on arrival" IS the typed-URL answer. Two tabs since
+    // 2026-09-21 and it still opens on the chat — the landing is the FIRST
+    // granted tab, and the catalog keeps chat first on purpose.
     assert.deepEqual(host.landing, { kind: 'support', tabId: 'support-chat' });
 
     // Server side: the board's own key stays out of reach.
     assert.equal(grantsAnyView(roles, perms, 'tickets', 'view'), false);
     assert.equal(grantsAnyView(roles, perms, 'support_chat', 'edit'), true);
+    assert.equal(grantsAnyView(roles, perms, 'support_tickets', 'edit'), true);
   });
 
   it('tickets-only: the board, unchanged, and no support tabs', () => {
@@ -105,6 +108,9 @@ describe('/tickets gate matrix — two surfaces, one route', () => {
     assert.equal(grantsAnyView(roles, perms, 'tickets', 'view'), true);
     assert.equal(grantsAnyView(roles, perms, 'tickets', 'edit'), true);
     assert.equal(grantsAnyView(roles, perms, 'support_chat', 'view'), false);
+    // The second support key changes nothing here: it lives in the OTHER
+    // catalog, which the `tickets` role's view never resolves.
+    assert.equal(grantsAnyView(roles, perms, 'support_tickets', 'view'), false);
   });
 
   it('both roles: both surfaces, landing where a tickets holder landed yesterday', () => {
@@ -113,11 +119,12 @@ describe('/tickets gate matrix — two surfaces, one route', () => {
     const host = ticketsHostAccess(roles, perms);
 
     assert.equal(host.board, true);
-    assert.deepEqual(host.supportTabs, ['support-chat']);
+    assert.deepEqual(host.supportTabs, ['support-chat', 'support-tickets']);
     assert.deepEqual(host.landing, { kind: 'board' });
 
     assert.equal(grantsAnyView(roles, perms, 'tickets', 'edit'), true);
     assert.equal(grantsAnyView(roles, perms, 'support_chat', 'edit'), true);
+    assert.equal(grantsAnyView(roles, perms, 'support_tickets', 'edit'), true);
   });
 
   it('admin: keys to the castle, with no overlay rows at all', () => {
@@ -126,7 +133,7 @@ describe('/tickets gate matrix — two surfaces, one route', () => {
     const host = ticketsHostAccess(roles, perms);
 
     assert.equal(host.board, true);
-    assert.deepEqual(host.supportTabs, ['support-chat']);
+    assert.deepEqual(host.supportTabs, ['support-chat', 'support-tickets']);
     assert.deepEqual(host.landing, { kind: 'board' });
 
     assert.equal(grantsAnyView(roles, perms, 'tickets', 'edit'), true);
@@ -176,8 +183,13 @@ describe('the FALLBACK_TABS trap stays shut', () => {
 
   it('an un-provisioned support holder gets no tabs, not a landing', () => {
     // Role granted (the SQL widen ran, Kane assigned it) but the overlay rows
-    // never arrived — or an admin hid every one of them.
-    for (const perms of [{}, { employee_support: { support_chat: 'hidden' as const } }]) {
+    // never arrived — or an admin hid every one of them. With two tabs the
+    // second case has to hide BOTH, or the assertion would be passing for the
+    // wrong reason.
+    for (const perms of [
+      {},
+      { employee_support: { support_chat: 'hidden' as const, support_tickets: 'hidden' as const } },
+    ]) {
       assert.deepEqual(allowedTabsForUser('employee_support', ['employee_support'], perms), []);
       assert.deepEqual(ticketsHostAccess(['employee_support'], perms).landing, { kind: 'none' });
     }
@@ -189,6 +201,16 @@ describe('the FALLBACK_TABS trap stays shut', () => {
     // board's landing — for a support holder with no tickets grants.
     assert.deepEqual(allowedTabsForUser('tickets', ['employee_support'], {}), []);
     assert.deepEqual(VIEW_TAB_IDS.tickets, [], 'VIEW_TAB_IDS.tickets must stay empty');
+    // Said the other way round, because "empty" is the thing a second support
+    // tab is most likely to be added to by hand: a support id parked here would
+    // be gated by the `tickets` overlay, which the `tickets` role
+    // auto-provisions to `edit` wholesale — the dev board would ship with it.
+    for (const tabId of VIEW_TAB_IDS.employee_support) {
+      assert.ok(
+        !(VIEW_TAB_IDS.tickets as readonly string[]).includes(tabId),
+        `${tabId} is listed under the tickets view; the tickets role would auto-provision it`,
+      );
+    }
   });
 
   it('the fallback still works for the dashboards that rely on it', () => {
@@ -216,8 +238,15 @@ describe('the existing tickets gate is not loosened', () => {
     // dev board, and `tickets` under `employee_support` would open the board to
     // the five answerers.
     const board = new Set(FEATURE_CATALOG.tickets.map((f) => f.key));
+    const support = new Set(FEATURE_CATALOG.employee_support.map((f) => f.key));
     for (const f of FEATURE_CATALOG.employee_support) {
       assert.ok(!board.has(f.key), `${f.key} appears in both catalogs`);
+    }
+    // Symmetric, so the assertion keeps its meaning if either catalog grows:
+    // today the board catalog is one key, and a `tickets` key appearing in the
+    // support catalog would be the same hole facing the other way.
+    for (const f of FEATURE_CATALOG.tickets) {
+      assert.ok(!support.has(f.key), `${f.key} appears in both catalogs`);
     }
   });
 
@@ -268,7 +297,7 @@ describe('the support grant is not inert', () => {
   it('granting the role provisions the support tabs and only those', () => {
     const perms = provisioned('employee_support');
     assert.deepEqual(Object.keys(perms), ['employee_support']);
-    assert.deepEqual(perms.employee_support, { support_chat: 'edit' });
+    assert.deepEqual(perms.employee_support, { support_chat: 'edit', support_tickets: 'edit' });
   });
 });
 
@@ -304,5 +333,125 @@ describe('the source still matches what these tests model', () => {
     const src = readFileSync(path.join(root, 'app', 'api', 'employee-roles', 'route.ts'), 'utf8');
     const list = src.slice(src.indexOf('const VALID_ROLES'), src.indexOf('] as const;'));
     assert.match(list, /'employee_support'/, 'without this, the five grants cannot be made at all');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The second support tab — Kane, 2026-09-21: "there should be two tabs in
+// ticket for employee support one for chat and one for ticket".
+// ---------------------------------------------------------------------------
+
+/* Two SIBLING tabs in the one `employee_support` catalog, not two sections of
+ * one tab (an earlier proposal said sections and he corrected it), and not a
+ * second role or a second FeatureViewKey — `ticketsHostAccess` already returns
+ * every granted support tab and lands on the first (view-tabs.ts:272-287).
+ *
+ * Everything above this line is the gate that was already proven; these pin
+ * the four things the SECOND tab could break. */
+describe('the second support tab is a catalog entry, not a new gate', () => {
+  it('the support catalog is exactly the two keys, chat first — and order is the landing', () => {
+    assert.deepEqual(FEATURE_CATALOG.employee_support.map((f) => f.key), [
+      'support_chat',
+      'support_tickets',
+    ]);
+    // Chat first is not cosmetic: the host opens on the first GRANTED tab, so
+    // reordering this list silently moves where the five answerers land.
+    assert.deepEqual(VIEW_TAB_IDS.employee_support, ['support-chat', 'support-tickets']);
+  });
+
+  it('tab ids and catalog keys mirror each other exactly, in the same order', () => {
+    // One direction is already pinned above (an id with no key is un-grantable
+    // and renders for admin only). This is the other: a key with no tab id is
+    // a permission an admin can grant in the grid that opens nothing at all.
+    assert.deepEqual(
+      VIEW_TAB_IDS.employee_support.map(tabFeatureKey),
+      FEATURE_CATALOG.employee_support.map((f) => f.key),
+    );
+  });
+
+  it('a support holder with BOTH tabs still cannot reach Overview / Board / Archived', () => {
+    const roles = ['employee_support'];
+    const perms = provisioned('employee_support');
+    const host = ticketsHostAccess(roles, perms);
+
+    assert.equal(host.board, false, 'by click: the rail draws no board group');
+    assert.equal(host.landing.kind, 'support', 'by typed URL: /tickets opens a support tab');
+    for (const boardView of ['overview', 'board', 'archived']) {
+      assert.ok(
+        !host.supportTabs.includes(boardView),
+        `${boardView} reached the support tab list`,
+      );
+    }
+    // And the data behind the board stays shut at both levels.
+    assert.equal(grantsAnyView(roles, perms, 'tickets', 'view'), false);
+    assert.equal(grantsAnyView(roles, perms, 'tickets', 'edit'), false);
+  });
+
+  it('the five granted BEFORE this key existed get the chat only, and land on it', () => {
+    // provisionDashboardTabs writes the catalog at GRANT time
+    // (app/api/employee-roles/route.ts:41-85), so the five answerers' overlay
+    // has support_chat and no row for support_tickets. A missing row resolves
+    // to `hidden` — the new tab stays dark for them until an admin grants it,
+    // which is the correct default-deny outcome and a deploy step, not a bug.
+    const perms: FeaturePermissionsMap = { employee_support: { support_chat: 'edit' } };
+    const host = ticketsHostAccess(['employee_support'], perms);
+    assert.deepEqual(host.supportTabs, ['support-chat']);
+    assert.deepEqual(host.landing, { kind: 'support', tabId: 'support-chat' });
+    assert.equal(grantsAnyView(['employee_support'], perms, 'support_tickets', 'view'), false);
+  });
+
+  it('the landing follows the GRANT, not the hard-coded first id', () => {
+    // An admin who hides Support Chat must not strand a holder on a landing
+    // that no longer exists — they open on the tickets tab instead.
+    const perms: FeaturePermissionsMap = {
+      employee_support: { support_chat: 'hidden', support_tickets: 'edit' },
+    };
+    const host = ticketsHostAccess(['employee_support'], perms);
+    assert.deepEqual(host.supportTabs, ['support-tickets']);
+    assert.deepEqual(host.landing, { kind: 'support', tabId: 'support-tickets' });
+    assert.equal(host.board, false);
+  });
+
+  it('view-level access is enough to open the tab; edit is a separate question', () => {
+    // Carla's read-only reviewer: the tab is visible at `view`, and the
+    // mutating routes ask for `edit` separately (canEditTab).
+    const perms: FeaturePermissionsMap = {
+      employee_support: { support_chat: 'view', support_tickets: 'view' },
+    };
+    assert.deepEqual(allowedTabsForUser('employee_support', ['employee_support'], perms), [
+      'support-chat',
+      'support-tickets',
+    ]);
+    assert.equal(grantsAnyView(['employee_support'], perms, 'support_tickets', 'view'), true);
+    assert.equal(grantsAnyView(['employee_support'], perms, 'support_tickets', 'edit'), false);
+  });
+});
+
+describe('the /tickets rail can actually draw every declared support tab', () => {
+  it('SUPPORT_NAV has an entry for each id in VIEW_TAB_IDS.employee_support', () => {
+    // TicketsSidebar skips an id it has no entry for (TicketsSidebar.tsx:184-187)
+    // rather than rendering a nameless button — the honest failure, but it means
+    // a granted tab can be invisible in the rail with nothing complaining. This
+    // scan is what keeps that window short. The component is a client `.tsx`
+    // with JSX, so it is read as text rather than imported.
+    const src = readFileSync(
+      path.join(__dirname, '..', '..', 'components', 'tickets', 'TicketsSidebar.tsx'),
+      'utf8',
+    );
+    const start = src.indexOf('const SUPPORT_NAV');
+    assert.ok(start > -1, 'SUPPORT_NAV must still be the rail’s support map');
+    const map = src.slice(start, src.indexOf('};', start));
+    for (const tabId of VIEW_TAB_IDS.employee_support) {
+      assert.ok(
+        map.includes(`'${tabId}'`),
+        `${tabId} is granted by the catalog but the rail has no entry to draw it`,
+      );
+    }
+    // And the union the rail navigates by must admit each id, or `onNavigate`
+    // is being handed a value its own type does not contain.
+    const union = src.slice(src.indexOf('export type TicketsView'), src.indexOf('interface TicketsSidebarProps'));
+    for (const tabId of VIEW_TAB_IDS.employee_support) {
+      assert.ok(union.includes(`'${tabId}'`), `${tabId} is missing from the TicketsView union`);
+    }
   });
 });

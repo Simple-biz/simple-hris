@@ -9,6 +9,7 @@ import {
   LogOut,
   MessageCircle,
   SquareKanban,
+  Ticket,
 } from 'lucide-react';
 import CollapsibleSidebarShell from '@/components/common/CollapsibleSidebarShell';
 import SidebarLogoHeader from '@/components/common/SidebarLogoHeader';
@@ -26,13 +27,15 @@ import type { TicketsHostAccess } from '@/lib/rbac/view-tabs';
  * The surfaces this rail can point at.
  *
  * The first three are the dev Kanban's own views — component state, not routes
- * (TicketsBoard.tsx:96). `support-chat` is Employee Support, hosted on the same
- * /tickets route by Kane's Q3, and its id is the one
- * `VIEW_TAB_IDS.employee_support` declares (view-tabs.ts:114) — the string is
- * the join between this nav and the per-tab overlay gate, so it is not a name
- * that may be chosen freely here.
+ * (TicketsBoard.tsx:96). `support-chat` and `support-tickets` are Employee
+ * Support's TWO tabs (Kane, 2026-09-21: "two tabs in ticket for employee
+ * support one for chat and one for ticket"), hosted on the same /tickets route
+ * by his Q3, and their ids are the ones `VIEW_TAB_IDS.employee_support`
+ * declares (view-tabs.ts:121-138) — the strings are the join between this nav
+ * and the per-tab overlay gate, so they are not names that may be chosen
+ * freely here.
  */
-export type TicketsView = 'board' | 'overview' | 'archived' | 'support-chat';
+export type TicketsView = 'board' | 'overview' | 'archived' | 'support-chat' | 'support-tickets';
 
 interface TicketsSidebarProps {
   /** Below `md`, sidebar is a drawer. Desktop ignores this. */
@@ -67,9 +70,17 @@ const BOARD_NAV: Array<{ key: TicketsView; label: string; icon: typeof SquareKan
  * Employee Support's tabs, keyed by the tab id the overlay gates. Only the ids
  * in `access.supportTabs` are drawn, so an admin hiding Support Chat in the
  * per-tab grid removes it here without a second rule.
+ *
+ * Two entries since 2026-09-21, and they are drawn in `access.supportTabs`
+ * order (= catalog order), so Chat sits above Tickets: chat is the intake
+ * channel, the ticket is the durable record every chat becomes.
+ * `src/lib/rbac/view-tabs.test.ts` pins that every id in
+ * `VIEW_TAB_IDS.employee_support` has an entry here — without one the loop
+ * below silently skips it and the granted tab is unreachable from the rail.
  */
 const SUPPORT_NAV: Record<string, { label: string; icon: typeof SquareKanban }> = {
   'support-chat': { label: 'Support Chat', icon: MessageCircle },
+  'support-tickets': { label: 'Support Tickets', icon: Ticket },
 };
 
 /** One rail entry. Extracted so the two groups cannot drift apart visually. */
@@ -166,9 +177,10 @@ export default function TicketsSidebar({
 
   // Only ids this rail actually knows how to draw. A catalog key with no entry
   // in SUPPORT_NAV is skipped rather than rendered as a nameless button — the
-  // catalog is expected to grow (feature-permissions.ts:117-120 says the next
-  // support surface appends its key there), and the honest failure while the
-  // two are briefly out of step is a missing entry, not a blank one.
+  // catalog is expected to grow (feature-permissions.ts:117-138: a new support
+  // surface appends its key there), and the honest failure while the two are
+  // briefly out of step is a missing entry, not a blank one. A test keeps that
+  // window short: view-tabs.test.ts scans this map for every declared tab id.
   const supportEntries = (access?.supportTabs ?? []).flatMap((id) => {
     const entry = SUPPORT_NAV[id];
     return entry ? [{ key: id as TicketsView, label: entry.label, icon: entry.icon }] : [];

@@ -114,11 +114,27 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
   // holder resolves `support_chat` to hidden. Pinned by
   // src/lib/rbac/view-tabs.test.ts.
   //
-  // One tab today. The agent-side live chat (plan task 18) is the only support
-  // surface in scope; the ES- ticket queue the v1 plan describes is explicitly
-  // out of scope, so its key is NOT invented here — append it when that ships.
+  // TWO tabs since 2026-09-21. Kane: "there should be two tabs in ticket for
+  // employee support one for chat and one for ticket" — so the ES- ticket queue
+  // that was out of scope for the chat build now has its key, appended into the
+  // SAME catalog rather than given a view of its own. That is the whole gate
+  // change: `ticketsHostAccess` already returns every granted support tab and
+  // lands on the first (view-tabs.ts:272-287), so a second tab is a catalog
+  // entry plus a nav row — no new role, no new FeatureViewKey, no new guard.
+  //
+  // ORDER IS THE LANDING. `VIEW_TAB_IDS.employee_support` mirrors this list and
+  // the host opens on its first granted id, so `support_chat` stays first: chat
+  // is the intake channel and it is where the five answerers landed yesterday.
+  //
+  // ⚠ DEPLOY: the five answerers were granted `employee_support` BEFORE this key
+  // existed. `provisionDashboardTabs` writes the catalog only at grant time
+  // (app/api/employee-roles/route.ts:41-85), so their overlay has
+  // `support_chat: edit` and NO `support_tickets` row — which resolves to
+  // `hidden` and correctly hides the tab until an admin grants it in the grid.
+  // Anyone granted the role after this ships gets both.
   employee_support: [
-    { key: "support_chat", label: "Support Chat" },
+    { key: "support_chat",    label: "Support Chat" },
+    { key: "support_tickets", label: "Support Tickets" },
   ],
 };
 

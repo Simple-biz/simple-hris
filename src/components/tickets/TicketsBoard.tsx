@@ -105,12 +105,14 @@ export default function TicketsBoard() {
   const [liveStatus, setLiveStatus] = useState<'live' | 'degraded'>('live');
   // Below `md` the sidebar is a drawer toggled by the header hamburger.
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  // Which surface is showing. **`null` means the landing is not decided yet**
-  // — see the host-access block below. It is deliberately not seeded with
-  // 'overview' any more: /tickets now hosts Employee Support as well, and a
-  // support-only holder must never be landed on the dev board, not even for
-  // the frame before their roles arrive.
-  const [activeView, setActiveView] = useState<TicketsView | null>(null);
+  // Overview is the default landing view on load/refresh — EXACTLY as it was
+  // before Employee Support was hosted here. Kane, 2026-09-21: "put back the
+  // BOARD SECTION … undo your shit". The dev Kanban's behaviour is not gated on
+  // a client-side roles fetch: /tickets' route gate (route-access.ts) and the
+  // `tickets` feature key on /api/tickets already guard it server-side. The
+  // only thing this component decides is whether a SUPPORT-ONLY holder gets
+  // steered onto their tab instead — see the effect below.
+  const [activeView, setActiveView] = useState<TicketsView>('overview');
 
   // ── Who is allowed on which of the two surfaces this route hosts ──────────
   // Since 2026-09-19 /tickets carries the HRIS dev Kanban AND Employee Support
@@ -119,36 +121,43 @@ export default function TicketsBoard() {
   // disagree (view-tabs.ts:272-287).
   const { data: authSession } = useSession();
   const hostEmail = authSession?.user?.email?.trim().toLowerCase() ?? null;
-  const { roles, perms, ready: permsReady, canEditTab } = useFeaturePermissions(hostEmail);
+  const { roles, perms, canEditTab } = useFeaturePermissions(hostEmail);
+  // Read `host` DIRECTLY, not behind `ready`. The hook paints optimistically
+  // from the JWT roles (useFeaturePermissions.ts:59-63), so an admin or a
+  // `tickets` holder has `board: true` on the very first render and the Board
+  // is never hidden behind a fetch. Gating on `ready` was what made the Board
+  // vanish into "Nothing here is granted to you yet" whenever that round-trip
+  // was slow — the defect Kane hit on 2026-09-21. A support-only holder's JWT
+  // seeds `employee_support`, so their `board` is false from the first frame
+  // too; nobody flickers.
   const host = useMemo(() => ticketsHostAccess(roles, perms), [roles, perms]);
-  /** `null` = we cannot tell yet; `false` = an answer, and it is no. */
-  const boardAccess: boolean | null = permsReady ? host.board : null;
-  const hostAccess = permsReady ? host : null;
 
-  // Land once, on the surface `ticketsHostAccess` chose. Re-running on every
-  // perms refresh would yank an agent off whatever they had navigated to, so
-  // this fires only while nothing is open.
+  // The ONE thing decided here: a SUPPORT-ONLY holder sitting on a board view
+  // is steered onto their first support tab. Everyone else keeps the original
+  // 'overview' landing untouched. Fires whenever the answer says so, but it can
+  // only move someone OFF the board — it never yanks an agent off a support tab
+  // they navigated to.
   useEffect(() => {
-    if (!permsReady || activeView !== null) return;
-    if (host.landing.kind === 'board') setActiveView('overview');
-    else if (host.landing.kind === 'support') setActiveView(host.landing.tabId as TicketsView);
-    // `{ kind: 'none' }` stays null on purpose: nothing was granted, so there
-    // is nothing to open and the rail says so. NEVER a default tab.
-  }, [permsReady, activeView, host.landing]);
+    const onBoardView =
+      activeView === 'overview' || activeView === 'board' || activeView === 'archived';
+    if (!host.board && onBoardView && host.supportTabs.length > 0) {
+      setActiveView(host.supportTabs[0] as TicketsView);
+    }
+  }, [activeView, host.board, host.supportTabs]);
 
-  // A grant revoked mid-session closes the surface it was holding open. The
-  // rail entry vanishes on its own (it is drawn from the same answer), but the
-  // OPEN view is component state and would otherwise sit there fetching 403s.
-  // Clearing it to `null` hands the decision straight back to the landing
-  // effect above, which re-opens whatever is still granted, or nothing.
+  // A SUPPORT grant revoked mid-session closes the support tab it was holding
+  // open — the rail entry vanishes on its own (drawn from the same answer), but
+  // the OPEN view is component state and would otherwise sit there fetching
+  // 403s. It falls back to the board if they hold it, else the first support
+  // tab still granted, else 'overview' — the original default, whose fetches
+  // the server refuses on its own. Never `null`: the Kanban's own views are
+  // not gated here, per Kane.
   useEffect(() => {
-    if (!permsReady || activeView === null) return;
-    const stillAllowed =
-      activeView === 'overview' || activeView === 'board' || activeView === 'archived'
-        ? host.board
-        : host.supportTabs.includes(activeView);
-    if (!stillAllowed) setActiveView(null);
-  }, [permsReady, activeView, host]);
+    const onSupportView = activeView === 'support-chat' || activeView === 'support-tickets';
+    if (onSupportView && !host.supportTabs.includes(activeView)) {
+      setActiveView(host.board ? 'overview' : ((host.supportTabs[0] as TicketsView) ?? 'overview'));
+    }
+  }, [activeView, host.board, host.supportTabs]);
 
   const [search, setSearch] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<'all' | TicketPriority>('all');
@@ -230,18 +239,15 @@ export default function TicketsBoard() {
   }, []);
 
   useEffect(() => {
-    // Never before the roles land, and never for somebody without the board
-    // grant: /api/tickets is gated on the `tickets` FEATURE key (route.ts:28),
-    // which an `employee_support` holder resolves to hidden — so this would be
-    // a 403 on mount, and then another every 30s once useLiveRefresh's poll
-    // started. `boardAccess === null` is "we cannot tell yet" and waits;
-    // `false` is an answer and stops. `loaded` deliberately stays false in
-    // that case, which is the truth (the board was never read) and is what
-    // keeps the poll, the deep-link and the board chrome switched off.
-    if (boardAccess !== true) return;
+    // Fetch on mount, as the board always did — the JWT-seeded `host.board` is
+    // true on the first render for anyone who could open this route before
+    // Employee Support was hosted here. The only viewer skipped is a confirmed
+    // support-only holder, for whom /api/tickets is a 403 (it is gated on the
+    // `tickets` FEATURE key, route.ts:28) and the fetch would just be noise.
+    if (!host.board) return;
     void fetchBoard();
     void fetchMembers();
-  }, [boardAccess, fetchBoard, fetchMembers]);
+  }, [host.board, fetchBoard, fetchMembers]);
 
   useEffect(() => {
     if (activeView === 'archived') void fetchArchived();
@@ -579,7 +585,7 @@ export default function TicketsBoard() {
         mobileOpen={mobileNavOpen}
         viewerEmail={viewer || null}
         active={activeView}
-        access={hostAccess}
+        access={host}
         onNavigate={(v) => {
           setActiveView(v);
           setMobileNavOpen(false);
@@ -760,31 +766,7 @@ export default function TicketsBoard() {
           lets the leaving surface clear before the next one lands; distances
           collapse under prefers-reduced-motion. */}
       <AnimatePresence mode="wait" initial={false}>
-      {activeView === null ? (
-        // The landing is not decided yet, or nothing was granted. Either way
-        // this must NOT fall through to the board: /tickets hosts two
-        // surfaces now, and the default branch at the bottom is the Kanban.
-        <motion.main
-          key="landing"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: reduceMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
-          className="flex min-h-0 flex-1 items-center justify-center p-6"
-        >
-          {permsReady ? (
-            <p className="max-w-sm text-center text-sm text-muted-foreground">
-              Nothing on this page is granted to you yet. Ask an admin for the board or for
-              Employee Support.
-            </p>
-          ) : (
-            <div
-              className="size-6 animate-spin rounded-full border-2 border-primary border-t-transparent motion-reduce:animate-none"
-              aria-label="Loading"
-            />
-          )}
-        </motion.main>
-      ) : activeView === 'support-chat' ? (
+      {activeView === 'support-chat' ? (
         <motion.main
           key="support-chat"
           initial={{ opacity: 0, y: reduceMotion ? 0 : 10 }}
