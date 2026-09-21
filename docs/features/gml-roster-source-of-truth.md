@@ -106,9 +106,22 @@ come out of `ALL_DIAGNOSTIC_NODE_IDS` — a canonical-list test enforces that pa
 
 ---
 
-## Steps 2, 3, 5 — built, rehearsed, NOT APPLIED
+## Steps 2, 3, 5 — APPLIED 2026-09-21
 
-Nothing has been written to Supabase. Both gates are real and both were exercised.
+**Both definitions of "active" now read 1,266 and are the same query.**
+
+| | before | after |
+| --- | --- | --- |
+| `active_employees` (HR screen) | 1,215 | **1,266** |
+| unstamped rows (external API) | 1,723 | **1,266** |
+| gap | **508** | **0** |
+
+457 rows stamped: 298 corpses `duplicate_cleanup`, 159 leavers with their own
+`offboarded_sheet` date. The 51-row residue that used to be the gap is now simply *on* the
+roster — which is the point: those people were always being served to the OMS, and the HRIS was
+the surface that could not see them.
+
+All 7 live people verified still active afterwards.
 
 ### Steps 2 + 3 — the data reconcile
 
@@ -146,7 +159,7 @@ node --import tsx scripts/apply-active-employees-one-definition.mts --verify   #
 node --import tsx scripts/apply-active-employees-one-definition.mts --revert   # PUT THE GATE BACK
 ```
 
-**The order is enforced by the database, not by this document.** The migration's pre-flight
+**The order was enforced by the database, not by this document.** The migration's pre-flight
 raises when more than 60 unstamped rows sit off the current upload. Run today it says:
 
 ```
