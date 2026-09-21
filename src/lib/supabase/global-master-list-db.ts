@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { parseCsv } from "@/lib/csv/parse-csv";
 import { applyDeptOverrideToRawRow } from "@/lib/departments/dept-email-overrides";
+import { decideSheetAssignment, type ExistingAssignment } from "@/lib/roster/sheet-assignment";
 
 const MASTER_LIST_UPLOADS_TABLE = "master_list_uploads";
 
@@ -484,6 +485,11 @@ export async function replaceGlobalMasterListFromCsvText(
    *  claimed by another row in the same sync — would have violated
    *  `global_master_list_work_email_dept_uniq`. */
   skippedWorkDeptCollisions: number;
+  /** Department TRANSFERS that reused the person's existing row instead of forking a
+   *  second one. Before 2026-09-21 every one of these was a new row whose predecessor
+   *  stayed active forever — 301 such corpses were on production. An adopted row keeps
+   *  its own Department: the sheet never overwrites it. */
+  adoptedTransfers: number;
 }> {
   const supabase = requireServiceRole();
   const table = getMasterTableName();
@@ -588,6 +594,11 @@ export async function replaceGlobalMasterListFromCsvText(
   // Unlike `existingByWorkDept` (single-bucket only), this keeps a pick even when a
   // bucket has >1 active row (pre-migration leftovers) so the INSERT still never collides.
   const activeWorkDeptReps = new Map<string, MasterReconcileRow>();
+  // Every ACTIVE row a person holds, keyed by personal email — the input
+  // `decideSheetAssignment` needs to tell a TRANSFER (one sheet line, one
+  // existing row, different department) from a genuine dual-role assertion.
+  // Active only: adopting a stamped row would un-write an offboard.
+  const activeByPersonal = new Map<string, ExistingAssignment[]>();
   {
     const selectCols = hasWorkEmailCol
       ? 'id, "Personal Email", "Department", "Work Email", first_seen_upload_id, off_boarded_at'
@@ -609,6 +620,10 @@ export async function replaceGlobalMasterListFromCsvText(
           first_seen_upload_id: r.first_seen_upload_id,
           off_boarded_at: r.off_boarded_at ?? null,
         });
+        if (!r.off_boarded_at) {
+          if (!activeByPersonal.has(pe)) activeByPersonal.set(pe, []);
+          activeByPersonal.get(pe)!.push({ id: String(r.id), department: dep });
+        }
       }
       if (!hasWorkEmailCol) continue;
       const we = normalizeEmail(r["Work Email"]);
@@ -660,8 +675,18 @@ export async function replaceGlobalMasterListFromCsvText(
   const duplicatesInCsv = dedupableRows.length - dedupableByKey.size;
   const dedupableRowsUnique = Array.from(dedupableByKey.values());
 
+  // Every department THIS CSV lists per person. A person listed more than once
+  // is the sheet asserting a multi-role set; a person listed once who already
+  // holds a different department is a TRANSFER, and must not fork a second row.
+  const csvDeptsByPersonal = new Map<string, string[]>();
+  for (const { personalEmail, department } of dedupableRowsUnique) {
+    if (!csvDeptsByPersonal.has(personalEmail)) csvDeptsByPersonal.set(personalEmail, []);
+    csvDeptsByPersonal.get(personalEmail)!.push(department);
+  }
+
   // ── Partition into UPDATE-targets and INSERT-payloads ──
   const updateOps: { id: string | number; payload: Record<string, string | null> }[] = [];
+  let adoptedTransfers = 0;
   for (const { row, personalEmail, department } of dedupableRowsUnique) {
     const payload = csvRowToObject(row, insertCols);
     if (payload["Personal Email"]) payload["Personal Email"] = personalEmail;
@@ -682,6 +707,39 @@ export async function replaceGlobalMasterListFromCsvText(
       if (we) {
         const workHit = existingByWorkDept.get(composeWorkDeptKey(we, department));
         if (workHit) match = { kind: "work", row: workHit };
+      }
+    }
+
+    // ── The transfer case: reuse the person's row instead of forking a new one ──
+    // Neither key above matched, which is exactly what a department transfer looks
+    // like. Before 2026-09-21 this fell straight through to INSERT and left the old
+    // row active forever — 301 people on production carried such a corpse, and the
+    // external API served every one as a live person.
+    //
+    // `adopt` reuses the row but the row KEEPS ITS OWN Department: the sheet is
+    // input-only and never overwrites it (Kane, 2026-09-21), and in all 7 measured
+    // sheet/DB mismatches the sheet was the stale side of an applied HRIS transfer
+    // (memory/hris-is-dept-source-of-truth.md).
+    let adopted = false;
+    if (!match) {
+      const decision = decideSheetAssignment({
+        department,
+        csvDepartments: csvDeptsByPersonal.get(personalEmail) ?? [],
+        existing: activeByPersonal.get(personalEmail) ?? [],
+      });
+      if (decision.action === "adopt") {
+        const claimed = (activeByPersonal.get(personalEmail) ?? []).find((e) => e.id === decision.id);
+        // Claim the row so a later CSV line for the same person cannot adopt it too.
+        activeByPersonal.set(personalEmail, []);
+        adopted = true;
+        adoptedTransfers += 1;
+        match = {
+          kind: "personal",
+          id: decision.id,
+          off_boarded_at: null,
+          first_seen_upload_id: null,
+        };
+        if (claimed) existingByKey.delete(composeIdentityKey(personalEmail, claimed.department));
       }
     }
 
@@ -721,6 +779,11 @@ export async function replaceGlobalMasterListFromCsvText(
       delete updatePayload["off_boarded_note"];
       delete updatePayload["scheduled_deletion_at"];
       delete updatePayload["deletion_processed_at"];
+      // An ADOPTED row keeps its own Department. This is the write-once rule:
+      // the sheet may create a person's department, never rewrite it. Without
+      // this line the adopt path would re-import the stale sheet department over
+      // an applied HRIS transfer — the exact clobber that made this necessary.
+      if (adopted) delete updatePayload["Department"];
       updateOps.push({
         id: (match.kind === "work" ? match.row.id : match.id) as string | number,
         payload: updatePayload,
@@ -915,6 +978,7 @@ export async function replaceGlobalMasterListFromCsvText(
     duplicatesInCsv,
     reconciledViaWorkEmail,
     skippedWorkDeptCollisions,
+    adoptedTransfers,
   };
 }
 

@@ -92,6 +92,9 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
         inserted: result.inserted,
         updated: result.updated,
         rowsMissingPersonalEmail: result.rowsMissingPersonalEmail,
+        // Department transfers that reused the person's row instead of forking a
+        // second one. Before 2026-09-21 each of these left a corpse behind.
+        adoptedTransfers: result.adoptedTransfers,
         restampedNonSheetRows: restamped,
         uploadId: result.uploadId,
       },
