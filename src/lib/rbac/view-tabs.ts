@@ -102,7 +102,28 @@ export const VIEW_TAB_IDS: Record<FeatureViewKey, readonly string[]> = {
   ],
   // /tickets is a single-surface board, not a tabbed dashboard — no tab ids.
   // Its access is checked via the `tickets` feature key directly (API layer).
+  //
+  // THIS STAYS EMPTY, and that is load-bearing in three ways. Employee Support
+  // now shares the /tickets ROUTE, but its tabs live in the `employee_support`
+  // catalog below, never here:
+  //   1. A tab id listed here is gated by the `tickets` overlay, which the
+  //      `tickets` role auto-provisions to `edit` wholesale — support tabs here
+  //      would ship with the dev board, which is the arrangement Kane rejected.
+  //   2. Listing `overview` here would arm the FALLBACK_TABS landing below for
+  //      every user the `tickets` overlay grants nothing — including an
+  //      un-provisioned `employee_support` holder, who would land on the dev
+  //      board's Overview. That is the specific trap this surface was scoped
+  //      against.
+  //   3. Any id here changes what today's `tickets` holders see:
+  //      allowedTabsForUser('tickets', …) returns [] for EVERYONE right now,
+  //      admins included, and the board renders from its own rail instead.
   tickets: [],
+  // Employee Support — its own tabs, hosted at /tickets (Kane's Q3). It carries
+  // NO `overview` ON PURPOSE: see FALLBACK_TABS. With no fallback id in this
+  // list, an `employee_support` holder whose overlay grants nothing gets [] —
+  // an empty support surface — instead of being landed somewhere nobody granted
+  // them. Plan task 8.
+  employee_support: ['support-chat'],
 };
 
 /** Roles that bypass the per-tab overlay and always see/edit every tab. */
@@ -110,8 +131,15 @@ const BYPASS_PERMS_ROLES = new Set(['admin']);
 
 /** Read-only FALLBACK tabs: shown only when the overlay grants nothing else, so
  *  a dashboard is never blank. NOT unconditionally visible — an admin can hide
- *  these as long as the user still has at least one other granted tab. */
-const FALLBACK_TABS = new Set(['overview']);
+ *  these as long as the user still has at least one other granted tab.
+ *
+ *  Exported so a view that must never fall back can be PINNED against it: a
+ *  view whose ids include none of these returns [] for an un-provisioned user
+ *  rather than landing them on a tab nobody granted. `employee_support` is
+ *  exactly that view, and src/lib/rbac/view-tabs.test.ts asserts the two lists
+ *  stay disjoint — so adding `overview` to the support tabs fails a test
+ *  instead of quietly opening a door. */
+export const FALLBACK_TABS: ReadonlySet<string> = new Set(['overview']);
 
 /** UI tab id -> feature key stored in `employee_feature_permissions`. */
 export function tabFeatureKey(tabId: string): string {
@@ -172,4 +200,88 @@ export function canEditTab(
 ): boolean {
   if (hasBypass(roles)) return true;
   return resolve(perms, view, tabFeatureKey(tabId)) === 'edit';
+}
+
+// ---------------------------------------------------------------------------
+// The /tickets host surface — two unrelated dashboards on one route
+// ---------------------------------------------------------------------------
+
+/** Roles that see the dev Kanban's own rail (Overview / Board / Archived).
+ *
+ *  This is EXACTLY the set that could open /tickets before Employee Support was
+ *  hosted there (route-access.ts, the `/tickets` entry, pre-2026-09-19), and the
+ *  rail was ungated inside — so reproducing that set here is what keeps an
+ *  existing `tickets` holder's access bit-for-bit unchanged. `employee_support`
+ *  is deliberately absent. The board's data is separately gated on the `tickets`
+ *  feature key at the API layer (app/api/tickets/route.ts:28), which this does
+ *  not touch or weaken. */
+const TICKET_BOARD_ROLES: ReadonlySet<string> = new Set(['tickets', 'admin']);
+
+/** Roles that see the Employee Support tabs. Required IN ADDITION to the
+ *  overlay grant, because the server requires both: requireFeatureAccessAnyView
+ *  walks the caller's ROLES and resolves the feature only under each role's view
+ *  (authorize-feature.ts:119-128), so a stray `employee_support` overlay row on
+ *  somebody who does not hold the role buys nothing server-side. Consulting the
+ *  role here too keeps the UI from drawing a tab whose every fetch would 403. */
+const SUPPORT_ROLES: ReadonlySet<string> = new Set(['employee_support', 'admin']);
+
+/** What the /tickets host must render on arrival — including on a typed URL,
+ *  which is the only way in (the board's Overview/Board/Archived are component
+ *  state, not routes: TicketsBoard.tsx:96). */
+export type TicketsHostLanding =
+  /** The dev Kanban, which opens on its own Overview. */
+  | { kind: 'board' }
+  /** The first Employee Support tab this user was actually granted. */
+  | { kind: 'support'; tabId: string }
+  /** Nothing was granted. Render an empty state — NEVER a default tab. */
+  | { kind: 'none' };
+
+export interface TicketsHostAccess {
+  /** May this user see the dev Kanban rail at all? */
+  board: boolean;
+  /** Employee Support tab ids this user may open, in catalog order. */
+  supportTabs: string[];
+  /** Where the surface opens. */
+  landing: TicketsHostLanding;
+}
+
+/**
+ * Who sees what on /tickets, now that two unrelated surfaces share the route:
+ * the HRIS dev Kanban (`tickets` role) and Employee Support (`employee_support`
+ * role, Kane's Q3). One function so the sidebar's nav, the page's landing and
+ * any guard inside cannot disagree with each other.
+ *
+ * The rules it encodes:
+ *   - A support-only holder gets `board: false`. They never see Overview /
+ *     Board / Archived — not in the rail, and not as a landing, which is the
+ *     only way a typed /tickets URL could have reached them.
+ *   - A `tickets` holder gets exactly what they got before: the rail, landing on
+ *     the board. Their `supportTabs` is [] unless someone also granted them
+ *     `employee_support`, because the support ids live in a catalog their roles
+ *     do not map to.
+ *   - An un-provisioned support holder (role granted, overlay rows missing or
+ *     all hidden) gets `{ kind: 'none' }`, NOT a fallback tab — see
+ *     FALLBACK_TABS and VIEW_TAB_IDS.employee_support.
+ *   - A support tab needs BOTH the role and the overlay grant, matching the
+ *     server's role-walk exactly — see SUPPORT_ROLES.
+ *   - `admin` keeps the keys to the castle: rail + every support tab.
+ *
+ * Pure and client-safe, like the rest of this module. It decides what to DRAW;
+ * every fetch behind either surface is separately gated server-side.
+ */
+export function ticketsHostAccess(
+  roles: readonly string[],
+  perms: FeaturePermissionsMap | null | undefined,
+): TicketsHostAccess {
+  const board = roles.some((r) => TICKET_BOARD_ROLES.has(r));
+  const supportTabs = roles.some((r) => SUPPORT_ROLES.has(r))
+    ? allowedTabsForUser('employee_support', roles, perms)
+    : [];
+  // Board first for a dual-role holder: that is where they landed yesterday.
+  const landing: TicketsHostLanding = board
+    ? { kind: 'board' }
+    : supportTabs.length > 0
+      ? { kind: 'support', tabId: supportTabs[0] }
+      : { kind: 'none' };
+  return { board, supportTabs, landing };
 }

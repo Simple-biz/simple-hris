@@ -114,6 +114,17 @@ expired rows never swept) and `app/api/presence/active/route.ts:30-42` (windowed
       Both-or-neither CHECKs on every paired column. No `BEGIN`/`COMMIT` — the apply script owns the
       transaction. Every new CHECK covers a brand-new column, so no existing row can violate one and
       the validating scan runs against an empty table.
+      **RATIFIED 2026-09-19, a THIRD table this task did not originally name:**
+      `employee_support_chat_agents`, which stores Kane's Q4 on-queue toggle and its heartbeat. The
+      toggle needed somewhere to live and this task was silent rather than contradictory. It is not
+      presence and must never be conflated with it — `POST /api/presence/heartbeat` takes the email
+      from the **request body** when there is no session (`SECURITY_AUDIT.md` row #50), so presence
+      cannot gate a queue. Expiry is compared **on read**, never swept.
+      **RATIFIED, the two `employee_notifications.type` values**: `support_chat.replied` and
+      `support_chat.became_ticket`. Chosen during the build, not by Kane — the plan named the n8n
+      slugs and the audit family but never these. They must also be mapped to `['employee']` in
+      `src/lib/notifications/notification-views.ts`: **an unmapped type has no dashboard badge and
+      is effectively invisible.**
 - [ ] 2. `references/sql/alter/2026-09-19_employee_support_role.sql` — the `employee_support` value on
       the roles CHECK. **Restate the FULL list**; a subset silently breaks every other role's INSERT.
       Re-read the live constraint before this is ever applied — it cannot be measured locally.
@@ -171,6 +182,22 @@ expired rows never swept) and `app/api/presence/active/route.ts:30-42` (windowed
   **the 2026-09-16 ticket migration's state is UNKNOWN, not unapplied.** Until both run, the routes
   report `migrated: false` and the UI says chat cannot accept sessions yet — **not 500, and not
   silently pretending to save.**
+- **⚠ MIGRATION ORDER IS A HARD DEPENDENCY.** This migration **cannot run before** the 2026-09-16
+  ticket migration: `became_ticket_id` is a foreign key into `employee_support_tickets`. Both the
+  `.sql` precondition block and the apply script's pre-flight name the launcher to run first. Run
+  `Apply Employee Support migration.cmd` before `Apply Employee Support Chat migration.cmd` — and
+  because the earlier one's state is unknown, `--verify` it first rather than assuming.
+- **The two widened CHECK lists are RECONSTRUCTED, not measured** — the roles list from six SQL
+  files in git order cross-checked against `VALID_ROLES` (`app/api/employee-roles/route.ts:15-25`),
+  the notification list from a seventeen-file chain cross-checked against
+  `NOTIFICATION_TYPE_TO_VIEWS`. They are written in an additive, union-with-live shape so a wrong
+  reconstruction **cannot DROP** an existing value — but **re-read both live definitions before
+  `--apply` anyway.** The files and the `.cmd` both say so.
+- **The ticket side still owes its own notification widen** (v1 plan task 3,
+  `references/sql/alter/2026-09-16_add_support_notification_types.sql`, for `support.replied` /
+  `support.answered`). It has never been written. Written in the same additive shape it is
+  order-independent with this one; **written as a flat restatement it would strip both chat types.**
+  Copy the shape, not the list.
 - **The roles CHECK widen is load-bearing** and must be re-read against the live constraint first.
 - **Five grants, by hand, after deploy**: `employee_support` to Carla, Claire, Ainsley, Grace, Alivia.
   Until those exist the staff tabs are empty for everyone.

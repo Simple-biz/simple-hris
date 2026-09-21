@@ -22,6 +22,14 @@ const VALID_ROLES = [
   'ceo',
   'qc',
   'tickets',
+  // Employee Support's five answerers. Granting it auto-provisions the
+  // `employee_support` feature catalog (the support tabs) and nothing else —
+  // the whole reason it is its own FeatureViewKey rather than a key under
+  // `tickets`; see provisionDashboardTabs below. This list is the only writer
+  // of employee_roles.role, so the value must also be in the live
+  // `employee_roles_role_check` or the INSERT 500s: the widen is
+  // references/sql/alter/2026-09-19_employee_support_role.sql, PENDING --apply.
+  'employee_support',
 ] as const;
 type Role = (typeof VALID_ROLES)[number];
 

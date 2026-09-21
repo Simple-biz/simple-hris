@@ -414,6 +414,17 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     label: 'Tickets board',
     note: 'created, updated, moved, commented, archived, restored, deleted',
   },
+  {
+    // Separate from `ticket.` on purpose, and the separation is the point: the
+    // dev Kanban and Employee Support share a dashboard and share nothing else.
+    // These rows carry pay disputes and complaints naming a manager, and the
+    // five people who answer them hold `employee_support`, never `tickets`.
+    // `employee` leads the surface list because the employee is who raises it.
+    match: 'employee_support.',
+    surfaces: ['employee', 'tickets'],
+    label: 'Employee Support',
+    note: 'chat.entered / chat.left / chat.claimed / chat.replied / chat.became_ticket, and the ticket side\'s filed / claimed / replied / reassigned / closed',
+  },
 
   // ── Assistants ─────────────────────────────────────────────────────────────
   {

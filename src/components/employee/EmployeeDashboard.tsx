@@ -108,6 +108,10 @@ import {
 import { parseUsHolidaysList, getEnabledHolidayMap } from '@/lib/us-holidays';
 import HiddenValue from './HiddenValue';
 import GiftShippingCard, { type GiftShippingState } from './GiftShippingCard';
+import EmployeeSupportChat, {
+  SupportChatButton,
+  type SupportChatState,
+} from './EmployeeSupportChat';
 import { Bell, Eye, EyeOff, Gift, Hourglass } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -896,6 +900,20 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     status: 'none',
     milestoneMonths: null,
     needsAction: false,
+  });
+
+  /** Live-chat dialog control — the chat button in BOTH header clusters flips
+   *  this flag, the same split the gift bell uses. There is deliberately no
+   *  floating launcher: Penny owns the one fixed bottom-right control on the
+   *  employee side (docs/features/employee-penny-ai.md:143-146). */
+  const [supportChatOpen, setSupportChatOpen] = useState(false);
+  /** State summary emitted by EmployeeSupportChat so the header can badge. */
+  const [supportChatState, setSupportChatState] = useState<SupportChatState>({
+    status: 'none',
+    position: null,
+    queueResolved: false,
+    migrated: null,
+    needsAttention: false,
   });
 
   // Fetch the employee's master row once to get their start_date
@@ -2695,6 +2713,16 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                   onClick={onNavigateToNotifications}
                 />
               )}
+              {/* Live chat, beside FAQs — the two help controls travel together.
+                  Inserted BEFORE FAQs here and before FAQs in the desktop
+                  cluster below, which is the same relative position in both
+                  even though the two clusters order Refresh and FAQs
+                  differently. Edit the pair together or they drift. */}
+              <SupportChatButton
+                state={supportChatState}
+                variant="icon"
+                onClick={() => setSupportChatOpen(true)}
+              />
               <Button
                 type="button"
                 variant="outline"
@@ -2749,6 +2777,12 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                 )}
                 Refresh
               </Button>
+              {/* Live chat, beside FAQs — mirrors the mobile cluster above. */}
+              <SupportChatButton
+                state={supportChatState}
+                variant="labelled"
+                onClick={() => setSupportChatOpen(true)}
+              />
               <Button
                 type="button"
                 variant="outline"
@@ -3046,6 +3080,17 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         dialogOpen={giftDialogOpen}
         onDialogOpenChange={setGiftDialogOpen}
         onStateChange={setGiftState}
+      />
+
+      {/* Employee Support live chat. The ENTRY POINT is the button in the two
+          header clusters above; only the dialog is mounted here, next to the
+          gift card for the same reason — a modal belongs at the root of the
+          shell, not nested inside a header row. Never a floating launcher. */}
+      <EmployeeSupportChat
+        email={email}
+        dialogOpen={supportChatOpen}
+        onDialogOpenChange={setSupportChatOpen}
+        onStateChange={setSupportChatState}
       />
 
       <div className="flex min-w-0 flex-col gap-2 overflow-x-clip pb-2 lg:min-h-0 lg:grow lg:gap-3">
