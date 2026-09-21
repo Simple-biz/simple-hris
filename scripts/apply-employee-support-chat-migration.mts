@@ -1,10 +1,18 @@
 /**
- * [EMPLOYEE-SUPPORT-CHAT]
- * Applies the Employee Support LIVE CHAT migration — three tables and two CHECK
- * widens — then verifies every table, comment, index, CHECK, trigger and RLS
- * setting landed, that each constraint actually rejects what it exists to
- * reject, that the two widened CHECK lists did not LOSE a single value, and that
- * none of the three new tables joined the supabase_realtime publication.
+ * [EMPLOYEE-SUPPORT]
+ * Applies the whole Employee Support migration set — FIVE files as of
+ * 2026-09-21: the live chat's three tables, the `employee_support` role widen,
+ * and the TICKET side's triage columns and notification widen. It then verifies
+ * every table, column, comment, index, CHECK, trigger and RLS setting landed,
+ * that each constraint actually rejects what it exists to reject, that no
+ * widened CHECK list LOST a value, and that none of the new tables joined the
+ * supabase_realtime publication.
+ *
+ * THE FILENAME SAYS "chat" AND THE SCOPE NO LONGER DOES. That is deliberate:
+ * the ticket side folded in by adding two lines to SQL_RELATIVE_PATHS, exactly
+ * as the note on that array predicted, and renaming the script would break the
+ * launcher, the deploy notes and three docs to buy nothing. One launcher, one
+ * transaction, one list.
  *
  *   node --import tsx scripts/apply-employee-support-chat-migration.mts           # rehearse, then ROLL BACK
  *   node --import tsx scripts/apply-employee-support-chat-migration.mts --dry     # same, explicitly
@@ -74,6 +82,13 @@ const SQL_RELATIVE_PATHS = [
   'references/sql/create/2026-09-19_employee_support_chat.sql',
   'references/sql/alter/2026-09-19_employee_support_role.sql',
   'references/sql/alter/2026-09-19_add_chat_notification_types.sql',
+  // The TICKET side, folded in 2026-09-21 exactly as the note above predicted.
+  // Order matters for the second one and not the first: the notification widen
+  // reads the LIVE constraint as its floor, so it must run AFTER the chat widen
+  // in the same transaction or it would compute its union against a floor that
+  // does not yet include support_chat.replied / support_chat.became_ticket.
+  'references/sql/alter/2026-09-21_employee_support_triage.sql',
+  'references/sql/alter/2026-09-21_support_notification_types.sql',
 ];
 
 const SQL_FILES = SQL_RELATIVE_PATHS.map((rel) => ({
@@ -421,6 +436,49 @@ const CHECKS: Array<[string, string]> = [
     `employee_notifications_type_check still allows ALL ${EXPECTED_NOTIFICATION_TYPES.length} types (nothing was dropped by the restatement)`,
     constraintCoverage('employee_notifications_type_check', EXPECTED_NOTIFICATION_TYPES),
   ],
+
+  // ---- The TICKET side's triage columns (2026-09-21) --------------------
+  // Keyed on object names, not on which file created them — which is why
+  // folding two more files in needed no other change to this script.
+  ...(['priority', 'triaged_at', 'triaged_by'] as const).map((col): [string, string] => [
+    `employee_support_tickets.${col} exists`,
+    `SELECT EXISTS (SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='employee_support_tickets'
+         AND column_name='${col}') AS ok`,
+  ]),
+  ...(['priority', 'triaged_at', 'triaged_by'] as const).map((col): [string, string] => [
+    `employee_support_tickets.${col} is NULLABLE (an un-triaged ticket is the default state)`,
+    `SELECT COALESCE((SELECT is_nullable='YES' FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='employee_support_tickets'
+         AND column_name='${col}'), false) AS ok`,
+  ]),
+  ...([
+    'employee_support_tickets_priority_valid',
+    'employee_support_tickets_triage_all_or_nothing',
+  ] as const).map((con): [string, string] => [
+    `${con} exists`,
+    `SELECT EXISTS (SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.employee_support_tickets'::regclass AND conname='${con}') AS ok`,
+  ]),
+  [
+    'employee_support_tickets_priority_valid admits exactly the four TICKET_PRIORITIES values',
+    constraintCoverage('employee_support_tickets_priority_valid', ['low', 'medium', 'high', 'urgent']),
+  ],
+  [
+    // The whole point of the second widen. If this fails, the ticket side can
+    // write a notification the CHECK rejects and the employee is never told.
+    'employee_notifications_type_check admits the TICKET types support.replied / support.answered',
+    constraintCoverage('employee_notifications_type_check', ['support.replied', 'support.answered']),
+  ],
+  [
+    // And the chat's two survived the second restatement — the exact failure
+    // the union-onto-live shape exists to make impossible, asserted anyway.
+    'employee_notifications_type_check STILL admits the CHAT types after the ticket widen',
+    constraintCoverage('employee_notifications_type_check', [
+      'support_chat.replied',
+      'support_chat.became_ticket',
+    ]),
+  ],
 ];
 
 // ===========================================================================
@@ -619,6 +677,40 @@ const TRIGGER_CONTROLS: Array<[string, string]> = [
      UPDATE ${SESSIONS} SET status='waiting', claimed_by=NULL, claimed_at=NULL WHERE id = ${CTL_SESSION_ID}
      RETURNING (queued_at = timestamptz '2026-01-01 00:00:00+00') AS ok`,
   ],
+
+  // ---- The TICKET side's triage columns (2026-09-21) --------------------
+  // The negative controls prove the CHECKs bite. This proves they do not bite
+  // the NORMAL case: a freshly filed ticket is un-triaged, which is the
+  // queueing line, which is where every ticket starts.
+  [
+    'a freshly filed ticket is accepted with NO priority — that is the queueing line',
+    insertRow(
+      'public.employee_support_tickets',
+      {
+        work_email: CTL_EMAIL,
+        filed_by_email: CTL_EMAIL,
+        category: "'other'",
+        concern: "'Control — un-triaged is the default state'",
+      },
+      '(priority IS NULL AND triaged_at IS NULL AND triaged_by IS NULL) AS ok',
+    ),
+  ],
+  [
+    'a ranked ticket is accepted when all three move together',
+    insertRow(
+      'public.employee_support_tickets',
+      {
+        work_email: CTL_EMAIL,
+        filed_by_email: CTL_EMAIL,
+        category: "'other'",
+        concern: "'Control — ranked onto the board'",
+        priority: "'urgent'",
+        triaged_at: 'now()',
+        triaged_by: "'  Carla@Simple.BIZ '",
+      },
+      "(priority = 'urgent' AND triaged_by = 'carla@simple.biz') AS ok",
+    ),
+  ],
 ];
 
 const NEGATIVE_CONTROLS: Array<[string, string]> = [
@@ -745,6 +837,43 @@ const NEGATIVE_CONTROLS: Array<[string, string]> = [
       type: "'support_chat.nope'",
       title: "'Control'",
       message: "'Control'",
+    }),
+  ],
+
+  // ---- The TICKET side's triage CHECKs (2026-09-21) ---------------------
+  // A CHECK that is never proven to reject is a comment with a semicolon.
+  [
+    'an unknown ticket priority is rejected',
+    insertRow('public.employee_support_tickets', {
+      work_email: CTL_EMAIL,
+      filed_by_email: CTL_EMAIL,
+      category: "'other'",
+      concern: "'Control — triage priority'",
+      priority: "'critical'",
+      triaged_at: 'now()',
+      triaged_by: CTL_EMAIL,
+    }),
+  ],
+  [
+    'a ranked ticket with no triaged_at is rejected (the three move as a set)',
+    insertRow('public.employee_support_tickets', {
+      work_email: CTL_EMAIL,
+      filed_by_email: CTL_EMAIL,
+      category: "'other'",
+      concern: "'Control — triage set'",
+      priority: "'high'",
+      triaged_by: CTL_EMAIL,
+    }),
+  ],
+  [
+    'a triage stamp with no priority is rejected (a rank cannot be forgotten halfway)',
+    insertRow('public.employee_support_tickets', {
+      work_email: CTL_EMAIL,
+      filed_by_email: CTL_EMAIL,
+      category: "'other'",
+      concern: "'Control — triage stamp'",
+      triaged_at: 'now()',
+      triaged_by: CTL_EMAIL,
     }),
   ],
 ];

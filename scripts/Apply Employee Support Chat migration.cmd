@@ -14,10 +14,18 @@ echo       employee_support_chat_sessions
 echo       employee_support_chat_messages
 echo       employee_support_chat_agents
 echo.
+echo   It also adds the TICKET side triage columns to the existing
+echo   employee_support_tickets table (priority, triaged_at, triaged_by)
+echo.
 echo   And it widens two existing CHECK lists:
 echo       employee_roles.role            + employee_support
 echo       employee_notifications.type    + support_chat.replied
 echo                                      + support_chat.became_ticket
+echo                                      + support.replied
+echo                                      + support.answered
+echo.
+echo   The widens only ever ADD values - each one reads the live
+echo   constraint first and unions onto it, so nothing can be dropped.
 echo.
 echo   It does NOT touch payroll, dispatch, paystubs, rates or the
 echo   existing tickets board.
