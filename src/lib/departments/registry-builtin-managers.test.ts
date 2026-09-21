@@ -241,3 +241,22 @@ test('every LIVE hsl:* grant label has a scope; only the family labels are unsco
 function scopeValidate(key: string, managersByLabel: Record<string, [string, string][]>) {
   return validateBuiltinManagersInput(scopeInput(key, managersByLabel));
 }
+
+test('an HSL DATA sub-team is a manager scope of its own, after the code teams', () => {
+  const subs = { hogan_smith_law: [{ key: 'spanish_intake', name: 'Spanish Intake' }] };
+  const codeOnly = builtinManagerScopes('hogan_smith_law');
+  const withData = builtinManagerScopes('hogan_smith_law', subs);
+  assert.equal(withData.length, codeOnly.length + 1);
+  assert.deepEqual(withData[withData.length - 1], { grantLabel: 'hsl:spanish_intake', displayName: 'HSL — Spanish Intake' });
+
+  // Its grant is claimed by that scope, not left unscoped -- unscoped is how a
+  // manager quietly loses a team.
+  const rows: BuiltinGrantRow[] = [{ department: 'hsl:spanish_intake', managerEmail: 'lead@simple.biz' }];
+  assert.deepEqual(partitionBuiltinGrants('hogan_smith_law', rows, subs).byScope.get('hsl:spanish_intake'), ['lead@simple.biz']);
+  // Without the map the same grant IS unscoped, which is exactly why the
+  // dialog and the route must both pass the PROSPECTIVE map.
+  assert.deepEqual(partitionBuiltinGrants('hogan_smith_law', rows).unscoped.map((u) => u.label), ['hsl:spanish_intake']);
+
+  // A flat department is untouched by the map.
+  assert.equal(builtinManagerScopes('lead_gen', subs).length, 1);
+});

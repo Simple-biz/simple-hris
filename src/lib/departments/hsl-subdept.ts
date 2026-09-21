@@ -164,8 +164,10 @@ export function formatDeptLabel(raw: string | null | undefined): string {
   const sub = hslSubKeyFromRaw(raw);
   if (sub) return `HSL — ${hslSubTeamName(sub)}`;
   const s = (raw ?? '').trim();
-  // Unknown `hsl:*` sub-key: still never show the bare slug to a human.
-  if (s.toLowerCase().startsWith('hsl:')) return `HSL — ${s.slice(4)}`;
+  // An `hsl:*` key not in code -- a DATA sub-team, or a typo -- still never
+  // shows a human the bare slug. Humanized from the key because the stored
+  // display name lives in app_settings and this function is pure.
+  if (s.toLowerCase().startsWith('hsl:')) return `HSL — ${humanizeSubKey(s.slice(4))}`;
   // Any OTHER namespaced cell `<parentKey>:<subKey>` (built-in sub-departments
   // since 2026-09-21, and in-app ones). Same rule as HSL: never show a human a
   // bare slug. The parent renders from DEPARTMENTS so it reads exactly as its
@@ -230,7 +232,16 @@ export function isPlaceableDeptLabel(
 ): boolean {
   const s = (raw ?? '').trim();
   if (!s) return false;
-  if (isHslFamilyLabel(s)) return isHslSubDeptLabel(s);
+  if (isHslFamilyLabel(s)) {
+    // A CODE sub-team is always placeable. A DATA sub-team (2026-09-21, Kane:
+    // "LET US REFACTOR this for HSL") is placeable when the map says it exists.
+    // A bare "HSL" is still never a placement.
+    if (isHslSubDeptLabel(s)) return true;
+    const dataSubs = subsByParent?.hogan_smith_law;
+    if (!dataSubs || dataSubs.length === 0) return false;
+    const lower = s.toLowerCase();
+    return dataSubs.some((x) => `hsl:${x.key.toLowerCase()}` === lower);
+  }
 
   // Built-in / in-app sub-departments (2026-09-21). Same rule HSL has had since
   // its cutover: once a department HAS sub-teams, the sub-team is what carries

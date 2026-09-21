@@ -17,6 +17,8 @@ import {
   builtinSubLabel,
   builtinSubOccupancy,
   builtinSubOptions,
+  builtinSubOptionsWithPinned,
+  pinnedSubDepartments,
   diffBuiltinSubs,
   placeableSubIndex,
   supportsDataSubDepartments,
@@ -34,16 +36,74 @@ const MAP: BuiltinSubMap = {
   ],
 };
 
-test('HSL is excluded from DATA sub-departments; other built-ins are not', () => {
+test('every built-in can carry DATA sub-departments, HSL included; registry keys cannot', () => {
   assert.equal(supportsDataSubDepartments('lead_gen'), true);
   assert.equal(supportsDataSubDepartments('qc'), true);
-  // HSL sub-teams are code: they carry KPI calculators and a Readiness row.
-  assert.equal(supportsDataSubDepartments('hogan_smith_law'), false);
+  // Changed 2026-09-21 (Kane: "LET US REFACTOR this for HSL if needed").
+  assert.equal(supportsDataSubDepartments('hogan_smith_law'), true);
   assert.equal(supportsDataSubDepartments('executive_assistants'), false, 'registry keys are not built-ins');
+});
+
+test('HSL: the 16 code teams are PINNED, and a data team cannot shadow or resurrect one', () => {
+  const pinned = pinnedSubDepartments('hogan_smith_law');
+  assert.equal(pinned.length, 16, '14 KPI teams + 2 placement-only');
+  assert.ok(pinned.some((p) => p.key === 'intake_specialist'));
+  assert.ok(pinned.some((p) => p.key === 'simple_texting'));
+  assert.deepEqual(pinnedSubDepartments('lead_gen'), [], 'only HSL has code teams');
+
+  // Shadowing a code team would silently redirect its cells and rate row.
   assert.match(
-    validateBuiltinSubsInput({ builtinKey: 'hogan_smith_law', subDepartments: [{ key: 'x', name: 'X' }] }).error ?? '',
-    /code/,
+    validateBuiltinSubsInput({
+      builtinKey: 'hogan_smith_law',
+      subDepartments: [{ key: 'intake_specialist', name: 'Intake' }],
+    }).error ?? '',
+    /defined in code/,
   );
+  // lead_nurture was retired 2026-08-13; it must not come back through data.
+  assert.match(
+    validateBuiltinSubsInput({
+      builtinKey: 'hogan_smith_law',
+      subDepartments: [{ key: 'lead_nurture', name: 'Lead Nurture' }],
+    }).error ?? '',
+    /retired/,
+  );
+  // A genuinely new team is fine.
+  assert.deepEqual(
+    validateBuiltinSubsInput({
+      builtinKey: 'hogan_smith_law',
+      subDepartments: [{ key: 'spanish_intake', name: 'Spanish Intake' }],
+    }),
+    { ok: true },
+  );
+});
+
+test('HSL: a data team is labelled hsl:<sub> so it STAYS in the HSL family', () => {
+  // The whole point of the exception: hogan_smith_law:<sub> would drop the
+  // person out of the Mon-Sun week model and the weekend premium.
+  assert.equal(builtinSubLabel('hogan_smith_law', 'spanish_intake'), 'hsl:spanish_intake');
+  assert.equal(normalizeDeptToKey('hsl:spanish_intake'), 'hogan_smith_law');
+  assert.deepEqual(builtinSubOptions({ hogan_smith_law: [{ key: 'spanish_intake', name: 'Spanish Intake' }] }, 'hogan_smith_law'), [
+    { value: 'hsl:spanish_intake', label: 'HSL — Spanish Intake' },
+  ]);
+  // Code teams first, then data, in the combined picker list.
+  const all = builtinSubOptionsWithPinned({ hogan_smith_law: [{ key: 'spanish_intake', name: 'Spanish Intake' }] }, 'hogan_smith_law');
+  assert.equal(all.length, 17);
+  assert.equal(all[0]!.value, 'hsl:ssd_medical_records');
+  assert.equal(all[16]!.value, 'hsl:spanish_intake');
+  // Occupancy reads the hsl: prefix, not hogan_smith_law:.
+  const occ = builtinSubOccupancy('hogan_smith_law', ['hsl:spanish_intake', 'HSL:Spanish_Intake', 'hsl:intake_specialist']);
+  assert.equal(occ.get('spanish_intake'), 2);
+});
+
+test('HSL: a data team is PLACEABLE only when the map says it exists', () => {
+  const withData = placeableSubIndex({ hogan_smith_law: [{ key: 'spanish_intake', name: 'Spanish Intake' }] });
+  assert.equal(isPlaceableDeptLabel('hsl:spanish_intake', withData), true);
+  assert.equal(isPlaceableDeptLabel('hsl:spanish_intake'), false, 'unknown to code and no map -> not a placement');
+  assert.equal(isPlaceableDeptLabel('hsl:spanish_intake', placeableSubIndex({})), false);
+  // Code teams and the bare label are unchanged either way.
+  assert.equal(isPlaceableDeptLabel('hsl:intake_specialist', withData), true);
+  assert.equal(isPlaceableDeptLabel('HSL', withData), false);
+  assert.equal(formatDeptLabel('hsl:spanish_intake'), 'HSL — Spanish Intake');
 });
 
 test('normalizeDeptToKey resolves <parent>:<sub> for any real parent — and NOTHING else', () => {

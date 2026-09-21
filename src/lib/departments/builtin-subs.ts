@@ -1,31 +1,38 @@
 // Sub-departments on a MASTER-LIST (built-in) department. Kane, 2026-09-21:
 // "I want us to make sure that if we edit these departments we can add sub
-// departments in it!"
+// departments in it!" -- and, on seeing HSL locked: "LET US REFACTOR this for
+// HSL if needed".
 //
 // Until now only HSL had sub-teams, hard-coded as HSL_DEPT_KEYS. This makes them
-// DATA for every other built-in, stored as one JSON blob in `app_settings` —
+// DATA for every built-in, stored as one JSON blob in `app_settings` --
 // deliberately no new table, exactly like the in-app department registry.
 //
-// KEY CONVENTION: `<builtinKey>:<subKey>` (e.g. `lead_gen:nurture`). That is the
-// same namespacing `subDeptStructureKey` uses for in-app departments, and it is
-// what `parentOfDeptKey` (dept-rail.ts) and `resolveDeptCatalogRate`
-// (resolve-rate.ts) already resolve generically — neither needed a change.
+// KEY CONVENTION: `<builtinKey>:<subKey>` (e.g. `lead_gen:nurture`) -- the same
+// namespacing `subDeptStructureKey` uses for in-app departments, and what
+// `parentOfDeptKey` (dept-rail.ts) and `resolveDeptCatalogRate`
+// (resolve-rate.ts) already resolve generically.
 //
-// HSL IS EXCLUDED ON PURPOSE. Its sub-teams stay code:
-//   - `hslSubDeptOptions()` is the single source the onboarding picker, transfer
-//     targets, the Pay Structure rail and the catalog export all read, while the
-//     KPI surfaces (HslBonusCalculator, AdminRoles, use-bonus-scoring-queue,
-//     ManagerBonusHistory, payroll-readiness, PayrollWizard) read HSL_DEPT_KEYS
-//     *directly*. A data-driven HSL sub would be placeable but invisible to the
-//     calculators;
-//   - putting it in the KPI keyspace instead gives it a calculator card nobody
-//     asked for AND a permanent `draft` row in Payroll Readiness that no one can
-//     clear — measured behaviour, which is why `simple_texting` became a
-//     placement-only key instead (see hsl-subdept.ts).
-// HSL already HAS sub-teams; the departments that have none are the point here.
+// HSL IS THE ONE EXCEPTION TO THE CONVENTION, NOT TO THE FEATURE. Its data
+// sub-teams are labelled `hsl:<subKey>`, never `hogan_smith_law:<subKey>`,
+// because `normalizeDeptToKey`'s `hsl:` branch is what keeps a cell inside the
+// HSL family -- the Mon-Sun week model, the +P15/h weekend premium and
+// dept-scoped bonus matching all hang off it (hsl-subdepartments.md s11). The
+// 16 CODE sub-teams (HSL_DEPT_KEYS + the placement-only ones) are PINNED: they
+// show in the editor but cannot be renamed or removed here, because 14 of them
+// carry a KPI calculator and a Payroll Readiness row. A DATA sub-team added to
+// HSL is exactly what Simple Texting already is: a real team people sit in,
+// with its own base rate, that has no calculator of its own.
 
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { HSL_BUILTIN_KEY, slugifyDeptKey, subDeptStructureKey, type DepartmentSubUnit } from './registry';
+import { HSL_DEPT_KEYS } from '@/lib/hsl-bonus/schema';
+import {
+  HSL_PLACEMENT_ONLY_SUB_KEYS,
+  hslSubDeptLabel,
+  hslSubDeptOptions,
+  hslSubTeamName,
+  type HslSubTeamKey,
+} from './hsl-subdept';
 
 /** app_settings key holding the JSON map. */
 export const BUILTIN_SUBS_SETTING_KEY = 'payment_catalog.departments.builtin_subs';
@@ -35,19 +42,44 @@ export type BuiltinSubMap = Record<string, DepartmentSubUnit[]>;
 
 export const MAX_BUILTIN_SUBS = 24;
 
-/** Can this built-in department carry DATA sub-departments? */
+/** Can this built-in department carry DATA sub-departments? Every built-in
+ *  can, HSL included since Kane's 2026-09-21 refactor call. */
 export function supportsDataSubDepartments(key: string): boolean {
-  if (key === HSL_BUILTIN_KEY) return false;
   return DEPARTMENTS.some((d) => d.key === key);
 }
+
+/**
+ * Sub-teams that exist in CODE and are therefore PINNED in the editor: shown,
+ * never renamed or removed here. Only HSL has any -- its 14 KPI-scoring teams
+ * plus the 2 placement-only ones.
+ */
+export function pinnedSubDepartments(key: string): DepartmentSubUnit[] {
+  if (key !== HSL_BUILTIN_KEY) return [];
+  const keys: readonly HslSubTeamKey[] = [...HSL_DEPT_KEYS, ...HSL_PLACEMENT_ONLY_SUB_KEYS];
+  return keys.map((k) => ({ key: k, name: hslSubTeamName(k) }));
+}
+
+/**
+ * `lead_nurture` shipped 2026-08-12 and was withdrawn 2026-08-13: Carla and CJ
+ * settled it named the SAME team as Simple Texting and collided with Lucky's
+ * separate Lead Nurture team. `hsl-subdept.test.ts` pins it absent from code;
+ * this pins it absent from DATA too, so an accountant cannot quietly bring it
+ * back through the editor. Ask Carla first.
+ */
+const RETIRED_HSL_SUB_KEYS: ReadonlySet<string> = new Set(['lead_nurture']);
 
 /** The sub-departments stored for a built-in (never undefined). */
 export function builtinSubsFor(map: BuiltinSubMap | null | undefined, key: string): DepartmentSubUnit[] {
   return map?.[key] ?? [];
 }
 
-/** The master-cell / rate-row label for one sub: `<builtinKey>:<subKey>`. */
+/**
+ * The master-cell / rate-row label for one sub: `<builtinKey>:<subKey>` -- except
+ * HSL, whose cells and rate rows are `hsl:<subKey>` (see the header). Using the
+ * generic form for HSL would drop the person out of the HSL family.
+ */
 export function builtinSubLabel(parentKey: string, subKey: string): string {
+  if (parentKey === HSL_BUILTIN_KEY) return hslSubDeptLabel(subKey as HslSubTeamKey);
   return subDeptStructureKey(parentKey, subKey);
 }
 
@@ -58,13 +90,27 @@ export function builtinSubOptions(
 ): Array<{ value: string; label: string }> {
   const parent = DEPARTMENTS.find((d) => d.key === key);
   if (!parent) return [];
+  // HSL reads "HSL — <team>" everywhere (hslSubDeptOptions), not "Hogan Smith
+  // Law — <team>"; a data team must sit beside the code ones indistinguishably.
+  const parentLabel = key === HSL_BUILTIN_KEY ? 'HSL' : parent.name;
   return builtinSubsFor(map, key).map((s) => ({
     value: builtinSubLabel(key, s.key),
-    label: `${parent.name} — ${s.name}`,
+    label: `${parentLabel} — ${s.name}`,
   }));
 }
 
-/** Every built-in sub across every department — the rail / options feed. */
+/** Code AND data sub-teams of one built-in, as picker options. For HSL that is
+ *  the 16 code teams followed by the data ones; for everyone else just data. */
+export function builtinSubOptionsWithPinned(
+  map: BuiltinSubMap | null | undefined,
+  key: string,
+): Array<{ value: string; label: string }> {
+  const pinned = key === HSL_BUILTIN_KEY ? hslSubDeptOptions() : [];
+  return [...pinned, ...builtinSubOptions(map, key)];
+}
+
+/** Every built-in DATA sub across every department — the rail / options feed.
+ *  HSL's code teams are NOT here; callers already list `hslSubDeptOptions()`. */
 export function allBuiltinSubOptions(
   map: BuiltinSubMap | null | undefined,
 ): Array<{ value: string; label: string }> {
@@ -97,13 +143,11 @@ export function validateBuiltinSubsInput(input: BuiltinSubsInput): { ok: boolean
   if (!DEPARTMENTS.some((d) => d.key === key)) {
     return { ok: false, error: 'That is not a built-in department.' };
   }
-  if (key === HSL_BUILTIN_KEY) {
-    return {
-      ok: false,
-      error: 'HSL sub-teams are defined in code — they carry KPI calculators and cannot be edited here.',
-    };
-  }
   if (!Array.isArray(input.subDepartments)) return { ok: false, error: 'Malformed sub-department payload.' };
+  // The payload is the DATA list only. A data key that shadows a code team
+  // would silently redirect that team's cells and rate row; a retired one
+  // would resurrect a decision Carla already made.
+  const pinned = new Set(pinnedSubDepartments(key).map((p) => p.key));
   if (input.subDepartments.length > MAX_BUILTIN_SUBS) {
     return { ok: false, error: `Keep it to ${MAX_BUILTIN_SUBS} sub-departments or fewer.` };
   }
@@ -118,6 +162,15 @@ export function validateBuiltinSubsInput(input: BuiltinSubsInput): { ok: boolean
     // `parentOfDeptKey` splits at the FIRST colon — the rate row and the rail
     // would disagree about who the parent is.
     if (subKey.includes(':')) return { ok: false, error: `"${name}" cannot contain a colon.` };
+    if (pinned.has(subKey)) {
+      return { ok: false, error: `"${name}" is already an HSL team defined in code — it is listed above.` };
+    }
+    if (key === HSL_BUILTIN_KEY && RETIRED_HSL_SUB_KEYS.has(subKey)) {
+      return {
+        ok: false,
+        error: `"${name}" was retired on 2026-08-13 (it named the same team as Simple Texting). Ask Carla before bringing it back.`,
+      };
+    }
     if (seen.has(subKey)) return { ok: false, error: `Two sub-departments resolve to "${subKey}".` };
     seen.add(subKey);
   }
@@ -169,7 +222,10 @@ export function builtinSubOccupancy(
   rosterDeptCells: readonly string[],
 ): Map<string, number> {
   const out = new Map<string, number>();
-  const prefix = `${parentKey.toLowerCase()}:`;
+  // `builtinSubLabel` with an empty sub yields exactly the prefix -- `hsl:` for
+  // HSL, `<key>:` for everyone else -- so the count reads the same cells the
+  // placement writes.
+  const prefix = builtinSubLabel(parentKey, '').toLowerCase();
   for (const raw of rosterDeptCells) {
     const cell = (raw ?? '').trim().toLowerCase();
     if (!cell.startsWith(prefix)) continue;

@@ -736,13 +736,24 @@ export interface BuiltinManagerScope {
  * The scopes a master-list department's Edit dialog may write. Empty for a key
  * that is not built-in, so no caller can invent one.
  */
-export function builtinManagerScopes(key: string): BuiltinManagerScope[] {
+export function builtinManagerScopes(
+  key: string,
+  /** HSL DATA sub-teams (2026-09-21), keyed by parent -- each is a manager
+   *  scope of its own (`hsl:<sub>`), exactly like the code teams. Omitted keeps
+   *  the code-only list. */
+  subsByParent?: Readonly<Record<string, readonly { key: string; name: string }[]>>,
+): BuiltinManagerScope[] {
   const dept = DEPARTMENTS.find((d) => d.key === key);
   if (!dept) return [];
   if (key !== HSL_BUILTIN_KEY) return [{ grantLabel: dept.name, displayName: dept.name }];
   // Both keyspaces: a placement-only sub-team is every bit as real a team to
-  // manage as a KPI-scoring one.
-  return hslSubDeptOptions().map((o) => ({ grantLabel: o.value, displayName: o.label }));
+  // manage as a KPI-scoring one. Data teams follow the code ones.
+  const code = hslSubDeptOptions().map((o) => ({ grantLabel: o.value, displayName: o.label }));
+  const codeKeys = new Set(code.map((c) => c.grantLabel.toLowerCase()));
+  const data = (subsByParent?.[HSL_BUILTIN_KEY] ?? [])
+    .map((x) => ({ grantLabel: `hsl:${x.key}`, displayName: `HSL — ${x.name}` }))
+    .filter((d) => !codeKeys.has(d.grantLabel.toLowerCase()));
+  return [...code, ...data];
 }
 
 /**
@@ -787,8 +798,9 @@ export interface BuiltinGrantPartition {
 export function partitionBuiltinGrants(
   key: string,
   rows: readonly BuiltinGrantRow[],
+  subsByParent?: Readonly<Record<string, readonly { key: string; name: string }[]>>,
 ): BuiltinGrantPartition {
-  const scopes = builtinManagerScopes(key);
+  const scopes = builtinManagerScopes(key, subsByParent);
   const byScope = new Map<string, string[]>(scopes.map((s) => [s.grantLabel.toLowerCase(), []]));
   const unscoped: Array<{ label: string; managerEmail: string }> = [];
   const perSubTeam = key === HSL_BUILTIN_KEY;
@@ -851,11 +863,14 @@ export interface BuiltinManagersInput {
 const MAX_BUILTIN_MANAGERS = 50;
 
 /** Mirrored client-side (Save gating) and server-side (PATCH). */
-export function validateBuiltinManagersInput(input: BuiltinManagersInput): { ok: boolean; error?: string } {
+export function validateBuiltinManagersInput(
+  input: BuiltinManagersInput,
+  subsByParent?: Readonly<Record<string, readonly { key: string; name: string }[]>>,
+): { ok: boolean; error?: string } {
   const key = input.builtinKey?.trim() ?? '';
   if (!BUILTIN_KEYS.has(key)) return { ok: false, error: 'That is not a built-in department.' };
 
-  const expected = builtinManagerScopes(key);
+  const expected = builtinManagerScopes(key, subsByParent);
   if (!Array.isArray(input.scopes) || input.scopes.length !== expected.length) {
     return { ok: false, error: 'That edit does not match the department’s manager scopes.' };
   }
@@ -949,8 +964,9 @@ export function diffBuiltinManagerScopes(
   key: string,
   partition: BuiltinGrantPartition,
   input: BuiltinManagersInput,
+  subsByParent?: Readonly<Record<string, readonly { key: string; name: string }[]>>,
 ): BuiltinManagersDiff {
-  const scopes = builtinManagerScopes(key);
+  const scopes = builtinManagerScopes(key, subsByParent);
   const sent = new Map(
     (input.scopes ?? []).map((s) => [(s.grantLabel ?? '').trim().toLowerCase(), s.managers ?? []] as const),
   );

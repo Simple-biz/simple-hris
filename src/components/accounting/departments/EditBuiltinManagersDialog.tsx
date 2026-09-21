@@ -59,15 +59,17 @@ import {
   type DepartmentSubUnit,
 } from '@/lib/departments/registry';
 import {
+  builtinSubLabel,
   builtinSubsFor,
   diffBuiltinSubs,
+  pinnedSubDepartments,
   placeableSubIndex,
   supportsDataSubDepartments,
   validateBuiltinSubsInput,
   builtinSubOccupancy,
   type BuiltinSubMap,
 } from '@/lib/departments/builtin-subs';
-import { formatDeptLabel, hslSubDeptOptions } from '@/lib/departments/hsl-subdept';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { EASE, firstNameOf, initialsOf, type DirectoryPerson } from './department-wizard-steps';
 import { StagedProgress, useStagedRun } from './staged-run';
@@ -117,13 +119,6 @@ export default function EditBuiltinManagersDialog({
   const lastInputRef = useRef<BuiltinManagersInput | null>(null);
 
   const deptKey = dept?.key ?? null;
-  const scopes = useMemo(() => (deptKey ? builtinManagerScopes(deptKey) : []), [deptKey]);
-  const multi = scopes.length > 1;
-
-  const partition = useMemo(
-    () => (deptKey ? partitionBuiltinGrants(deptKey, grantRows) : null),
-    [deptKey, grantRows],
-  );
 
   const nameByEmail = useMemo(() => {
     const m = new Map<string, string>();
@@ -134,17 +129,24 @@ export default function EditBuiltinManagersDialog({
   const who = (email: string) => firstNameOf(nameOf(email));
 
   useEffect(() => {
-    if (!open || !dept || !partition) return;
+    if (!open || !dept) return;
     setStep(0);
     setDir(1);
+    // Seed from the STORED sub map, never from `subs` state: that state is []
+    // until this effect sets it, and scopes built from [] would seed every HSL
+    // data sub-team's manager list EMPTY -- a save would then revoke them.
+    const storedSubs = builtinSubsFor(builtinSubs, dept.key);
+    const storedIndex = placeableSubIndex({ ...builtinSubs, [dept.key]: storedSubs });
+    const seedScopes = builtinManagerScopes(dept.key, storedIndex);
+    const seedPartition = partitionBuiltinGrants(dept.key, grantRows, storedIndex);
     const seed: Record<string, BuiltinManager[]> = {};
-    for (const s of scopes) {
+    for (const s of seedScopes) {
       const lower = s.grantLabel.toLowerCase();
-      seed[lower] = (partition.byScope.get(lower) ?? []).map((e) => ({ email: e, name: nameOf(e) }));
+      seed[lower] = (seedPartition.byScope.get(lower) ?? []).map((e) => ({ email: e, name: nameOf(e) }));
     }
     setByScope(seed);
     setMoves([]);
-    setSubs(builtinSubsFor(builtinSubs, dept.key));
+    setSubs(storedSubs);
     reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- prefill on open only
   }, [open, deptKey]);
@@ -174,6 +176,21 @@ export default function EditBuiltinManagersDialog({
     () => (deptKey ? builtinSubOccupancy(deptKey, roster.map((p) => p.department)) : new Map<string, number>()),
     [deptKey, roster],
   );
+  /** Sub-teams that exist in code (HSL's 16): shown pinned, never edited here. */
+  const pinnedSubs = useMemo(() => (deptKey ? pinnedSubDepartments(deptKey) : []), [deptKey]);
+
+  // Manager scopes follow the PROSPECTIVE sub map: an HSL data sub-team is a
+  // scope of its own, so a team added on step 2 can be given a manager on
+  // step 1 by going back.
+  const scopes = useMemo(
+    () => (deptKey ? builtinManagerScopes(deptKey, prospectiveSubs) : []),
+    [deptKey, prospectiveSubs],
+  );
+  const multi = scopes.length > 1;
+  const partition = useMemo(
+    () => (deptKey ? partitionBuiltinGrants(deptKey, grantRows, prospectiveSubs) : null),
+    [deptKey, grantRows, prospectiveSubs],
+  );
 
   const input: BuiltinManagersInput | null = dept
     ? {
@@ -190,15 +207,16 @@ export default function EditBuiltinManagersDialog({
       }
     : null;
 
-  const validation = input ? validateBuiltinManagersInput(input) : { ok: false };
+  const validation = input ? validateBuiltinManagersInput(input, prospectiveSubs) : { ok: false };
   const peopleValidation = deptKey
     ? validateBuiltinPeopleInput({ builtinKey: deptKey, moves }, prospectiveSubs)
     : { ok: true as const };
   const peopleDiff = deptKey ? diffBuiltinPeople(deptKey, { builtinKey: deptKey, moves }) : null;
   const diff = useMemo(
-    () => (deptKey && partition && input ? diffBuiltinManagerScopes(deptKey, partition, input) : null),
+    () =>
+      deptKey && partition && input ? diffBuiltinManagerScopes(deptKey, partition, input, prospectiveSubs) : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps -- input is derived from byScope
-    [deptKey, partition, byScope, scopes],
+    [deptKey, partition, byScope, scopes, prospectiveSubs],
   );
 
   const totalManagers = scopes.reduce((n, s) => n + (byScope[s.grantLabel.toLowerCase()] ?? []).length, 0);
@@ -427,7 +445,7 @@ export default function EditBuiltinManagersDialog({
                             deptName={dept.name}
                             subs={subs}
                             onSubs={setSubs}
-                            editable={subsEditable}
+                            pinned={pinnedSubs}
                             occupancy={subOccupancy}
                             error={(subsValidation as { error?: string }).error}
                           />
@@ -495,8 +513,9 @@ export default function EditBuiltinManagersDialog({
                                       <Plus className="mt-px h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
                                       <span>
                                         <strong>{sub.name}</strong> is added. People can be placed in it as{' '}
-                                        <code className="text-[10px]">{dept.key}:{sub.key}</code>, and it can carry its
-                                        own base rate in Pay structure.
+                                        <code className="text-[10px]">{builtinSubLabel(dept.key, sub.key)}</code>, and it
+                                        can carry its own base rate in Pay structure
+                                        {pinnedSubs.length > 0 ? ' — no KPI calculator of its own' : ''}.
                                       </span>
                                     </li>
                                   ))}
@@ -519,7 +538,8 @@ export default function EditBuiltinManagersDialog({
                                   ))}
                                 </ul>
                                 {subsDiff.added.length > 0 &&
-                                  builtinSubsFor(builtinSubs, dept.key).length === 0 && (
+                                  builtinSubsFor(builtinSubs, dept.key).length === 0 &&
+                                  pinnedSubs.length === 0 && (
                                     <p className="mt-2 rounded-md bg-amber-50 p-2 text-[11px] text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
                                       {dept.name} has no sub-departments today. Once it has them,{' '}
                                       <strong>new</strong> people must be placed in one — everyone already in{' '}
@@ -585,6 +605,7 @@ export default function EditBuiltinManagersDialog({
                             <WhatTheSheetOwns
                               deptName={dept.name}
                               multi={multi}
+                              pinnedCount={pinnedSubs.length}
                               onOpenPayStructure={() => {
                                 onClose();
                                 onOpenPayStructure(dept.key);
@@ -901,10 +922,12 @@ function UnscopedGrants({ labels }: { labels: string[] }) {
 function WhatTheSheetOwns({
   deptName,
   multi,
+  pinnedCount,
   onOpenPayStructure,
 }: {
   deptName: string;
   multi: boolean;
+  pinnedCount: number;
   onOpenPayStructure: () => void;
 }) {
   return (
@@ -917,9 +940,9 @@ function WhatTheSheetOwns({
         <li>
           <strong>People</strong> — come from the Google Sheet master-list sync; moving someone is a department transfer.
         </li>
-        {multi && (
+        {pinnedCount > 0 && (
           <li>
-            <strong>Which sub-teams exist</strong> — {deptName}&rsquo;s sub-teams are code; this dialog edits who manages them.
+            <strong>The {pinnedCount} teams defined in code</strong> — they carry KPI calculators, so they are pinned; teams you add here can be edited freely.
           </li>
         )}
       </ul>
@@ -1244,7 +1267,7 @@ function SubDepartmentsStep({
   deptName,
   subs,
   onSubs,
-  editable,
+  pinned,
   occupancy,
   error,
 }: {
@@ -1252,7 +1275,9 @@ function SubDepartmentsStep({
   deptName: string;
   subs: DepartmentSubUnit[];
   onSubs: (v: DepartmentSubUnit[]) => void;
-  editable: boolean;
+  /** Sub-teams defined in CODE (HSL's 16). Shown locked -- they carry KPI
+   *  calculators, so they are never renamed or removed here. */
+  pinned: DepartmentSubUnit[];
   /** subKey -> how many roster people sit in it right now. */
   occupancy: Map<string, number>;
   error?: string;
@@ -1268,42 +1293,52 @@ function SubDepartmentsStep({
     setDraft('');
   };
 
-  if (!editable) {
-    return (
-      <div className="space-y-3">
-        <div className="flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50/60 p-2.5 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
-          <Lock className="mt-px h-4 w-4 shrink-0" />
-          <span>
-            {deptName}&rsquo;s sub-teams are defined in code. Each one carries its own KPI calculator and
-            a Payroll Readiness row, so adding one here would create a team that can be staffed but
-            never scored. Changing them is an engineering change.
-          </span>
-        </div>
-        <ul className="space-y-1">
-          {hslSubDeptOptions().map((o) => (
-            <li
-              key={o.value}
-              className="truncate rounded-lg border border-zinc-200 p-2 text-sm text-zinc-700 dark:border-zinc-800 dark:text-zinc-300"
-            >
-              {o.label}
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-3">
       <div className="flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50/60 p-2.5 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
         <Layers className="mt-px h-4 w-4 shrink-0 text-orange-500" />
         <span>
-          Internal teams inside {deptName}, like HSL&rsquo;s. Each one becomes a placement
-          (<code className="text-[10px]">{deptKey}:&lt;team&gt;</code>) and can carry its own base rate in
-          Pay structure. <strong>Once {deptName} has sub-teams, new people must be placed in one</strong> —
+          Internal teams inside {deptName}. Each one becomes a placement
+          (<code className="text-[10px]">{builtinSubLabel(deptKey, '<team>')}</code>) and can carry its own
+          base rate in Pay structure. <strong>Once {deptName} has sub-teams, new people must be placed in one</strong> —
           existing placements are untouched.
+          {pinned.length > 0 && (
+            <>
+              {' '}A team added here is like Simple Texting: people can be placed in it and it can be priced,
+              but it has <strong>no KPI calculator of its own</strong>.
+            </>
+          )}
         </span>
       </div>
+
+      {pinned.length > 0 && (
+        <div>
+          <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">
+            <Lock className="h-3.5 w-3.5" />
+            Defined in code — {pinned.length} teams with their own KPI calculator or scoring
+          </p>
+          <ul className="max-h-40 space-y-1 overflow-y-auto pr-1">
+            {pinned.map((sub) => {
+              const held = occupancy.get(sub.key) ?? 0;
+              return (
+                <li
+                  key={`pin-${sub.key}`}
+                  className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50/60 p-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-300"
+                >
+                  <span className="min-w-0 flex-1 truncate">{sub.name}</span>
+                  <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                    {held} {held === 1 ? 'person' : 'people'}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {pinned.length > 0 && (
+        <p className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Added here</p>
+      )}
 
       <div className="flex gap-2">
         <Input
@@ -1326,7 +1361,7 @@ function SubDepartmentsStep({
 
       {subs.length === 0 ? (
         <p className="rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs text-zinc-400 dark:border-zinc-700 dark:text-zinc-500">
-          {deptName} is flat — no sub-departments.
+          {pinned.length > 0 ? `No teams added beyond the ${pinned.length} in code.` : `${deptName} is flat — no sub-departments.`}
         </p>
       ) : (
         <motion.ul layout className="space-y-1.5">

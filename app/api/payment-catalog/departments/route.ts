@@ -50,6 +50,7 @@ import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { applyDirectDepartmentMove } from '@/lib/transfers/direct-transfer';
 import {
+  builtinSubLabel,
   builtinSubsFor,
   diffBuiltinSubs,
   placeableSubIndex,
@@ -636,7 +637,7 @@ async function countMasterRowsForSubs(parentKey: string, subKeys: string[]): Pro
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return out;
   for (const sub of subKeys) {
-    const label = subDeptStructureKey(parentKey, sub);
+    const label = builtinSubLabel(parentKey, sub);
     const { count, error } = await supabase
       .from('global_master_list')
       .select('id', { count: 'exact', head: true })
@@ -655,9 +656,7 @@ async function countMasterRowsForSubs(parentKey: string, subKeys: string[]): Pro
 }
 
 async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string): Promise<Response> {
-  const check = validateBuiltinManagersInput(input);
-  if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
-  const key = input.builtinKey.trim();
+  const key = (input.builtinKey ?? '').trim();
   const dept = DEPARTMENTS.find((d) => d.key === key);
   if (!dept) return NextResponse.json({ error: 'That is not a built-in department.' }, { status: 400 });
 
@@ -716,8 +715,14 @@ async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string):
     }
   }
 
-  /** The sub map as it will be AFTER this save — what a placement is checked against. */
+  /** The sub map as it will be AFTER this save — what a placement is checked
+   *  against, AND what the manager scopes are built from: an HSL data sub-team
+   *  is a manager scope of its own (`hsl:<sub>`), exactly like the code teams,
+   *  so a team added in this save can be given a manager in this save. */
   const prospectiveSubs = placeableSubIndex({ ...storedSubs, [key]: nextSubs });
+
+  const check = validateBuiltinManagersInput(input, prospectiveSubs);
+  if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
 
   // People move as REAL transfers; the same validator the dialog gates Save on.
   const moves = input.people ?? [];
@@ -732,8 +737,8 @@ async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string):
     department: r.department,
     managerEmail: r.manager_email,
   }));
-  const partition = partitionBuiltinGrants(key, grantRows);
-  const diff = diffBuiltinManagerScopes(key, partition, input);
+  const partition = partitionBuiltinGrants(key, grantRows, prospectiveSubs);
+  const diff = diffBuiltinManagerScopes(key, partition, input, prospectiveSubs);
   const perSubTeam = key === HSL_BUILTIN_KEY;
 
   const nameFor = new Map(
@@ -783,7 +788,7 @@ async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string):
           // A removed sub's OWN dept-scope rate row goes with it, so no orphan
           // `<key>:<sub>` structure lingers (same rule as the in-app registry).
           for (const sub of subsDiff.removed) {
-            const structureKey = subDeptStructureKey(key, sub.key);
+            const structureKey = builtinSubLabel(key, sub.key);
             const { structures } = await listPayStructures();
             const existing = structures.find(
               (st) => st.scope === 'department' && st.departmentKey === structureKey,

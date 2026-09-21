@@ -58,7 +58,9 @@ test('formatDeptLabel prettifies sub-teams and passes everything else through', 
   assert.equal(formatDeptLabel('Hogan Smith Law'), 'Hogan Smith Law');
   assert.equal(formatDeptLabel(null), '');
   // An unknown sub-key has no display name — show the family, not the raw slug.
-  assert.equal(formatDeptLabel('hsl:not_a_team'), 'HSL — not_a_team');
+  // Humanized since 2026-09-21: an hsl:* key not in code may be a DATA sub-team
+  // (Kane: "LET US REFACTOR this for HSL"), and a human never sees a slug.
+  assert.equal(formatDeptLabel('hsl:not_a_team'), 'HSL — Not A Team');
 });
 
 test('collapseHslFamilyLabel leaves exactly ONE HSL entry in a picker list', () => {
@@ -296,8 +298,12 @@ test('RETIRED sub-team keys stay retired — `lead_nurture` never comes back by 
     // apply. A retired key must never strand someone outside HSL or at ₱0.
     assert.ok(isHslFamilyLabel(label), `${label} must stay in the HSL family for pay purposes`);
     assert.equal(collapseHslFamilyLabel(label), HSL_FAMILY_DEPT_LABEL, `${label} still collapses to one HSL`);
-    // And it degrades to the raw slug rather than impersonating a live team.
-    assert.equal(formatDeptLabel(label), `HSL — ${key}`);
+    // Display is humanized since 2026-09-21 (an unknown hsl:* key may be a DATA
+    // sub-team now), so a retired key READS like a team -- the guards above
+    // (not placeable, not in any picker, not a sub key) are what stop it from
+    // BEING one. Pinned so nobody "fixes" the display back to a slug.
+    const humanized = key.split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    assert.equal(formatDeptLabel(label), `HSL — ${humanized}`);
   }
 });
 

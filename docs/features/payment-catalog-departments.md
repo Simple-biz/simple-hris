@@ -250,7 +250,7 @@ same null-for-unknown contract as `normalizeDeptToKey`.
   close that gap for real hires.
 - **Missing-bank readiness** iterates `active_employees`, so a registry-only
   member is invisible to the bank check too.
-- **Sub-departments on a built-in are no longer HSL-only** (§7.4) — but HSL's own sub-teams remain code, because they carry KPI calculators.
+- **Sub-departments on a built-in are no longer HSL-only** (§7.4); HSL's 16 code teams stay pinned because they carry KPI calculators, and data teams can be added beside them.
 - The Department tab's own footnote sets the expectation: built-in KPI
   calculators with bespoke inputs (`DEPT_INPUT_CONFIG`) remain per-department
   code; a custom department gets the generic catalog-driven card, not a
@@ -463,8 +463,8 @@ swallow. Change those in Admin → Roles & permissions.
   manager quietly loses a team. The 14 labels measured live are pinned in the
   test suite; retiring a key from `HSL_DEPT_KEYS` while grants still point at it
   fires it.
-- The dialog lists what it **cannot** change — the name, and (for HSL alone)
-  which sub-teams exist — and why, with a Pay Structure link for rates.
+- The dialog lists what it **cannot** change — the name, and (for HSL) the 16
+  code teams, which are pinned — and why, with a Pay Structure link for rates.
 - Audit: `department.managers.update` on `department_managers` with the granted /
   revoked / resulting sets **per scope**, plus the unscoped labels left alone.
 - Payload discrimination: a PATCH body with a string `builtinKey` is the
@@ -575,17 +575,49 @@ legs needed no change at all**: `parentOfDeptKey` nests any
 `normalizeDeptToKey` collapses it. HSL keeps `hsl:<sub>` because its prefix is
 not its key, which is why that one stays special-cased.
 
-#### HSL is excluded, on purpose
+#### HSL: code teams pinned, data teams allowed (2026-09-21, second pass)
 
-HSL's sub-teams stay **code** and are shown read-only in the dialog; the
-validator refuses the key server-side too. `hslSubDeptOptions()` is the single
-source the onboarding picker, transfer targets, the rail and the exports read,
-while every KPI surface reads `HSL_DEPT_KEYS` **directly** — so a data-driven
-HSL sub would be placeable but invisible to the calculators. Putting it in the
-KPI keyspace instead is worse: it earns a calculator card nobody asked for *and*
-a permanent `draft` row in Payroll Readiness that nobody can clear (measured
-behaviour — it is why `simple_texting` became placement-only). HSL already has
-sub-teams; the departments that had none are the point of this change.
+The first pass excluded HSL outright. Kane, on seeing the lock in the running
+app: *"Why cant I edit HSL? ?? LET US REFACTOR this for HSL if needed"* — so
+HSL is in, with one exception to the convention and one boundary:
+
+- **Its data sub-teams are labelled `hsl:<subKey>`, never
+  `hogan_smith_law:<subKey>`** (`builtinSubLabel`). `normalizeDeptToKey`'s
+  `hsl:` branch is what keeps a cell inside the HSL family — the Mon–Sun week
+  model, the +₱15/h weekend premium and dept-scoped bonus matching all hang off
+  it (hsl-subdepartments.md §11). The generic form would drop the person out of
+  HSL. Rate rows and the occupancy count use the same `hsl:` prefix, so the
+  three keyspaces stay one.
+- **The 16 code teams are pinned** (`pinnedSubDepartments`): shown locked in
+  the step with their headcounts, never renamed or removed here, because 14 of
+  them carry a KPI calculator and a Payroll Readiness row. A data key that
+  shadows one is refused; so is `lead_nurture`, retired 2026-08-13
+  ([[hsl-placement-only-subteams]]) — the test that pins it absent from code
+  now also pins it absent from data.
+- **A data HSL team has no KPI calculator of its own.** It is exactly what
+  Simple Texting already is: placeable, priceable, transferable, and scored
+  either under another team's calculator or not at all. The step says so. If a
+  data team should later be *scored* under an existing calculator (the
+  `scoredUnder` pattern), that is a follow-up in `hsl-subdept.ts`, not a
+  dialog change.
+- **A data HSL team is a manager scope of its own** (`hsl:<sub>`, §7.1), built
+  from the **prospective** map so a team added on the Sub-departments step can
+  be given a manager on the Managers step by going back. The dialog seeds its
+  manager lists from the *stored* map rather than from `subs` state — that
+  state is `[]` until the seed effect sets it, and seeding from it would have
+  left every data team's list empty and a save would have revoked them.
+- `isPlaceableDeptLabel`'s HSL-family branch consults the map: a code team is
+  always placeable, a data team is placeable when the map holds it, a bare
+  `HSL` still never is. `formatDeptLabel` humanises any `hsl:*` key not in code
+  (`hsl:spanish_intake` → "HSL — Spanish Intake"); two assertions in
+  `hsl-subdept.test.ts` that pinned the old slug display were re-pinned to the
+  new one, with the retirement guards untouched.
+
+**Known gap, deliberately not widened into:** the manager Transfer dialog and
+the HR onboarding sub-team picker read `hslSubDeptOptions()` with no map, so a
+data HSL team is a destination from the Catalog's People step immediately and
+from those two surfaces only once they load the map. Both are manager/HR
+surfaces with their own governing docs.
 
 #### What changed in the shared department functions
 
@@ -653,9 +685,9 @@ as possible and pinned by tests.
   *"Nothing has changed yet"* next to an enabled **Save changes**, and then
   reported *"No change."* — caught while verifying, not in the browser.
 
-**Verification (2026-09-21):** typecheck clean; 10 green in
-`builtin-subs.test.ts` — including the same-save "add a sub then staff it"
-composition and the bare-placement refusal; **4,077 of 4,079** across `src/lib` — the two failures are the pre-existing
+**Verification (2026-09-21, after the HSL pass):** typecheck clean; 14 green in
+`builtin-subs.test.ts` (4 HSL-specific), 12 in `registry-builtin-managers.test.ts` — including the same-save "add a sub then staff it"
+composition and the bare-placement refusal; **4,087 of 4,089** across `src/lib` — the two failures are the pre-existing
 `ManagerApp.tsx:1859` pair (item 96).
 **Not browser-verified, and no sub-department has been created against
 production.** The migration-free storage means there is nothing to run, but the
