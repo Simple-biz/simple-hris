@@ -18,6 +18,7 @@ import {
   builtinSubOccupancy,
   builtinSubOptions,
   builtinSubOptionsWithPinned,
+  isBuiltinSubTeamKey,
   pinnedSubDepartments,
   diffBuiltinSubs,
   placeableSubIndex,
@@ -267,4 +268,19 @@ test('once a department has sub-teams, a bare placement into it is refused', () 
     validateBuiltinPeopleInput({ builtinKey: 'lead_gen', moves: [bare] }, placeableSubIndex({})),
     { ok: true },
   );
+});
+
+test('built-in sub-team keys are kept OFF the bonus target pickers', () => {
+  // The calculator collapses an assignment key to its parent, so offering a
+  // sub-team as a target offers a lie (bonus-catalog.md "Bare vs namespaced").
+  assert.equal(isBuiltinSubTeamKey('lead_gen:nurture'), true);
+  assert.equal(isBuiltinSubTeamKey('hsl:spanish_intake'), true);
+  assert.equal(isBuiltinSubTeamKey('hsl:intake_specialist'), true, 'code HSL teams too -- same collapse');
+  // Departments themselves and in-app registry entries are NOT filtered: they
+  // were offered before 2026-09-21 and this fix must not narrow that.
+  assert.equal(isBuiltinSubTeamKey('lead_gen'), false);
+  assert.equal(isBuiltinSubTeamKey('Lead Gen'), false);
+  assert.equal(isBuiltinSubTeamKey('executive_assistants'), false);
+  assert.equal(isBuiltinSubTeamKey('executive_assistants:nurture'), false, 'registry sub: unknown prefix, untouched');
+  assert.equal(isBuiltinSubTeamKey(''), false);
 });

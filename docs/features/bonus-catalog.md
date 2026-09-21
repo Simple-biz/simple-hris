@@ -282,6 +282,24 @@ US Manager Bonus · USEE**.
   `KNOWN_DISTINCT_DEPT_HOMONYMS` with a justification; an **undeclared** collision
   fails, which is the case that matters — a department retired from the calculator
   and later adopted into HSL otherwise re-enters the payable set silently.
+- **Built-in sub-teams are kept OFF the two target pickers** *(2026-09-21)*. Once
+  master-list departments gained data sub-teams (`payment-catalog-departments.md`
+  §7.4), `customDepartments` — the one seam the Pay Structure rail, Bonus
+  Assignments and System Bonuses all read — started carrying `lead_gen:<sub>` and
+  `hsl:<sub>` keys, and for one commit (`5bffa558`) they were **selectable as a
+  bonus target**. That is the namespaced vector this section is about: the KPI
+  calculator resolves an assignment by `normalizeDeptToKey(a.departmentKey)`
+  (`DeptBonusCalculator.tsx`, `commonByDept` / `sharedCommonByDept`), so a bonus
+  assigned to `lead_gen:nurture` would apply to **every** Lead Gen person, and a
+  namespaced key in a PAB/Tech allowlist would match **nobody**. `AssignmentsTab`
+  and `SystemBonusesTab` now receive `bonusTargetDepartments` =
+  `customDepartments` minus `isBuiltinSubTeamKey` (`builtin-subs.ts`, tested);
+  `PayStructureTab` keeps the full list because that is where a sub-team's base
+  rate is set. Sub-team-targeted bonuses are a real ask, not a bug to hide — the
+  build is a most-specific-first resolver in the calculator (person's raw cell
+  against the namespaced key first, parent second, the way `assignRosterToRail`
+  already homes people), after which the filter comes out.
+
   **Do not "fix" a homonym by removing the bare slug from the payable set** unless
   the two really are the same team; that narrows the set and stops paying weeks
   already scored under the in-app dept.

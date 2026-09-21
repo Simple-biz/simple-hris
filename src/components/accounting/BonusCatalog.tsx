@@ -69,7 +69,7 @@ import { Input } from '@/components/ui/input';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { formatDeptLabel, hslSubDeptOptions } from '@/lib/departments/hsl-subdept';
-import { allBuiltinSubOptions, type BuiltinSubMap } from '@/lib/departments/builtin-subs';
+import { allBuiltinSubOptions, isBuiltinSubTeamKey, type BuiltinSubMap } from '@/lib/departments/builtin-subs';
 import {
   buildDeptRail,
   assignRosterToRail,
@@ -786,6 +786,20 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
     );
   }, [deptRegistry, builtinSubs]);
 
+  /**
+   * `customDepartments` MINUS built-in sub-teams -- for the two tabs that pick a
+   * bonus TARGET. The KPI calculator resolves an assignment's key through
+   * `normalizeDeptToKey`, so a bonus assigned to `lead_gen:nurture` would apply
+   * to every Lead Gen person, and a namespaced key in a PAB/Tech allowlist
+   * matches nobody (bonus-catalog.md, "Bare vs namespaced is load-bearing").
+   * The Pay Structure rail keeps the full list: that is where a sub-team's own
+   * base rate is set. See `isBuiltinSubTeamKey`.
+   */
+  const bonusTargetDepartments = useMemo(
+    () => customDepartments.filter((d) => !isBuiltinSubTeamKey(d.key)),
+    [customDepartments],
+  );
+
   // Live USD-anchored FX rates — used only to sort the Bonus Library's
   // "Amount (high-low)" by PHP-equivalent so a $100 bonus outranks a ₱500 one.
   // The actual payout conversion happens at apply time in the KPI Calculator.
@@ -1482,7 +1496,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
                 bonuses={bonuses}
                 assignments={assignments}
                 roster={visibleRoster}
-                extraDepartments={customDepartments}
+                extraDepartments={bonusTargetDepartments}
                 onAdd={addAssignment}
                 onRemove={removeAssignment}
               />
@@ -1499,7 +1513,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
               <SystemBonusesTab
                 bonuses={systemBonuses}
                 fx={fx}
-                extraDepartments={customDepartments}
+                extraDepartments={bonusTargetDepartments}
                 onUpsert={upsertSystemBonus}
                 onDelete={deleteSystemBonus}
               />

@@ -24,6 +24,7 @@
 // with its own base rate, that has no calculator of its own.
 
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { HSL_BUILTIN_KEY, slugifyDeptKey, subDeptStructureKey, type DepartmentSubUnit } from './registry';
 import { HSL_DEPT_KEYS } from '@/lib/hsl-bonus/schema';
 import {
@@ -129,6 +130,30 @@ export function placeableSubIndex(map: BuiltinSubMap | null | undefined): Record
     if (subs.length > 0) out[d.key] = subs;
   }
   return out;
+}
+
+/**
+ * Is this rail key a BUILT-IN department's sub-team (`lead_gen:nurture`,
+ * `hsl:spanish_intake`) rather than a department or an in-app registry entry?
+ *
+ * Exists for ONE reason: these keys must stay OUT of the Bonus Assignments and
+ * System Bonuses target pickers. `bonus-catalog.md` "Bare vs namespaced is
+ * load-bearing": the payable set holds UNNAMESPACED slugs, and the KPI
+ * calculator resolves an assignment by `normalizeDeptToKey(a.departmentKey)`
+ * -- so a bonus assigned to `lead_gen:nurture` silently applies to ALL of Lead
+ * Gen, and a namespaced key in a PAB/Tech allowlist never matches anyone. The
+ * Pay Structure rail DOES want them (that is where a sub-team's base rate is
+ * set), which is why this is a filter at two call sites and not an omission
+ * from `customDepartments`.
+ *
+ * Sub-team-targeted bonuses are a real feature request, not a bug to hide: the
+ * fix is a most-specific-first resolver in the calculator, after which this
+ * filter comes out. Until then, offering the target is offering a lie.
+ */
+export function isBuiltinSubTeamKey(key: string): boolean {
+  const k = (key ?? '').trim();
+  if (!k.includes(':')) return false;
+  return normalizeDeptToKey(k) !== null;
 }
 
 export interface BuiltinSubsInput {
