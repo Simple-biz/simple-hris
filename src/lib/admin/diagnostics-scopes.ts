@@ -47,6 +47,7 @@ export const ALL_DIAGNOSTIC_NODE_IDS = [
   'rates',
   'hubstaff-csv',
   'master-list',
+  'roster-drift',
   'supabase-client',
   'supabase-postgres',
   'pg-pool',
@@ -86,6 +87,7 @@ const HR_NODE_IDS = [
   'hr-onboarding',
   'hr-offboarding',
   'master-list',
+  'roster-drift',
   'google-sheet-sync',
 ] as const satisfies readonly DiagnosticNodeId[];
 

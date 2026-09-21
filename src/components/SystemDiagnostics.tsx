@@ -431,6 +431,22 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
       lastChecked: iso,
     },
     {
+      id: 'roster-drift',
+      label: 'Roster Definition Drift',
+      category: 'employee-data',
+      status: 'healthy',
+      summary: 'Both definitions of "active" agree.',
+      details: [
+        'active_employees (unstamped AND on the current upload) vs what the external API serves (unstamped).',
+        'They differed by 508 rows on 2026-09-21 and nothing in the app was positioned to notice.',
+      ],
+      suggestedChecks: [
+        'Rehearse scripts/reconcile-gml-active-only.mts — it splits the gap without writing.',
+        'docs/features/gml-roster-source-of-truth.md explains the transfer-fork cause.',
+      ],
+      lastChecked: iso,
+    },
+    {
       id: 'supabase-client',
       label: 'Supabase Client',
       category: 'infra',
@@ -874,6 +890,7 @@ const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
   'rate-history':          { x: COL.data,    y: 1120 },
   'payment-dispatch':      { x: COL.data,    y: 1400 },
   'cycle-closeout':        { x: COL.data,    y: 1680 },
+  'roster-drift':          { x: COL.data,    y: 1960 },
   // Col 3 — client / pooler / audit
   'supabase-client':       { x: COL.client,  y: 0    },
   'pg-pool':               { x: COL.client,  y: 280  },

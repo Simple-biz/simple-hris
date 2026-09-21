@@ -20,6 +20,7 @@ import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 // prefix `dispatch.cycle_reopened.`, so a literal here that drifted would start
 // counting archived declarations as live ones.
 import { CYCLE_CLOSEOUT_PREFIX } from '@/lib/payroll/cycle-closeout';
+import { judgeRosterDrift } from '@/lib/roster/roster-drift';
 
 export type ProbeStatus = 'healthy' | 'warning' | 'critical' | 'unknown';
 
@@ -1506,5 +1507,116 @@ export async function probeCycleCloseout(): Promise<ProbeResult> {
       details: [trimError(e)],
       suggestedChecks: [],
     };
+  }
+}
+
+/**
+ * Do the HRIS's two answers to "who is active" still agree?
+ *
+ * `active_employees` (unstamped AND on the current upload) versus what the
+ * external API serves (unstamped, full stop). They differed by 508 rows on
+ * 2026-09-21 — Admin → Integrations said 1,723, HR → Global Master List said
+ * 1,215 — and nothing in the app was positioned to notice. This probe is the
+ * "once and for all" half of that fix: the next divergence is visible the day
+ * it starts.
+ *
+ * Identity is folded across all four email columns. A count keyed on one column
+ * is unsound against this table: it is how an earlier pass reported 217 people
+ * missing when the true number was 7.
+ */
+export async function probeRosterDrift(): Promise<ProbeResult> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { status: 'unknown', summary: 'No Supabase client.', details: [], suggestedChecks: [] };
+  }
+  try {
+    const current = await supabase
+      .from('master_list_uploads')
+      .select('id')
+      .eq('is_current', true)
+      .limit(1)
+      .maybeSingle();
+    if (current.error) {
+      return {
+        status: 'warning',
+        summary: 'Could not read master_list_uploads.',
+        details: [trimError(current.error)],
+        suggestedChecks: ['Confirm exactly one upload is flagged is_current.'],
+      };
+    }
+    const currentId = (current.data as { id?: string } | null)?.id ?? null;
+
+    const { rows, error } = await selectAllPaged<Record<string, unknown>>((from, to) =>
+      supabase
+        .from('global_master_list')
+        .select(
+          '"Work Email","Personal Email","Alternate Work Email","Alternate Work Email 2",off_boarded_at,last_seen_upload_id',
+        )
+        .is('off_boarded_at', null)
+        .order('id', { ascending: true })
+        .range(from, to),
+    );
+    if (error) {
+      return {
+        status: 'warning',
+        summary: 'Could not read the master list.',
+        details: [error],
+        suggestedChecks: ['Check service-role credentials and RLS on global_master_list.'],
+      };
+    }
+
+    const cols = ['Work Email', 'Personal Email', 'Alternate Work Email', 'Alternate Work Email 2'];
+    const parent = new Map<string, string>();
+    const find = (x: string): string => {
+      let r = x;
+      while (parent.get(r) !== r) r = parent.get(r)!;
+      return r;
+    };
+    const add = (x: string) => {
+      if (!parent.has(x)) parent.set(x, x);
+    };
+    const emailsOf = (r: Record<string, unknown>): string[] =>
+      cols.map((c) => normEmail(String(r[c] ?? ''))).filter((e): e is string => Boolean(e));
+    for (const r of rows) {
+      const es = emailsOf(r);
+      es.forEach(add);
+      for (let i = 1; i < es.length; i++) {
+        const a = find(es[0]);
+        const b = find(es[i]);
+        if (a !== b) parent.set(a, b);
+      }
+    }
+    const keyOf = (r: Record<string, unknown>, idx: number) => {
+      const es = emailsOf(r);
+      return es.length ? find(es[0]) : `row:${idx}`;
+    };
+
+    const onView = new Set<string>();
+    let viewRows = 0;
+    rows.forEach((r, i) => {
+      if (currentId && r['last_seen_upload_id'] === currentId) {
+        viewRows += 1;
+        onView.add(keyOf(r, i));
+      }
+    });
+    const allPeople = new Set(rows.map((r, i) => keyOf(r, i)));
+    let unexplained = 0;
+    for (const p of allPeople) if (!onView.has(p)) unexplained += 1;
+
+    const verdict = judgeRosterDrift({ activeRows: rows.length, viewRows, unexplained });
+    return {
+      status: verdict.status,
+      summary: verdict.summary,
+      details: verdict.details,
+      suggestedChecks:
+        verdict.status === 'healthy'
+          ? []
+          : [
+              'Rehearse scripts/reconcile-gml-active-only.mts — it splits the gap without writing.',
+              'docs/features/gml-roster-source-of-truth.md explains the transfer-fork cause.',
+            ],
+    };
+  } catch (e) {
+    return { status: 'unknown', summary: 'Roster drift probe error.', details: [trimError(e)], suggestedChecks: [] };
   }
 }

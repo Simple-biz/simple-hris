@@ -32,6 +32,8 @@ import {
   probeHrOnboarding,
   probeHubstaffCsv,
   probeMasterList,
+
+  probeRosterDrift,
   probeMesa,
   probeNewHireChecklist,
   probePaymentDispatch,
@@ -155,6 +157,8 @@ export async function GET() {
     pgPoolProbe,
     hubstaffProbe,
     masterListProbe,
+
+    rosterDriftProbe,
     auditLogProbe,
     disbursementProbe,
     authProbe,
@@ -177,6 +181,8 @@ export async function GET() {
     withProbeTimeout(probePgPool(), fallback),
     withProbeTimeout(probeHubstaffCsv(), fallback),
     withProbeTimeout(probeMasterList(), fallback),
+
+    withProbeTimeout(probeRosterDrift(), fallback),
     withProbeTimeout(probeAuditLog(), fallback),
     withProbeTimeout(probeDisbursementRecords(), fallback),
     withProbeTimeout(probeAuth(), fallback),
@@ -262,6 +268,8 @@ export async function GET() {
     node('rates', 'Rates Management', 'rates', ratesProbe),
     node('hubstaff-csv', 'Hubstaff CSV Import', 'csv', hubstaffProbe),
     node('master-list', 'Employee Master List', 'employee-data', masterListProbe),
+
+    node('roster-drift', 'Roster Definition Drift', 'employee-data', rosterDriftProbe),
     node('supabase-client', 'Supabase Client', 'infra', supabaseProbe),
     node('supabase-postgres', 'Supabase Postgres / RLS', 'database', supabaseProbe),
     node('pg-pool', 'pg Pool / Direct Postgres', 'database', pgPoolProbe),
