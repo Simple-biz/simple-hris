@@ -30,6 +30,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Crown,
+  Layers,
   Lock,
   Minus,
   Pencil,
@@ -53,14 +54,25 @@ import {
   type BuiltinGrantRow,
   type BuiltinPersonMove,
   type BuiltinManagersInput,
+  slugifyDeptKey,
   type BuiltinManagersSummary,
+  type DepartmentSubUnit,
 } from '@/lib/departments/registry';
-import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import {
+  builtinSubsFor,
+  diffBuiltinSubs,
+  placeableSubIndex,
+  supportsDataSubDepartments,
+  validateBuiltinSubsInput,
+  builtinSubOccupancy,
+  type BuiltinSubMap,
+} from '@/lib/departments/builtin-subs';
+import { formatDeptLabel, hslSubDeptOptions } from '@/lib/departments/hsl-subdept';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { EASE, firstNameOf, initialsOf, type DirectoryPerson } from './department-wizard-steps';
 import { StagedProgress, useStagedRun } from './staged-run';
 
-const STEPS = ['Managers', 'People', 'Review'] as const;
+const STEPS = ['Managers', 'Sub-departments', 'People', 'Review'] as const;
 
 export type BuiltinManager = { email: string; name: string };
 
@@ -70,6 +82,8 @@ export default function EditBuiltinManagersDialog({
   grantRows,
   roster,
   departmentOptions,
+  builtinSubs,
+  builtinSubsRevision,
   onClose,
   onChanged,
   onOpenPayStructure,
@@ -85,6 +99,10 @@ export default function EditBuiltinManagersDialog({
    *  departments). A bare family label is deliberately absent — it is not a
    *  placement. */
   departmentOptions: { value: string; label: string }[];
+  /** Built-in sub-departments as stored, plus the app_settings revision the
+   *  editor hands back so a stale save is a 409 and never a silent overwrite. */
+  builtinSubs: BuiltinSubMap;
+  builtinSubsRevision: string | null;
   onClose: () => void;
   onChanged: () => void;
   onOpenPayStructure: (deptKey: string) => void;
@@ -94,6 +112,7 @@ export default function EditBuiltinManagersDialog({
   /** Lower-cased grantLabel -> the resulting manager list for that scope. */
   const [byScope, setByScope] = useState<Record<string, BuiltinManager[]>>({});
   const [moves, setMoves] = useState<BuiltinPersonMove[]>([]);
+  const [subs, setSubs] = useState<DepartmentSubUnit[]>([]);
   const { view, running, run, reset } = useStagedRun<BuiltinManagersSummary>();
   const lastInputRef = useRef<BuiltinManagersInput | null>(null);
 
@@ -125,6 +144,7 @@ export default function EditBuiltinManagersDialog({
     }
     setByScope(seed);
     setMoves([]);
+    setSubs(builtinSubsFor(builtinSubs, dept.key));
     reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- prefill on open only
   }, [open, deptKey]);
@@ -138,6 +158,23 @@ export default function EditBuiltinManagersDialog({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose, running]);
 
+  const subsEditable = deptKey ? supportsDataSubDepartments(deptKey) : false;
+  const subsValidation =
+    deptKey && subsEditable ? validateBuiltinSubsInput({ builtinKey: deptKey, subDepartments: subs }) : { ok: true as const };
+  const subsDiff = deptKey ? diffBuiltinSubs(builtinSubsFor(builtinSubs, deptKey), subs) : null;
+  /** The sub map as it will be AFTER this save — a sub added in this same save
+   *  has to be a legal destination for a move in this same save. */
+  const prospectiveSubs = useMemo(
+    () => (deptKey ? placeableSubIndex({ ...builtinSubs, [deptKey]: subs }) : {}),
+    [builtinSubs, deptKey, subs],
+  );
+  /** How many roster people sit in each sub right now — a populated sub cannot
+   *  be removed, mirrored server-side against the live master list. */
+  const subOccupancy = useMemo(
+    () => (deptKey ? builtinSubOccupancy(deptKey, roster.map((p) => p.department)) : new Map<string, number>()),
+    [deptKey, roster],
+  );
+
   const input: BuiltinManagersInput | null = dept
     ? {
         builtinKey: dept.key,
@@ -149,12 +186,13 @@ export default function EditBuiltinManagersDialog({
           })),
         })),
         people: moves,
+        ...(subsEditable ? { subDepartments: subs, expectedSubsRevision: builtinSubsRevision } : {}),
       }
     : null;
 
   const validation = input ? validateBuiltinManagersInput(input) : { ok: false };
   const peopleValidation = deptKey
-    ? validateBuiltinPeopleInput({ builtinKey: deptKey, moves })
+    ? validateBuiltinPeopleInput({ builtinKey: deptKey, moves }, prospectiveSubs)
     : { ok: true as const };
   const peopleDiff = deptKey ? diffBuiltinPeople(deptKey, { builtinKey: deptKey, moves }) : null;
   const diff = useMemo(
@@ -165,8 +203,11 @@ export default function EditBuiltinManagersDialog({
 
   const totalManagers = scopes.reduce((n, s) => n + (byScope[s.grantLabel.toLowerCase()] ?? []).length, 0);
   const canSave =
-    validation.ok && peopleValidation.ok && ((diff?.changed ?? false) || (peopleDiff?.changed ?? false));
-  const stepOk = [totalManagers > 0, peopleValidation.ok, canSave][step] ?? false;
+    validation.ok &&
+    peopleValidation.ok &&
+    subsValidation.ok &&
+    ((diff?.changed ?? false) || (peopleDiff?.changed ?? false) || (subsDiff?.changed ?? false));
+  const stepOk = [totalManagers > 0, subsValidation.ok, peopleValidation.ok, canSave][step] ?? false;
 
   const runSave = (payload: BuiltinManagersInput) => {
     lastInputRef.current = payload;
@@ -363,6 +404,17 @@ export default function EditBuiltinManagersDialog({
                             />
                           ))}
                         {step === 1 && dept && (
+                          <SubDepartmentsStep
+                            deptKey={dept.key}
+                            deptName={dept.name}
+                            subs={subs}
+                            onSubs={setSubs}
+                            editable={subsEditable}
+                            occupancy={subOccupancy}
+                            error={(subsValidation as { error?: string }).error}
+                          />
+                        )}
+                        {step === 2 && dept && (
                           <PeopleStep
                             deptKey={dept.key}
                             deptName={dept.name}
@@ -372,7 +424,7 @@ export default function EditBuiltinManagersDialog({
                             departmentOptions={departmentOptions}
                           />
                         )}
-                        {step === 2 && (
+                        {step === 3 && (
                           <div className="space-y-4">
                             {!diff?.changed && !peopleDiff?.changed ? (
                               <div className="rounded-lg border border-dashed border-zinc-300 p-6 text-center dark:border-zinc-700">
@@ -1110,5 +1162,161 @@ function DestinationPicker({
         ))}
       </ul>
     </motion.div>
+  );
+}
+
+/**
+ * Sub-departments on a MASTER-LIST department (Kane, 2026-09-21).
+ *
+ * HSL's sub-teams are CODE — they carry KPI calculators and a Readiness row, so
+ * they are shown read-only here and the validator refuses them server-side too.
+ * Every other built-in gets add / rename / remove.
+ *
+ * An existing sub's KEY IS PINNED: renaming changes the label only, so its
+ * `<parent>:<sub>` rate row and every master cell pointing at it stay attached.
+ */
+function SubDepartmentsStep({
+  deptKey,
+  deptName,
+  subs,
+  onSubs,
+  editable,
+  occupancy,
+  error,
+}: {
+  deptKey: string;
+  deptName: string;
+  subs: DepartmentSubUnit[];
+  onSubs: (v: DepartmentSubUnit[]) => void;
+  editable: boolean;
+  /** subKey -> how many roster people sit in it right now. */
+  occupancy: Map<string, number>;
+  error?: string;
+}) {
+  const [draft, setDraft] = useState('');
+
+  const add = () => {
+    const name = draft.trim();
+    if (!name) return;
+    const key = slugifyDeptKey(name);
+    if (!key || subs.some((s) => s.key === key)) return;
+    onSubs([...subs, { key, name }]);
+    setDraft('');
+  };
+
+  if (!editable) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50/60 p-2.5 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+          <Lock className="mt-px h-4 w-4 shrink-0" />
+          <span>
+            {deptName}&rsquo;s sub-teams are defined in code. Each one carries its own KPI calculator and
+            a Payroll Readiness row, so adding one here would create a team that can be staffed but
+            never scored. Changing them is an engineering change.
+          </span>
+        </div>
+        <ul className="space-y-1">
+          {hslSubDeptOptions().map((o) => (
+            <li
+              key={o.value}
+              className="truncate rounded-lg border border-zinc-200 p-2 text-sm text-zinc-700 dark:border-zinc-800 dark:text-zinc-300"
+            >
+              {o.label}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50/60 p-2.5 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+        <Layers className="mt-px h-4 w-4 shrink-0 text-orange-500" />
+        <span>
+          Internal teams inside {deptName}, like HSL&rsquo;s. Each one becomes a placement
+          (<code className="text-[10px]">{deptKey}:&lt;team&gt;</code>) and can carry its own base rate in
+          Pay structure. <strong>Once {deptName} has sub-teams, new people must be placed in one</strong> —
+          existing placements are untouched.
+        </span>
+      </div>
+
+      <div className="flex gap-2">
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              add();
+            }
+          }}
+          placeholder="Add a sub-department, e.g. Nurture"
+          className="h-9"
+        />
+        <Button type="button" size="sm" onClick={add} disabled={!draft.trim()} className="shrink-0 gap-1">
+          <Plus className="h-3.5 w-3.5" />
+          Add
+        </Button>
+      </div>
+
+      {subs.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs text-zinc-400 dark:border-zinc-700 dark:text-zinc-500">
+          {deptName} is flat — no sub-departments.
+        </p>
+      ) : (
+        <motion.ul layout className="space-y-1.5">
+          <AnimatePresence initial={false} mode="popLayout">
+            {subs.map((sub, i) => {
+              const held = occupancy.get(sub.key) ?? 0;
+              return (
+                <motion.li
+                  key={sub.key}
+                  layout
+                  initial={{ opacity: 0, x: -12 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 12, scale: 0.97 }}
+                  transition={{ duration: 0.18, ease: EASE }}
+                  className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950"
+                >
+                  <Input
+                    value={sub.name}
+                    onChange={(e) => {
+                      const next = [...subs];
+                      // The KEY is pinned — renaming moves the label only, so the
+                      // rate row and every master cell stay attached.
+                      next[i] = { key: sub.key, name: e.target.value };
+                      onSubs(next);
+                    }}
+                    className="h-8 flex-1"
+                    aria-label={`Sub-department ${i + 1} name`}
+                  />
+                  <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                    {held} {held === 1 ? 'person' : 'people'}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={held > 0}
+                    onClick={() => onSubs(subs.filter((x) => x.key !== sub.key))}
+                    title={held > 0 ? 'Move its people out first' : `Remove ${sub.name}`}
+                    className="shrink-0 rounded-md p-1.5 text-zinc-400 transition-colors enabled:hover:bg-red-50 enabled:hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 dark:enabled:hover:bg-red-950/40"
+                    aria-label={`Remove ${sub.name}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </motion.li>
+              );
+            })}
+          </AnimatePresence>
+        </motion.ul>
+      )}
+
+      {error && (
+        <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+          <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+          {error}
+        </div>
+      )}
+    </div>
   );
 }

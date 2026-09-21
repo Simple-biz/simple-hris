@@ -10,8 +10,8 @@ rate, with a **streamed, staged creation animation**. Since 2026-09-03 every
 in-app card also carries **Edit** (§6): rename, restructure sub-departments,
 change people — the key never changes and stale saves are refused. Master-list
 cards carry Edit as well: **manager access** by grant SCOPE — one list for a
-flat department, one per sub-team for HSL — and **people**, who move as real
-department transfers (§7).
+flat department, one per sub-team for HSL — **people**, who move as real
+department transfers, and since 2026-09-21 **their own sub-departments** (§7).
 
 Built Jul 24, 2026: `5359889` (tab + wizard), `ec4482f` (self-contained
 refactor, same day), `83d81c5` (manager KPI surfaces + bonus assignments),
@@ -250,6 +250,7 @@ same null-for-unknown contract as `normalizeDeptToKey`.
   close that gap for real hires.
 - **Missing-bank readiness** iterates `active_employees`, so a registry-only
   member is invisible to the bank check too.
+- **Sub-departments on a built-in are no longer HSL-only** (§7.4) — but HSL's own sub-teams remain code, because they carry KPI calculators.
 - The Department tab's own footnote sets the expectation: built-in KPI
   calculators with bespoke inputs (`DEPT_INPUT_CONFIG`) remain per-department
   code; a custom department gets the generic catalog-driven card, not a
@@ -382,15 +383,16 @@ registry, edit, rate-alias and rail-alias suites. Not browser-verified in the
 building session (no signed-in browser); the dev server compiled both the GET
 and the PATCH route.
 
-## 7. Editing a master-list department — managers by scope, and people by transfer (2026-09-03, extended 2026-09-21)
+## 7. Editing a master-list department — managers, people and sub-departments (2026-09-03, extended 2026-09-21)
 
 Every **master-list** card carries **Edit** too (Kane, 2026-09-03: *"make sure
 that the from the Master list sync should have it"*). A Sheet-synced
 department owns almost nothing in the app — its name and alias map are code
 (`DEPARTMENTS`, `normalize-dept-key.ts`), and its people come from the Sheet
-sync. The dialog edits the two things the app can legitimately change:
-**manager access** (§7.1) and **who is placed there** (§7.3, as a real
-department transfer). Managers → People → Review, then the same staged overlay. The Payment Catalog is
+sync. The dialog edits the three things the app can legitimately change:
+**manager access** (§7.1), **its sub-departments** (§7.4) and **who is placed
+there** (§7.3, as a real department transfer). Managers → Sub-departments →
+People → Review, then the same staged overlay. The Payment Catalog is
 thereby a **second write path for `department_managers`** beside Admin →
 Roles & permissions — both use the same `assignManagerDepartment` /
 `revokeManagerDepartment` helpers.
@@ -461,8 +463,8 @@ swallow. Change those in Admin → Roles & permissions.
   manager quietly loses a team. The 14 labels measured live are pinned in the
   test suite; retiring a key from `HSL_DEPT_KEYS` while grants still point at it
   fires it.
-- The dialog lists what it **cannot** change — the name, and (for HSL) which
-  sub-teams exist — and why, with a Pay Structure link for rates.
+- The dialog lists what it **cannot** change — the name, and (for HSL alone)
+  which sub-teams exist — and why, with a Pay Structure link for rates.
 - Audit: `department.managers.update` on `department_managers` with the granted /
   revoked / resulting sets **per scope**, plus the unscoped labels left alone.
 - Payload discrimination: a PATCH body with a string `builtinKey` is the
@@ -549,9 +551,116 @@ Rules:
 write path is typed and unit-tested but has never run end to end, so the first
 real move should be a single low-stakes person with the Sheet checked by eye.
 
+### 7.4 Sub-departments on a built-in department (2026-09-21)
+
+Kane: *"I want us to make sure that if we edit these departments we can add sub
+departments in it!"* Until now only HSL had sub-teams, hard-coded. They are now
+**data** for every other built-in, stored as one JSON object in `app_settings`
+under `payment_catalog.departments.builtin_subs` — no new table, no migration,
+exactly like the in-app registry.
+
+| Piece | File |
+| --- | --- |
+| Model, validation, diff, occupancy (client-safe) | `src/lib/departments/builtin-subs.ts` (+ `builtin-subs.test.ts`) |
+| Storage — sanitize on read, CAS on write | `src/lib/departments/builtin-subs-db.ts` |
+| Sub-departments step | `src/components/accounting/departments/EditBuiltinManagersDialog.tsx` |
+| Rail / options seam | `src/components/accounting/BonusCatalog.tsx` (`customDepartments`) |
+| Read-only namespaced-cell audit | `scripts/audit-namespaced-dept-cells.mts` |
+
+**Key convention: `<builtinKey>:<subKey>`** (`lead_gen:nurture`) — the same
+namespacing `subDeptStructureKey` already uses for in-app departments. **Two
+legs needed no change at all**: `parentOfDeptKey` nests any
+`<parentKey>:<subKey>` whose parent is on the rail, and
+`resolveDeptCatalogRate` resolves any namespaced key *before*
+`normalizeDeptToKey` collapses it. HSL keeps `hsl:<sub>` because its prefix is
+not its key, which is why that one stays special-cased.
+
+#### HSL is excluded, on purpose
+
+HSL's sub-teams stay **code** and are shown read-only in the dialog; the
+validator refuses the key server-side too. `hslSubDeptOptions()` is the single
+source the onboarding picker, transfer targets, the rail and the exports read,
+while every KPI surface reads `HSL_DEPT_KEYS` **directly** — so a data-driven
+HSL sub would be placeable but invisible to the calculators. Putting it in the
+KPI keyspace instead is worse: it earns a calculator card nobody asked for *and*
+a permanent `draft` row in Payroll Readiness that nobody can clear (measured
+behaviour — it is why `simple_texting` became placement-only). HSL already has
+sub-teams; the departments that had none are the point of this change.
+
+#### What changed in the shared department functions
+
+Both are load-bearing far beyond this feature, so both were widened as narrowly
+as possible and pinned by tests.
+
+- **`normalizeDeptToKey`** gained a namespaced branch: `<parent>:<sub>` resolves
+  to the parent when the prefix is a known label **or** a canonical key.
+  An **unknown** prefix still returns `null`, and a bare sub-team display name
+  is still **not** inferred — the rule that keeps "Callback Team" and
+  "Executive Assistants" out of the HSL cohort is untouched.
+  **Measured read-only before shipping** (`scripts/audit-namespaced-dept-cells.mts`):
+  across **2,833 `global_master_list` rows, 1,215 `active_employees` and 22,610
+  `employee_hourly_rates`**, every colon-bearing Department cell is `hsl:*` —
+  **zero non-HSL**. So the branch regroups nobody and moves no money.
+- **`isPlaceableDeptLabel(raw, subsByParent?)`** takes an optional sub index.
+  **Called with nothing it behaves exactly as before**, so every existing caller
+  is unchanged. With one, a department that *has* sub-teams stops accepting a
+  bare parent placement — the same rule HSL has had since its cutover, because
+  the sub-team is what carries the base rate. It gates **new writes only, never
+  reads**: everyone already sitting on a bare `Lead Gen` cell is untouched.
+- **`formatDeptLabel`** renders any namespaced cell as "Parent — Sub" instead of
+  a bare slug. The sub is humanised from its key, because the stored display
+  name lives in `app_settings` and this function is pure.
+
+> **Trap worth knowing.** `normalizeDeptToKey`'s alias map is keyed on *display
+> labels* (`"lead gen"`), so the canonical key `"lead_gen"` does **not** resolve
+> on its own. Normalize the **whole** namespaced label, never the prefix you
+> split off it — doing the latter is a bug the tests caught during this build.
+
+#### Rules
+
+- **An existing sub's key is pinned.** Renaming changes the label only, so its
+  `<parent>:<sub>` rate row and every master cell pointing at it stay attached —
+  `diffBuiltinSubs` reports a rename as a rename, never a remove-plus-add,
+  which would orphan the rate row.
+- **A sub-key may not contain a colon.** `parentOfDeptKey` splits at the FIRST
+  colon, so `<parent>:<a>:<b>` would make the rail and the rate row disagree
+  about who the parent is. Refused in the validator and in the storage
+  sanitizer.
+- **A populated sub cannot be removed.** Counted against the **live**
+  `global_master_list`, not the payload, so a stale dialog cannot talk its way
+  past it. The count **fails closed**: anything that is not a real number —
+  including `count: null` with no error, which is what a `head: true` query
+  returns for a missing table ([[postgrest-head-true-hides-missing-table]]) —
+  reads as occupied. `?? 0` there would be a silent fail-open that deletes a
+  sub-department out from under its people.
+- **A removed sub's own dept-scope rate row is deleted** in the same save, so no
+  orphan `<key>:<sub>` structure lingers (same rule as §6.2).
+- **Sub-departments are written BEFORE people** in the same save, so a sub added
+  and staffed in one go works: the People step validates against the
+  **prospective** map (`placeableSubIndex({...stored, [key]: next})`), not the
+  stored one.
+- **Saves are CAS'd** on the sub map's own `app_settings` revision — 409, never
+  merge, like the registry. A failed GET leaves the map *and* its revision
+  untouched rather than nulling the revision, which would turn the next save
+  into a silent overwrite.
+- **A department that gains sub-teams drops out of the placement picker** in
+  favour of its teams, because a bare placement is no longer valid for it.
+
+**Verification (2026-09-21):** typecheck clean; 8 green in
+`builtin-subs.test.ts`; **151 of 152** across the departments, `dept-rail`,
+`resolve-rate`, `normalize-dept-key` and `hsl-transfer-effective` suites — the
+one failure is the pre-existing `ManagerApp.tsx:1859` raw dept render (item 96).
+**Not browser-verified, and no sub-department has been created against
+production.** The migration-free storage means there is nothing to run, but the
+first real sub should be made on a low-stakes department and its Pay Structure
+rail entry checked by eye.
+
 ## Deploy notes
 
-None. **No SQL migration** — the registry rides `app_settings`, and the only
+None. **No SQL migration** — including the 2026-09-21 built-in sub-departments,
+which ride a second `app_settings` key (`payment_catalog.departments.builtin_subs`);
+an absent key reads as "no sub-departments" and needs no seeding.
+Historic note: **no SQL migration** — the registry rides `app_settings`, and the only
 tables touched (`department_managers`, `payment_catalog_pay_structures`,
 `audit_log`) already exist. All six commits are on `main`. Edit (2026-09-03)
 adds optional `previousNames` / `updatedBy` / `updatedAt` fields to the

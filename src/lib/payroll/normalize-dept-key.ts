@@ -84,5 +84,36 @@ export function normalizeDeptToKey(raw: string | null | undefined): string | nul
     'client-va': 'client_va',
     'site building': 'site_building',
   };
-  return map[s] ?? null;
+  const exact = map[s];
+  if (exact) return exact;
+
+  // A NAMESPACED cell `<parent>:<sub>` belongs to its PARENT department.
+  //
+  // HSL is handled above and cannot come through here, because its prefix
+  // (`hsl`) is not its key (`hogan_smith_law`). Every other parent's prefix is
+  // either its canonical key (`lead_gen:nurture`) or a label this map already
+  // knows (`Lead Gen:Nurture`) -- the same `<parentKey>:<subKey>` convention the
+  // in-app registry and `subDeptStructureKey` already use, and the one
+  // `parentOfDeptKey` and `resolveDeptCatalogRate` already resolve.
+  //
+  // Deliberately narrow: an UNKNOWN prefix still returns null. This recognizes a
+  // namespaced cell under a department that really exists, and nothing else -- it
+  // is not the bare-label inference the comment above forbids.
+  //
+  // Measured read-only 2026-09-21 before shipping this
+  // (`scripts/audit-namespaced-dept-cells.mts`): across 2,833 global_master_list
+  // rows, 1,215 active_employees and 22,610 employee_hourly_rates, EVERY
+  // colon-bearing Department cell is `hsl:*` -- zero non-HSL. So this branch
+  // regroups nobody who resolves today and moves no money.
+  const colon = s.indexOf(':');
+  if (colon > 0) {
+    const prefix = s.slice(0, colon).trim();
+    const viaLabel = map[prefix];
+    if (viaLabel) return viaLabel;
+    // The prefix may already BE the canonical key.
+    for (const key of Object.values(map)) {
+      if (key === prefix) return key;
+    }
+  }
+  return null;
 }

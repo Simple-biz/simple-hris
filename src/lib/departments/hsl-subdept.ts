@@ -12,6 +12,7 @@
 
 import { HSL_DEPT_KEYS, HSL_DEPTS, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 
 /**
  * The ONE department label that stands for the whole HSL family in every
@@ -165,7 +166,31 @@ export function formatDeptLabel(raw: string | null | undefined): string {
   const s = (raw ?? '').trim();
   // Unknown `hsl:*` sub-key: still never show the bare slug to a human.
   if (s.toLowerCase().startsWith('hsl:')) return `HSL — ${s.slice(4)}`;
+  // Any OTHER namespaced cell `<parentKey>:<subKey>` (built-in sub-departments
+  // since 2026-09-21, and in-app ones). Same rule as HSL: never show a human a
+  // bare slug. The parent renders from DEPARTMENTS so it reads exactly as its
+  // card does; the sub is humanized from its key, because the stored display
+  // name lives in app_settings and this function is pure.
+  const colon = s.indexOf(':');
+  if (colon > 0) {
+    // Normalize the WHOLE label, never the prefix alone: `normalizeDeptToKey`'s
+    // alias map is keyed on DISPLAY labels ("lead gen"), so the canonical key
+    // "lead_gen" does not resolve on its own. The namespaced branch inside it
+    // handles both spellings.
+    const parentKey = normalizeDeptToKey(s);
+    const parentName = DEPARTMENTS.find((d) => d.key === parentKey)?.name ?? null;
+    if (parentName) return `${parentName} — ${humanizeSubKey(s.slice(colon + 1))}`;
+  }
   return s;
+}
+
+/** `medical_intake` -> "Medical Intake". Display only. */
+function humanizeSubKey(key: string): string {
+  return key
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
 }
 
 /**
@@ -199,10 +224,38 @@ export function collapseHslFamilyLabel(raw: string | null | undefined): string {
  * exactly like any other sub-team (own `hsl:<key>` rate first, parent as the
  * permanent fallback) — so a placement here can never resolve ₱0.
  */
-export function isPlaceableDeptLabel(raw: string | null | undefined): boolean {
+export function isPlaceableDeptLabel(
+  raw: string | null | undefined,
+  subsByParent?: Readonly<Record<string, readonly { key: string }[]>>,
+): boolean {
   const s = (raw ?? '').trim();
   if (!s) return false;
-  return isHslFamilyLabel(s) ? isHslSubDeptLabel(s) : true;
+  if (isHslFamilyLabel(s)) return isHslSubDeptLabel(s);
+
+  // Built-in / in-app sub-departments (2026-09-21). Same rule HSL has had since
+  // its cutover: once a department HAS sub-teams, the sub-team is what carries
+  // the base rate, so a bare parent label is no longer a placement. Callers that
+  // pass nothing keep the pre-2026-09-21 behaviour exactly.
+  if (!subsByParent) return true;
+
+  const colon = s.indexOf(':');
+  if (colon > 0) {
+    // The WHOLE label, not the prefix: the alias map is keyed on display labels,
+    // so "lead_gen" alone resolves to null while "lead_gen:nurture" resolves.
+    const parentKey = normalizeDeptToKey(s);
+    const subs = parentKey ? subsByParent[parentKey] : undefined;
+    if (!subs || subs.length === 0) return false; // namespaced under a parent with no such teams
+    const sub = s.slice(colon + 1).trim().toLowerCase();
+    return subs.some((x) => x.key.toLowerCase() === sub);
+  }
+
+  // A bare label. It may be a display name ("Lead Gen") or already the canonical
+  // key ("lead_gen"), and only the former is in the alias map.
+  const key = normalizeDeptToKey(s) ?? (DEPARTMENTS.some((d) => d.key === s.toLowerCase()) ? s.toLowerCase() : null);
+  const subs = key ? subsByParent[key] : undefined;
+  // A department that has sub-teams cannot take a bare placement; one that has
+  // none is placeable exactly as before.
+  return !subs || subs.length === 0;
 }
 
 /** One `{value,label}` per HSL sub-team — BOTH keyspaces, because every one of

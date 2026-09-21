@@ -45,9 +45,18 @@ import { deletePayStructure, listPayStructures, upsertPayStructure } from '@/lib
 import { newPayId, type PayStructure } from '@/lib/payment-catalog/pay-structure';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
+import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { applyDirectDepartmentMove } from '@/lib/transfers/direct-transfer';
+import {
+  builtinSubsFor,
+  diffBuiltinSubs,
+  placeableSubIndex,
+  validateBuiltinSubsInput,
+  type BuiltinSubMap,
+} from '@/lib/departments/builtin-subs';
+import { getBuiltinSubsWithRevision, replaceBuiltinSubs } from '@/lib/departments/builtin-subs-db';
 import {
   applyDepartmentEdit,
   diffBuiltinManagerScopes,
@@ -70,6 +79,7 @@ import {
   type CreateDepartmentStageKey,
   type DepartmentMemberRecord,
   type DepartmentRegistryEntry,
+  type DepartmentSubUnit,
   type EditDepartmentEvent,
   type EditDepartmentInput,
   type NewDepartmentMember,
@@ -99,6 +109,21 @@ export async function GET() {
     return NextResponse.json({ registry: [], revision: null, managers: {}, error: message }, { status: 500 });
   }
 
+  // Built-in sub-departments ride their own app_settings key. Best-effort, and
+  // reported: a read failure must degrade to "no sub-departments known" in the
+  // UI rather than take the whole tab down, but the Edit dialog must not then
+  // SAVE over them, which is what the null revision prevents (CAS mismatch).
+  let builtinSubs: BuiltinSubMap = {};
+  let builtinSubsRevision: string | null = null;
+  let builtinSubsError: string | null = null;
+  try {
+    const loaded = await getBuiltinSubsWithRevision();
+    builtinSubs = loaded.map;
+    builtinSubsRevision = loaded.revision;
+  } catch (e) {
+    builtinSubsError = e instanceof Error ? e.message : 'Could not read built-in sub-departments';
+  }
+
   const { rows, error } = await listAllDepartmentManagers();
   const managers: Record<string, string[]> = {};
   for (const row of rows) {
@@ -108,7 +133,15 @@ export async function GET() {
     if (!email) continue;
     (managers[dept] ??= []).push(email);
   }
-  return NextResponse.json({ registry, revision, managers, error: error ?? null });
+  return NextResponse.json({
+    registry,
+    revision,
+    managers,
+    builtinSubs,
+    builtinSubsRevision,
+    builtinSubsError,
+    error: error ?? null,
+  });
 }
 
 /** Wizard member -> stored registry record (normalized emails + attribution). */
@@ -590,6 +623,37 @@ export async function PATCH(request: Request) {
  * edited here at all -- a family-wide revoke would strip a manager's KPI access
  * to fifteen teams nobody touched.
  */
+/**
+ * How many LIVE master-list rows sit in each `<parentKey>:<subKey>` cell.
+ *
+ * Counted against `global_master_list` rather than the payload, so a stale
+ * dialog cannot talk its way past the "move people out first" refusal. Uses a
+ * HEAD count per sub — cheap, and it never hits the PostgREST 1000-row cap the
+ * way a select would.
+ */
+async function countMasterRowsForSubs(parentKey: string, subKeys: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return out;
+  for (const sub of subKeys) {
+    const label = subDeptStructureKey(parentKey, sub);
+    const { count, error } = await supabase
+      .from('global_master_list')
+      .select('id', { count: 'exact', head: true })
+      .ilike('"Department"', label);
+    // FAIL CLOSED. Anything other than a real number means we do not know who is
+    // in there, and "we do not know" must never read as "nobody", which would let
+    // a populated sub-department be deleted out from under its people.
+    //
+    // `count: null` with NO error is a real PostgREST shape, not a theoretical
+    // one: under `head: true` a table that does not exist returns exactly that
+    // ([[postgrest-head-true-hides-missing-table]]), so `?? 0` here would be a
+    // silent fail-open.
+    out.set(sub, error || typeof count !== 'number' ? Number.POSITIVE_INFINITY : count);
+  }
+  return out;
+}
+
 async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string): Promise<Response> {
   const check = validateBuiltinManagersInput(input);
   if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
@@ -597,9 +661,67 @@ async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string):
   const dept = DEPARTMENTS.find((d) => d.key === key);
   if (!dept) return NextResponse.json({ error: 'That is not a built-in department.' }, { status: 400 });
 
+  // -- Sub-departments -------------------------------------------------------
+  // Resolved BEFORE the people check, because a sub added in this same save has
+  // to be a legal destination for a move in this same save.
+  const editsSubs = Array.isArray(input.subDepartments);
+  let storedSubs: BuiltinSubMap = {};
+  let storedSubsRevision: string | null = null;
+  try {
+    const loaded = await getBuiltinSubsWithRevision();
+    storedSubs = loaded.map;
+    storedSubsRevision = loaded.revision;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : 'Could not read built-in sub-departments';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+
+  const currentSubs = builtinSubsFor(storedSubs, key);
+  const nextSubs = editsSubs ? (input.subDepartments as DepartmentSubUnit[]) : currentSubs;
+
+  if (editsSubs) {
+    const subsCheck = validateBuiltinSubsInput({ builtinKey: key, subDepartments: nextSubs });
+    if (!subsCheck.ok) return NextResponse.json({ error: subsCheck.error }, { status: 400 });
+    if ((input.expectedSubsRevision ?? null) !== storedSubsRevision) {
+      return NextResponse.json({ error: STALE_EDIT_MESSAGE, conflict: true }, { status: 409 });
+    }
+  }
+  const subsDiff = diffBuiltinSubs(currentSubs, nextSubs);
+
+  // A sub-department that still holds people cannot be removed: their master
+  // cell would name a team that no longer exists, and `isPlaceableDeptLabel`
+  // then refuses to re-place them. Counted against the LIVE roster, not the
+  // payload, so a stale dialog cannot talk its way past it.
+  if (subsDiff.removed.length > 0) {
+    const occupied = await countMasterRowsForSubs(
+      key,
+      subsDiff.removed.map((sub) => sub.key),
+    );
+    const blocking = subsDiff.removed
+      .map((sub) => ({ sub, n: occupied.get(sub.key) ?? Number.POSITIVE_INFINITY }))
+      .filter((x) => x.n > 0);
+    if (blocking.length > 0) {
+      return NextResponse.json(
+        {
+          error: `Move people out first — ${blocking
+            .map((b) =>
+              Number.isFinite(b.n)
+                ? `${b.sub.name} still has ${b.n} ${b.n === 1 ? 'person' : 'people'}`
+                : `${b.sub.name} could not be checked for people`,
+            )
+            .join('; ')}.`,
+        },
+        { status: 400 },
+      );
+    }
+  }
+
+  /** The sub map as it will be AFTER this save — what a placement is checked against. */
+  const prospectiveSubs = placeableSubIndex({ ...storedSubs, [key]: nextSubs });
+
   // People move as REAL transfers; the same validator the dialog gates Save on.
   const moves = input.people ?? [];
-  const peopleCheck = validateBuiltinPeopleInput({ builtinKey: key, moves });
+  const peopleCheck = validateBuiltinPeopleInput({ builtinKey: key, moves }, prospectiveSubs);
   if (!peopleCheck.ok) return NextResponse.json({ error: peopleCheck.error }, { status: 400 });
   const peopleDiff = diffBuiltinPeople(key, { builtinKey: key, moves });
 
@@ -651,6 +773,37 @@ async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string):
         controller.close();
       };
       try {
+        // -- Stage 1: sub-departments ---------------------------------------
+        if (editsSubs && subsDiff.changed) {
+          emit({ type: 'stage', stage: 'department', status: 'start' });
+          const saved = await replaceBuiltinSubs(key, nextSubs, input.expectedSubsRevision ?? null);
+          if (saved.conflict) return fail(STALE_EDIT_MESSAGE);
+          if (!saved.ok) return fail(saved.error ?? 'Could not save the sub-departments');
+
+          // A removed sub's OWN dept-scope rate row goes with it, so no orphan
+          // `<key>:<sub>` structure lingers (same rule as the in-app registry).
+          for (const sub of subsDiff.removed) {
+            const structureKey = subDeptStructureKey(key, sub.key);
+            const { structures } = await listPayStructures();
+            const existing = structures.find(
+              (st) => st.scope === 'department' && st.departmentKey === structureKey,
+            );
+            if (existing) await deletePayStructure(existing.id);
+          }
+          emit({
+            type: 'stage',
+            stage: 'department',
+            status: 'done',
+            note: [
+              subsDiff.added.length ? `+${subsDiff.added.length}` : null,
+              subsDiff.removed.length ? `-${subsDiff.removed.length}` : null,
+              subsDiff.renamed.length ? `${subsDiff.renamed.length} renamed` : null,
+            ]
+              .filter(Boolean)
+              .join(' · '),
+          });
+        }
+
         emit({ type: 'stage', stage: 'managers', status: 'start' });
 
         for (const scope of diff.scopes) {

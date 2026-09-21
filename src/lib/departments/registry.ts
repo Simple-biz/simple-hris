@@ -837,6 +837,15 @@ export interface BuiltinManagersInput {
    * save touches manager access only.
    */
   people?: BuiltinPersonMove[];
+  /**
+   * The FULL resulting sub-department list for this built-in, when the save
+   * edits them. Written BEFORE people, so a sub added in the same save is a
+   * valid destination for a move in that same save.
+   */
+  subDepartments?: DepartmentSubUnit[];
+  /** `app_settings.updated_at` of the sub map the editor loaded; a mismatch is
+   *  a 409 rather than a silent overwrite. */
+  expectedSubsRevision?: string | null;
 }
 
 const MAX_BUILTIN_MANAGERS = 50;
@@ -1044,7 +1053,14 @@ const MAX_PEOPLE_MOVES = 100;
  * `hogan_smith_law` base row was deleted in the 2026-08-14 cutover). See
  * hsl-subdepartments.md and [[hsl-parent-department-cutover]].
  */
-export function validateBuiltinPeopleInput(input: BuiltinPeopleInput): { ok: boolean; error?: string } {
+export function validateBuiltinPeopleInput(
+  input: BuiltinPeopleInput,
+  /** Sub-departments per parent key, so a department that HAS sub-teams refuses
+   *  a bare parent placement. Pass the PROSPECTIVE map when subs are being
+   *  edited in the same save, or a sub added here is not yet a valid
+   *  destination. Omitted keeps the pre-2026-09-21 HSL-only behaviour. */
+  subsByParent?: Readonly<Record<string, readonly { key: string }[]>>,
+): { ok: boolean; error?: string } {
   const key = input.builtinKey?.trim() ?? '';
   if (!BUILTIN_KEYS.has(key)) return { ok: false, error: 'That is not a built-in department.' };
   if (!Array.isArray(input.moves)) return { ok: false, error: 'Malformed people payload.' };
@@ -1069,7 +1085,7 @@ export function validateBuiltinPeopleInput(input: BuiltinPeopleInput): { ok: boo
     }
     // A bare family label is not a placement. This is the guard that stops a
     // new HSL arrival landing on a parent base rate that was deleted.
-    if (!isPlaceableDeptLabel(to)) {
+    if (!isPlaceableDeptLabel(to, subsByParent)) {
       return {
         ok: false,
         error: `${to} is not a placement — pick the specific sub-team for ${who}.`,
@@ -1115,6 +1131,7 @@ export const BUILTIN_MANAGERS_STAGES: { key: CreateDepartmentStageKey; label: st
  *  own -- a Sheet write-back failure must be visible, never folded into the
  *  manager result. */
 export const BUILTIN_EDIT_STAGES: { key: CreateDepartmentStageKey; label: string }[] = [
+  { key: 'department', label: 'Saving sub-departments' },
   { key: 'managers', label: 'Updating manager access' },
   { key: 'members', label: 'Moving people' },
 ];

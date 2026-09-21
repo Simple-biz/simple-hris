@@ -69,6 +69,7 @@ import { Input } from '@/components/ui/input';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { formatDeptLabel, hslSubDeptOptions } from '@/lib/departments/hsl-subdept';
+import { allBuiltinSubOptions, type BuiltinSubMap } from '@/lib/departments/builtin-subs';
 import {
   buildDeptRail,
   assignRosterToRail,
@@ -673,6 +674,11 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
    *  dialog hands it back so a stale save is refused (409) instead of clobbering
    *  a teammate's edit. */
   const [deptRegistryRevision, setDeptRegistryRevision] = useState<string | null>(null);
+  // Built-in departments' sub-departments ride their own app_settings key, so
+  // they carry their own CAS revision -- paired with the map for the same reason
+  // the registry revision is paired with the registry.
+  const [builtinSubs, setBuiltinSubs] = useState<BuiltinSubMap>({});
+  const [builtinSubsRevision, setBuiltinSubsRevision] = useState<string | null>(null);
   // Pay Processors registry (stored rows merged over the code seeds server-side).
   const [payProcessors, setPayProcessors] = useState<PayProcessor[]>([]);
   // Current Banks — folded server-side from the payees' free-text bank cells.
@@ -720,7 +726,18 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   // department-wide rate) are settable/exportable like any department's.
   const customDepartments = useMemo(() => {
     const builtin = new Set(DEPARTMENTS.map((d) => d.key));
-    return deptRegistry
+    // Built-in departments' OWN sub-departments (2026-09-21) ride the same list.
+    // `parentOfDeptKey` already nests any `<parentKey>:<subKey>` whose parent is
+    // on the rail, so they group under their department with no rail change --
+    // and being a rail entry is what makes their base rate settable in Pay
+    // Structure. Appended here rather than threaded as a new prop so the rail,
+    // the exports and Bonus Assignments all see them through one seam.
+    const builtinSubEntries = allBuiltinSubOptions(builtinSubs).map((o) => ({
+      key: o.value,
+      name: o.label,
+    }));
+    return builtinSubEntries.concat(
+      deptRegistry
       .filter((entry) => !builtin.has(entry.key))
       .flatMap((entry) => [
         // A renamed department's former names ride along as rail aliases, so a
@@ -730,8 +747,9 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
           key: subDeptStructureKey(entry.key, sub.key),
           name: `${entry.name} — ${sub.name}`,
         })),
-      ]);
-  }, [deptRegistry]);
+      ]),
+    );
+  }, [deptRegistry, builtinSubs]);
 
   // Live USD-anchored FX rates — used only to sort the Bonus Library's
   // "Amount (high-low)" by PHP-equivalent so a $100 bonus outranks a ₱500 one.
@@ -813,6 +831,9 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
         registry?: DepartmentRegistryEntry[];
         revision?: string | null;
         managers?: Record<string, string[]>;
+        builtinSubs?: BuiltinSubMap;
+        builtinSubsRevision?: string | null;
+        builtinSubsError?: string | null;
       }>(3);
       const proc = await read<{ processors?: PayProcessor[] }>(4);
       const bank = await read<{ banks?: BankGroup[] }>(5);
@@ -834,6 +855,13 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
         setDeptRegistry(dept.registry);
         setDeptRegistryRevision(dept.revision ?? null);
         setDeptManagers(dept.managers ?? {});
+      }
+      // Same pairing rule: the map and the revision that describes it move
+      // together. A failed read leaves BOTH untouched rather than nulling the
+      // revision, which would turn the next save into a silent overwrite.
+      if (dept && dept.builtinSubs && typeof dept.builtinSubs === 'object' && !dept.builtinSubsError) {
+        setBuiltinSubs(dept.builtinSubs);
+        setBuiltinSubsRevision(dept.builtinSubsRevision ?? null);
       }
       if (Array.isArray(proc?.processors)) setPayProcessors(proc.processors);
       if (Array.isArray(bank?.banks)) setBanks(bank.banks);
@@ -1285,6 +1313,8 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
                 payStructures={payStructures}
                 registry={deptRegistry}
                 registryRevision={deptRegistryRevision}
+                builtinSubs={builtinSubs}
+                builtinSubsRevision={builtinSubsRevision}
                 managersByDept={deptManagers}
                 onChanged={() => void refetch()}
                 onOpenPayStructure={(deptKey) => {

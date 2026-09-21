@@ -79,6 +79,7 @@ import EditDepartmentDialog from './departments/EditDepartmentDialog';
 import EditBuiltinManagersDialog from './departments/EditBuiltinManagersDialog';
 import { builtinManagerScopes, HSL_BUILTIN_KEY } from '@/lib/departments/registry';
 import { hslSubDeptOptions } from '@/lib/departments/hsl-subdept';
+import { allBuiltinSubOptions, type BuiltinSubMap } from '@/lib/departments/builtin-subs';
 
 export type { DirectoryPerson };
 
@@ -117,6 +118,8 @@ export default function DepartmentsTab({
   registry,
   registryRevision,
   managersByDept,
+  builtinSubs,
+  builtinSubsRevision,
   onChanged,
   onOpenPayStructure,
 }: {
@@ -128,6 +131,10 @@ export default function DepartmentsTab({
   registryRevision: string | null;
   /** dept string (lower-cased, as stored in department_managers) -> manager emails. */
   managersByDept: Record<string, string[]>;
+  /** Built-in departments' sub-departments (app_settings) + its revision, so a
+   *  stale save is refused rather than clobbering a teammate's edit. */
+  builtinSubs: BuiltinSubMap;
+  builtinSubsRevision: string | null;
   /** Refetch catalog data after a successful create / edit. */
   onChanged: () => void;
   /** Jump to the Pay Structure tab focused on a department key. */
@@ -197,12 +204,16 @@ export default function DepartmentsTab({
     const out: { value: string; label: string }[] = [];
     for (const d of DEPARTMENTS) {
       if (d.key === HSL_BUILTIN_KEY) continue;
+      // A department that HAS sub-departments is no longer placeable bare — the
+      // sub-team carries the base rate — so offer its teams instead of itself.
+      if ((builtinSubs[d.key] ?? []).length > 0) continue;
       out.push({ value: d.name, label: d.name });
     }
     out.push(...hslSubDeptOptions());
+    out.push(...allBuiltinSubOptions(builtinSubs));
     for (const e of registry) out.push({ value: e.name, label: e.name });
     return out.sort((a, b) => a.label.localeCompare(b.label));
-  }, [registry]);
+  }, [registry, builtinSubs]);
 
   const memberCountForBuiltin = (key: string) =>
     roster.filter((p) => normalizeDeptToKey(p.department) === key).length;
@@ -486,6 +497,8 @@ export default function DepartmentsTab({
         grantRows={grantRows}
         roster={roster}
         departmentOptions={departmentOptions}
+        builtinSubs={builtinSubs}
+        builtinSubsRevision={builtinSubsRevision}
         onClose={() => setBuiltinEditingKey(null)}
         onChanged={onChanged}
         onOpenPayStructure={onOpenPayStructure}
