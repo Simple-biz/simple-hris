@@ -88,6 +88,34 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   // the same thing from the other side.
   'support_chat.replied': ['employee'],
   'support_chat.became_ticket': ['employee'],
+  // Employee Support TICKETS — the second door behind the Employee dashboard's
+  // Help button (Kane, 2026-09-21: "Chat Support or a Ticket"). Both are the
+  // EMPLOYEE's, for the same reason as the chat pair above: the five answerers
+  // work the queueing line and the board on /tickets, and a badge on that
+  // dashboard for their own replies would be noise. No type exists for the
+  // staff side — the widen admits exactly these two — so an employee's reply
+  // reaches the answerers through the line they already watch, not a badge.
+  //
+  //   support.replied   a staff member replied on the employee's ES- ticket.
+  //                     Carla signed "A notification the moment someone
+  //                     replies" (2026-09-15); this is that notification.
+  //   support.answered  the ticket reached Answered on the employee's track
+  //                     map (SUPPORT_STATUS_LABELS, src/lib/support/types.ts:58-63),
+  //                     which `nextStatus` does on the FIRST staff reply
+  //                     (src/lib/support/lifecycle.ts:194-198) — the reply that
+  //                     stamps `first_response_at` and that Carla's
+  //                     one-working-day promise is measured against.
+  //
+  // Both must stay mapped, for the reason spelled out above the chat pair: an
+  // unmapped type is a notification that exists in the table and reaches
+  // nobody, and here it would be the answer the employee has been promised.
+  // The mapping does not depend on which reply the route files under which
+  // type — either way it is the employee's. Changed together with
+  // references/sql/alter/2026-09-21_support_notification_types.sql, which adds
+  // exactly these two values and says the same thing from the other side;
+  // notification-views.test.ts holds the two files to each other.
+  'support.replied': ['employee'],
+  'support.answered': ['employee'],
   // The manager published (or changed) this employee's KPI bonus for a
   // dept-week — carries the peso amount. Fired on Mark Ready/Lock and on any
   // change landing on an already-published week. Employee-only, ungated.

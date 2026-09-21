@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   NOTIFICATION_TYPE_TO_VIEWS,
   hiddenTypesForView,
@@ -78,4 +80,87 @@ test('an unmapped type is hidden from nobody', () => {
   assert.deepEqual(viewsForNotificationType('some.brand_new_type'), []);
   assert.ok(!hiddenTypesForView('hr').includes('some.brand_new_type'));
   assert.ok(!hiddenTypesForView('accounting').includes('some.brand_new_type'));
+});
+
+// ── Employee Support is the employee's, never the answerers' ─────────────────
+// Both doors behind the Employee dashboard's Help button — the live chat and,
+// from 2026-09-21, Raise a ticket — notify the person who asked. The five
+// answerers watch the queue, the line and the board on /tickets, so a badge on
+// that dashboard for their own replies would be noise. And an UNMAPPED type is
+// worse than noise: viewsForNotificationType returns [], the per-view count
+// adds the row to nothing, and the notification exists in the table while
+// reaching nobody. These pin both halves for all four types.
+
+const EMPLOYEE_SUPPORT_TYPES = [
+  'support_chat.replied',
+  'support_chat.became_ticket',
+  'support.replied',
+  'support.answered',
+] as const;
+
+test('the two ticket-side Employee Support types badge the Employee dashboard', () => {
+  assert.deepEqual(viewsForNotificationType('support.replied'), ['employee']);
+  assert.deepEqual(viewsForNotificationType('support.answered'), ['employee']);
+  const hiddenFromEmployee = hiddenTypesForView('employee');
+  assert.ok(!hiddenFromEmployee.includes('support.replied'));
+  assert.ok(!hiddenFromEmployee.includes('support.answered'));
+});
+
+test("Employee Support never badges the answerers' own dashboard", () => {
+  // /tickets is where the five answer from; their own replies must not light it.
+  const hiddenFromTickets = hiddenTypesForView('tickets');
+  for (const type of EMPLOYEE_SUPPORT_TYPES) {
+    assert.ok(hiddenFromTickets.includes(type), `${type} must be hidden from the tickets dashboard`);
+  }
+});
+
+test('every Employee Support type — chat and ticket — maps to the employee alone', () => {
+  // A guard against the next one, not just these four: any support.* or
+  // support_chat.* type added later belongs to the employee who asked unless
+  // somebody argues otherwise here first.
+  const support = Object.keys(NOTIFICATION_TYPE_TO_VIEWS).filter((t) => /^support(_chat)?\./.test(t));
+  for (const type of EMPLOYEE_SUPPORT_TYPES) {
+    assert.ok(support.includes(type), `${type} must be mapped — an unmapped type reaches nobody`);
+  }
+  for (const type of support) {
+    assert.deepEqual(
+      NOTIFICATION_TYPE_TO_VIEWS[type],
+      ['employee'],
+      `${type} belongs to the employee who asked, and to nobody else's badge`,
+    );
+  }
+});
+
+// The two widens each say they were "changed together with" this module. A
+// test is what makes that sentence true instead of hopeful: every value a widen
+// ADDS is mapped here, and every type mapped here for that family is one a
+// widen adds. A type in one place and not the other is either a dead
+// notification (in SQL, unmapped — invisible) or a rejected insert (mapped,
+// not in SQL — the kpi.scored three-day silence).
+
+/** The `added constant text[] := array[...]` values of an additive widen. */
+function addedTypes(sqlPath: string): string[] {
+  const sql = readFileSync(join(process.cwd(), sqlPath), 'utf8');
+  const m = sql.match(/added\s+constant\s+text\[\]\s*:=\s*array\[([^\]]*)\]/i);
+  assert.ok(m, `no \`added constant text[] := array[...]\` block in ${sqlPath}`);
+  return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]).sort();
+}
+
+const mappedFamily = (re: RegExp) =>
+  Object.keys(NOTIFICATION_TYPE_TO_VIEWS)
+    .filter((t) => re.test(t))
+    .sort();
+
+test('the ticket-side widen and this map admit the same two support.* types', () => {
+  assert.deepEqual(
+    mappedFamily(/^support\./),
+    addedTypes('references/sql/alter/2026-09-21_support_notification_types.sql'),
+  );
+});
+
+test('the chat-side widen and this map admit the same two support_chat.* types', () => {
+  assert.deepEqual(
+    mappedFamily(/^support_chat\./),
+    addedTypes('references/sql/alter/2026-09-19_add_chat_notification_types.sql'),
+  );
 });

@@ -7,10 +7,11 @@ it became a chat message to whoever seemed likely, with no record, no number, an
 whether anyone was dealing with it.
 
 **Approved by Carla Thomas 2026-09-15** (signed, `Employee-Support-for-approval.pdf`).
-**The data layer shipped 2026-09-16 in `99716520`.** The routes, the UI and the `employee_support`
-feature key are **not built**. The live chat half is a separate, later document —
-`employee-support-chat.md` — and is being built first by Kane's override; see *The chat came first*
-below.
+**The data layer shipped 2026-09-16 in `99716520`.** **The employee side shipped 2026-09-21** — the
+Help button, the filing form, the ticket history with its track map, and the routes behind them.
+The staff board's contents are still unbuilt; see *What is not built*. The live chat half is a
+separate document — `employee-support-chat.md` — and was built first by Kane's override; see *The
+chat came first* below.
 
 > The governing plan is `docs/superpowers/plans/2026-09-14-employee-support.md`. Read it before
 > changing anything here: it carries the signed decisions, the reasoning, and the task list.
@@ -114,16 +115,59 @@ longest-waiting unanswered question is at the top, **not the newest**."* Kane's 
 (2026-09-18) sits *above* that rule, not instead of it: urgency descending, then longest-waiting
 within each band, dated from **filing**.
 
+## The employee side — built 2026-09-21
+
+**The two portals.** Beside FAQs on the Employee Dashboard the button is **Help**, not Chat (Kane,
+2026-09-21). It opens a chooser with exactly two doors: **Chat Support**, which opens the shipped
+live-chat dialog, and **Raise a ticket**, which opens `EmployeeSupportTickets`. Both are in **both**
+header clusters (mobile icon, desktop labelled), always edited together. It is **never a floating
+bubble** — Penny owns the employee side's one fixed bottom-right control.
+
+**Filing.** `POST /api/employee/support`. The row is written from the **session**, never the body:
+`work_email` is the master email resolved server-side, `filed_by_email` is `authz.sessionEmail`, and
+`body.email` reaches exactly one place — `authorizeEmailAccess`, which grants or denies it. Name and
+work email are shown filled-in and read-only, as Carla asked. The category picker is the nine
+`SUPPORT_CATEGORIES`; choosing one shows `steerForCategory`'s notice **before** the person types, and
+`describeSteeredSubjects()` renders once on the form. Screening **flags and never blocks**, and the
+employee never sees the flag. On success: the `ES-` number and the one-working-day promise.
+**No per-day cap** (Decision 6) and **no file input** (Decision 8) — honoured by absence.
+
+**My tickets and the track map.** `GET /api/employee/support` returns the caller's own tickets,
+newest first, paged. Each carries the **track map** Kane asked for on the 18th — the four stops of
+`SUPPORT_STATUS_LABELS` (Waiting → Being looked at → Answered → Closed) with the current one lit.
+A reopened ticket is drawn at its *current* stop: `closed_at` survives the reopen, so the Closed stop
+is never lit from that column alone.
+
+**Replying, and the asymmetry that is deliberate.** `GET`/`POST /api/employee/support/[id]/messages`
+is scoped to the caller's own ticket and answers **404, never 403,** on anybody else's id. An
+**employee** reply to a **closed** ticket **reopens** it — Carla's *"either side can reply again"* —
+as a compare-and-set on `status = 'closed'`, with the message written **first** so a lost race
+loses the reopen (retried free on the next reply), never the reply. A **staff** reply to a closed
+ticket does **not** reopen it: that is a postscript, not a disagreement. `lifecycle.ts` holds the
+rule and the reasoning; the routes only enforce its verdict.
+
+**The notification Carla signed.** *"A notification the moment someone replies."* `support.replied`
+and `support.answered` are mapped to `['employee']` in `notification-views.ts` beside the chat pair;
+an unmapped type reaches nobody. The recipient for every ticket event is decided in code
+(`recipients.ts`) and is `null`, never `''` — the Gmail node is stop-on-error.
+
+**Hours are Eastern only.** Both dialogs build the sentence from `SUPPORT_OPEN_HOUR` /
+`SUPPORT_CLOSE_HOUR` and do **not** call `describeSupportHours`, which prints a Manila zone nobody is
+in. The Help badge **never clamps a queue position to `99+`** — 100th in line is something an
+employee deserves told honestly.
+
 ## What is not built
 
-Everything above the data layer. No routes, no components, no `employee_support` key, and **task 3
-— the `employee_notifications` type CHECK widen — has no file at all**, so until it exists every
-`support.*` notification insert is rejected and the notification is dead.
+**The staff board's contents.** The `Support Tickets` tab exists in `/tickets` (rail entry and grant
+key, `2e542207`) and the pure rules behind it are shipped and tested — `triage.ts` (line vs board,
+the sort, the counts) and `lifecycle.ts` — but the tab renders nothing yet, and the staff routes
+(`/api/support/tickets`) are a paused partial in the working tree, not on `main`. Until they land,
+a filed ticket is readable by its employee and by nobody on staff except through the database.
 
-Also unbuilt and worth knowing, because they are things Carla approved rather than nice-to-haves:
-the **at-a-glance counts** (*"how many need a reply, how many were answered today"*), and the
-**staff-only trial** — *"You and the support team try it before any employee sees it"* — which
-means the dashboard button ships in its **own commit, after** the five have used it for real.
+**The staff-only trial** Carla approved — *"You and the support team try it before any employee
+sees it"* — has nothing implementing it. The Help button ships to every employee the moment the
+migrations run. Staging it means gating the button on the `employee_support` grant first, or
+landing the dashboard wiring in its own later commit. That decision is still Kane's.
 
 ## The chat came first
 
