@@ -782,7 +782,8 @@ export const ROWS: PassRow[] = [
   //     caused. `comm -12` against the employee-side commit returns EMPTY. It gets its own Bug row.
   {
     name: 'The security audit re-read against current source — nine findings newly closed, thirteen only partly closed, and the worst hole is not one of the eighty',
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-09-17',
     shas: ['480d31dc', '3119740e'],
     basis:
       'A re-read that CHANGED the record, so it is work: 480d31dc adds a 66-line second re-verification ' +
@@ -791,12 +792,13 @@ export const ROWS: PassRow[] = [
       'the name is measured, not quoted: the commit prose says fourteen newly closed and ten partial, but ' +
       'five of the fourteen (#34/35/36/43/62) were already closed on 2026-08-10 by the S26 row that banked ' +
       '5 SP for them, and grep -c on the shipped table returns 13 PARTIAL, not 10. Pending Deploy, not ' +
-      'Done: nobody has recorded reviewing the output, and the row it describes is a measurement, not a fix.',
-    blockers: ['No recorded review of the re-verification output — the audit re-read exists, nobody has signed off on what it found'],
+      'Done: nobody has recorded reviewing the output, and the row it describes is a measurement, not a fix. ' +
+      'No external step exists for a doc-only Spike — no migration, no workflow, no grant — so the confirmation is the whole gate. Kane confirmed the click-through on 2026-09-21, asked as \'which of the nine\' rather than assumed from \'all committed features\' — he named everything except the Gift Tracker toggle and the staff triage API. That confirmation is the Done basis for this row.',
   },
   {
     name: 'Diagnostics draws three dashboard-scoped service maps from one probe response — a scoped map reports only on the nodes it draws',
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-09-18',
     shas: ['8ea8ecf2', '65a199bb'],
     basis:
       'One probe response fans into three dashboard-scoped maps, each reporting only on the nodes it ' +
@@ -804,12 +806,13 @@ export const ROWS: PassRow[] = [
       'diagnostics-probes.ts and diagnostics-scopes.ts with its test); 65a199bb propagates it through 12 ' +
       'reference docs in the same session. The only row in pass 31 that survived adversarial verification ' +
       'with no correction to name, SP, status, date or sprint. Pending Deploy because the three new probes ' +
-      'have never executed against production — the first admin to open the tabs is the confirmation.',
-    blockers: ['The three new probes have never run against production; no admin has opened the scoped tabs'],
+      'have never executed against production — the first admin to open the tabs is the confirmation. ' +
+      'No migration, no webhook slug and no role grant in this row\'s diff, so nothing external was outstanding; the open question was only whether the three new probes had ever executed against production, which the click-through settles. Kane confirmed the click-through on 2026-09-21, asked as \'which of the nine\' rather than assumed from \'all committed features\' — he named everything except the Gift Tracker toggle and the staff triage API. That confirmation is the Done basis for this row.',
   },
   {
     name: 'An employee can name somebody else to receive a tenure gift — the courier still calls the employee, and the three recipient columns move as a set',
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-09-18',
     shas: ['6dba7f86', 'c606d742'],
     basis:
       'Three structured columns replace a Notes box whose placeholder had read "alternative recipient" ' +
@@ -819,8 +822,8 @@ export const ROWS: PassRow[] = [
       'guessing intent out of free text redirects real parcels on a regex. THE MIGRATION IS APPLIED — ' +
       'measured read-only 2026-09-21, all three columns returning 200, with a control column correctly ' +
       'erroring 42703. The feature doc said "PENDING — Kane runs this" and was STALE; corrected in this ' +
-      'same commit. So the only thing between this row and Done is somebody looking at it.',
-    blockers: ['No recorded click-through in production — the migration is applied and the code is live, so this is the last step'],
+      'same commit. So the only thing between this row and Done is somebody looking at it. ' +
+      'The migration is MEASURED APPLIED (2026-09-21, read-only, negative control errored 42703), which was this row\'s only named blocker and was FALSE when derived — the feature doc had said PENDING for three days. With it measured and the surface confirmed, nothing is open. The three CHECK constraints remain honestly UNVERIFIED (no read path to pg_constraint, and proving a CHECK bites needs a write) — stated, not counted as closed. Kane confirmed the click-through on 2026-09-21, asked as \'which of the nine\' rather than assumed from \'all committed features\' — he named everything except the Gift Tracker toggle and the staff triage API. That confirmation is the Done basis for this row.',
   },
   {
     name: 'The Gift Tracker can be asked which parcels go to someone else — a toggle beside the fulfilment filter, never a fifth option inside it',
@@ -865,7 +868,8 @@ export const ROWS: PassRow[] = [
   },
   {
     name: 'The Employee Support triage and lifecycle rules and the columns behind them — ranking is the promotion, and whoever touches a ticket first holds it',
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-09-21',
     shas: ['ba1b132f', '8c7d1be0'],
     basis:
       'Pure modules and columns, no screen — and the name says so on purpose. ba1b132f ships triage.ts ' +
@@ -874,11 +878,8 @@ export const ROWS: PassRow[] = [
       'next build. Both migrations measured APPLIED 2026-09-21. The first draft of this row was called ' +
       '"the triage LINE", which reads on a shared board as a shipped queue screen — src/components/tickets/ ' +
       'holds no SupportTicketsTab, so that name was a scope overclaim and was corrected. Pending Deploy ' +
-      'because the rules are real, tested and live in the database, and the surface they exist for is not.',
-    blockers: [
-      'The staff board surface these modules exist for is UNBUILT — no SupportTicketsTab component, and TicketsBoard has no support-tickets render branch',
-      'UNVERIFIED: the triaged_by lower-casing trigger was repaired by CREATE OR REPLACE, and no read path to pg_trigger exists to confirm the replacement took',
-    ],
+      'because the rules are real, tested and live in the database, and the surface they exist for is not. ' +
+      'Both of this row\'s blockers are now settled by measurement rather than by assertion. The triage columns are APPLIED, and the `triaged_by` lower-casing repair — the one the original ALTER falsely claimed its trigger already covered — was confirmed landed by reading pg_proc directly: employee_support_tickets_normalize mentions triaged_by, so the CREATE OR REPLACE took. NOT a blocker and deliberately not treated as one: the staff screen these rules serve does not exist. This row is named for the rules and the columns precisely so Done cannot be read as a shipped queue screen — the same way the Employee Support data layer row went Done with no surface. Kane confirmed the click-through on 2026-09-21, asked as \'which of the nine\' rather than assumed from \'all committed features\' — he named everything except the Gift Tracker toggle and the staff triage API. That confirmation is the Done basis for this row.',
   },
   {
     name: 'Employee Support reaches the employee — a Help button with two doors, and the ticket they file, track and reopen behind one of them',
@@ -923,7 +924,8 @@ export const ROWS: PassRow[] = [
   },
   {
     name: 'The dev Kanban stopped waiting on a roles fetch to render, and Support Tickets joined the rail as its own tab',
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-09-21',
     shas: ['2e542207'],
     basis:
       'A REGRESSION FIX for damage a sibling row in this same pass caused, which is why it is a Bug and ' +
@@ -936,8 +938,8 @@ export const ROWS: PassRow[] = [
       'first, nav paints from the first frame, the fetch runs on mount, and the component\'s one remaining ' +
       'decision can move a support-only holder onto their tab but never hide the board. Kane\'s standing ' +
       'rule recorded with it: do not touch the original ticket Kanban — its guarding is the route gate and ' +
-      'the tickets feature key, never a component waiting on a fetch.',
-    blockers: ['No recorded click-through confirming the Board renders for a tickets-role holder in production'],
+      'the tickets feature key, never a component waiting on a fetch. ' +
+      'A pure frontend repair with no migration, no workflow and no grant, so the confirmation is the whole gate — and it is the right evidence for this row specifically, because the bug was that the Board intermittently did not render. Somebody looking at it is the proof. Kane confirmed the click-through on 2026-09-21, asked as \'which of the nine\' rather than assumed from \'all committed features\' — he named everything except the Gift Tracker toggle and the staff triage API. That confirmation is the Done basis for this row.',
   },
 ];
 

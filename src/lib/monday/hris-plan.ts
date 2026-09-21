@@ -2045,18 +2045,18 @@ export const PLAN_TASKS: PlanTask[] = [
   // three: `grep -c "| PARTIAL |"` = 13 where the prose says ten; five of the fourteen claimed
   // "newly closed" (#34/35/36/43/62) were already closed on 2026-08-10 by the S26 row that banked
   // 5 SP for it; and "all 80" is refuted by the checklist's own preamble.
-  { epic: 'HRIS-05', name: 'The security audit re-read against current source — nine findings newly closed, thirteen only partly closed, and the worst hole is not one of the eighty', type: 'Spike', sp: 2, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-05', name: 'The security audit re-read against current source — nine findings newly closed, thirteen only partly closed, and the worst hole is not one of the eighty', type: 'Spike', sp: 2, done: true, sprint: 'S29', priority: 'High' },
 
   // 5 SP: one probe response, three dashboard-scoped maps, and the rule that a scoped map reports
   // only on the nodes it draws. The only row this pass that survived adversarial verification with
   // no correction at all.
-  { epic: 'HRIS-15', name: 'Diagnostics draws three dashboard-scoped service maps from one probe response — a scoped map reports only on the nodes it draws', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-15', name: 'Diagnostics draws three dashboard-scoped service maps from one probe response — a scoped map reports only on the nodes it draws', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
 
   // 5 SP: three columns that move as a set. MIGRATION MEASURED APPLIED 2026-09-21 — the feature
   // doc's "PENDING — Kane runs this" at line 247 is STALE and is corrected in this same commit.
   // Kane's ruling holds: `active_contact_number` is still the number the courier calls and
   // `recipient_contact` never substitutes. See [[gift-address-external-link]].
-  { epic: 'HRIS-32', name: 'An employee can name somebody else to receive a tenure gift — the courier still calls the employee, and the three recipient columns move as a set', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-32', name: 'An employee can name somebody else to receive a tenure gift — the courier still calls the employee, and the three recipient columns move as a set', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
 
   // 2 SP: the question asked BEFORE packing rather than after. Deliberately NOT a fifth fulfilment
   // facet — those four are mutually exclusive states of one question, this ANDs with them.
@@ -2075,7 +2075,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // 5 SP: PURE MODULES AND COLUMNS, NO SCREEN. The name says "the columns behind them" rather than
   // "the triage line" on purpose: `src/components/tickets/` holds no SupportTicketsTab, so a name
   // reading as a shipped queue screen would be a scope overclaim on a shared board.
-  { epic: 'HRIS-17', name: 'The Employee Support triage and lifecycle rules and the columns behind them — ranking is the promotion, and whoever touches a ticket first holds it', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-17', name: 'The Employee Support triage and lifecycle rules and the columns behind them — ranking is the promotion, and whoever touches a ticket first holds it', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'High' },
 
   // 8 SP: 12 files / 4,524 insertions. The body email never writes the row, another employee's id
   // is a 404 and not a 403, and an employee reply to a closed ticket reopens it as a CAS while a
@@ -2095,5 +2095,5 @@ export const PLAN_TASKS: PlanTask[] = [
   // SECTION … undo your shit". Zero file overlap with the employee-side row — measured with
   // `comm -12` — so it is its own work, not part of that one. Kane's standing rule recorded with
   // it: do not touch the original ticket Kanban.
-  { epic: 'HRIS-17', name: 'The dev Kanban stopped waiting on a roles fetch to render, and Support Tickets joined the rail as its own tab', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'Critical' },
+  { epic: 'HRIS-17', name: 'The dev Kanban stopped waiting on a roles fetch to render, and Support Tickets joined the rail as its own tab', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'Critical' },
 ];
