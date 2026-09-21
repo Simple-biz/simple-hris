@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   DEPARTMENTS,
   DEPT_INPUT_CONFIG,
@@ -227,4 +229,56 @@ test('isKpiCalculatorDeptKey rejects empty keys and allows unknown ones', () => 
   assert.equal(isKpiCalculatorDeptKey(''), false);
   assert.equal(isKpiCalculatorDeptKey(null), false);
   assert.equal(isKpiCalculatorDeptKey(undefined), false);
+});
+
+// ── Add External Member: the dept list is a claim about the CATALOG ───────────
+//
+// `EXTERNAL_MEMBER_DEPTS` lives inside `DeptBonusCalculator.tsx` (it is UI
+// gating, not payroll config) so it is read from source rather than imported.
+// The control parses the ARRAY LITERAL, with comment lines stripped first —
+// a scan that can match prose in a comment is not a control
+// ([[kpi-calculator-active-offboarded-tiles]], where a detector broke four
+// times for exactly that reason).
+const CALC_SRC = readFileSync(
+  join(process.cwd(), 'src/components/manager/DeptBonusCalculator.tsx'),
+  'utf8',
+);
+
+/** The keys inside `new Set([...])`, comments removed. */
+function externalMemberDepts(): string[] {
+  const open = CALC_SRC.indexOf('const EXTERNAL_MEMBER_DEPTS = new Set([');
+  assert.notEqual(open, -1, 'EXTERNAL_MEMBER_DEPTS was renamed — this control is now scanning nothing');
+  const start = CALC_SRC.indexOf('[', open);
+  const end = CALC_SRC.indexOf(']', start);
+  assert.ok(end > start, 'EXTERNAL_MEMBER_DEPTS literal did not close');
+  const body = CALC_SRC.slice(start + 1, end)
+    .split('\n')
+    .map((l) => l.replace(/\/\/.*$/, ''))
+    .join('\n');
+  return [...body.matchAll(/'([a-z0-9_]+)'/g)].map((m) => m[1]);
+}
+
+test('every Add External Member department still has a calculator card', () => {
+  // An external member exists ONLY through their applied rows, so a department
+  // with no panel to add into offers a button that cannot persist anybody.
+  const keys = externalMemberDepts();
+  assert.ok(keys.length > 0, 'parsed no departments — the literal shape changed');
+  for (const key of keys) {
+    assert.ok(
+      isKpiCalculatorDeptKey(key),
+      `"${key}" can add external members but is RETIRED from the calculator — ` +
+        `there is no panel to add into`,
+    );
+  }
+});
+
+test('Discovery can add external members', () => {
+  // 2026-09-21, audit item 131: the departed-member guard hides markh@ from the
+  // live week and Discovery had no way to reach him — `canAddExternal` gates the
+  // Offboarded strip too, so the card had neither path. Discovery carries a
+  // department-scope weekly formula bonus, which is what makes an external stick.
+  assert.ok(
+    externalMemberDepts().includes('discovery'),
+    'discovery lost Add External Member — its hidden people become unreachable again',
+  );
 });

@@ -168,11 +168,27 @@ const PAGED_DEPTS: Record<string, number> = { lead_gen: 8 };
  *  roster (no employee record / permissions needed). The external member is
  *  keyed by the email the manager types, receives the department's common /
  *  team bonuses like everyone else, and persists purely through their saved
- *  applied rows (the same rows payroll pays). */
+ *  applied rows (the same rows payroll pays).
+ *
+ *  A department only belongs here if it has a **department-scope** catalog
+ *  bonus: an external exists solely through applied rows, so with nothing to
+ *  apply they would not survive a reload (the caveat recorded when this list
+ *  grew from `['edit']`, audit 2026-07-17). An employee-scope assignment cannot
+ *  cover them — they are not on the roster to be assigned one.
+ *
+ *  `canAddExternal` also gates the **Offboarded · last pay** strip below, so a
+ *  department left out of this list has no way to reach anybody the roster does
+ *  not serve — and Add External Member is the documented recovery path for
+ *  exactly that (`hsl-kpi-calculator-2026-07.md`, and
+ *  [[offboarded-bonus-scoring]]). `discovery` was added 2026-09-21 for that
+ *  reason: the departed-member guard hides `markh@` from the live week and the
+ *  card offered no way back (audit item 131). It carries a department-scope
+ *  weekly formula bonus, so the rule above is satisfied. */
 const EXTERNAL_MEMBER_DEPTS = new Set([
   'edit',
   'callback',
   'client_va',
+  'discovery',
   'lead_gen',
   'pm_team',
   'site_building',
