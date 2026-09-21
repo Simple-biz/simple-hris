@@ -88,18 +88,87 @@ that has started walking — coordinate with the OMS before reverting.
 
 ---
 
-## Steps still to come
+## Step 6.2 — the drift probe *(shipped)*
 
-| Step | What | Revert |
+A diagnostics node, **Roster Definition Drift**, compares the two definitions on every panel
+load. `judgeRosterDrift` is pure and tested; the read is alias-aware and paged.
+
+No threshold — one corpse is one person the external API is wrong about, and the 508-row gap
+started as one. Two shapes are **critical** rather than clever: the view exceeding the active set
+(a strict subset cannot be larger — the *read* is broken), and an empty roster, which is
+arithmetically "no drift" and is also exactly the 2026-08-03 incident where the view returned
+zero rows with HTTP 200 and the wizard re-labelled 422 people "Unassigned".
+
+### Flip it back
+
+Revert the commit. Read-only; removing it removes a signal, nothing else. The node id must also
+come out of `ALL_DIAGNOSTIC_NODE_IDS` — a canonical-list test enforces that pairing.
+
+---
+
+## Steps 2, 3, 5 — built, rehearsed, NOT APPLIED
+
+Nothing has been written to Supabase. Both gates are real and both were exercised.
+
+### Steps 2 + 3 — the data reconcile
+
+`scripts/reconcile-gml-active-only.mts` — rehearsal by default, `--apply` to write.
+
+```
+node --import tsx scripts/reconcile-gml-active-only.mts           # rehearse
+node --import tsx scripts/reconcile-gml-active-only.mts --apply   # write
+```
+
+Rehearsal, 2026-09-21, accounting for the gap exactly (298 + 159 + 8 + 43 = 508):
+
+| | rows | people |
 | --- | --- | --- |
-| 2 | retire the 298 corpses as `duplicate_cleanup` | the stamped ids are written to `references/backups/2026-09-21-gml-reconcile/`; clearing `off_boarded_*` on exactly those ids restores them |
-| 3 | stamp the 166 leavers with their real `offboarded_sheet` date | same — the backup names every id and its prior value |
-| 4 | hand HR the 7 + 16 | no write |
-| 5 | `active_employees` drops the upload gate | paired down-migration restores the gate in one statement |
-| 6.2 | diagnostics probe asserting the two definitions agree | read-only |
+| 1 corpses → `duplicate_cleanup` | 298 | 289 |
+| 2 leavers → their real `offboarded_sheet` date | 159 | 142 |
+| 3 **LIVE, missing from the HR screen** | 8 | **7** — no write |
+| 4 needs HR review | 43 | 41 — no write |
+| untouched (on the HR screen) | 1,215 | |
 
-**Order is the safety.** Steps 1–4 must land before step 5: flipping the view first would put
-483 dead rows in front of ~40 `active_employees` readers at once.
+Leavers came in at **159, not 185**, because the re-hire guard rejects any record that does not
+post-date the person's own Start Date. Those 26 rows moved to HR review rather than being
+stamped — the fail-open direction.
+
+**Flip it back:** `references/backups/2026-09-21-gml-reconcile/revert-plan.csv` names every id
+with the four `off_boarded_*` values it held before. Clearing those columns on exactly those ids
+restores them. The full 2,833-row snapshot sits beside it.
+
+### Step 5 — one definition
+
+```
+node --import tsx scripts/apply-active-employees-one-definition.mts            # dry run (rolls back)
+node --import tsx scripts/apply-active-employees-one-definition.mts --apply    # commit
+node --import tsx scripts/apply-active-employees-one-definition.mts --verify   # checks only
+node --import tsx scripts/apply-active-employees-one-definition.mts --revert   # PUT THE GATE BACK
+```
+
+**The order is enforced by the database, not by this document.** The migration's pre-flight
+raises when more than 60 unstamped rows sit off the current upload. Run today it says:
+
+```
+before: active_employees 1215 · unstamped 1723 · gap 508
+REFUSING: 508 unstamped rows are not on the current upload (expected <= 60 after
+the reconcile). Run scripts/reconcile-gml-active-only.mts --apply first.
+```
+
+Applying before the reconcile would publish 483 dead rows to the ~40 readers of
+`active_employees` at once.
+
+**Flip it back:** `--revert` applies
+`references/sql/alter/2026-09-21_active_employees_restore_upload_gate.sql`, byte-identical to the
+definition live until 2026-09-21. It restores the gate and **un-stamps nobody** — undoing stamps
+is `revert-plan.csv`, above. Note what comes back with the gate: the ~51-row residue (the 7 live
+people and the 41 unclassified) disappears from every surface again.
+
+### Step 4 — the 7
+
+`cathypa@` · `berne@` · `lawangc@` · `jjr@` · `rodneys@` · `michaelsy@` · `markga@`. Live, paid,
+and on no HR screen. Actionable today, independent of every other step — HR re-adds them to the
+sheet, or they are re-onboarded in the HRIS.
 
 ---
 
