@@ -702,9 +702,9 @@ import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-09-17';
-export const AUDIT_RANGE = 'board status sweep (rows shipped Sep 1 - Sep 4)';
-export const AUDIT_COMMITS = 0;
+export const PASS_DATE = '2026-09-21';
+export const AUDIT_RANGE = 'c58e0f6c..7c880535 (Sep 17 - Sep 21)';
+export const AUDIT_COMMITS = 22;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -731,169 +731,213 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // —── PASS 30 · 2026-09-17 · "mark these all as done and deployed" ────────────────────────────────────────
+  // —── PASS 31 · 2026-09-21 · THE Sep 17-21 RANGE, NINE ROWS, AND NOT ONE OF THEM IS DONE ──────
   //
-  // A STATUS SWEEP, not a commit audit. Kane sent a screenshot of the board's Pending Deploy column
-  // and said to close it. The board held 22 Pending Deploy rows of ours (330 Done, 4 Ready to Start).
+  // Kane: "All committed features lets push it with the Monday Board and Skill please."
   //
-  // WHAT THIS PASS DOES NOT TOUCH, and why — the gate's answer to a blanket Done is to ask which
-  // ones, so five of the 22 are deliberately left where they are:
+  // WHAT THE RANGE IS. `c58e0f6c..7c880535` = 22 commits. Note the range is NOT what a first look
+  // says: `c58e0f6c..origin/main` is 20, and the 21st — `fe37d2fa`, Open item 121 — was committed
+  // by a CONCURRENT SESSION while this pass's evidence was being gathered, and is UNPUSHED. It is
+  // record-keeping for another row's work and takes no row. A SECOND concurrent commit, 7c880535
+  // (items 122-123), landed LATER IN THE SAME SESSION and is likewise docs-only with no row.
+  // Three of the derived rows had already written "0 unpushed" into their basis as a MEASURED
+  // fact, and it was false by the time it was written. Corrected before staging, and every
+  // conclusion re-checked per sha rather than on the aggregate count — all nine survived on their
+  // own ancestor evidence. The shared-checkout hazard is not theoretical, and the skill's
+  // pre-flight did not catch it: mtimes and a clean tree both passed, because the other session
+  // was in docs/audits/ and nowhere near the board-sync files.
   //
-  //   · Scheduling inside the HSL department .. employee_schedule_periods MEASURED ABSENT 09-17
-  //   · Paystub reissue ....................... paystub_issues MEASURED ABSENT 09-17
-  //   · Lead Gen QC first-pass restore ........ script un-run; Kane's payability ruling outstanding
-  //   · Aliased MESA member ................... jimg@ fixed, dales@ STILL un-deducted
-  //   · Tickets update notifications .......... its work finished 2026-08-21, which is SPRINT 27,
-  //     but the row is filed S28. selfcheck REFUSES a Completed Date outside its sprint, and the fix
-  //     is a sprint re-file that only a FULL reconcile can write — still barred by the 12 deleted
-  //     Q2 epics. Held, and reported, rather than back-dated into a window it does not belong to.
+  // WHY NOTHING IS DONE. Every one of the nine is code-complete and every sha is an ancestor of
+  // origin/main, so nothing is In Progress on push grounds. All SEVEN migrations the range
+  // introduced are measured APPLIED — read-only probes on 2026-09-21 against production, each
+  // with a negative control that correctly errored (42703 for a missing column, PGRST205 for a
+  // missing table), because a probe that cannot fail proves nothing. Zero n8n workflows in the
+  // range. So NO external step holds any row here.
   //
-  // The 4 Ready to Start rows are NOT in this pass either: they are unstarted work, not undeployed
-  // work, and Kane's screenshot showed the Pending Deploy column.
+  // What holds all nine is the gate's last line: nobody has recorded looking at any of them in
+  // production. "All committed features" is a statement about git, not about a browser. The gate's
+  // answer to a blanket Done is to ask WHICH ONES and record the answer as the basis — so these go
+  // on as Pending Deploy carrying ESTIMATED SP, and a second, one-line pass moves the ones Kane
+  // names. 43 SP of Actual is not written on an inference.
   //
-  // TWO MORE "PENDING" CLAIMS MEASURED STALE, both read-only 09-17:
-  //   · the orphanage interns migration is APPLIED (all six tables present)
-  //   · webhooks.config now carries ticket_replied AND ticket_moved (25 entries, was 22)
-  // The second belongs to the Tickets row, which is held for the sprint reason above — its external
-  // step is no longer what holds it.
+  // TWO ROWS CANNOT GO DONE EVEN IF HE SAYS SO, and they are named so the question is precise:
+  //   · the Gift Tracker toggle — MEASURED: 57 gift-shipping rows in production, ZERO with a named
+  //     recipient, and the control is gated `peopleAltRecipient > 0` BY DESIGN. It renders nowhere.
+  //     Nobody can click through a control that is correctly suppressing itself.
+  //   · the staff read/triage API — `grep` finds ZERO callers and there is no tab body, so the
+  //     834-line route is dead code in production. Real work, really merged, not reachable.
   //
-  // EVERY DATE IS RECOVERED, NOT TYPED. The rows predate this pass, so their sha lists were read back
-  // out of the git history of pass.mts itself, and selfcheck re-derives each date from git.
+  // WHAT THE ADVERSARIAL PASS CHANGED, because the first draft of this pass was wrong in ways that
+  // would have gone onto a shared board as fact. Six of seven derived rows were REFUTED:
+  //   · the security row claimed "all 80 re-read", "fourteen newly closed" and "ten partly" — the
+  //     artifact's own preamble says rows not re-verified keep their old status, five of the
+  //     fourteen were already closed on 2026-08-10 by an S26 row that banked 5 SP for them, and
+  //     `grep -c "| PARTIAL |"` = 13. Name corrected to nine/thirteen; SP corrected 3 → 2.
+  //   · the gift row's entire basis was "migration un-run" — it is applied. Measured, twice.
+  //   · two names overclaimed a surface that does not exist ("gets its API", "triage line").
+  //   · `26292c44` ("push") is TWO features in one commit — 834 insertions of staff tickets route
+  //     against 714 of live chat. It is listed under both rows WITH THE SPLIT NAMED in each basis,
+  //     because excluding a sha is not what prevents a double-count; saying which half is whose is.
+  //   · `2e542207` was in NO cluster and is real work — a regression fix for damage a sibling row
+  //     caused. `comm -12` against the employee-side commit returns EMPTY. It gets its own Bug row.
   {
-    name: 'Generate COE from the Signing Queue — accounting issues and signs on the employee’s behalf',
-    status: 'Done',
-    completed: '2026-09-01',
-    shas: ['6d16bd70', '604abd10'],
+    name: 'The security audit re-read against current source — nine findings newly closed, thirteen only partly closed, and the worst hole is not one of the eighty',
+    status: 'Pending Deploy',
+    shas: ['480d31dc', '3119740e'],
     basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 2 sha(s), last 604abd10, which is an ancestor of origin/main (re-checked 2026-09-17).',
+      'A re-read that CHANGED the record, so it is work: 480d31dc adds a 66-line second re-verification ' +
+      'block to SECURITY_AUDIT.md and 3119740e adds an 81-row per-row status checklist, turning "is #32 ' +
+      'fixed" into a lookup. Zero lines of application code, zero migrations, zero fixes. Every count in ' +
+      'the name is measured, not quoted: the commit prose says fourteen newly closed and ten partial, but ' +
+      'five of the fourteen (#34/35/36/43/62) were already closed on 2026-08-10 by the S26 row that banked ' +
+      '5 SP for them, and grep -c on the shipped table returns 13 PARTIAL, not 10. Pending Deploy, not ' +
+      'Done: nobody has recorded reviewing the output, and the row it describes is a measurement, not a fix.',
+    blockers: ['No recorded review of the re-verification output — the audit re-read exists, nobody has signed off on what it found'],
   },
   {
-    name: 'Orphanage step deletes wipe both carriers, the additions blob is written under CAS, and the red panel restores from record',
-    status: 'Done',
-    completed: '2026-09-01',
-    shas: ['27328af3', '28bea8ac'],
+    name: 'Diagnostics draws three dashboard-scoped service maps from one probe response — a scoped map reports only on the nodes it draws',
+    status: 'Pending Deploy',
+    shas: ['8ea8ecf2', '65a199bb'],
     basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 2 sha(s), last 28bea8ac, which is an ancestor of origin/main (re-checked 2026-09-17).',
+      'One probe response fans into three dashboard-scoped maps, each reporting only on the nodes it ' +
+      'draws. 8ea8ecf2 is the build (10 files: the diagnostics route, SystemDiagnostics.tsx, ' +
+      'diagnostics-probes.ts and diagnostics-scopes.ts with its test); 65a199bb propagates it through 12 ' +
+      'reference docs in the same session. The only row in pass 31 that survived adversarial verification ' +
+      'with no correction to name, SP, status, date or sprint. Pending Deploy because the three new probes ' +
+      'have never executed against production — the first admin to open the tabs is the confirmation.',
+    blockers: ['The three new probes have never run against production; no admin has opened the scoped tabs'],
   },
   {
-    name: 'HSL KPI branches become a list that opens a Windowed/Half/Full overlay, with SSD rebuilt and a matching first-load skeleton',
-    status: 'Done',
-    completed: '2026-09-01',
-    shas: ['2547b719', '276e6d7f', 'db69b335'],
+    name: 'An employee can name somebody else to receive a tenure gift — the courier still calls the employee, and the three recipient columns move as a set',
+    status: 'Pending Deploy',
+    shas: ['6dba7f86', 'c606d742'],
     basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 3 sha(s), last db69b335, which is an ancestor of origin/main (re-checked 2026-09-17).',
+      'Three structured columns replace a Notes box whose placeholder had read "alternative recipient" ' +
+      'since the form shipped. Kane ruled all three questions on 2026-09-18: active_contact_number stays ' +
+      'THE EMPLOYEE\'S number — the one the courier calls — and recipient_contact is an additional fallback ' +
+      'that never substitutes, pinned by a test. No backfill of the prose spouse names already in notes: ' +
+      'guessing intent out of free text redirects real parcels on a regex. THE MIGRATION IS APPLIED — ' +
+      'measured read-only 2026-09-21, all three columns returning 200, with a control column correctly ' +
+      'erroring 42703. The feature doc said "PENDING — Kane runs this" and was STALE; corrected in this ' +
+      'same commit. So the only thing between this row and Done is somebody looking at it.',
+    blockers: ['No recorded click-through in production — the migration is applied and the code is live, so this is the last step'],
   },
   {
-    name: 'KPI Calculator paints from cache across the tab-switch unmount, and holds scoring until week, catalog and FX are live',
-    status: 'Done',
-    completed: '2026-09-01',
-    shas: ['9ddf772f', 'c502457c'],
+    name: 'The Gift Tracker can be asked which parcels go to someone else — a toggle beside the fulfilment filter, never a fifth option inside it',
+    status: 'Pending Deploy',
+    shas: ['06137741'],
     basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 2 sha(s), last c502457c, which is an ancestor of origin/main (re-checked 2026-09-17).',
+      'The alternate-recipient feature shipped 2026-09-18 with no way to ASK the question on screen — the ' +
+      'count lived only in the export summary band, so "which parcels go to a spouse?" could not be ' +
+      'answered before packing. Now a tile and a toggle. Deliberately NOT a fifth fulfilment facet: ' +
+      'All/We owe/Not recorded/Received are mutually exclusive states of one question, and this ANDs with ' +
+      'whichever is selected. CANNOT REACH DONE ON A CLICK-THROUGH, and that is not a defect: measured ' +
+      '2026-09-21, production holds 57 gift-shipping rows with ZERO named recipients, and the toggle is ' +
+      'gated peopleAltRecipient > 0 by design, because a permanently-zero control teaches people to ' +
+      'ignore the toolbar. The tile renders at zero; the toggle correctly does not render at all.',
+    blockers: [
+      'Self-suppressing at zero BY DESIGN: 57 production gift-shipping rows, 0 with a named recipient, so the toggle renders nowhere and cannot be clicked through until somebody names one',
+      'The three CHECK constraints and the partial index are UNVERIFIED — PostgREST gives no read path to pg_constraint and proving a CHECK bites needs a write, which is not authorised',
+    ],
   },
   {
-    name: 'Payroll Notes rows are shared — any wizard editor deletes or applies any row, and the board pages past 1000',
-    status: 'Done',
-    completed: '2026-09-01',
-    shas: ['e62f30e8'],
+    name: 'Employee Support live chat — the queue, the on-queue agents, and the ticket a chat becomes whether nobody answers or an agent addresses it',
+    status: 'Pending Deploy',
+    shas: ['00faf88f', 'e59a16ea', 'd5ad2d72', 'a9b291f7', 'b0c8df48', '26292c44'],
     basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last e62f30e8, which is an ancestor of origin/main (re-checked 2026-09-17).',
+      'The largest thing in the range: e59a16ea alone is 36 files / 11,264 insertions — three chat tables ' +
+      '(RLS on, deliberately out of supabase_realtime), a new employee_support role and FeatureViewKey, ' +
+      'the queue, the on-queue agents and the availability route. d5ad2d72 closes seven review findings ' +
+      'and gives the chat sweep a second caller; b0c8df48 adds the chat category column and repairs a ' +
+      'migration that wrongly claimed its trigger already covered triaged_by — caught by a control, and ' +
+      'fixed in the TRIGGER rather than by weakening the control. SHA SPLIT DECLARED: 26292c44 is a mixed ' +
+      '"push" commit and only its 714 live-chat insertions belong to this row (queue route 328, ' +
+      'abandonment.ts 82 + its test 100, chat-sweep.ts 204); its 834-line staff tickets route belongs to ' +
+      'the staff API row. Named for BOTH conversion paths because the code now converts a chat to a ' +
+      'ticket when nobody answers AND when an agent addresses it. Kane overrode Carla\'s signed Decision 2 ' +
+      'to build this before the ticket side — a named, dated reversal, recorded so it is never ' +
+      'rediscovered as drift. Migrations measured APPLIED 2026-09-21, 171 checks.',
+    blockers: [
+      'No recorded production click-through of the chat by anyone',
+      'The five employee_support grants (Carla, Claire, Ainsley, Grace, Alivia) are a manual step with no confirmation — until they exist no agent can open the queue and the employee half talks to an empty room',
+      'UNVERIFIED: support_chat_queued / support_chat_replied appear in no readable webhook registry; the live webhooks.config app_setting was last measured 09-17, before these slugs existed',
+    ],
   },
   {
-    name: 'Manager dashboard shell paints from cache across the tab-switch unmount and a reload',
-    status: 'Done',
-    completed: '2026-09-01',
-    shas: ['ad869220'],
+    name: 'The Employee Support triage and lifecycle rules and the columns behind them — ranking is the promotion, and whoever touches a ticket first holds it',
+    status: 'Pending Deploy',
+    shas: ['ba1b132f', '8c7d1be0'],
     basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last ad869220, which is an ancestor of origin/main (re-checked 2026-09-17).',
+      'Pure modules and columns, no screen — and the name says so on purpose. ba1b132f ships triage.ts ' +
+      'with its test plus the triage columns (priority, triaged_at, triaged_by) and the notification-type ' +
+      'widen including task 3; 8c7d1be0 ships lifecycle.ts with its test and records two rulings for the ' +
+      'next build. Both migrations measured APPLIED 2026-09-21. The first draft of this row was called ' +
+      '"the triage LINE", which reads on a shared board as a shipped queue screen — src/components/tickets/ ' +
+      'holds no SupportTicketsTab, so that name was a scope overclaim and was corrected. Pending Deploy ' +
+      'because the rules are real, tested and live in the database, and the surface they exist for is not.',
+    blockers: [
+      'The staff board surface these modules exist for is UNBUILT — no SupportTicketsTab component, and TicketsBoard has no support-tickets render branch',
+      'UNVERIFIED: the triaged_by lower-casing trigger was repaired by CREATE OR REPLACE, and no read path to pg_trigger exists to confirm the replacement took',
+    ],
   },
   {
-    name: 'Replayed wizard exports carry the FULL saved split, so every row reconciles against the paid final',
-    status: 'Done',
-    completed: '2026-09-01',
-    shas: ['0703c748'],
+    name: 'Employee Support reaches the employee — a Help button with two doors, and the ticket they file, track and reopen behind one of them',
+    status: 'Pending Deploy',
+    shas: ['386c5c10', 'b5f82467'],
     basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last 0703c748, which is an ancestor of origin/main (re-checked 2026-09-17).',
+      '12 files / 4,524 insertions: a Help button beside FAQs that REPLACED the chat button rather than ' +
+      'joining it, opening two doors — Chat Support and Raise a ticket — plus EmployeeSupportTickets ' +
+      '(form, history, track map) and the session-scoped routes behind it. Verified by hand at build ' +
+      'time, not by agent summary: the body email never writes the row (work_email is master-resolved, ' +
+      'filed_by_email comes from the session, and body.email reaches only authorizeEmailAccess); another ' +
+      'employee\'s id is a 404 and not a 403; an employee reply to a closed ticket reopens it as a CAS on ' +
+      'status with the message written first, while a staff reply does not — the asymmetry is deliberate ' +
+      'and lives in lifecycle.ts. A screening flag never blocks, because a blocking filter turns a false ' +
+      'positive into an employee who cannot report harassment on the channel built for it.',
+    blockers: [
+      'No recorded click-through of the Help button in production',
+      'The staff-only trial gate Carla signed is STILL only a comment in EmployeeHelpMenu.tsx — with the migrations applied the Help button is live to every employee, not to a trial group',
+      'The round trip does not close: a filed ticket is readable by its employee and by nobody on staff in the UI, because the staff tab body does not exist',
+      'Manual deploy step with no script: the five holders were granted employee_support before the support_tickets key existed, so an admin must add the key by hand or re-grant',
+    ],
   },
   {
-    name: 'Both KPI calculators share one header — a Departments/HSL switch, the readiness chip, the Draft/Ready/Locked ladder and the shell’s lock banner',
-    status: 'Done',
-    completed: '2026-09-02',
-    shas: ['f36a97ce'],
+    name: 'The Employee Support staff board’s read and triage API — two stages, and every claim, rank and reassign a compare-and-set',
+    status: 'Pending Deploy',
+    shas: ['26292c44'],
     basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last f36a97ce, which is an ancestor of origin/main (re-checked 2026-09-17).',
+      'The 834-line app/api/support/tickets/route.ts out of the mixed "push" commit — the paused partial ' +
+      'that Open item 118 recorded as still sitting in the working tree actually LANDED here, which is ' +
+      'exactly the trap the skill warns about: a one-word commit message carrying a whole surface. SHA ' +
+      'SPLIT DECLARED: only the 834 staff-tickets insertions belong to this row; the same commit\'s 714 ' +
+      'live-chat insertions belong to the live-chat row, and both rows name the split so the sha appearing ' +
+      'twice cannot read as the work being counted twice. Two stages (line and board) and every claim, ' +
+      'rank and reassign is a compare-and-set. NAMED NARROWLY on purpose: the first draft said the staff ' +
+      'board "gets its API", and it does not — app/api/support/tickets/ holds route.ts ALONE, the plan\'s ' +
+      '[id]/reply route does not exist, so no staff member can ANSWER a ticket through any API.',
+    blockers: [
+      'DEAD CODE IN PRODUCTION: grep finds ZERO callers of api/support/tickets in src/ or app/, and no SupportTicketsTab component exists to call it',
+      'The reply/close/reopen route the plan specifies as task 7 does not exist, so the staff half of the round trip cannot be completed through the API',
+      'Doc rot, unfixed in the tree: docs/features/INDEX.md and employee-support.md both still say the routes are "a paused partial in the working tree", false since this commit',
+    ],
   },
   {
-    name: 'Manager Time Adjustments becomes a master-detail review workspace on the MESA-in-blue theme, with the detail as a modal',
-    status: 'Done',
-    completed: '2026-09-02',
-    shas: ['840f0f77', 'b97637e3', '0ce0fa64', 'f36a97ce'],
+    name: 'The dev Kanban stopped waiting on a roles fetch to render, and Support Tickets joined the rail as its own tab',
+    status: 'Pending Deploy',
+    shas: ['2e542207'],
     basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 4 sha(s), last f36a97ce, which is an ancestor of origin/main (re-checked 2026-09-17).',
-  },
-  {
-    name: 'Manager Time Adjustments flicker was a fetch-per-render loop — ref the callback, poll every 60 s',
-    status: 'Done',
-    completed: '2026-09-02',
-    shas: ['62c8312e'],
-    basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last 62c8312e, which is an ancestor of origin/main (re-checked 2026-09-17).',
-  },
-  {
-    name: 'Lower-left “X paid Y $Z” toast on every dashboard while processing is on, broadcast by the server after each dispatch INSERT',
-    status: 'Done',
-    completed: '2026-09-03',
-    shas: ['60ea3aeb', '64f012b6', '1128ebce', '407207a3'],
-    basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 4 sha(s), last 407207a3, which is an ancestor of origin/main (re-checked 2026-09-17).',
-  },
-  {
-    name: 'Payment Dispatch refuses a second paid row per cycle — server 409 guard, stale-load fence, and a dedupe script',
-    status: 'Done',
-    completed: '2026-09-03',
-    shas: ['d406e7c9'],
-    basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last d406e7c9, which is an ancestor of origin/main (re-checked 2026-09-17).',
-  },
-  {
-    name: 'Orphanage interns — @pathway.ph profiles, own Hubstaff report and tables, a mini wizard on /orphanage, a Simple | Interns view in Accounting, and dispatch to the Orphanage queue',
-    status: 'Done',
-    completed: '2026-09-03',
-    shas: ['57ca6638', '5a18b40c', '34934480', 'cd8f4365', '2b54e2fb', '1a049e76', '5cc1a5eb', 'f9acc1a5'],
-    basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 8 sha(s), last f9acc1a5, which is an ancestor of origin/main (re-checked 2026-09-17). MIGRATION MEASURED APPLIED read-only 2026-09-17 with .limit(1), never head:true: orphanage_interns, orphanage_intern_hours, orphanage_intern_hours_uploads, orphanage_intern_pay, orphanage_intern_rates and orphanage_dispatches ALL PRESENT (negative control definitely_not_a_table_xyz correctly ABSENT). The memory note "Migration NOT yet applied" was STALE.',
-  },
-  {
-    name: 'Employee Pay Stubs are served from recovered snapshots and Profile loads in one wave',
-    status: 'Done',
-    completed: '2026-09-03',
-    shas: ['1b840fc6'],
-    basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last 1b840fc6, which is an ancestor of origin/main (re-checked 2026-09-17).',
-  },
-  {
-    name: 'Employee My Hours calendar tiles restyled like the MESA stat cards — flat tone fills, bigger dates, warm weekend text',
-    status: 'Done',
-    completed: '2026-09-03',
-    shas: ['c8e5f658', '4265bdfd', 'b1c0dcf3', 'fb26990b', '6f4ac980'],
-    basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 5 sha(s), last 6f4ac980, which is an ancestor of origin/main (re-checked 2026-09-17).',
-  },
-  {
-    name: 'Favicon becomes the Employee Penny chat-bubble heart',
-    status: 'Done',
-    completed: '2026-09-03',
-    shas: ['30230f09'],
-    basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last 30230f09, which is an ancestor of origin/main (re-checked 2026-09-17).',
-  },
-  {
-    name: 'Pay-cycle celebration fires ONE way — from the close-out route itself — with CSV, XLSX and PDF attached; the client-side cycle-complete route is deleted',
-    status: 'Done',
-    completed: '2026-09-04',
-    shas: ['88474107'],
-    basis:
-      'Kane 2026-09-17, shown the board\'s own Pending Deploy column: "mark these all as done and deployed". Recorded as the click-through evidence, per the honesty gate. Evidence recovered from the pass.mts history: 1 sha(s), last 88474107, which is an ancestor of origin/main (re-checked 2026-09-17).',
+      'A REGRESSION FIX for damage a sibling row in this same pass caused, which is why it is a Bug and ' +
+      'not part of the employee-side row — comm -12 against that commit\'s file list returns EMPTY, so it ' +
+      'is independent work by the skill\'s own file-overlap test. Hosting Employee Support at /tickets ' +
+      '(e59a16ea) had tied the dev Kanban\'s rendering to a client-side roles fetch: activeView seeded ' +
+      'null, the Board\'s nav and its data fetch both gated on permsReady, and useFeaturePermissions seeds ' +
+      'roles empty until its round trip settles — so whenever that was slow the Board vanished for the ' +
+      'people it belongs to. Kane: "put back the BOARD SECTION … undo your shit". Now overview lands ' +
+      'first, nav paints from the first frame, the fetch runs on mount, and the component\'s one remaining ' +
+      'decision can move a support-only holder onto their tab but never hide the board. Kane\'s standing ' +
+      'rule recorded with it: do not touch the original ticket Kanban — its guarding is the route gate and ' +
+      'the tickets feature key, never a component waiting on a fetch.',
+    blockers: ['No recorded click-through confirming the Board renders for a tickets-role holder in production'],
   },
 ];
 

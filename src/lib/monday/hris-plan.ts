@@ -2030,4 +2030,70 @@ export const PLAN_TASKS: PlanTask[] = [
   // 1 SP: presentation trims on two wizard steps, same session: the Orphanage step loses its gradient
   // banner card and the Dispatch step says it once.
   { epic: 'HRIS-15', name: 'The Orphanage and Dispatch wizard steps lose a gradient banner and three blocks of prose', type: 'Chore', sp: 1, done: true, sprint: 'S29', priority: 'Low' },
+
+  // —── PASS 31 · 2026-09-21 · Sep 17-21, nine rows, 43 SP, NOT ONE OF THEM DONE ─────────────────
+  // Every row below is `done: false` DELIBERATELY. All nine are code-complete and on origin/main,
+  // and all seven of the range's migrations are measured APPLIED (read-only, 2026-09-21, with a
+  // negative control that correctly errors 42703/PGRST205) — so nothing here is held by an external
+  // step. What holds them is the one thing the honesty gate will not infer: nobody has recorded
+  // looking at any of them in production. done:true would write an Actual SP, and bonuses ride on
+  // that number. The corrector writes Pending Deploy; Kane's confirmation is what moves them.
+
+  // 2 SP: A RE-READ, NOT A FIX — zero lines of application code. Scored 2 to match every other
+  // doc-only Spike on this board (the deletion-cron pre-flight, the pre-release security sweep).
+  // The counts in the name are MEASURED, not quoted from the commit message, which overstates all
+  // three: `grep -c "| PARTIAL |"` = 13 where the prose says ten; five of the fourteen claimed
+  // "newly closed" (#34/35/36/43/62) were already closed on 2026-08-10 by the S26 row that banked
+  // 5 SP for it; and "all 80" is refuted by the checklist's own preamble.
+  { epic: 'HRIS-05', name: 'The security audit re-read against current source — nine findings newly closed, thirteen only partly closed, and the worst hole is not one of the eighty', type: 'Spike', sp: 2, done: false, sprint: 'S29', priority: 'High' },
+
+  // 5 SP: one probe response, three dashboard-scoped maps, and the rule that a scoped map reports
+  // only on the nodes it draws. The only row this pass that survived adversarial verification with
+  // no correction at all.
+  { epic: 'HRIS-15', name: 'Diagnostics draws three dashboard-scoped service maps from one probe response — a scoped map reports only on the nodes it draws', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
+
+  // 5 SP: three columns that move as a set. MIGRATION MEASURED APPLIED 2026-09-21 — the feature
+  // doc's "PENDING — Kane runs this" at line 247 is STALE and is corrected in this same commit.
+  // Kane's ruling holds: `active_contact_number` is still the number the courier calls and
+  // `recipient_contact` never substitutes. See [[gift-address-external-link]].
+  { epic: 'HRIS-32', name: 'An employee can name somebody else to receive a tenure gift — the courier still calls the employee, and the three recipient columns move as a set', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
+
+  // 2 SP: the question asked BEFORE packing rather than after. Deliberately NOT a fifth fulfilment
+  // facet — those four are mutually exclusive states of one question, this ANDs with them.
+  // MEASURED: 57 gift-shipping rows in production, ZERO with a named recipient, and the toggle is
+  // gated `peopleAltRecipient > 0` by design — so it renders nowhere yet and cannot be clicked
+  // through until somebody names a recipient. The tile beside it does render, at zero.
+  { epic: 'HRIS-32', name: 'The Gift Tracker can be asked which parcels go to someone else — a toggle beside the fulfilment filter, never a fifth option inside it', type: 'Feature', sp: 2, done: false, sprint: 'S29', priority: 'Low' },
+
+  // 8 SP and arguably an epic: 36 files / 11,264 insertions across four commits plus the chat half
+  // of the mixed `push` commit. Named for BOTH conversion paths — a chat becomes a ticket when
+  // nobody answers (`expired`) AND when an agent addresses it (`addressed`); naming only the first
+  // understates what shipped. Kane overrode Carla's signed Decision 2 to build this first — a
+  // named, dated reversal, not drift. See [[employee-support-blueprint-pending]].
+  { epic: 'HRIS-17', name: 'Employee Support live chat — the queue, the on-queue agents, and the ticket a chat becomes whether nobody answers or an agent addresses it', type: 'Feature', sp: 8, done: false, sprint: 'S29', priority: 'High' },
+
+  // 5 SP: PURE MODULES AND COLUMNS, NO SCREEN. The name says "the columns behind them" rather than
+  // "the triage line" on purpose: `src/components/tickets/` holds no SupportTicketsTab, so a name
+  // reading as a shipped queue screen would be a scope overclaim on a shared board.
+  { epic: 'HRIS-17', name: 'The Employee Support triage and lifecycle rules and the columns behind them — ranking is the promotion, and whoever touches a ticket first holds it', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
+
+  // 8 SP: 12 files / 4,524 insertions. The body email never writes the row, another employee's id
+  // is a 404 and not a 403, and an employee reply to a closed ticket reopens it as a CAS while a
+  // staff reply does not. The staff-only trial gate Carla signed is STILL only a comment, so the
+  // Help button ships to every employee.
+  { epic: 'HRIS-17', name: 'Employee Support reaches the employee — a Help button with two doors, and the ticket they file, track and reopen behind one of them', type: 'Feature', sp: 8, done: false, sprint: 'S29', priority: 'High' },
+
+  // 5 SP: the 834-line staff route out of the mixed `push` commit. NAMED NARROWLY — "read and
+  // triage", never "gets its API": `app/api/support/tickets/` holds route.ts ALONE, the plan's
+  // `[id]/reply` route does not exist, and grep finds ZERO callers, so no staff member can answer
+  // a ticket through any API and the route is dead code in production until the tab body lands.
+  { epic: 'HRIS-17', name: 'The Employee Support staff board’s read and triage API — two stages, and every claim, rank and reassign a compare-and-set', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
+
+  // 3 SP, a Bug because it repairs a regression a SIBLING row caused: hosting Employee Support at
+  // /tickets tied the dev Kanban's rendering to a client-side roles fetch, so the Board vanished
+  // for the people it belongs to whenever that round trip was slow. Kane: "put back the BOARD
+  // SECTION … undo your shit". Zero file overlap with the employee-side row — measured with
+  // `comm -12` — so it is its own work, not part of that one. Kane's standing rule recorded with
+  // it: do not touch the original ticket Kanban.
+  { epic: 'HRIS-17', name: 'The dev Kanban stopped waiting on a roles fetch to render, and Support Tickets joined the rail as its own tab', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'Critical' },
 ];

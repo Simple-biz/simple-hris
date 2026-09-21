@@ -244,11 +244,22 @@ that says who is actually at the door would be exactly backwards.
    rehearses inside a transaction and rolls back. Verifies the three columns,
    their comments, the three CHECKs and the partial index, then proves each CHECK
    **bites** behind three positive controls.
-2. The same with `--apply`. **PENDING — Kane runs this.**
+2. The same with `--apply`. **APPLIED — measured 2026-09-21.** Read-only probe
+   against production: `recipient_name`, `recipient_relationship` and
+   `recipient_contact` all return 200, with a negative control column
+   (`definitely_not_a_column_xyz`) correctly erroring `42703` — a probe that
+   cannot fail proves nothing, so the control is the point. This line read
+   **"PENDING — Kane runs this"** from 2026-09-18 until it was measured; the
+   claim was never re-checked and the Monday row for this feature was nearly
+   filed with an un-run migration as its blocker.
+   **Still UNVERIFIED:** the three CHECK constraints and the partial index.
+   PostgREST offers no read path to `pg_constraint`, and proving a CHECK *bites*
+   requires a write, which is not authorised. Applied ≠ fully verified.
 3. Deploy the code.
 
 **Run the migration BEFORE deploying.** The columns are in `SELECT_COLS`, so with
-them absent *every* gift-shipping read fails — not just the new field.
+them absent *every* gift-shipping read fails — not just the new field. (That
+hazard is now closed: the columns exist.)
 
 **The migration SQL carries no `BEGIN`/`COMMIT`.** The apply script owns the
 transaction; a `COMMIT` inside the file ends it from within, so the rehearsal
