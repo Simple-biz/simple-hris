@@ -144,11 +144,16 @@ which is true of a ticket and false of a chat nobody is sitting in.
 
 ## Deploy notes
 
-- **MIGRATION PENDING — Kane runs it.** `scripts/Apply Employee Support Chat migration.cmd`. Dry run
-  is the default; `--verify` is read-only.
-- **⚠ ORDER MATTERS.** Run the **2026-09-16 ticket migration first** — `became_ticket_id` is a
-  foreign key into `employee_support_tickets`. That migration's state is **UNKNOWN, not unapplied**;
-  `--verify` it rather than assuming.
+- **APPLIED 2026-09-21 — measured by read-only `--verify`, 171 checks OK.** The three chat tables
+  (RLS on, out of `supabase_realtime`), the role widen (14 roles, nothing dropped), both
+  notification widens, and the triage columns. The launcher now applies **six** files; two landed
+  short on the first run because it was run before the sixth was folded in: the chat **`category`**
+  column, and the **`triaged_by`** lower-casing (the ALTER's trigger claim was false; fixed in the
+  trigger). **One re-run of the same launcher lands both** — every file is idempotent. Launcher:
+  `scripts/Apply Employee Support Chat migration.cmd`; `--verify` is read-only.
+- **Order mattered and was honoured**: the 2026-09-16 ticket migration was applied first —
+  `became_ticket_id` is a foreign key into `employee_support_tickets` — and its state, unknown for
+  five days, is now **measured APPLIED**.
 - **Both widened CHECK lists are RECONSTRUCTED, not measured** — `.env.local` holds only
   `.env.example` placeholders, so nothing could be probed. They are written additively so a wrong
   reconstruction cannot DROP a value, but **re-read both live definitions before `--apply`**.

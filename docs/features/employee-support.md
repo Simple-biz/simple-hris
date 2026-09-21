@@ -185,10 +185,13 @@ the chat migration has a foreign key into `employee_support_tickets`.
 - **MIGRATION PENDING — Kane runs it.** `scripts/Apply Employee Support migration.cmd`, or
   `node --import tsx scripts/apply-employee-support-migration.mts --apply`. Dry run is the default;
   `--verify` is read-only.
-- **The migration's state is UNKNOWN, not unapplied.** It has never been verified. The one recorded
-  run (2026-09-16, started by mistake) reported every object MISSING, which proves the credentials
-  worked that day and says nothing about today. `.env.local` has since held only `.env.example`
-  placeholders — see `docs/audits/audit-2026-09-16-session-log.md` Open item 115.
+- **APPLIED — measured 2026-09-21 by read-only `--verify`, all checks passed.** This was unknown
+  from 2026-09-16 to 2026-09-21: the one earlier run (started by mistake) reported every object
+  MISSING, and `.env.local` then held only `.env.example` placeholders for several days — see
+  `docs/audits/audit-2026-09-16-session-log.md` Open items 115 and 118. The triage columns
+  (`priority`, `triaged_at`, `triaged_by`) landed in the same 2026-09-21 apply via the chat
+  launcher; the `triaged_by` lower-casing needs one re-run of that launcher, because the shipped
+  normalize trigger predated the column and the first ALTER wrongly said it was covered.
 - **Run this migration BEFORE the chat one.** `employee_support_chat_sessions.became_ticket_id` is a
   foreign key into `employee_support_tickets`.
 - **Five grants by hand after deploy**: `employee_support` to Carla, Claire, Ainsley, Grace, Alivia.
