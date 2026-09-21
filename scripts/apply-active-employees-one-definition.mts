@@ -89,8 +89,12 @@ const CHECKS: Array<[string, string]> = [
         WHERE n.nspname = 'public' AND c.relname = 'active_employees'), true) AS ok`,
   ],
   [
+    // NOT a search for `last_seen_upload_id`: the view is `SELECT *`, so that
+    // column name appears in the expanded select list whether or not the gate
+    // exists. The gate itself is the sub-select on master_list_uploads, and
+    // that is what must be gone.
     'the view is no longer gated on the current upload',
-    `SELECT pg_get_viewdef('public.active_employees'::regclass, true) NOT LIKE '%last_seen_upload_id%' AS ok`,
+    `SELECT pg_get_viewdef('public.active_employees'::regclass, true) NOT LIKE '%master_list_uploads%' AS ok`,
   ],
   [
     'active_employees now EQUALS the unstamped set (one definition)',
