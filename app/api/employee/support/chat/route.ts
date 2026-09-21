@@ -11,6 +11,14 @@ import { normEmail } from '@/lib/email/norm-email';
 import { broadcastFromServer } from '@/lib/supabase/realtime-broadcast';
 import { CHAT_LIVE_EVENT, CHAT_LIVE_TOPIC, type ChatLivePayload } from '@/lib/support/chat-live';
 import type { ChatSessionStatus } from '@/lib/support/chat-types';
+import {
+  QUEUE_UNRESOLVED,
+  queuePositionFor,
+  type QueueRank,
+  type QueueState,
+} from '@/lib/support/queue';
+// Kane's Q1: the sweep runs on THIS read too, not only when an agent looks.
+import { readAgents, readOpenSessions, sweepChatQueue } from '@/lib/support/chat-sweep';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -61,10 +69,14 @@ export const runtime = 'nodejs';
  * * **No status transition to 'claimed' or 'live'.** Those are the agent
  *   side's compare-and-set (plan tasks 11-12). An employee route that also
  *   moved the status would be a second writer racing the first.
- * * **No expiry sweep.** Plan task 14 owns the lazy conversion of an abandoned
- *   session into a ticket. This route counts the waiting set AS STORED; once
- *   that sweep flips a dead waiter to 'abandoned', the count here is correct
- *   with no change to this file.
+ * * ~~**No expiry sweep.**~~ **CHANGED 2026-09-21 — this GET now sweeps.** Task
+ *   14's conversion lived only on the agent queue GET, so Kane's Q1 promise
+ *   fired only while an agent was looking, which is never true of the chats
+ *   that go unanswered. The rules moved to `src/lib/support/chat-sweep.ts` and
+ *   this read calls them too — an employee checking their own place is the read
+ *   that always happens. It runs BEFORE the state read, so a response that says
+ *   "this expired" already carries the ES- number, and it can never fail the
+ *   request.
  * * **No `claimed_by` in the wire shape.** The employee learns who picked
  *   their chat up from the 'system' line in the transcript ("Carla joined"),
  *   which is what that author side exists for. A route does not need to hand
@@ -102,24 +114,20 @@ type ChatSessionRow = {
   created_at: string;
 };
 
-/** Just enough of a waiting row to rank it. The queue read materialises a set, so it pages. */
-type QueueRow = { id: string; queued_at: string };
-
-type QueueState = {
-  /** How many people are in the line. `null` when the queue could not be read. */
-  waiting: number | null;
-  /** The caller's 1-based place. `null` when they are not in the line, or when we cannot tell. */
-  position: number | null;
-  /**
-   * FALSE MEANS WE CANNOT TELL. The client must render a skeleton — never `0`,
-   * never "you're next". `resolved: true` with `position: null` is the other
-   * state entirely: the caller is genuinely not waiting (connected, ended, or
-   * has no session at all).
-   */
-  resolved: boolean;
-};
-
-const QUEUE_UNRESOLVED: QueueState = { waiting: null, position: null, resolved: false };
+/**
+ * `QueueRank`, `QueueState`, `QUEUE_UNRESOLVED`, `QUEUE_READ_FAILED` and
+ * `queuePositionFor` come from `@/lib/support/queue`.
+ *
+ * They were declared here until 2026-09-21, and the duplication was not
+ * harmless: this copy is the one the employee actually saw, so the module's
+ * tests — including its 1000-row boundary proof — covered a function nothing
+ * called. The local copy also trusted whatever order the caller handed it
+ * instead of re-sorting, had no guard for an unparseable stamp, and exposed an
+ * UNFROZEN shared singleton straight into `NextResponse.json`.
+ *
+ * The wire shape is unchanged: field-for-field identical plus an optional
+ * `reason`, which the client ignores.
+ */
 
 /** The employee-facing projection. No `claimed_by`, no flags — see the header. */
 type ChatSessionWire = ChatSessionRow & {
@@ -238,8 +246,8 @@ async function readLatestSession(
  * rows break on `id` so two pages of the same set cannot shear into a different
  * order between reads.
  */
-async function readQueue(sb: SupabaseClient): Promise<QueueRow[] | null> {
-  const { rows, error } = await selectAllPaged<QueueRow>((from, to) =>
+async function readQueue(sb: SupabaseClient): Promise<QueueRank[] | null> {
+  const { rows, error } = await selectAllPaged<QueueRank>((from, to) =>
     sb
       .from(SESSIONS_TABLE)
       .select('id, queued_at')
@@ -256,22 +264,11 @@ async function readQueue(sb: SupabaseClient): Promise<QueueRow[] | null> {
   return error ? null : rows;
 }
 
-/** Rank the caller against the line. Never returns `0` for "we could not read it". */
-function queueStateFor(waiting: QueueRow[] | null, session: ChatSessionRow | null): QueueState {
-  if (!waiting) return QUEUE_UNRESOLVED;
-  if (!session || session.status !== 'waiting') {
-    return { waiting: waiting.length, position: null, resolved: true };
-  }
-  const index = waiting.findIndex((r) => r.id === session.id);
-  if (index < 0) {
-    // The session says 'waiting' but it is not in the set we just read — an
-    // agent claimed it between the two reads. Report the line's size, and say
-    // outright that this caller's own place is unknown rather than inventing
-    // one; the next poll resolves it.
-    return { waiting: waiting.length, position: null, resolved: false };
-  }
-  return { waiting: waiting.length, position: index + 1, resolved: true };
-}
+// Ranking lives in `queuePositionFor` (src/lib/support/queue.ts). It handles
+// every case this function used to: an unread line, a caller who is not
+// waiting, and the claimed-between-the-two-reads race where the session says
+// 'waiting' but is absent from the set — reported as unknown rather than
+// invented, with `reason: 'not_in_set'`.
 
 /**
  * The ES- number an expired chat turned into (Q1).
@@ -417,7 +414,7 @@ async function readState(
 
   const waiting = await readQueue(sb);
   const ticketNo = await ticketNoFor(sb, session.row?.became_ticket_id ?? null);
-  return { ok: true, row: session.row, queue: queueStateFor(waiting, session.row), ticketNo };
+  return { ok: true, row: session.row, queue: queuePositionFor(waiting, session.row), ticketNo };
 }
 
 /**
@@ -436,7 +433,34 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const prepared = await prepare(searchParams.get('email'));
   if (!prepared.ok) return prepared.response;
-  const { sb, identity } = prepared;
+  const { authz, sb, identity } = prepared;
+
+  // THE SWEEP RUNS HERE TOO, AND THIS IS THE READ THAT MATTERS (Kane's Q1).
+  //
+  // Until 2026-09-21 the agent queue GET was its only caller, which meant the
+  // promise — an unanswered chat becomes an ES- ticket — fired only when an
+  // agent happened to open /tickets. The chats that go unanswered are exactly
+  // the ones nobody is watching, so an employee could wait, go quiet, and learn
+  // nothing until somebody opened the board on Monday. An employee checking
+  // their own place is the read that always happens, so it is the read that has
+  // to convert. There is no cron and there must not be one
+  // (docs/features/INDEX.md:42).
+  //
+  // BEFORE readState, deliberately: the sweep may convert THIS caller's own
+  // session, and running it first means the very response that tells them the
+  // chat expired already carries the ticket number it became.
+  //
+  // It can never break the read. A failed sweep leaves the rows stale and the
+  // next read retries for free; an employee asking where they are in the line
+  // must not get a 500 because a conversion three rows away failed.
+  try {
+    const open = await readOpenSessions(sb);
+    if (open.migrated && !open.error) {
+      await sweepChatQueue(sb, request, authz, { open: open.rows, agents: await readAgents(sb) });
+    }
+  } catch {
+    /* see above */
+  }
 
   const state = await readState(sb, identity);
   if (!state.ok) return state.response;
@@ -505,7 +529,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       migrated: true,
       session: toWire(existing.row, ticketNo),
-      queue: queueStateFor(waiting, existing.row),
+      queue: queuePositionFor(waiting, existing.row),
       created: false,
       error: null,
     });
@@ -537,7 +561,7 @@ export async function POST(request: Request) {
         return NextResponse.json({
           migrated: true,
           session: toWire(again.row, await ticketNoFor(sb, again.row.became_ticket_id)),
-          queue: queueStateFor(waiting, again.row),
+          queue: queuePositionFor(waiting, again.row),
           created: false,
           error: null,
         });
@@ -607,7 +631,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     migrated: true,
     session: toWire(row, null),
-    queue: queueStateFor(waiting, row),
+    queue: queuePositionFor(waiting, row),
     created: true,
     error: null,
   });

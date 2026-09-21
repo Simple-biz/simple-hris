@@ -26,14 +26,15 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { cleanErrorMessage } from '@/lib/clean-error-message';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
-import { describeSupportHours, isSupportOpen } from '@/lib/support/hours';
+import { SUPPORT_CLOSE_HOUR, SUPPORT_OPEN_HOUR, isSupportOpen } from '@/lib/support/hours';
 import {
   SUPPORT_CONCERN_MAX,
   SUPPORT_REPLY_PROMISE,
   formatSupportTicketNo,
 } from '@/lib/support/types';
 import { CHAT_LIVE_EVENT, CHAT_LIVE_TOPIC, type ChatLivePayload } from '@/lib/support/chat-live';
-import type { ChatSessionStatus } from '@/lib/support/chat-types';
+import { isOpenChatSession, type ChatSessionStatus } from '@/lib/support/chat-types';
+import { QUEUE_UNRESOLVED, type QueueState } from '@/lib/support/queue';
 
 /**
  * Employee Support LIVE CHAT — the employee's entry point.
@@ -78,8 +79,11 @@ import type { ChatSessionStatus } from '@/lib/support/chat-types';
  * for the TICKET form and promises "you can still send this — someone picks it
  * up when they are back". That is TRUE of a ticket and FALSE of a live queue:
  * out of hours nobody is going to join the chat. So this surface writes its own
- * sentence from the same primitives (`isSupportOpen` + `describeSupportHours`),
- * and the shipped formatter is left exactly as the ticket form needs it. One
+ * sentence from the same primitives (`isSupportOpen` + the exported hour
+ * constants — NOT `describeSupportHours`, which prints a Manila zone nobody is
+ * in now that Kane has ruled every employee is on EST; see
+ * `describeChatAvailability` below), and the shipped formatters are left
+ * exactly as the ticket form needs them. One
  * formatter covering two different promises is how one of them goes quietly
  * wrong — the same reasoning as `PayrollLockBanner`'s required per-surface
  * `detail` prop.
@@ -127,23 +131,16 @@ type ChatMessageWire = {
 };
 
 /**
- * `resolved: false` MEANS WE CANNOT TELL. It is not "zero", and the two must
- * never render the same — see rule 1 in the header.
+ * `QueueState` and `QUEUE_UNRESOLVED` come from `@/lib/support/queue` — see the
+ * import above. They were declared locally here until 2026-09-21, which meant
+ * three copies of one ordering rule (this file, the employee route, and the
+ * module nothing called) and three chances to disagree about what a position
+ * means. `resolved: false` MEANS WE CANNOT TELL: it is not "zero", and the two
+ * must never render the same — rule 1 in the header.
+ *
+ * `isOpenChatSession` likewise comes from `chat-types.ts`, which is where the
+ * status vocabulary agrees with the SQL's partial indexes.
  */
-type QueueState = {
-  waiting: number | null;
-  position: number | null;
-  resolved: boolean;
-};
-
-const QUEUE_UNRESOLVED: QueueState = { waiting: null, position: null, resolved: false };
-
-/** The three statuses in which a session is still the employee's live concern. */
-const OPEN_STATUSES = ['waiting', 'claimed', 'live'] as const satisfies readonly ChatSessionStatus[];
-
-function isOpenStatus(status: ChatSessionStatus): boolean {
-  return (OPEN_STATUSES as readonly string[]).includes(status);
-}
 
 /* ──────────────────────────── poll cadences ──────────────────────────── */
 
@@ -176,16 +173,37 @@ const CLOCK_TICK_MS = 60_000;
 /**
  * The support window, said in the way a LIVE QUEUE has to say it.
  *
- * See the header: the shipped `describeSupportAvailability` tells the employee
- * their message is still accepted, which is true of a ticket and untrue of a
- * chat nobody is sitting in. Both zones always, because `describeSupportHours`
- * computes the Manila side and a bare "9 AM – 5 PM" is twelve hours wrong for
- * the workforce reading it.
+ * TWO departures from the shipped helpers, and both are deliberate.
+ *
+ * 1. Not `describeSupportAvailability`: it tells the employee their message is
+ *    still accepted, which is true of a ticket and false of a chat nobody is
+ *    sitting in. Promising a pickup that is not coming is the one thing this
+ *    surface must not do.
+ *
+ * 2. Not `describeSupportHours`, which renders BOTH zones — "9 AM – 5 PM
+ *    Eastern (9 PM – 5 AM Manila)". That string was written to protect a
+ *    Manila-based reader from a bare "9 AM – 5 PM", and **Kane overturned its
+ *    premise on 2026-09-19: "every employee is on EST so dont mind the time
+ *    zone please"** (plan `:28`). Printing a second zone nobody in the company
+ *    is in is now noise in front of someone deciding whether to wait.
+ *
+ * `hours.ts` is NOT edited for this. Its other caller is the ticket form, whose
+ * copy is a separate decision and not this feature's to make — so the Eastern
+ * sentence is built here, from the same exported constants, and the shipped
+ * dual-zone formatter keeps working unchanged for whoever still wants it.
  */
 function describeChatAvailability(at: Date): string {
+  const hours = `${hour12(SUPPORT_OPEN_HOUR)} – ${hour12(SUPPORT_CLOSE_HOUR)} Eastern, Mon–Fri`;
   return isSupportOpen(at)
-    ? `Support is open now — ${describeSupportHours(at)}.`
-    : `Support is closed right now, so nobody is likely to join until we are back — ${describeSupportHours(at)}.`;
+    ? `Support is open now — ${hours}.`
+    : `Support is closed right now, so nobody is likely to join until we are back — ${hours}.`;
+}
+
+/** `9` → `9 AM`, `17` → `5 PM`. Local to this file; the window is whole hours. */
+function hour12(hour24: number): string {
+  const suffix = hour24 < 12 ? 'AM' : 'PM';
+  const h = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  return `${h} ${suffix}`;
 }
 
 /** `1st`, `2nd`, `3rd`, `11th`. Used for a place in a line, never for a count. */
@@ -527,7 +545,7 @@ export default function EmployeeSupportChat({
 
   const sessionId = session?.id ?? null;
   const status: ChatSessionStatus | 'none' = session?.status ?? 'none';
-  const canType = session !== null && isOpenStatus(session.status) && migrated === true;
+  const canType = session !== null && isOpenChatSession(session.status) && migrated === true;
 
   const threadRef = useRef<HTMLDivElement | null>(null);
   const debounceRef = useRef<number | null>(null);
@@ -978,7 +996,7 @@ export default function EmployeeSupportChat({
                     </div>
                   ) : messages.length === 0 ? (
                     <p className="py-4 text-center text-[11.5px] text-zinc-400 dark:text-zinc-500">
-                      {isOpenStatus(session.status)
+                      {isOpenChatSession(session.status)
                         ? 'Type your question now — it is waiting for whoever picks you up.'
                         : 'Nothing was written in this chat.'}
                     </p>

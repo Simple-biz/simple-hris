@@ -73,6 +73,21 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   // The recipient's own ticket changed column. Same home as the other two —
   // the requester is an employee first, whatever dashboard they also hold.
   'ticket.moved': ['employee'],
+  // Employee Support live chat. Both are the EMPLOYEE's, never the agent's —
+  // the five answerers watch the queue itself, they do not need a badge for
+  // their own work.
+  //
+  // These must stay mapped. `viewsForNotificationType` returns [] for an
+  // unknown type, `useNotificationCountsByView` then adds the row to no view's
+  // count, and the ViewSwitcher badge never lights — so an unmapped type is a
+  // notification that exists in the table and reaches nobody. That is worst for
+  // `became_ticket`, which carries the ES- number the employee is owed after
+  // their chat went unanswered: the one message they are relying on would be
+  // the one that never surfaces. Changed together with
+  // references/sql/alter/2026-09-19_add_chat_notification_types.sql, which says
+  // the same thing from the other side.
+  'support_chat.replied': ['employee'],
+  'support_chat.became_ticket': ['employee'],
   // The manager published (or changed) this employee's KPI bonus for a
   // dept-week — carries the peso amount. Fired on Mark Ready/Lock and on any
   // change landing on an already-published week. Employee-only, ungated.
