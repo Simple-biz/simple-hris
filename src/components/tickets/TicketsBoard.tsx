@@ -67,6 +67,7 @@ import TicketDialog, { type TicketDraft } from './TicketDialog';
 import TicketsOverview from './TicketsOverview';
 import TicketsSidebar, { type TicketsView } from './TicketsSidebar';
 import SupportChatTab from './SupportChatTab';
+import SupportTicketsTab from './SupportTicketsTab';
 
 const byPosition = (a: TicketRow, b: TicketRow) =>
   a.position - b.position || a.created_at.localeCompare(b.created_at);
@@ -779,6 +780,21 @@ export default function TicketsBoard() {
               its own live channel and its own Live/Connecting/Polling pill —
               nothing on this board's `tickets` fetch reaches it. */}
           <SupportChatTab canEdit={canEditTab('employee_support', 'support-chat')} />
+        </motion.main>
+      ) : activeView === 'support-tickets' ? (
+        <motion.main
+          key="support-tickets"
+          initial={{ opacity: 0, y: reduceMotion ? 0 : 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: reduceMotion ? 0 : -6 }}
+          transition={{ duration: reduceMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
+          className="min-h-0 flex-1 overflow-hidden"
+        >
+          {/* Employee Support's ticket side. Same host wiring as the chat tab
+              beside it — the bug this branch fixes was this view falling
+              through to the `else` below and rendering the dev Kanban's data
+              under the "Support Tickets" label. */}
+          <SupportTicketsTab canEdit={canEditTab('employee_support', 'support-tickets')} />
         </motion.main>
       ) : activeView === 'overview' ? (
         <motion.main

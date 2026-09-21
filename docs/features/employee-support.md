@@ -9,12 +9,15 @@ whether anyone was dealing with it.
 **Approved by Carla Thomas 2026-09-15** (signed, `Employee-Support-for-approval.pdf`).
 **The data layer shipped 2026-09-16 in `99716520`.** **The employee side shipped 2026-09-21** — the
 Help button, the filing form, the ticket history with its track map, and the routes behind them.
-The staff board's contents are still unbuilt; see *What is not built*. The live chat half is a
-separate document — `employee-support-chat.md` — and was built first by Kane's override; see *The
-chat came first* below.
+**The staff board shipped 2026-09-21** — the line, the board, claim/rank/reassign, reply/close/
+reopen; see *The staff board — shipped 2026-09-21*. The live chat half is a separate document —
+`employee-support-chat.md` — and was built first by Kane's override; see *The chat came first*
+below.
 
-> The governing plan is `docs/superpowers/plans/2026-09-14-employee-support.md`. Read it before
-> changing anything here: it carries the signed decisions, the reasoning, and the task list.
+> The governing plan is `docs/superpowers/plans/2026-09-14-employee-support.md` (v1) plus
+> `docs/superpowers/plans/2026-09-21-employee-support-tickets-board.md` (the staff board). Read
+> both before changing anything here: they carry the signed decisions, the reasoning, and the task
+> lists.
 
 ## Key files
 
@@ -27,6 +30,12 @@ chat came first* below.
 | Category routing / the steered subjects | `src/lib/support/routing.ts` |
 | Language screening | `src/lib/support/screening.ts` |
 | Who hears about an event | `src/lib/support/recipients.ts` |
+| Triage: the line/board split, the sort, the counts | `src/lib/support/triage.ts` |
+| Lifecycle: who may claim/rank/reply/close/reopen/reassign | `src/lib/support/lifecycle.ts` |
+| The live channel's shared contract | `src/lib/support/ticket-live.ts` |
+| Staff board route (list + claim/rank/reassign) | `app/api/support/tickets/route.ts` |
+| Staff thread route (reply/close/reopen) | `app/api/support/tickets/[id]/reply/route.ts` |
+| Staff board UI | `src/components/tickets/SupportTicketsTab.tsx` |
 | Audit family `employee_support.` | `src/lib/audit/registry.ts` |
 
 ## It is not on the dev ticket board, and that is not a preference
@@ -156,13 +165,49 @@ an unmapped type reaches nobody. The recipient for every ticket event is decided
 in. The Help badge **never clamps a queue position to `99+`** — 100th in line is something an
 employee deserves told honestly.
 
-## What is not built
+## The staff board — shipped 2026-09-21
 
-**The staff board's contents.** The `Support Tickets` tab exists in `/tickets` (rail entry and grant
-key, `2e542207`) and the pure rules behind it are shipped and tested — `triage.ts` (line vs board,
-the sort, the counts) and `lifecycle.ts` — but the tab renders nothing yet, and the staff routes
-(`/api/support/tickets`) are a paused partial in the working tree, not on `main`. Until they land,
-a filed ticket is readable by its employee and by nobody on staff except through the database.
+**Session-log correction first.** Audit item 118 (2026-09-21) and this section, as they stood
+before this pass, said the staff routes were "a paused partial in the working tree, not on `main`."
+That was true when written; an unlabeled commit titled `push` (`26292c44`, later the same day)
+landed `app/api/support/tickets/route.ts` in full (GET the line/board/counts via `selectAllPaged`,
+PATCH claim/rank/reassign, each a compare-and-set → 409) — and neither doc was updated to match.
+Found and corrected in a status-check session (audit item 121) before this build closed the
+remaining gap. **The lesson, not just the fact:** a commit that lands real feature code needs a
+message that says so, or the next reader has no way to know the doc under their eyes is already
+wrong.
+
+**The tab now renders.** `SupportTicketsTab.tsx` — the line, the board, the answered list and a
+lazily-loaded closed list, Carla's two counts on top, a realtime pill on the same
+`employee-support-tickets-sync` Broadcast topic the employee side already uses (now factored into
+`src/lib/support/ticket-live.ts`, ending the "restated in two files, no third exists yet" state
+those two routes' comments had carried since 2026-09-19). Every claim/rank/reassign/reply/close/
+reopen control is enabled or disabled from the SAME `canStaffAct` verdict the routes enforce
+(`lifecycle.ts` is pure — no server import — so the client calls the identical function), which is
+what makes a control this screen shows and a write the route refuses impossible to have disagree.
+
+**Two gate levels on one screen, and it is deliberate, not a bug.** `app/api/support/tickets`
+(claim/rank/reassign) stays `edit`-gated, per the rule two sections up: somebody granted `view` and
+not `edit` was held back from deciding who answers a pay dispute. `app/api/support/tickets/[id]/
+reply` (reply/close/reopen) is gated at **`view`**, the documented exception, following
+`app/api/tickets/[id]/comments/route.ts:43-46` — a "View only" holder can still answer a ticket, the
+same way a "View only" dev-board member can still comment on their own. `SupportTicketsTab.tsx`
+reflects this: the claim/rank/hand-off row is hidden without `edit`; the reply box, Close and Reopen
+are not.
+
+**`support.replied` / `support.answered`, fired for real.** The reply route stamps
+`first_response_at` once, on the write where it was `null` going in, and fires `support.answered`
+on exactly that write; every later staff line on the same ticket fires `support.replied`. Both map
+to `['employee']` — the answerers work the line and the board they already watch, never a badge on
+their own dashboard for their own replies. The n8n leg reuses the SAME `support_replied` slug the
+employee's own reply route calls in the other direction, `recipient_is_employee` naming which way.
+
+**Not exercised in a browser** — `tsc` is clean and the suite is unaffected (4075/4077, the same
+two pre-existing failures tracked in [[main-has-three-failing-tests-2026-09-18]]), but nobody has
+clicked through the tab yet. First staff member to open it should confirm the counts resolve and a
+claim/reply/close round-trip actually lands.
+
+## What is not built
 
 **The staff-only trial** Carla approved — *"You and the support team try it before any employee
 sees it"* — has nothing implementing it. The Help button ships to every employee the moment the

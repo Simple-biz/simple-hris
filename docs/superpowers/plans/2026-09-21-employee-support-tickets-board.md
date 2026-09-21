@@ -119,40 +119,55 @@ row, not a new gate.
 
 ## Tasks
 
-- [ ] 1. `references/sql/alter/2026-09-21_employee_support_triage.sql` — `priority` (nullable,
+- [x] 1. `references/sql/alter/2026-09-21_employee_support_triage.sql` — `priority` (nullable,
       the four `TICKET_PRIORITIES` values), `triaged_at`, `triaged_by`. Two CHECKs, both on new
       columns only, so no existing row can violate one and the validating scan runs against a small
       table. **Must not DROP and re-add an existing CHECK** — the FPU migration once did that
       unconditionally and would have stripped a value on re-run.
-- [ ] 2. `references/sql/alter/2026-09-21_support_notification_types.sql` — plan task 3, which has
+- [x] 2. `references/sql/alter/2026-09-21_support_notification_types.sql` — plan task 3, which has
       never had a file. Restates the **FULL** `employee_notifications` type list plus
       `support.replied` / `support.answered`. **The chat's two types are already in that
       constraint**, so a flat restatement from an older file would strip them — additive shape, the
       same as the chat widen, and re-read live before `--apply`.
-- [ ] 3. `scripts/apply-employee-support-triage-migration.mts` + a `.cmd` launcher. Takes N sql
-      files, `--dry` default / `--apply` / `--verify`, `information_schema` read-back, negative
-      controls.
-- [ ] 4. `src/lib/support/triage.ts` (+ test) — pure. The line-vs-board predicates, the sort
+- [x] 3. Folded into `scripts/apply-employee-support-chat-migration.mts` rather than its own script
+      (a deliberate deviation from "a `.cmd` launcher" above) — that launcher already ran the
+      2026-09-19 chat files, and Kane has both `.cmd`s memorized; a third launcher for two more
+      files was one more thing to remember to run. Applied and verified 2026-09-21, 171 checks OK.
+- [x] 4. `src/lib/support/triage.ts` (+ test) — pure. The line-vs-board predicates, the sort
       (urgency DESC, then longest-waiting within the band, dated from `created_at`), and the two
       counts. Tested at the 1000-row boundary.
-- [ ] 5. `src/lib/support/lifecycle.ts` (+ test) — pure. Who may claim, rank, reply, close, reopen
+- [x] 5. `src/lib/support/lifecycle.ts` (+ test) — pure. Who may claim, rank, reply, close, reopen
       and reassign, and what a reply to a closed ticket does. One module so the route and the board
       cannot disagree about what a button should be disabled for.
-- [ ] 6. `app/api/support/tickets/route.ts` — GET the list (line + board + counts, `selectAllPaged`)
+- [x] 6. `app/api/support/tickets/route.ts` — GET the list (line + board + counts, `selectAllPaged`)
       and PATCH claim / rank / reassign, each a compare-and-set → 409. Gated on `support_chat`'s
-      sibling key (see task 8).
-- [ ] 7. `app/api/support/tickets/[id]/reply/route.ts` — reply, close, reopen. Reply gated at
+      sibling key (see task 8). **Landed in an unlabeled `push` commit (`26292c44`) — after this doc
+      and `employee-support.md` had already been written saying it was a paused partial. Neither
+      doc was corrected until the 2026-09-21 status-check session (audit item 121) caught it.**
+- [x] 7. `app/api/support/tickets/[id]/reply/route.ts` — reply, close, reopen. Reply gated at
       **view**, not edit. Writes the message, stamps `first_response_at` **once**, fires the in-app
       notification and the n8n leg — recipient decided in code, `null` never `''`.
-- [ ] 8. `src/lib/rbac/feature-permissions.ts` — a `support_tickets` key in the **existing**
+- [x] 8. `src/lib/rbac/feature-permissions.ts` — a `support_tickets` key in the **existing**
       `employee_support` catalog, and `VIEW_TAB_IDS.employee_support` gains `support-tickets`.
       **No new role, no change to any gate** — `ticketsHostAccess` already does the work. Keep the
-      two catalogs key-disjoint; a test already asserts it.
-- [ ] 9. `src/components/tickets/SupportTicketsTab.tsx` + `TicketsSidebar.tsx` — the line and the
-      board, the counts on top, the claim/rank/reply/close controls. Re-apply `tickets-theme dark`
-      on every portaled surface.
-- [ ] 10. Docs: rewrite `docs/features/employee-support.md` (it currently says this is unbuilt),
-      update its INDEX row, `api-reference.md`, `components.md`, memory — same commit.
+      two catalogs key-disjoint; a test already asserts it. (Landed alongside task 6.)
+- [x] 9. `src/components/tickets/SupportTicketsTab.tsx` — the line and the board, the counts on top,
+      the claim/rank/reassign/reply/close/reopen controls, each enabled from the same `canStaffAct`
+      verdict the routes enforce. `TicketsBoard.tsx` gained the missing `activeView ===
+      'support-tickets'` branch — without it the tab silently fell through to the dev Kanban's own
+      JSX, which is the live bug Kane reported ("shouldn't be the Board data in there") that started
+      this pass. `TicketsSidebar.tsx` needed no change — its rail entry already existed (`2e542207`).
+- [x] 10. Docs: rewrote `docs/features/employee-support.md`, corrected its INDEX row (78) and the
+      stale duplicate at row 60, memory — same commit. `api-reference.md` / `components.md` sweep
+      not done this pass — flagged, not silently skipped.
+
+## Also this pass, not originally scoped
+
+`src/lib/support/ticket-live.ts` — the shared live-channel contract
+`app/api/employee/support/route.ts` and `.../[id]/messages/route.ts` had each restated inline,
+saying in a comment that a third consumer would justify the module. The staff board is that third
+consumer, so it was created and both employee-side files were pointed at it instead of a third
+copy of the same two string literals.
 
 ## Deploy notes
 

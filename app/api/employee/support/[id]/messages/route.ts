@@ -10,6 +10,7 @@ import { getEmployeeMasterRecord } from '@/lib/supabase/employees';
 import { normEmail } from '@/lib/email/norm-email';
 import { broadcastFromServer } from '@/lib/supabase/realtime-broadcast';
 import { resolveWebhookUrl } from '@/lib/webhooks/resolve-webhook';
+import { TICKET_LIVE_EVENT, TICKET_LIVE_TOPIC, type TicketLivePayload } from '@/lib/support/ticket-live';
 import { screenText } from '@/lib/support/screening';
 import { employeeReplyRecipient } from '@/lib/support/recipients';
 import { canEmployeeReply, nextStatus, type LifecycleTicket } from '@/lib/support/lifecycle';
@@ -115,15 +116,6 @@ export const runtime = 'nodejs';
 
 const TICKETS_TABLE = 'employee_support_tickets';
 const MESSAGES_TABLE = 'employee_support_messages';
-
-/**
- * The live topic. MUST match `../../route.ts` byte for byte — a route module
- * may export only handlers, so until a `src/lib/support/ticket-live.ts` twin
- * of `chat-live.ts` exists the two files carry the same literals.
- */
-const TICKET_LIVE_TOPIC = 'employee-support-tickets-sync';
-const TICKET_LIVE_EVENT = 'changed';
-type TicketLivePayload = { kind: 'ticket' | 'message'; ticketId: string; ts: number };
 
 /**
  * One sentence for every "this is not your ticket" outcome. A constant, so the

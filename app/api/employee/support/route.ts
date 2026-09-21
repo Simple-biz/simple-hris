@@ -11,6 +11,7 @@ import { getAppSetting } from '@/lib/supabase/app-settings';
 import { normEmail } from '@/lib/email/norm-email';
 import { broadcastFromServer } from '@/lib/supabase/realtime-broadcast';
 import { resolveWebhookUrl } from '@/lib/webhooks/resolve-webhook';
+import { TICKET_LIVE_EVENT, TICKET_LIVE_TOPIC, type TicketLivePayload } from '@/lib/support/ticket-live';
 import { screenText } from '@/lib/support/screening';
 import { ticketFiledRecipient } from '@/lib/support/recipients';
 import { isSupportOpen } from '@/lib/support/hours';
@@ -130,21 +131,12 @@ export const runtime = 'nodejs';
  * anon and there is no private channel in this repo, so anything on the topic
  * is readable by any anon-key holder — the defect `chat-live.ts` documents.
  * Every listener re-fetches through its own gated route. The topic constants
- * are declared locally here and in `[id]/messages/route.ts` because a route
- * module may export only handlers; they belong in a `src/lib/support/ticket-live.ts`
- * twin of `chat-live.ts` (with the parse guard) once somebody owns that file.
+ * live in `src/lib/support/ticket-live.ts`, shared with `[id]/messages/route.ts`
+ * and the staff board (`app/api/support/tickets/[id]/reply/route.ts`).
  */
 
 const TICKETS_TABLE = 'employee_support_tickets';
 const MESSAGES_TABLE = 'employee_support_messages';
-
-/**
- * The live topic. MUST match `[id]/messages/route.ts` byte for byte — see the
- * REALTIME note in the header for why it is a local constant.
- */
-const TICKET_LIVE_TOPIC = 'employee-support-tickets-sync';
-const TICKET_LIVE_EVENT = 'changed';
-type TicketLivePayload = { kind: 'ticket' | 'message'; ticketId: string; ts: number };
 
 /**
  * Where a "new ticket" email goes. `recipients.ts` says this is configuration —
