@@ -927,6 +927,9 @@ async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string):
               .map((s) => ({ scope: s.grantLabel, granted: s.granted, revoked: s.revoked })),
             resulting_by_scope: Object.fromEntries(diff.scopes.map((s) => [s.grantLabel, s.resulting])),
             unscoped_labels_untouched: [...new Set(partition.unscoped.map((u) => u.label))],
+            subs_added: subsDiff.added.map((x) => x.key),
+            subs_removed: subsDiff.removed.map((x) => x.key),
+            subs_renamed: subsDiff.renamed,
             people_moved: peopleMoved,
             people_sheet_unsynced: peopleSheetUnsynced,
             people_not_on_roster: peopleNotOnRoster,
@@ -952,6 +955,15 @@ async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string):
               granted: s.granted,
               revoked: s.revoked,
             })),
+            ...(editsSubs && subsDiff.changed
+              ? {
+                  subs: {
+                    added: subsDiff.added.length,
+                    removed: subsDiff.removed.length,
+                    renamed: subsDiff.renamed.length,
+                  },
+                }
+              : {}),
             ...(peopleDiff.changed
               ? {
                   people: {

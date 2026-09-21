@@ -1143,6 +1143,8 @@ export interface BuiltinManagersSummary {
   revoked: string[];
   /** Per-scope, so an HSL save can say which sub-teams actually moved. */
   scopes: Array<{ displayName: string; granted: string[]; revoked: string[] }>;
+  /** Sub-department outcome, when the save carried one. */
+  subs?: { added: number; removed: number; renamed: number };
   /** People-move outcome, when the save carried one. */
   people?: {
     moved: number;

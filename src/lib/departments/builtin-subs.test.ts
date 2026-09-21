@@ -24,6 +24,7 @@ import {
   type BuiltinSubMap,
 } from './builtin-subs';
 import { isPlaceableDeptLabel, formatDeptLabel } from './hsl-subdept';
+import { validateBuiltinPeopleInput } from './registry';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 
 const MAP: BuiltinSubMap = {
@@ -156,4 +157,54 @@ test('occupancy counts the people a removal would strand', () => {
   assert.equal(occ.get('nurture'), 2, 'case-insensitive on the whole cell');
   assert.equal(occ.get('outbound'), 1);
   assert.equal(occ.get('ghost'), undefined);
+});
+
+test('a sub added and STAFFED in the same save works — subs are written first', () => {
+  // The exact composition the route and the dialog both use: validate the move
+  // against the map as it will be AFTER this save, not as it is stored now.
+  const stored: BuiltinSubMap = {};
+  const pending = [{ key: 'nurture', name: 'Nurture' }];
+  const prospective = placeableSubIndex({ ...stored, lead_gen: pending });
+
+  const move = {
+    name: 'Someone',
+    workEmail: 's@simple.biz',
+    personalEmail: null,
+    fromDepartment: 'QC',
+    toDepartment: 'lead_gen:nurture',
+  };
+
+  // Against the STORED map the destination does not exist yet.
+  assert.equal(
+    validateBuiltinPeopleInput({ builtinKey: 'lead_gen', moves: [move] }, placeableSubIndex(stored)).ok,
+    false,
+    'a sub that has not been saved yet is not a destination',
+  );
+  // Against the PROSPECTIVE map it does — which is why the route writes subs
+  // before it moves anybody.
+  assert.deepEqual(
+    validateBuiltinPeopleInput({ builtinKey: 'lead_gen', moves: [move] }, prospective),
+    { ok: true },
+  );
+});
+
+test('once a department has sub-teams, a bare placement into it is refused', () => {
+  const prospective = placeableSubIndex(MAP);
+  const bare = {
+    name: 'Someone',
+    workEmail: 's@simple.biz',
+    personalEmail: null,
+    fromDepartment: 'QC',
+    toDepartment: 'Lead Gen',
+  };
+  const res = validateBuiltinPeopleInput({ builtinKey: 'lead_gen', moves: [bare] }, prospective);
+  assert.equal(res.ok, false);
+  assert.match(res.error ?? '', /not a placement/);
+
+  // ...and with no sub-teams, the same move is fine — existing flat departments
+  // are completely unaffected by this feature.
+  assert.deepEqual(
+    validateBuiltinPeopleInput({ builtinKey: 'lead_gen', moves: [bare] }, placeableSubIndex({})),
+    { ok: true },
+  );
 });

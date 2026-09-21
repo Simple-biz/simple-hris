@@ -249,9 +249,24 @@ export default function EditBuiltinManagersDialog({
       ? {
           title: summary.people?.moved
             ? `${summary.name} updated — ${summary.people.moved} moved`
-            : `${summary.name} managers updated`,
+            : summary.subs
+              ? `${summary.name} sub-departments updated`
+              : `${summary.name} managers updated`,
           detail:
-            (summary.scopes.length > 1
+            [
+              summary.subs
+                ? [
+                    summary.subs.added ? `+${summary.subs.added} sub-dept` : null,
+                    summary.subs.removed ? `-${summary.subs.removed} sub-dept` : null,
+                    summary.subs.renamed ? `${summary.subs.renamed} renamed` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' ')
+                : null,
+            ]
+              .filter(Boolean)
+              .concat(
+                (summary.scopes.length > 1
               ? summary.scopes
                   .map(
                     (s) =>
@@ -268,7 +283,10 @@ export default function EditBuiltinManagersDialog({
                   summary.revoked.length ? `${summary.revoked.map(who).join(', ')} revoked` : null,
                 ]
                   .filter(Boolean)
-                  .join(' · ')) || 'No change.',
+                  .join(' · ')) || [],
+              )
+              .filter(Boolean)
+              .join(' · ') || 'No change.',
           warnings: summary.warnings,
           deptKey: summary.key,
         }
@@ -426,10 +444,10 @@ export default function EditBuiltinManagersDialog({
                         )}
                         {step === 3 && (
                           <div className="space-y-4">
-                            {!diff?.changed && !peopleDiff?.changed ? (
+                            {!diff?.changed && !peopleDiff?.changed && !subsDiff?.changed ? (
                               <div className="rounded-lg border border-dashed border-zinc-300 p-6 text-center dark:border-zinc-700">
                                 <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Nothing has changed yet</p>
-                                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Go back to change a manager or move someone.</p>
+                                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Go back to change a manager, a sub-department, or move someone.</p>
                               </div>
                             ) : diff?.changed ? (
                               <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
@@ -464,6 +482,52 @@ export default function EditBuiltinManagersDialog({
                                 </ul>
                               </div>
                             ) : null}
+
+                            {subsDiff && subsDiff.changed && (
+                              <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+                                <p className="flex items-center gap-1.5 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                                  <Layers className="h-4 w-4 text-orange-500" />
+                                  Sub-departments
+                                </p>
+                                <ul className="mt-2.5 space-y-1.5 text-xs text-zinc-700 dark:text-zinc-300">
+                                  {subsDiff.added.map((sub) => (
+                                    <li key={`sa-${sub.key}`} className="flex items-start gap-2">
+                                      <Plus className="mt-px h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                                      <span>
+                                        <strong>{sub.name}</strong> is added. People can be placed in it as{' '}
+                                        <code className="text-[10px]">{dept.key}:{sub.key}</code>, and it can carry its
+                                        own base rate in Pay structure.
+                                      </span>
+                                    </li>
+                                  ))}
+                                  {subsDiff.renamed.map((r) => (
+                                    <li key={`sr-${r.key}`} className="flex items-start gap-2">
+                                      <Pencil className="mt-px h-3.5 w-3.5 shrink-0 text-orange-500" />
+                                      <span>
+                                        <strong>{r.from}</strong> is renamed to <strong>{r.to}</strong> — the label only.
+                                        Its rate row and everyone in it stay attached.
+                                      </span>
+                                    </li>
+                                  ))}
+                                  {subsDiff.removed.map((sub) => (
+                                    <li key={`sx-${sub.key}`} className="flex items-start gap-2">
+                                      <Minus className="mt-px h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" />
+                                      <span>
+                                        <strong>{sub.name}</strong> is removed, and its own base rate row goes with it.
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                                {subsDiff.added.length > 0 &&
+                                  builtinSubsFor(builtinSubs, dept.key).length === 0 && (
+                                    <p className="mt-2 rounded-md bg-amber-50 p-2 text-[11px] text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                                      {dept.name} has no sub-departments today. Once it has them,{' '}
+                                      <strong>new</strong> people must be placed in one — everyone already in{' '}
+                                      {dept.name} stays exactly where they are.
+                                    </p>
+                                  )}
+                              </div>
+                            )}
 
                             {peopleDiff && peopleDiff.changed && (
                               <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">

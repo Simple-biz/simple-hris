@@ -645,11 +645,18 @@ as possible and pinned by tests.
   into a silent overwrite.
 - **A department that gains sub-teams drops out of the placement picker** in
   favour of its teams, because a bare placement is no longer valid for it.
+- **Review shows the sub-department diff** — added / renamed / removed, with the
+  `<key>:<sub>` a new one will be placed under, and a warning the first time a
+  flat department gains teams (new people must then be placed in one; everyone
+  already there is untouched). The Review empty state and the success line both
+  count sub-department edits: a subs-only save previously read
+  *"Nothing has changed yet"* next to an enabled **Save changes**, and then
+  reported *"No change."* — caught while verifying, not in the browser.
 
-**Verification (2026-09-21):** typecheck clean; 8 green in
-`builtin-subs.test.ts`; **151 of 152** across the departments, `dept-rail`,
-`resolve-rate`, `normalize-dept-key` and `hsl-transfer-effective` suites — the
-one failure is the pre-existing `ManagerApp.tsx:1859` raw dept render (item 96).
+**Verification (2026-09-21):** typecheck clean; 10 green in
+`builtin-subs.test.ts` — including the same-save "add a sub then staff it"
+composition and the bare-placement refusal; **4,077 of 4,079** across `src/lib` — the two failures are the pre-existing
+`ManagerApp.tsx:1859` pair (item 96).
 **Not browser-verified, and no sub-department has been created against
 production.** The migration-free storage means there is nothing to run, but the
 first real sub should be made on a low-stakes department and its Pay Structure
