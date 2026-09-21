@@ -147,6 +147,14 @@ import PayProcessorsTab from './PayProcessorsTab';
 import { PAY_PROCESSORS_SETTING_KEY, type PayProcessor } from '@/lib/payment-catalog/pay-processors';
 import { BANKS_SETTING_KEY, type BankGroup } from '@/lib/payment-catalog/banks';
 import { subDeptStructureKey, type DepartmentRegistryEntry } from '@/lib/departments/registry';
+import { setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import {
+  readCachedCatalog,
+  readCachedFx,
+  readCachedTab,
+  type CachedCatalog,
+  type CatalogTab,
+} from '@/lib/payment-catalog/catalog-cache';
 
 // Always render exactly 2 decimals so the exact amount is shown without ever
 // rounding cents away to a whole number (1500 -> "₱1,500.00", 1500.5 -> "₱1,500.50").
@@ -639,16 +647,6 @@ function withoutOffboarded(roster: RosterEntry[], offboarded: Set<string>): Rost
 // Top-level component
 // ---------------------------------------------------------------------------
 
-type CatalogTab =
-  | 'overview'
-  | 'search'
-  | 'departments'
-  | 'pay-processors'
-  | 'pay-structure'
-  | 'library'
-  | 'assignments'
-  | 'system-bonuses';
-
 /** The six reads that fill the tab, in the order `refetch` consumes them. The
  *  label is what the failure banner names, so it reads as the thing an
  *  accountant is missing ("Pay structures"), not as a route. */
@@ -662,38 +660,75 @@ const CATALOG_SOURCES = [
 ] as const;
 
 export default function BonusCatalog({ initialData }: { initialData?: InitialAccountingData | null }) {
-  const [bonuses, setBonuses] = useState<BonusDef[]>([]);
-  const [assignments, setAssignments] = useState<BonusAssignment[]>([]);
-  const [payStructures, setPayStructures] = useState<PayStructure[]>([]);
-  const [systemBonuses, setSystemBonuses] = useState<SystemBonus[]>(initialData?.systemBonuses ?? []);
+  // Seeded from the shared Accounting tab cache so a return to this tab paints
+  // what was on screen instead of the "Loading catalog..." card: the shell
+  // unmounts the tab on every switch (`App.tsx` AnimatePresence key={activeTab}),
+  // and the six reads below took the whole mount behind a skeleton.
+  //
+  // THE SEED PAINTS, IT NEVER DECIDES. There is no skip flag here and there may
+  // never be one: the Payment Catalog is the rate source of truth, which is the
+  // banned category in `accounting-dashboard-cache.md` § *The skip-flag policy*
+  // (`ratesSummary` is in the banned list in `tab-cache.test.ts`). The mount
+  // `refetch()` always runs — silently, because there are rows to look at while
+  // it does.
+  // A LAZY initialiser: React runs it once. `useRef(readCachedCatalog())` would
+  // re-read sessionStorage and re-parse the blob on every render of this
+  // component, which is the opposite of the point.
+  const [cachedCatalog] = useState(readCachedCatalog);
+  const [bonuses, setBonuses] = useState<BonusDef[]>(cachedCatalog?.bonuses ?? []);
+  const [assignments, setAssignments] = useState<BonusAssignment[]>(cachedCatalog?.assignments ?? []);
+  const [payStructures, setPayStructures] = useState<PayStructure[]>(cachedCatalog?.payStructures ?? []);
+  // The cache is written by the last successful refetch, so it is newer than the
+  // server prefetch that filled `initialData` when the shell mounted.
+  const [systemBonuses, setSystemBonuses] = useState<SystemBonus[]>(
+    cachedCatalog?.systemBonuses ?? initialData?.systemBonuses ?? [],
+  );
   // Custom departments created from the Department tab + every active
   // department_managers assignment (dept string, lower-cased -> manager emails).
-  const [deptRegistry, setDeptRegistry] = useState<DepartmentRegistryEntry[]>([]);
-  const [deptManagers, setDeptManagers] = useState<Record<string, string[]>>({});
+  const [deptRegistry, setDeptRegistry] = useState<DepartmentRegistryEntry[]>(
+    cachedCatalog?.deptRegistry ?? [],
+  );
+  const [deptManagers, setDeptManagers] = useState<Record<string, string[]>>(
+    cachedCatalog?.deptManagers ?? {},
+  );
   /** app_settings revision of the registry (GET `revision`). The Edit Department
    *  dialog hands it back so a stale save is refused (409) instead of clobbering
    *  a teammate's edit. */
-  const [deptRegistryRevision, setDeptRegistryRevision] = useState<string | null>(null);
+  const [deptRegistryRevision, setDeptRegistryRevision] = useState<string | null>(
+    cachedCatalog?.deptRegistryRevision ?? null,
+  );
   // Built-in departments' sub-departments ride their own app_settings key, so
   // they carry their own CAS revision -- paired with the map for the same reason
   // the registry revision is paired with the registry.
-  const [builtinSubs, setBuiltinSubs] = useState<BuiltinSubMap>({});
-  const [builtinSubsRevision, setBuiltinSubsRevision] = useState<string | null>(null);
+  const [builtinSubs, setBuiltinSubs] = useState<BuiltinSubMap>(cachedCatalog?.builtinSubs ?? {});
+  const [builtinSubsRevision, setBuiltinSubsRevision] = useState<string | null>(
+    cachedCatalog?.builtinSubsRevision ?? null,
+  );
   // Pay Processors registry (stored rows merged over the code seeds server-side).
-  const [payProcessors, setPayProcessors] = useState<PayProcessor[]>([]);
+  const [payProcessors, setPayProcessors] = useState<PayProcessor[]>(cachedCatalog?.payProcessors ?? []);
   // Current Banks — folded server-side from the payees' free-text bank cells.
-  const [banks, setBanks] = useState<BankGroup[]>([]);
+  const [banks, setBanks] = useState<BankGroup[]>(cachedCatalog?.banks ?? []);
   // Set when another tab asks Pay Structure to open focused on a department.
   const [payFocusDept, setPayFocusDept] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  /** Has a refetch completed this mount? Never seeded and never reset, so the
+   *  skeleton is decided by "is there anything to look at", not by "is a fetch
+   *  in flight" — a stored spinner repaints the skeleton over rows already on
+   *  screen (`accounting-dashboard-cache.md` § *Transfers lost its skip*). */
+  const [settled, setSettled] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   /** Labels of the reads that did NOT land on the last refetch. Empty = clean.
    *  A non-empty list is rendered as a banner with Retry, because the lists it
    *  feeds deliberately keep their prior (or empty) contents — without this the
    *  tab presents a confident, blank, wrong catalog. */
   const [failedReads, setFailedReads] = useState<string[]>([]);
-  const [tab, setTab] = useState<CatalogTab>('overview');
+  const [tab, setTab] = useState<CatalogTab>(readCachedTab);
   const instanceId = useId();
+
+  // Remember the tab across a switch away and back. UI selection only — no row
+  // data — and re-validated against `CATALOG_TAB_IDS` on read.
+  useEffect(() => {
+    setTabCache(TAB_CACHE_KEYS.ratesView, { tab });
+  }, [tab]);
 
   // TWO rosters, deliberately. `roster` is everyone on the active view and is
   // used only to RESOLVE NAMES for rows that already exist (a leaver's
@@ -754,7 +789,10 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   // Live USD-anchored FX rates — used only to sort the Bonus Library's
   // "Amount (high-low)" by PHP-equivalent so a $100 bonus outranks a ₱500 one.
   // The actual payout conversion happens at apply time in the KPI Calculator.
-  const [fx, setFx] = useState<FxRates>(officialFxRates());
+  // Seeded from the cache, falling back to the official rates as before. The
+  // fetch still runs on every mount -- the seed only stops the Bonus Library's
+  // PHP-equivalent sort from reordering itself a beat after the tab paints.
+  const [fx, setFx] = useState<FxRates>(() => readCachedFx() ?? officialFxRates());
   useEffect(() => {
     let cancelled = false;
     fetch('/api/app-settings?keys=usd_to_php_rate,usd_to_cop_rate', { cache: 'no-store' })
@@ -762,10 +800,12 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
       .then((json: { values?: Record<string, string | null> }) => {
         if (cancelled) return;
         const v = json.values ?? {};
-        setFx({
+        const next = {
           usdToPhp: effectiveUsdToPhpRateFromStored(v['usd_to_php_rate']),
           usdToCop: effectiveUsdToCopRateFromStored(v['usd_to_cop_rate']),
-        });
+        };
+        setFx(next);
+        setTabCache(TAB_CACHE_KEYS.ratesFx, next);
       })
       .catch(() => {
         /* keep the official fallback */
@@ -788,6 +828,33 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
       }),
     [payStructures, initialData, systemBonuses, fx, assignments, customDepartments],
   );
+
+  /**
+   * The last SERVER-TRUTH catalog, mirrored so `refetch` can carry a failed
+   * read's previous value into the cache without reading state (it is a
+   * dependency-free `useCallback`, so state would be a stale closure).
+   *
+   * Deliberately NOT updated by the optimistic local edits: those reconcile by
+   * calling `refetch`, and what belongs on disk is what the server said, not a
+   * write that may still be refused.
+   */
+  const [initialCommitted] = useState<CachedCatalog>(() => ({
+    bonuses: [],
+    assignments: [],
+    payStructures: [],
+    // Matches the state seeds above, so a first refetch that partially fails
+    // caches exactly what is on screen rather than an emptier catalog.
+    systemBonuses: initialData?.systemBonuses ?? [],
+    deptRegistry: [],
+    deptRegistryRevision: null,
+    deptManagers: {},
+    builtinSubs: {},
+    builtinSubsRevision: null,
+    payProcessors: [],
+    banks: [],
+    ...(cachedCatalog ?? {}),
+  }));
+  const committedRef = useRef<CachedCatalog>(initialCommitted);
 
   const refetch = useCallback(async () => {
     setRefreshing(true);
@@ -843,28 +910,36 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
       // reads as "everything is gone", not as an error
       // (payment-catalog-pay-processors.md §1). Before this, only processors and
       // banks were guarded; the other four took `?? []` and wiped themselves.
-      if (Array.isArray(cat?.bonuses)) setBonuses(cat.bonuses);
-      if (Array.isArray(cat?.assignments)) setAssignments(cat.assignments);
-      if (Array.isArray(pay?.structures)) setPayStructures(pay.structures);
-      if (Array.isArray(sys?.bonuses)) setSystemBonuses(sys.bonuses);
+      // Mirrors the commits below one-for-one so the cache can never hold
+      // something the tab is not showing: a read that did not land keeps its
+      // PREVIOUS value here exactly as it keeps it on screen.
+      const next: CachedCatalog = { ...committedRef.current };
+
+      if (Array.isArray(cat?.bonuses)) setBonuses((next.bonuses = cat.bonuses));
+      if (Array.isArray(cat?.assignments)) setAssignments((next.assignments = cat.assignments));
+      if (Array.isArray(pay?.structures)) setPayStructures((next.payStructures = pay.structures));
+      if (Array.isArray(sys?.bonuses)) setSystemBonuses((next.systemBonuses = sys.bonuses));
       // Registry + revision + managers move TOGETHER or not at all. The revision
       // is the CAS token the Edit Department dialog hands back to earn its 409,
       // so pairing it with a registry it does not describe (or nulling it while
       // keeping the rows) is how a stale save clobbers a teammate's edit.
       if (dept && Array.isArray(dept.registry)) {
-        setDeptRegistry(dept.registry);
-        setDeptRegistryRevision(dept.revision ?? null);
-        setDeptManagers(dept.managers ?? {});
+        setDeptRegistry((next.deptRegistry = dept.registry));
+        setDeptRegistryRevision((next.deptRegistryRevision = dept.revision ?? null));
+        setDeptManagers((next.deptManagers = dept.managers ?? {}));
       }
       // Same pairing rule: the map and the revision that describes it move
       // together. A failed read leaves BOTH untouched rather than nulling the
       // revision, which would turn the next save into a silent overwrite.
       if (dept && dept.builtinSubs && typeof dept.builtinSubs === 'object' && !dept.builtinSubsError) {
-        setBuiltinSubs(dept.builtinSubs);
-        setBuiltinSubsRevision(dept.builtinSubsRevision ?? null);
+        setBuiltinSubs((next.builtinSubs = dept.builtinSubs));
+        setBuiltinSubsRevision((next.builtinSubsRevision = dept.builtinSubsRevision ?? null));
       }
-      if (Array.isArray(proc?.processors)) setPayProcessors(proc.processors);
-      if (Array.isArray(bank?.banks)) setBanks(bank.banks);
+      if (Array.isArray(proc?.processors)) setPayProcessors((next.payProcessors = proc.processors));
+      if (Array.isArray(bank?.banks)) setBanks((next.banks = bank.banks));
+
+      committedRef.current = next;
+      setTabCache(TAB_CACHE_KEYS.ratesSummary, next);
 
       setFailedReads(failed);
     } catch {
@@ -872,7 +947,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
       // a throw here must still SAY so rather than present a clean empty tab.
       setFailedReads(CATALOG_SOURCES.map((s) => s.label));
     } finally {
-      setLoading(false);
+      setSettled(true);
       setRefreshing(false);
     }
   }, []);
@@ -1120,6 +1195,24 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
     },
     [systemBonuses, refetch],
   );
+
+  /**
+   * DERIVED, never stored. The skeleton is for "there is nothing to look at",
+   * not for "a fetch is running" — with a cache seed the mount refetch still
+   * always runs, and a stored flag would repaint the skeleton over rows that
+   * are already on screen every time the tab is reopened.
+   *
+   * `banks` is excluded from the test: it is the one read that is legitimately
+   * empty for a viewer whose payees have no bank cells, so it cannot stand for
+   * "the catalog arrived".
+   */
+  const hasAnythingToPaint =
+    bonuses.length > 0 ||
+    payStructures.length > 0 ||
+    systemBonuses.length > 0 ||
+    deptRegistry.length > 0 ||
+    payProcessors.length > 0;
+  const loading = !settled && !hasAnythingToPaint;
 
   const tabs = [
     { id: 'overview', label: 'Summary', icon: LayoutDashboard, count: 0 },

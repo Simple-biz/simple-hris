@@ -408,7 +408,40 @@ export function markFetchedThisSession(key: string): void {
 // A key only needs the parameters that select a genuinely different dataset for
 // the SAME viewer (a week, a status filter).
 export const TAB_CACHE_KEYS = {
+  /**
+   * Payment Catalog — the six reads of `CATALOG_SOURCES` as ONE entry
+   * (`BonusCatalog.tsx`). Declared 2026-09-09 and left unwired until 2026-09-21.
+   *
+   * The catalog is the RATE SOURCE OF TRUTH, so this is the banned category:
+   * `hasFetchedThisSession` may never gate it, the mount fetch ALWAYS runs, and
+   * the seed exists only to paint. Pinned in the banned list in
+   * `tab-cache.test.ts`.
+   *
+   * One key rather than six because the six land in a single `Promise.allSettled`
+   * batch and two of them carry CAS revisions that may never be separated from
+   * the rows they describe: the department registry moves with its `revision`
+   * and `managers`, and `builtinSubs` moves with `builtinSubsRevision`. Splitting
+   * them across keys is how a stale revision gets paired with a fresh registry
+   * and a save silently clobbers a teammate's edit.
+   */
   ratesSummary: 'rates:summary',
+  /**
+   * Payment Catalog — the USD-anchored FX rates (`/api/app-settings`).
+   *
+   * Its own key because it is its own fetch with its own failure mode: the
+   * catalog batch failing must not drop a good FX read, and vice versa. Used
+   * only to sort the Bonus Library by PHP-equivalent; the official fallback
+   * (`officialFxRates()`) still applies when nothing is cached.
+   */
+  ratesFx: 'rates:fx',
+  /**
+   * Payment Catalog — which of the eight tabs the viewer left on. UI selection
+   * only, no row data, same category as {@link TAB_CACHE_KEYS.documentsView}:
+   * the envelope guarantees identity, version and age but NOT the shape inside,
+   * so the value is re-validated against the live tab list on read and an
+   * unrecognised id falls back to the default.
+   */
+  ratesView: 'rates:view',
   dispatchQueue: 'dispatch:queue',
   // v2: rows are roster-gated — the bump orphans pre-gate (unfiltered) entries.
   mesaRequests: 'mesa:requests:v2',

@@ -19,7 +19,7 @@ Siblings: `employee-dashboard-cache.md`, `manager-dashboard-cache.md`, and
 
 ## One store, three dashboards
 
-Ten call sites across three shells read it, which is why it is neither the Accounting
+Eleven call sites across three shells read it, which is why it is neither the Accounting
 store nor the CEO store but the shared one:
 
 | Consumer | Datasets |
@@ -28,6 +28,7 @@ store nor the CEO store but the shared one:
 | `people/PeopleTab.tsx` | `peopleRoster` |
 | `accounting/AccountingTransfers.tsx` | `transfers` |
 | `accounting/AccountingDocuments.tsx` | `documentsQueue`, `documentsSignature`, `documentsView` |
+| `accounting/BonusCatalog.tsx` | `ratesSummary`, `ratesFx`, `ratesView` |
 | `accounting/PayrollWizardNotesFab.tsx` | notes rows, workers, uploads, readiness, offboarded |
 | `payroll/AccountingMesa.tsx` | `mesaRequests`, `mesaNonMembers`, `mesaActiveMembers` |
 | `payroll/PabDisputeQueue.tsx` | `pabDisputes`, `pabReasonCodes`, `bankPreferredRequests` |
@@ -195,6 +196,66 @@ queue on a network blip is worse than the blip.
 This is a client paint only. No route changed, every fetch is still `cache: 'no-store'`,
 and no gate moved — `requireFeatureAccess` / `requireFeatureEdit` decide as before.
 
+### Payment Catalog joined, and wired the key that was already reserved (2026-09-21)
+
+`BonusCatalog.tsx` was the other heavy Accounting tab with no cache at all. Kane:
+*"Payment Catalog - Add caching in there it loads all the time lol."* Leaving the tab
+unmounted it, and returning re-ran all six `CATALOG_SOURCES` reads behind the
+"Loading catalog..." card with the whole eight-tab surface blank.
+
+`ratesSummary` had been **declared since 2026-09-09 with no consumer** — reserved when
+the envelope shipped, listed in the banned list, never wired. It is now the key it was
+reserved to be.
+
+Three keys, and the categories are the ones this doc already draws:
+
+- **`ratesSummary`** — the six payloads as ONE entry. The Payment Catalog is the
+  **rate source of truth**, so it is squarely in the banned category above: the seed
+  paints, the mount `refetch()` **always** runs, and no skip flag may ever gate it. It
+  was already in `tab-cache.test.ts`'s banned list, which is why wiring it needed no
+  new entry there.
+
+  One key rather than six is deliberate and is a **correctness** choice, not a
+  convenience: two of the six carry **CAS revisions that may never be separated from
+  the rows they describe** — the department registry moves with its `revision` and
+  `managers`, `builtinSubs` moves with `builtinSubsRevision`. Across separate keys the
+  store's own per-key age eviction could drop the rows and keep the token, and a stale
+  revision beside a fresh registry is how a save clobbers a teammate's edit instead of
+  earning its 409. `catalog-cache.test.ts` pins both pairings in both directions.
+- **`ratesFx`** — the USD-anchored rates, its own fetch and its own failure mode, so
+  its own key. Validated as finite and positive on read; anything else keeps
+  `officialFxRates()`. These only sort the Bonus Library by PHP-equivalent — they never
+  convert a payout, which still happens at apply time in the KPI Calculator.
+- **`ratesView`** — which of the eight tabs the viewer left on. UI selection only, same
+  category as `documentsView`, re-validated against `CATALOG_TAB_IDS` on read so a tab
+  retired by a future deploy cannot come back out of a still-open browser tab as an
+  unrenderable selection.
+
+The readers live in `src/lib/payment-catalog/catalog-cache.ts` — a pure module rather
+than private helpers inside a 6,200-line component, because the pairing rules above are
+the kind of invariant that has to be testable. `parse*` is split from `read*` so the
+rules can be exercised without a storage mock.
+
+The same two render rules came with it: `loading` is now **derived**
+(`!settled && nothing-to-paint`, `settled` never seeded and never reset) rather than a
+stored `useState(true)`, and `refreshing` keeps its own flag for the Retry button. The
+"nothing to paint" test deliberately **excludes `banks`** — it is the one read that is
+legitimately empty for a viewer whose payees have no bank cells, so it cannot stand for
+"the catalog arrived".
+
+A partial failure caches exactly what is on screen: `refetch` builds its cache value
+from the same guards as the state commits, so a read that did not land carries its
+previous value into the cache just as it keeps it on the tab. The mirror is written from
+**server truth only** — the optimistic local edits (`upsertBonus` and friends) do not
+touch it, because they reconcile by calling `refetch` and a write that may still be
+refused does not belong on disk.
+
+Unlike `PeopleTab`, this tab has **no SSR/hydration seed mismatch**: `App.tsx` starts
+`activeTab` at `'overview'`, so `BonusCatalog` never renders server-side.
+
+Client paint only. No route changed, every fetch is still `cache: 'no-store'`, the
+Realtime channel and the focus refetch are untouched, and no gate moved.
+
 ## Adding another dataset
 
 1. Add a key to `TAB_CACHE_KEYS`. Keys do **not** carry the viewer's email — the identity
@@ -223,7 +284,10 @@ and no gate moved — `requireFeatureAccess` / `requireFeatureEdit` decide as be
   hydration safety as load-bearing and this one has no argument for it. Own review.
 - **No server-side caching.** Every route keeps `cache: 'no-store'`; this is a
   client-side paint optimisation and changes no route's freshness.
-- **Not verified in a browser.** `tsc` is clean and 2739/2741 tests pass (the two
-  failures are pre-existing and unrelated — `dept-label-render` and
-  `manager-time-adjustments-live`), but the live sign-out / `?email=` / reload behaviour
-  was not clicked through (needs Google SSO + Supabase auth).
+- **Not verified in a browser.** `tsc` is clean and, as of the 2026-09-21 Payment
+  Catalog pass, 4112/4114 tests pass (the two failures are pre-existing and unrelated —
+  `dept-label-render` and `manager-time-adjustments-live`, both confirmed failing with
+  the change stashed out), but the live sign-out / `?email=` / reload behaviour was not
+  clicked through (needs Google SSO + Supabase auth). `next build` was **not** run on
+  the Payment Catalog pass either: a `next dev` server was live on :3000 and the two
+  share `.next/`.
