@@ -170,6 +170,48 @@ stranger's phone number. An approved row stays locked; the new fields ride the
 existing refusal in `upsertShippingDetail` rather than opening a second write
 path.
 
+### The toolbar toggle is NOT a fifth fulfilment filter (2026-09-21)
+
+**Received by someone else** sits *beside* the
+**All · We owe · Not recorded · Received** group, never inside it, and it **ANDs**
+with whatever is selected there.
+
+Those four are mutually exclusive states of one question — *what do we know about
+this person's gifts* — and the group is named for it
+(`aria-label="Filter by gift fulfilment"`,
+[gift-tracker-receipts.md](gift-tracker-receipts.md) § *The fulfilment filter, and
+the order list*). This is a different question, read off a different table, and it
+is **orthogonal to all four**: the packing-run query is *of the people we owe,
+which ones go to a spouse?* A fifth radio option would make that query
+unaskable and would make the group's own name untrue.
+
+Everything the fulfilment filter owes, this owes too:
+
+- **It narrows the export, because the export reads the same `filteredRows`.**
+  No second path to drift out of step with the screen.
+- **It is stamped into the provenance preamble** — `scopeLabel` becomes
+  *"Employees owed a gift, received by someone else"*. A file of only the
+  spouse-delivery parcels labelled *"All employees"* misreports its own scope to
+  whoever packs it, which is the same failure the fulfilment filter's label
+  exists to prevent.
+- **It resets paging.** Narrowing while on page 4 shows an empty table, and an
+  empty table reads as *nobody*.
+- **Its count is summed into nothing.** A parcel going to a spouse is not a
+  shade of owed or received; the same person can be in any of the other four
+  states at the same time.
+
+The toggle **renders only when at least one person has named somebody** — a
+permanently-zero control teaches people to ignore the toolbar.
+
+The tile is **colourless (`slate`), deliberately.** Amber already means *owed / on
+the way* everywhere else in this feature, so an amber tile would read as a debt.
+`slate` is the tone reserved for everything that is **not a severity**, which
+until now was only *Not recorded*; a handover fact belongs there beside it.
+
+Both the toggle and the count go through **`hasAlternateRecipient`**, the same
+predicate the row's `Received by:` line uses, so the list and the line can never
+disagree about who is at the door.
+
 ## Export columns
 
 CSV and XLSX sheet 1, immediately after `Contact Number`:

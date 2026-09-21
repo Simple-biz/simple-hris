@@ -400,6 +400,17 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
    * different job (find out) from owing someone a gift (ship it).
    */
   const [owedFilter, setOwedFilter] = useState<'all' | 'owed' | 'unrecorded' | 'received'>('all');
+  /**
+   * Narrow to parcels going to somebody other than the employee.
+   *
+   * Deliberately NOT a fifth option on the fulfilment filter. Those four are
+   * mutually exclusive states of ONE question — what we know about this person's
+   * gifts — and this is a different question, from a different table. Kept
+   * orthogonal so it ANDs with them: *of the people we owe, which go to a
+   * spouse?* is the packing-run query, and a fifth radio would make it
+   * unaskable.
+   */
+  const [altRecipientOnly, setAltRecipientOnly] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [draftNotes, setDraftNotes] = useState<Map<string, string>>(new Map());
   const [savingKey, setSavingKey] = useState<string | null>(null);
@@ -672,14 +683,22 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
     if (owedFilter === 'owed') out = out.filter((r) => r.receipts.owedCount > 0);
     else if (owedFilter === 'unrecorded') out = out.filter((r) => r.receipts.unknownCount > 0);
     else if (owedFilter === 'received') out = out.filter((r) => r.receipts.receivedCount > 0);
+    // ANDed with the fulfilment filter, never replacing it. Through
+    // `hasAlternateRecipient` — THE one predicate — so this list and the
+    // `Received by:` line on the row can never disagree about who is at the door.
+    if (altRecipientOnly) {
+      out = out.filter((r) =>
+        (shippingByEmail.get(r.key) ?? []).some(hasAlternateRecipient),
+      );
+    }
     return out;
-  }, [rows, search, owedFilter]);
+  }, [rows, search, owedFilter, altRecipientOnly, shippingByEmail]);
 
   // Reset paging whenever the visible set changes — otherwise narrowing to
   // "Owed" while on page 4 shows an empty table that reads as "nobody is owed".
   useEffect(() => {
     setPage(0);
-  }, [owedFilter]);
+  }, [owedFilter, altRecipientOnly]);
 
   /**
    * Submissions handed to the export, scoped to match the rows in view.
@@ -740,8 +759,13 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
           : owedFilter === 'received'
             ? 'Employees with a recorded gift'
             : 'All employees';
-    return q ? `${base} matching "${q}"` : base;
-  }, [search, owedFilter]);
+    // The alternate-recipient narrowing has to reach the preamble too, for the
+    // same reason the fulfilment filter does: a file of only the spouse-delivery
+    // parcels, labelled "All employees", misreports its own scope to whoever
+    // packs it.
+    const scoped = altRecipientOnly ? `${base}, received by someone else` : base;
+    return q ? `${scoped} matching "${q}"` : scoped;
+  }, [search, owedFilter, altRecipientOnly]);
 
   const stats = useMemo(() => {
     let red = 0;
@@ -754,6 +778,10 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
     let peopleOwed = 0;
     let peopleUnknown = 0;
     let peopleReceived = 0;
+    // Its own count, summed into nothing. A parcel going to a spouse is not a
+    // shade of owed or received — it is a fact about the handover, and the
+    // person can be in any of the other four states at the same time.
+    let peopleAltRecipient = 0;
     for (const r of rows) {
       if (r.status === 'red') red += 1;
       else if (r.status === 'orange') orange += 1;
@@ -763,6 +791,9 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
       if (r.receipts.owedCount > 0) peopleOwed += 1;
       if (r.receipts.unknownCount > 0) peopleUnknown += 1;
       if (r.receipts.receivedCount > 0) peopleReceived += 1;
+      if ((shippingByEmail.get(r.key) ?? []).some(hasAlternateRecipient)) {
+        peopleAltRecipient += 1;
+      }
     }
     return {
       total: rows.length,
@@ -774,8 +805,9 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
       peopleOwed,
       peopleUnknown,
       peopleReceived,
+      peopleAltRecipient,
     };
-  }, [rows]);
+  }, [rows, shippingByEmail]);
 
   const toggleExpand = useCallback((key: string) => {
     setExpanded((prev) => {
@@ -1291,6 +1323,22 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             icon={HelpCircle}
             tone="slate"
           />
+          {/* COLOURLESS ON PURPOSE. Amber already means "owed / on the way"
+              across this feature, so an amber tile here would read as a debt.
+              Handing a parcel to a spouse is not a severity and not a fulfilment
+              state — it is a fact about the handover — which is exactly what
+              `slate` is reserved for. */}
+          <StatTile
+            label="Received by someone else"
+            value={stats.peopleAltRecipient}
+            hint={
+              stats.peopleAltRecipient === 0
+                ? 'Everyone receives their own'
+                : 'A spouse or relative accepts it'
+            }
+            icon={Users}
+            tone="slate"
+          />
           <StatTile
             label="Within 1 week"
             value={stats.red + stats.overdue}
@@ -1350,6 +1398,38 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                     received: stats.peopleReceived,
                   }}
                 />
+                {/* Beside the fulfilment group, not inside it — it ANDs with
+                    whatever is selected there. Rendered only when somebody has
+                    actually named an alternate recipient: a permanently-zero
+                    toggle is a control that teaches people to ignore the
+                    toolbar. */}
+                {stats.peopleAltRecipient > 0 && (
+                  <button
+                    type="button"
+                    aria-pressed={altRecipientOnly}
+                    onClick={() => setAltRecipientOnly((v) => !v)}
+                    title="Show only the parcels going to somebody other than the employee"
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors',
+                      altRecipientOnly
+                        ? 'border-amber-600 bg-amber-600 text-white shadow-sm'
+                        : 'border-amber-200/80 bg-white/80 text-amber-800 hover:bg-amber-50 dark:border-amber-900/45 dark:bg-zinc-950/60 dark:text-amber-200 dark:hover:bg-amber-950/40',
+                    )}
+                  >
+                    <Users className="h-3.5 w-3.5" />
+                    Received by someone else
+                    <span
+                      className={cn(
+                        'rounded px-1 py-0.5 text-[10px] font-bold tabular-nums',
+                        altRecipientOnly
+                          ? 'bg-white/20 text-white'
+                          : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-200',
+                      )}
+                    >
+                      {stats.peopleAltRecipient.toLocaleString()}
+                    </span>
+                  </button>
+                )}
                 <GiftExportMenu
                   rows={filteredRows}
                   submissions={exportSubmissions}
@@ -2348,9 +2428,11 @@ function StatTile({
   icon: React.ComponentType<{ className?: string }>;
   tone: 'pink' | 'red' | 'orange' | 'green' | 'slate';
 }) {
-  // `slate` is deliberately the only colourless tone: "nobody has told us" is
-  // not a severity, and painting it amber would read as a milder version of
-  // owed rather than as a different question.
+  // `slate` is deliberately the only colourless tone, and it carries everything
+  // that is NOT a severity: "nobody has told us", and "somebody else accepts the
+  // parcel". Painting either amber would read as a milder version of owed —
+  // amber means owed / on the way everywhere else in this feature — rather than
+  // as a different question.
   const tones: Record<'pink' | 'red' | 'orange' | 'green' | 'slate', string> = {
     pink: 'from-emerald-500 to-teal-700 shadow-emerald-500/30',
     red: 'from-rose-500 to-rose-800 shadow-rose-500/35',
