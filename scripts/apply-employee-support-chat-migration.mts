@@ -1,12 +1,13 @@
 /**
  * [EMPLOYEE-SUPPORT]
- * Applies the whole Employee Support migration set — FIVE files as of
+ * Applies the whole Employee Support migration set — SIX files as of
  * 2026-09-21: the live chat's three tables, the `employee_support` role widen,
- * and the TICKET side's triage columns and notification widen. It then verifies
- * every table, column, comment, index, CHECK, trigger and RLS setting landed,
- * that each constraint actually rejects what it exists to reject, that no
- * widened CHECK list LOST a value, and that none of the new tables joined the
- * supabase_realtime publication.
+ * the chat session's `category` (what the chat is ABOUT, which the ticket it
+ * becomes inherits), and the TICKET side's triage columns and notification
+ * widen. It then verifies every table, column, comment, index, CHECK, trigger
+ * and RLS setting landed, that each constraint actually rejects what it exists
+ * to reject, that no widened CHECK list LOST a value, and that none of the new
+ * tables joined the supabase_realtime publication.
  *
  * THE FILENAME SAYS "chat" AND THE SCOPE NO LONGER DOES. That is deliberate:
  * the ticket side folded in by adding two lines to SQL_RELATIVE_PATHS, exactly
@@ -82,6 +83,11 @@ const SQL_RELATIVE_PATHS = [
   'references/sql/create/2026-09-19_employee_support_chat.sql',
   'references/sql/alter/2026-09-19_employee_support_role.sql',
   'references/sql/alter/2026-09-19_add_chat_notification_types.sql',
+  // What the chat is ABOUT (Kane, 2026-09-21). Additive and order-free against
+  // everything else here — it only needs the sessions table above it — but it
+  // is listed beside its own table rather than at the end, because the next
+  // person looking for "where did chat.category come from" reads this array.
+  'references/sql/alter/2026-09-21_employee_support_chat_category.sql',
   // The TICKET side, folded in 2026-09-21 exactly as the note above predicted.
   // Order matters for the second one and not the first: the notification widen
   // reads the LIVE constraint as its floor, so it must run AFTER the chat widen
@@ -213,6 +219,29 @@ const EXPECTED_NOTIFICATION_TYPES = [
 
 /** Mirrors CHAT_SESSION_STATUSES in src/lib/support/chat-types.ts. */
 const SESSION_STATUSES = ['waiting', 'claimed', 'live', 'ended', 'abandoned'];
+
+/**
+ * Carla's Decision 4 list — the nine SUPPORT_CATEGORIES, restated by hand for
+ * the same reason as EXPECTED_ROLES: a verifier that imported the array would
+ * be asking the list about itself.
+ *
+ * THE LOAD-BEARING FACT IS THAT THIS IS ONE LIST, NOT TWO. The chat session and
+ * the ticket it becomes carry the same nine, and the conversion copies the
+ * value across verbatim (`chatTicketCategory`, src/lib/support/abandonment.ts).
+ * The coverage checks below assert BOTH constraints admit all nine, so the two
+ * cannot drift apart without a FAIL line here.
+ */
+const SESSION_CATEGORIES = [
+  'pay_payslip',
+  'bonus_pab',
+  'hours_time_adjustment',
+  'bank_payout',
+  'documents_certificates',
+  'gmail',
+  'hubstaff',
+  'roboform',
+  'other',
+];
 /** Mirrors CHAT_AUTHOR_SIDES. 'system' is the one the ticket table does not have. */
 const AUTHOR_SIDES = ['employee', 'agent', 'system'];
 
@@ -224,6 +253,7 @@ const CONSTRAINTS = [
   'employee_support_chat_sessions_waiting_is_unclaimed',
   'employee_support_chat_sessions_ended_has_stamp',
   'employee_support_chat_sessions_only_abandoned_becomes_ticket',
+  'employee_support_chat_sessions_category_valid',
   'employee_support_chat_sessions_work_email_present',
   'employee_support_chat_sessions_filed_by_present',
   'employee_support_chat_messages_side_valid',
@@ -347,6 +377,41 @@ const CHECKS: Array<[string, string]> = [
     `SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns
        WHERE table_schema='public' AND table_name='employee_support_chat_sessions'
          AND column_name IN ('position', 'queue_position')) AS ok`,
+  ],
+
+  // ---- What the chat is ABOUT (2026-09-21) -----------------------------
+  [
+    'sessions.category exists — the queue can say what a waiting chat is about without opening it',
+    `SELECT EXISTS (SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='employee_support_chat_sessions'
+         AND column_name='category') AS ok`,
+  ],
+  [
+    'sessions.category is NULLABLE (NULL = nobody asked; it is not the same fact as other)',
+    `SELECT COALESCE((SELECT is_nullable='YES' FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='employee_support_chat_sessions'
+         AND column_name='category'), false) AS ok`,
+  ],
+  [
+    // A default would have backfilled every session that shipped before the
+    // picker with an answer nobody gave, and the two facts would then be
+    // spelled the same way forever. Asserted, not left to the file's comment.
+    'sessions.category has NO default — history is not backfilled with an answer nobody gave',
+    `SELECT COALESCE((SELECT column_default IS NULL FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='employee_support_chat_sessions'
+         AND column_name='category'), false) AS ok`,
+  ],
+  [
+    `employee_support_chat_sessions_category_valid admits all ${SESSION_CATEGORIES.length} SUPPORT_CATEGORIES`,
+    constraintCoverage('employee_support_chat_sessions_category_valid', SESSION_CATEGORIES),
+  ],
+  [
+    // The inheritance is only sound while both ends speak the same nine. The
+    // ticket side's CHECK is asserted here too, against the SAME array, so a
+    // value added to one table and not the other is a FAIL line rather than a
+    // 500 on the day a chat carrying it converts.
+    `employee_support_tickets_category_valid admits the same ${SESSION_CATEGORIES.length} (chat and ticket are ONE vocabulary)`,
+    constraintCoverage('employee_support_tickets_category_valid', SESSION_CATEGORIES),
   ],
 
   [
@@ -568,6 +633,14 @@ const ACCEPT_CONTROLS: Array<[string, string]> = [
     `status '${s}' with its required companions is ACCEPTED`,
     insertSession({ status: `'${s}'`, ...STATUS_COMPANIONS[s] }),
   ]),
+  // Every category the chat may carry, one INSERT each. The definition-text
+  // coverage check above reads the constraint; these prove the database agrees,
+  // and they are the proof that the value a converted chat hands the ticket
+  // table is a value that table will take.
+  ...SESSION_CATEGORIES.map((c): [string, string] => [
+    `a session with category '${c}' is ACCEPTED`,
+    insertSession({ category: `'${c}'` }),
+  ]),
   [
     'an abandoned session that BECAME a ticket is ACCEPTED (Q1, the whole point)',
     `${insertCtlTicket}; ${insertSession({
@@ -672,6 +745,15 @@ const TRIGGER_CONTROLS: Array<[string, string]> = [
     `${insertRow(AGENTS, { agent_email: "'  Carla@Simple.BIZ '" })} RETURNING (agent_email = 'carla@simple.biz') AS ok`,
   ],
   [
+    // The migration-safety statement, run as a fact rather than trusted from
+    // the file's header: a session inserted without a category comes back NULL.
+    // If a default ever appears, every session that predates the picker starts
+    // claiming the employee said "Something else", and nothing afterwards can
+    // tell those rows from the ones where they really did.
+    'a session with NO category comes back NULL, not backfilled to other',
+    insertSession({}, '(category IS NULL) AS ok'),
+  ],
+  [
     'queued_at survives a release UNCHANGED — a position never rises',
     `${insertSession({ id: CTL_SESSION_ID, status: "'claimed'", ...STATUS_COMPANIONS.claimed, queued_at: "timestamptz '2026-01-01 00:00:00+00'" })};
      UPDATE ${SESSIONS} SET status='waiting', claimed_by=NULL, claimed_at=NULL WHERE id = ${CTL_SESSION_ID}
@@ -727,6 +809,22 @@ const NEGATIVE_CONTROLS: Array<[string, string]> = [
   [
     'a WAITING session that still names a claimant is rejected (the release must clear both)',
     insertSession({ status: "'waiting'", claimed_by: "'carla@simple.biz'", claimed_at: 'now()' }),
+  ],
+  [
+    // Kane's own word for it. 'salary' is what a person says; 'pay_payslip' is
+    // what the vocabulary calls it, and the picker is what maps one to the
+    // other. A raw word reaching this column would be inherited by the ticket
+    // and rejected THERE — a 500 on the conversion, and an employee who never
+    // gets their ES- number. It is refused at the door instead.
+    "an unknown category is rejected ('salary' is the question, 'pay_payslip' is the key)",
+    insertSession({ category: "'salary'" }),
+  ],
+  [
+    // The normalize trigger deliberately does not tidy this column, so a blank
+    // stays blank and the CHECK is what catches it. Proven, because "the
+    // trigger doesn't touch it" is only safe if something else does.
+    'a blank category is rejected — it is a key from a fixed list, not typed text',
+    insertSession({ category: "'   '" }),
   ],
   ['status=ended with no ended_at is rejected', insertSession({ status: "'ended'" })],
   ['status=abandoned with no ended_at is rejected', insertSession({ status: "'abandoned'" })],
@@ -941,6 +1039,7 @@ async function main() {
       ...SQL_FILES.map((f) => `    - ${f.rel}`),
       `  Tables   : ${NEW_TABLES.join(', ')}`,
       `  Widens   : employee_roles_role_check (+employee_support), employee_notifications_type_check (+2 chat types)`,
+      `  Columns  : chat sessions.category (${SESSION_CATEGORIES.length} values, nullable); tickets priority/triaged_at/triaged_by`,
       `  Indexes  : ${INDEXES.length}`,
       `  CHECKs   : ${CONSTRAINTS.length}`,
       `  Controls : ${1 + ACCEPT_CONTROLS.length} positive, ${TRIGGER_CONTROLS.length} trigger, ${NEGATIVE_CONTROLS.length} negative`,

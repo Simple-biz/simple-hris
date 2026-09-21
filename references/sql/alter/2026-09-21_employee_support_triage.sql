@@ -50,6 +50,12 @@
 -- re-added a status CHECK unconditionally and would have stripped a value on a
 -- re-run (docs/audits/audit-2026-09-16-session-log.md, Open item 101).
 --
+-- ONE existing object IS modified: the normalize trigger function is
+-- CREATE OR REPLACEd so it lower-cases the new triaged_by column. Replace is not
+-- drop — the trigger binding never detaches, and re-running re-declares the same
+-- body. See the block at the end of this file for why the fix is there and not
+-- in the verify control.
+--
 -- Both new CHECKs cover ONLY the new columns, so no existing row can violate
 -- one and ADD CONSTRAINT's validating scan cannot fail on data already there.
 
@@ -65,7 +71,7 @@ comment on column public.employee_support_tickets.triaged_at is
   'When the ticket was ranked onto the board. Moves as a set with priority and triaged_by. Also the far end of the filed->triaged leg a response-time KPI will want later.';
 
 comment on column public.employee_support_tickets.triaged_by is
-  'Who ranked it. Lowercased by the normalise trigger, same as every other email column on this table.';
+  'Who ranked it. Lower-cased and trimmed by employee_support_tickets_normalize(), which this migration re-declares to cover the column — the shipped trigger predated it.';
 
 -- The four values, matching TICKET_PRIORITIES exactly. NULL passes: an
 -- un-triaged ticket is the default state, not an invalid one.
@@ -112,6 +118,43 @@ begin
   end if;
 end
 $triage_set$;
+
+-- THE NORMALIZE TRIGGER LEARNS THE NEW COLUMN.
+--
+-- The shipped trigger function lower-cases and trims every email column on this
+-- table — work_email, filed_by_email, claimed_by, closed_by — and it predates
+-- triaged_by, so on its own it would let '  Carla@Simple.BIZ ' through as-is.
+-- The first --verify against production caught exactly that (2026-09-21: "a
+-- ranked ticket is accepted when all three move together — returned false"),
+-- because this file's own comment had claimed the trigger covered it. It did not.
+--
+-- The fix is the trigger, NOT the control: every other email column here is
+-- normalised at the row, so a route that forgot to lower-case would still write
+-- a correct row, and a control weakened to pass would have hidden a real gap.
+--
+-- CREATE OR REPLACE is the one place this file touches something that already
+-- exists. It is idempotent — re-running re-declares the same function — and it
+-- REPLACES rather than drops, so the trigger binding stays attached throughout.
+-- The body below is the shipped body from
+-- references/sql/create/2026-09-16_employee_support.sql, line for line, plus
+-- ONE line. If that create file ever changes this function, change it here too;
+-- the --verify control for a mixed-case triaged_by is what tells you they drifted.
+
+create or replace function public.employee_support_tickets_normalize()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.work_email     := lower(btrim(new.work_email));
+  new.filed_by_email := lower(btrim(new.filed_by_email));
+  new.claimed_by     := lower(nullif(btrim(coalesce(new.claimed_by, '')), ''));
+  new.closed_by      := lower(nullif(btrim(coalesce(new.closed_by, '')), ''));
+  new.triaged_by     := lower(nullif(btrim(coalesce(new.triaged_by, '')), ''));
+  new.department     := nullif(btrim(coalesce(new.department, '')), '');
+  new.updated_at     := now();
+  return new;
+end;
+$$;
 
 -- NO NEW INDEX, and that is a decision rather than an omission.
 --
