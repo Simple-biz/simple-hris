@@ -3,25 +3,51 @@
 // Payment Catalog -- Departments -- "Edit" on a MASTER-LIST department card.
 //
 // A Sheet-synced department owns almost nothing in the app: its name and alias
-// map are code, its people are the Sheet and move only via transfers, and
-// sub-departments exist only for HSL via hard-coded keys. The one in-app fact
-// is MANAGER ACCESS (department_managers), so this dialog edits exactly that --
+// map are code, and its people are the Sheet. The one in-app fact is MANAGER
+// ACCESS (department_managers), so this dialog edits exactly that --
 // Managers -> Review -- and says plainly where the rest comes from. Approved by
 // Kane 2026-09-03 (managers-only; the Payment Catalog may be a second write
 // path for grants beside Admin -> Roles & permissions).
 //
-// HSL never gets this dialog: its grants are per-sub-team access keys that
-// collapse to the parent, so "remove manager" would revoke sub-team KPI access.
+// SCOPED since 2026-09-21 (Kane: "the department created from the master list
+// can be edited the same way the ones created from the app"). Manager access is
+// a raw grant STRING, and HSL's strings ARE its sub-team access keys, so the
+// dialog edits one manager list PER SCOPE:
+//   - a flat built-in has ONE scope (its display name, claiming every alias
+//     spelling) and looks exactly as it did before;
+//   - HSL has one scope per sub-team, so a revoke lands on the team the
+//     accountant edited instead of collapsing onto all sixteen.
+// Grant labels this dialog does not manage (a bare "HSL" grant, a retired
+// sub-key) are listed read-only and never written.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, Crown, Minus, Pencil, Plus, Save, Search, Trash2, Wallet, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  ChevronDown,
+  Crown,
+  Lock,
+  Minus,
+  Pencil,
+  Plus,
+  Save,
+  Search,
+  Trash2,
+  Wallet,
+  X,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   BUILTIN_MANAGERS_STAGES,
-  diffBuiltinManagers,
+  builtinManagerScopes,
+  diffBuiltinManagerScopes,
+  partitionBuiltinGrants,
   validateBuiltinManagersInput,
+  type BuiltinGrantRow,
   type BuiltinManagersInput,
   type BuiltinManagersSummary,
 } from '@/lib/departments/registry';
@@ -36,7 +62,7 @@ export type BuiltinManager = { email: string; name: string };
 export default function EditBuiltinManagersDialog({
   open,
   dept,
-  currentManagers,
+  grantRows,
   roster,
   onClose,
   onChanged,
@@ -44,8 +70,10 @@ export default function EditBuiltinManagersDialog({
 }: {
   open: boolean;
   dept: { key: string; name: string } | null;
-  /** Live managers for the key (every raw grant label that normalizes to it). */
-  currentManagers: BuiltinManager[];
+  /** EVERY live department_managers row, raw. The dialog partitions them itself
+   *  through the same shared function the route uses, so client and server can
+   *  never disagree about which grant belongs to which scope. */
+  grantRows: BuiltinGrantRow[];
   roster: DirectoryPerson[];
   onClose: () => void;
   onChanged: () => void;
@@ -53,16 +81,38 @@ export default function EditBuiltinManagersDialog({
 }) {
   const [step, setStep] = useState(0);
   const [dir, setDir] = useState(1);
-  const [managers, setManagers] = useState<BuiltinManager[]>([]);
+  /** Lower-cased grantLabel -> the resulting manager list for that scope. */
+  const [byScope, setByScope] = useState<Record<string, BuiltinManager[]>>({});
   const { view, running, run, reset } = useStagedRun<BuiltinManagersSummary>();
   const lastInputRef = useRef<BuiltinManagersInput | null>(null);
 
   const deptKey = dept?.key ?? null;
+  const scopes = useMemo(() => (deptKey ? builtinManagerScopes(deptKey) : []), [deptKey]);
+  const multi = scopes.length > 1;
+
+  const partition = useMemo(
+    () => (deptKey ? partitionBuiltinGrants(deptKey, grantRows) : null),
+    [deptKey, grantRows],
+  );
+
+  const nameByEmail = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of roster) m.set(p.email, p.name);
+    return m;
+  }, [roster]);
+  const nameOf = (email: string) => nameByEmail.get(email) ?? email;
+  const who = (email: string) => firstNameOf(nameOf(email));
+
   useEffect(() => {
-    if (!open || !dept) return;
+    if (!open || !dept || !partition) return;
     setStep(0);
     setDir(1);
-    setManagers(currentManagers.map((m) => ({ email: m.email.toLowerCase(), name: m.name })));
+    const seed: Record<string, BuiltinManager[]> = {};
+    for (const s of scopes) {
+      const lower = s.grantLabel.toLowerCase();
+      seed[lower] = (partition.byScope.get(lower) ?? []).map((e) => ({ email: e, name: nameOf(e) }));
+    }
+    setByScope(seed);
     reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- prefill on open only
   }, [open, deptKey]);
@@ -77,15 +127,28 @@ export default function EditBuiltinManagersDialog({
   }, [open, onClose, running]);
 
   const input: BuiltinManagersInput | null = dept
-    ? { builtinKey: dept.key, managers: managers.map((m) => ({ name: m.name, workEmail: m.email })) }
+    ? {
+        builtinKey: dept.key,
+        scopes: scopes.map((s) => ({
+          grantLabel: s.grantLabel,
+          managers: (byScope[s.grantLabel.toLowerCase()] ?? []).map((m) => ({
+            name: m.name,
+            workEmail: m.email,
+          })),
+        })),
+      }
     : null;
+
   const validation = input ? validateBuiltinManagersInput(input) : { ok: false };
-  const diff = diffBuiltinManagers(
-    currentManagers.map((m) => m.email),
-    managers.map((m) => m.email),
+  const diff = useMemo(
+    () => (deptKey && partition && input ? diffBuiltinManagerScopes(deptKey, partition, input) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- input is derived from byScope
+    [deptKey, partition, byScope, scopes],
   );
-  const canSave = validation.ok && diff.changed;
-  const stepOk = [managers.length > 0, canSave][step] ?? false;
+
+  const totalManagers = scopes.reduce((n, s) => n + (byScope[s.grantLabel.toLowerCase()] ?? []).length, 0);
+  const canSave = validation.ok && (diff?.changed ?? false);
+  const stepOk = [totalManagers > 0, canSave][step] ?? false;
 
   const runSave = (payload: BuiltinManagersInput) => {
     lastInputRef.current = payload;
@@ -111,30 +174,38 @@ export default function EditBuiltinManagersDialog({
     setStep(next);
   };
 
-  const nameByEmail = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const p of roster) m.set(p.email, p.name);
-    for (const p of currentManagers) m.set(p.email.toLowerCase(), p.name);
-    for (const p of managers) m.set(p.email, p.name);
-    return m;
-  }, [roster, currentManagers, managers]);
-  const who = (email: string) => firstNameOf(nameByEmail.get(email) ?? email);
+  const setScopeManagers = (grantLabel: string, v: BuiltinManager[]) =>
+    setByScope((prev) => ({ ...prev, [grantLabel.toLowerCase()]: v }));
 
   const summary = view?.summary ?? null;
   const progressCopy = {
     runningTitle: `Updating ${dept?.name ?? 'department'} managers...`,
-    runningDetail: 'Granting and revoking department_managers access.',
+    runningDetail: multi
+      ? 'Granting and revoking department_managers access, per sub-team.'
+      : 'Granting and revoking department_managers access.',
     errorTitle: 'Updating hit a snag',
     success: summary
       ? {
           title: `${summary.name} managers updated`,
           detail:
-            [
-              summary.granted.length ? `${summary.granted.map(who).join(', ')} granted` : null,
-              summary.revoked.length ? `${summary.revoked.map(who).join(', ')} revoked` : null,
-            ]
-              .filter(Boolean)
-              .join(' · ') || 'No change.',
+            (summary.scopes.length > 1
+              ? summary.scopes
+                  .map(
+                    (s) =>
+                      `${s.displayName}: ${[
+                        s.granted.length ? `+${s.granted.map(who).join(', ')}` : null,
+                        s.revoked.length ? `-${s.revoked.map(who).join(', ')}` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}`,
+                  )
+                  .join(' · ')
+              : [
+                  summary.granted.length ? `${summary.granted.map(who).join(', ')} granted` : null,
+                  summary.revoked.length ? `${summary.revoked.map(who).join(', ')} revoked` : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')) || 'No change.',
           warnings: summary.warnings,
           deptKey: summary.key,
         }
@@ -209,6 +280,7 @@ export default function EditBuiltinManagersDialog({
                         </h2>
                         <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
                           Master-list department · Step {step + 1} of {STEPS.length}
+                          {multi ? ` · ${scopes.length} sub-teams` : ''}
                         </p>
                       </div>
                       <button
@@ -250,12 +322,27 @@ export default function EditBuiltinManagersDialog({
                         exit={{ opacity: 0, x: -24 * dir }}
                         transition={{ duration: 0.2, ease: EASE }}
                       >
-                        {step === 0 && (
-                          <ManagersStep deptName={dept.name} roster={roster} managers={managers} onManagers={setManagers} />
-                        )}
+                        {step === 0 &&
+                          (multi ? (
+                            <ScopedManagersStep
+                              deptName={dept.name}
+                              scopes={scopes}
+                              byScope={byScope}
+                              roster={roster}
+                              onScope={setScopeManagers}
+                              totalManagers={totalManagers}
+                            />
+                          ) : (
+                            <ManagersStep
+                              deptName={dept.name}
+                              roster={roster}
+                              managers={byScope[scopes[0]?.grantLabel.toLowerCase() ?? ''] ?? []}
+                              onManagers={(v) => scopes[0] && setScopeManagers(scopes[0].grantLabel, v)}
+                            />
+                          ))}
                         {step === 1 && (
                           <div className="space-y-4">
-                            {!diff.changed ? (
+                            {!diff?.changed ? (
                               <div className="rounded-lg border border-dashed border-zinc-300 p-6 text-center dark:border-zinc-700">
                                 <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Nothing has changed yet</p>
                                 <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Go back to add or remove a manager.</p>
@@ -267,32 +354,61 @@ export default function EditBuiltinManagersDialog({
                                   What will change
                                 </p>
                                 <ul className="mt-2.5 space-y-1.5 text-xs text-zinc-700 dark:text-zinc-300">
-                                  {diff.granted.map((e) => (
-                                    <li key={`g-${e}`} className="flex items-start gap-2">
-                                      <Plus className="mt-px h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                                      <span>
-                                        <strong>{who(e)}</strong> ({e}) gets manager access to {dept.name} — the department shows on their dashboard.
-                                      </span>
-                                    </li>
-                                  ))}
-                                  {diff.revoked.map((e) => (
-                                    <li key={`r-${e}`} className="flex items-start gap-2">
-                                      <Minus className="mt-px h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" />
-                                      <span>
-                                        <strong>{who(e)}</strong> ({e}) loses manager access to {dept.name}, under every label it was granted as.
-                                      </span>
-                                    </li>
-                                  ))}
+                                  {diff.scopes
+                                    .filter((s) => s.granted.length > 0 || s.revoked.length > 0)
+                                    .flatMap((s) => [
+                                      ...s.granted.map((e) => (
+                                        <li key={`g-${s.grantLabel}-${e}`} className="flex items-start gap-2">
+                                          <Plus className="mt-px h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                                          <span>
+                                            <strong>{who(e)}</strong> ({e}) gets manager access to{' '}
+                                            <strong>{s.displayName}</strong> — it shows on their dashboard.
+                                          </span>
+                                        </li>
+                                      )),
+                                      ...s.revoked.map((e) => (
+                                        <li key={`r-${s.grantLabel}-${e}`} className="flex items-start gap-2">
+                                          <Minus className="mt-px h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" />
+                                          <span>
+                                            <strong>{who(e)}</strong> ({e}) loses manager access to{' '}
+                                            <strong>{s.displayName}</strong>
+                                            {multi ? ' only — their other sub-teams are untouched.' : ', under every label it was granted as.'}
+                                          </span>
+                                        </li>
+                                      )),
+                                    ])}
                                 </ul>
                               </div>
                             )}
+
+                            {diff && diff.emptied.length > 0 && (
+                              <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">
+                                <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+                                <span>
+                                  <strong>{diff.emptied.join(', ')}</strong> will have no manager at all. Its KPI card has
+                                  no owner and its sheet goes unscored until someone is assigned.
+                                </span>
+                              </div>
+                            )}
+
+                            {partition && partition.unscoped.length > 0 && (
+                              <UnscopedGrants labels={[...new Set(partition.unscoped.map((u) => u.label))]} />
+                            )}
+
                             {!validation.ok && (
                               <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
                                 <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
                                 {(validation as { error?: string }).error}
                               </div>
                             )}
-                            <WhatTheSheetOwns deptName={dept.name} onOpenPayStructure={() => { onClose(); onOpenPayStructure(dept.key); }} />
+                            <WhatTheSheetOwns
+                              deptName={dept.name}
+                              multi={multi}
+                              onOpenPayStructure={() => {
+                                onClose();
+                                onOpenPayStructure(dept.key);
+                              }}
+                            />
                           </div>
                         )}
                       </motion.div>
@@ -330,6 +446,109 @@ export default function EditBuiltinManagersDialog({
   );
 }
 
+/** Multi-scope (HSL): one collapsible manager list per sub-team. Sub-team
+ *  identity is the whole point — the lists never merge, so a revoke here can
+ *  only ever touch the team it is under. */
+function ScopedManagersStep({
+  deptName,
+  scopes,
+  byScope,
+  roster,
+  onScope,
+  totalManagers,
+}: {
+  deptName: string;
+  scopes: { grantLabel: string; displayName: string }[];
+  byScope: Record<string, BuiltinManager[]>;
+  roster: DirectoryPerson[];
+  onScope: (grantLabel: string, v: BuiltinManager[]) => void;
+  totalManagers: number;
+}) {
+  const [openScope, setOpenScope] = useState<string | null>(null);
+
+  return (
+    <div className="space-y-3">
+      <div
+        className={`flex items-start gap-2 rounded-lg border p-2.5 text-xs font-medium transition-colors ${
+          totalManagers > 0
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300'
+            : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300'
+        }`}
+      >
+        {totalManagers > 0 ? <CheckCircle2 className="mt-px h-4 w-4 shrink-0" /> : <Crown className="mt-px h-4 w-4 shrink-0" />}
+        <span>
+          {deptName} grants manager access <strong>per sub-team</strong> — each list below is its own
+          access key, so removing someone from one team leaves their others alone.
+        </span>
+      </div>
+
+      <ul className="space-y-1.5">
+        {scopes.map((s) => {
+          const lower = s.grantLabel.toLowerCase();
+          const managers = byScope[lower] ?? [];
+          const isOpen = openScope === lower;
+          return (
+            <li key={lower} className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setOpenScope(isOpen ? null : lower)}
+                aria-expanded={isOpen}
+                className="flex w-full items-center justify-between gap-2 p-2.5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                    {s.displayName}
+                  </span>
+                  <span className="block truncate text-[11px] text-zinc-400 dark:text-zinc-500">
+                    {managers.length === 0
+                      ? 'No manager'
+                      : managers.map((m) => firstNameOf(m.name)).join(', ')}
+                  </span>
+                </span>
+                <span className="flex shrink-0 items-center gap-1.5">
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      managers.length === 0
+                        ? 'bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400'
+                        : 'bg-orange-100 text-orange-700 dark:bg-blue-950/60 dark:text-blue-300'
+                    }`}
+                  >
+                    {managers.length}
+                  </span>
+                  <ChevronDown
+                    className={`h-4 w-4 text-zinc-400 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                  />
+                </span>
+              </button>
+              <AnimatePresence initial={false}>
+                {isOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2, ease: EASE }}
+                    className="overflow-hidden border-t border-zinc-100 dark:border-zinc-800"
+                  >
+                    <div className="p-2.5">
+                      <ManagerPicker
+                        scopeName={s.displayName}
+                        roster={roster}
+                        managers={managers}
+                        onManagers={(v) => onScope(s.grantLabel, v)}
+                      />
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/** Single-scope (every flat built-in): unchanged from 2026-09-03. */
 function ManagersStep({
   deptName,
   roster,
@@ -337,6 +556,38 @@ function ManagersStep({
   onManagers,
 }: {
   deptName: string;
+  roster: DirectoryPerson[];
+  managers: BuiltinManager[];
+  onManagers: (v: BuiltinManager[]) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div
+        className={`flex items-center gap-2 rounded-lg border p-2.5 text-xs font-medium transition-colors ${
+          managers.length > 0
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300'
+            : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300'
+        }`}
+      >
+        {managers.length > 0 ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <Crown className="h-4 w-4 shrink-0" />}
+        {managers.length > 0
+          ? `${managers.length} manager${managers.length === 1 ? '' : 's'} for ${deptName}.`
+          : 'Every department needs at least one Manager -- add one below.'}
+      </div>
+      <ManagerPicker scopeName={deptName} roster={roster} managers={managers} onManagers={onManagers} />
+    </div>
+  );
+}
+
+/** The roster typeahead + manager list, shared by both shapes so the add/remove
+ *  rules can never drift between a flat department and an HSL sub-team. */
+function ManagerPicker({
+  scopeName,
+  roster,
+  managers,
+  onManagers,
+}: {
+  scopeName: string;
   roster: DirectoryPerson[];
   managers: BuiltinManager[];
   onManagers: (v: BuiltinManager[]) => void;
@@ -352,25 +603,17 @@ function ManagersStep({
   }, [query, roster, taken]);
 
   return (
-    <div className="space-y-4">
-      <div
-        className={`flex items-center gap-2 rounded-lg border p-2.5 text-xs font-medium transition-colors ${
-          managers.length > 0
-            ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300'
-            : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300'
-        }`}
-      >
-        {managers.length > 0 ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <Crown className="h-4 w-4 shrink-0" />}
-        {managers.length > 0
-          ? `${managers.length} manager${managers.length === 1 ? '' : 's'} for ${deptName}.`
-          : 'Every department needs at least one Manager -- add one below.'}
-      </div>
-
+    <div className="space-y-3">
       <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
         <p className="mb-2 text-xs font-medium text-zinc-700 dark:text-zinc-300">Add a manager from the roster</p>
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search people by name or email" className="h-9 pl-8" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search people by name or email"
+            className="h-9 pl-8"
+          />
         </div>
         <AnimatePresence initial={false}>
           {matches.length > 0 && (
@@ -405,7 +648,7 @@ function ManagersStep({
           )}
         </AnimatePresence>
         <p className="mt-1.5 text-[11px] text-zinc-400 dark:text-zinc-500">
-          Grants dashboard oversight of {deptName} (department_managers). Their roster row is not touched.
+          Grants dashboard oversight of {scopeName} (department_managers). Their roster row is not touched.
         </p>
       </div>
 
@@ -441,7 +684,7 @@ function ManagersStep({
                   type="button"
                   onClick={() => onManagers(managers.filter((x) => x.email !== m.email))}
                   className="shrink-0 rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40"
-                  aria-label={`Remove ${m.name}`}
+                  aria-label={`Remove ${m.name} from ${scopeName}`}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -454,7 +697,35 @@ function ManagersStep({
   );
 }
 
-function WhatTheSheetOwns({ deptName, onOpenPayStructure }: { deptName: string; onOpenPayStructure: () => void }) {
+/** Grant labels that belong to this department but that no scope claims — a
+ *  bare "HSL" grant, or a sub-key this build has retired. Shown so they are
+ *  never a silent omission; this dialog deliberately does not write them. */
+function UnscopedGrants({ labels }: { labels: string[] }) {
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 text-xs leading-relaxed text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+      <p className="flex items-center gap-1.5 font-medium text-zinc-700 dark:text-zinc-300">
+        <Lock className="h-3.5 w-3.5" />
+        Left untouched
+      </p>
+      <p className="mt-1">
+        {labels.length} grant label{labels.length === 1 ? '' : 's'} on this department{' '}
+        {labels.length === 1 ? 'is' : 'are'} not one of the lists above, so this dialog neither grants nor
+        revokes {labels.length === 1 ? 'it' : 'them'}: <strong>{labels.join(', ')}</strong>. Change{' '}
+        {labels.length === 1 ? 'it' : 'them'} in Admin → Roles &amp; permissions.
+      </p>
+    </div>
+  );
+}
+
+function WhatTheSheetOwns({
+  deptName,
+  multi,
+  onOpenPayStructure,
+}: {
+  deptName: string;
+  multi: boolean;
+  onOpenPayStructure: () => void;
+}) {
   return (
     <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 text-xs leading-relaxed text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
       <p className="font-medium text-zinc-700 dark:text-zinc-300">What this dialog cannot change</p>
@@ -465,9 +736,11 @@ function WhatTheSheetOwns({ deptName, onOpenPayStructure }: { deptName: string; 
         <li>
           <strong>People</strong> — come from the Google Sheet master-list sync; moving someone is a department transfer.
         </li>
-        <li>
-          <strong>Sub-departments</strong> — only HSL has them, as hard-coded sub-team keys.
-        </li>
+        {multi && (
+          <li>
+            <strong>Which sub-teams exist</strong> — {deptName}&rsquo;s sub-teams are code; this dialog edits who manages them.
+          </li>
+        )}
       </ul>
       <button
         type="button"

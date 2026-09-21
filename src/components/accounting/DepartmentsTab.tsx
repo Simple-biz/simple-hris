@@ -77,7 +77,7 @@ import {
 import { StagedProgress, useStagedRun } from './departments/staged-run';
 import EditDepartmentDialog from './departments/EditDepartmentDialog';
 import EditBuiltinManagersDialog from './departments/EditBuiltinManagersDialog';
-import { isBuiltinManagersEditable } from '@/lib/departments/registry';
+import { builtinManagerScopes } from '@/lib/departments/registry';
 
 export type { DirectoryPerson };
 
@@ -172,6 +172,20 @@ export default function DepartmentsTab({
     }
     return out;
   }, [managersByDept]);
+
+  /** Every live grant as a RAW row. The Edit dialog partitions these itself via
+   *  the shared `partitionBuiltinGrants`, because HSL's scopes are the raw
+   *  `hsl:<sub>` strings and normalizing them (as `managersForKey` does, for
+   *  the card's headline) would collapse sixteen sub-teams into one list. */
+  const grantRows = useMemo(
+    () =>
+      Object.entries(managersByDept).flatMap(([deptRaw, emails]) =>
+        emails.map((managerEmail) => ({ department: deptRaw, managerEmail })),
+      ),
+    [managersByDept],
+  );
+
+  const builtinScopeCount = (key: string) => builtinManagerScopes(key).length;
 
   const memberCountForBuiltin = (key: string) =>
     roster.filter((p) => normalizeDeptToKey(p.department) === key).length;
@@ -396,25 +410,16 @@ export default function DepartmentsTab({
                     )}
                   </span>
                   <span className="flex shrink-0 items-center gap-0.5">
-                    {isBuiltinManagersEditable(d.key) ? (
-                      <button
-                        type="button"
-                        onClick={() => setBuiltinEditingKey(d.key)}
-                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
-                        aria-label={`Edit ${d.name} managers`}
-                        title="Edit managers"
-                      >
-                        <Pencil className="h-3 w-3" />
-                        Edit
-                      </button>
-                    ) : (
-                      <span
-                        className="px-1.5 py-1 text-[10.5px] font-medium text-zinc-400 dark:text-zinc-500"
-                        title="HSL manager access is granted per sub-team in Roles & permissions"
-                      >
-                        Managers per sub-team
-                      </span>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => setBuiltinEditingKey(d.key)}
+                      className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
+                      aria-label={`Edit ${d.name} managers`}
+                      title={builtinScopeCount(d.key) > 1 ? 'Edit managers, per sub-team' : 'Edit managers'}
+                    >
+                      <Pencil className="h-3 w-3" />
+                      Edit
+                    </button>
                     <button
                       type="button"
                       onClick={() => onOpenPayStructure(d.key)}
@@ -461,14 +466,7 @@ export default function DepartmentsTab({
       <EditBuiltinManagersDialog
         open={builtinEditing !== null}
         dept={builtinEditing ? { key: builtinEditing.key, name: builtinEditing.name } : null}
-        currentManagers={
-          builtinEditing
-            ? Array.from(managersForKey.get(builtinEditing.key) ?? []).map((e) => ({
-                email: e,
-                name: nameByEmail.get(e) ?? e,
-              }))
-            : []
-        }
+        grantRows={grantRows}
         roster={roster}
         onClose={() => setBuiltinEditingKey(null)}
         onChanged={onChanged}

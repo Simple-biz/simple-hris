@@ -49,9 +49,12 @@ import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import {
   applyDepartmentEdit,
-  diffBuiltinManagers,
+  diffBuiltinManagerScopes,
   diffDepartmentEdit,
+  partitionBuiltinGrants,
   validateBuiltinManagersInput,
+  HSL_BUILTIN_KEY,
+  type BuiltinGrantRow,
   type BuiltinManagersEvent,
   type BuiltinManagersInput,
   managerGrantLabel,
@@ -575,6 +578,15 @@ export async function PATCH(request: Request) {
  * written under the built-in display name. HSL is refused by the validator: its
  * grants are per-sub-team access keys, not department management.
  */
+/**
+ * PATCH { builtinKey, scopes } -- manager access on a MASTER-LIST department.
+ *
+ * Scoped since 2026-09-21 (Kane): a flat built-in has ONE scope (its display
+ * name, claiming every alias spelling), HSL has one per sub-team (`hsl:<key>`).
+ * Revokes are computed and written INSIDE a scope, which is what lets HSL be
+ * edited here at all -- a family-wide revoke would strip a manager's KPI access
+ * to fifteen teams nobody touched.
+ */
 async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string): Promise<Response> {
   const check = validateBuiltinManagersInput(input);
   if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 });
@@ -584,11 +596,40 @@ async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string):
 
   const { rows, error: listErr } = await listAllDepartmentManagers();
   if (listErr) return NextResponse.json({ error: listErr }, { status: 500 });
-  const currentRows = rows.filter((r) => normalizeDeptToKey(r.department) === key);
-  const current = currentRows.map((r) => r.manager_email.trim().toLowerCase());
-  const next = input.managers.map((m) => m.workEmail.trim().toLowerCase());
-  const diff = diffBuiltinManagers(current, next);
-  const nameFor = new Map(input.managers.map((m) => [m.workEmail.trim().toLowerCase(), m.name.trim()] as const));
+
+  const grantRows: BuiltinGrantRow[] = rows.map((r) => ({
+    department: r.department,
+    managerEmail: r.manager_email,
+  }));
+  const partition = partitionBuiltinGrants(key, grantRows);
+  const diff = diffBuiltinManagerScopes(key, partition, input);
+  const perSubTeam = key === HSL_BUILTIN_KEY;
+
+  const nameFor = new Map(
+    input.scopes
+      .flatMap((s) => s.managers)
+      .map((m) => [m.workEmail.trim().toLowerCase(), m.name.trim()] as const),
+  );
+
+  /**
+   * Every RAW label this email holds INSIDE this scope -- the exact strings to
+   * revoke. A flat scope claims every spelling that normalizes to the key (so a
+   * ghost grant under an alias cannot keep lighting a dashboard); an HSL scope
+   * claims only its own `hsl:<sub>` spelling, so the other fifteen are untouched.
+   */
+  const rawLabelsFor = (grantLabel: string, email: string): string[] => {
+    const want = grantLabel.trim().toLowerCase();
+    const out = new Set<string>();
+    for (const r of grantRows) {
+      const label = (r.department ?? '').trim();
+      if (!label) continue;
+      if ((r.managerEmail ?? '').trim().toLowerCase() !== email) continue;
+      if (normalizeDeptToKey(label) !== key) continue;
+      if (perSubTeam && label.toLowerCase() !== want) continue;
+      out.add(label);
+    }
+    return [...out];
+  };
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -602,26 +643,52 @@ async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string):
       };
       try {
         emit({ type: 'stage', stage: 'managers', status: 'start' });
-        for (const email of diff.revoked) {
-          // Every raw-label variant this person holds for the key.
-          const labels = new Set(
-            currentRows.filter((r) => r.manager_email.trim().toLowerCase() === email).map((r) => r.department.trim()),
-          );
-          for (const label of labels) {
-            const res = await revokeManagerDepartment({ manager_email: email, department: label });
-            if (res.error) return fail(`${email}: could not revoke manager access: ${res.error}`);
+
+        for (const scope of diff.scopes) {
+          for (const email of scope.revoked) {
+            const labels = rawLabelsFor(scope.grantLabel, email);
+            for (const label of labels) {
+              const res = await revokeManagerDepartment({ manager_email: email, department: label });
+              if (res.error) {
+                return fail(`${email}: could not revoke ${scope.displayName} access: ${res.error}`);
+              }
+            }
+          }
+          for (const email of scope.granted) {
+            const res = await assignManagerDepartment({
+              manager_email: email,
+              department: scope.grantLabel,
+              assigned_by: actor,
+            });
+            if (res.error) {
+              return fail(`${nameFor.get(email) || email}: ${scope.displayName} grant failed: ${res.error}`);
+            }
           }
         }
-        for (const email of diff.granted) {
-          const res = await assignManagerDepartment({ manager_email: email, department: dept.name, assigned_by: actor });
-          if (res.error) return fail(`${nameFor.get(email) || email}: manager grant failed: ${res.error}`);
-        }
+
+        const movedScopes = diff.scopes.filter((s) => s.granted.length > 0 || s.revoked.length > 0);
         emit({
           type: 'stage',
           stage: 'managers',
           status: 'done',
-          note: diff.changed ? `+${diff.granted.length} / -${diff.revoked.length}` : 'unchanged',
+          note: diff.changed
+            ? `+${diff.granted.length} / -${diff.revoked.length}` +
+              (perSubTeam ? ` across ${movedScopes.length} sub-team${movedScopes.length === 1 ? '' : 's'}` : '')
+            : 'unchanged',
         });
+
+        const warnings: string[] = [];
+        if (diff.emptied.length > 0) {
+          warnings.push(
+            `No manager left on ${diff.emptied.join(', ')} — that team's KPI card and sheet have no owner.`,
+          );
+        }
+        if (partition.unscoped.length > 0) {
+          const labels = [...new Set(partition.unscoped.map((u) => u.label))];
+          warnings.push(
+            `Left untouched: ${labels.length} grant label${labels.length === 1 ? '' : 's'} this dialog does not manage (${labels.join(', ')}).`,
+          );
+        }
 
         const whoActor = await getSessionActor();
         void insertAuditLog({
@@ -632,15 +699,31 @@ async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string):
           resource_id: key,
           details: {
             department: dept.name,
+            scoped: perSubTeam ? 'per_sub_team' : 'department',
             managers_granted: diff.granted,
             managers_revoked: diff.revoked,
-            resulting_managers: next,
+            by_scope: diff.scopes
+              .filter((s) => s.granted.length > 0 || s.revoked.length > 0)
+              .map((s) => ({ scope: s.grantLabel, granted: s.granted, revoked: s.revoked })),
+            resulting_by_scope: Object.fromEntries(diff.scopes.map((s) => [s.grantLabel, s.resulting])),
+            unscoped_labels_untouched: [...new Set(partition.unscoped.map((u) => u.label))],
           },
         }).catch(() => undefined);
 
         emit({
           type: 'done',
-          summary: { key, name: dept.name, granted: diff.granted, revoked: diff.revoked, warnings: [] },
+          summary: {
+            key,
+            name: dept.name,
+            granted: diff.granted,
+            revoked: diff.revoked,
+            scopes: movedScopes.map((s) => ({
+              displayName: s.displayName,
+              granted: s.granted,
+              revoked: s.revoked,
+            })),
+            warnings,
+          },
         });
         controller.close();
       } catch (e) {

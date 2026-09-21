@@ -9,7 +9,8 @@ initial people (**at least one Manager required**) → optional department pay
 rate, with a **streamed, staged creation animation**. Since 2026-09-03 every
 in-app card also carries **Edit** (§6): rename, restructure sub-departments,
 change people — the key never changes and stale saves are refused. Master-list
-cards carry Edit as well, for **managers only** (§7).
+cards carry Edit as well, for **managers only** — by grant SCOPE, which is
+one list for a flat department and one per sub-team for HSL (§7).
 
 Built Jul 24, 2026: `5359889` (tab + wizard), `ec4482f` (self-contained
 refactor, same day), `83d81c5` (manager KPI surfaces + bonus assignments),
@@ -380,50 +381,97 @@ registry, edit, rate-alias and rail-alias suites. Not browser-verified in the
 building session (no signed-in browser); the dev server compiled both the GET
 and the PATCH route.
 
-## 7. Editing a master-list department — managers only (2026-09-03)
+## 7. Editing a master-list department — managers, by scope (2026-09-03, scoped 2026-09-21)
 
-Every **master-list** card carries **Edit** too (Kane, same day: *"make sure
+Every **master-list** card carries **Edit** too (Kane, 2026-09-03: *"make sure
 that the from the Master list sync should have it"*). A Sheet-synced
 department owns almost nothing in the app — its name and alias map are code
-(`DEPARTMENTS`, `normalize-dept-key.ts`), its people come from the Sheet sync
-and move only via department transfers, and sub-departments exist only for HSL
-as hard-coded `HSL_DEPT_KEYS`. The one in-app fact is **manager access**, so
-the dialog edits exactly that: Managers → Review, then the same staged overlay.
-Approved as managers-only; the Payment Catalog is thereby a **second write
-path for `department_managers`** beside Admin → Roles & permissions — both use
-the same `assignManagerDepartment` / `revokeManagerDepartment` helpers.
+(`DEPARTMENTS`, `normalize-dept-key.ts`), and its people come from the Sheet
+sync. The in-app fact is **manager access**, so the dialog edits exactly that:
+Managers → Review, then the same staged overlay. The Payment Catalog is
+thereby a **second write path for `department_managers`** beside Admin →
+Roles & permissions — both use the same `assignManagerDepartment` /
+`revokeManagerDepartment` helpers.
+
+**HSL is included since 2026-09-21** (Kane: *"LET US MAKE SURE THAT THE
+DEPARTMENT CREATED FROM THE MASTER LIST CAN BE EDITED THE SAME WAY THE ONES
+CREATED FROM THE APP"*). It is included because the editor stopped collapsing
+its grants, not because the old objection went away — see §7.1.
 
 | Piece | File |
 | --- | --- |
-| Dialog (Managers step, Review, "what this dialog cannot change") | `src/components/accounting/departments/EditBuiltinManagersDialog.tsx` |
-| `validateBuiltinManagersInput`, `diffBuiltinManagers`, `isBuiltinManagersEditable` | `src/lib/departments/registry.ts` (+ `registry-builtin-managers.test.ts`) |
-| `PATCH { builtinKey, managers }` branch | `app/api/payment-catalog/departments/route.ts` (`patchBuiltinManagers`) |
+| Dialog (scoped Managers step, Review, "what this dialog cannot change") | `src/components/accounting/departments/EditBuiltinManagersDialog.tsx` |
+| `builtinManagerScopes`, `partitionBuiltinGrants`, `validateBuiltinManagersInput`, `diffBuiltinManagerScopes` | `src/lib/departments/registry.ts` (+ `registry-builtin-managers.test.ts`) |
+| `PATCH { builtinKey, scopes }` branch | `app/api/payment-catalog/departments/route.ts` (`patchBuiltinManagers`) |
+| Read-only grant-shape audit | `scripts/audit-department-manager-grants.mts` |
 
-Rules:
+### 7.1 A grant SCOPE, not a department
 
-- **"Current" is every active grant whose raw label normalizes to the key.**
-  Admin Roles writes whatever label its picker offered ("Lead Gen", "Lead
-  Generation", …), so the dialog's manager list and the server's diff both go
-  through `normalizeDeptToKey` — the same way the card's `managersForKey`
-  already counted them. **Revoking a manager revokes every raw-label variant**
-  that person holds for the key; otherwise a ghost grant under an alias would
-  keep lighting their dashboard. New grants are written under the built-in
-  display name (`DEPARTMENTS[].name`), which normalizes to the key.
-- **HSL has no Edit.** Its grants are per-sub-team access keys (`hsl:<key>`),
-  and `normalizeDeptToKey` collapses them to `hogan_smith_law`, so a "remove
-  manager" here would silently revoke a manager's sub-team KPI access
-  ([hsl-subdepartments.md](./hsl-subdepartments.md)). The card says "Managers
-  per sub-team"; the validator refuses the key server-side too
-  (`BUILTIN_MANAGERS_EDIT_EXCLUDED_KEYS`).
-- **At least one manager stays**, mirrored client (Save gating) and server.
-- The dialog lists what it **cannot** change — name, people, sub-departments —
-  and why, with a Pay Structure link for rates. Adding a person to a built-in
-  department is a transfer, not an edit; do not add a member picker here.
-- Audit: `department.managers.update` on `department_managers` with granted /
-  revoked / resulting sets.
+Manager access is a raw `department_managers.department` **string**, and "which
+strings belong to this department" turned out to be two different questions.
+`builtinManagerScopes(key)` answers both:
+
+- **A flat built-in has ONE scope**, its `DEPARTMENTS[].name`. Admin Roles
+  writes whatever label its picker offered ("Lead Gen", "Lead Generation", …),
+  so the scope claims **every raw variant that `normalizeDeptToKey`s to the
+  key** and a revoke still clears them all — otherwise a ghost grant under an
+  alias would keep lighting the manager's dashboard. Unchanged since
+  2026-09-03; these cards look and behave exactly as they did.
+- **HSL has one scope PER SUB-TEAM** (`hsl:<key>`, both keyspaces — the
+  KPI-scoring `HSL_DEPT_KEYS` and the placement-only ones). Its raw grant
+  string *is* the sub-team access key, and `normalizeDeptToKey` collapses all
+  of them to `hogan_smith_law`. Measured live 2026-09-21
+  (`scripts/audit-department-manager-grants.mts`): **113 HSL-family grant rows
+  across 14 sub-team labels**. One collapsed list would have merged those 14
+  into a single ~15-person roster where removing anybody revoked them from
+  **every** team at once. That is the whole reason HSL had no Edit before, and
+  scoping is what retired the exclusion rather than waiving it.
+
+**A scope owns only the labels it claims.** Anything else that normalizes to the
+department is **unscoped**: shown read-only in Review, never granted, never
+revoked. Live today that is exactly two labels — `"HSL"` (9 managers) and
+`"Hogan Smith Law"` (2) — which the sub-team lists must not be allowed to
+swallow. Change those in Admin → Roles & permissions.
+
+### 7.2 Rules
+
+- **"Current" per scope.** A flat scope matches by `normalizeDeptToKey`; an HSL
+  scope matches the **exact** raw label. `partitionBuiltinGrants` is shared by
+  the dialog and the route, so client and server cannot disagree about which
+  grant belongs to which list.
+- **Revokes are written inside their scope.** For a flat department that is
+  still every raw-label variant the person holds for the key. For HSL it is
+  only that sub-team's spelling, so removing someone from Intake leaves Filing
+  untouched — pinned by `registry-builtin-managers.test.ts`.
+- **At least one manager stays on the DEPARTMENT**, mirrored client (Save
+  gating) and server. Deliberately *department*-level, not per sub-team: plenty
+  of HSL teams have no manager today and a per-team requirement would refuse
+  every save. A sub-team going from some managers to **none** is named in
+  Review and in the save's warnings, because an unmanaged sub-team has no KPI
+  card and its sheet goes unscored.
+- **The client cannot invent a scope.** The validator refuses a payload whose
+  grant-label set is not exactly `builtinManagerScopes(builtinKey)` — no
+  extras, no omissions, no duplicates.
+- **Every live `hsl:*` label must have a scope.** A sub-team label with no scope
+  falls into `unscoped` and becomes invisible *and* uneditable, which is how a
+  manager quietly loses a team. The 14 labels measured live are pinned in the
+  test suite; retiring a key from `HSL_DEPT_KEYS` while grants still point at it
+  fires it.
+- The dialog lists what it **cannot** change — name, people, and (for HSL) which
+  sub-teams exist — and why, with a Pay Structure link for rates. Adding a
+  person to a built-in department is a transfer, not a manager edit.
+- Audit: `department.managers.update` on `department_managers` with the granted /
+  revoked / resulting sets **per scope**, plus the unscoped labels left alone.
 - Payload discrimination: a PATCH body with a string `builtinKey` is the
   managers edit; anything else is the in-app edit (§6). A registry key is never
   a built-in key (Create refuses the collision), so the two cannot be confused.
+
+**Verification (2026-09-21):** typecheck clean; 11 tests green in
+`registry-builtin-managers.test.ts` (including the live-label coverage guard and
+the per-sub-team revoke isolation); 71 of 72 green across
+`src/lib/departments/*.test.ts` — the one failure,
+`dept-label-render.test.ts` naming `ManagerApp.tsx:1859`, is **pre-existing on
+`main`** in a file this change never touched. Not browser-verified.
 
 ## Deploy notes
 

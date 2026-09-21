@@ -18,6 +18,7 @@
 // This module is CLIENT-SAFE: types + pure helpers only, no Supabase imports.
 
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { hslSubDeptOptions } from '@/lib/departments/hsl-subdept';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { PAY_CURRENCIES, type PayCurrency } from '@/lib/payment-catalog/pay-structure';
 
@@ -693,23 +694,121 @@ export type EditDepartmentEvent =
 
 // ---------------------------------------------------------------------------
 // Built-in (master-list) departments -- manager access is the ONE thing the
-// app owns about them. Name and alias map are code (DEPARTMENTS), people come
-// from the Sheet sync and move only via transfers, sub-departments exist only
-// for HSL via HSL_DEPT_KEYS. So "Edit" on a master-list card edits managers.
-// (Kane, 2026-09-03: managers-only; Payment Catalog may be a second write path
-// for department_managers beside Admin → Roles & permissions.)
+// app owns about them. Name and alias map are code (DEPARTMENTS); people come
+// from the Sheet sync and move only via transfers. So "Edit" on a master-list
+// card edits managers.
+// (Kane, 2026-09-03: managers-only; the Payment Catalog may be a second write
+// path for department_managers beside Admin -> Roles & permissions.
+//  Kane, 2026-09-21: HSL is included too -- per SUB-TEAM, see BuiltinManagerScope.)
 // ---------------------------------------------------------------------------
 
-/**
- * Built-in keys whose manager access is NOT editable here. HSL grants are
- * per SUB-TEAM access keys (`hsl:<key>`), which `normalizeDeptToKey` collapses
- * to the parent — a "remove manager" here would silently revoke a manager's
- * sub-team KPI access. That stays in Roles & permissions.
- */
-export const BUILTIN_MANAGERS_EDIT_EXCLUDED_KEYS: ReadonlySet<string> = new Set(['hogan_smith_law']);
+/** The one built-in whose grants are per-sub-team access keys. */
+export const HSL_BUILTIN_KEY = 'hogan_smith_law';
 
+/**
+ * A writable manager-grant SCOPE on a master-list department.
+ *
+ * Manager access is a raw `department_managers.department` STRING, and "which
+ * strings belong to this department" is really two different questions:
+ *
+ *  - A FLAT built-in: every raw variant Admin Roles ever offered ("Lead Gen",
+ *    "Lead Generation", ...) normalizes to the one key and means the same
+ *    access. ONE scope; new grants written under `DEPARTMENTS[].name`.
+ *  - HSL: the raw string IS the sub-team access key (`hsl:<sub>`), and
+ *    `normalizeDeptToKey` collapses every one of them to `hogan_smith_law`.
+ *    Editing them as a single list is exactly how "remove a manager" would
+ *    revoke KPI access to a sub-team nobody touched -- which is why HSL had no
+ *    Edit at all before 2026-09-21. ONE SCOPE PER SUB-TEAM instead.
+ *
+ * A scope owns only the raw labels it claims. Anything else that normalizes to
+ * the department -- a bare "HSL" grant, a retired `hsl:lead_nurture` -- is
+ * UNSCOPED: surfaced read-only, never granted and never revoked here. See
+ * `partitionBuiltinGrants`.
+ */
+export interface BuiltinManagerScope {
+  /** Exact string written to `department_managers.department` for a new grant. */
+  grantLabel: string;
+  /** How the scope reads to a human ("HSL - Intake Specialist"). */
+  displayName: string;
+}
+
+/**
+ * The scopes a master-list department's Edit dialog may write. Empty for a key
+ * that is not built-in, so no caller can invent one.
+ */
+export function builtinManagerScopes(key: string): BuiltinManagerScope[] {
+  const dept = DEPARTMENTS.find((d) => d.key === key);
+  if (!dept) return [];
+  if (key !== HSL_BUILTIN_KEY) return [{ grantLabel: dept.name, displayName: dept.name }];
+  // Both keyspaces: a placement-only sub-team is every bit as real a team to
+  // manage as a KPI-scoring one.
+  return hslSubDeptOptions().map((o) => ({ grantLabel: o.value, displayName: o.label }));
+}
+
+/**
+ * Every built-in department's manager access is editable from the Department
+ * tab. Kept as a named predicate because the tab and the route both ask.
+ *
+ * HSL was excluded until 2026-09-21; it is now editable through per-sub-team
+ * scopes, which is what made the exclusion unnecessary rather than merely
+ * inconvenient.
+ */
 export function isBuiltinManagersEditable(key: string): boolean {
-  return BUILTIN_KEYS.has(key) && !BUILTIN_MANAGERS_EDIT_EXCLUDED_KEYS.has(key);
+  return BUILTIN_KEYS.has(key);
+}
+
+/** One live `department_managers` row, as stored. */
+export interface BuiltinGrantRow {
+  /** Raw `department_managers.department`, exactly as written. */
+  department: string;
+  managerEmail: string;
+}
+
+export interface BuiltinGrantPartition {
+  /** Lower-cased grantLabel -> the manager emails currently holding that scope. */
+  byScope: Map<string, string[]>;
+  /**
+   * Raw labels that belong to this department but that NO scope claims, with
+   * their holders. The dialog shows them read-only; this editor never writes
+   * or revokes them, so an unrecognized spelling can never be silently dropped.
+   */
+  unscoped: Array<{ label: string; managerEmail: string }>;
+}
+
+/**
+ * Split a department's live grants across its scopes.
+ *
+ * FLAT built-in: a row is claimed when it NORMALIZES to the key, so every alias
+ * spelling lands in the one list and a revoke still clears them all (unchanged
+ * since 2026-09-03). HSL: a row is claimed only on an EXACT `hsl:<sub>` match --
+ * normalizing would merge sixteen teams into one list and turn every revoke
+ * into a family-wide revoke.
+ */
+export function partitionBuiltinGrants(
+  key: string,
+  rows: readonly BuiltinGrantRow[],
+): BuiltinGrantPartition {
+  const scopes = builtinManagerScopes(key);
+  const byScope = new Map<string, string[]>(scopes.map((s) => [s.grantLabel.toLowerCase(), []]));
+  const unscoped: Array<{ label: string; managerEmail: string }> = [];
+  const perSubTeam = key === HSL_BUILTIN_KEY;
+  const flatSlot = perSubTeam ? null : (scopes[0]?.grantLabel.toLowerCase() ?? null);
+
+  for (const row of rows) {
+    const label = (row.department ?? '').trim();
+    const email = (row.managerEmail ?? '').trim().toLowerCase();
+    if (!label || !email) continue;
+    // Not this department at all.
+    if (normalizeDeptToKey(label) !== key) continue;
+    const slotKey = perSubTeam ? label.toLowerCase() : flatSlot;
+    const slot = slotKey ? byScope.get(slotKey) : undefined;
+    if (slot) {
+      if (!slot.includes(email)) slot.push(email);
+    } else {
+      unscoped.push({ label, managerEmail: email });
+    }
+  }
+  return { byScope, unscoped };
 }
 
 export interface BuiltinManagerInput {
@@ -717,11 +816,21 @@ export interface BuiltinManagerInput {
   workEmail: string;
 }
 
+/** The FULL resulting manager set for ONE scope; the server diffs it. */
+export interface BuiltinManagerScopeInput {
+  grantLabel: string;
+  managers: BuiltinManagerInput[];
+}
+
 export interface BuiltinManagersInput {
   /** A built-in DEPARTMENTS key (never a registry key). */
   builtinKey: string;
-  /** The FULL resulting manager set; the server diffs it against live grants. */
-  managers: BuiltinManagerInput[];
+  /**
+   * EXACTLY the scopes `builtinManagerScopes(builtinKey)` returns -- same set,
+   * no extras, no omissions, no duplicates. A flat built-in sends one; HSL
+   * sends one per sub-team.
+   */
+  scopes: BuiltinManagerScopeInput[];
 }
 
 const MAX_BUILTIN_MANAGERS = 50;
@@ -730,24 +839,48 @@ const MAX_BUILTIN_MANAGERS = 50;
 export function validateBuiltinManagersInput(input: BuiltinManagersInput): { ok: boolean; error?: string } {
   const key = input.builtinKey?.trim() ?? '';
   if (!BUILTIN_KEYS.has(key)) return { ok: false, error: 'That is not a built-in department.' };
-  if (BUILTIN_MANAGERS_EDIT_EXCLUDED_KEYS.has(key)) {
-    return { ok: false, error: 'HSL manager access is granted per sub-team in Roles & permissions.' };
+
+  const expected = builtinManagerScopes(key);
+  if (!Array.isArray(input.scopes) || input.scopes.length !== expected.length) {
+    return { ok: false, error: 'That edit does not match the department’s manager scopes.' };
   }
-  if (!Array.isArray(input.managers) || input.managers.length === 0) {
-    return { ok: false, error: 'Keep at least one Manager on the department.' };
+  // The client may not invent, drop or duplicate a grant label: the set it sends
+  // must be the set this department actually has.
+  const want = new Map(expected.map((s) => [s.grantLabel.toLowerCase(), s.displayName] as const));
+  const seenScopes = new Set<string>();
+  for (const s of input.scopes) {
+    const label = (s.grantLabel ?? '').trim().toLowerCase();
+    if (!want.has(label)) {
+      return { ok: false, error: `“${s.grantLabel}” is not a manager scope of this department.` };
+    }
+    if (seenScopes.has(label)) return { ok: false, error: `“${s.grantLabel}” is listed twice.` };
+    seenScopes.add(label);
   }
-  if (input.managers.length > MAX_BUILTIN_MANAGERS) {
-    return { ok: false, error: `Keep it to ${MAX_BUILTIN_MANAGERS} managers or fewer.` };
+
+  let total = 0;
+  for (const s of input.scopes) {
+    const where = want.get((s.grantLabel ?? '').trim().toLowerCase()) ?? s.grantLabel;
+    if (!Array.isArray(s.managers)) return { ok: false, error: `${where} needs a manager list.` };
+    if (s.managers.length > MAX_BUILTIN_MANAGERS) {
+      return { ok: false, error: `Keep ${where} to ${MAX_BUILTIN_MANAGERS} managers or fewer.` };
+    }
+    const seen = new Set<string>();
+    for (const m of s.managers) {
+      const who = m.name?.trim() || m.workEmail?.trim() || 'a manager';
+      if (!m.name?.trim()) return { ok: false, error: 'Every manager needs a name.' };
+      const email = m.workEmail?.trim().toLowerCase() ?? '';
+      if (!email || !isEmailish(email)) return { ok: false, error: `${who} needs a valid work email.` };
+      if (seen.has(email)) return { ok: false, error: `${email} is listed twice under ${where}.` };
+      seen.add(email);
+    }
+    total += s.managers.length;
   }
-  const seen = new Set<string>();
-  for (const m of input.managers) {
-    const who = m.name?.trim() || m.workEmail?.trim() || 'a manager';
-    if (!m.name?.trim()) return { ok: false, error: 'Every manager needs a name.' };
-    const email = m.workEmail?.trim().toLowerCase() ?? '';
-    if (!email || !isEmailish(email)) return { ok: false, error: `${who} needs a valid work email.` };
-    if (seen.has(email)) return { ok: false, error: `${email} is listed twice.` };
-    seen.add(email);
-  }
+  // The documented invariant, at the granularity it was written: the DEPARTMENT
+  // keeps a manager. Per-sub-team emptiness stays legal -- plenty of HSL teams
+  // have no manager today and refusing the save would strand every other edit --
+  // but `diffBuiltinManagerScopes` names each team going to zero so the Review
+  // step can warn.
+  if (total === 0) return { ok: false, error: 'Keep at least one Manager on the department.' };
   return { ok: true };
 }
 
@@ -765,6 +898,80 @@ export function diffBuiltinManagers(
   return { granted, revoked, changed: granted.length > 0 || revoked.length > 0 };
 }
 
+/** What one scope gains and loses. */
+export interface BuiltinManagersScopeDiff {
+  grantLabel: string;
+  displayName: string;
+  granted: string[];
+  revoked: string[];
+  /** Managers left on this scope after the edit. */
+  resulting: string[];
+}
+
+export interface BuiltinManagersDiff {
+  scopes: BuiltinManagersScopeDiff[];
+  changed: boolean;
+  /** Distinct emails gaining access to at least one scope. */
+  granted: string[];
+  /** Distinct emails losing at least one scope. */
+  revoked: string[];
+  /**
+   * Display names of scopes that HELD a manager and will end with none. Never a
+   * block -- a sub-team with no manager is a legal (and today common) state --
+   * but the Review step names them, because an HSL sub-team with no manager has
+   * no KPI card and its sheet goes unscored.
+   */
+  emptied: string[];
+}
+
+/**
+ * Diff a scoped edit against the live grants, scope by scope.
+ *
+ * Per-scope is the whole point: a revoke computed across the collapsed family
+ * would take a manager off sixteen sub-teams when the accountant edited one.
+ */
+export function diffBuiltinManagerScopes(
+  key: string,
+  partition: BuiltinGrantPartition,
+  input: BuiltinManagersInput,
+): BuiltinManagersDiff {
+  const scopes = builtinManagerScopes(key);
+  const sent = new Map(
+    (input.scopes ?? []).map((s) => [(s.grantLabel ?? '').trim().toLowerCase(), s.managers ?? []] as const),
+  );
+  const out: BuiltinManagersScopeDiff[] = [];
+  const granted = new Set<string>();
+  const revoked = new Set<string>();
+  const emptied: string[] = [];
+
+  for (const scope of scopes) {
+    const lower = scope.grantLabel.toLowerCase();
+    const current = partition.byScope.get(lower) ?? [];
+    const next = (sent.get(lower) ?? [])
+      .map((m) => (m.workEmail ?? '').trim().toLowerCase())
+      .filter(Boolean);
+    const d = diffBuiltinManagers(current, next);
+    for (const e of d.granted) granted.add(e);
+    for (const e of d.revoked) revoked.add(e);
+    if (next.length === 0 && current.length > 0) emptied.push(scope.displayName);
+    out.push({
+      grantLabel: scope.grantLabel,
+      displayName: scope.displayName,
+      granted: d.granted,
+      revoked: d.revoked,
+      resulting: next,
+    });
+  }
+
+  return {
+    scopes: out,
+    changed: out.some((s) => s.granted.length > 0 || s.revoked.length > 0),
+    granted: [...granted],
+    revoked: [...revoked],
+    emptied,
+  };
+}
+
 export const BUILTIN_MANAGERS_STAGES: { key: CreateDepartmentStageKey; label: string }[] = [
   { key: 'managers', label: 'Updating manager access' },
 ];
@@ -774,6 +981,8 @@ export interface BuiltinManagersSummary {
   name: string;
   granted: string[];
   revoked: string[];
+  /** Per-scope, so an HSL save can say which sub-teams actually moved. */
+  scopes: Array<{ displayName: string; granted: string[]; revoked: string[] }>;
   warnings: string[];
 }
 
