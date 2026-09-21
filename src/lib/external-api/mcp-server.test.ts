@@ -7,12 +7,19 @@ import type { GmlRow } from './gml-query';
 import type { GmlReadOutcome } from './gml-read';
 import { OFFERABLE_COLUMNS } from './catalog';
 
-function row(id: number, extra: Record<string, unknown> = {}): GmlRow {
-  const r: GmlRow = { id, off_boarded_at: null, import_batch_id: 'b' };
-  for (const c of OFFERABLE_COLUMNS) r[c] = `${c}-${id}`;
-  r['Work Email'] = `p${id}@simple.biz`;
-  r['Personal Email'] = `p${id}@gmail.com`;
-  r['Name'] = `Person ${id}`;
+/** `global_master_list.id` is a UUID — these fixtures used integers until
+ *  2026-09-21, which is why the suite never caught that the MCP tool's numeric
+ *  `cursor` schema rejected every continuation the tool itself issued. */
+function uuid(n: number): string {
+  return `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
+}
+
+function row(seed: number, extra: Record<string, unknown> = {}): GmlRow {
+  const r: GmlRow = { id: uuid(seed), off_boarded_at: null, import_batch_id: 'b' };
+  for (const c of OFFERABLE_COLUMNS) r[c] = `${c}-${seed}`;
+  r['Work Email'] = `p${seed}@simple.biz`;
+  r['Personal Email'] = `p${seed}@gmail.com`;
+  r['Name'] = `Person ${seed}`;
   return { ...r, ...extra };
 }
 
@@ -105,15 +112,17 @@ test('query_global_master_list: off-boarded people are never returned, and the c
   const rows = [row(1), row(2, { off_boarded_at: '2026-01-01T00:00:00Z' }), row(3)];
   const { client, server } = await connected(ctxWith(rows, null));
   const first = parse((await client.callTool({ name: 'query_global_master_list', arguments: { limit: 1 } })) as { content: unknown });
-  const page = first['page'] as { next_cursor: number | null };
-  assert.deepEqual((first['data'] as Array<{ id: number }>).map((r) => r.id), [1]);
-  assert.equal(page.next_cursor, 1);
+  const page = first['page'] as { next_cursor: string | null };
+  assert.deepEqual((first['data'] as Array<{ id: string }>).map((r) => r.id), [uuid(1)]);
+  assert.equal(page.next_cursor, uuid(1));
+  // The continuation must be accepted by the tool's OWN input schema — this is
+  // the round-trip that was broken: the tool issued a UUID and then refused it.
   const second = parse(
     (await client.callTool({ name: 'query_global_master_list', arguments: { limit: 5, cursor: page.next_cursor! } })) as {
       content: unknown;
     },
   );
-  assert.deepEqual((second['data'] as Array<{ id: number }>).map((r) => r.id), [3]);
+  assert.deepEqual((second['data'] as Array<{ id: string }>).map((r) => r.id), [uuid(3)]);
   await client.close();
   await server.close();
 });

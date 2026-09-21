@@ -17,13 +17,17 @@ import { applyGmlQuery, type GmlQuery, type GmlRow } from './gml-query';
 
 const q: GmlQuery = { department: null, email: null, search: null, limit: 100, cursor: null };
 
-function fullRow(id: number, extra: Record<string, unknown> = {}): GmlRow {
-  const r: GmlRow = { id };
-  for (const c of OFFERABLE_COLUMNS) r[c] = `${c}-${id}`;
+function uuid(n: number): string {
+  return `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
+}
+
+function fullRow(seed: number, extra: Record<string, unknown> = {}): GmlRow {
+  const r: GmlRow = { id: uuid(seed) };
+  for (const c of OFFERABLE_COLUMNS) r[c] = `${c}-${seed}`;
   for (const c of NEVER_COLUMNS) r[c] = null;
-  r['Work Email'] = `p${id}@simple.biz`;
-  r['Personal Email'] = `p${id}@gmail.com`;
-  r['Name'] = `Person ${id}`;
+  r['Work Email'] = `p${seed}@simple.biz`;
+  r['Personal Email'] = `p${seed}@gmail.com`;
+  r['Name'] = `Person ${seed}`;
   r['Department'] = 'Sales';
   return { ...r, ...extra };
 }
@@ -75,7 +79,7 @@ test('projectRow: a hidden column NEVER appears, the always column always does, 
   const row = fullRow(7, { off_boarded_at: null, import_batch_id: 'b1' });
   const narrow = projectRow(row, ['Name', 'Work Email']);
   assert.deepEqual(Object.keys(narrow).sort(), ['Name', 'Work Email', 'id'].sort());
-  assert.equal(narrow['id'], 7);
+  assert.equal(narrow['id'], uuid(7));
   assert.ok(!('Personal Email' in narrow));
   assert.ok(!('off_boarded_at' in narrow));
   assert.ok(!('import_batch_id' in narrow));
@@ -86,8 +90,8 @@ test('projectRow: a hidden column NEVER appears, the always column always does, 
 });
 
 test('projectRow keeps a stable shape: a granted column missing from the row comes back as null', () => {
-  const r = projectRow({ id: 1, Name: 'A' }, ['Name', 'Work Email']);
-  assert.deepEqual(r, { id: 1, Name: 'A', 'Work Email': null });
+  const r = projectRow({ id: uuid(1), Name: 'A' }, ['Name', 'Work Email']);
+  assert.deepEqual(r, { id: uuid(1), Name: 'A', 'Work Email': null });
 });
 
 test('end to end: filter + page + project — hidden columns absent from every row of the page', () => {

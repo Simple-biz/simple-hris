@@ -32,7 +32,22 @@ export const GML_EMAIL_COLUMNS = [
 
 const KNOWN_PARAMS = ['department', 'email', 'search', 'limit', 'cursor'];
 
-export type GmlRow = Record<string, unknown> & { id: number };
+/**
+ * `global_master_list.id` is a **UUID**, not an integer. This was typed `number`
+ * until 2026-09-21, which made paging impossible for every caller: the API
+ * returned the last row's UUID as `next_cursor` and then refused that very value
+ * on the next call. Measured before the fix, no successful call had ever
+ * returned more than 500 rows.
+ */
+export type GmlRow = Record<string, unknown> & { id: string };
+
+/**
+ * Canonical UUID text. The cursor is OPAQUE to the caller — they only ever echo
+ * back what we issued — but it is still validated, because the only thing we
+ * ever issue is a row id. This replaces the old `/^\d+$/` integer guard; it does
+ * not relax it, and an integer cursor is now correctly refused.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type GmlQuery = {
   department: string | null;
@@ -40,8 +55,8 @@ export type GmlQuery = {
   /** Case-insensitive substring over Name and the four email columns. */
   search: string | null;
   limit: number;
-  /** Exclusive: rows with `id > cursor`. */
-  cursor: number | null;
+  /** Exclusive: rows with `id > cursor`, compared as canonical UUID text. */
+  cursor: string | null;
 };
 
 export type GmlQueryError = { field: string; message: string };
@@ -70,13 +85,13 @@ export function parseGmlQuery(params: URLSearchParams): ParsedGmlQuery {
     }
   }
 
-  let cursor: number | null = null;
+  let cursor: string | null = null;
   const rawCursor = str(params, 'cursor');
   if (rawCursor != null) {
-    if (!/^\d+$/.test(rawCursor)) {
+    if (!UUID_RE.test(rawCursor)) {
       errors.push({ field: 'cursor', message: 'cursor must be the next_cursor value from a previous page' });
     } else {
-      cursor = Number(rawCursor);
+      cursor = rawCursor;
     }
   }
 
@@ -135,7 +150,7 @@ export const ALL_VISIBLE: FilterVisibility = { emailColumns: GML_EMAIL_COLUMNS, 
 export type GmlPage = {
   rows: GmlRow[];
   /** `id` of the last row returned, or null when this was the final page. */
-  nextCursor: number | null;
+  nextCursor: string | null;
   /** Active rows matching the filters, before paging. */
   total: number;
 };
@@ -163,7 +178,11 @@ export function applyGmlQuery(rows: readonly GmlRow[], q: GmlQuery, visible: Fil
   }
 
   // 3. Stable order, keyset cursor, page.
-  out.sort((a, b) => a.id - b.id);
+  // Plain relational comparison, NOT `localeCompare` — a locale-aware collation
+  // could order hex differently from Postgres, and this order must match the
+  // `.order('id', { ascending: true })` the route's SQL read already applies.
+  // (That SQL order is load-bearing: keep it.)
+  out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const total = out.length;
   if (q.cursor != null) {
     const c = q.cursor;

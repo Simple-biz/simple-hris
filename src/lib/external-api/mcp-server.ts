@@ -104,7 +104,14 @@ export function buildMcpServer(ctx: McpAccessContext): McpServer {
         email: z.string().trim().email().max(320).optional(),
         search: z.string().trim().min(1).max(120).optional(),
         limit: z.number().int().min(1).max(MAX_LIMIT).optional(),
-        cursor: z.number().int().min(0).optional(),
+        // Opaque string, NOT a number: `global_master_list.id` is a UUID, so a
+        // numeric schema here made every continuation a schema error and capped
+        // the tool at its first page (fixed 2026-09-21).
+        cursor: z
+          .string()
+          .trim()
+          .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+          .optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },

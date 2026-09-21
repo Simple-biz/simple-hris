@@ -6,11 +6,15 @@ import { OFFERABLE_COLUMNS } from './catalog';
 
 const q: GmlQuery = { department: null, email: null, search: null, limit: 100, cursor: null };
 
-function row(id: number, extra: Record<string, unknown> = {}): GmlRow {
-  const r: GmlRow = { id, off_boarded_at: null, import_batch_id: 'b' };
-  for (const c of OFFERABLE_COLUMNS) r[c] = `${c}-${id}`;
-  r['Work Email'] = `p${id}@simple.biz`;
-  r['Personal Email'] = `p${id}@gmail.com`;
+function uuid(n: number): string {
+  return `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
+}
+
+function row(seed: number, extra: Record<string, unknown> = {}): GmlRow {
+  const r: GmlRow = { id: uuid(seed), off_boarded_at: null, import_batch_id: 'b' };
+  for (const c of OFFERABLE_COLUMNS) r[c] = `${c}-${seed}`;
+  r['Work Email'] = `p${seed}@simple.biz`;
+  r['Personal Email'] = `p${seed}@gmail.com`;
   return { ...r, ...extra };
 }
 
@@ -77,11 +81,11 @@ test('leavers are dropped and the page cursor works through the pipeline', async
   const first = await executeGmlRead(fakeRead(rows), { ...q, limit: 2 }, ['Name']);
   assert.ok(first.ok);
   if (!first.ok) return;
-  assert.deepEqual(first.data.map((r) => r['id']), [1, 3]);
-  assert.equal(first.page.next_cursor, 3);
-  const second = await executeGmlRead(fakeRead(rows), { ...q, limit: 2, cursor: 3 }, ['Name']);
+  assert.deepEqual(first.data.map((r) => r['id']), [uuid(1), uuid(3)]);
+  assert.equal(first.page.next_cursor, uuid(3));
+  const second = await executeGmlRead(fakeRead(rows), { ...q, limit: 2, cursor: uuid(3) }, ['Name']);
   assert.ok(second.ok);
   if (!second.ok) return;
-  assert.deepEqual(second.data.map((r) => r['id']), [4]);
+  assert.deepEqual(second.data.map((r) => r['id']), [uuid(4)]);
   assert.equal(second.page.next_cursor, null);
 });

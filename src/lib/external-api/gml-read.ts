@@ -20,7 +20,8 @@ export type GmlReadPage = {
   max_limit: number;
   returned: number;
   total: number;
-  next_cursor: number | null;
+  /** Opaque: the last row's UUID id. Echo it back as `cursor` to continue. */
+  next_cursor: string | null;
 };
 
 export type GmlReadOutcome =

@@ -199,7 +199,9 @@ Authorization: Bearer hris_live_…
 ?email=        matches the VISIBLE email columns    — needs one visible
 ?search=       substring over Name + visible emails — needs Name or an email visible
 ?limit=        1–500, default 100
-?cursor=       the previous page's page.next_cursor (exclusive, keyset on id)
+?cursor=       the previous page's page.next_cursor — an OPAQUE STRING (the row's
+               UUID id), exclusive, keyset on id. Refused unless it is canonical
+               UUID text, because that is the only thing this API ever issues.
 
 200 { data: [...rows, granted columns only], page: { limit, max_limit, returned, total, next_cursor },
       meta: { as_of, active_only: true, client, columns: [...], expires_at } }
@@ -218,6 +220,17 @@ POST /api/external/mcp        Streamable HTTP, stateless, JSON responses; same B
 Walk the roster with `cursor` until `next_cursor` is `null`. `limit` is capped at 500, below
 the PostgREST 1000-row ceiling by construction (a test asserts `MAX_LIMIT < 1000`); the read
 itself uses `selectAllPaged` regardless.
+
+**The cursor is a UUID, and was typed `number` until 2026-09-21.** `global_master_list.id` is a
+UUID, so `page.next_cursor` returned a value the very next call refused with a `400` — paging was
+impossible from the day the surface shipped. Measured before the fix: **no successful call had
+ever returned more than 500 rows** (`external_api_requests`, `max(row_count)` on a `200` = 500;
+every `cursor` call a `400`). The live OMS client hit it on 2026-09-18. The suite missed it
+because **every fixture used integer ids** — those fixtures are now UUIDs, and
+`gml-query.test.ts` walks a UUID-keyed roster to exhaustion, asserting that every cursor the API
+issues survives a round-trip through its own parser. **Never widen `MAX_LIMIT` past 1000 to dodge
+paging** — PostgREST truncates there even with `.range()`
+(`memory/postgrest-1000-cap-sweep.md`). See audit item 133.
 
 ## Admin routes
 
