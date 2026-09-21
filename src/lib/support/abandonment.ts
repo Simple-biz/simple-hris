@@ -118,6 +118,7 @@ import {
   SUPPORT_CONCERN_MAX,
   SUPPORT_REPLY_PROMISE,
   formatSupportTicketNo,
+  isSupportCategory,
   type SupportCategory,
 } from './types';
 
@@ -210,6 +211,27 @@ export type SweepSessionRow = {
   filed_by_email: string;
   member_name: string | null;
   department: string | null;
+  /**
+   * What the employee said the chat is ABOUT, asked when they joined the queue
+   * (Kane, 2026-09-21). One of the nine `SUPPORT_CATEGORIES`, or `null` when
+   * nobody asked — a session from before the picker shipped, which is NOT the
+   * same fact as `'other'`.
+   *
+   * TYPED `string | null` AND NOT `SupportCategory | null`, DELIBERATELY. The
+   * column's CHECK admits only the nine
+   * (`2026-09-21_employee_support_chat_category.sql`), but this row arrives as
+   * JSON from PostgREST and TypeScript cannot check what the wire sent.
+   * Narrowing it here would be an assertion dressed as a fact, and the one
+   * place it becomes a `SupportCategory` is {@link chatTicketCategory}, which
+   * verifies rather than asserts.
+   *
+   * REQUIRED, not optional, because the caller's select list is the only thing
+   * that can forget it: a missing column reads back as `undefined`, every
+   * converted chat silently files under `other` again, and nothing anywhere
+   * says so. A required field makes the row shape state the requirement out
+   * loud — and `chat-sweep.ts`'s `SESSION_SELECT` is what has to carry it.
+   */
+  category: string | null;
   /** The employee's RANK. Carried only so the ticket can say how long they waited. */
   queued_at: string;
   /** The EMPLOYEE's heartbeat. This is the whole staleness question. */
@@ -610,20 +632,69 @@ export type ChatTicketDraft = {
 };
 
 /**
- * Every converted chat files under `other`.
+ * What a converted chat files under when the session never knew its subject.
  *
- * The chat has no category picker — Kane's front door is a conversation, not a
- * form — so there is nothing to carry over, and guessing one from the words in
- * the transcript would be a classifier making a routing decision nobody asked
- * for. `other` reads as `'Something else'` (`types.ts:49`), which is exactly
- * what is true: the question arrived without one.
+ * THIS USED TO BE THE ANSWER. IT IS NOW THE FALLBACK.
+ * ---------------------------------------------------------------------------
+ * Until 2026-09-21 the chat had no category picker, so every converted chat was
+ * filed as `other` — `'Something else'` (`types.ts:49`) — and the board could
+ * not tell a pay dispute from a Roboform lockout without opening the
+ * transcript. Kane: *"The chat support option should ask the Employees what
+ * issue is it about"*, so the session now carries one and the ticket
+ * {@link buildChatTicket} mints INHERITS it.
+ *
+ * `other` survives for the two cases that are real and always will be:
+ *
+ * * **Nobody asked.** A session that predates the picker, or one opened by a
+ *   path that does not collect a category. `null` on the row.
+ * * **Something arrived that is not one of the nine.** See
+ *   {@link chatTicketCategory} — that case must land somewhere, and it must
+ *   never land on the ticket table's CHECK.
+ *
+ * It is NOT deleted and NOT inlined: it is the value two other modules compare
+ * against, and a bare `'other'` string spread through the conversion path is
+ * how a fallback becomes unfindable.
  */
 export const CHAT_TICKET_CATEGORY: SupportCategory = 'other';
 
 /**
+ * The session's category, turned into one the ticket table will accept.
+ *
+ * THIS IS A GUARD, NOT A MAPPING, AND IT IS THE POINT OF THE WHOLE FUNCTION.
+ * ---------------------------------------------------------------------------
+ * `employee_support_tickets.category` is `not null` under
+ * `employee_support_tickets_category_valid`
+ * (`2026-09-16_employee_support.sql:68-81`). An unrecognised value reaching
+ * that insert is a CHECK violation, which is a 500 on the conversion path —
+ * and a failed conversion means an employee who was already let down once
+ * silently never gets their `ES-` number. So nothing that is not provably one
+ * of the nine is ever handed to it.
+ *
+ * Takes `unknown` on purpose. The row is JSON off the wire: the column can be
+ * absent entirely (a select list that forgot it), `null`, a value from a
+ * future migration this deploy has not heard of, or something a different
+ * writer put there. All of them are the same answer here.
+ *
+ * NOTHING IS COERCED. `'  pay_payslip  '`, `'PAY_PAYSLIP'` and `'salary'` all
+ * file as {@link CHAT_TICKET_CATEGORY}, because trimming or lower-casing a
+ * near-miss is guessing at what somebody meant, and the database refuses those
+ * values at the session door anyway (the normalize trigger deliberately does
+ * not touch this column). A category that arrives malformed is a bug in the
+ * writer; filing it as "Something else" keeps the employee's ticket while
+ * leaving the bug visible in the row.
+ */
+export function chatTicketCategory(value: unknown): SupportCategory {
+  return isSupportCategory(value) ? value : CHAT_TICKET_CATEGORY;
+}
+
+/**
  * Build the ticket. Identity is copied from the SESSION, which took it from
  * `authz.effectiveEmail` when the chat was opened — never from anything a
- * request said since.
+ * request said since. The CATEGORY comes from the session too, for the same
+ * reason and with one extra one: it is the employee's own answer to *"what is
+ * this about"*, and the ticket is the durable record of the question they
+ * asked. Re-deriving it from the transcript would be a classifier overruling
+ * the person who typed it.
  */
 export function buildChatTicket(input: {
   session: SweepSessionRow;
@@ -649,7 +720,10 @@ export function buildChatTicket(input: {
     filed_by_email: input.session.filed_by_email,
     member_name: input.session.member_name,
     department: input.session.department,
-    category: CHAT_TICKET_CATEGORY,
+    // The employee's own answer, or `other` when there was not one. Never the
+    // raw value: `chatTicketCategory` is what stands between an unrecognised
+    // string and a CHECK violation on the insert below.
+    category: chatTicketCategory(input.session.category),
     concern,
     // The ORIGINAL stamp, not `now`: the flag was raised when the message was
     // typed, and re-dating it would make the ticket claim the screen ran at

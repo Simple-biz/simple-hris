@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AGENT_STALE_AFTER_MS } from './availability';
-import { SUPPORT_CONCERN_MAX } from './types';
+import { SUPPORT_CATEGORIES, SUPPORT_CONCERN_MAX, isSupportCategory } from './types';
 import {
   CHAT_TICKET_CATEGORY,
   EMPLOYEE_STALE_AFTER_MS,
@@ -12,6 +12,7 @@ import {
   becameTicketSystemLine,
   buildChatTicket,
   buildChatTicketConcern,
+  chatTicketCategory,
   chatTicketConcernPattern,
   chatTicketMarker,
   employeeIdleMs,
@@ -34,6 +35,14 @@ function session(over: Partial<SweepSessionRow> = {}): SweepSessionRow {
     filed_by_email: 'rowan@simple.biz',
     member_name: 'Rowan Diaz',
     department: 'hsl:intake_specialist',
+    /**
+     * `null` — NOBODY ASKED, which is the honest default for a helper written
+     * before the picker existed and is NOT the same fact as `'other'`
+     * (`2026-09-21_employee_support_chat_category.sql`). Defaulting it to
+     * `'other'` would leave every test above asserting the FALLBACK path while
+     * reading as though it asserted the real one.
+     */
+    category: null,
     queued_at: '2026-09-19T14:00:00.000Z',
     last_seen_at: new Date(NOW.getTime() - 1_000).toISOString(),
     ended_at: null,
@@ -356,6 +365,96 @@ test('the ticket copies identity from the SESSION and claims nothing', () => {
   assert.equal('claimed_by' in draft, false);
   assert.equal('claimed_at' in draft, false);
   assert.equal('first_response_at' in draft, false);
+});
+
+/* ──────────────────── the category the ticket inherits ───────────────────── */
+
+test('the ticket INHERITS the category the employee chose, for all nine', () => {
+  // The point of the column. Before 2026-09-21 every one of these filed as
+  // 'other' and the board could not tell a pay dispute from a Roboform lockout
+  // without opening the transcript.
+  for (const category of SUPPORT_CATEGORIES) {
+    const draft = buildChatTicket({ session: session({ category }), messages: [line()] });
+    assert.equal(draft.category, category);
+  }
+});
+
+test("Kane's two examples land on the nine without a tenth value", () => {
+  // *"if it is about salary or COE"*. 'salary' and 'COE' are what a person
+  // says; the picker is what maps them onto keys the vocabulary already has,
+  // which is why the chat reuses SUPPORT_CATEGORIES instead of inventing a
+  // list that would then need a mapping table to the ticket side.
+  assert.equal(
+    buildChatTicket({ session: session({ category: 'pay_payslip' }), messages: [line()] }).category,
+    'pay_payslip',
+  );
+  assert.equal(
+    buildChatTicket({ session: session({ category: 'documents_certificates' }), messages: [line()] })
+      .category,
+    'documents_certificates',
+  );
+});
+
+test('a session nobody asked still files, as the fallback — never as a failure', () => {
+  // Every session that existed before the column shipped. The employee is owed
+  // an ES- number either way; 'Something else' is a worse ticket than an
+  // accurate one and an infinitely better outcome than a 500.
+  const draft = buildChatTicket({ session: session({ category: null }), messages: [line()] });
+  assert.equal(draft.category, CHAT_TICKET_CATEGORY);
+  assert.equal(draft.category, 'other');
+});
+
+test('NOTHING that is not provably one of the nine reaches the ticket CHECK', () => {
+  // employee_support_tickets_category_valid is NOT NULL and closed over the
+  // nine (2026-09-16_employee_support.sql:68-81). A value it refuses is a 500
+  // on the conversion path, and a failed conversion is an employee who was
+  // already let down once and now silently never gets their number. So the
+  // guard is total: whatever the wire sent, the answer is one of the nine.
+  const hostile: unknown[] = [
+    undefined,              // the select list forgot the column
+    null,                   // nobody asked
+    '',                     // a blank the DB would refuse
+    '   ',
+    'salary',               // Kane's word, not the key
+    'COE',
+    'PAY_PAYSLIP',          // case is not coerced — see chatTicketCategory
+    '  pay_payslip  ',      // nor is whitespace
+    'schedules',            // Carla ruled this a manager question; no key exists
+    'a_value_from_a_future_migration',
+    42,
+    true,
+    {},
+    [],
+    ['pay_payslip'],
+    { category: 'pay_payslip' },
+  ];
+
+  for (const value of hostile) {
+    const resolved = chatTicketCategory(value);
+    assert.ok(
+      isSupportCategory(resolved),
+      `chatTicketCategory(${JSON.stringify(value)}) returned something the ticket CHECK would refuse`,
+    );
+    assert.equal(resolved, CHAT_TICKET_CATEGORY);
+
+    // …and the same value, carried the whole way through the builder.
+    const draft = buildChatTicket({
+      session: session({ category: value as SweepSessionRow['category'] }),
+      messages: [line()],
+    });
+    assert.ok(isSupportCategory(draft.category));
+  }
+});
+
+test('the guard is a verifier, not an assertion: every one of the nine passes through it', () => {
+  // The other half of the total. A guard that refused a legitimate value would
+  // quietly re-file real answers as 'other' and look exactly like success.
+  for (const category of SUPPORT_CATEGORIES) {
+    assert.equal(chatTicketCategory(category), category);
+  }
+  // Still exported, still the fallback, still one of the nine itself.
+  assert.ok(isSupportCategory(CHAT_TICKET_CATEGORY));
+  assert.equal(CHAT_TICKET_CATEGORY, 'other');
 });
 
 test('a screening flag follows the question onto the ticket, both halves or neither', () => {

@@ -50,7 +50,12 @@ import { normEmail } from '@/lib/email/norm-email';
 import { broadcastFromServer } from '@/lib/supabase/realtime-broadcast';
 import { recordNotifyFailure } from '@/lib/notifications/notify-failure-audit';
 import { CHAT_LIVE_EVENT, CHAT_LIVE_TOPIC, type ChatLivePayload } from '@/lib/support/chat-live';
-import { CHAT_OPEN_STATUSES, type ChatSessionStatus } from '@/lib/support/chat-types';
+import {
+  CHAT_OPEN_STATUSES,
+  formatChatSessionNo,
+  type ChatSessionStatus,
+} from '@/lib/support/chat-types';
+import { formatSupportTicketNo } from '@/lib/support/types';
 import { agentsOnQueue, type ChatAgentRow } from '@/lib/support/availability';
 import {
   EMPLOYEE_STALE_AFTER_MS,
@@ -85,7 +90,7 @@ export const OPEN_STATUSES = [...CHAT_OPEN_STATUSES] as ChatSessionStatus[];
  * the pure module cannot drift apart without the compiler saying so.
  */
 export const SESSION_SELECT =
-  'id, session_no, status, work_email, filed_by_email, member_name, department, queued_at, last_seen_at, ended_at, claimed_by, claimed_at, became_ticket_id';
+  'id, session_no, status, work_email, filed_by_email, member_name, department, category, queued_at, last_seen_at, ended_at, claimed_by, claimed_at, became_ticket_id';
 
 export type ChatSessionRow = SweepSessionRow & { claimed_at: string | null };
 
@@ -234,6 +239,98 @@ export async function readTranscript(
 
 /* ────────────────────────────── the sweep ───────────────────────────────── */
 
+/* ──────────────────────── the two reasons for a ticket ──────────────────── */
+
+/**
+ * WHY this chat is becoming a ticket. Two acts, ONE minting path.
+ *
+ * `expired`   — the lazy sweep. Nobody answered, the session is already
+ *               `abandoned`, and the ticket is the promise being kept.
+ * `addressed` — Kane, 2026-09-21: *"they can click to address that concern and
+ *               if they address that concern it should be able to start the
+ *               ticket."* An agent took the chat and the ticket is the durable
+ *               record of the question, opened while the conversation is still
+ *               happening.
+ *
+ * They differ in three things and in nothing else — the copy, the audit action,
+ * and whether the session is stamped (see THE STAMP below). Everything that
+ * decides WHICH ticket exists is shared, because two minting paths is how one
+ * question ends up with two `ES-` numbers, and `abandonment.ts:178-193` calls
+ * that the single outcome this design exists to prevent.
+ */
+export type ConversionKind = 'expired' | 'addressed';
+
+/** What a conversion attempt actually produced. */
+export type ConversionResult = {
+  /** The ticket exists and the employee has been told, or was told already. */
+  ok: boolean;
+  ticketId: string | null;
+  ticketNo: number | null;
+  /** TRUE only when THIS call inserted the row. False = it attached to one already there. */
+  minted: boolean;
+};
+
+/**
+ * Nothing was written and no ticket exists. Frozen: a shared singleton a caller
+ * mutated would poison every later conversion, the same reason
+ * `triage.ts`'s `COUNTS_UNRESOLVED` is frozen.
+ */
+export const NO_CONVERSION: Readonly<ConversionResult> = Object.freeze({
+  ok: false,
+  ticketId: null,
+  ticketNo: null,
+  minted: false,
+});
+
+/**
+ * The `system` line an ADDRESSED chat gets, and the sibling of
+ * `becameTicketSystemLine` (`abandonment.ts`).
+ *
+ * WHY THE COPY LIVES HERE AND NOT THERE. `abandonment.ts` is the ABANDONMENT
+ * vocabulary — the words a chat hears when *nobody answered*, written so that
+ * "abandoned" never reaches the person who waited. This is the opposite case:
+ * somebody DID answer, on purpose, in the same minute. Filing its wording under
+ * abandonment would put two contradictory meanings in one module and invite a
+ * later edit to "unify" them.
+ *
+ * It says both true things — *you are being helped* and *there is a number* —
+ * because an employee who reads only the second one has been told their live
+ * chat turned into a queue ticket, which is what happens when nobody comes.
+ *
+ * Written by NOBODY (`author_email` NULL, the side CHECK at SQL `:267`): the
+ * agent is about to speak for themselves and this is not their sentence.
+ */
+export function addressedSystemLine(ticketNo: number | null): string {
+  const label = formatSupportTicketNo(ticketNo);
+  return (
+    `Somebody from Support has picked this up and is with you now. ` +
+    `Everything you wrote is also kept as ticket ${label}, so nothing is lost when the chat ends.`
+  );
+}
+
+/**
+ * The in-app notification for an addressed chat.
+ *
+ * Deliberately the EXISTING `support_chat.became_ticket` type and not a new
+ * one: the type list is a CHECK constraint that needs DDL to widen, a dead
+ * notification type looks exactly like a delivered one
+ * (`notify-failure-audit.ts:4-12`), and this event is the same event that type
+ * already names — *your chat now has a ticket number*. Only the words differ,
+ * because the reason does.
+ */
+export function addressedNotification(input: { sessionNo: number; ticketNo: number | null }): {
+  title: string;
+  message: string;
+} {
+  const ticket = formatSupportTicketNo(input.ticketNo);
+  return {
+    title: `Support picked up your chat — ticket ${ticket}`,
+    message:
+      `Somebody from Support is looking at your live chat ${formatChatSessionNo(input.sessionNo)} right now. ` +
+      `Everything you wrote is also kept as ticket ${ticket}, so the record stays after the chat ends.`,
+  };
+}
+
 /**
  * Finish a conversion: find or mint the ticket, stamp it on, tell the employee.
  *
@@ -244,22 +341,56 @@ export async function readTranscript(
  * second `ES-` number for one question is the single unrecoverable mistake on
  * this path — the employee is then promised twice and answered once.
  *
- * The stamp carries its own condition (`became_ticket_id IS NULL`) in its own
- * WHERE clause, so two callers racing produce one stamp and one no-op rather
- * than a last-writer-wins overwrite.
+ * It is also what makes the `addressed` caller safe against the sweep and
+ * against itself: pressing Address twice, or an addressed chat later expiring,
+ * finds the one ticket and attaches to it.
+ *
+ * THE STAMP, AND THE ONE THING THE ADDRESSED PATH CANNOT DO TODAY
+ * ---------------------------------------------------------------------------
+ * `became_ticket_id`/`became_ticket_at` are the session's receipt. The write
+ * carries its own condition (`became_ticket_id IS NULL`) in its own WHERE
+ * clause, so two callers racing produce one stamp and one no-op rather than a
+ * last-writer-wins overwrite.
+ *
+ * ⚠ It runs for `expired` ONLY, because the database forbids the other case:
+ * `employee_support_chat_sessions_only_abandoned_becomes_ticket`
+ * (`2026-09-19_employee_support_chat.sql:174-175`) is
+ * `check (became_ticket_id is null or status = 'abandoned')`, and an ADDRESSED
+ * session is `claimed`/`live` — it is being answered, and `abandoned` is
+ * reserved for the expiry path because only it carries the "nobody answered
+ * you" meaning. Stamping an addressed session would be rejected by that CHECK
+ * *after* the ticket was already minted.
+ *
+ * **The rule is NOT loosened here to make it fit.** The addressed link is
+ * carried the other way round instead — by the `[ESC-nnnn]` marker
+ * `buildChatTicket` writes into the ticket's own concern, which is exactly what
+ * the lookup above reads, so idempotence never depended on the stamp. What is
+ * missing is only the REVERSE pointer: a session row cannot yet say which
+ * ticket it started, so the queue cannot show the number after a reload. That
+ * needs one migration and a decision Kane owns — widen the CHECK, or give the
+ * session a separate nullable `ticket_id` meaning *"the ticket this chat is
+ * recorded in"* (the cleaner of the two: `became_*` says the chat ENDED as a
+ * ticket, which an ongoing conversation has not). Until then this returns the
+ * ids to its caller and writes no half-state.
+ *
+ * TELLING THE EMPLOYEE HAPPENS AT MOST ONCE, AND THE GATE DIFFERS BY KIND.
+ * For `expired` it is the stamp landing — the winner of the race speaks. For
+ * `addressed` there is no stamp to win, so it is `minted`: whoever inserted the
+ * row is the one who tells them, and a second Address attaches in silence.
  */
 export async function completeConversion(
   sb: SupabaseClient,
   request: Request,
   authz: AuthzOk,
   session: ChatSessionRow,
-): Promise<boolean> {
+  kind: ConversionKind = 'expired',
+): Promise<ConversionResult> {
   const messages = await readTranscript(sb, session.id);
   // An unreadable transcript is not an empty one. Minting a ticket that claims
   // "the employee did not type anything" when in fact we could not read what
   // they typed would put a falsehood into the permanent record — and the next
   // read retries this for free.
-  if (!messages) return false;
+  if (!messages) return { ...NO_CONVERSION };
 
   let ticketId: string | null = null;
   let ticketNo: number | null = null;
@@ -271,48 +402,67 @@ export async function completeConversion(
     .ilike('concern', chatTicketConcernPattern(session.session_no))
     .order('created_at', { ascending: true })
     .limit(1);
-  if (existing.error) return false;
+  if (existing.error) return { ...NO_CONVERSION };
 
   const found = (existing.data?.[0] as { id: string; ticket_no: number } | undefined) ?? null;
   if (found) {
     ticketId = found.id;
     ticketNo = found.ticket_no;
   } else {
-    const minted = await sb
+    const inserted = await sb
       .from(TICKETS_TABLE)
       .insert(buildChatTicket({ session, messages }))
       .select('id, ticket_no')
       .limit(1);
-    if (minted.error) return false;
-    const row = (minted.data?.[0] as { id: string; ticket_no: number } | undefined) ?? null;
-    if (!row) return false;
+    if (inserted.error) return { ...NO_CONVERSION };
+    const row = (inserted.data?.[0] as { id: string; ticket_no: number } | undefined) ?? null;
+    if (!row) return { ...NO_CONVERSION };
     ticketId = row.id;
     ticketNo = row.ticket_no;
   }
 
-  // The stamp. Both columns move as one act — `..._became_both_or_neither`
-  // (SQL :155-156) — and the status is NOT re-asserted here: the CHECK
-  // `..._only_abandoned_becomes_ticket` (:174-175) already refuses this write
-  // on any other status, and a second copy of that rule in TypeScript is a
-  // second thing to keep true.
-  const stamped = await sb
-    .from(SESSIONS_TABLE)
-    .update({ became_ticket_id: ticketId, became_ticket_at: new Date().toISOString() })
-    .eq('id', session.id)
-    .is('became_ticket_id', null)
-    .select('id');
-  if (stamped.error) return false;
-  // Zero rows: somebody else stamped it between our read and this write. The
-  // ticket we may have just minted is theirs to have found; nothing is written
-  // twice and nothing is told to the employee twice.
-  if (!stamped.data || stamped.data.length === 0) return true;
+  /** The ticket is ours to announce only if this call is the one that made it. */
+  const minted = !found;
+  const result: ConversionResult = { ok: true, ticketId, ticketNo, minted };
 
-  await systemLine(sb, session.id, becameTicketSystemLine(ticketNo));
+  /** Who gets to tell the employee. See TELLING THE EMPLOYEE in the header. */
+  let speaks = minted;
 
-  const { title, message } = becameTicketNotification({
-    sessionNo: session.session_no,
-    ticketNo,
-  });
+  if (kind === 'expired') {
+    // The stamp. Both columns move as one act — `..._became_both_or_neither`
+    // (SQL :155-156) — and the status is NOT re-asserted here: the CHECK
+    // `..._only_abandoned_becomes_ticket` (:174-175) already refuses this write
+    // on any other status, and a second copy of that rule in TypeScript is a
+    // second thing to keep true. It is also why this block is `expired` only —
+    // see THE STAMP in the header.
+    const stamped = await sb
+      .from(SESSIONS_TABLE)
+      .update({ became_ticket_id: ticketId, became_ticket_at: new Date().toISOString() })
+      .eq('id', session.id)
+      .is('became_ticket_id', null)
+      .select('id');
+    // The ticket exists either way, so the ids go back; `ok: false` is what
+    // makes the sweep count this a failure and retry on the next read, which
+    // the lookup above makes free.
+    if (stamped.error) return { ...result, ok: false };
+    // Zero rows: somebody else stamped it between our read and this write. The
+    // ticket we may have just minted is theirs to have found; nothing is written
+    // twice and nothing is told to the employee twice.
+    speaks = !!stamped.data && stamped.data.length > 0;
+  }
+
+  if (!speaks) return result;
+
+  await systemLine(
+    sb,
+    session.id,
+    kind === 'addressed' ? addressedSystemLine(ticketNo) : becameTicketSystemLine(ticketNo),
+  );
+
+  const { title, message } =
+    kind === 'addressed'
+      ? addressedNotification({ sessionNo: session.session_no, ticketNo })
+      : becameTicketNotification({ sessionNo: session.session_no, ticketNo });
   // `null` never `''` — an empty recipient is the Gmail-node failure this house
   // rule exists for (`docs/features/tickets-board.md:109-112`), and an empty
   // `recipient_email` here is a row nobody can ever read.
@@ -338,7 +488,7 @@ export async function completeConversion(
       // rejected by exactly that constraint until task 16's DDL runs.
       void recordNotifyFailure({
         notificationType: 'support_chat.became_ticket',
-        origin: 'support/chat/queue sweep',
+        origin: kind === 'addressed' ? 'support/chat/queue address' : 'support/chat/queue sweep',
         error: notif.error,
         actor: { user_name: authz.sessionEmail, user_role: authz.roles[0] ?? 'user' },
         details: { session_no: session.session_no, ticket_no: ticketNo },
@@ -348,7 +498,10 @@ export async function completeConversion(
 
   void insertAuditLog({
     ...auditFrom(request, authz),
-    action: 'employee_support.chat.became_ticket',
+    action:
+      kind === 'addressed'
+        ? 'employee_support.chat.addressed'
+        : 'employee_support.chat.became_ticket',
     resource: SESSIONS_TABLE,
     resource_id: session.id,
     details: {
@@ -358,12 +511,13 @@ export async function completeConversion(
       // The sweep is nobody's decision — it is the passage of time. The actor
       // on the row is whoever's read happened to run it, which is the truth
       // about who touched the data and deliberately not a claim that they
-      // chose to.
-      swept_by_read: true,
+      // chose to. An ADDRESS is the opposite: somebody chose it, and the same
+      // actor columns then mean what they appear to mean.
+      ...(kind === 'addressed' ? { addressed: true } : { swept_by_read: true }),
     },
   });
 
-  return true;
+  return result;
 }
 
 /**
@@ -457,8 +611,8 @@ export async function sweepChatQueue(
     // we read it. Either way it is not ours and not a failure.
     if (leased.error || !leased.data || leased.data.length === 0) continue;
 
-    const ok = await completeConversion(sb, request, authz, { ...row, ended_at: nowIso });
-    if (ok) report.completed += 1;
+    const done = await completeConversion(sb, request, authz, { ...row, ended_at: nowIso }, 'expired');
+    if (done.ok) report.completed += 1;
     else report.failed += 1;
   }
 
@@ -485,8 +639,14 @@ export async function sweepChatQueue(
     }
     if (!flipped.data || flipped.data.length === 0) continue; // somebody else won it
 
-    const ok = await completeConversion(sb, request, authz, { ...row, status: 'abandoned', ended_at: nowIso });
-    if (ok) report.converted += 1;
+    const done = await completeConversion(
+      sb,
+      request,
+      authz,
+      { ...row, status: 'abandoned', ended_at: nowIso },
+      'expired',
+    );
+    if (done.ok) report.converted += 1;
     else report.failed += 1;
     announce(row.id, 'session');
   }
