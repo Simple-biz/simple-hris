@@ -47,12 +47,15 @@ import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { applyDirectDepartmentMove } from '@/lib/transfers/direct-transfer';
 import {
   applyDepartmentEdit,
   diffBuiltinManagerScopes,
+  diffBuiltinPeople,
   diffDepartmentEdit,
   partitionBuiltinGrants,
   validateBuiltinManagersInput,
+  validateBuiltinPeopleInput,
   HSL_BUILTIN_KEY,
   type BuiltinGrantRow,
   type BuiltinManagersEvent,
@@ -594,6 +597,12 @@ async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string):
   const dept = DEPARTMENTS.find((d) => d.key === key);
   if (!dept) return NextResponse.json({ error: 'That is not a built-in department.' }, { status: 400 });
 
+  // People move as REAL transfers; the same validator the dialog gates Save on.
+  const moves = input.people ?? [];
+  const peopleCheck = validateBuiltinPeopleInput({ builtinKey: key, moves });
+  if (!peopleCheck.ok) return NextResponse.json({ error: peopleCheck.error }, { status: 400 });
+  const peopleDiff = diffBuiltinPeople(key, { builtinKey: key, moves });
+
   const { rows, error: listErr } = await listAllDepartmentManagers();
   if (listErr) return NextResponse.json({ error: listErr }, { status: 500 });
 
@@ -677,7 +686,65 @@ async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string):
             : 'unchanged',
         });
 
+        // -- Stage 2: people, as real department transfers ------------------
+        // Master list first, Sheet second, both recorded on an `applied`
+        // transfer row. A per-person failure is COLLECTED, never thrown: one
+        // bad row must not abandon the moves that already landed.
+        const peopleMoved: string[] = [];
+        const peopleSheetUnsynced: Array<{ email: string; reason: string }> = [];
+        const peopleNotOnRoster: string[] = [];
+        const peopleFailed: Array<{ email: string; reason: string }> = [];
+
+        if (peopleDiff.changed) {
+          emit({ type: 'stage', stage: 'members', status: 'start' });
+          for (const m of peopleDiff.moves) {
+            const res = await applyDirectDepartmentMove({
+              name: m.name ?? null,
+              workEmail: m.workEmail,
+              personalEmail: m.personalEmail ?? null,
+              fromDepartment: m.fromDepartment,
+              toDepartment: m.toDepartment,
+              actor,
+              reason: `Moved from the ${dept.name} card in Payment Catalog → Departments.`,
+            });
+            if (res.error) peopleFailed.push({ email: res.workEmail, reason: res.error });
+            else if (res.notOnRoster) peopleNotOnRoster.push(res.workEmail);
+            else {
+              peopleMoved.push(res.workEmail);
+              if (!res.sheetSynced) {
+                peopleSheetUnsynced.push({
+                  email: res.workEmail,
+                  reason: res.sheetError ?? 'the master Sheet was not updated',
+                });
+              }
+            }
+          }
+          emit({
+            type: 'stage',
+            stage: 'members',
+            status: 'done',
+            note: `${peopleMoved.length} moved${peopleFailed.length ? ` · ${peopleFailed.length} failed` : ''}`,
+          });
+        }
+
         const warnings: string[] = [];
+        if (peopleSheetUnsynced.length > 0) {
+          warnings.push(
+            `Moved on the master list but NOT on the Google Sheet: ${peopleSheetUnsynced
+              .map((p) => `${p.email} (${p.reason})`)
+              .join('; ')}. The next master sync can snap them back — fix the Sheet row or retry from Accounting.`,
+          );
+        }
+        if (peopleNotOnRoster.length > 0) {
+          warnings.push(
+            `Not on the active roster, so nothing moved: ${peopleNotOnRoster.join(', ')}.`,
+          );
+        }
+        if (peopleFailed.length > 0) {
+          warnings.push(
+            `Move failed: ${peopleFailed.map((p) => `${p.email} (${p.reason})`).join('; ')}.`,
+          );
+        }
         if (diff.emptied.length > 0) {
           warnings.push(
             `No manager left on ${diff.emptied.join(', ')} — that team's KPI card and sheet have no owner.`,
@@ -707,6 +774,16 @@ async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string):
               .map((s) => ({ scope: s.grantLabel, granted: s.granted, revoked: s.revoked })),
             resulting_by_scope: Object.fromEntries(diff.scopes.map((s) => [s.grantLabel, s.resulting])),
             unscoped_labels_untouched: [...new Set(partition.unscoped.map((u) => u.label))],
+            people_moved: peopleMoved,
+            people_sheet_unsynced: peopleSheetUnsynced,
+            people_not_on_roster: peopleNotOnRoster,
+            people_failed: peopleFailed,
+            people_moves: peopleDiff.moves.map((m) => ({
+              email: m.workEmail,
+              kind: m.kind,
+              from: m.fromDepartment,
+              to: m.toDepartment,
+            })),
           },
         }).catch(() => undefined);
 
@@ -722,6 +799,16 @@ async function patchBuiltinManagers(input: BuiltinManagersInput, actor: string):
               granted: s.granted,
               revoked: s.revoked,
             })),
+            ...(peopleDiff.changed
+              ? {
+                  people: {
+                    moved: peopleMoved.length,
+                    sheetUnsynced: peopleSheetUnsynced,
+                    notOnRoster: peopleNotOnRoster,
+                    failed: peopleFailed,
+                  },
+                }
+              : {}),
             warnings,
           },
         });

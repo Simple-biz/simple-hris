@@ -9,8 +9,9 @@ initial people (**at least one Manager required**) → optional department pay
 rate, with a **streamed, staged creation animation**. Since 2026-09-03 every
 in-app card also carries **Edit** (§6): rename, restructure sub-departments,
 change people — the key never changes and stale saves are refused. Master-list
-cards carry Edit as well, for **managers only** — by grant SCOPE, which is
-one list for a flat department and one per sub-team for HSL (§7).
+cards carry Edit as well: **manager access** by grant SCOPE — one list for a
+flat department, one per sub-team for HSL — and **people**, who move as real
+department transfers (§7).
 
 Built Jul 24, 2026: `5359889` (tab + wizard), `ec4482f` (self-contained
 refactor, same day), `83d81c5` (manager KPI surfaces + bonus assignments),
@@ -34,7 +35,7 @@ refactor, same day), `83d81c5` (manager KPI surfaces + bonus assignments),
 | One-off EA master-list transfer (Jul 24) | `scripts/transfer-eas-to-executive-assistants.mts` |
 | Edit Department dialog (§6) | `src/components/accounting/departments/EditDepartmentDialog.tsx` |
 | Shared Create/Edit steps + staged overlay | `src/components/accounting/departments/department-wizard-steps.tsx` · `staged-run.tsx` |
-| Master-list card Edit — managers only (§7) | `src/components/accounting/departments/EditBuiltinManagersDialog.tsx` |
+| Master-list card Edit — managers + people (§7) | `src/components/accounting/departments/EditBuiltinManagersDialog.tsx` |
 
 ## 1. Storage — an `app_settings` registry, **no migration**
 
@@ -381,14 +382,15 @@ registry, edit, rate-alias and rail-alias suites. Not browser-verified in the
 building session (no signed-in browser); the dev server compiled both the GET
 and the PATCH route.
 
-## 7. Editing a master-list department — managers, by scope (2026-09-03, scoped 2026-09-21)
+## 7. Editing a master-list department — managers by scope, and people by transfer (2026-09-03, extended 2026-09-21)
 
 Every **master-list** card carries **Edit** too (Kane, 2026-09-03: *"make sure
 that the from the Master list sync should have it"*). A Sheet-synced
 department owns almost nothing in the app — its name and alias map are code
 (`DEPARTMENTS`, `normalize-dept-key.ts`), and its people come from the Sheet
-sync. The in-app fact is **manager access**, so the dialog edits exactly that:
-Managers → Review, then the same staged overlay. The Payment Catalog is
+sync. The dialog edits the two things the app can legitimately change:
+**manager access** (§7.1) and **who is placed there** (§7.3, as a real
+department transfer). Managers → People → Review, then the same staged overlay. The Payment Catalog is
 thereby a **second write path for `department_managers`** beside Admin →
 Roles & permissions — both use the same `assignManagerDepartment` /
 `revokeManagerDepartment` helpers.
@@ -404,6 +406,8 @@ its grants, not because the old objection went away — see §7.1.
 | `builtinManagerScopes`, `partitionBuiltinGrants`, `validateBuiltinManagersInput`, `diffBuiltinManagerScopes` | `src/lib/departments/registry.ts` (+ `registry-builtin-managers.test.ts`) |
 | `PATCH { builtinKey, scopes }` branch | `app/api/payment-catalog/departments/route.ts` (`patchBuiltinManagers`) |
 | Read-only grant-shape audit | `scripts/audit-department-manager-grants.mts` |
+| People step — direct transfer orchestrator | `src/lib/transfers/direct-transfer.ts` |
+| `classifyBuiltinPersonMove`, `validateBuiltinPeopleInput`, `diffBuiltinPeople` | `src/lib/departments/registry.ts` (+ `registry-builtin-people.test.ts`) |
 
 ### 7.1 A grant SCOPE, not a department
 
@@ -457,9 +461,8 @@ swallow. Change those in Admin → Roles & permissions.
   manager quietly loses a team. The 14 labels measured live are pinned in the
   test suite; retiring a key from `HSL_DEPT_KEYS` while grants still point at it
   fires it.
-- The dialog lists what it **cannot** change — name, people, and (for HSL) which
-  sub-teams exist — and why, with a Pay Structure link for rates. Adding a
-  person to a built-in department is a transfer, not a manager edit.
+- The dialog lists what it **cannot** change — the name, and (for HSL) which
+  sub-teams exist — and why, with a Pay Structure link for rates.
 - Audit: `department.managers.update` on `department_managers` with the granted /
   revoked / resulting sets **per scope**, plus the unscoped labels left alone.
 - Payload discrimination: a PATCH body with a string `builtinKey` is the
@@ -472,6 +475,79 @@ the per-sub-team revoke isolation); 71 of 72 green across
 `src/lib/departments/*.test.ts` — the one failure,
 `dept-label-render.test.ts` naming `ManagerApp.tsx:1859`, is **pre-existing on
 `main`** in a file this change never touched. Not browser-verified.
+
+### 7.3 People — a real transfer, never a member record (2026-09-21)
+
+Kane ruled the master-list card's **People** step must write. It writes a
+**department transfer** and nothing else:
+
+1. `global_master_list` via `applyDepartmentTransfer` (authoritative; a failure
+   here is fatal and stops before anything else is touched),
+2. the master Google Sheet via `updateMasterSheetDepartment` (best-effort),
+3. a `department_transfer_requests` row marked **`applied`**, carrying the
+   Sheet outcome.
+
+`src/lib/transfers/direct-transfer.ts` (`applyDirectDepartmentMove`) is the one
+orchestrator; the route's `members` stage calls it per person.
+
+**Why not a member record.** §5 already says registry members are not a people
+source for pay surfaces: someone "added" that way appears on the card, is paid
+nothing, and is invisible to the missing-bank readiness check. A built-in
+department's people **are** the roster, so moving one is a transfer or it is
+nothing.
+
+**Why a transfer ROW and not just the two writes.**
+[[hris-is-dept-source-of-truth]] (Kane, 2026-08-21) makes the DB authoritative
+over the Sheet, and names the `applied` row as *"the strongest evidence of the
+DB's value being deliberate"*. A move that skipped the row would be
+indistinguishable from drift the next time anyone reconciles. The row is also
+where `sheet_synced` / `sheet_sync_error` live, which is what drives
+Accounting's **Retry** badge — and the paystub's mid-week transfer disclosure
+and the HSL weekend-premium map are both built from this table.
+
+Rules:
+
+- **A bare family label is refused.** `isPlaceableDeptLabel` gates every
+  destination, mirrored client and server, so an HSL arrival must name a
+  sub-team. Accepting `"HSL"` would place someone on a parent base rate that
+  **was deleted** in the 2026-08-14 cutover, so they would resolve no
+  department base at all ([[hsl-parent-department-cutover]]). The tab's
+  `departmentOptions` therefore omits the bare HSL label entirely.
+- **A move must touch this department on one side.**
+  `classifyBuiltinPersonMove` returns `in` / `out` / `within` / `unrelated`,
+  and `unrelated` is refused — this dialog is not a general-purpose transfer
+  tool.
+- **`within` is legal and is the point for HSL.** A sub-team reshuffle stays in
+  the family, and `buildHslTransferEffectiveMap` skips rows whose
+  `from_department` is already HSL-family, so it does **not** reset a
+  long-tenured person's +₱15/h weekend-premium day-scoping. A move in from
+  outside HSL correctly does set it. Do not change the from/to labels written
+  by `applyDirectDepartmentMove` without re-reading that filter.
+- **Removing somebody needs a destination.** There is no "no department" to
+  drop a person into, so the UI asks where they go. For a flat department the
+  picker deliberately offers **no** same-department option: the person's cell
+  may hold an alias spelling ("Lead Generation" vs "Lead Gen") which would slip
+  past the literal from-equals-to check and write a pointless relabel.
+- **A per-person failure is collected, never thrown.** One bad row must not
+  abandon the moves that already landed, so the stage reports
+  `moved` / `notOnRoster` / `sheetUnsynced` / `failed` and the success screen
+  warns on each. **A Sheet write that did not land is surfaced, never
+  swallowed**: the only two outcomes that mean the Sheet is correct are "a cell
+  was flipped" and "an email-matched row already reads the target". Anything
+  else and the next master sync can snap the person back.
+- **Not on the active roster** is reported, not treated as success — nothing
+  moved and no transfer row is written.
+- Audit `department.managers.update` now also carries `people_moved`,
+  `people_sheet_unsynced`, `people_not_on_roster`, `people_failed` and the full
+  move list with its `kind`.
+
+**Verification (2026-09-21):** typecheck clean; 7 green in
+`registry-builtin-people.test.ts`; **78 of 79** across
+`src/lib/departments/*.test.ts` — the one failure is the pre-existing
+`ManagerApp.tsx:1859` raw dept render (item 96 / item 131), untouched here.
+**Not browser-verified, and no move has been executed against production**: the
+write path is typed and unit-tested but has never run end to end, so the first
+real move should be a single low-stakes person with the Sheet checked by eye.
 
 ## Deploy notes
 

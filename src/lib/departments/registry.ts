@@ -18,7 +18,7 @@
 // This module is CLIENT-SAFE: types + pure helpers only, no Supabase imports.
 
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
-import { hslSubDeptOptions } from '@/lib/departments/hsl-subdept';
+import { hslSubDeptOptions, isPlaceableDeptLabel } from '@/lib/departments/hsl-subdept';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { PAY_CURRENCIES, type PayCurrency } from '@/lib/payment-catalog/pay-structure';
 
@@ -831,6 +831,12 @@ export interface BuiltinManagersInput {
    * sends one per sub-team.
    */
   scopes: BuiltinManagerScopeInput[];
+  /**
+   * People moving into / out of / within this department, applied as REAL
+   * department transfers (see `BuiltinPersonMove`). Absent or empty means the
+   * save touches manager access only.
+   */
+  people?: BuiltinPersonMove[];
 }
 
 const MAX_BUILTIN_MANAGERS = 50;
@@ -972,8 +978,145 @@ export function diffBuiltinManagerScopes(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Built-in department PEOPLE (2026-09-21).
+//
+// Kane ruled the master-list card's People step must WRITE. It does so as a
+// REAL department transfer -- `applyDepartmentTransfer` + the master Sheet
+// write-back, recorded as a `department_transfer_requests` row -- and never as
+// a registry member record.
+//
+// Registry members are not a people source for pay (§5): a person "added" that
+// way shows on the card, is paid nothing, and is invisible to the missing-bank
+// readiness check. A built-in department's people ARE the roster, so moving one
+// is a transfer and nothing else. [[hris-is-dept-source-of-truth]]: the applied
+// transfer row is the strongest evidence the DB's department is deliberate, so
+// the row is written, not bypassed.
+// ---------------------------------------------------------------------------
+
+/** One person moving into, out of, or within a built-in department. */
+export interface BuiltinPersonMove {
+  name: string;
+  workEmail: string;
+  personalEmail?: string | null;
+  /** The person's CURRENT raw master-list Department cell. */
+  fromDepartment: string;
+  /** The raw label to write into the master cell. Must be PLACEABLE. */
+  toDepartment: string;
+}
+
+export interface BuiltinPeopleInput {
+  builtinKey: string;
+  moves: BuiltinPersonMove[];
+}
+
+/**
+ * How a move relates to the department being edited.
+ *
+ *  - `in`       arriving from somewhere else
+ *  - `out`      leaving for somewhere else
+ *  - `within`   a reshuffle inside the family (an HSL sub-team change) --
+ *               legal, and the main reason HSL needs this at all
+ *  - `unrelated` touches the department on neither side; always refused, because
+ *               this dialog must not become a general-purpose transfer tool
+ */
+export type BuiltinMoveKind = 'in' | 'out' | 'within' | 'unrelated';
+
+export function classifyBuiltinPersonMove(builtinKey: string, move: BuiltinPersonMove): BuiltinMoveKind {
+  const from = normalizeDeptToKey(move.fromDepartment ?? '');
+  const to = normalizeDeptToKey(move.toDepartment ?? '');
+  const fromHere = from === builtinKey;
+  const toHere = to === builtinKey;
+  if (fromHere && toHere) return 'within';
+  if (toHere) return 'in';
+  if (fromHere) return 'out';
+  return 'unrelated';
+}
+
+const MAX_PEOPLE_MOVES = 100;
+
+/**
+ * Mirrored client-side (Save gating) and server-side (PATCH).
+ *
+ * The load-bearing refusal is `isPlaceableDeptLabel`: a bare "HSL" target is NOT
+ * a placement, because the sub-team is what carries the base rate, and accepting
+ * one would put a person on a parent fallback that no longer exists (the
+ * `hogan_smith_law` base row was deleted in the 2026-08-14 cutover). See
+ * hsl-subdepartments.md and [[hsl-parent-department-cutover]].
+ */
+export function validateBuiltinPeopleInput(input: BuiltinPeopleInput): { ok: boolean; error?: string } {
+  const key = input.builtinKey?.trim() ?? '';
+  if (!BUILTIN_KEYS.has(key)) return { ok: false, error: 'That is not a built-in department.' };
+  if (!Array.isArray(input.moves)) return { ok: false, error: 'Malformed people payload.' };
+  if (input.moves.length > MAX_PEOPLE_MOVES) {
+    return { ok: false, error: `Move at most ${MAX_PEOPLE_MOVES} people at a time.` };
+  }
+
+  const seen = new Set<string>();
+  for (const m of input.moves) {
+    const who = m.name?.trim() || m.workEmail?.trim() || 'someone';
+    const email = m.workEmail?.trim().toLowerCase() ?? '';
+    if (!email || !isEmailish(email)) return { ok: false, error: `${who} needs a valid work email.` };
+    if (seen.has(email)) return { ok: false, error: `${email} is moved twice in one save.` };
+    seen.add(email);
+
+    const from = (m.fromDepartment ?? '').trim();
+    const to = (m.toDepartment ?? '').trim();
+    if (!from) return { ok: false, error: `${who} has no current department to move from.` };
+    if (!to) return { ok: false, error: `${who} needs a destination department.` };
+    if (from.toLowerCase() === to.toLowerCase()) {
+      return { ok: false, error: `${who} is already in ${to}.` };
+    }
+    // A bare family label is not a placement. This is the guard that stops a
+    // new HSL arrival landing on a parent base rate that was deleted.
+    if (!isPlaceableDeptLabel(to)) {
+      return {
+        ok: false,
+        error: `${to} is not a placement — pick the specific sub-team for ${who}.`,
+      };
+    }
+
+    const kind = classifyBuiltinPersonMove(key, m);
+    if (kind === 'unrelated') {
+      return {
+        ok: false,
+        error: `${who}'s move touches neither side of this department — make it from the other department's card.`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
+export interface BuiltinPeopleDiff {
+  moves: Array<BuiltinPersonMove & { kind: BuiltinMoveKind }>;
+  added: BuiltinPersonMove[];
+  removed: BuiltinPersonMove[];
+  reshuffled: BuiltinPersonMove[];
+  changed: boolean;
+}
+
+export function diffBuiltinPeople(builtinKey: string, input: BuiltinPeopleInput): BuiltinPeopleDiff {
+  const moves = (input.moves ?? []).map((m) => ({ ...m, kind: classifyBuiltinPersonMove(builtinKey, m) }));
+  return {
+    moves,
+    added: moves.filter((m) => m.kind === 'in'),
+    removed: moves.filter((m) => m.kind === 'out'),
+    reshuffled: moves.filter((m) => m.kind === 'within'),
+    changed: moves.length > 0,
+  };
+}
+
 export const BUILTIN_MANAGERS_STAGES: { key: CreateDepartmentStageKey; label: string }[] = [
   { key: 'managers', label: 'Updating manager access' },
+];
+
+/** A master-list edit that also moves people runs BOTH stages. People move as
+ *  real transfers, so the stage is deliberately separate and reported on its
+ *  own -- a Sheet write-back failure must be visible, never folded into the
+ *  manager result. */
+export const BUILTIN_EDIT_STAGES: { key: CreateDepartmentStageKey; label: string }[] = [
+  { key: 'managers', label: 'Updating manager access' },
+  { key: 'members', label: 'Moving people' },
 ];
 
 export interface BuiltinManagersSummary {
@@ -983,6 +1126,16 @@ export interface BuiltinManagersSummary {
   revoked: string[];
   /** Per-scope, so an HSL save can say which sub-teams actually moved. */
   scopes: Array<{ displayName: string; granted: string[]; revoked: string[] }>;
+  /** People-move outcome, when the save carried one. */
+  people?: {
+    moved: number;
+    /** Moved on the master list but NOT mirrored to the Sheet -- the next sync
+     *  can snap them back, so this is surfaced, never swallowed. */
+    sheetUnsynced: Array<{ email: string; reason: string }>;
+    /** Not on the active roster, so nothing moved. */
+    notOnRoster: string[];
+    failed: Array<{ email: string; reason: string }>;
+  };
   warnings: string[];
 }
 

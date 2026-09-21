@@ -25,6 +25,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   AlertTriangle,
   ArrowLeft,
+  ArrowLeftRight,
   ArrowRight,
   CheckCircle2,
   ChevronDown,
@@ -42,20 +43,24 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  BUILTIN_MANAGERS_STAGES,
+  BUILTIN_EDIT_STAGES,
   builtinManagerScopes,
+  diffBuiltinPeople,
   diffBuiltinManagerScopes,
   partitionBuiltinGrants,
   validateBuiltinManagersInput,
+  validateBuiltinPeopleInput,
   type BuiltinGrantRow,
+  type BuiltinPersonMove,
   type BuiltinManagersInput,
   type BuiltinManagersSummary,
 } from '@/lib/departments/registry';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { EASE, firstNameOf, initialsOf, type DirectoryPerson } from './department-wizard-steps';
 import { StagedProgress, useStagedRun } from './staged-run';
 
-const STEPS = ['Managers', 'Review'] as const;
+const STEPS = ['Managers', 'People', 'Review'] as const;
 
 export type BuiltinManager = { email: string; name: string };
 
@@ -64,6 +69,7 @@ export default function EditBuiltinManagersDialog({
   dept,
   grantRows,
   roster,
+  departmentOptions,
   onClose,
   onChanged,
   onOpenPayStructure,
@@ -75,6 +81,10 @@ export default function EditBuiltinManagersDialog({
    *  never disagree about which grant belongs to which scope. */
   grantRows: BuiltinGrantRow[];
   roster: DirectoryPerson[];
+  /** Every PLACEABLE destination label (built-ins, HSL sub-teams, in-app
+   *  departments). A bare family label is deliberately absent — it is not a
+   *  placement. */
+  departmentOptions: { value: string; label: string }[];
   onClose: () => void;
   onChanged: () => void;
   onOpenPayStructure: (deptKey: string) => void;
@@ -83,6 +93,7 @@ export default function EditBuiltinManagersDialog({
   const [dir, setDir] = useState(1);
   /** Lower-cased grantLabel -> the resulting manager list for that scope. */
   const [byScope, setByScope] = useState<Record<string, BuiltinManager[]>>({});
+  const [moves, setMoves] = useState<BuiltinPersonMove[]>([]);
   const { view, running, run, reset } = useStagedRun<BuiltinManagersSummary>();
   const lastInputRef = useRef<BuiltinManagersInput | null>(null);
 
@@ -113,6 +124,7 @@ export default function EditBuiltinManagersDialog({
       seed[lower] = (partition.byScope.get(lower) ?? []).map((e) => ({ email: e, name: nameOf(e) }));
     }
     setByScope(seed);
+    setMoves([]);
     reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- prefill on open only
   }, [open, deptKey]);
@@ -136,10 +148,15 @@ export default function EditBuiltinManagersDialog({
             workEmail: m.email,
           })),
         })),
+        people: moves,
       }
     : null;
 
   const validation = input ? validateBuiltinManagersInput(input) : { ok: false };
+  const peopleValidation = deptKey
+    ? validateBuiltinPeopleInput({ builtinKey: deptKey, moves })
+    : { ok: true as const };
+  const peopleDiff = deptKey ? diffBuiltinPeople(deptKey, { builtinKey: deptKey, moves }) : null;
   const diff = useMemo(
     () => (deptKey && partition && input ? diffBuiltinManagerScopes(deptKey, partition, input) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- input is derived from byScope
@@ -147,8 +164,9 @@ export default function EditBuiltinManagersDialog({
   );
 
   const totalManagers = scopes.reduce((n, s) => n + (byScope[s.grantLabel.toLowerCase()] ?? []).length, 0);
-  const canSave = validation.ok && (diff?.changed ?? false);
-  const stepOk = [totalManagers > 0, canSave][step] ?? false;
+  const canSave =
+    validation.ok && peopleValidation.ok && ((diff?.changed ?? false) || (peopleDiff?.changed ?? false));
+  const stepOk = [totalManagers > 0, peopleValidation.ok, canSave][step] ?? false;
 
   const runSave = (payload: BuiltinManagersInput) => {
     lastInputRef.current = payload;
@@ -179,14 +197,18 @@ export default function EditBuiltinManagersDialog({
 
   const summary = view?.summary ?? null;
   const progressCopy = {
-    runningTitle: `Updating ${dept?.name ?? 'department'} managers...`,
-    runningDetail: multi
-      ? 'Granting and revoking department_managers access, per sub-team.'
-      : 'Granting and revoking department_managers access.',
+    runningTitle: `Updating ${dept?.name ?? 'department'}...`,
+    runningDetail: peopleDiff?.changed
+      ? 'Updating manager access, then moving people on the master list and the Sheet.'
+      : multi
+        ? 'Granting and revoking department_managers access, per sub-team.'
+        : 'Granting and revoking department_managers access.',
     errorTitle: 'Updating hit a snag',
     success: summary
       ? {
-          title: `${summary.name} managers updated`,
+          title: summary.people?.moved
+            ? `${summary.name} updated — ${summary.people.moved} moved`
+            : `${summary.name} managers updated`,
           detail:
             (summary.scopes.length > 1
               ? summary.scopes
@@ -251,7 +273,7 @@ export default function EditBuiltinManagersDialog({
                 >
                   <StagedProgress
                     view={view}
-                    stageList={BUILTIN_MANAGERS_STAGES}
+                    stageList={BUILTIN_EDIT_STAGES}
                     copy={progressCopy}
                     onRetry={() => lastInputRef.current && runSave(lastInputRef.current)}
                     onBackToForm={reset}
@@ -340,18 +362,28 @@ export default function EditBuiltinManagersDialog({
                               onManagers={(v) => scopes[0] && setScopeManagers(scopes[0].grantLabel, v)}
                             />
                           ))}
-                        {step === 1 && (
+                        {step === 1 && dept && (
+                          <PeopleStep
+                            deptKey={dept.key}
+                            deptName={dept.name}
+                            roster={roster}
+                            moves={moves}
+                            onMoves={setMoves}
+                            departmentOptions={departmentOptions}
+                          />
+                        )}
+                        {step === 2 && (
                           <div className="space-y-4">
-                            {!diff?.changed ? (
+                            {!diff?.changed && !peopleDiff?.changed ? (
                               <div className="rounded-lg border border-dashed border-zinc-300 p-6 text-center dark:border-zinc-700">
                                 <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Nothing has changed yet</p>
-                                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Go back to add or remove a manager.</p>
+                                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Go back to change a manager or move someone.</p>
                               </div>
-                            ) : (
+                            ) : diff?.changed ? (
                               <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
                                 <p className="flex items-center gap-1.5 text-sm font-medium text-zinc-800 dark:text-zinc-200">
                                   <Save className="h-4 w-4 text-orange-500" />
-                                  What will change
+                                  Manager access
                                 </p>
                                 <ul className="mt-2.5 space-y-1.5 text-xs text-zinc-700 dark:text-zinc-300">
                                   {diff.scopes
@@ -378,6 +410,39 @@ export default function EditBuiltinManagersDialog({
                                       )),
                                     ])}
                                 </ul>
+                              </div>
+                            ) : null}
+
+                            {peopleDiff && peopleDiff.changed && (
+                              <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+                                <p className="flex items-center gap-1.5 text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                                  <ArrowLeftRight className="h-4 w-4 text-orange-500" />
+                                  People moving ({peopleDiff.moves.length})
+                                </p>
+                                <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                                  Each one writes the master list, mirrors the Google Sheet and files an
+                                  applied transfer record.
+                                </p>
+                                <ul className="mt-2 space-y-1.5 text-xs text-zinc-700 dark:text-zinc-300">
+                                  {peopleDiff.moves.map((m) => (
+                                    <li key={`mv-${m.workEmail}`} className="flex items-start gap-2">
+                                      <ArrowRight className="mt-px h-3.5 w-3.5 shrink-0 text-orange-500" />
+                                      <span>
+                                        <strong>{m.name || m.workEmail}</strong>:{' '}
+                                        {formatDeptLabel(m.fromDepartment)} →{' '}
+                                        <strong>{formatDeptLabel(m.toDepartment)}</strong>
+                                        {m.kind === 'within' ? ' (same department, different team)' : ''}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {!peopleValidation.ok && (
+                              <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+                                <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+                                {(peopleValidation as { error?: string }).error}
                               </div>
                             )}
 
@@ -751,5 +816,299 @@ function WhatTheSheetOwns({
         Rates live in Pay structure
       </button>
     </div>
+  );
+}
+
+/**
+ * People on a MASTER-LIST department (Kane, 2026-09-21).
+ *
+ * Every change here is a REAL department transfer — master list, then the
+ * master Google Sheet, recorded as an `applied` transfer row. It is NOT a
+ * registry member list: registry members are invisible to pay and to the
+ * missing-bank check, so "adding" someone that way would show them on the card
+ * and pay them nothing.
+ *
+ * Two consequences the UI has to carry honestly:
+ *  - Removing somebody is a move OUT, so it needs a destination. There is no
+ *    "no department" to drop them into.
+ *  - A bare family label is not a placement, so HSL arrivals must name a
+ *    sub-team. `isPlaceableDeptLabel` refuses the rest server-side.
+ */
+function PeopleStep({
+  deptKey,
+  deptName,
+  roster,
+  moves,
+  onMoves,
+  departmentOptions,
+}: {
+  deptKey: string;
+  deptName: string;
+  roster: DirectoryPerson[];
+  moves: BuiltinPersonMove[];
+  onMoves: (v: BuiltinPersonMove[]) => void;
+  departmentOptions: { value: string; label: string }[];
+}) {
+  const [query, setQuery] = useState('');
+  const [pendingAdd, setPendingAdd] = useState<DirectoryPerson | null>(null);
+  const [movingOut, setMovingOut] = useState<DirectoryPerson | null>(null);
+
+  const current = useMemo(
+    () => roster.filter((p) => normalizeDeptToKey(p.department) === deptKey),
+    [roster, deptKey],
+  );
+  const movedEmails = useMemo(() => new Set(moves.map((m) => m.workEmail)), [moves]);
+
+  /** Where someone can land IN this department. For HSL that is its sub-teams;
+   *  for a flat built-in it is the single department label. */
+  const inboundOptions = useMemo(
+    () => departmentOptions.filter((o) => normalizeDeptToKey(o.value) === deptKey),
+    [departmentOptions, deptKey],
+  );
+  /** Where someone can go when they leave — anywhere but here. */
+  const outboundOptions = useMemo(
+    () => departmentOptions.filter((o) => normalizeDeptToKey(o.value) !== deptKey),
+    [departmentOptions, deptKey],
+  );
+
+  const candidates = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return roster
+      .filter(
+        (p) =>
+          normalizeDeptToKey(p.department) !== deptKey &&
+          !movedEmails.has(p.email) &&
+          (p.name.toLowerCase().includes(q) || p.email.includes(q)),
+      )
+      .slice(0, 6);
+  }, [query, roster, deptKey, movedEmails]);
+
+  const addMove = (m: BuiltinPersonMove) => {
+    onMoves([...moves.filter((x) => x.workEmail !== m.workEmail), m]);
+    setPendingAdd(null);
+    setMovingOut(null);
+    setQuery('');
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50/60 p-2.5 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+        <ArrowLeftRight className="mt-px h-4 w-4 shrink-0 text-orange-500" />
+        <span>
+          {deptName}&rsquo;s people come from the master list, so every change here is a real{' '}
+          <strong>department transfer</strong> — it writes the master list, mirrors the Google Sheet
+          and files an applied transfer record. There is no way to add someone without moving them.
+        </span>
+      </div>
+
+      {/* Move someone IN */}
+      <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+        <p className="mb-2 text-xs font-medium text-zinc-700 dark:text-zinc-300">Move someone into {deptName}</p>
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search people in other departments"
+            className="h-9 pl-8"
+          />
+        </div>
+        <AnimatePresence initial={false}>
+          {candidates.length > 0 && !pendingAdd && (
+            <motion.ul
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.18, ease: EASE }}
+              className="mt-1.5 overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800"
+            >
+              {candidates.map((p) => (
+                <li key={p.email}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (inboundOptions.length === 1) {
+                        addMove({
+                          name: p.name,
+                          workEmail: p.email,
+                          personalEmail: null,
+                          fromDepartment: p.department,
+                          toDepartment: inboundOptions[0]!.value,
+                        });
+                      } else {
+                        setPendingAdd(p);
+                      }
+                    }}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors hover:bg-orange-50 dark:hover:bg-blue-950/30"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">{p.name}</span>
+                      <span className="block truncate text-[11px] text-zinc-400">{p.email}</span>
+                    </span>
+                    <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                      {formatDeptLabel(p.department) || 'No department'}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </motion.ul>
+          )}
+        </AnimatePresence>
+
+        {pendingAdd && (
+          <DestinationPicker
+            title={`Which team does ${firstNameOf(pendingAdd.name)} join?`}
+            options={inboundOptions}
+            onCancel={() => setPendingAdd(null)}
+            onPick={(value) =>
+              addMove({
+                name: pendingAdd.name,
+                workEmail: pendingAdd.email,
+                personalEmail: null,
+                fromDepartment: pendingAdd.department,
+                toDepartment: value,
+              })
+            }
+          />
+        )}
+      </div>
+
+      {/* Current people */}
+      <div>
+        <p className="mb-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300">
+          {current.length} {current.length === 1 ? 'person' : 'people'} on the master list
+        </p>
+        {current.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-zinc-300 p-4 text-center text-xs text-zinc-400 dark:border-zinc-700 dark:text-zinc-500">
+            Nobody is placed in {deptName} yet.
+          </p>
+        ) : (
+          <ul className="max-h-64 space-y-1 overflow-y-auto pr-1">
+            {current.map((p) => {
+              const queued = moves.find((m) => m.workEmail === p.email);
+              return (
+                <li
+                  key={p.email}
+                  className={`flex items-center gap-2 rounded-lg border p-2 ${
+                    queued
+                      ? 'border-orange-300 bg-orange-50/60 dark:border-blue-900/60 dark:bg-blue-950/20'
+                      : 'border-zinc-200 dark:border-zinc-800'
+                  }`}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">{p.name}</span>
+                    <span className="block truncate text-[11px] text-zinc-400">
+                      {queued ? (
+                        <>
+                          {formatDeptLabel(p.department)} → <strong>{formatDeptLabel(queued.toDepartment)}</strong>
+                        </>
+                      ) : (
+                        formatDeptLabel(p.department)
+                      )}
+                    </span>
+                  </span>
+                  {queued ? (
+                    <button
+                      type="button"
+                      onClick={() => onMoves(moves.filter((m) => m.workEmail !== p.email))}
+                      className="shrink-0 rounded-md px-1.5 py-1 text-[11px] font-semibold text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-900 dark:hover:text-zinc-200"
+                    >
+                      Undo
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setMovingOut(p)}
+                      className="shrink-0 rounded-md px-1.5 py-1 text-[11px] font-semibold text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-900 dark:hover:text-zinc-200"
+                      aria-label={`Move ${p.name} out of ${deptName}`}
+                    >
+                      Move…
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {movingOut && (
+        <DestinationPicker
+          title={`Where does ${firstNameOf(movingOut.name)} go?`}
+          options={[
+            // Inside a department with sub-teams (HSL), a reshuffle to a SIBLING
+            // team is a legitimate move, so offer them alongside every other
+            // department. A FLAT department has exactly one inbound label and
+            // must offer none of it: the person's cell may hold an alias
+            // spelling ("Lead Generation" vs "Lead Gen"), which would slip past
+            // the validator's literal from-equals-to check and write a pointless
+            // relabel nobody asked for.
+            ...(inboundOptions.length > 1
+              ? inboundOptions.filter(
+                  (o) => o.value.trim().toLowerCase() !== movingOut.department.trim().toLowerCase(),
+                )
+              : []),
+            ...outboundOptions,
+          ]}
+          onCancel={() => setMovingOut(null)}
+          onPick={(value) =>
+            addMove({
+              name: movingOut.name,
+              workEmail: movingOut.email,
+              personalEmail: null,
+              fromDepartment: movingOut.department,
+              toDepartment: value,
+            })
+          }
+        />
+      )}
+    </div>
+  );
+}
+
+function DestinationPicker({
+  title,
+  options,
+  onPick,
+  onCancel,
+}: {
+  title: string;
+  options: { value: string; label: string }[];
+  onPick: (value: string) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, ease: EASE }}
+      className="mt-2 rounded-lg border border-orange-200 bg-orange-50/60 p-2.5 dark:border-blue-900/60 dark:bg-blue-950/20"
+    >
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <p className="text-xs font-medium text-zinc-800 dark:text-zinc-200">{title}</p>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-white/60 hover:text-zinc-700 dark:hover:bg-zinc-900"
+          aria-label="Cancel"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <ul className="max-h-48 space-y-0.5 overflow-y-auto">
+        {options.map((o) => (
+          <li key={o.value}>
+            <button
+              type="button"
+              onClick={() => onPick(o.value)}
+              className="w-full truncate rounded-md px-2 py-1.5 text-left text-xs font-medium text-zinc-700 transition-colors hover:bg-white dark:text-zinc-300 dark:hover:bg-zinc-900"
+            >
+              {o.label}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </motion.div>
   );
 }

@@ -77,7 +77,8 @@ import {
 import { StagedProgress, useStagedRun } from './departments/staged-run';
 import EditDepartmentDialog from './departments/EditDepartmentDialog';
 import EditBuiltinManagersDialog from './departments/EditBuiltinManagersDialog';
-import { builtinManagerScopes } from '@/lib/departments/registry';
+import { builtinManagerScopes, HSL_BUILTIN_KEY } from '@/lib/departments/registry';
+import { hslSubDeptOptions } from '@/lib/departments/hsl-subdept';
 
 export type { DirectoryPerson };
 
@@ -186,6 +187,22 @@ export default function DepartmentsTab({
   );
 
   const builtinScopeCount = (key: string) => builtinManagerScopes(key).length;
+
+  /** Every PLACEABLE destination a person can be moved to from the master-list
+   *  card's People step. The bare HSL family label is deliberately EXCLUDED:
+   *  `isPlaceableDeptLabel` refuses it, because the sub-team is what carries the
+   *  base rate and the parent's own rate row was deleted in the 2026-08-14
+   *  cutover — a bare "HSL" placement resolves no department base at all. */
+  const departmentOptions = useMemo(() => {
+    const out: { value: string; label: string }[] = [];
+    for (const d of DEPARTMENTS) {
+      if (d.key === HSL_BUILTIN_KEY) continue;
+      out.push({ value: d.name, label: d.name });
+    }
+    out.push(...hslSubDeptOptions());
+    for (const e of registry) out.push({ value: e.name, label: e.name });
+    return out.sort((a, b) => a.label.localeCompare(b.label));
+  }, [registry]);
 
   const memberCountForBuiltin = (key: string) =>
     roster.filter((p) => normalizeDeptToKey(p.department) === key).length;
@@ -468,6 +485,7 @@ export default function DepartmentsTab({
         dept={builtinEditing ? { key: builtinEditing.key, name: builtinEditing.name } : null}
         grantRows={grantRows}
         roster={roster}
+        departmentOptions={departmentOptions}
         onClose={() => setBuiltinEditingKey(null)}
         onChanged={onChanged}
         onOpenPayStructure={onOpenPayStructure}
