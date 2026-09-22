@@ -6,7 +6,7 @@ every line that will land on the statement, and where payroll has got to — eig
 Hubstaff upload to the money leaving. The point is anticipation: the employee watches the figure
 assemble instead of finding out on Friday.
 
-Built 2026-09-22, blueprint brief posted and ruled on the same day. **No migration** — every signal
+Built 2026-09-22, commit `e3ee5541`; blueprint brief posted and ruled on the same day. **No migration** — every signal
 already existed; what was missing was an employee-safe way to read them.
 
 ## Key files
@@ -94,8 +94,13 @@ adjustment for you" is not a settled fact before the lock.
 The carrier is `app_settings['payroll.wizard.additions.<file>']`, a **company-wide object**. It is
 read server-side and only this caller's overlay (`pickAdditionsOverlay`) is returned. **The blob
 itself must never reach a browser** — `EmployeeDashboard.tsx:684` already client-fetches the
-neighbouring `payroll.wizard.final_pay.<file>` through the ungated `GET /api/app-settings?key=`, and
-that is a known open finding, not a pattern to copy.
+neighbouring `payroll.wizard.final_pay.<file>` through `GET /api/app-settings?key=`, which gates only
+the `secret.`/`auth.`/`webhook`/`token` families and so hands **the whole company's net pay to any
+signed-in user**. That is a known open finding (session log item 161), not a pattern to copy.
+
+For the avoidance of a repeat: the app *is* gated globally. **`proxy.ts` is Next.js's renamed
+`middleware.ts`** and it 401s every `/api/*` outside a small allowlist. Grepping for `middleware.ts`
+and concluding there is no auth layer is a mistake this repo has already produced once.
 
 ## 5 · "Orphanage — Not applicable" needs positive evidence
 
