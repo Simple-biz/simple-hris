@@ -1,6 +1,7 @@
 'use client';
 
 import { signOut, useSession } from 'next-auth/react';
+import { clearAllTicketsCache } from '@/lib/tickets/tab-cache';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import {
   Archive,
@@ -300,6 +301,11 @@ export default function TicketsSidebar({
             try {
               sessionStorage.removeItem(SESSION_EMAIL_KEY);
             } catch { /* ignore */ }
+            // `signOut` navigates in the SAME tab and `sessionStorage` survives
+            // that, so the next person here would otherwise have the board on
+            // disk. Email first, then the purge: a read racing the purge would
+            // re-adopt the identity being dropped.
+            clearAllTicketsCache();
             void signOut({ callbackUrl: '/login' });
           }}
         >

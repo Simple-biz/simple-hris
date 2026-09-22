@@ -4,6 +4,7 @@ import React from 'react';
 import { motion } from 'motion/react';
 import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
+import { clearAllContractorCache } from '@/lib/contractor/tab-cache';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import {
@@ -182,6 +183,10 @@ export default function ContractorSidebar({
               sessionStorage.removeItem(SESSION_EMAIL_KEY);
               sessionStorage.removeItem('contractor_session_email');
             } catch { /* ignore */ }
+            // `signOut` navigates in the SAME tab and `sessionStorage` survives
+            // that, so the next person here would otherwise have this
+            // contractor's invoices on disk. Emails first, then the purge.
+            clearAllContractorCache();
             void signOut({ callbackUrl: '/login' });
           }}
         >

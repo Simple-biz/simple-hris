@@ -26,6 +26,12 @@ interface InvoiceLineItem {
   rate?: number | null;
 }
 
+import {
+  CONTRACTOR_CACHE_KEYS,
+  useContractorCacheIdentity,
+  useContractorCachedState,
+} from '@/lib/contractor/tab-cache';
+
 interface InvoiceRow {
   id: string;
   invoice_number: string;
@@ -38,6 +44,9 @@ interface InvoiceRow {
   created_at: string;
   line_items?: InvoiceLineItem[] | null;
 }
+
+/** Module-scope so the cached-state hook's initial value is referentially stable. */
+const NO_INVOICES: InvoiceRow[] = [];
 
 const PANEL =
   'rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/60';
@@ -170,24 +179,39 @@ export default function ContractorOverview({
   contractorName,
   onNavigate,
 }: ContractorOverviewProps) {
-  const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Bound above the seed below — the store is inert until this runs.
+  useContractorCacheIdentity(contractorEmail || null);
+  // Seeded from the tab-switch/reload/dashboard-switch cache; the fetch still
+  // runs on every mount. These rows are invoice METADATA only — the payout row
+  // (`/api/contractor/profile`, which carries account and ACH routing numbers)
+  // is never cached, and neither is the saved-invoice list, whose rows hold a
+  // payment rail and an inline logo data URL.
+  const [invoices, setInvoices] = useContractorCachedState<InvoiceRow[]>(
+    CONTRACTOR_CACHE_KEYS.overviewInvoices,
+    NO_INVOICES,
+  );
+  // Derived, never stored, never reset.
+  const [settled, setSettled] = useState(false);
+  const loading = !settled && invoices.length === 0;
   const reduce = useReducedMotion();
 
   useEffect(() => {
     if (!contractorEmail) return;
     let cancelled = false;
-    setLoading(true);
     fetch(`/api/contractor/invoices?email=${encodeURIComponent(contractorEmail)}`, { cache: 'no-store' })
       .then((r) => r.json())
       .then((j: { invoices?: InvoiceRow[] }) => {
         if (cancelled) return;
-        setInvoices(j.invoices ?? []);
+        setInvoices(j.invoices ?? NO_INVOICES);
       })
-      .catch(() => { if (!cancelled) setInvoices([]); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .catch(() => {
+        // Blank only when nothing was painted: a blip over rows seeded from the
+        // cache keeps them rather than reading as "you have never invoiced".
+        if (!cancelled) setInvoices((previous) => (previous.length > 0 ? previous : NO_INVOICES));
+      })
+      .finally(() => { if (!cancelled) setSettled(true); });
     return () => { cancelled = true; };
-  }, [contractorEmail]);
+  }, [contractorEmail, setInvoices]);
 
   // ── Derived figures ──
   const invoiceCount = invoices.length;

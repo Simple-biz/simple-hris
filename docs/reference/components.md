@@ -2189,6 +2189,7 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/components/tickets/TicketsSidebar.tsx` | component | [tickets-board](../features/tickets-board.md) |
 | `src/components/transfers/TransferToolbar.tsx` | component | — **no doc** |
 | `src/hooks/useAdminCachedState.ts` | hook | [admin-dashboard-cache](../features/admin-dashboard-cache.md) |
+| `src/lib/dashboard-cache/create-cached-state-hook.ts` | hook factory | [qc-contractor-tickets-cache](../features/qc-contractor-tickets-cache.md) — builds the `useCacheIdentity` + `useCachedState` pair for a store made by `create-tab-cache.ts`. Used by the QC, Contractor and Tickets stores; **migrates none of the seven shipped stores** |
 | `src/hooks/useBankInfoRequest.ts` | hook | — **no doc** |
 | `src/hooks/useChecklistRoom.ts` | hook | [new-hire-checklist](../features/new-hire-checklist.md) |
 | `src/hooks/useCobrowse.ts` | hook | [accounting-cobrowse](../features/accounting-cobrowse.md) |

@@ -91,6 +91,12 @@ interface QcData {
   officerCount: number;
 }
 
+import {
+  QC_CACHE_KEYS,
+  useQcCacheIdentity,
+  useQcCachedState,
+} from '@/lib/qc/tab-cache';
+
 const EMPTY_MINE: QcMine = { memberEmails: [], byDept: {}, members: [] };
 
 /** The departments QC scores, in display order (matches the dept bars). Sourced
@@ -105,12 +111,34 @@ interface StagedProgress {
 }
 const EMPTY_PROGRESS: StagedProgress = { byDept: {}, total: 0 };
 
+/** Module-scope so the cached-state hook's initial value is referentially stable. */
+const EMPTY_QC: QcData = { mine: EMPTY_MINE, locks: [], deptTotals: [], officerCount: 0 };
+
+/**
+ * Is there anything on screen worth keeping the skeleton away for?
+ *
+ * `officerCount` alone would not do: a week with one officer and no assignments
+ * yet is a legitimately empty answer, and reading it as "nothing arrived" would
+ * pulse the skeleton at a number that is never going to change.
+ */
+function hasQcData(qc: QcData): boolean {
+  return (
+    qc.officerCount > 0 ||
+    qc.locks.length > 0 ||
+    qc.deptTotals.length > 0 ||
+    qc.mine.memberEmails.length > 0
+  );
+}
+
 export default function QCApp() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const emailFromQuery = searchParams?.get('email') ?? null;
 
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
+  // Bound above every consumer: the store is inert until this runs, and
+  // boundness is folded into the hook's key so the bind render reseeds.
+  useQcCacheIdentity(viewerEmail);
   const [activeTab, setActiveTab] = useState<QcTab>('overview');
   usePublishPresenceTab(humanizeTabId(activeTab));
   useTabDocumentTitle(humanizeTabId(activeTab));
@@ -193,8 +221,18 @@ export default function QCApp() {
     setWeekStart(currentWeekStart);
   }, [currentWeekStart]);
 
-  const [qc, setQc] = useState<QcData>({ mine: EMPTY_MINE, locks: [], deptTotals: [], officerCount: 0 });
-  const [qcLoaded, setQcLoaded] = useState(false);
+  // Cached PER WEEK — stepping between weeks is the common move here, and one
+  // shared key would make each week evict the other and re-fetch on the way
+  // back. The key is `null` until a week resolves, which opts out cleanly rather
+  // than writing an entry under a blank week. The fetch still runs every time.
+  const [qc, setQc] = useQcCachedState<QcData>(
+    weekStart ? QC_CACHE_KEYS.assignments(weekStart) : null,
+    EMPTY_QC,
+  );
+  // Derived, and reset PER WEEK on purpose (unlike the other `settled` flags in
+  // this codebase): a different week is a different dataset, so a flag carried
+  // across would clear the skeleton for a week that has not loaded.
+  const [qcSettledFor, setQcSettledFor] = useState<string | null>(null);
 
   // Per-fetch epoch tokens: stepping through periods quickly fires overlapping
   // requests; only the latest call of each function is allowed to commit, so a
@@ -223,9 +261,9 @@ export default function QCApp() {
     } catch {
       /* keep last good state */
     } finally {
-      if (epoch === assignEpoch.current) setQcLoaded(true);
+      if (epoch === assignEpoch.current) setQcSettledFor(week);
     }
-  }, []);
+  }, [setQc]);
 
   // No pay week resolved, and the upload list has finished trying. That is
   // TERMINAL, not pending ([[kpi-calculator-week-unresolved-hang]]) — the
@@ -233,18 +271,24 @@ export default function QCApp() {
   // the empty state must say THIS rather than "nobody is assigned to you".
   const weekUnresolved = weeksLoaded && !weekStart;
 
+  /**
+   * `qcLoaded` is DERIVED: the skeleton is for having nothing to paint, not for
+   * a request being in flight. A cached week paints at once and revalidates
+   * behind itself; an unresolvable week is terminal and stops pulsing.
+   */
+  const qcLoaded = weekUnresolved || qcSettledFor === weekStart || hasQcData(qc);
+
   useEffect(() => {
-    if (!weekStart) {
-      if (weeksLoaded) setQcLoaded(true);
-      return;
-    }
-    setQcLoaded(false);
+    if (!weekStart) return;
     void fetchAssignments(weekStart);
-  }, [weekStart, weeksLoaded, fetchAssignments]);
+  }, [weekStart, fetchAssignments]);
 
   // ── Scoring progress (how many of my assigned members I've staged) ──────────
   const me = norm(viewerEmail);
-  const [progress, setProgress] = useState<StagedProgress>(EMPTY_PROGRESS);
+  const [progress, setProgress] = useQcCachedState<StagedProgress>(
+    weekStart ? QC_CACHE_KEYS.progress(weekStart) : null,
+    EMPTY_PROGRESS,
+  );
 
   const fetchProgress = useCallback(
     async (week: string, officer: string) => {
@@ -279,7 +323,7 @@ export default function QCApp() {
         /* keep last good state */
       }
     },
-    [],
+    [setProgress],
   );
 
   // Refresh assignments + progress whenever the week changes or the user returns

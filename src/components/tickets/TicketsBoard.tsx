@@ -69,6 +69,13 @@ import TicketsSidebar, { type TicketsView } from './TicketsSidebar';
 import SupportChatTab from './SupportChatTab';
 import SupportTicketsTab from './SupportTicketsTab';
 
+import { useSelfEmail } from '@/components/presence/PresenceProvider';
+import {
+  TICKETS_CACHE_KEYS,
+  useTicketsCacheIdentity,
+  useTicketsCachedState,
+} from '@/lib/tickets/tab-cache';
+
 const byPosition = (a: TicketRow, b: TicketRow) =>
   a.position - b.position || a.created_at.localeCompare(b.created_at);
 
@@ -90,11 +97,31 @@ interface BoardData {
   isAdmin: boolean;
 }
 
+/* Module-scope so the cached-state hooks' initial values are referentially stable. */
+const NO_TICKETS: TicketRow[] = [];
+
 export default function TicketsBoard() {
+  // Bound at the TOP, above every consumer: the store is inert until this runs,
+  // and the seeds below happen in `useState` initialisers, which run before any
+  // effect. `useSelfEmail` resolves from the NextAuth session, falling back to
+  // the session-email key login wrote — both available before the board's own
+  // fetch answers, which is the whole point (the fetch's `j.viewer` would arrive
+  // far too late to seed anything).
+  useTicketsCacheIdentity(useSelfEmail());
   const router = useRouter();
   const searchParams = useSearchParams();
   const reduceMotion = useReducedMotion();
-  const [tickets, setTickets] = useState<TicketRow[]>([]);
+  // Seeded from the tab-switch/reload/dashboard-switch cache; the fetch below
+  // still runs on every mount. A board is a queue OTHER PEOPLE act on, so it may
+  // paint from cache but may never skip the check — a skipped fetch is how you
+  // drag a card somebody else already moved.
+  const [tickets, setTickets] = useTicketsCachedState<TicketRow[]>(
+    TICKETS_CACHE_KEYS.board,
+    NO_TICKETS,
+  );
+  // `access` is NOT cached, on purpose: it is a PERMISSION, and a cached
+  // permission is a cached value DECIDING. It also gates whether the board is
+  // draggable, so a stale copy would offer edits the server will refuse.
   const [access, setAccess] = useState<'view' | 'edit'>('view');
   const [viewer, setViewer] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
@@ -200,12 +227,15 @@ export default function TicketsBoard() {
       setLoaded(true);
       setRefreshing(false);
     }
-  }, []);
+  }, [setTickets]);
 
   // Board members — powers the assignee pickers (dialog + admin), the card's
   // "assigned developer" label, and the Overview Members rail. Grants change
   // rarely; one fetch per mount plus the header refresh button is enough.
-  const [members, setMembers] = useState<TicketMember[] | null>(null);
+  const [members, setMembers] = useTicketsCachedState<TicketMember[] | null>(
+    TICKETS_CACHE_KEYS.members,
+    null,
+  );
   const [membersError, setMembersError] = useState<string | null>(null);
   const fetchMembers = useCallback(async () => {
     try {
@@ -221,11 +251,14 @@ export default function TicketsBoard() {
       setMembers((prev) => prev ?? []);
       setMembersError(e instanceof Error ? e.message : 'Could not load members');
     }
-  }, []);
+  }, [setMembers]);
 
   // The Archived view's list — fetched lazily when the view opens, refreshed
   // alongside the board so a restore/archive elsewhere shows up live.
-  const [archivedTickets, setArchivedTickets] = useState<TicketRow[]>([]);
+  const [archivedTickets, setArchivedTickets] = useTicketsCachedState<TicketRow[]>(
+    TICKETS_CACHE_KEYS.archived,
+    NO_TICKETS,
+  );
   const [archivedLoaded, setArchivedLoaded] = useState(false);
   const fetchArchived = useCallback(async () => {
     try {
@@ -237,7 +270,7 @@ export default function TicketsBoard() {
     } catch {
       // Best-effort; the view shows a retry via the header refresh button.
     }
-  }, []);
+  }, [setArchivedTickets]);
 
   useEffect(() => {
     // Fetch on mount, as the board always did — the JWT-seeded `host.board` is

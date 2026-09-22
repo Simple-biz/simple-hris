@@ -3,6 +3,7 @@
 import React from 'react';
 import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
+import { clearAllQcCache } from '@/lib/qc/tab-cache';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import { Bell, ClipboardCheck, LayoutDashboard, LogOut, Moon, MoreHorizontal, Sun } from 'lucide-react';
 import CollapsibleSidebarShell from '@/components/common/CollapsibleSidebarShell';
@@ -162,6 +163,10 @@ export default function QCSidebar({
             } catch {
               /* ignore */
             }
+            // `signOut` navigates in the SAME tab and `sessionStorage` survives
+            // that, so the next person here would otherwise have this QC week's
+            // assignments on disk. Email first, then the purge.
+            clearAllQcCache();
             void signOut({ callbackUrl: '/login' });
           }}
         >
