@@ -93,9 +93,21 @@ managers with **no** explicit department assignments (elevated). In `ManagerTran
 `GET /api/manager/transfer-candidates?q=&department=` returns **active** Global-Master-List people
 via `listActiveMasterListPeople` — **Name + Department + work/personal email only, never pay**.
 `?q=` matches name / department / **work email** / personal email; `?department=` filters to one
-dept. The server scans the whole roster and returns both the filtered `people` (capped at 200) and
-the full `departments` list for the filter dropdown, so search/filter is server-backed rather than a
-client slice of a page.
+dept. The server scans the whole roster and returns the filtered `people` (capped at 200), the
+full `departments` list for the filter dropdown, and `builtinSubs` — the data sub-team **map**
+(`<builtinKey>:<subKey>`, [[builtin-sub-departments]]) a parent grant expands through — so
+search/filter is server-backed rather than a client slice of a page.
+
+> **The response shape is a contract, and it is typed (`TransferCandidatesResponse`) for a
+> reason.** `2026-09-22`: `b3be176d` added `builtinSubs` and swapped it with `people` —
+> `{ people, builtinSubs: filtered.slice(0, 200) }`. `NextResponse.json()` takes `any`, so
+> nothing failed anywhere, and **all three of this route's contracts broke at once**: `?q=` and
+> `?department=` stopped narrowing (the picker returned the whole roster, so searching a work
+> email listed strangers — Kane's report), the picker exclusion below stopped dropping the
+> manager's own team, and the dialog read a candidate array as the sub-team map. `people` is
+> **always the filtered, capped list, never the raw roster**; `builtinSubs` is **always a map,
+> never a list of people**. Name the response type — do not hand an object literal to
+> `NextResponse.json()` on this route.
 
 > **1000-row cap gotcha:** the active-roster readers must paginate — a single `.range(0, 9999)` on
 > the `active_employees` view is silently capped at PostgREST `db.max-rows` (1000), which once

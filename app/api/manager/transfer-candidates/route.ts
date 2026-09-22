@@ -3,14 +3,28 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
 import { normEmail } from '@/lib/email/norm-email';
 import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
-import { listActiveMasterListPeople } from '@/lib/supabase/global-master-list-db';
+import { listActiveMasterListPeople, type ActiveMasterListPerson } from '@/lib/supabase/global-master-list-db';
 import { listRecentlyOffboardedPeople } from '@/lib/roster/recently-offboarded';
 import { getBuiltinSubs } from '@/lib/departments/builtin-subs-db';
+import type { BuiltinSubMap } from '@/lib/departments/builtin-subs';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 type SessionLike = { user?: { email?: string | null; roles?: string[] } | null } | null;
+
+/**
+ * The success shape of the active-candidate GET. `people` is the FILTERED,
+ * capped list — never the raw roster; `builtinSubs` is a MAP keyed
+ * `<builtinKey>:<subKey>`, never a list of people.
+ */
+type TransferCandidatesResponse = {
+  people: ActiveMasterListPerson[];
+  builtinSubs: BuiltinSubMap;
+  departments: string[];
+  error: null;
+};
+
 function rolesOf(session: SessionLike): string[] {
   return (session?.user?.roles ?? []) as string[];
 }
@@ -106,6 +120,22 @@ export async function GET(request: Request) {
   // Data sub-teams (Payment Catalog → Departments → Edit) so a parent grant can
   // expand to them as transfer targets. Best-effort: a failed read degrades to
   // the code teams only, exactly the pre-2026-09-22 behaviour.
-  const builtinSubs = await getBuiltinSubs().catch(() => ({}));
-  return NextResponse.json({ people, builtinSubs: filtered.slice(0, 200), departments, error: null });
+  const builtinSubs = await getBuiltinSubs().catch((): BuiltinSubMap => ({}));
+
+  // Typed on the way out ON PURPOSE. `NextResponse.json()` takes `any`, so when
+  // the sub-team map was added (b3be176d) `people` and `builtinSubs` were swapped
+  // — the picker shipped the WHOLE unfiltered roster under `people` and a
+  // candidate array under the map key, and nothing failed. That silently undid
+  // all three of this route's documented contracts at once: `?q=`/`?department=`
+  // stopped narrowing anything (searching a work email returned strangers), the
+  // no-poaching picker exclusion stopped dropping the manager's own team
+  // (department-transfers.md:81), and the dialog's sub-team expansion read an
+  // array as a map. Naming the shape makes that class a compile error.
+  const body: TransferCandidatesResponse = {
+    people: filtered.slice(0, 200),
+    builtinSubs,
+    departments,
+    error: null,
+  };
+  return NextResponse.json(body);
 }
