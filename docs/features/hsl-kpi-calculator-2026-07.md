@@ -7,6 +7,12 @@ A batch of changes to the manager-facing **HSL KPI Calculator**
 and the removal of five stale departments.
 
 Built 2026-07-17. All HSL bonus rules remain hardcoded in `schema.ts` — the
+**except** that since 2026-09-22 a Bonus Library bonus assigned to a branch
+(`hsl:<key>`) is scored on that branch's card as an extra rule and folds into
+`calculated_bonus` (`src/lib/hsl-bonus/catalog-bonus.ts`; see `bonus-catalog.md`
+§3.1). The KPI programme itself is still code; what changed is that an
+accountant can now attach an ad-hoc award to one sub-team without an
+engineering change. Everything below describes the code rules — the
 single source of truth the calculator, PayrollWizard HSL step, Bonus History,
 and employee KPI results all read.
 

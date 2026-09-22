@@ -59,7 +59,16 @@ import {
   subTeamInputsBlank,
 } from '@/lib/manager/kpi-autosave';
 
-import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { formatDeptLabel, hslSubDeptLabel } from '@/lib/departments/hsl-subdept';
+import type { BonusAssignment, BonusDef } from '@/lib/bonus-catalog/types';
+import {
+  calcHslCatalogTotal,
+  catalogBonusVariables,
+  catalogOnKey,
+  catalogVarKey,
+  hslCatalogBonusesFor,
+  type HslCatalogBonus,
+} from '@/lib/hsl-bonus/catalog-bonus';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -628,6 +637,69 @@ export default function HslBonusCalculator({
   );
   const today = new Date();
   const [weekStart, setWeekStart] = useState(() => cachedWeek ?? isoWeekStart(today));
+
+  /**
+   * Bonus Library definitions + assignments (2026-09-22). A bonus assigned to
+   * this branch's `hsl:<key>` is scored here as an extra rule and folds into
+   * `calculated_bonus` — see `src/lib/hsl-bonus/catalog-bonus.ts` for why that,
+   * and not a `bonus_catalog_applied` row.
+   *
+   * Best-effort: a failed read leaves both empty, so the card scores exactly the
+   * schema rules it always has rather than showing columns it cannot price.
+   */
+  const [catalogBonuses, setCatalogBonuses] = useState<BonusDef[]>([]);
+  const [catalogAssignments, setCatalogAssignments] = useState<BonusAssignment[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch('/api/bonus-catalog', { cache: 'no-store' });
+        const json = (await res.json()) as { bonuses?: BonusDef[]; assignments?: BonusAssignment[] };
+        if (cancelled) return;
+        setCatalogBonuses(json.bonuses ?? []);
+        setCatalogAssignments(json.assignments ?? []);
+      } catch {
+        /* keep the schema-only card */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /**
+   * The catalog bonuses that apply to one person on one branch. Resolved per
+   * call rather than memoised across branches: a branch's period_start decides
+   * whether a monthly bonus is even offered this week.
+   */
+  const catalogFor = useCallback(
+    (deptKey: HslDeptKey, email: string): HslCatalogBonus[] =>
+      hslCatalogBonusesFor({
+        subLabel: hslSubDeptLabel(deptKey),
+        employeeEmail: email,
+        assignments: catalogAssignments,
+        bonuses: catalogBonuses,
+        periodStart: periodStart(HSL_DEPTS[deptKey]),
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- periodStart is stable per week
+    [catalogAssignments, catalogBonuses, weekStart],
+  );
+
+  /**
+   * `calcBonus` + the catalog side. EVERY place that recomputes a person's
+   * `calculated_bonus` must go through this, or a catalog bonus would be
+   * scored on screen and dropped on save (or the reverse).
+   */
+  const scoreEntry = useCallback(
+    (deptKey: HslDeptKey, email: string, kpi: KpiData, isManager: boolean): number => {
+      const cfg = HSL_DEPTS[deptKey];
+      const base = cfg.perEmployee
+        ? calcManagerBonus(email, kpi, { periodStart: periodStart(cfg) })
+        : calcBonus(kpi, cfg, isManager, { periodStart: periodStart(cfg) });
+      return base + calcHslCatalogTotal(kpi, catalogFor(deptKey, email));
+    },
+    [catalogFor],
+  );
   /**
    * Whether `weekStart` is the REAL payroll week (the Hubstaff upload's Sun–Sat
    * range start) rather than the local-clock guess it's seeded with.
@@ -1510,6 +1582,7 @@ export default function HslBonusCalculator({
             loading={pendingFirstLoad.has(key)}
             searchSeed={personSearch}
             periodStartStr={periodStart(HSL_DEPTS[key])}
+            catalogFor={(email) => catalogFor(key, email)}
             onKpiChange={(email, kpiKey, val) => {
               setDeptState((prev) => {
                 const d = prev[key]!;
@@ -1520,10 +1593,8 @@ export default function HslBonusCalculator({
                     ...e,
                     kpi_data: newKpi,
                     // Managers dept sums per-manager components; others use the
-                    // uniform rule engine.
-                    calculated_bonus: HSL_DEPTS[key].perEmployee
-                      ? calcManagerBonus(email, newKpi, { periodStart: periodStart(HSL_DEPTS[key]) })
-                      : calcBonus(newKpi, HSL_DEPTS[key], e.is_manager, { periodStart: periodStart(HSL_DEPTS[key]) }),
+                    // uniform rule engine. `scoreEntry` adds the catalog side.
+                    calculated_bonus: scoreEntry(key, email, newKpi, e.is_manager),
                   };
                 });
                 // For SSD, sub_team changes affect every team member's share —
@@ -1541,9 +1612,7 @@ export default function HslBonusCalculator({
                   return {
                     ...e,
                     is_manager: newIsManager,
-                    calculated_bonus: HSL_DEPTS[key].perEmployee
-                      ? calcManagerBonus(email, e.kpi_data, { periodStart: periodStart(HSL_DEPTS[key]) })
-                      : calcBonus(e.kpi_data, HSL_DEPTS[key], newIsManager, { periodStart: periodStart(HSL_DEPTS[key]) }),
+                    calculated_bonus: scoreEntry(key, email, e.kpi_data, newIsManager),
                   };
                 });
                 // Re-share for SSD — toggling someone's manager flag doesn't
@@ -2138,6 +2207,9 @@ interface DeptBlockProps {
    *  overlay, which is what keeps the header from offering to reopen itself. */
   onOpen?: () => void;
   periodStartStr: string;
+  /** Bonus Library bonuses assigned to THIS branch, per person (2026-09-22).
+   *  Threaded from the calculator so the table and the scorer read one source. */
+  catalogFor?: (email: string) => HslCatalogBonus[];
   onKpiChange: (email: string, key: string, val: number | boolean) => void;
   onToggleManager: (email: string) => void;
   /** Epoch ms of the last successful autosave for this dept, for the inline
@@ -2184,6 +2256,7 @@ interface DeptBlockProps {
 const DEPT_PAGE_SIZE = 10;
 
 function DeptBlock({
+  catalogFor,
   deptKey, state, loading, searchSeed, sectionClassName,
   chromeless, onOpen, periodStartStr,
   onKpiChange, onToggleManager,
@@ -2454,6 +2527,7 @@ function DeptBlock({
             subtotal={deptTotal}
             isLocked={readOnly}
             periodStart={periodStartStr}
+            catalogFor={catalogFor}
             onKpiChange={onKpiChange}
             onToggleManager={onToggleManager}
             rosterEmails={rosterEmails}
@@ -2604,6 +2678,10 @@ interface KpiTableProps {
   entries: EntryRow[];
   subtotal: number;
   isLocked: boolean;
+  /** Bonus Library bonuses assigned to THIS branch, per person (2026-09-22).
+   *  Rendered as extra columns after the schema rules; a non-PHP one is shown
+   *  but not priced, because this card has no FX. */
+  catalogFor?: (email: string) => HslCatalogBonus[];
   /** ISO period_start of the week on screen — a `cadence: 'monthly'` flat rule
    *  is only tickable in the final payroll week of its month. */
   periodStart: string;
@@ -2633,8 +2711,19 @@ function ExtChip({ email, offboardedEmails }: { email: string; offboardedEmails?
   );
 }
 
-export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, onKpiChange, onToggleManager, rosterEmails, offboardedEmails, onRemoveMember }: KpiTableProps) {
+export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, catalogFor, onKpiChange, onToggleManager, rosterEmails, offboardedEmails, onRemoveMember }: KpiTableProps) {
   const rules = dept.rules.filter((r) => r.type !== 'team_split');
+  // The catalog columns are the UNION across everyone on the page: a bonus
+  // assigned per-employee reaches one person, and the column still has to exist
+  // for their cell to render. Non-applicable cells read "n/a", exactly as a
+  // managerOnly rule does.
+  const catalogCols: HslCatalogBonus[] = (() => {
+    const seen = new Map<string, HslCatalogBonus>();
+    if (catalogFor) {
+      for (const e of entries) for (const c of catalogFor(e.employee_email)) if (!seen.has(c.bonus.id)) seen.set(c.bonus.id, c);
+    }
+    return [...seen.values()];
+  })();
   // Monthly flat rules (Pre/Post-Hearing's ₱2,500) open only in the month's final
   // payroll week — the same calendar rule the wizard uses for every monthly bonus.
   const finalWeekOfMonth = isFinalPayrollWeekOfMonth(periodStart);
@@ -2657,13 +2746,25 @@ export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, onKpi
                 </span>
               </th>
             ))}
+            {catalogCols.map(({ bonus, scoreable }) => (
+              <th key={`cat-${bonus.id}`} className="px-2 py-2 text-right font-mono text-[9px] uppercase tracking-[0.12em] text-sky-600 dark:text-sky-400">
+                {bonus.name}
+                <span className="block font-normal text-sky-500/70 dark:text-sky-500/60">
+                  {!scoreable
+                    ? `${bonus.currency} — not scored here`
+                    : bonus.kind === 'flat'
+                      ? `${formatPeso(bonus.amount ?? 0)} flat${bonus.cadence === 'monthly' ? ' · monthly' : ''}`
+                      : 'formula'}
+                </span>
+              </th>
+            ))}
             <th className="px-3 py-2 text-right font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Bonus</th>
           </tr>
         </thead>
         <tbody>
           {entries.length === 0 && (
             <tr>
-              <td colSpan={rules.length + 3} className="px-3 py-6 text-center font-mono text-[10px] text-zinc-500">
+              <td colSpan={rules.length + catalogCols.length + 3} className="px-3 py-6 text-center font-mono text-[10px] text-zinc-500">
                 No employees on this page.
               </td>
             </tr>
@@ -2746,6 +2847,61 @@ export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, onKpi
                   )}
                 </td>
               ))}
+              {catalogCols.map(({ bonus }) => {
+                const mine = catalogFor ? catalogFor(e.employee_email) : [];
+                const hit = mine.find((c) => c.bonus.id === bonus.id);
+                if (!hit) {
+                  // Assigned to someone else on this page (a per-employee bonus).
+                  return (
+                    <td key={`cat-${bonus.id}`} className="px-2 py-2 text-right">
+                      <span className="text-zinc-300 dark:text-zinc-700">n/a</span>
+                    </td>
+                  );
+                }
+                if (!hit.scoreable) {
+                  return (
+                    <td key={`cat-${bonus.id}`} className="px-2 py-2 text-right">
+                      <span
+                        className="font-mono text-[9px] uppercase tracking-wider text-amber-500"
+                        title={`${bonus.name} is a ${bonus.currency} bonus. This card scores in pesos only, so it pays nothing here — assign a PHP bonus, or score it on the department card.`}
+                      >
+                        {bonus.currency}
+                      </span>
+                    </td>
+                  );
+                }
+                const on = !!e.kpi_data[catalogOnKey(bonus.id)];
+                const vars = catalogBonusVariables(bonus);
+                return (
+                  <td key={`cat-${bonus.id}`} className="px-2 py-2 text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      {on && vars.map((v) => (
+                        <input
+                          key={v}
+                          type="number"
+                          min={0}
+                          disabled={isLocked}
+                          title={v}
+                          aria-label={`${bonus.name} — ${v} for ${e.employee_name}`}
+                          value={String(e.kpi_data[catalogVarKey(bonus.id, v)] ?? '')}
+                          onChange={(ev) =>
+                            onKpiChange(e.employee_email, catalogVarKey(bonus.id, v), Number(ev.target.value) || 0)
+                          }
+                          className="w-14 rounded border border-zinc-200 bg-white px-1 py-0.5 text-right font-mono text-[11px] disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900"
+                        />
+                      ))}
+                      <input
+                        type="checkbox"
+                        className="accent-sky-600"
+                        checked={on}
+                        disabled={isLocked}
+                        aria-label={`${bonus.name} for ${e.employee_name}`}
+                        onChange={() => onKpiChange(e.employee_email, catalogOnKey(bonus.id), !on)}
+                      />
+                    </div>
+                  </td>
+                );
+              })}
               <td className="px-3 py-2 text-right font-mono font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
                 <AnimatedPeso amount={e.calculated_bonus} />
               </td>
@@ -2753,7 +2909,7 @@ export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, onKpi
             );
           })}
           <tr className="border-t border-zinc-300 bg-zinc-100/70 dark:border-zinc-700 dark:bg-zinc-900/60">
-            <td colSpan={rules.length + 2} className="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
+            <td colSpan={rules.length + catalogCols.length + 2} className="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
               Subtotal
             </td>
             <td className="px-3 py-2 text-right font-mono font-bold text-zinc-900 dark:text-zinc-100">

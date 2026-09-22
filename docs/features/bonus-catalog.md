@@ -282,6 +282,45 @@ US Manager Bonus · USEE**.
   `KNOWN_DISTINCT_DEPT_HOMONYMS` with a justification; an **undeclared** collision
   fails, which is the case that matters — a department retired from the calculator
   and later adopted into HSL otherwise re-enters the payable set silently.
+- **HSL sub-teams became live Library targets on 2026-09-22 — WITHOUT entering
+  the payable set.** Kane: *"Hogan Smith Law under Payment Catalog - Assignments
+  - HSL should have all its subdepartments so we can assign their bonuses in
+  here."* The first design sketched for this (audit item 139 fork (b)) would
+  have written `bonus_catalog_applied` rows keyed `hsl:<sub>` and added a second
+  wizard loader. Reading the loaders showed a smaller and safer shape, and it is
+  the one that shipped: **a catalog bonus assigned to `hsl:<sub>` is scored on
+  that sub-team's HSL card as an EXTRA RULE**, its inputs stored in `kpi_data`
+  under a `catalog:` namespace and its amount folded into
+  `hsl_bonus_entries.calculated_bonus`. The money then rides the existing HSL
+  path the wizard already pays. **No `bonus_catalog_applied` row is written for
+  HSL, no second loader exists, and no `hsl:` key ever enters
+  `WIZARD_PAYABLE_KPI_DEPT_KEYS`** — the double-pay guard above is untouched
+  rather than carefully worked around. Module:
+  `src/lib/hsl-bonus/catalog-bonus.ts` (8 tests).
+  - The `catalog:` prefix cannot collide with a schema rule key; the test
+    asserts no `HSL_DEPTS` rule key uses it.
+  - The catalog total is **outside** the department's `monthlyMax`. That cap
+    governs the KPI programme's own rules; an accountant-assigned award is a
+    separate thing, and folding it under the cap would silently shrink one or
+    the other. Same reasoning as `exemptFromMonthlyMax`.
+  - **A non-PHP bonus is shown but never paid.** The HSL card has no FX rates
+    and never has — every schema rule is peso-denominated. Rather than thread a
+    rate through the card (and inherit the general calculator's "the rate at
+    save time is the rate that sticks" caveat), a USD/COP bonus renders its
+    currency code with a tooltip and contributes ₱0. Paying `50` as if it were
+    pesos, or converting at an unstated rate, are both worse than saying so.
+  - **The BARE family is now REFUSED as a target** (`isDeadBonusTargetKey`
+    inverted). `hogan_smith_law` / `HSL` have no card of their own — the HSL
+    calculator is per sub-team — so a bonus assigned there was drawn by nothing
+    and paid by nothing. It was offered (it rides `DEPARTMENTS`) and silently
+    dead; refusing it is the tightening this change earns. The Assignments rail
+    drops the parent row and `buildDeptRail` promotes its sub-teams, so nothing
+    disappears from the list.
+  - Editing an assignment does **not** rewrite an already-scored week: the
+    wizard pays the stored `calculated_bonus`, per
+    [[payroll-rule-changes-forward-only]]. `withoutCatalogKeys` strips a removed
+    bonus's stale inputs the next time the card is touched.
+
 - **Sub-team-targeted assignments** *(2026-09-21, second pass the same day)*.
   When master-list departments gained data sub-teams
   (`payment-catalog-departments.md` §7.4), `customDepartments` — the seam that

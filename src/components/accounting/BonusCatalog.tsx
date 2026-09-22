@@ -808,10 +808,16 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
    * be offering a lie. System Bonuses keep the strict list above: PAB/Tech
    * eligibility still resolves on the bare parent key.
    */
-  const assignmentTargetDepartments = useMemo(
-    () => customDepartments.filter((d) => !isDeadBonusTargetKey(d.key)),
-    [customDepartments],
-  );
+  const assignmentTargetDepartments = useMemo(() => {
+    // HSL's CODE sub-teams are not in `customDepartments` (that list carries the
+    // registry and the DATA subs); the Pay Structure rail adds them separately.
+    // Assignments needs them too, since 2026-09-22 they are live bonus targets.
+    const seen = new Set(customDepartments.map((d) => d.key.toLowerCase()));
+    const hslCode = hslSubDeptOptions()
+      .filter((o) => !seen.has(o.value.toLowerCase()))
+      .map((o) => ({ key: o.value, name: o.label }));
+    return [...customDepartments, ...hslCode].filter((d) => !isDeadBonusTargetKey(d.key));
+  }, [customDepartments]);
 
   // Live USD-anchored FX rates — used only to sort the Bonus Library's
   // "Amount (high-low)" by PHP-equivalent so a $100 bonus outranks a ₱500 one.
@@ -4799,7 +4805,12 @@ function AssignmentsTab({
   const [effectiveDate, setEffectiveDate] = useState<string>(nextMondayIso);
   const allDepts = useMemo(
     () => [
-      ...DEPARTMENTS.map((d) => ({ key: d.key, name: d.name })),
+      // The bare HSL parent is dropped: it has no KPI card of its own, so a
+      // bonus assigned there is drawn by nothing (audit item 139). Its
+      // sub-teams arrive through `extraDepartments` and nest under it in the
+      // rail via `buildDeptRail`, which promotes a child whose parent is
+      // absent to top level — so nothing disappears.
+      ...DEPARTMENTS.filter((d) => !isDeadBonusTargetKey(d.key)).map((d) => ({ key: d.key, name: d.name })),
       ...extraDepartments,
     ],
     [extraDepartments],

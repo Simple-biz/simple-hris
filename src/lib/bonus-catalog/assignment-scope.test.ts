@@ -60,10 +60,19 @@ test('scope index: per parent, per bonus; a bare assignment makes the bonus depa
   assert.equal(idx.has('qc'), false, 'a department with only bare assignments has no restrictions');
 });
 
-test('dead targets: HSL sub-teams are never offered — nothing draws or pays them', () => {
-  assert.equal(isDeadBonusTargetKey('hsl:intake_specialist'), true);
-  assert.equal(isDeadBonusTargetKey('hsl:spanish_intake'), true, 'a DATA HSL team is just as dead');
+test('dead targets INVERTED 2026-09-22: the BARE family is dead, sub-teams are live', () => {
+  // Was: every hsl:* refused, because the HSL card did not read the catalog.
+  // Now: the card scores a sub-team assignment as an extra rule folded into
+  // calculated_bonus (hsl-bonus/catalog-bonus.ts), so sub-teams are real targets.
+  assert.equal(isDeadBonusTargetKey('hsl:intake_specialist'), false);
+  assert.equal(isDeadBonusTargetKey('hsl:spanish_intake'), false, 'a DATA HSL team is live too');
   assert.equal(isDeadBonusTargetKey('lead_gen:nurture'), false);
-  assert.equal(isDeadBonusTargetKey('hogan_smith_law'), false, 'the bare parent is pre-existing behaviour, out of scope here');
   assert.equal(isDeadBonusTargetKey('lead_gen'), false);
+  // The bare family has NO card of its own — the calculator is per sub-team —
+  // so a bonus assigned there is drawn by nothing. It used to be offered and
+  // silently dead; refusing it is the tightening this change earns.
+  assert.equal(isDeadBonusTargetKey('hogan_smith_law'), true);
+  assert.equal(isDeadBonusTargetKey('HSL'), true);
+  assert.equal(isDeadBonusTargetKey('Hogan Smith Law'), true);
+  assert.equal(isDeadBonusTargetKey(''), false);
 });

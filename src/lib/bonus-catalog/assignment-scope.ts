@@ -23,7 +23,7 @@
 // CLIENT-SAFE: pure functions only.
 
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
-import { HSL_BUILTIN_KEY } from '@/lib/departments/registry';
+import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 
 /** The parent card an assignment lands on — the same collapse every consumer
  *  (`commonByDept`, the scoring queue, readiness) already performs. */
@@ -98,12 +98,31 @@ export function buildCommonScopeIndex(
 
 /**
  * A target the Assignments tab must NOT offer because nothing would ever draw or
- * pay it: an HSL sub-team. HSL bonuses are code rules in `hsl-bonus/schema.ts`,
- * the HSL calculator never reads the catalog, and the wizard excludes the HSL
- * family from the catalog's payable set on purpose (bonus-catalog.md §3.1;
- * audit item 139). Offering the target would be offering a lie.
+ * pay it.
+ *
+ * **This inverted on 2026-09-22.** It used to refuse every HSL sub-team: the HSL
+ * calculator did not read the catalog, so an assignment there was dead (audit
+ * item 139). Kane then asked for sub-team bonuses, and the HSL card now scores a
+ * catalog bonus assigned to `hsl:<sub>` as an extra rule folded into
+ * `calculated_bonus` (`src/lib/hsl-bonus/catalog-bonus.ts`). So a SUB-TEAM is
+ * now a live target.
+ *
+ * The BARE family is not, and never was: `hogan_smith_law` / `HSL` have no card
+ * of their own — the HSL calculator is per sub-team — so a bonus assigned there
+ * is drawn by nothing and paid by nothing. It was offered (it rides
+ * `DEPARTMENTS`) and silently dead; refusing it is the tightening this change
+ * earns.
  */
 export function isDeadBonusTargetKey(departmentKey: string): boolean {
   const k = (departmentKey ?? '').trim();
-  return k.includes(':') && normalizeDeptToKey(k) === HSL_BUILTIN_KEY;
+  if (!k) return false;
+  // A namespaced HSL sub-team is live now. Checked FIRST, because
+  // `isHslFamilyLabel` is true for `hsl:<sub>` as well.
+  if (k.includes(':')) return false;
+  // The bare HSL family — no card, nothing draws it. `isHslFamilyLabel` rather
+  // than `normalizeDeptToKey(k) === HSL_BUILTIN_KEY`: the alias map is keyed on
+  // DISPLAY labels, so it has no entry for its own output and
+  // `normalizeDeptToKey('hogan_smith_law')` is NULL — the canonical key would
+  // have slipped through ([[builtin-sub-departments]]).
+  return isHslFamilyLabel(k);
 }
